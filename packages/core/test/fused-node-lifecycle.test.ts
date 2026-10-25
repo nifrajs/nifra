@@ -7,6 +7,13 @@ import { responseObserver } from "../src/response-observer.ts"
 import type { StandardSchemaV1 } from "../src/schema/standard.ts"
 import type { NodeServeOutcome } from "../src/server/node-outcome.ts"
 
+/** A value `JSON.stringify` throws on. */
+function cyclic(): Record<string, unknown> {
+  const node: Record<string, unknown> = {}
+  node.self = node
+  return node
+}
+
 function req(path: string, init?: RequestInit): Request {
   return new Request(`http://localhost${path}`, init)
 }
@@ -212,7 +219,7 @@ describe("fused generic lifecycle runners - Node-direct parity", () => {
 
     const derive = server({ logger: silentLogger })
       .use(nodeDirect())
-      .derive(() => status(200, 1n))
+      .derive(() => status(200, cyclic()))
       .beforeHandle(() => undefined)
       .get("/early", () => ({ ok: true }))
     await assertInternalError(derive)
@@ -220,14 +227,14 @@ describe("fused generic lifecycle runners - Node-direct parity", () => {
     const before = server({ logger: silentLogger })
       .use(nodeDirect())
       .derive(() => ({ ok: true }))
-      .beforeHandle(() => status(200, 1n))
+      .beforeHandle(() => status(200, cyclic()))
       .get("/early", () => ({ ok: true }))
     await assertInternalError(before)
 
     const asyncBefore = server({ logger: silentLogger })
       .use(nodeDirect())
       .derive(() => ({ ok: true }))
-      .beforeHandle(async () => status(200, 1n))
+      .beforeHandle(async () => status(200, cyclic()))
       .get("/early", () => ({ ok: true }))
     await assertInternalError(asyncBefore)
   })

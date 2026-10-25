@@ -125,10 +125,9 @@ export interface ServerOptions {
   readonly maxInboundDeadlineMs?: number
   /**
    * When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false.
-   * `{ drainMs }` sets how long in-flight requests get to finish before the stop forces them closed
-   * (default 10_000) - keep it under the platform's kill grace period (`docker stop` waits 10 s).
+   * The object form is passed to `stop()`: see {@link StopOptions}.
    */
-  readonly gracefulSignals?: boolean | { readonly drainMs?: number }
+  readonly gracefulSignals?: boolean | StopOptions
   /**
    * Capacity-admission gate (see {@link AdmissionController}). Bounds concurrent in-flight work so a
    * healthy instance sheds load (`429` + `Retry-After`) instead of accepting more than it can finish.
@@ -254,8 +253,20 @@ export interface MountFetchOptions {
   readonly opaque?: string | OpaqueMountDeclaration
 }
 
-/** A callback awaited after the Bun server has drained and stopped. */
+/** A callback a server awaits while it stops: `onStopping` when it begins, `onStop` after the drain. */
 export type StopHook = () => MaybePromise<void>
+
+/** How `stop()` winds a listening server down. */
+export interface StopOptions {
+  /** How long in-flight requests get to finish before the stop forces them closed. Default 10_000. */
+  readonly drainMs?: number
+  /**
+   * How long the server keeps serving after `stop()` began, before it drains: the time a load
+   * balancer takes to see readiness fail and route elsewhere. Default 0. Keep `delayMs + drainMs`
+   * under the platform's kill grace period (`docker stop` waits 10 s, Kubernetes 30 s).
+   */
+  readonly delayMs?: number
+}
 
 /**
  * MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it

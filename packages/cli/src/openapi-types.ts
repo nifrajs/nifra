@@ -39,6 +39,43 @@ type TypeChecker = TSApi.TypeChecker
 
 const hasFlag = (type: Type, flag: number): boolean => (type.flags & flag) !== 0
 
+/** A `bigint` as a nifra JSON response writes it: its decimal string. */
+const BIGINT_SCHEMA: JsonSchema = { type: "string", pattern: "^-?(0|[1-9][0-9]*)$" }
+
+/** `JSON.stringify` writes a typed array as an object keyed by index. */
+const NUMBER_ARRAYS: ReadonlySet<string> = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+])
+const NUMBER_ARRAY_SCHEMA: JsonSchema = { type: "object", additionalProperties: { type: "number" } }
+/** A `BigInt64Array` or `BigUint64Array`: keyed by index too, each entry a `bigint`'s decimal string. */
+const BIGINT_ARRAYS: ReadonlySet<string> = new Set(["BigInt64Array", "BigUint64Array"])
+const BIGINT_ARRAY_SCHEMA: JsonSchema = { type: "object", additionalProperties: BIGINT_SCHEMA }
+/** What a Node `Buffer`'s `toJSON` writes in place of the index object. */
+const BUFFER_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    type: { const: "Buffer" },
+    data: { type: "array", items: { type: "integer", minimum: 0, maximum: 255 } },
+  },
+  required: ["type", "data"],
+}
+
+/** The schema of a typed array or `Buffer` named `name`, as `JSON.stringify` writes it. */
+function binarySchema(name: string | undefined): JsonSchema | undefined {
+  if (name === undefined) return undefined
+  if (name === "Buffer") return BUFFER_SCHEMA
+  if (BIGINT_ARRAYS.has(name)) return BIGINT_ARRAY_SCHEMA
+  return NUMBER_ARRAYS.has(name) ? NUMBER_ARRAY_SCHEMA : undefined
+}
+
 function schemaForType(
   ts: TypeScriptApi,
   checker: TypeChecker,
@@ -66,7 +103,7 @@ function schemaForType(
   if (hasFlag(type, ts.TypeFlags.StringLike)) return { type: "string" }
   if (hasFlag(type, ts.TypeFlags.NumberLike)) return { type: "number" }
   if (hasFlag(type, ts.TypeFlags.BooleanLike)) return { type: "boolean" }
-  if (hasFlag(type, ts.TypeFlags.BigIntLike)) return { type: "integer" }
+  if (hasFlag(type, ts.TypeFlags.BigIntLike)) return BIGINT_SCHEMA
   if (hasFlag(type, ts.TypeFlags.Null)) return { type: "null" }
 
   if (type.isUnion()) {
@@ -93,6 +130,8 @@ function schemaForType(
   }
 
   if (type.symbol?.name === "Date") return { type: "string", format: "date-time" }
+  const binary = binarySchema(type.symbol?.name)
+  if (binary !== undefined) return binary
   if ((type.flags & ts.TypeFlags.Object) === 0) return undefined
 
   seen.add(type)
@@ -255,7 +294,7 @@ async function schemaForType7(
   if ((input.flags & stringLikeFlag) !== 0) return { type: "string" }
   if ((input.flags & numberLikeFlag) !== 0) return { type: "number" }
   if ((input.flags & booleanLikeFlag) !== 0) return { type: "boolean" }
-  if ((input.flags & bigintLikeFlag) !== 0) return { type: "integer" }
+  if ((input.flags & bigintLikeFlag) !== 0) return BIGINT_SCHEMA
   if ((input.flags & nullFlag) !== 0) return { type: "null" }
 
   if ((input.flags & unionFlag) !== 0) {
@@ -291,6 +330,8 @@ async function schemaForType7(
 
   const symbol = await input.getSymbol()
   if (symbol?.name === "Date") return { type: "string", format: "date-time" }
+  const binary = binarySchema(symbol?.name)
+  if (binary !== undefined) return binary
   if ((input.flags & objectFlag) === 0) return undefined
 
   seen.add(input)

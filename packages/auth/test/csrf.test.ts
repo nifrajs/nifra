@@ -112,3 +112,42 @@ describe("csrf - a same-origin form under Referrer-Policy: no-referrer", () => {
     )
   })
 })
+
+describe("csrf - exempt routes", () => {
+  const post = (url: string, headers: Record<string, string> = {}) =>
+    new Request(url, { method: "POST", headers })
+  const statusOf = (result: unknown) => (result instanceof Response ? result.status : undefined)
+
+  test("an exempt route takes a POST with no Origin; every other route still refuses one", async () => {
+    const app = server()
+      .use(csrf({ exempt: ["/webhooks/payments", "/inbound/:vendor/:id?"] }))
+      .post("/webhooks/payments", () => ({ ok: true }))
+      .post("/inbound/:vendor/:id?", (c) => ({ vendor: c.params.vendor }))
+      .post("/account", () => ({ ok: true }))
+      .post("/webhooks/payments/refund", () => ({ ok: true }))
+
+    expect((await app.fetch(post("https://app.example/webhooks/payments?sig=1"))).status).toBe(200)
+    expect((await app.fetch(post("https://app.example/inbound/acme"))).status).toBe(200)
+    expect((await app.fetch(post("https://app.example/inbound/acme/7"))).status).toBe(200)
+    expect((await app.fetch(post("https://app.example/account"))).status).toBe(403)
+    expect((await app.fetch(post("https://app.example/webhooks/payments/refund"))).status).toBe(403)
+    const crossSite = post("https://app.example/account", { origin: "https://evil.example" })
+    expect((await app.fetch(crossSite)).status).toBe(403)
+  })
+
+  test("a path the exemption does not route is checked", async () => {
+    const onRequest = csrf({ exempt: ["/webhooks/payments"] }).onRequest
+    if (onRequest === undefined) throw new Error("csrf must define onRequest")
+    for (const path of [
+      "/webhooks/payments2",
+      "/webhooks",
+      "/WEBHOOKS/payments",
+      "/x/webhooks/payments",
+    ])
+      expect(statusOf(await onRequest(post(`https://app.example${path}`)))).toBe(403)
+  })
+
+  test("refuses an exemption that is not a route pattern", () => {
+    expect(() => csrf({ exempt: ["webhooks/payments"] })).toThrow()
+  })
+})

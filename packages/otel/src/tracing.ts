@@ -13,13 +13,13 @@ import {
   readCausalityHeaders,
   startCausality,
 } from "@nifrajs/core/causality"
-import { type ContextPlugin, defineContextPlugin } from "@nifrajs/core/server"
+import { type ContextPlugin, defineContextPlugin, routeTemplateOf } from "@nifrajs/core/server"
 import {
   type ActiveObservation,
   createObservationLifecycle,
   type ObservationContext,
 } from "./lifecycle.ts"
-import { methodLabel, routeTemplateOf } from "./route-template.ts"
+import { methodLabel } from "./route-template.ts"
 import { consoleSpanExporter, type ObservationAdapter } from "./span.ts"
 
 /** The trace context exposed on the handler `c.trace` (typed, threaded via `derive`). */

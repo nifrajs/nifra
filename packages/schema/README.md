@@ -25,6 +25,10 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
   …) that become JSON Schema constraints. Validators are compiled (fast).
 - **Validating string formats** - `email`/`uuid`/`date-time`/`date`/`time`/`uri`/`ipv4`
   validate *and* annotate; register more with `registerFormat`.
+- **Bytes in a response** - `t.bytes()` declares a field the handler fills with a `Uint8Array` (or a
+  `Buffer`). The route writes it as a base64 string, the typed client reads a `string`, and the
+  document says `{ type: "string", contentEncoding: "base64" }`. Response-only for now: a request or
+  `sse` schema with it is refused at registration.
 - **`toOpenAPI`** - richest from a contract (it carries `response` schemas + op names →
   `operationId`s); also works on a live app. A Standard Schema that also implements Standard JSON
   Schema (zod 4 does) is described like `t`; one that exposes no JSON Schema is emitted without a

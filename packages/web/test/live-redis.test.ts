@@ -4,19 +4,23 @@
  * (the Lua itself, the clock under concurrent appends, a RESP3 reply).
  */
 import { afterAll, expect, test } from "bun:test"
-import { type LiveBusEvent, type LiveBusListener, live } from "../src/live.ts"
+import { type LiveBusEvent, type LiveBusListener, live, livePublisher } from "../src/live.ts"
 import { type RedisCommand, redisLiveBus } from "../src/live-redis.ts"
 import { memoryRedis } from "./memory-redis.ts"
 
 /** A listener recording what the bus tells it. */
 function recorder() {
   const seen: (LiveBusEvent | { gap: number } | "down")[] = []
+  const causes: unknown[] = []
   const listener: LiveBusListener = {
     event: (event) => seen.push(event),
     gap: (head) => seen.push({ gap: head }),
-    down: () => seen.push("down"),
+    down: (error) => {
+      seen.push("down")
+      causes.push(error)
+    },
   }
-  return { seen, listener }
+  return { seen, causes, listener }
 }
 
 /** Waits for a condition; the deadline only turns a hang into a failure. */
@@ -98,7 +102,7 @@ test("a reader that fell behind a trim reports the gap, then goes on", async () 
 test("one failed read is retried quietly; an outage reports down, then a gap at the clock", async () => {
   const redis = memoryRedis()
   const bus = redisLiveBus({ ...redis, blockMs: 20 })
-  const { seen, listener } = recorder()
+  const { seen, causes, listener } = recorder()
   const sub = await bus.subscribe(listener)
   redis.failures.read = 1
   const s1 = await bus.append({ type: "change", keys: ["a"] })
@@ -108,6 +112,9 @@ test("one failed read is retried quietly; an outage reports down, then a gap at 
   const s2 = await bus.append({ type: "change", keys: ["b"] })
   await until(() => seen.length >= 3, "down then gap")
   expect(seen.slice(1, 3)).toEqual(["down", { gap: s2 }])
+  // The read's own failure travels with the outage, so the runtime can say why.
+  expect(causes).toHaveLength(1)
+  expect(causes[0]).toBeInstanceOf(Error)
   const s3 = await bus.append({ type: "change", keys: ["c"] })
   await until(() => seen.length === 4, "resumed")
   expect(seen[3]).toEqual({ type: "change", keys: ["c"], seq: s3 })
@@ -245,6 +252,58 @@ test("a live runtime on the bus: a publish resolves once this process has read i
   await runtime.publish("post:1")
   await runtime.revokeKey("post:1")
   expect(redis.streams.get("nifra:live")).toHaveLength(2)
+})
+
+test("a bus with no reader appends, and refuses to subscribe", async () => {
+  const redis = memoryRedis()
+  const bus = redisLiveBus({ send: redis.send })
+  expect(await bus.append({ type: "change", keys: ["a"] })).toBeGreaterThan(0)
+  const { listener } = recorder()
+  await expect(bus.subscribe(listener)).rejects.toThrow(/`read`/)
+})
+
+test("livePublisher: a publish-only process reaches a runtime reading the same stream", async () => {
+  const redis = memoryRedis()
+  const runtime = live({
+    secret: "redis-bus-secret-0123456789abcdef-01",
+    subject: () => null,
+    bus: redisLiveBus({ ...redis, blockMs: 20 }),
+    logger: false,
+  })
+  await runtime.ready
+  const publish = livePublisher(redisLiveBus({ send: redis.send }))
+  await publish("post:1", "post:1", "post:2")
+  await until(() => runtime.status().events === 1, "the runtime applied the change")
+  expect(redis.streams.get("nifra:live")).toHaveLength(1)
+  await publish()
+  expect(redis.streams.get("nifra:live")).toHaveLength(1)
+  await expect(publish("bad key")).rejects.toThrow(TypeError)
+  await runtime.close()
+})
+
+test("close() stops the reader first: its connection failing afterwards is no outage", async () => {
+  const redis = memoryRedis()
+  const lines: string[] = []
+  const logger = {
+    debug() {},
+    info() {},
+    warn: (message: string) => lines.push(message),
+    error: (message: string) => lines.push(message),
+  }
+  const runtime = live({
+    secret: "redis-bus-secret-0123456789abcdef-01",
+    subject: () => null,
+    bus: redisLiveBus({ ...redis, blockMs: 20 }),
+    logger,
+  })
+  await runtime.ready
+  await runtime.close()
+  // The parked read wakes on the next append and fails, as a connection closed under it would.
+  redis.failures.read = 10
+  await redisLiveBus({ send: redis.send }).append({ type: "change", keys: ["a"] })
+  await until(() => redis.reads.pending === 0, "the parked read returned")
+  expect(redis.failures.read).toBe(9)
+  expect(lines).toEqual([])
 })
 
 // --- A real server ------------------------------------------------------------------------------------

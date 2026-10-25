@@ -7,6 +7,8 @@
 import { hasResidentBody, markResidentBody, residentBodiesRecorded } from "../mount.ts"
 import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
 import { plainError } from "./http.ts"
+import { jsonResponse } from "./json-response.ts"
+import { jsonText } from "./json-text.ts"
 import {
   CONTEXT_REQUEST,
   CONTEXT_SET,
@@ -216,7 +218,7 @@ function jsonResponseWithOwnHeaders(
   status: number,
   headers: Record<string, string>,
 ): Response {
-  const response = status === 200 ? Response.json(result) : Response.json(result, { status })
+  const response = jsonResponse(result, status === 200 ? undefined : { status })
   for (const name of Object.keys(headers)) response.headers.set(name, headers[name]!)
   return withBody(response)
 }
@@ -504,8 +506,8 @@ function tagged(
  * prebuilt init. Both keep the exact body/content-type contract. */
 function plainJsonResponse(result: object): Response {
   // `undefined` from stringify (a `toJSON` returning nothing) keeps `Response.json`'s TypeError.
-  const body = IS_BUN || IS_DENO ? undefined : (JSON.stringify(result) as string | undefined)
-  return body === undefined ? Response.json(result) : new Response(body, JSON_INIT_200)
+  const body = IS_BUN || IS_DENO ? undefined : (jsonText(result) as string | undefined)
+  return body === undefined ? jsonResponse(result) : new Response(body, JSON_INIT_200)
 }
 
 /** Fused-lane respond when `c.set` is untouched; keep the generic fallback for non-JSON values. */
@@ -550,7 +552,7 @@ export function fusedRespondNoSet(
     // Deno the tier's only saving here is the response walk itself; every other runtime keeps the
     // one-call prebuilt init below.
     if (statics !== undefined && IS_DENO && !tagResponseBody) {
-      const response = Response.json(result)
+      const response = jsonResponse(result)
       // Indexed for the same reason as `applyStaticDefaults`: pair destructuring is a second
       // iterator walk per header.
       for (let i = 0; i < statics.entries.length; i++) {
@@ -563,7 +565,7 @@ export function fusedRespondNoSet(
     // content-type, so this lane still constructs the response in one call - the whole point of
     // declaring headers statically instead of writing them per response.
     if (tagResponseBody || statics !== undefined) {
-      const body = JSON.stringify(result) as string | undefined
+      const body = jsonText(result) as string | undefined
       // Each shape carries the content-type of the lane it stands in for: the framework's own for the
       // tagging path this branch already owned, and `Response.json`'s for the construction below that
       // the static tier replaces. They differ on Deno, and a declared header must not change one.
@@ -587,7 +589,7 @@ export function fusedRespondNoSet(
     return withBody(
       statics === undefined
         ? plainJsonResponse(result)
-        : Response.json(result, statics.responseJsonInit200()),
+        : jsonResponse(result, statics.responseJsonInit200()),
     )
   }
   return toResponse(
@@ -737,7 +739,7 @@ function renderValue(
     // prebuilt init beats `Response.json`'s internal init handling. Output is byte-identical -
     // same body bytes, same probed content-type. `undefined` from stringify (a function/symbol
     // result) delegates to Response.json so its TypeError contract stays the single source.
-    const body = JSON.stringify(result) as string | undefined
+    const body = jsonText(result) as string | undefined
     if (body !== undefined) {
       const init: ResponseInit =
         status === 200
@@ -756,7 +758,7 @@ function renderValue(
   const init: ResponseInit = headers === undefined ? { status } : { status, headers }
   if (result === undefined) return ownedBy(new Response(null, init), request)
   if (tagResponseBody) {
-    const body = JSON.stringify(result) as string | undefined
+    const body = jsonText(result) as string | undefined
     if (body !== undefined) {
       const response =
         IS_DENO && !(headers instanceof Headers)
@@ -780,7 +782,7 @@ function renderValue(
     // the same writes plus a content-type one; a declared content-type still overrides the default.
     return jsonResponseWithOwnHeaders(result, status, headers)
   }
-  return withBody(Response.json(result, init))
+  return withBody(jsonResponse(result, init))
 }
 
 // Add a JSON content-type without pre-building a `Headers` instance just to check-and-set one key:

@@ -291,7 +291,10 @@ describe("nifra mcp against a project on another nifra release", () => {
 
   test("a project CLI without a linked bin cannot take the session, so the tools refuse", async () => {
     const dir = await project("no-bin", { cli: true })
-    expect(await findProjectCli(dir)).toEqual({ version: PROJECT_VERSION })
+    expect(await findProjectCli(dir)).toEqual({
+      version: PROJECT_VERSION,
+      dir: join(dir, "node_modules", "@nifrajs", "cli"),
+    })
     const answered = await rpc(dir, [], [initialize, call(2, "nifra_docs", { query: "x" })], [1, 2])
     expect(isErrorOf(answered[2])).toBe(true)
     expect(textOf(answered[2])).toContain("nifra_docs refused")

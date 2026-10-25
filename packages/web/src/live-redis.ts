@@ -14,6 +14,15 @@
  *     read: (command, args) => reader.send(command, [...args]),
  *   })
  *   const runtime = live({ secret, subject, bus, instances: 4 })
+ *   app.onStop(async () => {
+ *     await runtime.close() // stops the reader first, so closing its connection is no outage
+ *     reader.close()
+ *     shared.close()
+ *   })
+ *
+ * Any client with a raw-command call fits: with ioredis, `(command, args) => redis.call(command,
+ * ...args)`, the reader on a `redis.duplicate()`. A process that only publishes (a worker, another
+ * app) passes `send` alone and hands the bus to `livePublisher`.
  *
  * Every entry also carries a running count, so a reader that fell behind a trim - or lost the
  * connection - reports the gap instead of skipping what it missed.
@@ -26,8 +35,11 @@ export type RedisCommand = (command: string, args: readonly string[]) => Promise
 export interface RedisLiveBusOptions {
   /** Appends and reads the clock; any connection. */
   readonly send: RedisCommand
-  /** Reads the stream. Its own connection: a blocking `XREAD` holds it. */
-  readonly read: RedisCommand
+  /**
+   * Reads the stream. Its own connection: a blocking `XREAD` holds it. Required to subscribe, so for
+   * `live()`; a process that only appends leaves it out.
+   */
+  readonly read?: RedisCommand
   /** The stream; the clock lives at `<key>:clock`. Default `nifra:live`. */
   readonly key?: string
   /** Entries kept, roughly. Default 100,000, the most the live history keeps. */
@@ -89,9 +101,15 @@ export function redisLiveBus(options: RedisLiveBusOptions): LiveBus {
     },
 
     async subscribe(listener) {
+      const read = options.read
+      if (read === undefined) {
+        throw new TypeError(
+          "[nifra/web] live-redis: subscribing needs `read`, a connection of its own; a bus without one only appends",
+        )
+      }
       const start = await position()
       let closed = false
-      void follow(start.seq, start.n, listener, () => closed)
+      void follow(read, start.seq, start.n, listener, () => closed)
       return {
         head: start.seq,
         close: () => {
@@ -102,6 +120,7 @@ export function redisLiveBus(options: RedisLiveBusOptions): LiveBus {
   }
 
   async function follow(
+    read: RedisCommand,
     head: number,
     count: number,
     listener: LiveBusListener,
@@ -116,22 +135,28 @@ export function redisLiveBus(options: RedisLiveBusOptions): LiveBus {
     let down = false
     while (!isClosed()) {
       let entries: Entry[] | undefined
+      let error: unknown
       try {
         const reply = await within(
-          options.read("XREAD", ["BLOCK", blockMs, "COUNT", "1000", "STREAMS", key, cursor]),
+          read("XREAD", ["BLOCK", blockMs, "COUNT", "1000", "STREAMS", key, cursor]),
           readTimeoutMs,
         )
         entries = reply === null || reply === undefined ? [] : entriesOf(reply)
-      } catch {
+        if (entries === undefined)
+          error = new Error("[nifra/web] live-redis: XREAD replied in no known shape")
+      } catch (failure) {
         entries = undefined
+        error = failure
       }
+      // Closed while the read was blocked: closing its connection next is the caller's shutdown.
+      if (isClosed()) return
       if (entries === undefined) {
         // A reply of no known shape counts as a failed read, so it backs off instead of spinning.
         failures++
         // One failed read may be a hiccup; a second in a row is an outage.
         if (failures === 2) {
           down = true
-          listener.down()
+          listener.down(error)
         }
         await wait(RETRY_MS[Math.min(failures - 1, RETRY_MS.length - 1)] ?? 5_000)
         continue

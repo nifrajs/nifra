@@ -1322,3 +1322,15 @@ describe("how query, header and cookie values are read", () => {
     expect(toOpenAPIFromEvidence(evidence)).toEqual(doc)
   })
 })
+
+test("a t.bytes() field is a base64 string in the document", () => {
+  const app = server().get("/file", { response: t.object({ data: t.bytes() }) }, () => ({
+    data: new Uint8Array([1]),
+  }))
+  expect(jsonOf(toOpenAPI(app), "/file", "get", "200")).toEqual({
+    type: "object",
+    properties: { data: { type: "string", contentEncoding: "base64", "x-nifra-bytes": true } },
+    required: ["data"],
+    additionalProperties: false,
+  })
+})

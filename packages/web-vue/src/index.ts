@@ -17,8 +17,8 @@ import { holeApp } from "./hole-app.ts"
 
 const ID_TARGET = /^#([A-Za-z][\w-]*)$/
 
-const isDev = (): boolean =>
-  typeof process !== "undefined" && process.env?.NODE_ENV !== "production"
+// No `?.`: a bundler's NODE_ENV define replaces only the plain member read, and this runs per render.
+const isDev = (): boolean => typeof process !== "undefined" && process.env.NODE_ENV !== "production"
 
 const warned = new Set<string>()
 const devWarn = (message: string): void => {

@@ -24,6 +24,7 @@ export { type ErrorLogDetail, emitRequestErrorLog } from "./server/bare-error-la
 export { assertByteLimit, capBodyBytes } from "./server/body.ts"
 export { type FormOrigins, readBodyFramed } from "./server/body-lane.ts"
 export { plainError } from "./server/http.ts"
+export { jsonResponse } from "./server/json-response.ts"
 export {
   answerNotFound,
   type NotFoundHandler,

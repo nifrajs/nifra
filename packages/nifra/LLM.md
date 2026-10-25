@@ -25,7 +25,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
 - **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
 
-_…and 133 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 134 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

@@ -174,9 +174,10 @@ function scripted() {
     }
     const id = ++n
     const routeId = routeOf(body.path)
+    // A seed, rendered with the page, is bound to no socket: the server takes it from any.
     const presented = body.grants
       .map((grant) => issued.get(grant))
-      .find((load) => load !== undefined && load.sid === body.sid)
+      .find((load) => load !== undefined && (load.sid === body.sid || load.sid === ""))
     const renew = body.mode === "renew" && presented?.path === body.path
     const keepRoot = presented !== undefined && (renew || body.retain.includes(ROOT))
     const keepPage =
@@ -253,8 +254,26 @@ interface Rig {
   readonly stop: () => void
 }
 
-function rig(path = "/posts/1", keepAlive = false): Rig {
+/** The seed a server-rendered `/posts/1` carries, as the handover puts it in the initial state. */
+const SEED = {
+  subjects: ["viewer-1"],
+  grant: "seed",
+  tags: { "tag:/posts/1": ["P:posts/[id]"], "tag:root": [ROOT] },
+  ttl: 600,
+}
+
+function rig(path = "/posts/1", keepAlive = false, seed?: unknown): Rig {
   const server = scripted()
+  if (seed !== undefined) {
+    server.issued.set("seed", {
+      path,
+      sid: "",
+      frame: "page",
+      mode: "load",
+      retain: [],
+      grants: [],
+    })
+  }
   const client = liveClient({ fetch: server.fetch, layoutIdsOf })
   // An app with a `keepAlive` route: its router wraps the live transport, as the generated entry does.
   const keep = keepAlive
@@ -267,7 +286,7 @@ function rig(path = "/posts/1", keepAlive = false): Rig {
     : undefined
   const inner = createClientRouter({
     patterns,
-    initial: initial(path),
+    initial: seed === undefined ? initial(path) : { ...initial(path), live: seed },
     fetchData: keep?.fetchData ?? client.fetchData,
     routeHooks,
   })
@@ -313,6 +332,60 @@ test("the first live load waits for the socket's id, then watches its grant; not
   ready(r, [[]])
   await settle()
   expect(r.server.loads).toHaveLength(1)
+  r.stop()
+})
+
+test("a rendered page's seed is traded on the welcome: one load keeping every owner, then a watch", async () => {
+  const r = rig("/posts/1", false, SEED)
+  await settle()
+  expect(r.server.loads).toEqual([])
+  r.socket().welcome()
+  await until(() => r.socket().watches().length === 1, "watch")
+  expect(r.server.loads).toEqual([
+    {
+      path: "/posts/1",
+      sid: SID,
+      frame: "page",
+      mode: "load",
+      retain: [ROOT, "P:posts/[id]"],
+      grants: ["seed"],
+    },
+  ])
+  // Nothing loaded again: the rendered copies stay on screen.
+  expect(r.router.snapshot().data).toEqual({ path: "/posts/1", n: 0 })
+  expect(r.router.snapshot().layoutData).toEqual([{ root: 0 }])
+  expect(r.socket().watches()).toEqual([{ t: "watch", gen: 1, grants: ["grant-1"] }])
+  ready(r, [[]])
+  await settle()
+  expect(r.server.loads).toHaveLength(1)
+  r.stop()
+})
+
+test("a seed the exchange could not trade loads the page whole on the retry", async () => {
+  jest.useFakeTimers()
+  const r = rig("/posts/1", false, SEED)
+  r.server.control.failing = 1
+  r.socket().welcome()
+  await until(() => r.server.loads.length === 1 && !r.router.snapshot().pending, "exchange")
+  await settle()
+  jest.advanceTimersByTime(5_000)
+  await until(() => r.server.loads.length === 2, "retry")
+  expect(r.server.loads[1]).toMatchObject({ mode: "load", retain: [], grants: [] })
+  r.stop()
+})
+
+test("a seed is never watched, and with no socket the page polls whole", async () => {
+  jest.useFakeTimers()
+  const r = rig("/posts/1", false, SEED)
+  for (let i = 0; i < 3; i++) {
+    r.socket().drop(1006)
+    jest.advanceTimersByTime(60_000)
+    await settle()
+  }
+  expect(FakeSocket.all.every((socket) => socket.watches().length === 0)).toBe(true)
+  jest.advanceTimersByTime(40_000)
+  await until(() => r.server.loads.length >= 1, "poll")
+  expect(r.server.loads[0]).toMatchObject({ retain: [], grants: [] })
   r.stop()
 })
 
@@ -807,6 +880,24 @@ test("with the socket failing to connect, the page polls instead", async () => {
   // Bound to an id no socket has: the grant is never watched.
   expect(r.server.loads[0]?.sid).not.toBe(SID)
   expect(r.server.loads[0]?.sid).toMatch(/^[0-9a-f]{32}$/)
+  r.stop()
+})
+
+test("every poll loads the page whole: the grant it got last time keeps nothing it shows", async () => {
+  jest.useFakeTimers()
+  const r = rig()
+  for (let i = 0; i < 3; i++) {
+    r.socket().drop(1006)
+    jest.advanceTimersByTime(60_000)
+    await settle()
+  }
+  for (let polls = 0; polls < 20 && r.server.loads.length < 3; polls++) {
+    jest.advanceTimersByTime(30_000)
+    await settle()
+  }
+  expect(r.server.loads.length).toBeGreaterThanOrEqual(3)
+  for (const body of r.server.loads) expect(body).toMatchObject({ retain: [], grants: [] })
+  expect(r.router.snapshot().data).toEqual({ path: "/posts/1", n: r.server.loads.length })
   r.stop()
 })
 

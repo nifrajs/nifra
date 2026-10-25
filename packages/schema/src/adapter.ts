@@ -7,6 +7,7 @@ import type {
 import { Kind, type Static, type TSchema } from "@sinclair/typebox"
 import { type TypeCheck, TypeCompiler } from "@sinclair/typebox/compiler"
 import { Value } from "@sinclair/typebox/value"
+import { markAnswerStep } from "./answer-step.ts"
 import { ensureDefaultFormats } from "./formats.ts"
 import { COERCES, TEXT_SLOT } from "./marks.ts"
 
@@ -350,6 +351,7 @@ export function fromTypeBox<T extends TSchema>(
     },
     jsonSchema: schema,
   }
+  markAnswerStep(result["~standard"].validate, schema)
   if (coerce) Object.defineProperty(result["~standard"].validate, COERCES, { value: true })
   else {
     PLAIN_VALIDATORS.add(result["~standard"].validate)

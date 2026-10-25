@@ -103,6 +103,35 @@ Deno.test("stop() drains an in-flight request, then is idempotent", async () => 
   await running.stop() // second call is a no-op (idempotent)
 })
 
+Deno.test("stop() runs the app's onStopping hooks, serves through delayMs, then runs onStop", async () => {
+  const events: string[] = []
+  let entered!: () => void
+  const stopping = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  let stoppingAt = 0
+  const app = server()
+    .onStopping(() => {
+      events.push("stopping")
+      stoppingAt = performance.now()
+      entered()
+    })
+    .onStop(() => {
+      events.push(
+        `stopped after ${performance.now() - stoppingAt >= 290 ? "the delay" : "too soon"}`,
+      )
+    })
+    .get("/", () => ({ ok: true }))
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const stopped = running.stop({ delayMs: 300, drainMs: 1000 })
+  await stopping
+  const res = await fetch(`http://127.0.0.1:${running.port}/`)
+  await res.body?.cancel()
+  events.push(`served ${res.status}`)
+  await stopped
+  assertEquals(events, ["stopping", "served 200", "stopped after the delay"])
+})
+
 Deno.test("stop() force-closes a handler that outlives the drain deadline", async () => {
   let resolveStarted: (() => void) | undefined
   const started = new Promise<void>((resolve) => {

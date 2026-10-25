@@ -256,11 +256,21 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Preserve mount authentication metadata and make auth refusals terminal: measured 37,907 B
   // bare, 42,328 B idempotency, 68,853 B typebox-form (Bun 1.4.4). Only these three caps cross;
   // each takes the next 0.1 KiB ceiling, including the schema issue-path fix in typebox-form.
+  // `onStopping()` hooks and `stop({ delayMs })`, so readiness fails before the drain: bare 37,907 ->
+  // 38,018 B, idempotency 42,328 -> 42,427, effect-ledger 39,919 -> 40,029, mcp 38,179 -> 38,290,
+  // sse 38,790 -> 38,894, valibot 38,902 -> 38,998, typebox-form 68,853 -> 68,957 (Bun 1.4.4); each
+  // crossed cap takes the next 0.1 KiB step.
+  // A `bigint` in a JSON answer written as its decimal string, and the registration step a
+  // `t.bytes()` response field takes around the handler and the hooks that answer in its place (its
+  // base64 walk ships only with `t`): bare 38,018 -> 38,326 B, idempotency 42,427 -> 42,708,
+  // effect-ledger 40,029 -> 40,337, sse 38,894 -> 39,179, mcp 38,290 -> 38,593, valibot 38,998 ->
+  // 39,288, typebox-t 63,958 -> 65,228, typebox-form 68,957 -> 70,229 (Bun 1.4.4); each crossed cap
+  // takes the next 0.1 KiB step.
   // A route's query, headers and cookies schemas swapped at registration for the text form a schema
-  // offers: bare 37,907 -> 37,998 B, idempotency 42,328 -> 42,400, effect-ledger 39,919 -> 40,000,
-  // sse 38,790 -> 38,869, mcp 38,179 -> 38,259, valibot 38,902 -> 38,979, typebox-t 63,861 -> 63,978,
-  // typebox-form 68,853 -> 68,975 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step.
-  "nifra-bare": 37.2,
+  // offers: bare 38,326 -> 38,394 B, idempotency 42,708 -> 42,779, effect-ledger 40,337 -> 40,401,
+  // sse 39,179 -> 39,251, mcp 38,593 -> 38,657, valibot 39,288 -> 39,361, typebox-t 65,228 -> 65,348,
+  // typebox-form 70,229 -> 70,319 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step.
+  "nifra-bare": 37.5,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -269,15 +279,15 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
-  "nifra-idempotency": 41.5,
-  "nifra-effect-ledger": 39.1,
-  "nifra-mcp": 37.4,
+  "nifra-idempotency": 41.8,
+  "nifra-effect-ledger": 39.5,
+  "nifra-mcp": 37.8,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.0,
-  "nifra-valibot": 38.1,
-  "nifra-typebox-t": 62.5,
+  "nifra-sse": 38.4,
+  "nifra-valibot": 38.5,
+  "nifra-typebox-t": 63.9,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 67.4,
+  "nifra-typebox-form": 68.7,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
@@ -299,7 +309,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // (Bun 1.4.4). A navigation loads before its view transition, which holds only the page swap and
   // skips its animation when no frame comes: 19,844 -> 19,961 B (Bun 1.4.4). `notFound`, `gone` and
   // `statusPage`, which this row's whole-namespace import keeps and a named import tree-shakes:
-  // 19,961 -> 20,178 B (Bun 1.4.4).
+  // 19,961 -> 20,178 B (Bun 1.4.4). A `bigint` in the plain transport codec as its decimal string:
+  // 20,178 -> 20,228 B (Bun 1.4.4).
   "nifra-web-client": 19.8,
   "nifra-i18n": 4.3,
 }

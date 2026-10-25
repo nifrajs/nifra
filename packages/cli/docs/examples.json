@@ -519,7 +519,7 @@
     "name": "OFFICIAL",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",
-    "code": "import { server } from \"@nifrajs/core/server\"\nimport { requestId, logger, etag } from \"@nifrajs/middleware\"\n\nconst app = server()\n  .use(requestId())   // reuse/generate x-request-id → c.requestId (typed) + response header\n  .use(logger())      // one structured line/request: { method, path, status, ms }\n  .use(etag())        // content-hash ETag on GET 200s → 304 on matching If-None-Match"
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { requestId, logger, etag } from \"@nifrajs/middleware\"\n\nconst app = server()\n  .use(requestId())   // reuse/generate x-request-id → c.requestId (typed) + response header\n  .use(logger())      // one structured line/request: { method, path: route, status, ms }\n  .use(etag())        // content-hash ETag on GET 200s → 304 on matching If-None-Match"
   },
   {
     "name": "PERF",

@@ -84,16 +84,11 @@ main > section { padding: 2rem; }
 main section { padding: 2rem; }
 [data-nifra-page] > section { padding: 2rem; }`
 
-const IDENTITY = `// doc-check: skip - adapter, manifest and clientEntry are the app's own.
-const app = createWebApp({
-  adapter,
-  manifest,
-  clientEntry,
-  keepAlive: {
-    identityCookies: ["sid"], // your own session cookie
-    ignoreCookies: ["cart"], // HttpOnly, but says nothing about who is signed in
-  },
-})`
+const IDENTITY = `// backend/framework.ts
+export const keepAlive = {
+  identityCookies: ["sid"], // your own session cookie
+  ignoreCookies: ["cart"], // HttpOnly, but says nothing about who is signed in
+}`
 
 const ROTATE = `import { server } from "@nifrajs/core/server"
 import { rotateIdentityEpoch } from "@nifrajs/web"
@@ -312,8 +307,12 @@ export default function KeepAlive() {
         epoch before it shows a kept page.
       </p>
       <p>
-        The session cookies of <code>@nifrajs/auth</code>, Better Auth and Auth.js count under their
-        default names. Name any other in <code>identityCookies</code>:
+        The session cookies of <code>@nifrajs/auth</code> and Auth.js count under their default
+        names, and Better Auth's under any <code>cookiePrefix</code>. Name any other, such as one
+        renamed through Better Auth's <code>advanced.cookies</code>, in{" "}
+        <code>identityCookies</code>. <code>nifra dev</code> and <code>nifra build</code> read it
+        from <code>backend/framework.ts</code>; a server you write passes the same object to{" "}
+        <code>createWebApp(&#123; keepAlive &#125;)</code>:
       </p>
       <CodeBlock code={IDENTITY} />
       <p>

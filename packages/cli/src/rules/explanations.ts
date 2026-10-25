@@ -46,7 +46,7 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
   },
   "NF-C007": {
     why: "A route handler returns a raw Response, so the typed client infers `data: never` and drift detection is lost for that route.",
-    fix: "Return a plain object (set status, headers and cookies on c.set), use app.sse() for a stream, or declare `{ response: t.... }`; mark an intended file or redirect with `// nifra-expect NF-C007: <reason>`.",
+    fix: "Return a plain object (set status, headers and cookies on c.set), use app.sse() for a stream, `bytes()` from @nifrajs/core/binary for a file or other binary body, or `raw<T>(response)` from the same module for a hand-built JSON Response; or declare `{ response: t.... }`. Mark an intended redirect with `// nifra-expect NF-C007: <reason>`.",
     docs: "/docs/api",
   },
   "NF-C008": {
@@ -301,8 +301,8 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     docs: "/docs/troubleshooting#mixed-versions",
   },
   "NF-D003": {
-    why: "bun.lock records dependencies a file: package no longer declares. Bun never reads that package.json again, so it installs the recorded versions beside the declared ones.",
-    fix: "Run `bun update <package>` for each package the finding names; `nifra upgrade --write` drops the entries before the next install.",
+    why: "bun.lock records dependencies a file: package no longer declares. Bun 1.4.2 never reads that package.json again, so it installs the recorded versions beside the declared ones.",
+    fix: "Run `bun update <package>` for each package the finding names: it refreshes those entries and keeps every other pin. Deleting an entry by hand makes the next install re-resolve the whole lock.",
     docs: "/docs/troubleshooting#stale-file-links",
   },
   "NF-A001": {

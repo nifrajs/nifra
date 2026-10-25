@@ -13,6 +13,13 @@ describe("generateMockValue", () => {
     expect(val).toBe("mock_username")
   })
 
+  test("generates base64 for a base64-encoded string", () => {
+    const schema = { type: "string", contentEncoding: "base64", "x-nifra-bytes": true }
+    const val = generateMockValue(schema, "data")
+    expect(val).toBe("bW9jaw==")
+    expect(typeof val === "string" && atob(val)).toBe("mock")
+  })
+
   test("generates email format strings", () => {
     const val = generateMockValue({ type: "string", format: "email" }, "contact")
     expect(val).toBe("mock@contact.com")

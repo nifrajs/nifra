@@ -576,7 +576,7 @@ describe("resolveNode - stateful native middleware twins", () => {
     const outcome = await app.resolveNode(req("/things/42?x=1"))
     expect(outcome.kind).toBe("json")
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toMatchObject({ method: "GET", path: "/things/42", status: 200 })
+    expect(lines[0]).toMatchObject({ method: "GET", path: "/things/:id", status: 200 })
     expect(lines[0]?.ms).toBeGreaterThanOrEqual(0)
   })
 

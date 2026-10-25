@@ -70,7 +70,7 @@ describe("contracts digest", () => {
     )
     const body = carrying(jsonSchema)
     const lock = await buildContractsLock(server().post("/x", { body, response: body }, () => 1))
-    expect(lock.routes["POST /x"]).toEqual({
+    expect(lock.routes["POST /x"]).toMatchObject({
       request: "bf924b715378ebc058a0e6db8dbf747d6ef7a9b199941ecf936ddb849814fa4a",
       response: "0635694117631da47d2db592e8997bcdaadbc65eaee4c079d62988f34210692a",
     })

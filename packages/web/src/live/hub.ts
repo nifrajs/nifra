@@ -18,6 +18,8 @@ export const CLOSE_REVOKED = 4403
 export const CLOSE_SCOPE = 4409
 export const CLOSE_CAPACITY = 1013
 export const CLOSE_PROTOCOL = 1008
+/** The runtime closed: reconnect, most likely to another process. */
+export const CLOSE_GOING_AWAY = 1001
 /** Nothing to watch: a tab with no tag to hear about reconnects only once it has one. */
 export const CLOSE_UNWATCHED = 1000
 
@@ -119,6 +121,8 @@ interface Pending {
 export class LiveHub {
   /** Bus unreachable: no watch is accepted and no socket kept. */
   down = false
+  /** `changed` frames sent, one per subscribed socket: each makes a page reload. */
+  notified = 0
   private readonly sockets = new Set<NifraWebSocket<LiveSocket>>()
   /** Local subscribers per tag: the intern table, and the input to `spread`. */
   private readonly members = new Map<string, number>()
@@ -416,6 +420,7 @@ export class LiveHub {
     for (const tag of tags) {
       const subscribers = this.members.get(tag)
       if (subscribers === undefined) continue
+      this.notified += subscribers
       const frame = JSON.stringify({ t: "changed", tag, spread: this.spread(subscribers) })
       for (const publish of this.publishers) publish(this.topic(tag), frame)
     }
