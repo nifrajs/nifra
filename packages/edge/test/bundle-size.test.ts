@@ -11,11 +11,12 @@ import { fileURLToPath } from "node:url"
  * bodies; 9,607 B once header reads on Deno skipped building the whole header list (+158 B); 9,766 B
  * with Bun's prototype-guard cursor stack, which ships here unused (+86 B); 9,882 B once a client's
  * body that fails while it is read answers 400 instead of 500 (+120 B); 9,983 B (from 9,885) once a
- * `bigint` in a JSON answer is written as its decimal string, as on core. The ceiling has headroom
- * for honest growth; a jump past it means something big got pulled in - investigate, don't just
- * bump the number.
+ * `bigint` in a JSON answer is written as its decimal string, as on core; 10,028 B (from 9,983)
+ * once a route that sets a header, cookie or status with no response hook skips the resident-body
+ * record. The ceiling has headroom for honest growth; a jump past it means something big got
+ * pulled in - investigate, don't just bump the number.
  */
-const CEILING_GZIP_BYTES = 10_000
+const CEILING_GZIP_BYTES = 10_100
 
 test(`self-contained bundle stays under ${CEILING_GZIP_BYTES} B gzipped`, async () => {
   const built = await Bun.build({
