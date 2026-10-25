@@ -1558,8 +1558,6 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       // Once the action has run, falling back to posting the form again would run it twice.
       let posted = false
       let landing: string | undefined
-      // The count its reads after the POST began at.
-      let reads = visitor
       try {
         const prepared = await prepareClientAction(action, body, ac.signal)
         if (Object.hasOwn(prepared, "optimisticData")) {
@@ -1576,7 +1574,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // A sign-in or sign-out answers here with its cookie, and the reads after it are the new
         // visitor's.
         checkEpoch()
-        reads = visitor
+        const reads = visitor
         dropPrefetched()
         if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
         const redirectTo = res.headers.get(REDIRECT_HEADER)
