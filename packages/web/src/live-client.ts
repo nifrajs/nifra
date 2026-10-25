@@ -21,6 +21,7 @@ import {
   watchLiveQueries,
 } from "./internal/live-queries.ts"
 import { queryDigester } from "./internal/query-digest.ts"
+import { isRecord } from "./internal/record.ts"
 import { appUrl } from "./internal/route-path.ts"
 import {
   type ClientRouter,
@@ -983,9 +984,6 @@ function envelopeOf(value: unknown): ServerEnvelope | undefined {
   if (queryKeys !== undefined) envelope.query = queryKeys
   return envelope
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 /** A minute before `loaded` expires, less up to 30 s of jitter; a short grant renews a third early. */
 const renewAtOf = (loaded: Loaded): number =>

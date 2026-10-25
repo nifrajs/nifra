@@ -4,6 +4,7 @@ import {
   type Middleware,
   type ResponseBodyReplacement,
 } from "@nifrajs/core/server"
+import { type ChunkReader, concatBytes, replayFrom } from "./_chunks.ts"
 import { ifNoneMatchIncludes } from "./_entity-tag.ts"
 import { weakFingerprint } from "./_fingerprint.ts"
 
@@ -33,22 +34,7 @@ async function sha256Tag(bytes: Uint8Array): Promise<string> {
   return hex
 }
 
-const concat = (chunks: readonly Uint8Array[], total: number): Uint8Array => {
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
-}
-
 type ReadBytes = { readonly bytes: Uint8Array } | { readonly response: Response }
-
-interface ChunkReader {
-  read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array }>
-  cancel(reason?: unknown): Promise<void>
-}
 
 /** Read a raw response without losing a streamed body when the cap is exceeded or the upstream
  * fails. The already-read prefix is replayed through the same reader instead of cancelling a clone,
@@ -62,7 +48,7 @@ async function readBytesCapped(res: Response, maxBytes: number): Promise<ReadByt
   try {
     for (;;) {
       const { done, value } = await reader.read()
-      if (done) return { bytes: concat(chunks, total) }
+      if (done) return { bytes: concatBytes(chunks, total) }
       if (value === undefined) return { response: replayFrom(res, chunks, reader) }
       chunks.push(value)
       total += value.byteLength
@@ -71,29 +57,6 @@ async function readBytesCapped(res: Response, maxBytes: number): Promise<ReadByt
   } catch {
     return { response: replayFrom(res, chunks, reader) }
   }
-}
-
-function replayFrom(res: Response, chunks: readonly Uint8Array[], reader: ChunkReader): Response {
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(chunk)
-    },
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read()
-        if (done || value === undefined) controller.close()
-        else controller.enqueue(value)
-      } catch (error) {
-        controller.error(error)
-      }
-    },
-    cancel: (reason) => reader.cancel(reason),
-  })
-  return new Response(stream, {
-    status: res.status,
-    statusText: res.statusText,
-    headers: res.headers,
-  })
 }
 
 /**

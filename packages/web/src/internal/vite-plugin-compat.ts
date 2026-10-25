@@ -1,9 +1,8 @@
 // A Vite `config` hook is a plain function or the object form `{ handler, order }` Vite accepts for hook
 // ordering; plugins are typed structurally (no `vite` type dep) and every other field is kept by spread.
-type ConfigFn = (config: unknown, env: unknown) => unknown
+import { isRecord } from "./record.ts"
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
+type ConfigFn = (config: unknown, env: unknown) => unknown
 
 /**
  * Move a plugin's `optimizeDeps.rollupOptions` to `optimizeDeps.rolldownOptions` under rolldown-vite and

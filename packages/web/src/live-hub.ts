@@ -20,6 +20,7 @@
  * retention.
  */
 import type { NifraWebSocket, WebSocketData } from "@nifrajs/core/server"
+import { isRecord } from "./internal/record.ts"
 import { type LiveBusInput, nextSeq } from "./live/bus.ts"
 import { applyEvent, type LiveCore } from "./live/core.ts"
 import { History, keyHasher } from "./live/history.ts"
@@ -653,6 +654,3 @@ const seqLike = (value: unknown): value is number => integer(value) && value >= 
 
 const subjectLike = (value: unknown): value is string =>
   typeof value === "string" && value.length <= MAX_SUBJECT_CHARS
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)

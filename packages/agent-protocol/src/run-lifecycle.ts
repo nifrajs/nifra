@@ -13,6 +13,7 @@
  *    {@link parseRunEvidence}, which accepts only the declared content-free keys.
  */
 
+import { isRecord } from "./internal/record.ts"
 import {
   FORBIDDEN_CONTENT_KEYS,
   parseRunEvidence,
@@ -217,10 +218,6 @@ export function resumeFromCursor<T extends { readonly seq: number }>(
 // ── Decoders ──────────────────────────────────────────────────────────────────────────────────
 
 const HEX64 = /^[0-9a-f]{64}$/
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
 
 function assertNoForbiddenKeys(record: Record<string, unknown>, where: string): void {
   for (const key of FORBIDDEN_CONTENT_KEYS) {

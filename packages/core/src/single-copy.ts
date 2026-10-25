@@ -58,6 +58,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path"
 import type { BunPlugin } from "bun"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { isRecord } from "./internal/record.ts"
 
 /**
  * Packages whose duplication is a defect rather than a waste. Each keeps module-scoped state that
@@ -150,9 +151,6 @@ export interface SingleCopyOptions {
 
 /** Environment switch for strict mode when the declaration does not set it: `1` or `true`. */
 export const SINGLE_COPY_STRICT_ENV = "NIFRA_SINGLE_COPY_STRICT"
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const readJsonSync = (path: string): Record<string, unknown> | undefined => {
   try {

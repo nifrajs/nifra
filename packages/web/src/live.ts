@@ -26,6 +26,7 @@ import {
   type LiveRuntimeHandle,
 } from "./internal/live-contract.ts"
 import { queryDigester, querySalt } from "./internal/query-digest.ts"
+import { isRecord } from "./internal/record.ts"
 import {
   type LiveBus,
   type LiveBusEvent,
@@ -1187,9 +1188,6 @@ function parseBody(text: string): LoadBody | undefined {
     return undefined
   return { path, sid, frame, mode, retain, grants, fill }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const isStringList = (value: unknown, max: number, chars: number): value is readonly string[] =>
   Array.isArray(value) &&

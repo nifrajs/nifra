@@ -206,6 +206,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **descriptorFromTool** _(function)_ - `descriptorFromTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>`
   Adapt a Nifra core {@link ToolContract} into a descriptor without touching its execution contract. The schema digest is taken over the tool's own input JSON schema, retry follows idempotency, and the approval policy is carried through unchanged, so the descriptor is a faithful, content-free project…
 - **isModelGatewayErrorCode** _(function)_ - `isModelGatewayErrorCode: (value: unknown) => value is ModelGatewayErrorCode`
+- **parseAgentResume** _(function)_ - `parseAgentResume: (raw: unknown) => AgentTurnInput["resume"] | undefined`
+  The `resume` of an {@link AgentTurnInput} read from an untrusted wire value, or `undefined` when it is not one. Every agent transport parses a resume with this, so a continuation is accepted on the same terms however it arrives.
 - **parseCapabilityDescriptor** _(function)_ - `parseCapabilityDescriptor: (value: unknown) => CapabilityDescriptor`
   Validate an untrusted value as a {@link CapabilityDescriptor}, normalizing capability order. Missing, unknown, or content-bearing fields are rejected with a stable code. This is the single admission point: every adapter output and every wire value passes through it before it enters a snapshot.
 - **parseDeploymentCapabilityReport** _(function)_ - `parseDeploymentCapabilityReport: (value: unknown) => DeploymentCapabilityReport`
@@ -408,7 +410,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AGENT_MAX_PAYLOAD_STRING** _(const)_ - `AGENT_MAX_PAYLOAD_STRING: number`
   Longest string an event's `input`, `output`, or `details` value may carry.
 - **AGENT_PROTOCOL_VERSION** _(const)_ - `AGENT_PROTOCOL_VERSION: 1`
-  Backend-neutral protocol for local coding-agent hosts.
+  The session protocol version every snapshot and event carries; one with another version is refused.
 - **AgentApprovalRequiredEvent** _(interface)_ - `interface AgentApprovalRequiredEvent`
 - **AgentApprovalResolvedEvent** _(interface)_ - `interface AgentApprovalResolvedEvent`
 - **AgentAssistantDeltaEvent** _(interface)_ - `interface AgentAssistantDeltaEvent`
@@ -1835,6 +1837,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **varyOn** _(function)_ - `varyOn: (value: string | null, names: readonly string[]) => string`
+  A `Vary` header value (`null` when the response has none) that names each of `names` once, matched without regard to case. `Vary: *` already covers every request header, so it comes back unchanged.
 - **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
   The response to write headers on for the request being answered: `response` itself, or a copy.
 
@@ -3144,6 +3148,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **varyOn** _(function)_ - `varyOn: (value: string | null, names: readonly string[]) => string`
+  A `Vary` header value (`null` when the response has none) that names each of `names` once, matched without regard to case. `Vary: *` already covers every request header, so it comes back unchanged.
 - **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
   The response to write headers on for the request being answered: `response` itself, or a copy.
 
@@ -5049,7 +5055,7 @@ _No named exports (side-effect entrypoint)._
 - **CertificationCheck** _(interface)_ - `interface CertificationCheck<Adapter>`
 - **CertificationCheckEvidence** _(interface)_ - `interface CertificationCheckEvidence`
 - **CertificationContext** _(interface)_ - `interface CertificationContext`
-  Profile-based adapter certification. Profiles are structural and dependency-free: an adapter package uses this only in its test/CI surface, while the resulting capability matrix is portable JSON evidence.
+  What a certification check receives besides the adapter under test.
 - **CertificationTarget** _(interface)_ - `interface CertificationTarget`
   Portable identity for the artifact, runtime, and witness that produced one check result.
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
@@ -8058,5 +8064,7 @@ _No named exports (side-effect entrypoint)._
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
+- **varyOn** _(function)_ - `varyOn: (value: string | null, names: readonly string[]) => string`
+  A `Vary` header value (`null` when the response has none) that names each of `names` once, matched without regard to case. `Vary: *` already covers every request header, so it comes back unchanged.
 - **writableResponse** _(function)_ - `writableResponse: (response: Response, request?: Request) => Response`
   The response to write headers on for the request being answered: `response` itself, or a copy.

@@ -73,7 +73,13 @@ export {
   type ScheduledHandler,
   toFetchHandler,
 } from "./server/edge.ts"
-export { isSameOriginPath, pathnameOf, type UrlParts, urlPartsOf } from "./server/http.ts"
+export {
+  isSameOriginPath,
+  pathnameOf,
+  type UrlParts,
+  urlPartsOf,
+  varyOn,
+} from "./server/http.ts"
 export {
   commonSecretPatterns,
   jsonLogger,

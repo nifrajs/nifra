@@ -9,6 +9,7 @@
 
 import type { StandardSchemaV1 } from "@nifrajs/core/schema"
 import { validateStandard } from "@nifrajs/core/schema"
+import { isRecord } from "./internal/record.ts"
 
 export const MODEL_GATEWAY_ERROR_CODES = [
   "malformed_output",
@@ -229,10 +230,6 @@ export interface ModelRoutePolicy {
   readonly budget?: ModelGatewayBudget
   readonly deadlineAt?: number
   readonly now?: () => number
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function routeId(value: ModelRouteRef): string {

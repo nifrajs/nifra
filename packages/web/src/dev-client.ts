@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto"
 import { type DevLogLevel, isDevLogLevel } from "./dev-feed.ts"
 import { admitInlineScript } from "./internal/dev-csp.ts"
+import { isRecord } from "./internal/record.ts"
 
 export interface DevClientConfig {
   /** Where the batches go (same origin). */
@@ -287,9 +288,6 @@ export interface ClientBatch {
   readonly token: string
   readonly events: readonly ClientEvent[]
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const text = (value: unknown, max: number): string | undefined =>
   typeof value === "string" ? value.slice(0, max) : undefined

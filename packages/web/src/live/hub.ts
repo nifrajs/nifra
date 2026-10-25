@@ -8,6 +8,7 @@
  * `ready.stale` or delivered after the subscription, and `ready` precedes every later frame.
  */
 import { isSameOriginRequest, type NifraWebSocket, type WebSocketData } from "@nifrajs/core/server"
+import { isRecord } from "../internal/record.ts"
 import type { LiveRevocation } from "./bus.ts"
 import type { History } from "./history.ts"
 import { type Keyring, MAX_GRANT_CHARS, type OpenedGrant } from "./keyring.ts"
@@ -573,9 +574,6 @@ function parseWatch(text: string): Watch | undefined {
   }
   return { gen, grants: list }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 function utf8Length(text: string): number {
   let bytes = 0

@@ -115,7 +115,7 @@
     "kind": "const",
     "package": "@nifrajs/agent-protocol",
     "signature": "export declare const AGENT_PROTOCOL_VERSION: 1;",
-    "doc": "/**\n * Backend-neutral protocol for local coding-agent hosts.\n *\n * This package deliberately has no runtime dependencies. A Pi adapter, a Nifra-native backend,\n * the CLI, and the Workbench can all implement or consume these contracts without pulling any\n * framework, model provider, or UI code into an application.\n */"
+    "doc": "/** The session protocol version every snapshot and event carries; one with another version is refused. */"
   },
   {
     "name": "ALARM_GAP_MS",
@@ -3287,7 +3287,7 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface CertificationContext {\n    /** Deterministic per-check key safe for shared test backends and stable re-runs. */\n    readonly key: (suffix: string) => string;\n}",
-    "doc": "/**\n * Profile-based adapter certification. Profiles are structural and dependency-free: an adapter package\n * uses this only in its test/CI surface, while the resulting capability matrix is portable JSON evidence.\n */"
+    "doc": "/** What a certification check receives besides the adapter under test. */"
   },
   {
     "name": "CertificationTarget",
@@ -22060,6 +22060,13 @@
     "doc": "/** Parse an `Accept` header, preserving quality and wildcard specificity. */"
   },
   {
+    "name": "parseAgentResume",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function parseAgentResume(raw: unknown): AgentTurnInput[\"resume\"] | undefined;",
+    "doc": "/**\n * The `resume` of an {@link AgentTurnInput} read from an untrusted wire value, or `undefined` when it\n * is not one. Every agent transport parses a resume with this, so a continuation is accepted on the\n * same terms however it arrives.\n */"
+  },
+  {
     "name": "parseArtifactRef",
     "kind": "function",
     "package": "@nifrajs/agent-protocol",
@@ -25736,6 +25743,20 @@
     "package": "@nifrajs/web-vanilla",
     "signature": "export declare const vanillaAdapter: RenderAdapter;",
     "doc": "/** The zero-framework server render adapter - pass to @nifrajs/web's `renderPage`/`createWebApp`. */"
+  },
+  {
+    "name": "varyOn",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function varyOn(value: string | null, names: readonly string[]): string;",
+    "doc": "/**\n * A `Vary` header value (`null` when the response has none) that names each of `names` once, matched\n * without regard to case. `Vary: *` already covers every request header, so it comes back unchanged.\n */"
+  },
+  {
+    "name": "varyOn",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function varyOn(value: string | null, names: readonly string[]): string;",
+    "doc": "/**\n * A `Vary` header value (`null` when the response has none) that names each of `names` once, matched\n * without regard to case. `Vary: *` already covers every request header, so it comes back unchanged.\n */"
   },
   {
     "name": "vectorAdvances",

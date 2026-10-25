@@ -3,6 +3,9 @@
  * uses this only in its test/CI surface, while the resulting capability matrix is portable JSON evidence.
  */
 
+import { isRecord } from "./internal/record.ts"
+
+/** What a certification check receives besides the adapter under test. */
 export interface CertificationContext {
   /** Deterministic per-check key safe for shared test backends and stable re-runs. */
   readonly key: (suffix: string) => string
@@ -73,9 +76,6 @@ export class AdapterCertificationError extends Error {
 const TOKEN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
 const TARGET_NAME = /^@?[a-z0-9][a-z0-9._:-]*(?:\/[a-z0-9][a-z0-9._:-]*)?$/
 const MAX_CHECKS = 128
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`

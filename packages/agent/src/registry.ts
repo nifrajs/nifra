@@ -21,6 +21,7 @@
 
 import type { ToolContract } from "@nifrajs/core/tool-contract"
 import { toolInputJsonSchema } from "@nifrajs/core/tool-contract"
+import { isRecord } from "./internal/record.ts"
 
 export const CAPABILITY_DESCRIPTOR_VERSION = 1 as const
 export const REGISTRY_SNAPSHOT_VERSION = 1 as const
@@ -183,10 +184,6 @@ function canonicalJson(value: unknown): string {
     return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`
   }
   throw new TypeError(`cannot canonicalize ${typeof value}`)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function parseKind(value: unknown): CapabilityKind {

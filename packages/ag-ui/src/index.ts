@@ -64,7 +64,6 @@ import {
   type AgentDefinition,
   type AgentDeltaSink,
   type AgentModelDelta,
-  type AgentPendingKind,
   type AgentPorts,
   type AgentRunResult,
   type AgentSharedState,
@@ -74,6 +73,7 @@ import {
   combineAgentTelemetry,
   createAgentSharedState,
   createAgentState,
+  parseAgentResume,
   resumeAgent,
   runAgent,
 } from "@nifrajs/agent"
@@ -97,7 +97,6 @@ const DEFAULT_PATH = "/agui"
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
-const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
 const TURN_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
 const LAST_EVENT_ID_PATTERN = /^\d{1,15}$/
 
@@ -214,7 +213,7 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   const turnId = forwardedTurnId ?? entry?.turnId ?? runId
 
   const input = Object.hasOwn(forwarded, "input") ? forwarded.input : lastUserMessage(body.messages)
-  const resume = parseResume(forwarded.resume) ?? entry?.resume
+  const resume = parseAgentResume(forwarded.resume) ?? entry?.resume
   let log = options.evidenceLog
   if (log !== undefined && options.evidenceOwner !== undefined) {
     let owner: string
@@ -874,35 +873,6 @@ function lastUserMessage(messages: unknown): unknown {
   return undefined
 }
 
-function parseResume(raw: unknown): AgentTurnInput["resume"] | undefined {
-  const record = asRecord(raw)
-  if (record === undefined) return undefined
-  const continuation = asRecord(record.continuation)
-  if (continuation === undefined) return undefined
-  const kind = continuation.kind
-  if (typeof kind !== "string" || !PENDING_KINDS.includes(kind as AgentPendingKind))
-    return undefined
-  if (typeof continuation.effectId !== "string") return undefined
-  if (continuation.tool !== undefined && typeof continuation.tool !== "string") return undefined
-  const approval = asRecord(record.approval)
-  return {
-    continuation: {
-      kind: kind as AgentPendingKind,
-      ...(continuation.tool === undefined ? {} : { tool: continuation.tool as string }),
-      ...(Object.hasOwn(continuation, "input") ? { input: continuation.input } : {}),
-      effectId: continuation.effectId,
-    },
-    ...(approval !== undefined && typeof approval.granted === "boolean"
-      ? {
-          approval: {
-            granted: approval.granted,
-            ...(typeof approval.reason === "string" ? { reason: approval.reason } : {}),
-          },
-        }
-      : {}),
-  }
-}
-
 /**
  * Parse the spec `RunAgentInput.resume` array. The runtime holds no interrupt registry - the
  * interrupt id IS the turn id, and the entry's `payload` must echo the interrupt's
@@ -920,7 +890,7 @@ function parseResumeEntry(
   if (status !== "resolved" && status !== "cancelled") return undefined
   const payload = asRecord(entry.payload) ?? {}
   const approval = asRecord(payload.approval)
-  const resume = parseResume({
+  const resume = parseAgentResume({
     continuation: payload.continuation,
     // A cancelled entry without an explicit approval decision resumes as a denial.
     approval: approval ?? (status === "cancelled" ? { granted: false } : undefined),

@@ -7,6 +7,8 @@
  * associated data. `kid = secretId (4) || processId (8) || hour (4)`.
  */
 
+import { isRecord } from "../internal/record.ts"
+
 const TEXT = new TextEncoder()
 const UTF8 = new TextDecoder("utf-8", { fatal: true })
 
@@ -330,9 +332,6 @@ function validClaims(
   }
   return keys <= MAX_KEYS_PER_FRAME
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const isInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value)

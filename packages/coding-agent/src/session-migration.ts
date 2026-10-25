@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs"
 import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises"
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { isRecord } from "./internal/record.ts"
 import { sessionFileStem } from "./sessions.ts"
 
 /** Version of the evidence-only legacy session file format. */
@@ -380,10 +381,6 @@ function nonNegativeInteger(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
     throw new SessionMigrationError("invalid_record", `${name} must be a non-negative integer`)
   return value
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function isNotFound(error: unknown): boolean {

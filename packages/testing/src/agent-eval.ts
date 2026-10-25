@@ -16,6 +16,7 @@
 import { type FailureDirective, FailureInjectedError, runFailureScenario } from "./failure-lab.ts"
 import { type FaultProfile, runFaultProfile } from "./fault-profile.ts"
 import { type EffectLedger, type IdempotencyProof, proveIdempotency } from "./idempotency.ts"
+import { isRecord } from "./internal/record.ts"
 
 /** Code-unit order, the same in every locale: a case digest must not depend on the machine scoring it. */
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
@@ -379,9 +380,6 @@ export function assertAgentEval(report: AgentEvalCompositionReport): void {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
