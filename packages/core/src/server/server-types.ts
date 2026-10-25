@@ -90,6 +90,18 @@ export interface ServerOptions {
    */
   readonly trustBodyFraming?: boolean
   /**
+   * Answer `400 invalid_host` on Bun to every Host that Node and Deno refuse: one sent twice, one
+   * no URL can be built on (a space, a byte past ASCII, a port past 65535, an IPv6 literal no parser
+   * takes), a percent-encoded or sub-delimiter one, and serve an HTTP/1.0 request with no Host as
+   * `localhost`. Bun serves those requests itself, building `c.req.url` on the first Host or leaving
+   * it relative, so `new URL(c.req.url)` can throw in a handler.
+   *
+   * Disabled by default: the check reads the Host on every request, which measured about 6% of a bare
+   * route on Bun. Left off, a target with `.` or `..` segments is still checked, so a dot segment is
+   * never routed raw. Node and Deno refuse these Hosts either way; the option changes nothing there.
+   */
+  readonly validateHost?: boolean
+  /**
    * Max inbound WebSocket message size (bytes). A larger message never reaches the handler and the
    * socket closes with `1009`; when Bun's own frame limit refuses it, Bun up to 1.4.3 drops the
    * connection (the client sees `1006`) and Bun 1.4.4 sends `1009`, while the `close` handler gets

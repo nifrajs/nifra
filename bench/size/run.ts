@@ -274,6 +274,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // record: bare 38,394 -> 38,427 B, idempotency 42,779 -> 42,815, effect-ledger 40,401 -> 40,440,
   // sse 39,251 -> 39,282, mcp 38,657 -> 38,694, valibot 39,361 -> 39,399, typebox-t 65,348 ->
   // 65,376, typebox-form 70,319 -> 70,358 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step.
+  // Bun's Host check behind `validateHost`: bare 38,427 -> 38,453 B, idempotency 42,815 -> 42,850,
+  // effect-ledger 40,440 -> 40,468, sse 39,282 -> 39,315, mcp 38,694 -> 38,714, valibot 39,399 ->
+  // 39,425, typebox-t 65,376 -> 65,416, typebox-form 70,358 -> 70,396 (Bun 1.4.4); each crossed cap
+  // takes the next 0.1 KiB step.
   "nifra-bare": 37.6,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -284,11 +288,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
   "nifra-idempotency": 41.9,
-  "nifra-effect-ledger": 39.5,
-  "nifra-mcp": 37.8,
+  "nifra-effect-ledger": 39.6,
+  "nifra-mcp": 37.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 38.4,
-  "nifra-valibot": 38.5,
+  "nifra-valibot": 38.6,
   "nifra-typebox-t": 63.9,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   "nifra-typebox-form": 68.8,

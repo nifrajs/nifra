@@ -320,11 +320,37 @@ describe("Bun-native route table agrees with the portable router", () => {
     const instance = app.listen(0, { hostname: "127.0.0.1" })
     try {
       expect(await requestTargetMismatches(instance.port)).toEqual([])
+    } finally {
+      instance.stop(true)
+    }
+  })
+
+  test("validateHost refuses on Bun every Host that Node and Deno refuse", async () => {
+    const app = requestTargetApp(server({ validateHost: true }))
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
       // HTTP/1.0 may leave the Host out: Bun then hands the target over as sent and matched its
       // table on it, so `/users/..` reached `/users/:id` with the id `..`.
       expect(await requestTargetMismatches(instance.port, true)).toEqual([])
       expect(await invalidHostMismatches(instance.port)).toEqual([])
       expect(await refusedHostMismatches(instance.port)).toEqual([])
+    } finally {
+      instance.stop(true)
+    }
+  })
+
+  test("without validateHost Bun serves a bad Host, and still refuses one behind a dot segment", async () => {
+    const app = requestTargetApp(server())
+    expect(nativeKeys(app)).toContain("GET /users/:id")
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      expect(
+        await rawExchange(instance.port, "GET", "/users/7", undefined, ["127.0.0.1", "x.example"]),
+      ).toEqual({ status: 200, body: '{"route":"GET /users/:id","id":"7"}' })
+      expect(await rawExchange(instance.port, "GET", "/users/../posts", undefined, "a b")).toEqual({
+        status: 400,
+        body: '{"ok":false,"error":"invalid_host"}',
+      })
     } finally {
       instance.stop(true)
     }
@@ -341,9 +367,9 @@ describe("Bun-native route table agrees with the portable router", () => {
     expect(answers).toEqual(hosts.map((host) => [host, 200, { route: "GET /url", path: "/url" }]))
   })
 
-  test("a Host sent twice or one Node and Deno refuse is refused on Bun's table and in fetch", async () => {
+  test("validateHost refuses a Host sent twice or one Node and Deno refuse on Bun's table and in fetch", async () => {
     // Bun builds the URL on such a Host (on the first, joined with ", ", when it repeats).
-    const app = requestTargetApp(server())
+    const app = requestTargetApp(server({ validateHost: true }))
     expect(nativeKeys(app)).toEqual(expect.arrayContaining(["GET /posts", "GET /users/:id"]))
     const targets = ["/posts", "/users/7", "/url", "/missing"]
     const refusedHosts = [...REPEATED_HOSTS, ...PARSEABLE_INVALID_HOSTS]
@@ -376,8 +402,27 @@ describe("Bun-native route table agrees with the portable router", () => {
     }
   })
 
+  test("validateHost refuses an empty Host on the first request a process serves", async () => {
+    // The last-valid-Host cache is process-wide, so only a fresh process shows its starting value.
+    const script = `
+      import { server, silentLogger } from ${JSON.stringify(new URL("../src/index.ts", import.meta.url).href)}
+      import { rawExchange } from ${JSON.stringify(new URL("./request-target-matrix.ts", import.meta.url).href)}
+      const app = server({ validateHost: true, logger: silentLogger }).get("/users/:id", (c) => ({ id: c.params.id }))
+      const instance = app.listen(0, { hostname: "127.0.0.1" })
+      const answer = await rawExchange(instance.port, "GET", "/users/7", undefined, "")
+      instance.stop(true)
+      process.stdout.write(String(answer.status))
+    `
+    const child = Bun.spawn([process.execPath, "--eval", script], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [out, code] = await Promise.all([new Response(child.stdout).text(), child.exited])
+    expect([out.slice(-3), code]).toEqual(["400", 0])
+  })
+
   test("a request built in process is refused only on the URL Bun would build on its Host", async () => {
-    const app = requestTargetApp(server())
+    const app = requestTargetApp(server({ validateHost: true }))
     const twoHosts = (url: string) =>
       app.fetch(
         new Request(url, {
