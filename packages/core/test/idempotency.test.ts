@@ -460,6 +460,45 @@ describe("idempotency primitives", () => {
     }
   })
 
+  test("a JSON body that is not valid UTF-8 fingerprints its exact bytes", async () => {
+    const withBytes = (...bytes: number[]): Uint8Array =>
+      new Uint8Array([
+        ...new TextEncoder().encode('{"to":"'),
+        ...bytes,
+        ...new TextEncoder().encode('"}'),
+      ])
+    // Decoding with replacement would turn both bytes into U+FFFD and give the two bodies one fingerprint.
+    const a = withBytes(0xff)
+    const b = withBytes(0xfe)
+    expect(canonicalizeIdempotencyBody(a, "application/json")).toBe(a)
+    // A body that writes U+FFFD itself reads the same as those, so it keeps its bytes as well.
+    const replacement = withBytes(0xef, 0xbf, 0xbd)
+    expect(canonicalizeIdempotencyBody(replacement, "application/json")).toBe(replacement)
+    expect(
+      await computeIdempotencyFingerprint(
+        "POST",
+        "/pay",
+        canonicalizeIdempotencyBody(a, "application/json"),
+      ),
+    ).not.toBe(
+      await computeIdempotencyFingerprint(
+        "POST",
+        "/pay",
+        canonicalizeIdempotencyBody(b, "application/json"),
+      ),
+    )
+    // A leading byte order mark still decodes away, as JSON readers do.
+    const bom = new Uint8Array([
+      0xef,
+      0xbb,
+      0xbf,
+      ...new TextEncoder().encode(' { "b": 1, "a": 2 } '),
+    ])
+    expect(new TextDecoder().decode(canonicalizeIdempotencyBody(bom, "application/json"))).toBe(
+      '{"a":2,"b":1}',
+    )
+  })
+
   test("serialize/replay round-trips status, headers, and a binary body + stamps the replay header", async () => {
     const bytes = new Uint8Array([0, 1, 2, 255, 254])
     const original = new Response(bytes, { status: 201, headers: { "x-test": "v" } })
