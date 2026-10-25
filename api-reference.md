@@ -4279,8 +4279,10 @@ _No named exports (side-effect entrypoint)._
 - **RateLimitStore** _(interface)_ - `interface RateLimitStore`
   Counter backend. Production deploys MUST use a shared store (Redis, etc.) so the limit holds across instances - that's a user dependency, not ours, hence the interface. {@link MemoryStore} is for dev / single-instance only.
 - **RateLimitTier** _(interface)_ - `interface RateLimitTier`
-  One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it.
+  One bucket of a {@link rateLimitTiers} limiter: the requests at a `prefix` or below it.
 - **RateLimitTiersOptions** _(interface)_ - `interface RateLimitTiersOptions`
+- **RateLimiter** _(interface)_ - `interface RateLimiter`
+  A rate-limit {@link Middleware} that can name the counter a request is charged to.
 - **ReadinessCheck** _(type)_ - `type ReadinessCheck = (signal: AbortSignal) => MaybePromise<boolean>`
   One readiness check: resolve `true` when the dependency can serve. A `false`, a throw and a timeout all fail it. `signal` aborts at the check's timeout, so a ping can cancel its own I/O instead of leaving a connection half-used.
 - **ReadinessCheckOptions** _(interface)_ - `interface ReadinessCheckOptions`
@@ -4377,10 +4379,10 @@ _No named exports (side-effect entrypoint)._
   Opt-in RFC 9457 formatting for Nifra's structured error envelope.
 - **rangeResponse** _(function)_ - `rangeResponse: (request: Request, body: string | ArrayBuffer | ArrayBufferView | Uint8Array, options?: RangeResponseOptions) => Response`
   Create a standards-shaped byte representation response with Range, If-Range, and conditional validator handling. The input is already caller-owned memory; this helper does not read or retain external state. Multiple ranges use `multipart/byteranges` and adjacent ranges are coalesced.
-- **rateLimit** _(function)_ - `rateLimit: (options: RateLimitOptions) => Middleware`
+- **rateLimit** _(function)_ - `rateLimit: (options: RateLimitOptions) => RateLimiter`
   Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it also covers 404s); over the limit → `429` + `Retry-After`. Every response carries `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
-- **rateLimitTiers** _(function)_ - `rateLimitTiers: (options: RateLimitTiersOptions) => Middleware`
-  Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is charged to at most one bucket: the tier with the longest `prefix` that is the request's path or an ancestor of it, else the `floor`, else none when there is no floor. Tiers never stack, so a tier may s…
+- **rateLimitTiers** _(function)_ - `rateLimitTiers: (options: RateLimitTiersOptions) => RateLimiter`
+  Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is charged to at most one bucket: the tier owning the longest prefix that is the request's path or an ancestor of it, across every tier's prefixes, else the `floor`, else none when there is no floor. Tier…
 - **requestId** _(function)_ - `requestId: (options?: RequestIdOptions) => ContextPlugin<{ requestId: string; }>`
   A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed, threaded by `derive`), and echoes it on EVERY response leaving the app - handler-returned raw `Response`s…
 - **responseCache** _(const)_ - `responseCache: (options: CacheOptions) => Middleware`

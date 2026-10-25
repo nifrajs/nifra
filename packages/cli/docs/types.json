@@ -12190,14 +12190,21 @@
     "name": "RateLimitTier",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface RateLimitTier {\n    /** Static path prefix such as `/api/public`: no params, wildcards, dot segments or trailing slash. */\n    readonly prefix: string;\n    readonly max: number;\n    readonly windowMs: number;\n    /** Bucket key for this tier only. Default: the limiter's `key`, or the derived client IP. Like\n     * {@link RateLimitOptions.key} it may be async, and a throw or rejection is charged to the client IP. */\n    readonly key?: (req: Request, platform?: Platform) => string | Promise<string>;\n}",
-    "doc": "/** One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it. */"
+    "signature": "export interface RateLimitTier {\n    /**\n     * Static path prefix such as `/api/public`: no params, wildcards, dot segments or trailing slash.\n     * A list charges every prefix in it to this tier's one bucket, so\n     * `[\"/api/exports\", \"/api/reports/download\"]` with `max: 30` allows 30 across both, not 30 each.\n     */\n    readonly prefix: string | readonly string[];\n    /**\n     * The bucket's store scope, `tier:<name>:`. Default: the first prefix. Name a tier whose prefix\n     * list may change, so editing the list keeps its live counters. Letters, digits, `/` and\n     * `-._~%!$&'()+,;=@`; unique across tiers.\n     */\n    readonly name?: string;\n    readonly max: number;\n    readonly windowMs: number;\n    /** Bucket key for this tier only. Default: the limiter's `key`, or the derived client IP. Like\n     * {@link RateLimitOptions.key} it may be async, and a throw or rejection is charged to the client IP. */\n    readonly key?: (req: Request, platform?: Platform) => string | Promise<string>;\n}",
+    "doc": "/** One bucket of a {@link rateLimitTiers} limiter: the requests at a `prefix` or below it. */"
   },
   {
     "name": "RateLimitTiersOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface RateLimitTiersOptions extends Omit<RateLimitOptions, \"max\" | \"windowMs\"> {\n    /**\n     * The bucket for every request no tier claims. Omit it when something in front of the app already\n     * applies a base limit: a request no tier claims is then not charged and gets no `RateLimit-*`\n     * headers, and the rate-limit route evidence covers only the routes under a tier.\n     */\n    readonly floor?: {\n        readonly max: number;\n        readonly windowMs: number;\n    };\n    readonly tiers: readonly RateLimitTier[];\n}"
+  },
+  {
+    "name": "RateLimiter",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface RateLimiter extends Middleware {\n    /**\n     * The exact store key `request` would be charged to, so a test or an ops tool can pre-spend,\n     * inspect or reset that bucket through the store. A custom key runs as it would on a request,\n     * async included, and a key that throws or rejects resolves to the client-IP bucket. `undefined`\n     * when the request would not be charged: `skip` leaves it, no tier claims it and there is no\n     * floor, or no key can be derived. Nothing is counted.\n     */\n    keyOf(request: Request, platform?: Platform): Promise<string | undefined>;\n}",
+    "doc": "/** A rate-limit {@link Middleware} that can name the counter a request is charged to. */"
   },
   {
     "name": "RawHtml",
@@ -22779,15 +22786,15 @@
     "name": "rateLimit",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function rateLimit(options: RateLimitOptions): Middleware;",
+    "signature": "export declare function rateLimit(options: RateLimitOptions): RateLimiter;",
     "doc": "/**\n * Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it\n * also covers 404s); over the limit → `429` + `Retry-After`. Every response carries\n * `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).\n */"
   },
   {
     "name": "rateLimitTiers",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function rateLimitTiers(options: RateLimitTiersOptions): Middleware;",
-    "doc": "/**\n * Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is\n * charged to at most one bucket: the tier with the longest `prefix` that is the request's path or an\n * ancestor of it, else the `floor`, else none when there is no floor. Tiers never stack, so a tier\n * may sit above the floor (`600/min` for `/api/public` under a `120/min` floor). It runs in\n * `onRequest`, before routing, so a 404, a 405 or a body that fails validation is charged too.\n * Prefixes are validated here; each tier counts in its own keys, so tiers can share one store.\n */"
+    "signature": "export declare function rateLimitTiers(options: RateLimitTiersOptions): RateLimiter;",
+    "doc": "/**\n * Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is\n * charged to at most one bucket: the tier owning the longest prefix that is the request's path or an\n * ancestor of it, across every tier's prefixes, else the `floor`, else none when there is no floor.\n * Tiers never stack, so a tier may sit above the floor (`600/min` for `/api/public` under a\n * `120/min` floor). It runs in `onRequest`, before routing, so a 404, a 405 or a body that fails\n * validation is charged too. Prefixes and names are validated here; each tier counts in its own\n * keys, so tiers can share one store.\n */"
   },
   {
     "name": "raw",

@@ -498,6 +498,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { cache, MemoryResponseCache, prettyJson } from \"@nifrajs/middleware\"\n\n// Full response cache: pluggable store, Vary-aware keys, byte cap. Bypasses Set-Cookie and respects\n// Cache-Control (no-store/private). MemoryResponseCache is per-instance - refuses prod unless opted in.\nconst app = server()\napp.use(cache({ store: new MemoryResponseCache(), ttlMs: 30_000, vary: [\"accept-language\"] }))\napp.use(prettyJson())   // pretty-print JSON responses (size-capped; optional ?pretty query toggle)"
   },
   {
+    "name": "GROUPED_TIERS",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { MemoryStore, rateLimitTiers } from \"@nifrajs/middleware\"\n\nconst store = new MemoryStore()\nconst limiter = rateLimitTiers({\n  store,\n  floor: { max: 120, windowMs: 60_000 },\n  tiers: [\n    // One 30/min allowance across all three, not 30 each. The name is the bucket's\n    // store scope, so adding or removing a prefix later keeps the live counters.\n    {\n      name: \"exports\",\n      prefix: [\"/api/exports\", \"/api/reports/download\", \"/api/invoices/pdf\"],\n      max: 30,\n      windowMs: 60_000,\n    },\n  ],\n})\nconst app = server().use(limiter)\n\n// The store key a request is charged to, for a test or an ops tool: \"tier:exports:<ip>\".\nconst key = await limiter.keyOf(new Request(\"http://x/api/exports/csv\"), { clientIp: \"203.0.113.9\" })\nif (key !== undefined) await store.hit(key, 60_000) // pre-spend one hit"
+  },
+  {
     "name": "IDENTITY",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

@@ -4002,6 +4002,44 @@ const app = server().use(
 )
 ```
 
+A tier's `prefix` can be a list: every prefix in it charges the tier's one bucket,
+so traffic of one kind spread over several paths shares one allowance. Selection is still the
+longest prefix across every tier, so a longer prefix that belongs to another tier charges only
+that tier. A prefix listed in two tiers is refused when the limiter is built. A tier counts
+under `tier:<name>:`, and `name` defaults to the first prefix; name
+a tier whose list may change, so editing the list neither resets nor splits its counters. Two
+tiers with one name are refused too. Both limiters have `keyOf(request, platform?)`,
+which resolves to the exact store key a request would be charged to, running an async key and
+its client-IP fallback as a request would, or `undefined` when the request would not
+be charged. It counts nothing, so a test can pre-spend or reset a bucket without copying the key
+format.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
+
+const store = new MemoryStore()
+const limiter = rateLimitTiers({
+  store,
+  floor: { max: 120, windowMs: 60_000 },
+  tiers: [
+    // One 30/min allowance across all three, not 30 each. The name is the bucket's
+    // store scope, so adding or removing a prefix later keeps the live counters.
+    {
+      name: "exports",
+      prefix: ["/api/exports", "/api/reports/download", "/api/invoices/pdf"],
+      max: 30,
+      windowMs: 60_000,
+    },
+  ],
+})
+const app = server().use(limiter)
+
+// The store key a request is charged to, for a test or an ops tool: "tier:exports:<ip>".
+const key = await limiter.keyOf(new Request("http://x/api/exports/csv"), { clientIp: "203.0.113.9" })
+if (key !== undefined) await store.hit(key, 60_000) // pre-spend one hit
+```
+
 ### A shared store in production
 
 `MemoryStore` counts per instance, so it refuses to start under
@@ -20140,7 +20178,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
-`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `AuthPlugin`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `BearerOptions`, `BodyLimitOptions`, `ByteRange`, `ByteRangeResult`, `CacheControlOptions`, `CacheOptions`, `CachedResponse`, `Composable`, `CompressionOptions`, `ConditionalResponseOptions`, `ContentPreference`, `CorsOptions`, `CsrfOptions`, `DurableCommandOptions`, `ETagOptions`, `HealthcheckOptions`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `IpRestrictionOptions`, `JwkKey`, `JwksOptions`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `LanguageMatch`, `LanguageOptions`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `MultipartResponseOptions`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `PoweredByOptions`, `PrettyJsonOptions`, `ProblemDetailsOptions`, `RangeResponseOptions`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `RateLimitTier`, `RateLimitTiersOptions`, `ReadinessCheck`, `ReadinessCheckOptions`, `ReadinessCheckResult`, `ReadinessCheckStatus`, `ReadinessReport`, `RequestIdOptions`, `RequestLogFields`, `ResponseCacheStore`, `RouteLike`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `VerifiedJwt`, `VerifyJwtOptions`, `VerifyJwtResult`, `apiKey`, `appendTrailingSlash`, `basicAuth`, `bearer`, `bodyLimit`, `buildOpenApiDocument`, `cache`, `cacheControl`, `combine`, `compression`, `conditionalResponse`, `cors`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `durableCommand`, `etag`, `healthcheck`, `idempotency`, `ipRestriction`, `jwk`, `jwks`, `jwt`, `language`, `logger`, `methodOverride`, `multipartResponse`, `namedCombine`, `negotiateContentType`, `openapi`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `prettyJson`, `problemDetails`, `rangeResponse`, `rateLimit`, `rateLimitTiers`, `requestId`, `responseCache`, `securityHeaders`, `timing`, `trimTrailingSlash`, `tryVerifyJwt`, `verifyCsrfToken`, `verifyJwt`
+`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `AuthPlugin`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `BearerOptions`, `BodyLimitOptions`, `ByteRange`, `ByteRangeResult`, `CacheControlOptions`, `CacheOptions`, `CachedResponse`, `Composable`, `CompressionOptions`, `ConditionalResponseOptions`, `ContentPreference`, `CorsOptions`, `CsrfOptions`, `DurableCommandOptions`, `ETagOptions`, `HealthcheckOptions`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `IpRestrictionOptions`, `JwkKey`, `JwksOptions`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `LanguageMatch`, `LanguageOptions`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `MultipartResponseOptions`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `PoweredByOptions`, `PrettyJsonOptions`, `ProblemDetailsOptions`, `RangeResponseOptions`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `RateLimitTier`, `RateLimitTiersOptions`, `RateLimiter`, `ReadinessCheck`, `ReadinessCheckOptions`, `ReadinessCheckResult`, `ReadinessCheckStatus`, `ReadinessReport`, `RequestIdOptions`, `RequestLogFields`, `ResponseCacheStore`, `RouteLike`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `VerifiedJwt`, `VerifyJwtOptions`, `VerifyJwtResult`, `apiKey`, `appendTrailingSlash`, `basicAuth`, `bearer`, `bodyLimit`, `buildOpenApiDocument`, `cache`, `cacheControl`, `combine`, `compression`, `conditionalResponse`, `cors`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `durableCommand`, `etag`, `healthcheck`, `idempotency`, `ipRestriction`, `jwk`, `jwks`, `jwt`, `language`, `logger`, `methodOverride`, `multipartResponse`, `namedCombine`, `negotiateContentType`, `openapi`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `prettyJson`, `problemDetails`, `rangeResponse`, `rateLimit`, `rateLimitTiers`, `requestId`, `responseCache`, `securityHeaders`, `timing`, `trimTrailingSlash`, `tryVerifyJwt`, `verifyCsrfToken`, `verifyJwt`
 
 ## @nifrajs/mock
 

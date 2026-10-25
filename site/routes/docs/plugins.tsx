@@ -118,6 +118,30 @@ const app = server().use(
   }),
 )`
 
+const GROUPED_TIERS = `import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
+
+const store = new MemoryStore()
+const limiter = rateLimitTiers({
+  store,
+  floor: { max: 120, windowMs: 60_000 },
+  tiers: [
+    // One 30/min allowance across all three, not 30 each. The name is the bucket's
+    // store scope, so adding or removing a prefix later keeps the live counters.
+    {
+      name: "exports",
+      prefix: ["/api/exports", "/api/reports/download", "/api/invoices/pdf"],
+      max: 30,
+      windowMs: 60_000,
+    },
+  ],
+})
+const app = server().use(limiter)
+
+// The store key a request is charged to, for a test or an ops tool: "tier:exports:<ip>".
+const key = await limiter.keyOf(new Request("http://x/api/exports/csv"), { clientIp: "203.0.113.9" })
+if (key !== undefined) await store.hit(key, 60_000) // pre-spend one hit`
+
 const PORTABLE_HOOK = `import { responseObserver } from "@nifrajs/core/response-observer"
 import { server } from "@nifrajs/core/server"
 import type { Middleware } from "@nifrajs/core/server"
@@ -683,6 +707,20 @@ export default function Plugins() {
         under its tiers.
       </p>
       <CodeBlock code={SESSION_TIERS} />
+      <p>
+        A tier's <code>prefix</code> can be a list: every prefix in it charges the tier's one bucket,
+        so traffic of one kind spread over several paths shares one allowance. Selection is still the
+        longest prefix across every tier, so a longer prefix that belongs to another tier charges only
+        that tier. A prefix listed in two tiers is refused when the limiter is built. A tier counts
+        under <code>tier:&lt;name&gt;:</code>, and <code>name</code> defaults to the first prefix; name
+        a tier whose list may change, so editing the list neither resets nor splits its counters. Two
+        tiers with one name are refused too. Both limiters have <code>keyOf(request, platform?)</code>,
+        which resolves to the exact store key a request would be charged to, running an async key and
+        its client-IP fallback as a request would, or <code>undefined</code> when the request would not
+        be charged. It counts nothing, so a test can pre-spend or reset a bucket without copying the key
+        format.
+      </p>
+      <CodeBlock code={GROUPED_TIERS} />
 
       <h2>A shared store in production</h2>
       <p>
