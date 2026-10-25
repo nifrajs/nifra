@@ -800,7 +800,8 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
   },
   "packages/web-vue/src/client.ts": { levels: MEMO },
   "packages/web-vue/src/compose.ts": {
-    "<expr>@declaredProps": "a component's declared prop names",
+    declared: "components' declared prop names, weakly keyed by the component",
+    "names@declaredBy": "a component's declared prop names",
   },
   "packages/web-vue/src/keep-alive.ts": {
     "children@mountRouter": "the slot tree of the router's latest state",
