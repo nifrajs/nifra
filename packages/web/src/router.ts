@@ -865,18 +865,22 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     const ac = new AbortController()
     navAbort = ac
     const initial = dataFields(state)
-    const loaded = await applyClientLoader(
-      state.path,
-      route,
-      ac.signal,
-      () => Promise.resolve(initial),
-      initial,
-    )
-    if (mine !== generation) return
-    // No terminal status can arrive here: the server already rendered this route (a status page
-    // included) and its data is the only server result the client loader sees.
-    state = { ...state, ...dataFields(loaded) }
-    emit()
+    try {
+      const loaded = await applyClientLoader(
+        state.path,
+        route,
+        ac.signal,
+        () => Promise.resolve(initial),
+        initial,
+      )
+      if (mine !== generation) return
+      // No terminal status can arrive here: the server already rendered this route (a status page
+      // included) and its data is the only server result the client loader sees.
+      state = { ...state, ...dataFields(loaded) }
+      emit()
+    } finally {
+      if (mine === generation) reloadIfStale()
+    }
   }
   let state = options.initial
   // The page as last published from a load, with the response text it was read from. Every publish of
@@ -884,6 +888,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   let shownPage: LoadedRouteData | undefined
   const listeners = new Set<() => void>()
   let generation = 0
+  // One count per visitor change the page has seen, and the count the page on screen was loaded at.
+  let visitor = 0
+  let shownFor = 0
+  // The navigation, submit or reload that owns the page while it is in flight: the count it began at,
+  // and how to start it again for a new visitor. A submit never starts again: its POST has to land.
+  let running:
+    | { readonly gen: number; readonly seen: number; readonly again?: () => void }
+    | undefined
   // Snapshot listeners to defend against accidental un/subscribe during notification. The adapters
   // don't do this (un/subscribe runs in effect/cleanup ticks), so the overhead is negligible
   // (5-20 listeners typically), and the defensiveness is valuable.
@@ -1141,11 +1153,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // Refetch what is on screen + republish, single-flight via the shared `generation`. Shared by
   // `invalidate` and targeted revalidation: `inScope` says which paths to refresh, and a page or held
   // target outside it is kept. Rejects if the page's fetch fails (clearing its own `pending` first).
+  const reloadAgain = (): void => void refetchActive().catch(() => {})
   const refetchActive = async (inScope?: (path: string) => boolean): Promise<void> => {
     const page = inScope === undefined || inScope(pagePathOf(state))
     const target = state.intercepted !== undefined && (inScope === undefined || inScope(state.path))
     if (!page && !target) return
     const mine = ++generation
+    const seen = visitor
+    running = { gen: mine, seen, again: reloadAgain }
     navAbort?.abort()
     const ac = new AbortController()
     navAbort = ac
@@ -1154,6 +1169,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     try {
       const { fields, route } = await reloadActive(ac.signal, page, target, mine)
       if (mine !== generation) return // superseded - drop the stale result
+      if (page) shownFor = seen
       // A terminal answer for the page (the session expired, the record is gone) replaces it, and any
       // boundary over it, with its status route, as a navigation to this URL would.
       state =
@@ -1174,6 +1190,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         emit()
       }
       throw err
+    } finally {
+      // Never a reload of its own here: a reload that keeps failing would retry forever.
+      if (running?.gen === mine) running = undefined
     }
   }
 
@@ -1226,7 +1245,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       if (matched === null) return // unmatched path → no-op
       // Data held from before a new epoch goes first, so what this load reads is not dropped as the
       // previous visitor's on the next read.
-      checkFetchersEpoch()
+      checkEpoch()
       const mine = ++fGeneration
       fAbort?.abort()
       const ac = new AbortController()
@@ -1261,7 +1280,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     const fetcher: Fetcher = {
       // A fetcher outlives the `fetcher(key)` call that made it, so its read checks the epoch too.
       snapshot: () => {
-        checkFetchersEpoch()
+        checkEpoch()
         return fState
       },
       subscribe: (l) => {
@@ -1272,7 +1291,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       },
       load: runLoad,
       submit: async (action, body) => {
-        checkFetchersEpoch()
+        checkEpoch()
         const mine = ++fGeneration
         // Abort any prior in-flight load/submit on THIS fetcher (its fetch + NDJSON drain) - like
         // `runLoad` does for a superseding load. The mutation POST is left to complete; the
@@ -1300,6 +1319,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           const actionData = res.status === 204 ? undefined : await readResponseData(res, ac.signal)
           const changed = parseRevalidate(res.headers.get(REVALIDATE_HEADER))
           if (mine !== fGeneration) return
+          // A sign-in or sign-out answers with the new epoch: what the fetcher held goes, and this
+          // answer, given once the action ran, stays.
+          checkEpoch()
           // Publish the fetcher's actionData; clear `submission` (the optimistic window is over).
           fState = { pending: false, data: fState.data, actionData }
           fEmit()
@@ -1337,32 +1359,54 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     }
   }
 
+  const reloadIfStale = (): void => {
+    if (shownFor !== visitor) reloadAgain()
+  }
+  // The page on screen reloads in place, shown as it was and pending until the reload lands, and what
+  // is loading for the previous visitor starts again. A submit is left to finish; once it settles, the
+  // page reloads if its reads began before the change.
+  const reloadForVisitor = (): void => {
+    const now = running?.gen === generation ? running : undefined
+    if (now === undefined) reloadIfStale()
+    else if (now.seen !== visitor) now.again?.()
+  }
+
   // Warmed pages and what every fetcher holds were loaded for the previous visitor. Another tab's
   // message drops warmed pages only: this tab hears its own `identityChanged()` there too, a task
-  // later, and a fetcher may have started loading for the new visitor by then.
+  // later, and a fetcher or the page may have started loading for the new visitor by then.
   onIdentityChange(() => {
+    // A cookie the change came with is the same change.
+    seenEpoch = documentEpoch()
+    visitor++
     dropPrefetched()
     for (const entry of fetchers.values()) entry.forget()
     for (const entry of fetchers.values()) entry.notify()
+    reloadForVisitor()
   })
   if (typeof BroadcastChannel !== "undefined")
     new BroadcastChannel(IDENTITY_CHANNEL).addEventListener("message", dropPrefetched)
-  // A new epoch cookie says the same with no signal. Fetchers are read while a component renders, so
-  // they forget at once and tell their subscribers once the render is over.
-  let fetchersEpoch = documentEpoch()
-  const checkFetchersEpoch = (): void => {
+  // A new epoch cookie says the same with no signal. It is read while a component renders, so fetchers
+  // forget at once, and their subscribers hear and the page reloads once the render is over. A load
+  // that read the epoch first already counts as the new visitor's.
+  let seenEpoch = documentEpoch()
+  const checkEpoch = (): void => {
     const epoch = documentEpoch()
-    if (epoch === fetchersEpoch) return
-    fetchersEpoch = epoch
+    if (epoch === seenEpoch) return
+    seenEpoch = epoch
+    visitor++
     for (const entry of fetchers.values()) entry.forget()
     queueMicrotask(() => {
       for (const entry of fetchers.values()) entry.notify()
+      reloadForVisitor()
     })
   }
 
-  return {
+  const self: ClientRouter = {
     match,
-    snapshot: () => state,
+    snapshot: () => {
+      checkEpoch()
+      return state
+    },
     subscribe: (listener) => {
       listeners.add(listener)
       return () => {
@@ -1370,6 +1414,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
     },
     navigate: async (path) => {
+      checkEpoch()
       const matched = match(path)
       if (matched === null) return
       // The target an open boundary already shows (a `#fragment` entry inside it, a link to itself):
@@ -1407,9 +1452,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           state = { ...state, path, pending: false, pendingPath: undefined }
           emit()
         })
+        if (mine === generation) reloadIfStale()
         return
       }
       const mine = ++generation
+      const seen = visitor
+      running = { gen: mine, seen, again: () => void self.navigate(path).catch(() => {}) }
       navAbort?.abort() // abandon any in-flight navigation's stream
       const ac = new AbortController()
       navAbort = ac
@@ -1434,6 +1482,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             // optional client wrapper). Only the presentation route is retained; the current page stays
             // mounted underneath the named slot. A target that returned a terminal status never reaches
             // this branch, so an unauthorized/missing target cannot become a modal.
+            // The page underneath keeps the visitor it was loaded for.
             state = {
               ...state,
               path: to,
@@ -1454,6 +1503,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             pending: false,
           }
           shownPage = loaded
+          shownFor = seen
           emit()
         })
       } catch (err) {
@@ -1465,10 +1515,15 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         state = { ...state, pending: false, pendingPath: undefined }
         emit()
         throw err
+      } finally {
+        if (running?.gen === mine) running = undefined
+        if (mine === generation) reloadIfStale()
       }
     },
     submit: async (action, body, opts) => {
+      checkEpoch()
       const mine = ++generation
+      running = { gen: mine, seen: visitor }
       const previousActionData = state.actionData
       // An action posted to the target an intercept boundary holds answers that boundary, not the page.
       const actionBoundary =
@@ -1503,6 +1558,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       // Once the action has run, falling back to posting the form again would run it twice.
       let posted = false
       let landing: string | undefined
+      // The count its reads after the POST began at.
+      let reads = visitor
       try {
         const prepared = await prepareClientAction(action, body, ac.signal)
         if (Object.hasOwn(prepared, "optimisticData")) {
@@ -1516,6 +1573,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         })
         // Whatever the status, the server took the POST: the action may have run before it failed.
         posted = true
+        // A sign-in or sign-out answers here with its cookie, and the reads after it are the new
+        // visitor's.
+        checkEpoch()
+        reads = visitor
         dropPrefetched()
         if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
         const redirectTo = res.headers.get(REDIRECT_HEADER)
@@ -1546,6 +1607,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             pending: false,
           }
           shownPage = loaded
+          shownFor = reads
           emit()
           return
         }
@@ -1569,6 +1631,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (mine !== generation) return
         // Mark the OTHER changed routes stale so the next access refetches.
         markStale(changed.filter((p) => p !== pagePath && (!reloadTarget || p !== state.path)))
+        if (reloadPage) shownFor = reads
         // Reconcile: publish the revalidated data + actionData; omit `submission` (the optimistic
         // window is over - the real data now drives the view). A reload that names another route (a
         // terminal answer for the page) renders it in the page's place, closing any boundary, and the
@@ -1620,10 +1683,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // Otherwise show the route that owns the action, as a native post to it would.
         const owner = actionBoundary === undefined ? pagePathOf(state) : state.path
         throw redirectOf(err) === undefined ? redirected(landing ?? owner, err) : err
+      } finally {
+        if (running?.gen === mine) running = undefined
+        if (mine === generation) reloadIfStale()
       }
     },
     hydrate,
     invalidate: async (paths) => {
+      checkEpoch()
       // Mark targeted cache entries stale (all entries when no `paths`) - unmounted ones refetch
       // lazily on next access. A warmed prefetch of a target is dropped: it would show the old data.
       const targets = paths ?? [...cache.keys()]
@@ -1638,6 +1705,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       await Promise.all(jobs)
     },
     prefetch: async (path) => {
+      checkEpoch()
       if (inflight.has(path) || freshPrefetch(path) !== undefined) return
       const matched = match(path)
       if (matched === null) return
@@ -1672,7 +1740,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
     },
     fetcher: (key) => {
-      checkFetchersEpoch()
+      checkEpoch()
       const existing = fetchers.get(key)
       if (existing !== undefined) return existing.fetcher
       const entry = createFetcher()
@@ -1681,7 +1749,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       return entry.fetcher
     },
     fetchers: () => {
-      checkFetchersEpoch()
+      checkEpoch()
       return fetchersArr
     },
     subscribeFetchers: (listener) => {
@@ -1691,4 +1759,5 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
     },
   }
+  return self
 }

@@ -1225,6 +1225,203 @@ describe("createClientRouter", () => {
         })
       })
     })
+
+    const settled = () => new Promise((resolve) => setImmediate(resolve))
+    const as = (whoami: string, id = "7") => ({ id, whoami, version: 0 })
+    const gate = () => {
+      let open = (): void => {}
+      const opened = new Promise<void>((resolve) => {
+        open = resolve
+      })
+      return { opened, open }
+    }
+
+    test("identityChanged() reloads the page on screen, shown as loaded and pending until it lands", async () => {
+      const state = { whoami: "alice", version: 0 }
+      const r = routerFor(state)
+      await r.navigate("/users/7")
+      state.whoami = "bob"
+      identityChanged()
+      expect([r.snapshot().pending, r.snapshot().data]).toEqual([true, as("alice")])
+      await settled()
+      expect([r.snapshot().pending, r.snapshot().data]).toEqual([false, as("bob")])
+    })
+
+    test("a navigation in flight when the visitor changes loads again, and its first answer never shows", async () => {
+      const state = { whoami: "alice", version: 0 }
+      const first = gate()
+      const asked: string[] = []
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => {
+          const seen = { id: m.params.id, ...state }
+          asked.push(seen.whoami)
+          if (asked.length === 1) await first.opened
+          return seen
+        },
+      })
+      const going = r.navigate("/users/7")
+      while (asked.length < 1) await Promise.resolve()
+      state.whoami = "bob"
+      identityChanged()
+      first.open()
+      await going
+      await settled()
+      expect([asked, r.snapshot().path, r.snapshot().data]).toEqual([
+        ["alice", "bob"],
+        "/users/7",
+        as("bob"),
+      ])
+    })
+
+    // A sign-out posted while the page loads for whoever is signed in: the POST answers once `posted`
+    // opens, and the page's loader once `revalidated` does.
+    const signOut = async (changeDuring: "post" | "revalidation") => {
+      const state = { whoami: "alice", version: 0 }
+      const posted = gate()
+      const revalidated = gate()
+      const asked: string[] = []
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => {
+          const seen = { id: m.params.id, ...state }
+          asked.push(seen.whoami)
+          if (asked.length === 2) await revalidated.opened
+          return seen
+        },
+      })
+      await r.navigate("/users/7")
+      const realFetch = globalThis.fetch
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router only posts the action through it here.
+      globalThis.fetch = (async (_url: string, _init?: RequestInit) => {
+        await posted.opened
+        return Response.json({ ok: true })
+      }) as typeof fetch
+      try {
+        const submitting = r.submit("/logout", new URLSearchParams())
+        if (changeDuring === "post") {
+          state.whoami = "bob"
+          identityChanged()
+          posted.open()
+          revalidated.open()
+        } else {
+          posted.open()
+          while (asked.length < 2) await Promise.resolve()
+          state.whoami = "bob"
+          identityChanged()
+          revalidated.open()
+        }
+        await submitting
+        await settled()
+      } finally {
+        globalThis.fetch = realFetch
+      }
+      return { asked, shown: r.snapshot() }
+    }
+
+    test("a submit in flight when the visitor changes finishes, and its page answers for the new visitor", async () => {
+      const { asked, shown } = await signOut("post")
+      expect([asked, shown.data, shown.actionData]).toEqual([
+        ["alice", "bob"],
+        as("bob"),
+        { ok: true },
+      ])
+    })
+
+    test("a submit whose page was reloading when the visitor changed reloads it again once it settles", async () => {
+      const { asked, shown } = await signOut("revalidation")
+      expect([asked, shown.data, shown.pending]).toEqual([
+        ["alice", "alice", "bob"],
+        as("bob"),
+        false,
+      ])
+    })
+
+    test("a sign-in answered with a new epoch keeps its answer, and the page loads once for it", async () => {
+      await withEpoch(async (rotate) => {
+        const state = { whoami: "alice", version: 0 }
+        let fetches = 0
+        const r = createClientRouter({
+          patterns,
+          initial,
+          fetchData: async (_p, m) => {
+            fetches++
+            return { id: m.params.id, ...state }
+          },
+        })
+        await r.navigate("/users/7")
+        let epoch = 1
+        const realFetch = globalThis.fetch
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router only posts actions through it here.
+        globalThis.fetch = (async (_url: string, _init?: RequestInit) => {
+          epoch++
+          await rotate(String(epoch))
+          state.whoami = epoch === 2 ? "bob" : "carol"
+          return Response.json({ ok: true })
+        }) as typeof fetch
+        try {
+          await r.submit("/login", new URLSearchParams())
+          // The render after it reads the new epoch, which the page already loaded under.
+          r.snapshot()
+          await settled()
+          expect([r.snapshot().data, r.snapshot().actionData, fetches]).toEqual([
+            as("bob"),
+            { ok: true },
+            2,
+          ])
+          await r.fetcher("form").submit("/login", new URLSearchParams())
+          r.snapshot()
+          await settled()
+        } finally {
+          globalThis.fetch = realFetch
+        }
+        expect([r.fetcher("form").snapshot().actionData, r.snapshot().data, fetches]).toEqual([
+          { ok: true },
+          as("carol"),
+          3,
+        ])
+      })
+    })
+
+    test("a new identity epoch reloads the page on screen once, after the read that sees it", async () => {
+      await withEpoch(async (rotate) => {
+        const state = { whoami: "alice", version: 0 }
+        let fetches = 0
+        const r = createClientRouter({
+          patterns,
+          initial,
+          fetchData: async (_p, m) => {
+            fetches++
+            return { id: m.params.id, ...state }
+          },
+        })
+        await r.navigate("/users/7")
+        state.whoami = "bob"
+        await rotate("two")
+        // Read while a component renders: the reload starts once the render is over.
+        expect([r.snapshot().pending, r.snapshot().data]).toEqual([false, as("alice")])
+        await settled()
+        expect([r.snapshot().data, fetches]).toEqual([as("bob"), 2])
+
+        // A navigation that sees the epoch first already loads for the new visitor.
+        state.whoami = "carol"
+        await rotate("three")
+        await r.navigate("/users/8")
+        await settled()
+        expect([r.snapshot().data, fetches]).toEqual([as("carol", "8"), 3])
+
+        // identityChanged() with the cookie its response set is one change.
+        state.whoami = "dave"
+        await rotate("four")
+        identityChanged()
+        await settled()
+        r.snapshot()
+        await settled()
+        expect([r.snapshot().data, fetches]).toEqual([as("dave", "8"), 4])
+      })
+    })
   })
 
   test("submit posts the action in data mode, then revalidates the active loader", async () => {

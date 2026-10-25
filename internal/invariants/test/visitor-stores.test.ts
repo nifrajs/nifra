@@ -466,7 +466,8 @@ interface Page {
   readonly held: readonly Held[]
   /** Arguments for each `kind.function`. */
   readonly calls: Readonly<Record<string, readonly unknown[]>>
-  /** What the page shows once everything has settled, by part. */
+  /** What the page shows once everything has settled, by part. It is read twice, a render and the
+   * one after what that render started has landed: a new epoch cookie is seen at a read. */
   readonly settled: () => Readonly<Record<string, unknown>>
   readonly close?: () => void
 }
@@ -610,14 +611,13 @@ const SURFACES: readonly Surface[] = [
   },
 ]
 
-const ON_SCREEN =
-  "the page on screen keeps what it loaded for the first visitor: nothing reloads it when the visitor changes"
+const RELOADING =
+  "the page on screen reloads in place: until the reload lands it shows as it was loaded, pending"
 
 /** What still answers differently for what the first visitor loaded, each with why: a call's return
  * as `surface: held.function`, a settled part as `surface: part`. */
 const SWEEP_OPEN: Readonly<Record<string, string>> = {
-  "the router: router.snapshot": ON_SCREEN,
-  "the router: page": ON_SCREEN,
+  "the router: router.snapshot": RELOADING,
 }
 
 /** A returned value as a page would use it: a handle by what it shows, a function as itself. */
@@ -651,6 +651,8 @@ for (const surface of SURFACES)
               } catch (error) {
                 returned = { threw: String(error) }
               }
+              await flushed()
+              page.settled()
               await flushed()
               const parts = Object.entries(page.settled())
               return {

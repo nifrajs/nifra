@@ -390,6 +390,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       lastEpoch = epoch
       channel?.postMessage("changed")
       dropKept("identity")
+      inner.snapshot()
     }
 
     const keep = ({
@@ -645,7 +646,11 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     }
 
     return {
-      snapshot: () => published,
+      snapshot: () => {
+        // The router sees a new epoch at a read, and a render reads here: the page on screen reloads.
+        inner.snapshot()
+        return published
+      },
       subscribe: (listener) => {
         listeners.add(listener)
         return () => {

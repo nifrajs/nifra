@@ -320,8 +320,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 19,961 -> 20,178 B (Bun 1.4.4). A `bigint` in the plain transport codec as its decimal string:
   // 20,178 -> 20,228 B (Bun 1.4.4). Query clients and fetchers drop what they hold on
   // `identityChanged()` and on a new identity epoch cookie, read once per synchronous run because a
-  // `document.cookie` read costs about 2.4 us in Chromium: 20,228 -> 20,519 B (Bun 1.4.4).
-  "nifra-web-client": 20.1,
+  // `document.cookie` read costs about 2.4 us in Chromium: 20,228 -> 20,519 B (Bun 1.4.4). Handles
+  // and fetchers a page kept check the epoch on every read, and the page on screen reloads when the
+  // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4).
+  "nifra-web-client": 20.4,
   "nifra-i18n": 4.3,
 }
 
