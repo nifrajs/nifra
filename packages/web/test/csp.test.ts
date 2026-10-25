@@ -419,6 +419,23 @@ describe("createWebApp({ nonce, cspHeader })", () => {
     expect(res.headers.get("cache-control")).toBeNull()
   })
 
+  test("a nonce-free request whose document streams a deferred value gets a fresh nonce in the header", async () => {
+    const app = nonceApp(
+      manifestOf({
+        "/later": () => ({ default: "later", loader: () => ({ slow: defer(Promise.resolve(1)) }) }),
+      }),
+      createNonceResolver({ generate: () => undefined }),
+    )
+    const res = await app.fetch(new Request("http://x/later"))
+    const html = await res.text()
+    const nonce = scriptNonce(html)
+    expect(nonce).toBeTruthy()
+    const policy = res.headers.get("content-security-policy") ?? ""
+    expect(policy).toContain(`'nonce-${nonce}'`)
+    expect(await everyInlineScriptAllowed(html, policy)).toBe(true)
+    expect(res.headers.get("cache-control")).toBe("private, no-store")
+  })
+
   test("an API response gets no header, and `undefined` from the callback sends none", async () => {
     const withApi = (cspHeader: typeof header | (() => undefined)) =>
       createWebApp({
