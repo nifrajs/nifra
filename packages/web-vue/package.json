@@ -123,20 +123,28 @@
   },
   "dependencies": {
     "@nifrajs/core": "workspace:*",
-    "@nifrajs/i18n": "workspace:*",
-    "@nifrajs/image": "workspace:*",
     "@nifrajs/web": "workspace:*"
   },
   "peerDependencies": {
     "@vue/compiler-sfc": "^3.4.0",
-    "vue": "^3.4.0"
+    "vue": "^3.4.0",
+    "@nifrajs/i18n": "workspace:^",
+    "@nifrajs/image": "workspace:^"
   },
   "peerDependenciesMeta": {
+    "@nifrajs/i18n": {
+      "optional": true
+    },
+    "@nifrajs/image": {
+      "optional": true
+    },
     "@vue/compiler-sfc": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@nifrajs/i18n": "workspace:*",
+    "@nifrajs/image": "workspace:*",
     "@vue/compiler-sfc": "^3.5.0",
     "happy-dom": "21.0.4",
     "vue": "^3.5.0"

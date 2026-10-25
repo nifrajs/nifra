@@ -1,17 +1,10 @@
 /**
- * `@nifrajs/web-react/auth` - React bindings for `@nifrajs/authjs`. `<AuthSessionProvider>`
- * seeds the subtree with a session (from a loader on the server, refreshed in the browser) and
- * `useAuthSession()` reads it; `signIn`/`signOut` delegate to the shared client. Imports only
- * `react` + `@nifrajs/authjs/client`; no JSX (the package builds with plain `tsc`).
- * `@nifrajs/authjs` is an optional peer, so only an app that installs it pulls Auth.js in.
+ * `@nifrajs/authjs/react` - React bindings for the Auth.js client. `<AuthSessionProvider>` seeds the
+ * subtree with a session (from a loader on the server, refreshed in the browser) and
+ * `useAuthSession()` reads it; `signIn`/`signOut` delegate to the shared client. Imports only `react`
+ * and the agnostic client; no JSX (the package builds with plain `tsc`). `react` is an optional peer.
  */
-import {
-  type AuthClient,
-  createAuthClient,
-  type Session,
-  type SignInOptions,
-  type SignOutOptions,
-} from "@nifrajs/authjs/client"
+
 import {
   createContext,
   createElement,
@@ -22,6 +15,13 @@ import {
   useRef,
   useState,
 } from "react"
+import {
+  type AuthClient,
+  createAuthClient,
+  type Session,
+  type SignInOptions,
+  type SignOutOptions,
+} from "./client.ts"
 
 export type { Session }
 export type AuthStatus = "loading" | "authenticated" | "unauthenticated"
@@ -137,9 +137,7 @@ export function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode 
 export function useAuthSession(): AuthSession {
   const session = useContext(AuthSessionContext)
   if (session === null) {
-    throw new Error(
-      "[nifra/web-react] useAuthSession() must be used within an <AuthSessionProvider>",
-    )
+    throw new Error("[nifra/authjs] useAuthSession() must be used within an <AuthSessionProvider>")
   }
   return session
 }

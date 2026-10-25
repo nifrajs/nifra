@@ -71,11 +71,6 @@
       "types": "./dist/i18n.d.ts",
       "default": "./dist/i18n.js"
     },
-    "./auth": {
-      "bun": "./src/auth.ts",
-      "types": "./dist/auth.d.ts",
-      "default": "./dist/auth.js"
-    },
     "./image": {
       "bun": "./src/image.ts",
       "types": "./dist/image.d.ts",
@@ -147,20 +142,20 @@
   },
   "dependencies": {
     "@nifrajs/core": "workspace:*",
-    "@nifrajs/i18n": "workspace:*",
-    "@nifrajs/image": "workspace:*",
-    "@nifrajs/web": "workspace:*",
-    "@nifrajs/schema": "workspace:*"
+    "@nifrajs/web": "workspace:*"
   },
   "peerDependencies": {
-    "@nifrajs/authjs": "workspace:^",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@vitejs/plugin-rsc": "0.5.35",
-    "react-server-dom-webpack": "19.3.1"
+    "react-server-dom-webpack": "19.3.1",
+    "@nifrajs/i18n": "workspace:^",
+    "@nifrajs/image": "workspace:^"
   },
   "devDependencies": {
-    "@nifrajs/authjs": "workspace:*",
+    "@nifrajs/i18n": "workspace:*",
+    "@nifrajs/image": "workspace:*",
+    "@nifrajs/schema": "workspace:*",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-rsc": "0.5.35",
@@ -180,7 +175,10 @@
   },
   "homepage": "https://github.com/nifrajs/nifra#readme",
   "peerDependenciesMeta": {
-    "@nifrajs/authjs": {
+    "@nifrajs/i18n": {
+      "optional": true
+    },
+    "@nifrajs/image": {
       "optional": true
     },
     "@vitejs/plugin-rsc": {

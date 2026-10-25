@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import type { AuthClient, Session } from "@nifrajs/authjs/client"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { AuthSessionProvider, useAuthSession } from "../src/auth.ts"
+import type { AuthClient, Session } from "../src/client.ts"
+import { AuthSessionProvider, useAuthSession } from "../src/react.ts"
 
 const session = { user: { name: "Ada" }, expires: "2999-01-01T00:00:00.000Z" } as Session
 
@@ -11,7 +11,7 @@ function WhoAmI() {
   return createElement("p", { "data-status": status }, current?.user?.name ?? "anon")
 }
 
-describe("@nifrajs/web-react/auth", () => {
+describe("@nifrajs/authjs/react", () => {
   test("seeded session renders synchronously (SSR); anonymous renders as such", () => {
     const authed = renderToStaticMarkup(
       createElement(AuthSessionProvider, { initialSession: session }, createElement(WhoAmI)),

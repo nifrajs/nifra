@@ -10,11 +10,10 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 
 ## Public entrypoints
 
-`@nifrajs/web-react` · `@nifrajs/web-react/auth` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/keep-alive` · `@nifrajs/web-react/ppr` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router` · `@nifrajs/web-react/server-components` · `@nifrajs/web-react/server-components/client` · `@nifrajs/web-react/server-components/guard` · `@nifrajs/web-react/server-components/jsx-dev-runtime` · `@nifrajs/web-react/server-components/jsx-runtime` · `@nifrajs/web-react/server-components/nested` · `@nifrajs/web-react/server-components/outlet` · `@nifrajs/web-react/server-components/rsc`
+`@nifrajs/web-react` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/keep-alive` · `@nifrajs/web-react/ppr` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router` · `@nifrajs/web-react/server-components` · `@nifrajs/web-react/server-components/client` · `@nifrajs/web-react/server-components/guard` · `@nifrajs/web-react/server-components/jsx-dev-runtime` · `@nifrajs/web-react/server-components/jsx-runtime` · `@nifrajs/web-react/server-components/nested` · `@nifrajs/web-react/server-components/outlet` · `@nifrajs/web-react/server-components/rsc`
 
 ## Key exports
 
-- **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode` · from `@nifrajs/web-react/auth`
 - **Await** _(function)_ - `Await: <T>(props: AwaitProps<T>) => ReactNode` · from `@nifrajs/web-react/await`
 - **Content** _(function)_ - `Content: ({ html, as, ...rest }: ContentProps) => ReactElement` · from `@nifrajs/web-react/content`
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ReactNode` · from `@nifrajs/web-react/ppr`
@@ -28,8 +27,9 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("react").FunctionComponentElement<{ readon…` · from `@nifrajs/web-react/server-components/outlet`
 - **createReactComponentRenderer** _(function)_ - `createReactComponentRenderer: (components: readonly ServerComponentHandle[]) => (reference: string, props: unknown, context: ComponentRende…` · from `@nifrajs/web-react/server-components/rsc`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
+- **guardedClientElement** _(function)_ - `guardedClientElement: (type: unknown, raw: unknown, key?: unknown) => ReactNode | undefined` · from `@nifrajs/web-react/server-components/guard`
 
-_…and 78 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 72 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

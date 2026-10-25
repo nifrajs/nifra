@@ -130,6 +130,8 @@ export default function Images() {
         mark the LCP image with <code>priority</code> to get <code>eager</code> +{" "}
         <code>fetchpriority="high"</code>. Extra DOM props (<code>className</code>, <code>style</code>,{" "}
         <code>id</code>, <code>data-*</code>) pass straight through to the <code>&lt;img&gt;</code>.
+        Each adapter's <code>/image</code> entry takes <code>@nifrajs/image</code> as an optional
+        peer, so the app installs it beside the adapter.
       </p>
       <CodeBlock code={USAGE} />
       <p>

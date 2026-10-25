@@ -5331,7 +5331,7 @@ handlers and loaders) or guard with `requireAuthUser(request, config)` (returns
 the user, or throws a 401/redirect). The frontend half is a framework-agnostic client
 (`createAuthClient()` - session, sign-in, sign-out) plus
 `<AuthSessionProvider>` / `useAuthSession()` in
-`@nifrajs/web-react/auth`.
+`@nifrajs/authjs/react`.
 
 ```ts
 // doc-check: skip - needs `@auth/core` providers + AUTH_SECRET; install them to run this.
@@ -5359,7 +5359,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 // Frontend - any framework via the agnostic client, or React bindings:
 // import { createAuthClient } from "@nifrajs/authjs/client"
 // await createAuthClient().signIn("github")
-// import { AuthSessionProvider, useAuthSession } from "@nifrajs/web-react/auth"
+// import { AuthSessionProvider, useAuthSession } from "@nifrajs/authjs/react"
 ```
 
 Secrets resolve per request - explicit `secret`, then the `AUTH_SECRET`
@@ -5658,6 +5658,8 @@ loader at a CDN and the runtime stays tiny. Or self-host: the optional
 mark the LCP image with `priority` to get `eager` +
 `fetchpriority="high"`. Extra DOM props (`className`, `style`,
 `id`, `data-*`) pass straight through to the `<img>`.
+Each adapter's `/image` entry takes `@nifrajs/image` as an optional
+peer, so the app installs it beside the adapter.
 
 ```ts
 import { Image } from "@nifrajs/web-react/image"
@@ -6391,7 +6393,8 @@ portable core.
 
 - `<I18nProvider>` + `useT()` ship for **all five adapters**
 (React, Preact, Vue, Solid, Svelte) - import from `@nifrajs/web-<framework>/i18n`;
-each is a thin binding over the agnostic `createFormatter`.
+each is a thin binding over the agnostic `createFormatter`. `@nifrajs/i18n`
+is an optional peer of every adapter, so the app installs it beside the adapter.
 
 ## Nifra - Edge & bindings
 
@@ -16260,8 +16263,8 @@ export const app = server()
   mount's `authUrl`, `trustProxy` and `basePath` so the session is read where the mount serves it.
 - `requireAuthUser(req, config, { redirectTo? })` - returns the user or throws a 401/redirect.
 - `@nifrajs/authjs/client` - `createAuthClient()` (session, sign-in, sign-out) for any frontend.
-- `@nifrajs/web-react/auth` - `<AuthSessionProvider>` + `useAuthSession()`. This package is an optional
-  peer of `@nifrajs/web-react`, so install it in the app alongside.
+- `@nifrajs/authjs/react` - `<AuthSessionProvider>` + `useAuthSession()` over that client. `react`
+  is an optional peer; only this entry imports it.
 
 Auth.js itself does the security-critical work (PKCE, state, token verification); this package
 is the nifra-shaped surface over `@auth/core`. See `/docs/auth` (Auth.js section) for the full
