@@ -42,7 +42,7 @@ import {
   type VNode,
   watchEffect,
 } from "vue"
-import { pageNode } from "./compose.ts"
+import { ownProps, pageNode } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 import { PAGE_KEY, type PageSlot } from "./page-visibility.ts"
 import { PROPS_KEY, RouteContextProvider, SEARCH_KEY } from "./route-context.ts"
@@ -92,7 +92,10 @@ const pageChain = (chain: readonly unknown[], depth: number, props: RenderProps)
   return h(
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an entry between the layouts and the page is the `_error` boundary component
     chain[depth] as Component,
-    { data: props.layoutData?.[depth] ?? null, boundaries: props.boundaries },
+    ownProps(chain[depth], {
+      data: props.layoutData?.[depth] ?? null,
+      boundaries: props.boundaries,
+    }),
     { default: () => pageChain(chain, depth + 1, props) },
   )
 }
@@ -218,7 +221,10 @@ export function mountRouter(options: KeepAliveMountOptions): void {
             : h(
                 // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
                 chain[node.depth] as Component,
-                { data: props.layoutData?.[node.depth] ?? null, boundaries: props.boundaries },
+                ownProps(chain[node.depth], {
+                  data: props.layoutData?.[node.depth] ?? null,
+                  boundaries: props.boundaries,
+                }),
                 { default: () => h(Level, { nodes: node.children, parent: node.key }) },
               )
         }

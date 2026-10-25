@@ -21,7 +21,7 @@ import {
   shallowRef,
   type VNode,
 } from "vue"
-import { compose, pageNode } from "./compose.ts"
+import { compose, ownProps, pageNode } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 import { RouteContextProvider } from "./route-context.ts"
 
@@ -116,7 +116,10 @@ const levelOf = (component: unknown): Component => {
         shown = h(
           // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a chain entry above the page is a layout module's default export, a layout component
           component as Component,
-          { data: route.layoutData?.[props.depth] ?? null, boundaries: route.boundaries },
+          ownProps(component, {
+            data: route.layoutData?.[props.depth] ?? null,
+            boundaries: route.boundaries,
+          }),
           { default: slot, $stable: stable },
         )
         return shown
