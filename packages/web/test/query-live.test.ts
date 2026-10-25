@@ -1,5 +1,6 @@
 /** Queries with live keys: registration while mounted, refresh, the tick a fetch asked at, and clear. */
 import { afterEach, beforeEach, expect, test } from "bun:test"
+import { identityChanged } from "../src/identity.ts"
 import {
   advanceLiveTick,
   clearQueryClients,
@@ -246,6 +247,126 @@ test("a viewer switch clears every query client the page made, and no server-sid
   clearQueryClients()
   expect(mine.getQueryData(["k"])).toBeUndefined()
   expect(serverSide.getQueryData(["k"])).toBe("request-scoped")
+})
+
+test("identityChanged() clears every query client the page made, and no server-side one", () => {
+  const mine = createQueryClient({ now: () => 0 })
+  mine.setQueryData(["k"], "theirs")
+  Reflect.deleteProperty(globalThis, "window")
+  const serverSide = createQueryClient({ now: () => 0 })
+  serverSide.setQueryData(["k"], "request-scoped")
+  Reflect.set(globalThis, "window", globalThis)
+  identityChanged()
+  expect(mine.getQueryData(["k"])).toBeUndefined()
+  expect(serverSide.getQueryData(["k"])).toBe("request-scoped")
+})
+
+// A sign-in or sign-out response rotates the document's identity epoch, in a task of its own.
+const withEpoch = async (
+  run: (rotate: (epoch: string) => Promise<void>) => Promise<void>,
+): Promise<void> => {
+  const described = Object.getOwnPropertyDescriptor(globalThis, "document")
+  const cookies = { cookie: "nifra-epoch=one" }
+  Object.defineProperty(globalThis, "document", { value: cookies, configurable: true })
+  try {
+    await run(async (epoch) => {
+      await Promise.resolve()
+      cookies.cookie = `nifra-epoch=${epoch}`
+    })
+  } finally {
+    if (described === undefined) Reflect.deleteProperty(globalThis, "document")
+    else Object.defineProperty(globalThis, "document", described)
+  }
+}
+const firstPage = { initialPageParam: 0, getNextPageParam: () => undefined }
+
+test("a new identity epoch drops a client's data on its next read, and mounted queries refetch after it", async () => {
+  await withEpoch(async (rotate) => {
+    const c = createQueryClient({ now: () => 0 })
+    let who = "first"
+    const one = c.query(["me"], async () => who)
+    const feed = c.infiniteQuery(["feed"], async () => who, firstPage)
+    await Promise.all([one.fetch(), feed.fetch()])
+    c.hydrate({
+      queries: [],
+      infiniteQueries: [
+        { key: ["seeded"], data: { pages: ["first"], pageParams: [0] }, updatedAt: 0 },
+      ],
+    })
+    let told = 0
+    const offs = [one.subscribe(() => told++), feed.subscribe(() => told++)]
+    who = "second"
+    await rotate("two")
+    // Read while a component renders: its subscribers hear once the render is over.
+    expect(c.getQueryData(["me"])).toBeUndefined()
+    expect([one.snapshot().status, feed.snapshot().status, told]).toEqual(["pending", "pending", 0])
+    expect(c.infiniteQuery(["seeded"], async () => who, firstPage).snapshot().status).toBe(
+      "pending",
+    )
+    await flush()
+    expect(told).toBeGreaterThan(0)
+    expect([one.snapshot().data, feed.snapshot().data?.pages]).toEqual(["second", ["second"]])
+    for (const off of offs) off()
+  })
+})
+
+test("a fetch in flight when the epoch changes never publishes", async () => {
+  await withEpoch(async (rotate) => {
+    const c = createQueryClient({ now: () => 0 })
+    const g = gated()
+    const handle = c.query(["me"], g.fn)
+    const off = handle.subscribe(() => {})
+    void handle.fetch()
+    await rotate("two")
+    c.query(["me"], g.fn)
+    g.resolve(0, "first")
+    await flush()
+    expect(handle.snapshot().data).toBeUndefined()
+    g.resolve(1, "second")
+    await flush()
+    expect(handle.snapshot().data).toBe("second")
+    off()
+  })
+})
+
+test("a held handle's read after a new epoch shows the fetch it starts, which the mounted refetch joins", async () => {
+  await withEpoch(async (rotate) => {
+    const c = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
+    const g = gated()
+    const one = c.query(["me"], g.fn)
+    const feed = c.infiniteQuery(["feed"], g.fn, firstPage)
+    const offs = [one.subscribe(() => {}), feed.subscribe(() => {})]
+    void one.fetch()
+    void feed.fetch()
+    g.resolve(0, "first")
+    g.resolve(1, "first")
+    await flush()
+    await rotate("two")
+    void one.fetch()
+    void feed.fetch()
+    await flush()
+    expect([one.snapshot(), feed.snapshot()].map((s) => [s.status, s.isFetching])).toEqual([
+      ["pending", true],
+      ["pending", true],
+    ])
+    expect(g.calls()).toBe(4)
+    g.resolve(2, "second")
+    g.resolve(3, "second")
+    await flush()
+    expect([one.snapshot().data, feed.snapshot().data?.pages]).toEqual(["second", ["second"]])
+    for (const off of offs) off()
+  })
+})
+
+test("a handle kept past its last subscriber reads nothing of the previous visitor", async () => {
+  const c = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
+  let who = "first"
+  const held = c.query(["me"], async () => who)
+  await held.fetch()
+  c.clear()
+  who = "second"
+  expect(held.snapshot().status).toBe("pending")
+  expect(await held.fetch()).toBe("second")
 })
 
 test("the registry lets go of query clients the page dropped", async () => {
