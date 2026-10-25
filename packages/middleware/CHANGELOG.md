@@ -1,5 +1,57 @@
 # @nifrajs/middleware
 
+## 5.7.0
+
+### Minor Changes
+
+- b141cf4: A stop now tells the load balancer before it drains. `app.onStopping(fn)` runs as `stop()` begins,
+  before in-flight requests drain, and `stop({ delayMs })` (or `gracefulSignals: { delayMs }`, and
+  `signals: { delayMs }` on the Node and Deno adapters) keeps serving that long first, so a balancer
+  polling readiness takes the instance out of rotation while it still answers. `onStop` hooks run after
+  the drain as before, on Node and Deno too.
+  
+  `healthcheck()` readiness is reworked for production probes:
+  
+  - `/ready` answers `503 { status: "stopping" }` from the moment a stop begins, without running a
+    check.
+  - Each check gets an `AbortSignal` and a timeout (`timeoutMs`, default 2 s, settable per check), and
+    reports `timeout` past it.
+  - A check is never called again while an earlier call still runs, probes arriving during a run share
+    it, and a finished run answers probes for `cacheMs` (default 1 s).
+  - A check marked `optional: true` reports `degraded` and keeps `/ready` at `200`.
+  - A check moving between passing and failing is logged once each way (`logger`, default
+    `jsonLogger()`).
+  
+  The `/ready` body changes shape: each check is now `{ status: "pass" | "fail" | "timeout", ms }`
+  (plus `optional: true`) where it was a boolean, and the top-level `status` can also be `degraded` or
+  `stopping`. A monitor that reads the body rather than the status code needs updating.
+  
+  `nifra doctor` counts an `onStopping` hook as graceful-shutdown handling.
+- 281cd38: A rate limit `key`, on `rateLimit`, on `rateLimitTiers` or on one tier, may now return a promise, so a
+  bucket can follow a session whose signed cookie is verified with WebCrypto first. A key that throws or
+  rejects is charged to the client IP the default key derives, so an unverified cookie never mints a
+  bucket of its own; with no client IP either, the request is refused with a `500`, as an unkeyable
+  request already was. A key that returns a string is not awaited.
+  
+  `rateLimitTiers` no longer requires a `floor`. Without one, a request no tier claims is not charged and
+  carries no `RateLimit-*` headers, for apps whose edge or shell already applies a base limit. Its
+  rate-limit route evidence then covers only the routes under a tier. A limiter with neither a floor nor
+  a tier is refused when it is built.
+- b141cf4: `logger()` logs the matched route template as `path` (`/share/:token`, never `/share/9f2c...`), so
+  ids and tokens a URL carries stay out of request logs. A request no route matched logs its pathname;
+  `rawPath: true` logs the pathname always. The query string is never logged.
+  
+  `routeTemplateOf(app)` is exported from `@nifrajs/core/server` for any plugin that labels requests by
+  route; `@nifrajs/otel` tracing now uses it.
+
+### Patch Changes
+
+- Updated dependencies [a97b081]
+- Updated dependencies [d083ad2]
+- Updated dependencies [25f97c2]
+- Updated dependencies [0e59830]
+  - @nifrajs/schema@5.7.0
+
 ## 5.6.0
 
 ### Minor Changes

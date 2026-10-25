@@ -1,5 +1,47 @@
 # @nifrajs/web-react
 
+## 5.7.0
+
+### Minor Changes
+
+- 86a62c0: `@nifrajs/image` and `@nifrajs/i18n` are optional peers of every UI adapter rather than
+  dependencies, so an app installs them only when it imports the adapter's `/image` or `/i18n` entry.
+  An app that imports either entry adds the matching package beside the adapter; one that already
+  imports it directly, as the image and i18n guides show, needs nothing more.
+- 02bfd9b: `<AuthSessionProvider>` and `useAuthSession()` move from `@nifrajs/web-react/auth` to
+  `@nifrajs/authjs/react`, so the React adapter no longer depends on Auth.js in any form and Auth.js
+  carries its own framework bindings. `react` is an optional peer of `@nifrajs/authjs`; only the
+  `/react` entry imports it. `nifra upgrade` rewrites the import.
+
+### Patch Changes
+
+- 0bdbffb: `@nifrajs/web-react` no longer depends on `@nifrajs/schema`. Its one use was the props schema of the
+  nested server-component host, which is now a closed Standard Schema written out by hand, so a React
+  app no longer installs `@nifrajs/schema` and TypeBox unless it uses them.
+- Updated dependencies [0a29798]
+- Updated dependencies [b141cf4]
+- Updated dependencies [a97b081]
+- Updated dependencies [0a29798]
+- Updated dependencies [0a29798]
+- Updated dependencies [25f97c2]
+- Updated dependencies [22df027]
+- Updated dependencies [b3d8ac9]
+- Updated dependencies [b141cf4]
+- Updated dependencies [25f97c2]
+- Updated dependencies [67d82f1]
+- Updated dependencies [e7479fe]
+- Updated dependencies [d083ad2]
+- Updated dependencies [25f97c2]
+- Updated dependencies [b141cf4]
+- Updated dependencies [b795cd9]
+- Updated dependencies [a57b75c]
+- Updated dependencies [911204f]
+- Updated dependencies [911204f]
+- Updated dependencies [0e59830]
+- Updated dependencies [911204f]
+  - @nifrajs/web@5.7.0
+  - @nifrajs/core@5.7.0
+
 ## 5.6.0
 
 ### Minor Changes

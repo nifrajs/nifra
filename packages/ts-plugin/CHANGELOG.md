@@ -1,5 +1,33 @@
 # @nifrajs/ts-plugin
 
+## 5.7.0
+
+### Patch Changes
+
+- Updated dependencies [0a29798]
+- Updated dependencies [b141cf4]
+- Updated dependencies [a97b081]
+- Updated dependencies [0a29798]
+- Updated dependencies [0a29798]
+- Updated dependencies [25f97c2]
+- Updated dependencies [22df027]
+- Updated dependencies [b3d8ac9]
+- Updated dependencies [b141cf4]
+- Updated dependencies [25f97c2]
+- Updated dependencies [67d82f1]
+- Updated dependencies [e7479fe]
+- Updated dependencies [d083ad2]
+- Updated dependencies [25f97c2]
+- Updated dependencies [b141cf4]
+- Updated dependencies [b795cd9]
+- Updated dependencies [a57b75c]
+- Updated dependencies [911204f]
+- Updated dependencies [911204f]
+- Updated dependencies [0e59830]
+- Updated dependencies [911204f]
+  - @nifrajs/web@5.7.0
+  - @nifrajs/core@5.7.0
+
 ## 5.6.0
 
 ### Patch Changes

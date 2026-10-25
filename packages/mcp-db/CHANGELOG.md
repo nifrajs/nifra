@@ -1,5 +1,12 @@
 # @nifrajs/mcp-db
 
+## 5.7.0
+
+### Patch Changes
+
+- 25f97c2: Stop retaining finalized or abandoned SQLite statements for the lifetime of read-only connections, while continuing to finalize live statements on close.
+- @nifrajs/mcp@5.7.0
+
 ## 5.6.0
 
 ### Patch Changes

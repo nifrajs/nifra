@@ -1,5 +1,98 @@
 # @nifrajs/core
 
+## 5.7.0
+
+### Minor Changes
+
+- b141cf4: A stop now tells the load balancer before it drains. `app.onStopping(fn)` runs as `stop()` begins,
+  before in-flight requests drain, and `stop({ delayMs })` (or `gracefulSignals: { delayMs }`, and
+  `signals: { delayMs }` on the Node and Deno adapters) keeps serving that long first, so a balancer
+  polling readiness takes the instance out of rotation while it still answers. `onStop` hooks run after
+  the drain as before, on Node and Deno too.
+  
+  `healthcheck()` readiness is reworked for production probes:
+  
+  - `/ready` answers `503 { status: "stopping" }` from the moment a stop begins, without running a
+    check.
+  - Each check gets an `AbortSignal` and a timeout (`timeoutMs`, default 2 s, settable per check), and
+    reports `timeout` past it.
+  - A check is never called again while an earlier call still runs, probes arriving during a run share
+    it, and a finished run answers probes for `cacheMs` (default 1 s).
+  - A check marked `optional: true` reports `degraded` and keeps `/ready` at `200`.
+  - A check moving between passing and failing is logged once each way (`logger`, default
+    `jsonLogger()`).
+  
+  The `/ready` body changes shape: each check is now `{ status: "pass" | "fail" | "timeout", ms }`
+  (plus `optional: true`) where it was a boolean, and the top-level `status` can also be `degraded` or
+  `stopping`. A monitor that reads the body rather than the status code needs updating.
+  
+  `nifra doctor` counts an `onStopping` hook as graceful-shutdown handling.
+- a97b081: A `bigint` in a JSON answer is written as its decimal string, `{ "id": "9007199254740993" }`, on every
+  runtime and lane: a returned value, `status(...)`, `c.json(...)`, an SSE event, the plain transport
+  codec and `@nifrajs/edge`. A route returning one used to answer a 500. The typed client reads such a
+  field as `string` (it was typed as absent), and `nifra openapi` describes it as a string of digits.
+  
+  `t.bytes()` declares a response field filled with a `Uint8Array` or a `Buffer`. A route whose
+  `response` or `errors` declares one writes every `Uint8Array` in its answer as base64, the typed client
+  reads a `string`, the document says `{ type: "string", contentEncoding: "base64" }`, and a mock fills
+  it with valid base64. A request or `sse` schema that declares it is refused at registration with
+  `RouteConfigError` `RESPONSE_ONLY_SCHEMA`. The step is `withBase64Bytes` from `@nifrajs/core/binary`,
+  for a hand-written schema too. A `Uint8Array` on a route without the field is still the
+  `{ "0": 1, ... }` object `JSON.stringify` writes (a `BigInt64Array`'s entries as decimal strings), and a
+  Node `Buffer` the `{ "type": "Buffer", "data": [...] }` its `toJSON` writes; the client and
+  `nifra openapi` now describe each as written. A hook that answers in the handler's place (a
+  `beforeHandle` that answers first, an `afterHandle` that replaces the answer, an `onError`) has its
+  bytes written as base64 too.
+- d083ad2: `toOpenAPI`, `buildOpenApiDocument` and the `openapi()` plugin list every error the framework answers
+  itself, as the shared `NifraError` component: `500` on every route, `404` on a path whose parameter
+  has a pattern a value can miss, and `429` with a `Retry-After` header where `rateLimit()` covers the
+  route, beside the `400`/`413`/`415`/`422` they already listed. A route's own `errors` schema for a
+  status still wins, which is where an app whose `onError` or `notFound()` writes another body declares
+  it.
+  
+  A query list is declared as `style: form, explode: true`, the repeated keys the parser reads
+  (`?tag=a,b` is the one value `"a,b"`). A boolean read by `t.query`, `t.headers` or `t.cookies` lists
+  the text it accepts (`true`/`1`, `false`/`0`/`-0`, either case) as `x-nifra-boolean-literals`; a schema
+  that does not coerce lists none. `reflectSchema` and the project evidence snapshot record such a schema
+  as `coerces: true`, so a document built from evidence matches one built from the app.
+  
+  `nifra check` adds NF-C054 (info): in a project that builds its document from the running routes
+  (`openapi()`, `buildOpenApiDocument`, `toOpenAPI`), a route registered without a `response` schema,
+  which the document can only describe as a `200` with no body type. Declare the schema, build the
+  document with `nifra openapi`, or mark the route with `// nifra-expect NF-C054: <reason>`.
+- b141cf4: `logger()` logs the matched route template as `path` (`/share/:token`, never `/share/9f2c...`), so
+  ids and tokens a URL carries stay out of request logs. A request no route matched logs its pathname;
+  `rawPath: true` logs the pathname always. The query string is never logged.
+  
+  `routeTemplateOf(app)` is exported from `@nifrajs/core/server` for any plugin that labels requests by
+  route; `@nifrajs/otel` tracing now uses it.
+- 0e59830: A `t.object` in a route's `query`, `headers` or `cookies` slot converts the text it receives to the
+  types it declares, as `t.query`, `t.headers` and `t.cookies` do: `?archived=true` is `true` and
+  `?page=2` is `2`, where both were a 422. It stays closed, a `body` slot still converts nothing, and a
+  schema compiled with `compileSchema` reads the same text as its source. The OpenAPI document lists
+  the boolean literals such a field accepts. Core takes the converting form a schema offers under
+  `Symbol.for("nifra.schema.textSlot")` on its `validate`, so it ships no conversion code.
+  
+  `nifra check` adds NF-C055 (warn): zod's `z.coerce.boolean()` in a route's `query`, `headers` or
+  `cookies` schema. It is `Boolean(value)`, so `"false"` and `"0"` read as `true`; `z.stringbool()`
+  reads them as false and refuses text it does not know.
+
+### Patch Changes
+
+- b3d8ac9: Skip unused response-body bookkeeping on general JSON routes without response hooks. In-process clients still enable the resident-body record, and response ownership checks remain unchanged.
+- 25f97c2: Preserve authenticated-request metadata when stripping mount prefixes, including WebSocket-to-HTTP request reuse, so child response caches cannot share custom-credential responses across users. Keep mount authentication refusals terminal even when their status is 404 and child-miss fallthrough is enabled, for both HTTP and WebSockets.
+- a57b75c: A linked package's CommonJS file that has no counterpart in the app's copy keeps its exports under
+  single-copy. The registrar used to hand the file back to Bun as source, which loaded it as an ES
+  module, so both `require()` and `import` saw no exports. A bundle now loads such a file itself, and
+  the runtime loads it natively through a re-export of the file.
+- 911204f: `nifra check` and `nifra doctor` no longer call a single-copy declaration enforced when `bunfig.toml`
+  preloads the registrar for only one of `bun run` and `bun test`. Each finding lists the commands that
+  still load both copies, and the report names a `preload` line written below a table such as
+  `[install]`, where Bun reads it as that table's key. When `@nifrajs/core` loads twice in a process
+  where no single-copy registrar ran, its warning says so.
+- 911204f: The single-copy registrar's version-skew warning says the second copy is installed, not that it
+  loads. It is computed from the installed trees, so it also appears for a package nothing imports.
+
 ## 5.6.0
 
 ### Minor Changes

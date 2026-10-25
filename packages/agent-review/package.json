@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/agent-review",
-  "version": "5.6.0",
+  "version": "5.7.0",
   "description": "A bounded, content-free review report contract for Nifra tooling.",
   "keywords": [
     "bun",

@@ -1,5 +1,94 @@
 # @nifrajs/web
 
+## 5.7.0
+
+### Minor Changes
+
+- b141cf4: The live runtime is easier to operate:
+  
+  - `live.status()` reports whether the runtime is ready, whether the bus is down and since when, open
+    sockets, live loads, bus events applied, sockets notified, and the last publish lag; `live.close()` ends every socket with `1001` and stops reading the bus.
+    Call it in `onStop` before closing your Redis clients.
+  - A `logger` option (default `jsonLogger()`) logs the bus going down and coming back, events lost
+    before this process read them, and publishes not read back.
+  - `redisLiveBus()` takes `read` as optional: a process that only publishes passes `send` alone, and
+    `livePublisher(bus)` gives it a validated `publish(...keys)`. Subscribing without `read` throws.
+  - A server-rendered page now carries a short-lived seed grant, so the page no longer runs its loaders
+    a second time when its live socket opens: the socket exchanges the seed for a grant bound to it,
+    re-checking gates. Pages under partial prerendering, server-component routes and Workers hub mode
+    keep the full first load.
+  
+  A page polling while its socket is down now reloads all its data on every poll; before, every poll
+  after the first kept stale owners and never refreshed them.
+
+### Patch Changes
+
+- 0a29798: An app run by `nifra dev` and `nifra build` names its sign-in cookies for kept pages by exporting
+  `keepAlive` from `backend/framework.ts`, like the other `createWebApp` options there. The dev server,
+  the generated server entry, the static prerender, `nifra mcp`'s render tool and the hydration gate all
+  pass it to `createWebApp`, and a value of the wrong shape is refused at load. The
+  `NIFRA_KEEPALIVE_IDENTITY_COOKIE` report and `nifra doctor` point at that export.
+- 0a29798: A Better Auth session cookie counts as a sign-in cookie for kept pages under any
+  `advanced.cookiePrefix`, so a sign-in or sign-out through `<prefix>.session_token` rotates the identity
+  epoch, and its `session_data` and `dont_remember` cookies are never reported. An app's own
+  `keepAlive.ignoreCookies` entry outranks the suffix. `nifra doctor` notes keep-alive routes in an app
+  whose source renames a session cookie outright (Better Auth's `advanced.cookies.session_token.name`,
+  Auth.js's `cookies.sessionToken.name`, `cookieName`) without naming it in `identityCookies`.
+- 0a29798: The development-only keep-alive checks run in a Vite dev browser: `window.__nifraKeepAlive` for the
+  devtools kept-pages list, the kept views it counts, and the `NIFRA_KEEPALIVE_DIRECT_CHILD_CSS` report.
+  They read `process.env.NODE_ENV`, which every bundler replaces, without first asking for a `process`
+  global the browser does not have.
+- 25f97c2: Prevent keep-alive from retaining the active visitor's data after an explicit bearer-auth identity change, including cross-tab signals. Freshly loaded data can be kept again without changing the identity cookie.
+  
+  Release an unrelated invalidation's load identity when it settles, without clearing a newer load's capture, so later fresh pages remain keepable.
+- 22df027: A page Back restores from keep-alive is kept again only under the visitor it was restored for. Before,
+  when the epoch cookie changed while the restored page's reload was in flight (a sign-in or sign-out
+  in another tab whose signal had not reached this one yet), the page took the new epoch: leaving it
+  kept the previous visitor's data, from the late reload or from the kept response a failed reload
+  falls back to, and Back showed it to the new visitor.
+- 67d82f1: A client navigation starts loading the moment it is made, and only the page swap runs inside the view
+  transition. Before, the whole navigation ran inside `document.startViewTransition`, whose callback
+  waits for a frame: the data request left a frame late, the page stopped painting until the data
+  arrived (pending and `_loading` UI included), and a page that drew no frames while reporting itself
+  visible, such as an occluded window, changed its URL and never showed the new page. Back during such
+  a navigation then started the stalled navigation after it and wrote its URL into the entry Back
+  landed on. The swap now waits at most 100 ms for a frame before skipping the animation, and a swap a
+  newer navigation has superseded does nothing.
+  
+  A navigation that a newer one supersedes settles quietly, as a superseded submit already did. Before,
+  the newer navigation aborting its data request rejected it, and the history layer loaded the
+  superseded page as a document: clicking a second link while the first one's data loaded ended on the
+  first page.
+- e7479fe: A production server bundle checks NODE_ENV at build time, not on each request, in partial prerendering,
+  the Vue adapter's streamed render and the Solid adapter's error serialization. On Node each such read
+  went to the process environment.
+- 25f97c2: Revive tagged Dates in streamed PPR interactive props and signed shared-cache entries. Cached server data keeps its tagged JSON representation so blocking renders and subsequent browser responses preserve Dates across processes.
+  
+  Treat a signed cache entry containing an invalid Date tag as a cache miss instead of allowing it to fail during response serialization.
+- b795cd9: A React server components build no longer prints a `MODULE_LEVEL_DIRECTIVE` warning for every
+  `"use client"` module in its client and SSR bundles. Only the RSC build acts on the directive, so the
+  client and SSR builds now drop it before bundling.
+- 911204f: `nifra check` and `nifra doctor` no longer call a single-copy declaration enforced when `bunfig.toml`
+  preloads the registrar for only one of `bun run` and `bun test`. Each finding lists the commands that
+  still load both copies, and the report names a `preload` line written below a table such as
+  `[install]`, where Bun reads it as that table's key. When `@nifrajs/core` loads twice in a process
+  where no single-copy registrar ran, its warning says so.
+- 911204f: `notFound`, `gone` and `statusPage` are also exported from `@nifrajs/web/client`. A route helper that
+  the browser loads too can import them there, so Vite's dev server no longer sends it the root entry
+  and its `node:crypto` import.
+- Updated dependencies [b141cf4]
+- Updated dependencies [a97b081]
+- Updated dependencies [b3d8ac9]
+- Updated dependencies [25f97c2]
+- Updated dependencies [d083ad2]
+- Updated dependencies [b141cf4]
+- Updated dependencies [a57b75c]
+- Updated dependencies [911204f]
+- Updated dependencies [911204f]
+- Updated dependencies [0e59830]
+  - @nifrajs/core@5.7.0
+  - @nifrajs/island-trigger@5.7.0
+
 ## 5.6.0
 
 ### Minor Changes
