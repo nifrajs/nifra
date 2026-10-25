@@ -2511,6 +2511,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **markIdempotencySafeToRetry** _(function)_ - `markIdempotencySafeToRetry: (context: object) => void`
   Opt a concrete 5xx response into releasing its idempotency reservation, but only while the request-local effect scope still proves that no owned effect began.
 
+### `@nifrajs/core/idle-timeout`
+
+- **withIdleTimeout** _(function)_ - `withIdleTimeout: <T>(c: Context, seconds: number, work: () => MaybePromise<T>) => MaybePromise<T>`
+  Run `work` with the idle timeout of the request's connection set to `seconds` (`0` turns it off), then put back the listener's.
+
 ### `@nifrajs/core/ledger`
 
 - **CreateRequestLedgerOptions** _(interface)_ - `interface CreateRequestLedgerOptions`

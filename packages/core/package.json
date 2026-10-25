@@ -255,6 +255,11 @@
       "types": "./dist/server/body-parser.d.ts",
       "default": "./dist/server/body-parser.js"
     },
+    "./idle-timeout": {
+      "bun": "./src/server/idle-timeout.ts",
+      "types": "./dist/server/idle-timeout.d.ts",
+      "default": "./dist/server/idle-timeout.js"
+    },
     "./methods": {
       "bun": "./src/server/methods.ts",
       "types": "./dist/server/methods.d.ts",

@@ -278,7 +278,12 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // effect-ledger 40,440 -> 40,468, sse 39,282 -> 39,315, mcp 38,694 -> 38,714, valibot 39,399 ->
   // 39,425, typebox-t 65,376 -> 65,416, typebox-form 70,358 -> 70,396 (Bun 1.4.4); each crossed cap
   // takes the next 0.1 KiB step.
-  "nifra-bare": 37.6,
+  // A Bun request's idle-timeout control for `withIdleTimeout()`, and the per-request Bun platform
+  // built as a class: bare 38,453 -> 38,566 B, idempotency 42,850 -> 42,978, effect-ledger 40,468 ->
+  // 40,592, sse 39,315 -> 39,435, mcp 38,714 -> 38,842, valibot 39,425 -> 39,550, typebox-t 65,416 ->
+  // 65,557, typebox-form 70,396 -> 70,526 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step
+  // that fits.
+  "nifra-bare": 37.7,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -287,15 +292,15 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
-  "nifra-idempotency": 41.9,
-  "nifra-effect-ledger": 39.6,
-  "nifra-mcp": 37.9,
+  "nifra-idempotency": 42.0,
+  "nifra-effect-ledger": 39.7,
+  "nifra-mcp": 38.0,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.4,
-  "nifra-valibot": 38.6,
-  "nifra-typebox-t": 63.9,
+  "nifra-sse": 38.6,
+  "nifra-valibot": 38.7,
+  "nifra-typebox-t": 64.1,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 68.8,
+  "nifra-typebox-form": 68.9,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
