@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
 import type { RenderProps, RouterState } from "@nifrajs/web"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import { createSSRApp, defineComponent, h } from "vue"
 import { renderToString } from "vue/server-renderer"
 import { compose } from "../src/compose.ts"
-import { routeProps } from "../src/route-props.ts"
 import { useMatches } from "../src/router.ts"
 
 /** Renders what `useMatches` reports, from wherever it sits in the chain. */
