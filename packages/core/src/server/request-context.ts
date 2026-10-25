@@ -12,6 +12,8 @@ import type { Platform } from "./context.ts"
 import { type CookieOptions, cookieNamePrefix, parseCookies, serializeCookie } from "./cookies.ts"
 import { headerObjectOf } from "./headers.ts"
 import { plainError } from "./http.ts"
+import { jsonResponse } from "./json-response.ts"
+import { jsonText } from "./json-text.ts"
 import type { ProtoPoisoning } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
 import { residentText, responseJsonContentType } from "./respond.ts"
@@ -342,14 +344,14 @@ export class RequestContext implements RawContext {
       // (`undefined`, a function, a symbol) - exactly the case where `Response.json` throws, so it
       // gets the throw rather than an invented body. The content-type is the runtime's own, read
       // off `Response.json` once, so a deferred response carries the same one byte for byte.
-      const text = defer === undefined ? undefined : (JSON.stringify(body) as string | undefined)
+      const text = defer === undefined ? undefined : (jsonText(body) as string | undefined)
       const headers =
         text === undefined ? undefined : ownHeaderRecord(i?.headers, responseJsonContentType())
       if (defer !== undefined && text !== undefined && headers !== undefined) {
         reply = defer(text, i?.status ?? 200, headers)
       }
     }
-    reply ??= markResidentBody(Response.json(body, i))
+    reply ??= markResidentBody(jsonResponse(body, i))
     // Remembered so a response contract holds the value to the route's schema: this is the
     // framework's JSON helper, not a raw-Response escape hatch.
     this.jsonBody = body

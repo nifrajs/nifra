@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url"
 import { FastResponse } from "srvx/node"
 import { type BodyReadState, NodeBodyRead } from "./body-read.ts"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
+import { jsonText } from "./generated/json-text.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { type ByteRange, parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
@@ -290,7 +291,7 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
           body:
             plain.body === undefined || isBodylessStatus(plain.status)
               ? null
-              : JSON.stringify(plain.body),
+              : jsonText(plain.body),
         }
       }
       const body = result.toNodeBody?.()
@@ -309,7 +310,7 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
       return nodeOutcomeFromResponse(applySetToResponse(result, set))
     }
     const status = set.status ?? (result === undefined ? 204 : 200)
-    const body = result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result)
+    const body = result === undefined || isBodylessStatus(status) ? null : jsonText(result)
     return {
       kind: "json",
       status,
@@ -627,9 +628,7 @@ function nodeOutcomeFromResponse(result: Response | NodeResponseResult): NodeSer
         headers: plain.headers === undefined ? undefined : { ...plain.headers },
         cookies: undefined,
         body:
-          plain.body === undefined || isBodylessStatus(plain.status)
-            ? null
-            : JSON.stringify(plain.body),
+          plain.body === undefined || isBodylessStatus(plain.status) ? null : jsonText(plain.body),
       }
     }
     return nodeOutcomeFromResponse(result.toResponse())

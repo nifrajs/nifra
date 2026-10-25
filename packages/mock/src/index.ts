@@ -356,6 +356,8 @@ export function generateMockValue(
 
   switch (type) {
     case "string": {
+      // A `t.bytes()` field: the base64 of "mock", so a client that decodes it gets bytes back.
+      if (raw.contentEncoding === "base64") return constrainedString(raw, "bW9jaw==", fieldName)
       const format = raw.format as string | undefined
       switch (format) {
         case "email":

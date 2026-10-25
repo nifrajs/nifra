@@ -50,6 +50,7 @@ const StoredItem = t.object({
 const PublicUser = t.object({ id: t.string(), name: t.string() })
 // A constraint only the runtime check sees, so the handler compiles and still breaks its contract.
 const Badge = t.object({ code: t.string({ minLength: 4 }) })
+const BytesFile = t.object({ name: t.string(), data: t.bytes() })
 
 /** A stand-in for a database row: the response contract must strip the columns it does not declare. */
 function userRow(id: string) {
@@ -89,6 +90,12 @@ export function createDifferentialApp(options: DifferentialAppOptions = {}) {
     .get("/users/:id/posts/:post", (c) => ({ user: c.params.id, post: c.params.post }))
     .get("/files/*rest", (c) => ({ rest: c.params.rest }))
     .get("/whoami", (c) => ({ caller: c.caller }))
+    // JSON has no bigint or bytes: a bigint is its decimal string, a `t.bytes()` field base64.
+    .get("/ids", () => ({ id: 9007199254740993n, ids: [1n, -2n] }))
+    .get("/bytes", { response: BytesFile }, () => ({
+      name: "a.bin",
+      data: new Uint8Array([0, 1, 2, 250, 255]),
+    }))
     .get(
       "/headers",
       { headers: t.headers({ "x-count": t.integer({ minimum: 0, maximum: 9 }) }) },

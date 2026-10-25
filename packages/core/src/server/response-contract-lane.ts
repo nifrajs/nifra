@@ -59,6 +59,7 @@ import {
   type StandardSchemaV1,
 } from "../schema/standard.ts"
 import { INSTALL_RESPONSE_CONTRACT } from "./install.ts"
+import { jsonText } from "./json-text.ts"
 import type { IdentityPlugin } from "./plugin.ts"
 import { isResponseResult, status } from "./runtime-core.ts"
 import type { AnyServer } from "./server.ts"
@@ -546,7 +547,7 @@ const schemaFor = (definition: ResponseContractDefinition, code: number) =>
 function reserialize(reply: Response, value: unknown): Response {
   const headers = new Headers(reply.headers)
   headers.delete("content-length")
-  return new Response(JSON.stringify(value), {
+  return new Response(jsonText(value), {
     status: reply.status,
     statusText: reply.statusText,
     headers,

@@ -111,6 +111,11 @@ route. Split groups before the compiler reports `TS2589`, rather than weakening 
 - **Bounded reconciliation workers.** `@nifrajs/core/reconciliation-worker` runs effect or saga
   scans under an atomic lease with durable cursor checkpoints, a finite page budget, bounded handler
   concurrency, filters, cancellation, and token-only metrics. A worker invocation always terminates.
+- **`bigint` in plain JSON.** A JSON answer writes a `bigint` as its decimal string
+  (`{ "id": "9007199254740993" }`) instead of failing with a 500, and the typed client reads a
+  `string`. A `Uint8Array` is base64 only where the response schema declares `t.bytes()` from
+  `@nifrajs/schema`; elsewhere it is the `{ "0": 1, ... }` object `JSON.stringify` writes, and a
+  Node `Buffer` is the `{ "type": "Buffer", "data": [...] }` its `toJSON` writes.
 - **Rich wire values (opt in).** `@nifrajs/core/wire` round-trips dates, bigints, maps, sets, binary,
   shared references, and cycles through JSON transports. Decoding validates every reachable shape,
   preserves owned `__proto__` keys without prototype mutation, and enforces configurable node, depth,

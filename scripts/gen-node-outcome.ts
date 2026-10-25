@@ -23,6 +23,8 @@ const STATIC_FILE_SOURCE = "packages/core/src/static-file.ts"
 const STATIC_FILE_TARGET = "packages/node/src/generated/static-file.ts"
 const RANGE_SOURCE = "packages/core/src/range.ts"
 const RANGE_TARGET = "packages/node/src/generated/range.ts"
+const JSON_TEXT_SOURCE = "packages/core/src/server/json-text.ts"
+const JSON_TEXT_TARGET = "packages/node/src/generated/json-text.ts"
 
 function parse(sourcePath: string): ts.SourceFile {
   return ts.createSourceFile(
@@ -109,6 +111,11 @@ export function generateRange(root: string = ROOT): string {
   return copyImportFree(root, RANGE_SOURCE, "parses byte ranges")
 }
 
+/** The JSON writer, so a `bigint` in an answer the adapter writes is the same decimal string. */
+export function generateJsonText(root: string = ROOT): string {
+  return copyImportFree(root, JSON_TEXT_SOURCE, "writes JSON")
+}
+
 const ARTIFACTS: readonly { readonly target: string; readonly render: (root: string) => string }[] =
   [
     { target: OUTCOME_TARGET, render: generateNodeOutcomeContract },
@@ -116,6 +123,7 @@ const ARTIFACTS: readonly { readonly target: string; readonly render: (root: str
     { target: TARGET_TARGET, render: generateRequestTarget },
     { target: STATIC_FILE_TARGET, render: generateStaticFile },
     { target: RANGE_TARGET, render: generateRange },
+    { target: JSON_TEXT_TARGET, render: generateJsonText },
   ]
 
 /** The generated files under `root` whose content differs from what this generator writes. */
@@ -145,7 +153,7 @@ if (import.meta.main) {
     console.log("✓ @nifrajs/node outcome contract is current")
   } else {
     console.log(
-      "Generated @nifrajs/node outcome contract, bridge markers, request-target resolver, static-file policy + range parser.",
+      "Generated @nifrajs/node outcome contract, bridge markers, request-target resolver, static-file policy, range parser + JSON writer.",
     )
   }
 }

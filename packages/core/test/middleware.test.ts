@@ -2,6 +2,13 @@ import { describe, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server, silentLogger } from "@nifrajs/core"
 
+/** A value `JSON.stringify` throws on. */
+function cyclic(): Record<string, unknown> {
+  const node: Record<string, unknown> = {}
+  node.self = node
+  return node
+}
+
 const limitQuery: StandardSchemaV1<unknown, { limit: string }> = {
   "~standard": {
     version: 1,
@@ -96,7 +103,7 @@ describe("lifecycle hooks", () => {
 
     const bad = server({ logger: silentLogger })
       .beforeHandle(() => undefined)
-      .get("/bad", () => 1n)
+      .get("/bad", () => cyclic())
     const error = await bad.fetch(new Request("http://x/bad"))
     expect(error.status).toBe(500)
     expect(await error.json()).toEqual({ ok: false, error: "internal_error" })
