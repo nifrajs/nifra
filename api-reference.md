@@ -2190,7 +2190,6 @@ Every public export of every package and documented subpath - name, kind, signat
 - **BoundDataPort** _(interface)_ - `interface BoundDataPort<Contract extends DataContract>`
   A data port bound to one request context; every operation emits capability evidence first.
 - **DATA_CAPABILITIES** _(const)_ - `DATA_CAPABILITIES: Readonly<{ readonly read: "db.read"; readonly write: "db.write"; }>`
-  Public, token-only data access contracts. Durable adapters and RLS policy enforcement stay outside this package; this subpath defines the typed seam they implement.
 - **DataAccess** _(type)_ - `type DataAccess = keyof typeof DATA_CAPABILITIES`
 - **DataCapability** _(type)_ - `type DataCapability = (typeof DATA_CAPABILITIES)[DataAccess]`
 - **DataCapabilityBeacon** _(type)_ - `type DataCapabilityBeacon = (context: object, capability: DataCapability) => void`
@@ -3725,7 +3724,6 @@ _No named exports (side-effect entrypoint)._
 - **ImageProps** _(interface)_ - `interface ImageProps`
 - **OgImageOptions** _(interface)_ - `interface OgImageOptions`
 - **OgImageRasterized** _(interface)_ - `interface OgImageRasterized`
-  Dependency-free Open Graph image generation.
 - **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
 - **PngRenderer** _(type)_ - `type PngRenderer = (svg: string) => Uint8Array | Promise<Uint8Array>`
   A dependency-free shape implemented by SVG→PNG codecs such as Resvg, Satori, or a WASM backend.
@@ -3789,7 +3787,6 @@ _No named exports (side-effect entrypoint)._
 
 - **OgImageOptions** _(interface)_ - `interface OgImageOptions`
 - **OgImageRasterized** _(interface)_ - `interface OgImageRasterized`
-  Dependency-free Open Graph image generation.
 - **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
 - **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>`
   Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for t…

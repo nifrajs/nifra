@@ -12,6 +12,7 @@ import type { StandardSchemaV1 } from "@nifrajs/core/schema"
 import type { ToolBudget } from "@nifrajs/core/tool-contract"
 import { createFailureLab, type FailureEvidence } from "./failure-lab.ts"
 import type { FaultProfile, FaultProfileFault, FaultProfileFaultKind } from "./fault-profile.ts"
+import { sha256Hex } from "./internal/sha256-hex.ts"
 
 export interface TrajectoryTranscript {
   readonly version: 1
@@ -322,7 +323,5 @@ function validateAgentTranscript(value: AgentTranscript): void {
 async function digest(value: unknown): Promise<string> {
   const serialized = JSON.stringify(value)
   if (serialized === undefined) throw new TypeError("trajectory: value is not serializable")
-  const bytes = new TextEncoder().encode(serialized)
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
-  return [...hash].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+  return sha256Hex(serialized)
 }
