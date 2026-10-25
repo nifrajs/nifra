@@ -71,6 +71,7 @@ export interface CacheStore {
 
 const ISR_TAG_PATTERN = /^[A-Za-z][A-Za-z0-9._:/-]{0,127}$/
 const MAX_ISR_TAGS = 32
+const NO_TAGS: readonly string[] = Object.freeze([])
 
 function normalizeTag(tag: string): string {
   if (typeof tag !== "string" || !ISR_TAG_PATTERN.test(tag)) {
@@ -81,6 +82,8 @@ function normalizeTag(tag: string): string {
 
 export function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
   if (tags === undefined) return []
+  // Every untagged document passes here; it needs no Set or frozen copy.
+  if (Array.isArray(tags) && tags.length === 0) return NO_TAGS
   if (!Array.isArray(tags) || tags.length > MAX_ISR_TAGS) {
     throw new TypeError("[nifra/web] ISR tags must contain at most 32 bounded tokens")
   }

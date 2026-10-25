@@ -407,7 +407,6 @@
     "packages/web/src/internal/output-guard.ts": 1,
     "packages/web/src/internal/page-execution.ts": 9,
     "packages/web/src/internal/parity.ts": 3,
-    "packages/web/src/internal/render-document.ts": 1,
     "packages/web/src/internal/secret-scan.ts": 2,
     "packages/web/src/internal/status-page.ts": 1,
     "packages/web/src/internal/web-app.ts": 4,

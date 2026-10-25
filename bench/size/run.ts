@@ -278,6 +278,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // effect-ledger 40,440 -> 40,468, sse 39,282 -> 39,315, mcp 38,694 -> 38,714, valibot 39,399 ->
   // 39,425, typebox-t 65,376 -> 65,416, typebox-form 70,358 -> 70,396 (Bun 1.4.4); each crossed cap
   // takes the next 0.1 KiB step.
+  // GET and HEAD slots in Bun's table skip the body-cap wrapper: bare 38,453 -> 38,472 B, idempotency
+  // 42,850 -> 42,874, effect-ledger 40,468 -> 40,488, sse 39,315 -> 39,333, mcp 38,714 -> 38,732,
+  // valibot 39,425 -> 39,441, typebox-t 65,416 -> 65,436, typebox-form 70,396 -> 70,416 (Bun 1.4.4);
+  // only the sse and typebox-t caps are crossed.
   "nifra-bare": 37.6,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -291,9 +295,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-effect-ledger": 39.6,
   "nifra-mcp": 37.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.4,
+  "nifra-sse": 38.5,
   "nifra-valibot": 38.6,
-  "nifra-typebox-t": 63.9,
+  "nifra-typebox-t": 64.0,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   "nifra-typebox-form": 68.8,
   "nifra-agent-review": 5.2,
