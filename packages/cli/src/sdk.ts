@@ -102,7 +102,7 @@ function identifier(value: string, fallback: string): string {
   const normalized = value
     .replace(/[^A-Za-z0-9_]+/g, "_")
     .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "")
+    .replace(/^_+|(?<!_)_+$/g, "")
   const safe = /^\d/.test(normalized) ? `_${normalized}` : normalized
   return safe === "" || safe === "_" ? fallback : safe
 }

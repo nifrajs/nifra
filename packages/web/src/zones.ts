@@ -255,7 +255,7 @@ export function parseZoneConfig(value: unknown, source: string): ZoneConfig {
         .replaceAll("\\", "/")
         .replace(/^\.\//, "")
         .replace(/\/\*\*$/, "")
-        .replace(/\/+$/, "")
+        .replace(/(?<!\/)\/+$/, "")
       const top = folder.split("/")[0] ?? ""
       if (folder === "" || folder.startsWith("/") || /^[a-z]:/i.test(folder))
         fail(`"${side}" entry "${entry}" must be a folder or file relative to the app`)

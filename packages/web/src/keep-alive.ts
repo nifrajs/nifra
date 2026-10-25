@@ -1225,7 +1225,7 @@ const reportedCss = new Set<string>()
 // Pseudo-classes that read an element's position among its siblings, which the wrappers change.
 const POSITIONAL =
   /:(?:first-child|last-child|only-child|nth-child\([^)]*\)|nth-last-child\([^)]*\))/g
-const DIRECT_HAS = /:has\(\s*>\s*([^)]*)\)/
+const DIRECT_HAS = /:has\(\s*>\s*([^)\s][^)]*)?\)/
 
 /** `selector`'s compounds and the combinators between them, split outside parentheses and brackets. */
 const compoundsOf = (

@@ -135,7 +135,7 @@ function decodeDataUrl(url: string): string | undefined {
  * `/@fs/<absolute path>`; everything else maps onto the project root.
  */
 function scriptDirectory(scriptPath: string, root: string): string {
-  const dir = decodeURIComponent(scriptPath.replace(/[^/]*$/, ""))
+  const dir = decodeURIComponent(scriptPath.slice(0, scriptPath.lastIndexOf("/") + 1))
   // `/@fs/C:/x/` names `C:/x/` on Windows: the slash before a drive letter is URL syntax only.
   return dir.startsWith("/@fs/")
     ? dir.slice("/@fs".length).replace(/^\/([a-zA-Z]:)/, "$1")

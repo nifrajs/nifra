@@ -204,7 +204,7 @@ export function copyChunkId(id: string): string {
  * ```
  */
 export function createCopyScanner(ts: typeof TS, host: CopySourceHost): CopyScanner {
-  const root = slash(host.root).replace(/\/+$/, "")
+  const root = slash(host.root).replace(/(?<!\/)\/+$/, "")
   const relative = (file: string): string =>
     file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file
   const absolute = (file: string): string =>

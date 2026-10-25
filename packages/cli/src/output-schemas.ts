@@ -480,7 +480,7 @@ function schemaTokens(text: string): string {
       i++
     }
   }
-  return out.replace(/,(?=[}\])])/g, "").replace(/;+$/, "")
+  return out.replace(/,(?=[}\])])/g, "").replace(/(?<!;);+$/, "")
 }
 
 function declarationText(schema: OutputExport, fn: RouteFn, body: string): string {

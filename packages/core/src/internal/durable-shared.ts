@@ -40,7 +40,10 @@ export function addDuration(timestamp: number, duration: number, label: string):
 export function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = ""
   for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "")
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/={1,2}$/u, "")
 }
 
 export async function sha256(value: string): Promise<string> {
