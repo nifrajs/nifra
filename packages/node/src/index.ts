@@ -34,6 +34,7 @@ import { jsonText } from "./generated/json-text.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { type ByteRange, parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
+import { RESPONSE_OWNED_HEADERS } from "./generated/response-owned-headers.ts"
 import {
   CONTENT_SNAPSHOT_MAX,
   contentTags,
@@ -552,16 +553,6 @@ function installFastResponse(): void {
   if (globalThis.Response === (DeferringResponse as unknown)) return
   globalThis.Response = DeferringResponse as unknown as typeof Response
 }
-
-/** Headers that describe a Response's body or its framing - core's list, mirrored here because the
- * adapter does not import core: a `c.set` value for one describes a body the handler did not return. */
-const RESPONSE_OWNED_HEADERS: ReadonlySet<string> = new Set([
-  "content-type",
-  "content-length",
-  "content-encoding",
-  "content-range",
-  "transfer-encoding",
-])
 
 /**
  * `response` with this request's `c.set` headers it lacks and its queued cookies - core's

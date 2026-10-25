@@ -4,7 +4,7 @@
  * Each entry names a symbol looked up with `Symbol.for(...)`, so the two packages agree ONLY by the
  * string. A rename on one side and not the other is a silent protocol break - no type error, just a
  * symbol that never matches and a body that stops taking the direct-write lane. This module is the
- * single source: core defines its own symbols from these literals, and `scripts/gen-node-outcome.ts`
+ * single source: core defines its own symbols from these literals, and `scripts/gen-vendored.ts`
  * copies the map verbatim into the adapter's generated contract, so @nifrajs/node reads the identical
  * strings without a runtime dependency on core (the same deployment shape the generated outcome type
  * preserves).

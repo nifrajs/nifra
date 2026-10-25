@@ -10,7 +10,7 @@
  *   .mcp.json, .cursor/mcp.json       - the nifra MCP server, registered for Claude Code and Cursor
  *
  * `create-nifra` (scaffold time) and `@nifrajs/cli`'s `nifra init-agents` (retrofit an existing app) each
- * ship this file byte-identical - `packages/cli/test/init-agents.test.ts` holds the two copies equal - so
+ * ship this file byte-identical - the CLI's is generated from this one (`scripts/gen-vendored.ts`) - so
  * the generated files can never drift apart and neither package needs the other at runtime. It stays
  * dependency-free (pure string + object generation) on purpose: `create-nifra` ships with no runtime deps.
  *

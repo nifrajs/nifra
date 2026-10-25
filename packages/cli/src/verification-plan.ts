@@ -58,9 +58,14 @@ const GATES = Object.freeze([
     "Run `bun run gen:cards` and review the generated package cards.",
   ),
   gate(
-    "node-outcome-corpus",
+    "node-outcome-laws",
     [["run", "check:node-outcome"]],
-    "Run `bun run gen:node-outcome` and review the generated Node outcome contract.",
+    "Run `bun run check:node-outcome` and fix the Node adapter answer that breaks the printed outcome law.",
+  ),
+  gate(
+    "vendored-copies",
+    [["run", "check:vendored"]],
+    "Edit the source each refused copy names, never the copy, then run `bun run gen:vendored`.",
   ),
   gate(
     "sitemap",
@@ -104,7 +109,7 @@ const GATES = Object.freeze([
   gate(
     "corpus",
     [["run", "check:corpus"]],
-    "Run `bun run gen:llms`, `bun run gen:api`, and `bun run gen:cards`, then rerun the corpus gate.",
+    "Run `bun run gen:llms`, `bun run gen:api`, `bun run gen:cards`, and `bun run gen:vendored`, then rerun the corpus gate.",
   ),
   gate(
     "core-performance",
@@ -227,7 +232,8 @@ const DEFAULT_PLAN = Object.freeze([
   "docs",
   "api-corpus",
   "cards-corpus",
-  "node-outcome-corpus",
+  "node-outcome-laws",
+  "vendored-copies",
   "sitemap",
   "public-boundary",
   "public-manifest",
