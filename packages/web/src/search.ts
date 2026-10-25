@@ -10,6 +10,7 @@
  * with that wiring.
  */
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
+import { isRecord } from "./internal/record.ts"
 
 /**
  * Bounds applied while parsing a query string. A search string is attacker-controlled, so it is capped
@@ -42,10 +43,6 @@ export interface SearchCodec {
 // others) can pollute Object.prototype. Dropped at every level of a decoded value.
 const FORBIDDEN_KEYS = new Set<string>(["__proto__", "prototype", "constructor"])
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
 // True when `value` nests deeper than `remaining` levels (a scalar never does). Used to reject an
 // over-deep decoded JSON value back to its raw string rather than store the graph.
 function exceedsDepth(value: unknown, remaining: number): boolean {
@@ -53,7 +50,7 @@ function exceedsDepth(value: unknown, remaining: number): boolean {
     if (remaining <= 0) return true
     return value.some((item) => exceedsDepth(item, remaining - 1))
   }
-  if (isPlainObject(value)) {
+  if (isRecord(value)) {
     if (remaining <= 0) return true
     return Object.values(value).some((item) => exceedsDepth(item, remaining - 1))
   }
@@ -65,7 +62,7 @@ function exceedsDepth(value: unknown, remaining: number): boolean {
 // so it is removed here, at the source.
 function sanitize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitize)
-  if (isPlainObject(value)) {
+  if (isRecord(value)) {
     const out: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value)) {
       if (FORBIDDEN_KEYS.has(key)) continue
@@ -85,7 +82,7 @@ function decodeValue(raw: string, limits: SearchLimits): unknown {
   } catch {
     return raw
   }
-  if ((isPlainObject(parsed) || Array.isArray(parsed)) && exceedsDepth(parsed, limits.maxDepth)) {
+  if ((isRecord(parsed) || Array.isArray(parsed)) && exceedsDepth(parsed, limits.maxDepth)) {
     return raw
   }
   return sanitize(parsed)
@@ -211,7 +208,7 @@ export function searchOfChain(
   let out: Record<string, unknown> = {}
   for (const schema of defined) {
     const validated = validateSearch(schema, parsed)
-    if (!isPlainObject(validated)) {
+    if (!isRecord(validated)) {
       throw new TypeError("[nifra/web] a search schema must produce an object")
     }
     out = { ...out, ...validated }
@@ -260,7 +257,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
     return a.length === b.length && a.every((item, index) => deepEqual(item, b[index]))
   }
-  if (isPlainObject(a) && isPlainObject(b)) {
+  if (isRecord(a) && isRecord(b)) {
     const aKeys = Object.keys(a)
     return (
       aKeys.length === Object.keys(b).length &&
@@ -278,7 +275,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
  */
 export function shareSearch<T>(prev: T, next: T): T {
   if (Object.is(prev, next)) return prev
-  if (!isPlainObject(prev) || !isPlainObject(next)) return next
+  if (!isRecord(prev) || !isRecord(next)) return next
   const out: Record<string, unknown> = {}
   let identical = Object.keys(prev).length === Object.keys(next).length
   for (const [key, after] of Object.entries(next)) {

@@ -11,6 +11,7 @@ import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { CONFIG_FILE } from "./app-files.ts"
+import { isRecord } from "./internal/record.ts"
 import type { NifraMonorepoConfig } from "./load.ts"
 import { appFingerprint } from "./mcp-exec.ts"
 import {
@@ -71,9 +72,6 @@ function childPath(): string {
     "mcp-project-child.$1",
   )
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const isAnswer = (value: unknown): value is ProjectChildAnswer =>
   isRecord(value) &&

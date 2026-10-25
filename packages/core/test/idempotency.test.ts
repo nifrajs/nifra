@@ -418,6 +418,87 @@ describe("idempotency primitives", () => {
     expect(new TextDecoder().decode(a)).toBe(new TextDecoder().decode(b))
   })
 
+  test("a JSON number a double would round keeps its written value in the fingerprint", () => {
+    const canonical = (text: string): string =>
+      new TextDecoder().decode(
+        canonicalizeIdempotencyBody(new TextEncoder().encode(text), "application/json"),
+      )
+    // Each pair parses to one double, so only the written text keeps the two requests apart.
+    for (const [a, b] of [
+      ["12345678901234567890", "12345678901234567891"],
+      ["9007199254740992", "9007199254740993"],
+      ["0.1", "0.10000000000000000001"],
+      ["4e-324", "5e-324"],
+      ["0", "1E-400"],
+    ]) {
+      expect(canonical(`{"n":${a}}`)).not.toBe(canonical(`{"n":${b}}`))
+    }
+    // Every other number in such a body, and its order and whitespace, canonicalize as before.
+    expect(canonical('{ "b": 1.0, "a": [12345678901234567891, -0, 1E2, 1e300] }')).toBe(
+      '{"a":[12345678901234567891,0,100,1e+300],"b":1}',
+    )
+    // A match inside a string takes the slower parse but writes what the plain one would.
+    expect(canonical('{"n":1.0,"id":"12345678901234567","note":"see e-1000"}')).toBe(
+      '{"id":"12345678901234567","n":1,"note":"see e-1000"}',
+    )
+    // A number past the largest double is refused, so its body keeps its exact bytes, as before.
+    expect(canonical('{ "n": 1e400 }')).toBe('{ "n": 1e400 }')
+  })
+
+  test("an engine that cannot keep a number's text fingerprints a lossy body's exact bytes", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(JSON, "rawJSON")
+    Reflect.deleteProperty(JSON, "rawJSON")
+    try {
+      const lossy = new TextEncoder().encode('{ "n": 12345678901234567891 }')
+      expect(canonicalizeIdempotencyBody(lossy, "application/json")).toBe(lossy)
+      const plain = new TextEncoder().encode('{ "n": 1 }')
+      expect(new TextDecoder().decode(canonicalizeIdempotencyBody(plain, "application/json"))).toBe(
+        '{"n":1}',
+      )
+    } finally {
+      if (descriptor !== undefined) Object.defineProperty(JSON, "rawJSON", descriptor)
+    }
+  })
+
+  test("a JSON body that is not valid UTF-8 fingerprints its exact bytes", async () => {
+    const withBytes = (...bytes: number[]): Uint8Array =>
+      new Uint8Array([
+        ...new TextEncoder().encode('{"to":"'),
+        ...bytes,
+        ...new TextEncoder().encode('"}'),
+      ])
+    // Decoding with replacement would turn both bytes into U+FFFD and give the two bodies one fingerprint.
+    const a = withBytes(0xff)
+    const b = withBytes(0xfe)
+    expect(canonicalizeIdempotencyBody(a, "application/json")).toBe(a)
+    // A body that writes U+FFFD itself reads the same as those, so it keeps its bytes as well.
+    const replacement = withBytes(0xef, 0xbf, 0xbd)
+    expect(canonicalizeIdempotencyBody(replacement, "application/json")).toBe(replacement)
+    expect(
+      await computeIdempotencyFingerprint(
+        "POST",
+        "/pay",
+        canonicalizeIdempotencyBody(a, "application/json"),
+      ),
+    ).not.toBe(
+      await computeIdempotencyFingerprint(
+        "POST",
+        "/pay",
+        canonicalizeIdempotencyBody(b, "application/json"),
+      ),
+    )
+    // A leading byte order mark still decodes away, as JSON readers do.
+    const bom = new Uint8Array([
+      0xef,
+      0xbb,
+      0xbf,
+      ...new TextEncoder().encode(' { "b": 1, "a": 2 } '),
+    ])
+    expect(new TextDecoder().decode(canonicalizeIdempotencyBody(bom, "application/json"))).toBe(
+      '{"a":2,"b":1}',
+    )
+  })
+
   test("serialize/replay round-trips status, headers, and a binary body + stamps the replay header", async () => {
     const bytes = new Uint8Array([0, 1, 2, 255, 254])
     const original = new Response(bytes, { status: 201, headers: { "x-test": "v" } })

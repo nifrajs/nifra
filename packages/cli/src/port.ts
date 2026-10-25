@@ -19,6 +19,7 @@ import { Glob } from "bun"
 import { stripComments } from "./check.ts"
 import { readConfigTarget } from "./config-target.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { lineAt } from "./internal/line-at.ts"
 
 /** The five deploy targets a nifra `site` app can build for (mirrors create-nifra's DEPLOY presets). */
 export const TARGETS = ["bun", "node", "deno", "cloudflare", "vercel"] as const
@@ -210,10 +211,6 @@ export interface DetectedFeature {
   readonly evidence: readonly Evidence[]
   readonly verdicts: Readonly<Record<Target, Verdict>>
 }
-
-/** Line number (1-based) of a string index. */
-const lineAt = (content: string, index: number): number =>
-  content.slice(0, index).split("\n").length
 
 // --- Detection signals (all matched against comment-stripped source so doc examples don't false-positive) ---
 

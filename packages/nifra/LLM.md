@@ -25,7 +25,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
 
-_…and 137 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 138 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

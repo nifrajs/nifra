@@ -55,7 +55,11 @@ const GATES: Readonly<Record<string, Gate>> = {
   "check:api": { redPath: "scripts/gen-api-reference.test.ts" },
   "check:cards": { redPath: "scripts/gen-llm-cards.test.ts" },
   "check:llms": { redPath: "scripts/llms-corpus-check.test.ts" },
-  "check:node-outcome": { redPath: "scripts/gen-node-outcome.test.ts" },
+  "check:node-outcome": {
+    untested:
+      "runs the outcome laws against the Node adapter on a real socket; its red path is a law failing",
+  },
+  "check:vendored": { redPath: "scripts/gen-vendored.test.ts" },
   "check:sitemap": { redPath: "scripts/gen-sitemap.test.ts" },
   "check:site": { redPath: "packages/web/test/server-zone-guard.test.ts" },
   "check:corpus": { untested: COMPOSITE },

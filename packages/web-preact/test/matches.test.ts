@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
 import type { RenderProps, RouterState } from "@nifrajs/web"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import { type ComponentChildren, h } from "preact"
 import { renderToString } from "preact-render-to-string"
 import { compose } from "../src/compose.ts"
-import { routeProps } from "../src/route-props.ts"
 import { useMatches } from "../src/router.ts"
 
 // Preact escapes text content, so `{"a":1}` arrives as `{&quot;a&quot;:1}`.

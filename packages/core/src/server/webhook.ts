@@ -105,7 +105,7 @@ const BASE64URL = /^[A-Za-z0-9_-]+={0,2}$/
 
 const fromBase64Url = (value: string): Uint8Array<ArrayBuffer> | null => {
   if (!BASE64URL.test(value)) return null
-  const unpadded = value.replace(/=+$/, "")
+  const unpadded = value.replace(/={1,2}$/, "")
   // Padding only ever completes the last quartet; a lone trailing character encodes no byte.
   if (unpadded.length % 4 === 1) return null
   if (unpadded.length !== value.length && value.length % 4 !== 0) return null

@@ -117,7 +117,7 @@ async function workspaceMatches(
 ): Promise<string[]> {
   const segments = pattern
     .replace(/^\.\//, "")
-    .replace(/\/+$/, "")
+    .replace(/(?<!\/)\/+$/, "")
     .split("/")
     .filter((segment) => segment !== "" && segment !== ".")
   const firstGlob = segments.findIndex((segment) => /[*?[{]/.test(segment))

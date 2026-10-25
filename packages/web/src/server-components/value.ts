@@ -1,16 +1,9 @@
+import { canonicalJson } from "@nifrajs/core/canonical-json"
 import { ServerComponentError } from "./error.ts"
 import type { ComponentValue } from "./types.ts"
 
 /** Property order does not identify a resource; callers supply already-validated DTO inputs. */
-export function componentInputKey(value: ComponentValue): string {
-  if (Array.isArray(value)) return `[${value.map(componentInputKey).join(",")}]`
-  if (typeof value === "object" && value !== null)
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${componentInputKey(Reflect.get(value, key))}`)
-      .join(",")}}`
-  return JSON.stringify(value)
-}
+export const componentInputKey: (value: ComponentValue) => string = canonicalJson
 
 const encoder = new TextEncoder()
 const forbidden = new Set(["__proto__", "prototype", "constructor"])

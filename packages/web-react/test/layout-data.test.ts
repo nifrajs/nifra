@@ -94,3 +94,10 @@ test("routeProps keeps search the same object while the query is the same", () =
   expect(searchAt("/org?page=2")).toBe(first)
   expect(searchAt("/org?page=3")).toEqual({ page: 3 })
 })
+
+test("routeProps names where a navigation is heading only while one is", () => {
+  // `useNavigation().location` and `NavLink`'s `isPending` read it.
+  const heading = routeProps(snapshot({ pending: true, pendingPath: "/org/7" }), undefined)
+  expect(heading.pendingPath).toBe("/org/7")
+  expect("pendingPath" in routeProps(snapshot(), undefined)).toBe(false)
+})

@@ -18,6 +18,7 @@ import {
   parseHandoffSnapshot,
   parseRunSnapshot,
 } from "@nifrajs/agent-protocol"
+import { isRecord } from "./internal/record.ts"
 import {
   type AgentTransport,
   AgentTransportError,
@@ -511,10 +512,6 @@ function streamRequest(
 
 function commandError(method: string, outcome: { status: number; error: string }): AgentAppError {
   return new AgentAppError(`${method} failed (${outcome.status}): ${outcome.error}`)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 /** Project a raw boundary record to a content-free {@link BoundaryItemView}, or drop it if malformed. */

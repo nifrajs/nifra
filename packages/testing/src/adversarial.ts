@@ -15,6 +15,7 @@ import type {
   ContractTarget,
   ContractWitness,
 } from "@nifrajs/core/assurance"
+import { canonicalJson } from "@nifrajs/core/canonical-json"
 import {
   compileRoutePattern,
   type ParamConstraint,
@@ -294,19 +295,6 @@ const jsonClone = (value: unknown): unknown => {
   const serialized = JSON.stringify(value)
   if (serialized === undefined) throw new TypeError("value is not JSON serializable")
   return JSON.parse(serialized) as unknown
-}
-
-const canonical = (value: unknown): string => {
-  if (value === undefined) return "undefined"
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
-  if (value !== null && typeof value === "object") {
-    const record = value as Readonly<Record<string, unknown>>
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
 }
 
 const valueSize = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length
@@ -1489,13 +1477,14 @@ export async function runAdversarialContract(
             ([name, headerValue]) => response.headers.get(name) === headerValue,
           )
           const bodyMatch =
-            !Object.hasOwn(expected, "body") || canonical(value) === canonical(expected.body)
+            !Object.hasOwn(expected, "body") ||
+            canonicalJson(value) === canonicalJson(expected.body)
           if (actualContentType !== expectedContentType || !headersMatch || !bodyMatch) {
             results.push(
               resultForFailure(
                 { ...base, status },
                 seed,
-                `expected response envelope ${expectedContentType} ${canonical(expected.body)}, received ${actualContentType || "(missing content type)"} ${canonical(value)}`,
+                `expected response envelope ${expectedContentType} ${canonicalJson(expected.body)}, received ${actualContentType || "(missing content type)"} ${canonicalJson(value)}`,
               ),
             )
             continue

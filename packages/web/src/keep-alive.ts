@@ -390,6 +390,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       lastEpoch = epoch
       channel?.postMessage("changed")
       dropKept("identity")
+      inner.snapshot()
     }
 
     const keep = ({
@@ -645,7 +646,11 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
     }
 
     return {
-      snapshot: () => published,
+      snapshot: () => {
+        // The router sees a new epoch at a read, and a render reads here: the page on screen reloads.
+        inner.snapshot()
+        return published
+      },
       subscribe: (listener) => {
         listeners.add(listener)
         return () => {
@@ -1225,7 +1230,7 @@ const reportedCss = new Set<string>()
 // Pseudo-classes that read an element's position among its siblings, which the wrappers change.
 const POSITIONAL =
   /:(?:first-child|last-child|only-child|nth-child\([^)]*\)|nth-last-child\([^)]*\))/g
-const DIRECT_HAS = /:has\(\s*>\s*([^)]*)\)/
+const DIRECT_HAS = /:has\(\s*>\s*([^)\s][^)]*)?\)/
 
 /** `selector`'s compounds and the combinators between them, split outside parentheses and brackets. */
 const compoundsOf = (

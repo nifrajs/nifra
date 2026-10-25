@@ -278,7 +278,13 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // effect-ledger 40,440 -> 40,468, sse 39,282 -> 39,315, mcp 38,694 -> 38,714, valibot 39,399 ->
   // 39,425, typebox-t 65,376 -> 65,416, typebox-form 70,358 -> 70,396 (Bun 1.4.4); each crossed cap
   // takes the next 0.1 KiB step.
-  "nifra-bare": 37.6,
+  // GET and HEAD slots in Bun's table skip the body-cap wrapper: bare 38,453 -> 38,472 B, idempotency
+  // 42,850 -> 42,874, effect-ledger 40,468 -> 40,488, sse 39,315 -> 39,333, mcp 38,714 -> 38,732,
+  // valibot 39,425 -> 39,441, typebox-t 65,416 -> 65,436, typebox-form 70,396 -> 70,416 (Bun 1.4.4);
+  // only the sse and typebox-t caps are crossed.
+  // That GET/HEAD skip together with the request-locals link and t.date() below: bare 38,514 B,
+  // effect-ledger 40,554, typebox-form 72,301 (Bun 1.4.4); these three caps take the next 0.1 KiB step.
+  "nifra-bare": 37.7,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -291,8 +297,13 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // transport and idempotency lanes): bare 38,453 -> 38,495 B, idempotency 42,850 -> 42,915, sse
   // 39,315 -> 39,370, typebox-t 65,416 -> 65,496, typebox-form 70,396 -> 70,452 (Bun 1.4.4). Only
   // the four caps crossed take the next 0.1 KiB step.
-  "nifra-idempotency": 42.0,
-  "nifra-effect-ledger": 39.6,
+  // Core's shared canonical JSON, which refuses a value JSON cannot carry instead of hashing it as
+  // something else: idempotency 42,874 -> 42,982 B (Bun 1.4.4); only the idempotency cap is crossed.
+  // A fingerprint keeps the written text of a JSON number a double would round, behind a sampled scan
+  // 3-7x cheaper than a regex over the body: idempotency 42,982 -> 43,223 B (Bun 1.4.4); only the
+  // idempotency cap is crossed, by three 0.1 KiB steps.
+  "nifra-idempotency": 42.3,
+  "nifra-effect-ledger": 39.7,
   "nifra-mcp": 37.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 38.5,
@@ -302,7 +313,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
   "nifra-typebox-t": 65.8,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 70.6,
+  "nifra-typebox-form": 70.7,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
@@ -325,8 +336,12 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // skips its animation when no frame comes: 19,844 -> 19,961 B (Bun 1.4.4). `notFound`, `gone` and
   // `statusPage`, which this row's whole-namespace import keeps and a named import tree-shakes:
   // 19,961 -> 20,178 B (Bun 1.4.4). A `bigint` in the plain transport codec as its decimal string:
-  // 20,178 -> 20,228 B (Bun 1.4.4).
-  "nifra-web-client": 19.8,
+  // 20,178 -> 20,228 B (Bun 1.4.4). Query clients and fetchers drop what they hold on
+  // `identityChanged()` and on a new identity epoch cookie, read once per synchronous run because a
+  // `document.cookie` read costs about 2.4 us in Chromium: 20,228 -> 20,519 B (Bun 1.4.4). Handles
+  // and fetchers a page kept check the epoch on every read, and the page on screen reloads when the
+  // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4).
+  "nifra-web-client": 20.4,
   "nifra-i18n": 4.3,
 }
 

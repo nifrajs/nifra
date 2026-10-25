@@ -55,6 +55,8 @@
  * or lifecycle hook has already left that lane, so for the routes that look like production the
  * contract is effectively free - declare it.
  */
+
+import { isRecord } from "../internal/record.ts"
 import {
   formatStandardIssues,
   type StandardResult,
@@ -143,9 +145,6 @@ export type ResponseContractOutcome =
   /** `enforce` only: the payload cannot be reconciled with the contract, so it must not be sent. */
   | { readonly kind: "violation"; readonly message: string }
 
-const isPlainObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v)
-
 /** Rebuilds a value with only what its schema declares; absent when the schema can strip nothing. */
 type Projector = (value: unknown) => unknown
 
@@ -214,7 +213,7 @@ function compileProjector(node: unknown): Projector | undefined {
     return undefined
   const declared = new Set(keys)
   return (value) => {
-    if (!isPlainObject(value)) return value
+    if (!isRecord(value)) return value
     const out: Record<string, unknown> = closed ? {} : { ...value }
     for (const key of closed ? keys : nested.keys()) {
       if (!hasField(value, key)) continue
@@ -254,7 +253,7 @@ function compileUnion(branches: readonly unknown[]): Projector | undefined {
   if (forArray === undefined && forObject === undefined) return undefined
   return (value) => {
     if (Array.isArray(value)) return forArray === undefined ? value : forArray(value)
-    return forObject !== undefined && isPlainObject(value) ? forObject(value) : value
+    return forObject !== undefined && isRecord(value) ? forObject(value) : value
   }
 }
 
@@ -301,7 +300,7 @@ function compileDiscriminated(branches: readonly object[]): Projector | undefine
     })
     if (!disjoint) continue
     return (value) => {
-      if (!isPlainObject(value) || !hasField(value, key)) return value
+      if (!isRecord(value) || !hasField(value, key)) return value
       const projector = byTag.get(value[key])
       return projector === undefined ? value : projector(value)
     }
@@ -508,7 +507,7 @@ function collectStripped(sent: unknown, kept: unknown, path: string, out: Set<st
     }
     return
   }
-  if (!isPlainObject(sent) || !isPlainObject(kept)) return
+  if (!isRecord(sent) || !isRecord(kept)) return
   for (const key of Object.keys(sent)) {
     const short = key.length > MAX_NAME_LENGTH ? `${key.slice(0, MAX_NAME_LENGTH)}...` : key
     const name = path === "" ? short : `${path}.${short}`
@@ -548,7 +547,7 @@ function strippedMessage(fields: readonly string[]): string {
 
 /** Top-level keys present in the handler's result but absent from the validated value. */
 function droppedKeys(result: unknown, value: unknown): string[] {
-  if (!isPlainObject(result) || !isPlainObject(value)) return []
+  if (!isRecord(result) || !isRecord(value)) return []
   return Object.keys(result).filter((k) => !(k in value))
 }
 

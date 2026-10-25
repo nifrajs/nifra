@@ -1,4 +1,5 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 /**
  * @nifrajs/web-vue/client - Vue client runtime. `hydrate` hydrates a single SSR'd route; `mountRouter`
  * hydrates a stateful Router whose root component subscribes to the agnostic store (a `shallowRef`
@@ -23,7 +24,6 @@ import {
 import { compose, pageNode } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 import { RouteContextProvider } from "./route-context.ts"
-import { routeProps } from "./route-props.ts"
 
 // The `_error` boundary chain element - defined in its own module, re-exported here so nifra's client
 // codegen resolves it from `@nifrajs/web-vue/client` alongside `mountRouter`.

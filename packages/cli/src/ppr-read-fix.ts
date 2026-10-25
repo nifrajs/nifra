@@ -143,9 +143,9 @@ function holeNameOf(local: string): string | undefined {
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^[^a-z]+|-+$/g, "")
+    .replace(/^[^a-z]+|(?<!-)-+$/g, "")
     .slice(0, 28)
-    .replace(/-+$/, "")
+    .replace(/(?<!-)-+$/, "")
   return HOLE_NAME.test(name) ? name : undefined
 }
 

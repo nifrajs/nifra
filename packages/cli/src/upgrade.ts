@@ -54,6 +54,7 @@ import {
 } from "./hooks-report.ts"
 import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { gitIgnoredSync } from "./internal/git-ignored.ts"
 import { otherProjectCore } from "./local-cli.ts"
 import {
@@ -326,8 +327,6 @@ export function specIncludes(spec: string, version: string): boolean {
       return order === 0
   }
 }
-
-const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /**
  * Apply pin rules to one package.json's TEXT (format-preserving - targeted string replaces, never a

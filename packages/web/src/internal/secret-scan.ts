@@ -515,7 +515,7 @@ function envNeedles(
     if (publicValues.has(value)) continue
     const named = secretEnvName(name)
     if (!named && AMBIENT_ENV.test(name)) continue
-    const credentialUrl = /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]+:[^/@\s]+@/i.test(value)
+    const credentialUrl = /^[a-z][a-z0-9+.-]*:\/\/[^/@\s:]+:[^/@\s]+@/i.test(value)
     if (!named && !credentialUrl && !looksRandom(value, 20)) continue
     const forms: [string, string][] = [["raw", value]]
     const add = (form: string, encoded: string): void => {

@@ -10,6 +10,7 @@
  * and focus before Vue hides a page and puts them back when it is shown again.
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import {
   type KeepAliveRouter,
   type KeepAliveTable,
@@ -45,7 +46,6 @@ import { pageNode } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 import { PAGE_KEY, type PageSlot } from "./page-visibility.ts"
 import { PROPS_KEY, RouteContextProvider, SEARCH_KEY } from "./route-context.ts"
-import { routeProps } from "./route-props.ts"
 
 export * from "./client.ts"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"

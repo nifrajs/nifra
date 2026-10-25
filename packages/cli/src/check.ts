@@ -262,7 +262,7 @@ async function loadCheckConfig(
     const raw = Array.isArray(parsed.externalMounts) ? parsed.externalMounts : []
     const externalMounts = raw
       .filter((m): m is string => typeof m === "string" && m.startsWith("/"))
-      .map((m) => m.replace(/\/\*+$/, "").replace(/\/+$/, "") || "/")
+      .map((m) => m.replace(/\/\*+$/, "").replace(/(?<!\/)\/+$/, "") || "/")
     const warnings: string[] = []
     const rules: Record<string, RuleOverride> = {}
     if (parsed.rules !== undefined) {

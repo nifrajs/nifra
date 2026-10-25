@@ -34,13 +34,13 @@
 
 import {
   type AgentDefinition,
-  type AgentPendingKind,
   type AgentPorts,
   type AgentRunResult,
   type AgentTurnInput,
   type AgentTurnState,
   combineAgentTelemetry,
   createAgentState,
+  parseAgentResume,
   resumeAgent,
   runAgent,
 } from "@nifrajs/agent"
@@ -61,7 +61,6 @@ const DEFAULT_PATH = "/a2a"
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
-const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
 const TURN_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
 
 // JSON-RPC 2.0 standard codes plus the A2A-specific range.
@@ -318,7 +317,7 @@ function prepareTurn(
     return { error: { code: A2A_ERROR_CODES.invalidParams, message: "invalid_params" } }
   const metadata = asRecord(message.metadata) ?? {}
   const taskId = typeof message.taskId === "string" ? message.taskId : undefined
-  const resume = parseResume(metadata.resume)
+  const resume = parseAgentResume(metadata.resume)
   if (taskId !== undefined && !isValidTaskId(taskId))
     return { error: { code: A2A_ERROR_CODES.invalidParams, message: "invalid_task_id" } }
   // A message that names a task must carry the continuation: the runtime keeps state token-only,
@@ -533,35 +532,6 @@ function outputArtifact(turnId: string, output: unknown): Record<string, unknown
     artifactId: `${turnId}:output`,
     name: "output",
     parts: [typeof output === "string" ? { text: output } : { text: JSON.stringify(output) }],
-  }
-}
-
-function parseResume(raw: unknown): AgentTurnInput["resume"] | undefined {
-  const record = asRecord(raw)
-  if (record === undefined) return undefined
-  const continuation = asRecord(record.continuation)
-  if (continuation === undefined) return undefined
-  const kind = continuation.kind
-  if (typeof kind !== "string" || !PENDING_KINDS.includes(kind as AgentPendingKind))
-    return undefined
-  if (typeof continuation.effectId !== "string") return undefined
-  if (continuation.tool !== undefined && typeof continuation.tool !== "string") return undefined
-  const approval = asRecord(record.approval)
-  return {
-    continuation: {
-      kind: kind as AgentPendingKind,
-      ...(continuation.tool === undefined ? {} : { tool: continuation.tool as string }),
-      ...(Object.hasOwn(continuation, "input") ? { input: continuation.input } : {}),
-      effectId: continuation.effectId,
-    },
-    ...(approval !== undefined && typeof approval.granted === "boolean"
-      ? {
-          approval: {
-            granted: approval.granted,
-            ...(typeof approval.reason === "string" ? { reason: approval.reason } : {}),
-          },
-        }
-      : {}),
   }
 }
 

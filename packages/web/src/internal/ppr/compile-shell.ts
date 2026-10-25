@@ -3,6 +3,8 @@ import { basename, join, resolve } from "node:path"
 import type * as TS from "typescript"
 import type { Manifest, RouteEntry } from "../../manifest.ts"
 import { type BunMetafileLike, fromBunMetafile } from "../../module-graph.ts"
+import { escapeRegExp } from "../escape-regexp.ts"
+import { toPosix } from "../posix-path.ts"
 import { isTypeScriptCompiler } from "../typescript-api.ts"
 
 /**
@@ -44,10 +46,6 @@ export interface CompileShellsOptions {
 }
 
 const NAMESPACE = "nifra-ppr-shell"
-
-const toPosix = (path: string): string => path.replaceAll("\\", "/")
-
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /**
  * nifra's own modules that read the visitor's request from async context. Packages stay external in

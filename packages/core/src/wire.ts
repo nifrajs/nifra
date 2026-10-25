@@ -21,6 +21,8 @@
  * carrying its own enumerable properties), non-enumerable and symbol keys, and getters (read once).
  */
 
+import { isRecord } from "./internal/record.ts"
+
 /** Discriminator key on a tagged wire node. Never collides with user data: user objects live under a
  * node's `v` field, so their own keys - including one literally named `$w` - are never re-interpreted. */
 const TAG = "$w"
@@ -72,10 +74,6 @@ export class WireDecodeError extends TypeError {
     super(message)
     this.name = "WireDecodeError"
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
 function decodeLimit(value: number | undefined, fallback: number, label: string): number {

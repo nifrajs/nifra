@@ -114,7 +114,10 @@ const SECRET_ENCODER = new TextEncoder()
 const encodeBase64Url = (bytes: Uint8Array): string => {
   let bin = ""
   for (const b of bytes) bin += String.fromCharCode(b)
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  return btoa(bin)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "")
 }
 
 /** A 256-bit random session id (base64url). High-entropy + unguessable - the cookie also signs it. */

@@ -89,7 +89,7 @@ export const clientIp = "platform"
 
 /** The framework's `nifra.config.ts`, declaring the target `nifra build` emits. */
 export function withTarget(config: string, site: SiteTarget): string {
-  return `${config.replace(/\n*$/, "\n")}\n${CLIENT_IP_DECLARATION}\n// The deploy target \`nifra build\` emits; \`nifra target <t>\` switches it.\nexport const target = "${site.target}"\n`
+  return `${config.replace(/(?<!\n)\n*$/, "\n")}\n${CLIENT_IP_DECLARATION}\n// The deploy target \`nifra build\` emits; \`nifra target <t>\` switches it.\nexport const target = "${site.target}"\n`
 }
 
 export interface MaterializeOptions extends SiteTarget {

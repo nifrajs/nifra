@@ -3,6 +3,8 @@
  * Nothing on the internet reaches a Durable Object except through the app's own isolate, which
  * forwards only the socket handshake; the paths below are refused on every public route.
  */
+
+import { isRecord } from "../internal/record.ts"
 import type { LiveBusInput } from "./bus.ts"
 import { KEY_PATTERN, type Keyring, MAX_KEYS_PER_FRAME } from "./keyring.ts"
 import type { RevocationSnapshot } from "./revocations.ts"
@@ -128,6 +130,3 @@ const seqLike = (value: unknown): value is number =>
 
 const subjectLike = (value: unknown): value is string =>
   typeof value === "string" && value.length <= MAX_SUBJECT_CHARS
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)

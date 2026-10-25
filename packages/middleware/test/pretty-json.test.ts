@@ -60,6 +60,21 @@ describe("prettyJson()", () => {
     expect(await (await app.fetch(new Request("http://x/?pretty"))).text()).toBe('{\n  "a": 1\n}\n')
   })
 
+  test("enabled decides per request, and false leaves every response as written", async () => {
+    const json = { headers: { "content-type": "application/json" } }
+    const byHeader = server()
+      .use(prettyJson({ enabled: (request) => request.header("x-pretty") === "1", newline: false }))
+      .get("/", () => new Response('{"a":1}', json))
+    expect(await (await byHeader.fetch(new Request("http://x/"))).text()).toBe('{"a":1}')
+    const asked = new Request("http://x/", { headers: { "x-pretty": "1" } })
+    expect(await (await byHeader.fetch(asked)).text()).toBe('{\n  "a": 1\n}')
+
+    const off = server()
+      .use(prettyJson({ enabled: false }))
+      .get("/", () => new Response('{"a":1}', json))
+    expect(await (await off.fetch(new Request("http://x/"))).text()).toBe('{"a":1}')
+  })
+
   test("pretty-prints a raw streamed JSON response", async () => {
     const app = server()
       .use(prettyJson({ spaces: 2, newline: false }))

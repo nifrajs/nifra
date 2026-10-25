@@ -24,6 +24,7 @@ import {
   defineContextPlugin,
   type Middleware,
   serializeCookie,
+  varyOn,
 } from "@nifrajs/core/server"
 import { LOCALE_COOKIE_MAX_AGE } from "./cookie.ts"
 import {
@@ -48,15 +49,6 @@ export interface LocaleContext {
   /** The negotiated locale - always one of the configured `locales`. */
   readonly locale: Locale
   readonly localeSource: LocaleSource
-}
-
-/** `value` naming each of `names` once; `Vary: *` already covers every request header. */
-function varyOn(value: string | null, names: readonly string[]): string {
-  if (value === null || value.trim() === "") return names.join(", ")
-  const fields = value.split(",").map((field) => field.trim().toLowerCase())
-  if (fields.includes("*")) return value
-  const missing = names.filter((name) => !fields.includes(name.toLowerCase()))
-  return missing.length === 0 ? value : `${value}, ${missing.join(", ")}`
 }
 
 /**

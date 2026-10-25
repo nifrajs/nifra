@@ -18,6 +18,7 @@ import {
   entryOwnership,
   parseEnvironment,
 } from "./internal/package-entries.ts"
+import { toPosix } from "./internal/posix-path.ts"
 import { SERVER_FN_MODULE } from "./internal/server-boundary.ts"
 import { withoutQuery } from "./internal/without-query.ts"
 
@@ -255,7 +256,7 @@ export function parseZoneConfig(value: unknown, source: string): ZoneConfig {
         .replaceAll("\\", "/")
         .replace(/^\.\//, "")
         .replace(/\/\*\*$/, "")
-        .replace(/\/+$/, "")
+        .replace(/(?<!\/)\/+$/, "")
       const top = folder.split("/")[0] ?? ""
       if (folder === "" || folder.startsWith("/") || /^[a-z]:/i.test(folder))
         fail(`"${side}" entry "${entry}" must be a folder or file relative to the app`)
@@ -336,8 +337,6 @@ export interface ZoneClassifier {
    */
   classify(file: string, specifier?: string): Classification
 }
-
-const toPosix = (path: string): string => path.replaceAll("\\", "/")
 
 // `generateServerManifest`'s first line. The manifest composes both halves of every route, so it
 // imports frontend code from wherever the build wrote it - next to the server entry, often backend/.

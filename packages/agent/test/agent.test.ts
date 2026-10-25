@@ -1003,6 +1003,13 @@ describe("a resume continues only the step the turn suspended on", () => {
     return { ports, pending: first.pending }
   }
 
+  test("the stored input digest a resume is checked against has pinned bytes", async () => {
+    const { ports } = await suspendOnLookup("pinned")
+    expect(ports.state.load("pinned")?.pending?.inputDigest).toBe(
+      "72991e190ee4d64c11cbd7941d47bd63d4f328ad57aa9a36c321c4d2876a82c4",
+    )
+  })
+
   test("another tool, another effect, or another input is refused and runs nothing", async () => {
     executed.length = 0
     const { ports, pending } = await suspendOnLookup("forged")

@@ -19,8 +19,10 @@
  * reverse - so neither this package nor the protocol ever imports MCP transport or the coding agent.
  */
 
+import { canonicalJson } from "@nifrajs/core/canonical-json"
 import type { ToolContract } from "@nifrajs/core/tool-contract"
 import { toolInputJsonSchema } from "@nifrajs/core/tool-contract"
+import { isRecord } from "./internal/record.ts"
 
 export const CAPABILITY_DESCRIPTOR_VERSION = 1 as const
 export const REGISTRY_SNAPSHOT_VERSION = 1 as const
@@ -164,29 +166,6 @@ async function sha256HexOf(text: string): Promise<string> {
   let hex = ""
   for (let i = 0; i < view.length; i++) hex += (view[i] as number).toString(16).padStart(2, "0")
   return hex
-}
-
-/** Deterministic JSON with recursively sorted object keys. Arrays keep order; non-finite rejected. */
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string")
-    return JSON.stringify(value)
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new TypeError("non-finite JSON number")
-    return JSON.stringify(value)
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>
-    const keys = Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort()
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`
-  }
-  throw new TypeError(`cannot canonicalize ${typeof value}`)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function parseKind(value: unknown): CapabilityKind {

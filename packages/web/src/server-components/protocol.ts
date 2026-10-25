@@ -99,7 +99,10 @@ export function parseComponentRequest(value: unknown): ComponentRequest {
 function base64url(bytes: Uint8Array): string {
   let binary = ""
   for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/={1,2}$/, "")
 }
 
 export function componentRequestHeader(value: ComponentRequest): string {
