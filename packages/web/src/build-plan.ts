@@ -215,6 +215,8 @@ export interface Bundler {
     readonly generatedFiles?: readonly string[]
     /** The public-env prefix browser code may read (default `"PUBLIC_"`). */
     readonly publicEnvPrefix?: string
+    /** Node built-ins the runtime provides besides what `target` implies, kept as imports. */
+    readonly providedBuiltins?: readonly string[]
   }): Promise<ServerBuild>
 }
 

@@ -310,6 +310,100 @@ test("--target bun serves a public file over a page that matches its path, from 
   }
 }, 60_000)
 
+test("--target bun with selfHost.gracefulSignals stops on SIGTERM and exits on its own", async () => {
+  const outDir = join(projectRoot, "dist-bun-signals")
+  await buildTarget("bun", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-bun-signals"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+    selfHost: { gracefulSignals: { drainMs: 1000 }, idleTimeoutSec: 30 },
+  })
+  const proc = Bun.spawn([process.execPath, join(outDir, "server.js")], {
+    env: { ...process.env, PORT: "0" },
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  try {
+    const base = await listening(proc.stdout)
+    expect((await fetch(`${base}/robots.txt`)).status).toBe(404)
+    proc.kill("SIGTERM")
+    // Without the handlers SIGTERM kills the process; with them stop() drains and nothing holds it.
+    expect(await proc.exited).toBe(0)
+    expect(proc.signalCode).toBeNull()
+  } finally {
+    proc.kill()
+    await proc.exited
+  }
+}, 60_000)
+
+test("buildTarget refuses a selfHost setting of the wrong shape before it builds", async () => {
+  const outDir = join(projectRoot, "dist-bun-bad-selfhost")
+  await expect(
+    buildTarget("bun", {
+      routesDir,
+      outDir,
+      workDir: join(projectRoot, ".work-bun-bad-selfhost"),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      selfHost: { idleTimeoutSec: 300 },
+    }),
+  ).rejects.toThrow("[nifra/web] buildTarget: selfHost idleTimeoutSec must be a whole number")
+  expect(existsSync(outDir)).toBe(false)
+})
+
+const DENO = Bun.which("deno")
+
+test.skipIf(DENO === null)(
+  "--target deno serves through @nifrajs/deno: a public file over a page at its path, pages from the app",
+  async () => {
+    writeFileSync(join(routesDir, "[slug].tsx"), "export default function Slug() { return null }\n")
+    mkdirSync(join(projectRoot, "public"), { recursive: true })
+    writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *\n")
+    const outDir = join(projectRoot, "dist-deno")
+    await buildTarget("deno", {
+      routesDir,
+      outDir,
+      workDir: join(projectRoot, ".work-deno"),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      selfHost: { gracefulSignals: true },
+    })
+    const proc = Bun.spawn(
+      [
+        DENO ?? "deno",
+        "run",
+        "--quiet",
+        "--no-config",
+        "--no-lock",
+        "-A",
+        join(outDir, "server.js"),
+      ],
+      {
+        env: { ...process.env, PORT: "0", DENO_NO_UPDATE_CHECK: "1", NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "ignore",
+      },
+    )
+    try {
+      const base = await listening(proc.stdout)
+      const robots = await fetch(`${base}/robots.txt`)
+      expect(robots.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+      expect(await robots.text()).toBe("User-agent: *\n")
+      const page = await fetch(`${base}/hello`)
+      expect(page.status).toBe(200)
+      expect(await page.text()).toContain("<p>nifra</p>")
+      proc.kill("SIGTERM")
+      expect(await proc.exited).toBe(0)
+    } finally {
+      proc.kill()
+      await proc.exited
+    }
+  },
+  60_000,
+)
+
 // The partner-domain shape: every host but the app's own renders only the public surface.
 const HOST_POLICY_MODULE =
   'import { createHostPolicy } from "@nifrajs/web"\n' +

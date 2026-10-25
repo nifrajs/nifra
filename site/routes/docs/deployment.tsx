@@ -179,6 +179,19 @@ export default function Deployment() {
         the client, so drop the line before serving it publicly any other way.
       </p>
       <p>
+        A SIGTERM or SIGINT kills the Bun, Node and Deno servers at once unless{" "}
+        <code>nifra.config.ts</code> exports <code>selfHost</code>, such as{" "}
+        <code>{"export const selfHost = { gracefulSignals: { drainMs: 8_000 }, idleTimeoutSec: 60 }"}</code>.
+        With <code>gracefulSignals</code> the server drains instead (<code>docker stop</code>,
+        Ctrl-C): in-flight requests get <code>drainMs</code> to finish, and <code>delayMs</code> keeps
+        it serving first while a load balancer sees it go. <code>idleTimeoutSec</code> is how long Bun
+        keeps a connection that moves no bytes, a request whose handler is still working included:
+        10 seconds by default, <code>0</code> for never. Node and Deno do not close a connection
+        while its request is being handled, so they ignore it, and an edge build ignores{" "}
+        <code>selfHost</code>. <code>nifra start</code> runs the built server, so it applies there
+        too.
+      </p>
+      <p>
         Nifra never runs the deploy or enters your cloud credentials - it scaffolds the config + a{" "}
         <code>deploy</code> script that shells out to the vendor CLI you've already authed.
       </p>
@@ -266,6 +279,13 @@ export default function Deployment() {
           <code>@nifrajs/deno</code> - serves <code>app.fetch</code> on <code>Deno.serve</code>.
         </li>
       </ul>
+      <p>
+        The servers <code>nifra build --target node</code> and <code>--target deno</code> emit run
+        on these adapters, so the app installs the one for its target, from the same release as{" "}
+        <code>@nifrajs/web</code>. The Deno adapter's <code>static</code> sees every request first:
+        it answers with a file's response, or <code>undefined</code> to let the app route it. The
+        generated Deno server serves its client bundle and <code>public/</code> files that way.
+      </p>
       <p>
         Self-hosting (no CDN in front)? Hand <code>@nifrajs/node</code>'s <code>serve</code> a{" "}
         <code>static</code> mount and it serves the client bundle from disk - traversal-guarded,

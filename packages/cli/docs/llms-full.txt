@@ -7000,6 +7000,18 @@ The scaffold declares it. The trust holds only while that edge is the one way in
 bundle served by `wrangler pages dev` or a self-hosted workerd takes the header from
 the client, so drop the line before serving it publicly any other way.
 
+A SIGTERM or SIGINT kills the Bun, Node and Deno servers at once unless
+`nifra.config.ts` exports `selfHost`, such as
+`export const selfHost = { gracefulSignals: { drainMs: 8_000 }, idleTimeoutSec: 60 }`.
+With `gracefulSignals` the server drains instead (`docker stop`,
+Ctrl-C): in-flight requests get `drainMs` to finish, and `delayMs` keeps
+it serving first while a load balancer sees it go. `idleTimeoutSec` is how long Bun
+keeps a connection that moves no bytes, a request whose handler is still working included:
+10 seconds by default, `0` for never. Node and Deno do not close a connection
+while its request is being handled, so they ignore it, and an edge build ignores
+`selfHost`. `nifra start` runs the built server, so it applies there
+too.
+
 Nifra never runs the deploy or enters your cloud credentials - it scaffolds the config + a
 `deploy` script that shells out to the vendor CLI you've already authed.
 
@@ -7094,6 +7106,12 @@ store (signed with one `storeSecret` in every process - see
 
 -
 `@nifrajs/deno` - serves `app.fetch` on `Deno.serve`.
+
+The servers `nifra build --target node` and `--target deno` emit run
+on these adapters, so the app installs the one for its target, from the same release as
+`@nifrajs/web`. The Deno adapter's `static` sees every request first:
+it answers with a file's response, or `undefined` to let the app route it. The
+generated Deno server serves its client bundle and `public/` files that way.
 
 Self-hosting (no CDN in front)? Hand `@nifrajs/node`'s `serve` a
 `static` mount and it serves the client bundle from disk - traversal-guarded,
@@ -17260,6 +17278,21 @@ a Bun-`listen()`-style graceful `stop()` and opt-in signals.
 await serve(app, { port: 3000, signals: true }) // SIGTERM/SIGINT → graceful stop()
 await serve(app, { port: 3000, signals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
 ```
+
+## Files ahead of the app
+
+```ts
+await serve(app, {
+  port: 3000,
+  static: (req) =>
+    new URL(req.url).pathname === "/robots.txt" ? new Response("User-agent: *\n") : undefined,
+})
+```
+
+`static` sees every request before the app does, so a file it answers wins over any route at the
+same path. It returns a response, or `undefined` (or a promise of one) to let the app route the
+request. No hook of the app runs for a request it answers, and a throw answers a plain `500`. The
+server `nifra build --target deno` emits serves its client bundle and public files this way.
 
 ## Client disconnect and `c.req.signal`
 

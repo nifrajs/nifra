@@ -16,7 +16,7 @@
 import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { CreateWebAppOptions, CssLoadingMode } from "@nifrajs/web"
-import type { SecretExemption } from "@nifrajs/web/build"
+import type { SecretExemption, ServerEntrySelfHost } from "@nifrajs/web/build"
 import { assertCurrentLayout, BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
@@ -77,6 +77,11 @@ export interface NifraFramework {
    * is the sole way in: served any other way the header is whatever the client sent. Self-hosting
    * targets use the socket peer either way. */
   readonly clientIp?: "platform"
+  /** How the server a `bun`, `node` or `deno` build emits stops and keeps idle connections, `nifra start`
+   * included: `gracefulSignals` drains it on SIGTERM and SIGINT, `idleTimeoutSec` is Bun's idle
+   * connection timeout. `nifra build` checks it before building; an edge build ignores it. See
+   * `ServerEntrySelfHost` in `@nifrajs/web/build`. */
+  readonly selfHost?: ServerEntrySelfHost
   /** `nifra dev` settings. `indicator: false` turns the in-page issues badge off for every run
    * (`nifra dev --no-indicator` does it for one); browser errors still reach `nifra errors`.
    * `allowedHosts` lists host names the Bun dev server answers besides loopback ones; it refuses

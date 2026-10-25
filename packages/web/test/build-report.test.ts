@@ -11,6 +11,7 @@ import * as staticFile from "@nifrajs/core/static-file"
 import {
   aggregateSizeReport,
   BUILD_TARGETS,
+  type BuildTarget,
   type ChunkSize,
   cloudflareRouteRules,
   diffManifestRoutes,
@@ -25,6 +26,7 @@ import {
   parseManifestStyles,
   renderSizeReport,
   resyncServerManifestSource,
+  type ServerEntrySelfHost,
 } from "../src/build.ts"
 import { generateServerManifest, servePublicDir } from "../src/index.ts"
 
@@ -264,31 +266,33 @@ interface StaticHandler {
 }
 
 /**
- * Evaluate a generated entry's static gate and handler themselves, rooted at `dir` instead of the
- * entry's own folder, rather than pattern-match their text. Deno's runs on the `deno` file API shim.
+ * Evaluate a generated entry from its static section on, rooted at `dir` instead of the entry's own
+ * folder, rather than pattern-match its text. Deno's runs on the `deno` file API shim. With `through`
+ * the section runs to the end and answers the options the Deno entry passes to `serve`.
  */
-async function staticHandler(src: string, dir: string, deno = denoFiles): Promise<StaticHandler> {
+async function evaluateStatic(src: string, dir: string, deno: object, through: boolean) {
   const start = src.indexOf("const STATIC_ROOT")
-  const end = Math.max(
-    src.indexOf("const server = app.listen"),
-    src.indexOf("await serve("),
-    src.indexOf("Deno.serve("),
-  )
-  const section = src.slice(start, end).replace('new URL("./", import.meta.url)', "ROOT_URL")
+  const end = ["const server = ", "await serve("]
+    .map((marker) => src.indexOf(marker))
+    .find((at) => at !== -1)
+  const section = src
+    .slice(start, through ? undefined : end)
+    .replace('new URL("./", import.meta.url)', "ROOT_URL")
+    .replace("const server = await serve(app,", "const server = capture(")
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an async function's constructor is AsyncFunction, which TS does not name.
   const AsyncFunction = (async () => {}).constructor as new (
     ...source: string[]
   ) => (...args: unknown[]) => Promise<unknown>
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the evaluated section is the generated entry's static handler, which declares these two functions.
-  return (await new AsyncFunction(
+  return new AsyncFunction(
     "servePublicDir",
     "fileURLToPath",
     "parseByteRange",
     "createHash",
     "Deno",
     "ROOT_URL",
+    "capture",
     ...Object.keys(staticFile),
-    `${new Bun.Transpiler({ loader: "ts" }).transformSync(section)}; return { staticPath, staticResponse }`,
+    `${new Bun.Transpiler({ loader: "ts" }).transformSync(section)}; return ${through ? "server" : "{ staticPath, staticResponse }"}`,
   )(
     servePublicDir,
     fileURLToPath,
@@ -296,8 +300,27 @@ async function staticHandler(src: string, dir: string, deno = denoFiles): Promis
     createHash,
     deno,
     pathToFileURL(`${dir}/`),
+    (options: unknown) => options,
     ...Object.values(staticFile),
-  )) as StaticHandler
+  )
+}
+
+async function staticHandler(src: string, dir: string, deno = denoFiles): Promise<StaticHandler> {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the evaluated section is the generated entry's static handler, which declares these two functions.
+  return (await evaluateStatic(src, dir, deno, false)) as StaticHandler
+}
+
+interface DenoServeOptions {
+  readonly port: number
+  readonly signals?: unknown
+  static(request: Request): Response | Promise<Response | undefined> | undefined
+}
+
+/** The options the generated Deno entry passes to `@nifrajs/deno`'s `serve`, with no PORT set. */
+async function denoServeOptions(src: string, dir: string): Promise<DenoServeOptions> {
+  const deno = { ...denoFiles, env: { get: (): string | undefined => undefined } }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the evaluated entry returns the options object it passed to the capture stub.
+  return (await evaluateStatic(src, dir, deno, true)) as DenoServeOptions
 }
 
 /** The options a generated Node entry passes to `serve`, evaluated with its folder at `dir`. */
@@ -494,12 +517,90 @@ describe("generateServerEntry", () => {
     expect((unlisted.static as Record<string, unknown>[])[0]).not.toHaveProperty("hashedFiles")
   })
 
-  test("deno → Deno.serve passing the peer address", () => {
-    const src = generateServerEntry({ target: "deno", adapterImport: "../framework.ts" })
-    expect(src).toContain("Deno.serve(")
-    expect(src).toContain("app.fetch(req, { clientIp: info.remoteAddr.hostname })")
-    expect(src).toContain('Symbol.for("nifra.body.trustedFraming")')
-    expect(src).not.toContain("toFetchHandler")
+  test("deno → the app itself on @nifrajs/deno, the build's files in front of it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nifra-deno-entry-"))
+    writeFileSync(join(root, "robots.txt"), "User-agent: *\n")
+    try {
+      const src = generateServerEntry({
+        target: "deno",
+        adapterImport: "../framework.ts",
+        publicFiles: ["/robots.txt"],
+      })
+      // The adapter marks the body framing, passes the socket peer and drains on stop().
+      expect(src).toContain('import { serve } from "@nifrajs/deno"')
+      expect(src).not.toContain("Deno.serve(")
+      expect(src).not.toContain("app.fetch(")
+      expect(src).not.toContain("toFetchHandler")
+      const options = await denoServeOptions(src, root)
+      expect(options.port).toBe(3000)
+      expect(options).not.toHaveProperty("signals")
+      const robots = await options.static(new Request("http://app.test/robots.txt"))
+      expect(await robots?.text()).toBe("User-agent: *\n")
+      expect(options.static(new Request("http://app.test/about"))).toBeUndefined()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("selfHost reaches each self-hosting server, idleTimeoutSec Bun's alone; an edge target ignores it", async () => {
+    const selfHost = { gracefulSignals: { drainMs: 5000, delayMs: 1000 }, idleTimeoutSec: 120 }
+    const entry = (target: BuildTarget, settings: ServerEntrySelfHost = selfHost) =>
+      generateServerEntry({
+        target,
+        adapterImport: "../framework.ts",
+        selfHost: settings,
+      })
+    const bare = (target: BuildTarget) =>
+      generateServerEntry({ target, adapterImport: "../framework.ts" })
+    const bun = entry("bun")
+    expect(bun).toContain('  server: { gracefulSignals: {"drainMs":5000,"delayMs":1000} },')
+    expect(bun).toContain("  idleTimeoutSec: 120,")
+    expect(entry("bun", { gracefulSignals: true })).toContain(
+      "  server: { gracefulSignals: true },",
+    )
+    for (const target of ["bun", "node", "deno"] as const) {
+      expect(entry(target, { gracefulSignals: false })).toBe(bare(target))
+    }
+    for (const target of ["node", "deno"] as const) {
+      expect(entry(target)).not.toContain("idleTimeoutSec")
+      expect(entry(target)).not.toContain("server:")
+    }
+    const node = await nodeServeOptions(entry("node"), "/srv/app/")
+    expect(node.signals).toEqual(selfHost.gracefulSignals)
+    const deno = await denoServeOptions(entry("deno"), tmpdir())
+    expect(deno.signals).toEqual(selfHost.gracefulSignals)
+    for (const target of ["cloudflare", "vercel"] as const) {
+      expect(entry(target)).toBe(bare(target))
+    }
+  })
+
+  test("a selfHost setting of the wrong shape is refused, naming it", () => {
+    const refused: [unknown, string][] = [
+      [null, "selfHost must be an object"],
+      [{ gracefulSignals: "yes" }, "gracefulSignals must be a boolean or { drainMs, delayMs }"],
+      [{ gracefulSignals: { drainMs: -1 } }, "gracefulSignals.drainMs must be a number"],
+      [{ gracefulSignals: { delayMs: Number.NaN } }, "gracefulSignals.delayMs must be a number"],
+      [{ idleTimeoutSec: 256 }, "idleTimeoutSec must be a whole number of seconds from 0 to 255"],
+      [{ idleTimeoutSec: 1.5 }, "idleTimeoutSec must be a whole number"],
+      [{ idleTimeoutSec: "30" }, "idleTimeoutSec must be a whole number"],
+    ]
+    for (const [selfHost, message] of refused) {
+      expect(() =>
+        generateServerEntry({
+          target: "bun",
+          adapterImport: "../framework.ts",
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the wrong shapes a JavaScript config can hand the generator.
+          selfHost: selfHost as ServerEntrySelfHost,
+        }),
+      ).toThrow(message)
+    }
+    expect(() =>
+      generateServerEntry({
+        target: "bun",
+        adapterImport: "../framework.ts",
+        selfHost: { gracefulSignals: { drainMs: 0, delayMs: 0 }, idleTimeoutSec: 0 },
+      }),
+    ).not.toThrow()
   })
 
   test("vercel → edge config + default fetch export", () => {
