@@ -1132,6 +1132,99 @@ describe("createClientRouter", () => {
         else Object.defineProperty(globalThis, "document", described)
       }
     })
+
+    // A sign-in or sign-out response rotates the document's identity epoch, in a task of its own.
+    const withEpoch = async (
+      run: (rotate: (epoch: string) => Promise<void>) => Promise<void>,
+    ): Promise<void> => {
+      const described = Object.getOwnPropertyDescriptor(globalThis, "document")
+      const cookies = { cookie: "nifra-epoch=one" }
+      Object.defineProperty(globalThis, "document", { value: cookies, configurable: true })
+      try {
+        await run(async (epoch) => {
+          await Promise.resolve()
+          cookies.cookie = `nifra-epoch=${epoch}`
+        })
+      } finally {
+        if (described === undefined) Reflect.deleteProperty(globalThis, "document")
+        else Object.defineProperty(globalThis, "document", described)
+      }
+    }
+    const IDLE = { pending: false, data: undefined }
+
+    test("identityChanged() returns every fetcher to idle and tells it, and drops a load in flight", async () => {
+      const state = { whoami: "alice", version: 0 }
+      let release = (): void => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let fetches = 0
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => {
+          fetches++
+          const seen = { id: m.params.id, ...state }
+          if (fetches === 2) await held
+          return seen
+        },
+      })
+      await r.fetcher("cart").load("/users/7")
+      let told = 0
+      r.fetcher("cart").subscribe(() => {
+        told++
+      })
+      const loading = r.fetcher("late").load("/users/8")
+      identityChanged()
+      expect([r.fetcher("cart").snapshot(), told]).toEqual([IDLE, 1])
+      release()
+      await loading
+      expect(r.fetcher("late").snapshot()).toEqual(IDLE)
+    })
+
+    test("a new identity epoch returns fetchers to idle on the next read, and tells them after it", async () => {
+      await withEpoch(async (rotate) => {
+        const r = routerFor({ whoami: "alice", version: 0 })
+        await r.fetcher("cart").load("/users/7")
+        let told = 0
+        r.fetcher("cart").subscribe(() => {
+          told++
+        })
+        await rotate("two")
+        // Read while a component renders: its subscribers hear once the render is over.
+        expect([r.fetcher("cart").snapshot(), told]).toEqual([IDLE, 0])
+        await Promise.resolve()
+        expect(told).toBe(1)
+
+        await r.fetcher("cart").load("/users/7")
+        await rotate("three")
+        expect(r.fetchers().map((fetcher) => fetcher.snapshot())).toEqual([IDLE])
+      })
+    })
+
+    test("a fetcher load or submit that starts after a new epoch keeps what it reads", async () => {
+      await withEpoch(async (rotate) => {
+        const state = { whoami: "alice", version: 0 }
+        const r = routerFor(state)
+        const cart = r.fetcher("cart")
+        await cart.load("/users/7")
+        state.whoami = "bob"
+        await rotate("two")
+        await cart.load("/users/7")
+        expect(r.fetcher("cart").snapshot().data).toEqual({ id: "7", whoami: "bob", version: 0 })
+
+        await rotate("three")
+        await withAction(
+          () => cart.submit("/cart", new URLSearchParams()),
+          () => {},
+        )
+        expect(r.fetcher("cart").snapshot()).toEqual({
+          pending: false,
+          data: undefined,
+          actionData: { ok: true },
+        })
+      })
+    })
   })
 
   test("submit posts the action in data mode, then revalidates the active loader", async () => {

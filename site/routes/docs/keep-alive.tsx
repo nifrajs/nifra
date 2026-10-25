@@ -324,7 +324,8 @@ export default function KeepAlive() {
       <CodeBlock code={ROTATE} />
       <p>
         When identity lives in client storage, as a bearer token, call <code>identityChanged()</code>{" "}
-        at sign-in and sign-out:
+        at sign-in and sign-out. It also clears every query client and returns every fetcher to
+        idle:
       </p>
       <CodeBlock code={TOKEN} />
       <p>

@@ -268,7 +268,7 @@ interface Visit {
   who: "first" | "second"
 }
 
-type Change = (visit: Visit) => void
+type Change = (visit: Visit) => Promise<void>
 
 const pages = [
   { routeId: "index", pattern: "/" },
@@ -292,7 +292,7 @@ const SCENARIOS = [
       const visit: Visit = { who: "first" }
       const router = routerFor(visit)
       await router.prefetch("/me")
-      change(visit)
+      await change(visit)
       await router.navigate("/me")
       return router.snapshot().data
     },
@@ -305,7 +305,7 @@ const SCENARIOS = [
       const router = routerFor(visit)
       await router.navigate("/me")
       await router.navigate("/")
-      change(visit)
+      await change(visit)
       await router.navigate("/me")
       return router.snapshot().data
     },
@@ -317,7 +317,7 @@ const SCENARIOS = [
       const visit: Visit = { who: "first" }
       const router = routerFor(visit)
       await router.fetcher("account").load("/me")
-      change(visit)
+      await change(visit)
       return router.fetcher("account").snapshot().data
     },
   },
@@ -329,7 +329,7 @@ const SCENARIOS = [
       const queries = createQueryClient({ now: () => 0 })
       const load = async () => ({ who: visit.who })
       await queries.query(["me"], load).fetch()
-      change(visit)
+      await change(visit)
       return queries.query(["me"], load).snapshot().data
     },
   },
@@ -341,7 +341,7 @@ const SCENARIOS = [
       const queries = createQueryClient({ now: () => 0 })
       const load = async () => ({ who: visit.who })
       await queries.infiniteQuery(["feed"], load, feed).fetch()
-      change(visit)
+      await change(visit)
       return queries.infiniteQuery(["feed"], load, feed).snapshot().data
     },
   },
@@ -357,7 +357,7 @@ const SCENARIOS = [
           { key: ["feed"], data: { pages: [{ who: "first" }], pageParams: [0] }, updatedAt: 0 },
         ],
       })
-      change(visit)
+      await change(visit)
       return queries.infiniteQuery(["feed"], async () => ({ who: visit.who }), feed).snapshot().data
     },
   },
@@ -366,12 +366,7 @@ const SCENARIOS = [
 type ScenarioId = (typeof SCENARIOS)[number]["id"]
 
 /** Visitor data an identity change does not drop yet, each with what the second visitor sees. */
-const OPEN: Readonly<Partial<Record<ScenarioId, string>>> = {
-  "router-fetcher": "the fetcher still holds the data it loaded for the first visitor",
-  query: "the second visitor's first read is the first visitor's data, marked success",
-  "query-infinite": "the second visitor's first read is the first visitor's pages",
-  "query-seed": "the second visitor's first read is the pages seeded for the first",
-}
+const OPEN: Readonly<Partial<Record<ScenarioId, string>>> = {}
 
 /** How a page hears that the visitor changed. */
 const CHANGES: readonly (readonly [
@@ -381,7 +376,7 @@ const CHANGES: readonly (readonly [
   [
     "identityChanged()",
     (run) =>
-      run((visit) => {
+      run(async (visit) => {
         visit.who = "second"
         identityChanged()
       }),
@@ -393,7 +388,9 @@ const CHANGES: readonly (readonly [
       const document = { cookie: "nifra-epoch=first" }
       Object.defineProperty(globalThis, "document", { value: document, configurable: true })
       try {
-        return await run((visit) => {
+        // A response sets the cookie in a task of its own.
+        return await run(async (visit) => {
+          await Promise.resolve()
           visit.who = "second"
           document.cookie = "nifra-epoch=second"
         })
@@ -410,8 +407,16 @@ for (const scenario of SCENARIOS)
     const open = OPEN[scenario.id]
     const title = `${scenario.title}, after ${change}${open === undefined ? "" : ` - open: ${open}`}`
     const check = async () => {
-      const seen = await through(scenario.run)
-      expect(JSON.stringify(seen) ?? "").not.toContain("first")
+      // A page: query clients a server builds per request are never adopted.
+      const held = Object.getOwnPropertyDescriptor(globalThis, "window")
+      Object.defineProperty(globalThis, "window", { value: globalThis, configurable: true })
+      try {
+        const seen = await through(scenario.run)
+        expect(JSON.stringify(seen) ?? "").not.toContain("first")
+      } finally {
+        if (held === undefined) Reflect.deleteProperty(globalThis, "window")
+        else Object.defineProperty(globalThis, "window", held)
+      }
     }
     if (open === undefined) test(title, check)
     else test.failing(title, check)

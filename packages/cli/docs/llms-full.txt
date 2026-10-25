@@ -2067,6 +2067,11 @@ function Row({ id }: { id: string }) {
 const anyPending = useFetchers().some((f) => f.snapshot().pending)
 ```
 
+A fetcher holds nothing for the next visitor: `identityChanged()` returns every
+fetcher to idle. In an app with a [keepAlive](/docs/keep-alive#sign-in) route, so
+does the identity epoch cookie a sign-in or sign-out response rotates, on the next
+`useFetcher` read.
+
 ## Nifra - Rendering: SSR, streaming, SSG & ISR
 
 > Render critical HTML first, stream deferred data progressively, prerender static routes, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.
@@ -3173,6 +3178,14 @@ surgery.
 In an app with [live refresh](/docs/live), a query can name the live keys its data
 depends on: `useQuery(key, fn, { live: [`post:${id}`] })` refetches whenever
 the server publishes one of them.
+
+### Sign-in and sign-out
+
+A cached query never answers for the next visitor. `identityChanged()` from
+`@nifrajs/web/client` clears every query client in the page: mounted queries go
+back to pending and refetch, the rest are dropped. In an app with a
+[keepAlive](/docs/keep-alive#sign-in) route, the identity epoch cookie a sign-in
+or sign-out response rotates does the same on the client's next read.
 
 It's the same agnostic core under every adapter: the cache, dedup, and invalidation logic
 live in `@nifrajs/web`; each binding is a thin wrapper in its framework's own
@@ -12224,7 +12237,8 @@ export const api = server().post("/switch-account", (c) => {
 ```
 
 When identity lives in client storage, as a bearer token, call `identityChanged()`
-at sign-in and sign-out:
+at sign-in and sign-out. It also clears every query client and returns every fetcher to
+idle:
 
 ```ts
 import { identityChanged } from "@nifrajs/web/client"

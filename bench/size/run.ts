@@ -318,8 +318,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // skips its animation when no frame comes: 19,844 -> 19,961 B (Bun 1.4.4). `notFound`, `gone` and
   // `statusPage`, which this row's whole-namespace import keeps and a named import tree-shakes:
   // 19,961 -> 20,178 B (Bun 1.4.4). A `bigint` in the plain transport codec as its decimal string:
-  // 20,178 -> 20,228 B (Bun 1.4.4).
-  "nifra-web-client": 19.8,
+  // 20,178 -> 20,228 B (Bun 1.4.4). Query clients and fetchers drop what they hold on
+  // `identityChanged()` and on a new identity epoch cookie, read once per synchronous run because a
+  // `document.cookie` read costs about 2.4 us in Chromium: 20,228 -> 20,519 B (Bun 1.4.4).
+  "nifra-web-client": 20.1,
   "nifra-i18n": 4.3,
 }
 

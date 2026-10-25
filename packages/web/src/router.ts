@@ -9,7 +9,7 @@ import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryState, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
-import { epochOf, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
+import { documentEpoch, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
 import { present } from "./internal/present.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
 import { appUrl, requestPattern } from "./internal/route-path.ts"
@@ -300,6 +300,8 @@ export interface FetcherState {
  * with the main router and with other fetchers - each is single-flight against *itself* (its own
  * monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without
  * disturbing the active view. Loads/submits write the shared cache and honor `X-Nifra-Revalidate`.
+ * When the visitor changes (`identityChanged()` in this tab, or a new identity epoch cookie, read on
+ * the next `fetcher()`), every fetcher goes back to idle.
  */
 export interface Fetcher {
   /** Current state; stable reference between transitions. */
@@ -899,16 +901,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // path -> the token of the prefetch loading it; a prefetch stores what it read only while its
   // token is still there, so dropping the token discards a load that started before the drop.
   const inflight = new Map<string, object>()
-  // Read without the DOM types: this module also builds in tsconfigs that leave the DOM lib out.
-  const readEpoch = (): string => {
-    const cookie: unknown = Reflect.get(Reflect.get(globalThis, "document") ?? {}, "cookie")
-    return typeof cookie === "string" ? epochOf(cookie) : ""
-  }
   const freshPrefetch = (path: string): LoadedRouteData | undefined => {
     const held = prefetched.get(path)
     return held !== undefined &&
       Date.now() - held[1] < PREFETCH_MAX_AGE_MS &&
-      held[2] === readEpoch()
+      held[2] === documentEpoch()
       ? held[0]
       : undefined
   }
@@ -918,9 +915,6 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     inflight.clear()
     prefetched.clear()
   }
-  onIdentityChange(dropPrefetched)
-  if (typeof BroadcastChannel !== "undefined")
-    new BroadcastChannel(IDENTITY_CHANNEL).addEventListener("message", dropPrefetched)
   // Keyed data cache (path → latest loader data + freshness). Written on every published data
   // (navigate/submit), read by `invalidate` (+ targeted revalidation and fetchers in later F16
   // increments). Bounded - evict the oldest-inserted past the cap (route data is small; this just
@@ -1189,6 +1183,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   type FetcherEntry = {
     fetcher: Fetcher
     refreshIfShowing: (paths: readonly string[]) => Promise<void>
+    /** Back to idle without telling subscribers, dropping what a load or submit in flight reads. */
+    forget: () => void
+    notify: () => void
   }
   const fetchers = new Map<string, FetcherEntry>()
   const fetcherListeners = new Set<() => void>()
@@ -1227,6 +1224,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     const runLoad = async (path: string): Promise<void> => {
       const matched = match(path)
       if (matched === null) return // unmatched path → no-op
+      // Data held from before a new epoch goes first, so what this load reads is not dropped as the
+      // previous visitor's on the next read.
+      checkFetchersEpoch()
       const mine = ++fGeneration
       fAbort?.abort()
       const ac = new AbortController()
@@ -1268,6 +1268,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       },
       load: runLoad,
       submit: async (action, body) => {
+        checkFetchersEpoch()
         const mine = ++fGeneration
         // Abort any prior in-flight load/submit on THIS fetcher (its fetch + NDJSON drain) - like
         // `runLoad` does for a superseding load. The mutation POST is left to complete; the
@@ -1320,7 +1321,39 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (loadedPath !== undefined && paths.includes(loadedPath))
           await runLoad(loadedPath).catch(() => {})
       },
+      forget: () => {
+        fGeneration++
+        fAbort?.abort()
+        fAbort = undefined
+        loadedPath = undefined
+        shown = undefined
+        fState = { pending: false, data: undefined }
+      },
+      notify: fEmit,
     }
+  }
+
+  // Warmed pages and what every fetcher holds were loaded for the previous visitor. Another tab's
+  // message drops warmed pages only: this tab hears its own `identityChanged()` there too, a task
+  // later, and a fetcher may have started loading for the new visitor by then.
+  onIdentityChange(() => {
+    dropPrefetched()
+    for (const entry of fetchers.values()) entry.forget()
+    for (const entry of fetchers.values()) entry.notify()
+  })
+  if (typeof BroadcastChannel !== "undefined")
+    new BroadcastChannel(IDENTITY_CHANNEL).addEventListener("message", dropPrefetched)
+  // A new epoch cookie says the same with no signal. Fetchers are read while a component renders, so
+  // they forget at once and tell their subscribers once the render is over.
+  let fetchersEpoch = documentEpoch()
+  const checkFetchersEpoch = (): void => {
+    const epoch = documentEpoch()
+    if (epoch === fetchersEpoch) return
+    fetchersEpoch = epoch
+    for (const entry of fetchers.values()) entry.forget()
+    queueMicrotask(() => {
+      for (const entry of fetchers.values()) entry.notify()
+    })
   }
 
   return {
@@ -1606,7 +1639,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       if (matched === null) return
       const token = {}
       inflight.set(path, token)
-      const epoch = readEpoch()
+      const epoch = documentEpoch()
       try {
         // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from -
         // otherwise a prefetch hit would publish an envelope where a miss publishes loader data.
@@ -1625,7 +1658,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           loaded.serverComponents === undefined &&
           !holes &&
           inflight.get(path) === token &&
-          epoch === readEpoch()
+          epoch === documentEpoch()
         )
           prefetched.set(path, [loaded, Date.now(), epoch])
       } catch {
@@ -1635,6 +1668,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
     },
     fetcher: (key) => {
+      checkFetchersEpoch()
       const existing = fetchers.get(key)
       if (existing !== undefined) return existing.fetcher
       const entry = createFetcher()
@@ -1642,7 +1676,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       emitFetchers() // a new fetcher appeared - wake any `useFetchers` subscriber
       return entry.fetcher
     },
-    fetchers: () => fetchersArr,
+    fetchers: () => {
+      checkFetchersEpoch()
+      return fetchersArr
+    },
     subscribeFetchers: (listener) => {
       fetcherListeners.add(listener)
       return () => {
