@@ -16,8 +16,9 @@
  * source only on the first `pull`, which is what makes the hand-back sound.
  *
  * The seam is a `Symbol.for` key because the two packages that use it share no runtime dependency
- * (`@nifrajs/proxy` is dependency-free by design, so it carries its own copy of this file). Both
- * sides must agree on {@link NODE_STREAM_CLAIM} and on the shape below, and nothing else.
+ * (`@nifrajs/proxy` is dependency-free by design, so it carries a generated copy of this file,
+ * reachable only through its `./undici` subpath). Both sides must agree on {@link NODE_STREAM_CLAIM}
+ * and on the shape below, and nothing else.
  *
  * Claiming is ONE-SHOT and refused once the Web view has been touched, which is the property that
  * makes it safe: a body can never be split between the two views, and a layer that already started
@@ -26,7 +27,7 @@
 
 import { Readable } from "node:stream"
 
-/** Shared with `@nifrajs/proxy/undici`'s copy of this module - the value is the contract. */
+/** Shared by `@nifrajs/node` and `@nifrajs/proxy/undici` - the value is the contract. */
 export const NODE_STREAM_CLAIM = Symbol.for("nifra.node.stream-claim")
 
 interface NodeStreamClaim {
@@ -147,7 +148,7 @@ export function claimableWebStream(
               }
               // Bounded drain: past DRAIN_BYTE_CAP stop pulling and destroy, so a slow client cannot
               // hold the socket open by trickling an over-cap body forever.
-              drained += (step.value as Uint8Array).byteLength
+              drained += step.value.byteLength
               if (drained > DRAIN_BYTE_CAP) {
                 finish()
                 return

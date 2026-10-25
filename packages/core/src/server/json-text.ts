@@ -3,7 +3,7 @@
  * id answered a 500. Every plain JSON writer goes through this instead: a `bigint` is written as its
  * decimal string, the encoding OpenAPI generators and protobuf's JSON mapping use for 64-bit integers.
  * Only a first attempt that threw is retried, so a value without one costs nothing more. The Node
- * adapter runs a generated copy (scripts/gen-node-outcome.ts), so this module imports nothing.
+ * adapter runs a generated copy (scripts/gen-vendored.ts), so this module imports nothing.
  */
 
 const bigintAsText = (_key: string, value: unknown): unknown =>

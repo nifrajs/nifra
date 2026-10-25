@@ -7,7 +7,7 @@
  * (from `@nifrajs/web-svelte/router`, re-exported here) let a page pause its timers meanwhile.
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
-import { searchOfChain } from "@nifrajs/web/client"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import {
   createSlotParking,
   type KeepAliveRouter,
@@ -58,7 +58,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
     propsOf: (state) => {
       let held = props.get(state)
       if (held === undefined) {
-        held = propsFor(state, searchSchemas, matchChains)
+        held = routeProps(state, searchSchemas, matchChains)
         props.set(state, held)
       }
       return held
@@ -80,31 +80,6 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   } finally {
     if (warning !== undefined) console.warn = originalWarn
   }
-}
-
-// What Router.svelte derives for the page on screen, for any state.
-const propsFor = (
-  state: RouterState,
-  searchSchemas: MountRouterOptions["searchSchemas"],
-  matchChains: NonNullable<MountRouterOptions["matchChains"]>,
-): RenderProps => {
-  const path = state.intercepted?.pagePath ?? state.path
-  const q = path.indexOf("?")
-  const matchChain = matchChains[state.routeId]
-  const props: { -readonly [K in keyof RenderProps]: RenderProps[K] } = {
-    data: state.data,
-    actionData: state.actionData,
-    pending: state.pending,
-    params: state.params,
-    path,
-    search: searchOfChain(searchSchemas?.[state.routeId] ?? [], q === -1 ? "" : path.slice(q)),
-  }
-  if (state.layoutData !== undefined) props.layoutData = state.layoutData
-  if (state.serverComponents !== undefined) props.serverComponents = state.serverComponents
-  if (state.submission) props.submission = state.submission
-  if (state.boundaries !== undefined) props.boundaries = state.boundaries
-  if (matchChain !== undefined) props.matchChain = matchChain
-  return props
 }
 
 function assuranceWarning(): ((message: string) => void) | undefined {

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
 import type { RouterState } from "@nifrajs/web"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import { createSSRApp, defineComponent, h } from "vue"
 import { renderToString } from "vue/server-renderer"
 import { compose } from "../src/compose.ts"
-import { routeProps } from "../src/route-props.ts"
 
 /** A layout that renders whatever loader data it was handed, plus its default slot. */
 const layout = (marker: string) =>
@@ -51,15 +51,5 @@ test("the mounted Router renders each layout with the snapshot's layout data", a
 })
 
 test("a snapshot with no layout data renders the layouts with null", async () => {
-  expect("layoutData" in routeProps(snapshot(), undefined)).toBe(false)
   expect(await render(snapshot())).toContain('data-layout="root">null')
-})
-
-test("routeProps keeps search the same object while the query is the same", () => {
-  // A new object with equal content would count as a changed prop for a memoized page.
-  const searchAt = (path: string) => routeProps(snapshot({ path }), undefined).search
-  const first = searchAt("/org?page=2")
-  expect(first).toEqual({ page: 2 })
-  expect(searchAt("/org?page=2")).toBe(first)
-  expect(searchAt("/org?page=3")).toEqual({ page: 3 })
 })

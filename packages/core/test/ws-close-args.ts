@@ -35,6 +35,8 @@ export const FORBIDDEN_CLOSES: readonly (readonly [number | null, string | null]
   [1000.5, null],
   [1000, "r".repeat(124)],
   [1000, "é".repeat(62)],
+  // 126 bytes: a lone surrogate is sent as U+FFFD, three bytes, though it is one UTF-16 unit.
+  [1000, "\ud800".repeat(42)],
   [null, "a reason without a code"],
 ]
 
