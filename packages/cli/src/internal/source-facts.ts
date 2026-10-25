@@ -19,6 +19,23 @@ export interface UntypedResponseRoutes {
   readonly indirectReturns: readonly number[]
 }
 
+/** A route registration of one file that declares no `response`, from {@link SourceFacts.undeclaredResponseRoutes}. */
+export interface UndeclaredResponseRoute {
+  /** The start of the registration's method name (`get` in `.get("/x", h)`). */
+  readonly position: number
+  readonly method: string
+  readonly path: string
+}
+
+/** A zod `coerce.boolean()` that a route's text slot reaches, from {@link SourceFacts.textSlotBooleanCoercions}. */
+export interface TextSlotBooleanCoercion {
+  /** The start of the `coerce.boolean()` call. */
+  readonly position: number
+  readonly slot: "query" | "headers" | "cookies"
+  readonly method: string
+  readonly path: string
+}
+
 export interface SourceFacts {
   parse(file: string, content: string): TSApi.SourceFile | undefined
   isValueImportAt(
@@ -61,6 +78,20 @@ export interface SourceFacts {
     source: TSApi.SourceFile,
     importReturnsResponse?: (specifier: string, name: string) => boolean,
   ): UntypedResponseRoutes
+  /**
+   * The `.get("/path", …)` registrations (and the other methods) whose options are all object
+   * literals and none declares `response`, leaving out those whose handlers {@link untypedResponseRoutes}
+   * reports: a raw `Response` has no JSON body to declare. One whose options are a variable or a call is
+   * left out too, since the file does not show whether it declares one.
+   */
+  undeclaredResponseRoutes(source: TSApi.SourceFile): readonly UndeclaredResponseRoute[]
+  /**
+   * The zod `coerce.boolean()` calls a route's `query`, `headers` or `cookies` schema reaches in
+   * `source`: written in the route's options, or in a variable of the file the options name, at any
+   * depth. Each call is reported once, for the first route that reaches it. A schema imported from
+   * another file is not followed.
+   */
+  textSlotBooleanCoercions(source: TSApi.SourceFile): readonly TextSlotBooleanCoercion[]
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -119,6 +150,56 @@ const REGISTRATION_METHODS: ReadonlySet<string> = new Set([
   "options",
   "all",
 ])
+
+const ZOD_MODULES: ReadonlySet<string> = new Set(["zod", "zod/v4", "zod/mini", "zod/v4/mini"])
+
+/** The names `source` binds zod's namespace to (`z`), and those it binds zod's `coerce` to. */
+function zodBindings(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+): { readonly namespaces: ReadonlySet<string>; readonly coerce: ReadonlySet<string> } {
+  const namespaces = new Set<string>()
+  const coerce = new Set<string>()
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+      continue
+    const clause = statement.importClause
+    if (!ZOD_MODULES.has(statement.moduleSpecifier.text) || clause === undefined) continue
+    if (clause.isTypeOnly) continue
+    if (clause.name !== undefined) namespaces.add(clause.name.text)
+    const bindings = clause.namedBindings
+    if (bindings !== undefined && ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text)
+    else if (bindings !== undefined) {
+      for (const element of bindings.elements) {
+        const imported = (element.propertyName ?? element.name).text
+        if (element.isTypeOnly) continue
+        if (imported === "z") namespaces.add(element.name.text)
+        if (imported === "coerce") coerce.add(element.name.text)
+      }
+    }
+  }
+  return { namespaces, coerce }
+}
+
+/** The initializer of each variable of `source`, any scope, by name: the first one wins. */
+function variableInitializers(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+): Map<string, TSApi.Expression> {
+  const consts = new Map<string, TSApi.Expression>()
+  const visit = (node: TSApi.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined &&
+      !consts.has(node.name.text)
+    )
+      consts.set(node.name.text, node.initializer)
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return consts
+}
 
 function unwrapExpression(ts: TypeScriptApi, node: TSApi.Expression): TSApi.Expression {
   let current = node
@@ -618,6 +699,121 @@ export function createSourceFacts(
     }
   }
 
+  const undeclaredResponseRoutes = (
+    source: TSApi.SourceFile,
+  ): readonly UndeclaredResponseRoute[] => {
+    const locals = localFunctions(ts, source)
+    const raw = untypedResponseRoutes(source)
+    const routes: UndeclaredResponseRoute[] = []
+    const visit = (node: TSApi.Node): void => {
+      ts.forEachChild(node, visit)
+      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return
+      const method = node.expression.name.text
+      const [first, ...rest] = node.arguments
+      if (
+        !REGISTRATION_METHODS.has(method) ||
+        first === undefined ||
+        !ts.isStringLiteralLike(first)
+      )
+        return
+      const handlers: FunctionNode[] = []
+      for (const argument of rest.map((value) => unwrapExpression(ts, value))) {
+        const local = ts.isIdentifier(argument) ? locals.get(argument.text) : undefined
+        if (isFunctionValue(ts, argument)) handlers.push(argument)
+        else if (local !== undefined) handlers.push(...local)
+        else if (!ts.isObjectLiteralExpression(argument) || declaresResponse(ts, argument)) return
+      }
+      if (handlers.length > 0 && handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
+        return
+      routes.push({
+        position: node.expression.name.getStart(source),
+        method: method.toUpperCase(),
+        path: first.text,
+      })
+    }
+    visit(source)
+    return routes.sort((a, b) => a.position - b.position)
+  }
+
+  const textSlotBooleanCoercions = (
+    source: TSApi.SourceFile,
+  ): readonly TextSlotBooleanCoercion[] => {
+    const zod = zodBindings(ts, source)
+    if (zod.namespaces.size === 0 && zod.coerce.size === 0) return []
+    const consts = variableInitializers(ts, source)
+    const isCoerceBoolean = (node: TSApi.Node): boolean => {
+      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression))
+        return false
+      const { expression, name } = node.expression
+      if (name.text !== "boolean") return false
+      if (ts.isIdentifier(expression)) return zod.coerce.has(expression.text)
+      return (
+        ts.isPropertyAccessExpression(expression) &&
+        expression.name.text === "coerce" &&
+        ts.isIdentifier(expression.expression) &&
+        zod.namespaces.has(expression.expression.text)
+      )
+    }
+    const found: TextSlotBooleanCoercion[] = []
+    const reported = new Set<number>()
+    const reach = (
+      node: TSApi.Node,
+      seen: Set<TSApi.Node>,
+      route: Omit<TextSlotBooleanCoercion, "position">,
+    ): void => {
+      if (ts.isIdentifier(node)) {
+        const initializer = consts.get(node.text)
+        if (initializer !== undefined && !seen.has(initializer)) {
+          seen.add(initializer)
+          reach(initializer, seen, route)
+        }
+        return
+      }
+      if (isCoerceBoolean(node)) {
+        const position = node.getStart(source)
+        if (!reported.has(position)) {
+          reported.add(position)
+          found.push({ position, ...route })
+        }
+      }
+      // Only the value side: a property name or a member name is never a schema.
+      if (ts.isPropertyAccessExpression(node)) reach(node.expression, seen, route)
+      else if (ts.isPropertyAssignment(node)) reach(node.initializer, seen, route)
+      else ts.forEachChild(node, (child) => reach(child, seen, route))
+    }
+    const visit = (node: TSApi.Node): void => {
+      ts.forEachChild(node, visit)
+      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return
+      const method = node.expression.name.text
+      const [first, ...rest] = node.arguments
+      if (
+        !REGISTRATION_METHODS.has(method) ||
+        first === undefined ||
+        !ts.isStringLiteralLike(first)
+      )
+        return
+      for (const argument of rest) {
+        let options = unwrapExpression(ts, argument)
+        const named = ts.isIdentifier(options) ? consts.get(options.text) : undefined
+        if (named !== undefined) options = unwrapExpression(ts, named)
+        if (!ts.isObjectLiteralExpression(options)) continue
+        for (const property of options.properties) {
+          if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property))
+            continue
+          const slot =
+            ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
+              ? property.name.text
+              : undefined
+          if (slot !== "query" && slot !== "headers" && slot !== "cookies") continue
+          const value = ts.isPropertyAssignment(property) ? property.initializer : property.name
+          reach(value, new Set(), { slot, method: method.toUpperCase(), path: first.text })
+        }
+      }
+    }
+    visit(source)
+    return found.sort((a, b) => a.position - b.position)
+  }
+
   const exportReturnsResponse = (source: TSApi.SourceFile, name: string): boolean => {
     const local = exportedLocal(ts, source, name)
     if (local === undefined) return false
@@ -655,6 +851,8 @@ export function createSourceFacts(
     isFunctionRouteCallAt,
     isResponseSyntaxAt,
     untypedResponseRoutes,
+    undeclaredResponseRoutes,
+    textSlotBooleanCoercions,
     exportReturnsResponse,
     isDynamicImportAt,
   }

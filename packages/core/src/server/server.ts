@@ -163,6 +163,7 @@ import {
   type StatusResponse,
 } from "./runtime-core.ts"
 import { normalizeStaticResponseHeaders, type StaticResponseHeaders } from "./static-headers.ts"
+import { withTextSlots } from "./text-slots.ts"
 import { plainValidationError } from "./validation.ts"
 
 // NodeServeOutcome (the nifra<->node bridge render form) now lives in `./node-outcome.ts`; re-exported
@@ -2595,6 +2596,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): CatalogRoute {
+    schema = withTextSlots(schema)
     // Route provenance for the CLI's capability walk, which sets NIFRA_ROUTE_SITES while it loads the
     // app: the module that registered the route, read where a static scan cannot see the path.
     if (

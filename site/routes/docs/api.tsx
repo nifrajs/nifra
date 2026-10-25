@@ -494,6 +494,25 @@ export default function Api() {
         header too when proxies or plain HTTP clients read it.
       </p>
 
+      <h2>Query, header and cookie values are text</h2>
+      <p>
+        A query string, header values and a <code>Cookie</code> header always arrive as text. A{" "}
+        <code>t.object</code>, <code>t.query</code>, <code>t.headers</code> or <code>t.cookies</code>{" "}
+        schema in one of those slots converts the text to the types it declares:{" "}
+        <code>?archived=true</code> and <code>?archived=1</code> are <code>true</code>,{" "}
+        <code>?page=2</code> is <code>2</code>, and text that is neither, such as{" "}
+        <code>?archived=yes</code>, is a <code>422</code>. A list is read from repeated keys (
+        <code>?tag=a&amp;tag=b</code>), and a comma stays inside its value. A JSON body is already
+        typed, so a <code>body</code> schema converts nothing.
+      </p>
+      <p>
+        Another Standard Schema gets the text as it came and converts what it says it does. With
+        zod, <code>z.coerce.boolean()</code> is <code>Boolean(value)</code>, so <code>"false"</code>{" "}
+        and <code>"0"</code> are both <code>true</code>. Use <code>z.stringbool()</code>, which reads{" "}
+        <code>false</code>, <code>0</code>, <code>no</code> and <code>off</code> as false and refuses
+        other text; <code>nifra check</code> reports the first as NF-C055.
+      </p>
+
       <h2>Typed request cookies (schema.cookies)</h2>
       <p>
         <code>c.cookies</code> is the request's <code>Cookie</code> header as a name-to-value record,
@@ -523,8 +542,8 @@ export default function Api() {
         <code>"headers"</code>), and <code>c.headers</code> becomes the schema&rsquo;s typed output.
         Every client sends headers no route declares - <code>host</code>, <code>user-agent</code>,{" "}
         <code>accept</code> - so a closed <code>t.object</code> validates only the names it declares,
-        each read case-insensitively, which is also how the OpenAPI document lists them: one{" "}
-        <code>in: header</code> parameter per declared name.
+        each read case-insensitively and converted from text, which is also how the OpenAPI document
+        lists them: one <code>in: header</code> parameter per declared name.
       </p>
       <CodeBlock code={HEADERS} lang="ts" />
       <p>

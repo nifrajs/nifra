@@ -9,6 +9,7 @@ import { type TypeCheck, TypeCompiler } from "@sinclair/typebox/compiler"
 import { Value } from "@sinclair/typebox/value"
 import { markAnswerStep } from "./answer-step.ts"
 import { ensureDefaultFormats } from "./formats.ts"
+import { COERCES, TEXT_SLOT } from "./marks.ts"
 
 /**
  * A `t` schema. It is a Standard Schema (so any nifra route validates it with no
@@ -44,9 +45,6 @@ function toIssue(error: { readonly message: string; readonly path: string }): St
 // The issues past this are never reported (a 422 lists 100), so walking them is wasted work on a
 // large hostile body.
 const MAX_ISSUES = 100
-
-/** Marks a coercing `validate`. On the function, not the schema, so a spread copy keeps it. */
-export const COERCES = Symbol.for("nifra.schema.coerce")
 
 // Every `validate` that checks its `jsonSchema` and nothing else: the only kind precompilation can
 // replace. A wrapper (`t.form`'s coercion and multipart reader, a hand-written Standard Schema) is
@@ -357,6 +355,10 @@ export function fromTypeBox<T extends TSchema>(
   if (coerce) Object.defineProperty(result["~standard"].validate, COERCES, { value: true })
   else {
     PLAIN_VALIDATORS.add(result["~standard"].validate)
+    let textForm: NifraSchema<T> | undefined
+    Object.defineProperty(result["~standard"].validate, TEXT_SLOT, {
+      get: () => (textForm ??= fromTypeBox(schema, { coerce: true })),
+    })
     // Built when the output guard first asks, at route load: most schemas never validate one.
     let projected: NifraSchema["~standard"]["validate"] | null | undefined
     Object.defineProperty(result["~standard"].validate, VALIDATE_PROJECTED, {

@@ -182,6 +182,9 @@ describe("t.bytes() where a value arrives", () => {
       { body: file },
       { query: t.query({ data: t.bytes() }) },
       { headers: t.headers({ data: t.bytes() }) },
+      // A t.object or precompiled schema in a text slot is swapped for its text form first.
+      { query: file },
+      { cookies: fromPrecompiled(file.jsonSchema, () => true) },
       { body: form.form({ data: t.bytes() }) },
     ]) {
       let refused: unknown

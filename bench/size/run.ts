@@ -266,6 +266,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // effect-ledger 40,029 -> 40,337, sse 38,894 -> 39,179, mcp 38,290 -> 38,593, valibot 38,998 ->
   // 39,288, typebox-t 63,958 -> 65,228, typebox-form 68,957 -> 70,229 (Bun 1.4.4); each crossed cap
   // takes the next 0.1 KiB step.
+  // A route's query, headers and cookies schemas swapped at registration for the text form a schema
+  // offers: bare 38,326 -> 38,394 B, idempotency 42,708 -> 42,779, effect-ledger 40,337 -> 40,401,
+  // sse 39,179 -> 39,251, mcp 38,593 -> 38,657, valibot 39,288 -> 39,361, typebox-t 65,228 -> 65,348,
+  // typebox-form 70,229 -> 70,319 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step.
   "nifra-bare": 37.5,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -276,14 +280,14 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
   "nifra-idempotency": 41.8,
-  "nifra-effect-ledger": 39.4,
-  "nifra-mcp": 37.7,
+  "nifra-effect-ledger": 39.5,
+  "nifra-mcp": 37.8,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.3,
-  "nifra-valibot": 38.4,
-  "nifra-typebox-t": 63.7,
+  "nifra-sse": 38.4,
+  "nifra-valibot": 38.5,
+  "nifra-typebox-t": 63.9,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 68.6,
+  "nifra-typebox-form": 68.7,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

@@ -253,12 +253,13 @@ describe("document-level breadth (servers, tags, security, info.description)", (
     expect(doc.components?.securitySchemes).toEqual({ bearer: { type: "http", scheme: "bearer" } })
   })
 
-  test("a doc without breadth options omits servers/tags/security/components entirely", () => {
+  test("a doc without breadth options omits servers/tags/security, and its components hold only the error envelope", () => {
     const plain = toOpenAPI(contract, { title: "X", version: "1" })
     expect(plain.servers).toBeUndefined()
     expect(plain.tags).toBeUndefined()
     expect(plain.security).toBeUndefined()
-    expect(plain.components).toBeUndefined()
+    expect(Object.keys(plain.components ?? {})).toEqual(["schemas"])
+    expect(Object.keys(plain.components?.schemas ?? {})).toEqual(["NifraError"])
   })
 })
 
@@ -356,7 +357,9 @@ describe("$ref reuse via $id → components.schemas", () => {
       defineContract({ getUriUser: { method: "GET", path: "/uri-user", response: UriUser } }),
     )
 
-    const componentNames = Object.keys(uriDoc.components?.schemas ?? {})
+    const componentNames = Object.keys(uriDoc.components?.schemas ?? {}).filter(
+      (name) => name !== "NifraError",
+    )
     expect(componentNames).toHaveLength(1)
     const componentName = componentNames[0] as string
     expect(componentName).toMatch(/^[A-Za-z0-9._-]+$/)
@@ -844,7 +847,11 @@ describe("typed SSE routes", () => {
       required: ["id", "title"],
     })
     // Two routes whose names collide each keep their own payload.
-    expect(Object.keys(doc.components?.schemas ?? {})).toEqual(["FeedRoomEvent", "FeedRoomEvent_2"])
+    expect(Object.keys(doc.components?.schemas ?? {})).toEqual([
+      "FeedRoomEvent",
+      "NifraError",
+      "FeedRoomEvent_2",
+    ])
   })
 
   test("3.1 keeps a valid media type and carries the item schema as an extension", () => {
@@ -1005,7 +1012,7 @@ describe("a Standard JSON Schema (zod) is described on its own side", () => {
   })
 })
 
-describe("the errors the framework answers before a handler runs", () => {
+describe("the errors the framework answers", () => {
   const error = { $ref: "#/components/schemas/NifraError" }
   const validation = { $ref: "#/components/schemas/NifraValidationError" }
   const app = server({ maxBodyBytes: 64 })
@@ -1026,16 +1033,42 @@ describe("the errors the framework answers before a handler runs", () => {
       "413",
       "415",
       "422",
+      "500",
     ])
-    for (const status of ["400", "413", "415"]) {
+    for (const status of ["400", "413", "415", "500"]) {
       expect(jsonOf(doc, "/items", "post", status)).toEqual(error)
     }
     expect(jsonOf(doc, "/items", "post", "422")).toEqual(validation)
   })
 
-  test("a query route lists the validation error; a route without schemas lists none", () => {
-    expect(Object.keys(doc.paths["/items"]?.get?.responses ?? {})).toEqual(["200", "422"])
-    expect(Object.keys(doc.paths["/health"]?.get?.responses ?? {})).toEqual(["200"])
+  test("a query route lists the validation error; a route without schemas lists only the 500", () => {
+    expect(Object.keys(doc.paths["/items"]?.get?.responses ?? {})).toEqual(["200", "422", "500"])
+    expect(Object.keys(doc.paths["/health"]?.get?.responses ?? {})).toEqual(["200", "500"])
+    expect(jsonOf(doc, "/health", "get", "500")).toEqual(error)
+  })
+
+  test("a path parameter with a pattern lists the router's 404", () => {
+    const routes = toOpenAPI(
+      server()
+        .get("/users/:id{[0-9]+}", () => ({}))
+        .get("/teams/:slug", () => ({})),
+    )
+    expect(Object.keys(routes.paths["/users/{id}"]?.get?.responses ?? {})).toEqual([
+      "200",
+      "404",
+      "500",
+    ])
+    expect(jsonOf(routes, "/users/{id}", "get", "404")).toEqual(error)
+    expect(Object.keys(routes.paths["/teams/{slug}"]?.get?.responses ?? {})).toEqual(["200", "500"])
+  })
+
+  test("a declared 500 wins over the envelope", () => {
+    const declared = toOpenAPI(
+      server().get("/x", { errors: { 500: t.object({ trace: t.string() }) } }, () => ({})),
+    )
+    expect(jsonOf(declared, "/x", "get", "500")).toMatchObject({
+      properties: { trace: { type: "string" } },
+    })
   })
 
   test("a declared error wins", () => {
@@ -1100,6 +1133,7 @@ describe("the errors the framework answers before a handler runs", () => {
       "400",
       "413",
       "415",
+      "500",
     ])
     const hooked = server({ onValidationError: hook }).get(
       "/b",
@@ -1107,7 +1141,7 @@ describe("the errors the framework answers before a handler runs", () => {
       () => [],
     )
     const appHook = toOpenAPI(hooked)
-    expect(Object.keys(appHook.paths["/b"]?.get?.responses ?? {})).toEqual(["200"])
+    expect(Object.keys(appHook.paths["/b"]?.get?.responses ?? {})).toEqual(["200", "500"])
     expect(
       toOpenAPIFromEvidence(JSON.parse(JSON.stringify(snapshotProjectEvidence(hooked)))),
     ).toEqual(appHook)
@@ -1216,6 +1250,76 @@ describe("a tagged union is a oneOf, with a discriminator over components", () =
         mapping: { a: "#/components/schemas/A", b: "#/components/schemas/B" },
       },
     })
+  })
+})
+
+describe("how query, header and cookie values are read", () => {
+  const app = server()
+    .get(
+      "/coerced",
+      {
+        query: t.query({
+          tag: t.optional(t.array(t.string())),
+          flag: t.optional(t.boolean()),
+          flags: t.optional(t.array(t.boolean())),
+        }),
+        headers: t.headers({ "x-dry-run": t.optional(t.boolean()) }),
+      },
+      (c) => c.query,
+    )
+    .get("/strict", { query: t.object({ flag: t.optional(t.boolean()) }) }, (c) => c.query)
+    .get(
+      "/zod",
+      { query: z.object({ flag: z.coerce.boolean().optional(), tag: z.array(z.string()) }) },
+      (c) => c.query,
+    )
+  const doc = toOpenAPI(app)
+  const param = (path: string, name: string) =>
+    doc.paths[path]?.get?.parameters?.find((parameter) => parameter.name === name)
+  const read = async (url: string) => {
+    const response = await app.fetch(new Request(`http://x${url}`))
+    return { status: response.status, body: await response.json() }
+  }
+
+  test("a list is declared as repeated keys, and a comma stays in its value", async () => {
+    expect(param("/coerced", "tag")).toMatchObject({ style: "form", explode: true })
+    expect(param("/zod", "tag")).toMatchObject({ style: "form", explode: true })
+    expect(param("/coerced", "flag")).not.toHaveProperty("style")
+    expect(await read("/coerced?tag=a&tag=b,c")).toEqual({
+      status: 200,
+      body: { tag: ["a", "b,c"] },
+    })
+  })
+
+  test("a coercing schema lists the boolean literals it accepts, and accepts exactly those", async () => {
+    const literals = param("/coerced", "flag")?.["x-nifra-boolean-literals"]
+    expect(literals).toEqual({
+      true: ["true", "1"],
+      false: ["false", "0", "-0"],
+      caseInsensitive: true,
+    })
+    expect(param("/coerced", "flags")?.["x-nifra-boolean-literals"]).toEqual(literals)
+    expect(param("/coerced", "x-dry-run")?.["x-nifra-boolean-literals"]).toEqual(literals)
+    for (const [value, words] of [
+      [true, literals?.true ?? []],
+      [false, literals?.false ?? []],
+    ] as const) {
+      for (const word of [...words, ...words.map((w) => w.toUpperCase())]) {
+        expect(await read(`/coerced?flag=${word}`)).toEqual({ status: 200, body: { flag: value } })
+      }
+    }
+    for (const word of ["yes", "", "2"])
+      expect((await read(`/coerced?flag=${word}`)).status).toBe(422)
+  })
+
+  test("a t.object reads the same literals in a query, and a zod schema lists none", () => {
+    expect(param("/strict", "flag")).toHaveProperty("x-nifra-boolean-literals")
+    expect(param("/zod", "flag")).not.toHaveProperty("x-nifra-boolean-literals")
+  })
+
+  test("an evidence snapshot renders the same document", () => {
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app)))
+    expect(toOpenAPIFromEvidence(evidence)).toEqual(doc)
   })
 })
 

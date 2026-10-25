@@ -66,6 +66,11 @@ export interface SchemaReflection {
    * JSON and urlencoded bodies every body schema reads. Absent when it declares none.
    */
   readonly mediaTypes?: readonly string[]
+  /**
+   * Set when the schema reads text values with `t.query`'s string coercion (`"1"` and `"TRUE"` are
+   * `true`, a lone value is a one-item list), as `t.query`, `t.headers` and `t.cookies` do.
+   */
+  readonly coerces?: true
 }
 
 export interface ReflectedRouteSchema {
@@ -223,6 +228,18 @@ const mediaTypesOf = (value: unknown): readonly string[] | undefined => {
   }
 }
 
+// The mark a coercing `@nifrajs/schema` validate carries.
+const COERCES = Symbol.for("nifra.schema.coerce")
+
+const coercesOf = (standard: StandardSchemaV1 | undefined): boolean => {
+  try {
+    const validate: unknown = standard?.["~standard"].validate
+    return typeof validate === "function" && Reflect.get(validate, COERCES) === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws.
  * Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
@@ -243,6 +260,7 @@ export function reflectSchema(value: unknown, side: SchemaSide = "input"): Schem
     ...(converted !== undefined ? { converted: true as const } : {}),
     fields: fieldsOf(jsonSchema),
     ...(mediaTypes !== undefined ? { mediaTypes } : {}),
+    ...(coercesOf(standard) ? { coerces: true as const } : {}),
   }
 }
 

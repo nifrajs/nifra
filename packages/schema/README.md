@@ -69,6 +69,9 @@ schema whose `validate` does more than check its `jsonSchema`, custom registry k
 runtime-only metadata, and known TypeBox compiler escape hazards. Use the ordinary `t` adapter for
 these shapes. This opt-in build step leaves the existing validation API and runtime behavior intact.
 
+A compiled schema in a route's `query`, `headers` or `cookies` slot reads the text there the way the
+schema it was compiled from does: `?archived=true` is `true` for both.
+
 ### Forms and files - `@nifrajs/schema/form`
 
 The `t` exported from `@nifrajs/schema/form` is the same builder plus `t.file` and `t.form`. A
@@ -146,20 +149,30 @@ It emits `paths`, `parameters` (path + object query), `requestBody`, and `respon
 - **`$ref` reuse** - a schema with a `$id` (`t.object({…}, { $id: "User" })`) is hoisted into
   `components.schemas` once and referenced by `$ref` everywhere it's used. A Standard JSON Schema's
   `$defs` are hoisted the same way, so its refs resolve inside the document.
-- **Framework errors** - the responses the server answers before a handler runs, as the shared
-  `NifraError` (`{ ok: false, error }`) and `NifraValidationError` (`{ ok: false, error: "validation",
-  issues }`) components: `400`, `413` and `415` on a route with a body, `422` on any route with a request
-  schema (left out when an `onValidationError` hook writes that body). A declared response wins.
+- **Framework errors** - the responses the server answers itself, as the shared `NifraError`
+  (`{ ok: false, error }`) and `NifraValidationError` (`{ ok: false, error: "validation", issues }`)
+  components: `400`, `413` and `415` on a route with a body, `422` on any route with a request schema
+  (left out when an `onValidationError` hook writes that body), `404` on a path whose parameter has a
+  pattern, `429` with a `Retry-After` header where `rateLimit()` covers the route, and `500` on every
+  route. A declared response wins, so an app whose `onError` or `notFound()` writes another body
+  declares it in `errors`.
+- **Query, header and cookie values** - a list is read from repeated keys and declared as
+  `style: form, explode: true` (`?tag=a,b` is the one value `"a,b"`). A boolean read from that text
+  (by `t.query`, `t.headers`, `t.cookies`, or a `t.object` in one of those slots) also accepts
+  `1`/`0` and either case, listed on the parameter as `x-nifra-boolean-literals`; another Standard
+  Schema lists none.
 - **Tagged unions** - a union whose members all pin one required property to distinct values is
   emitted as a `oneOf`. When every member is a component (a `$id`) it also gets a `discriminator`
   with a `mapping`, so a client generator can build a tagged union; OpenAPI discriminators never
   consider inline members.
 - Per-operation **`summary`**, **`description`**, **`tags`**, **`deprecated`** - declared on the contract op.
 
-A **contract** is richest (its ops carry all of the above); in **app** mode a route's response is a
-generic `200` with no schema - declare a `defineContract` with `response` schemas, or pass
-`options.operations` (keyed by `"METHOD /path"`) to enrich app routes. Routes using a schema that
-exposes no JSON Schema are still emitted without body/response detail.
+A **contract** is richest (its ops carry all of the above). In **app** mode a route's `response` and
+`errors` schemas are emitted; a route without a `response` is a generic `200` with no schema, which
+`nifra check` reports (NF-C054) in a project that builds its document this way. Declare one, build the
+document with `nifra openapi` (it reads each handler's return type), or pass `options.operations`
+(keyed by `"METHOD /path"`). Routes using a schema that exposes no JSON Schema are still emitted
+without body/response detail.
 
 `@nifrajs/core` is a peer dependency. ESM-only. MIT.
 

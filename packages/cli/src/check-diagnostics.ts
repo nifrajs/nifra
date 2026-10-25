@@ -36,6 +36,8 @@ import { routeRules } from "./rules/routes.ts"
 import { secretRules } from "./rules/secrets.ts"
 import { securityRules } from "./rules/security.ts"
 import { swapRules } from "./rules/swap.ts"
+import { textSlotBooleanRule } from "./rules/text-slot-boolean.ts"
+import { undeclaredResponseRule } from "./rules/undeclared-response.ts"
 import { zoneRules } from "./rules/zones.ts"
 
 /** A single machine-readable check failure - the unit an agent (or CI) acts on. */
@@ -503,6 +505,8 @@ export async function collectCheckDiagnostics(
     ...pprRules,
     mergeAuthGapRule,
     routeStatementRule,
+    undeclaredResponseRule,
+    textSlotBooleanRule,
     ...zoneRules,
     ...dataGuardRules,
     ...secretRules,

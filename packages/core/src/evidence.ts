@@ -31,6 +31,8 @@ export interface ProjectEvidenceSchemaPart {
   readonly fields?: readonly ReflectedSchemaField[]
   /** The media types a body schema reads through a parser of its own. */
   readonly mediaTypes?: readonly string[]
+  /** Set when the schema reads text values with `t.query`'s string coercion. */
+  readonly coerces?: true
 }
 
 export interface ProjectEvidenceSchema {
@@ -145,6 +147,7 @@ function schemaPart(value: SchemaReflection | undefined): ProjectEvidenceSchemaP
     ...(value.mediaTypes !== undefined
       ? { mediaTypes: Object.freeze([...value.mediaTypes].sort()) }
       : {}),
+    ...(value.coerces === true ? { coerces: true as const } : {}),
   })
 }
 
@@ -491,6 +494,7 @@ function schemaPartToReflection(
         jsonSchema: value.jsonSchema,
         fields: value.fields,
         ...(value.mediaTypes !== undefined ? { mediaTypes: value.mediaTypes } : {}),
+        ...(value.coerces === true ? { coerces: true as const } : {}),
       }
 }
 
