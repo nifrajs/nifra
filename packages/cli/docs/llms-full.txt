@@ -10491,6 +10491,33 @@ export const handler = withISR(app, {
 })
 ```
 
+An app that wants a nonce on every document still gets its header from nifra: pass
+`cspHeader` beside `nonce`, and each document nifra renders - a page, a
+status page, `_error`, a streamed or deferred one - carries the policy built from
+the nonce on its own scripts. A wrapper that rebuilds the request with
+`new Request(url, req)` (a mount that strips a prefix, a request id, an origin
+rewrite) no longer has to find which nonce a document used. `cspHeader` needs
+`nonce`, and is refused beside `csp` or a resolver made with its own
+`header`. The documents stay `private, no-store`.
+
+```ts
+import { createNonceResolver, createWebApp } from "@nifrajs/web"
+
+declare const adapter: import("@nifrajs/web").RenderAdapter
+declare const manifest: import("@nifrajs/web").Manifest
+
+// A fresh nonce on every document, and nifra writes the header from that same value - on pages,
+// status pages, _error, and streamed or deferred documents - whatever rebuilds the Request in front.
+export const app = createWebApp({
+  adapter,
+  manifest,
+  clientEntry: "/assets/client.js",
+  nonce: createNonceResolver(),
+  // `sources`: 'nonce-…' plus a sha256 hash per constant inline script nifra writes.
+  cspHeader: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,
+})
+```
+
 ### The client ↔ server boundary
 
 Loaders, actions, and head resolution run on the server. The client receives the loader's

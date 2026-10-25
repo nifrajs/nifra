@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { cspHeaderValue, prepareCspPolicy } from "../src/csp.ts"
 import {
   createCspPolicy,
   createNonceResolver,
   createWebApp,
   defer,
+  gone,
   type Manifest,
   MemoryCacheStore,
   nifraScriptHashes,
@@ -313,4 +314,148 @@ test("a nonce resolver refuses an empty generated nonce, and the request can ask
   )
   expect(await resolver({ request, env: undefined })).toBe("abc123")
   expect(resolver.get?.(request)).toBe("abc123")
+})
+
+describe("createWebApp({ nonce, cspHeader })", () => {
+  const nonceApp = (
+    manifest: Manifest,
+    nonce = createNonceResolver(),
+  ): ReturnType<typeof createWebApp> =>
+    createWebApp({ adapter, clientEntry: "/c.js", manifest, nonce, cspHeader: header })
+
+  /** The one nonce every executable inline script carries, or `undefined` when they carry none. */
+  const scriptNonce = (html: string): string | undefined => {
+    const nonces = new Set(
+      executableInlineScripts(html).map(({ attrs }) => attrs.match(/\bnonce="([^"]+)"/)?.[1]),
+    )
+    expect(nonces.size).toBeLessThanOrEqual(1)
+    return [...nonces][0]
+  }
+
+  test("the header names the nonce on the scripts, however the request was rebuilt in front", async () => {
+    const app = nonceApp(
+      manifestOf({
+        "/": () => ({ default: "home" }),
+        "/later": () => ({ default: "later", loader: () => ({ slow: defer(Promise.resolve(1)) }) }),
+      }),
+    )
+    // A prefix-stripping mount, a request id, a public-origin rewrite: each builds a new Request.
+    const wrapped = (req: Request) => {
+      const rebuilt = new Request(req.url.replace("http://public", "http://x"), req)
+      rebuilt.headers.set("x-request-id", "r1")
+      return app.fetch(new Request(rebuilt.url, rebuilt))
+    }
+    for (const path of ["/", "/later"]) {
+      const res = await wrapped(new Request(`http://public${path}`))
+      const html = await res.text()
+      const nonce = scriptNonce(html)
+      expect(nonce).toBeTruthy()
+      const policy = res.headers.get("content-security-policy") ?? ""
+      expect(policy).toContain(`'nonce-${nonce}'`)
+      expect(await everyInlineScriptAllowed(html, policy)).toBe(true)
+      expect(res.headers.get("cache-control")).toBe("private, no-store")
+    }
+  })
+
+  test("status pages and the _error boundary carry the header too", async () => {
+    const manifest: Manifest = {
+      routes: [
+        {
+          id: "gone",
+          pattern: "/gone",
+          layoutIds: [],
+          file: "gone.tsx",
+          load: async () => ({ default: "gone", loader: () => gone() }),
+        },
+        {
+          id: "boom",
+          pattern: "/boom",
+          layoutIds: [],
+          errorIds: ["_error"],
+          file: "boom.tsx",
+          load: async () => ({
+            default: "boom",
+            loader: () => {
+              throw new Error("boom")
+            },
+          }),
+        },
+      ],
+      layouts: {},
+      errors: { _error: { file: "_error.tsx", load: async () => ({ default: "error" }) } },
+      notFound: { file: "_404.tsx", load: async () => ({ default: "not-found" }) },
+      statusPages: { "410": { file: "_410.tsx", load: async () => ({ default: "gone-page" }) } },
+    }
+    const app = nonceApp(manifest)
+    for (const [path, status] of [
+      ["/missing", 404],
+      ["/gone", 410],
+      ["/boom", 500],
+    ] as const) {
+      const res = await app.fetch(new Request(`http://x${path}`))
+      const html = await res.text()
+      expect([path, res.status]).toEqual([path, status])
+      const policy = res.headers.get("content-security-policy") ?? ""
+      expect(policy).toContain("'nonce-")
+      // The `_error` document does not hydrate, so it has no inline script to name the nonce.
+      const nonce = scriptNonce(html)
+      if (path !== "/boom") expect(policy).toContain(`'nonce-${nonce}'`)
+      expect(await everyInlineScriptAllowed(html, policy)).toBe(true)
+      expect(res.headers.get("cache-control")).toBe("private, no-store")
+    }
+  })
+
+  test("a document the resolver leaves nonce-free gets the hash sources alone, and stays cacheable", async () => {
+    const app = nonceApp(
+      manifestOf({ "/": () => ({ default: "home" }) }),
+      createNonceResolver({ generate: () => undefined }),
+    )
+    const res = await app.fetch(new Request("http://x/"))
+    const html = await res.text()
+    expect(html).not.toContain("nonce=")
+    const policy = res.headers.get("content-security-policy") ?? ""
+    expect(policy).not.toContain("'nonce-")
+    expect(await everyInlineScriptAllowed(html, policy)).toBe(true)
+    expect(res.headers.get("cache-control")).toBeNull()
+  })
+
+  test("an API response gets no header, and `undefined` from the callback sends none", async () => {
+    const withApi = (cspHeader: typeof header | (() => undefined)) =>
+      createWebApp({
+        adapter,
+        clientEntry: "/c.js",
+        manifest: manifestOf({ "/": () => ({ default: "home" }) }),
+        nonce: createNonceResolver(),
+        cspHeader,
+        use: (inner) => inner.get("/api/ping", () => ({ ok: true })),
+      })
+    const api = await withApi(header).fetch(new Request("http://x/api/ping"))
+    expect([api.status, api.headers.get("content-security-policy")]).toEqual([200, null])
+    const page = await withApi(() => undefined).fetch(new Request("http://x/"))
+    expect(page.headers.get("content-security-policy")).toBeNull()
+    expect(page.headers.get("cache-control")).toBe("private, no-store")
+  })
+
+  test("cspHeader is refused beside `csp`, without `nonce`, or beside a resolver's own header", () => {
+    const base = { adapter, clientEntry: "/c.js", manifest: manifestOf({}) }
+    expect(() =>
+      createWebApp({ ...base, csp: createCspPolicy({ header }), cspHeader: header }),
+    ).toThrow(/`csp` or `cspHeader`/)
+    expect(() => createWebApp({ ...base, cspHeader: header })).toThrow(/pass `nonce`/)
+    expect(() =>
+      createWebApp({
+        ...base,
+        nonce: createNonceResolver({ header: ({ nonce }) => `script-src 'nonce-${nonce}'` }),
+        cspHeader: header,
+      }),
+    ).toThrow(/keep one/)
+    expect(() =>
+      createWebApp({
+        ...base,
+        nonce: createNonceResolver(),
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a wrong type on purpose, for the runtime check that plain JavaScript callers reach.
+        cspHeader: "x" as never,
+      }),
+    ).toThrow(/must be a function/)
+  })
 })

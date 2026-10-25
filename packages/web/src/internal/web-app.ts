@@ -13,7 +13,14 @@ import {
 import { withResponseObserver } from "@nifrajs/core/response-observer"
 import type { MountableApp, MountOptions } from "@nifrajs/core/server"
 import { replacedRequestOf, type ServerOptions, server } from "@nifrajs/core/server"
-import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
+import {
+  type CspHeaderContext,
+  type CspPolicy,
+  cspNonceResolver,
+  DOCUMENT_POLICY,
+  isCspPolicy,
+  nonceCspPolicy,
+} from "../csp.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
 import {
   type BuildAssetSet,
@@ -96,10 +103,25 @@ export interface CreateWebAppOptions<Env = unknown> {
    * Resolve a fresh CSP nonce for each document request. The value is applied to every
    * framework-owned executable script; return `undefined` to keep the default nonce-free output.
    * Nonce-bearing documents are marked `private, no-store` so the request-specific value is not
-   * replayed by browser, CDN, or ISR caches. The resolver does not declare a CSP header because the
-   * policy's allowed sources are app-specific.
+   * replayed by browser, CDN, or ISR caches. Pass {@link cspHeader} to have nifra write the
+   * Content-Security-Policy header from the same value.
    */
   readonly nonce?: NonceResolver<Env>
+  /**
+   * Build the Content-Security-Policy value for each document a {@link nonce} app renders, or return
+   * `undefined` to send none. nifra sets it on every document it renders - pages, status pages,
+   * `_error`, streamed and deferred documents - from the nonce it put on that document's scripts, so
+   * the header never depends on which `Request` object a wrapper holds. `sources` is the
+   * `script-src` list the document needs: `'nonce-…'` plus a `'sha256-…'` hash for each constant
+   * inline script nifra writes, which covers a document the resolver left nonce-free.
+   *
+   * ```ts
+   * cspHeader: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`
+   * ```
+   *
+   * Needs `nonce`; `csp` writes its own header, so the two are refused together.
+   */
+  readonly cspHeader?: (context: CspHeaderContext) => string | undefined
   /**
    * A hash-based Content-Security-Policy from `createCspPolicy`, instead of `nonce`. A document then
    * carries a nonce only when it needs one (it `defer()`s a value, or `meta` names the nonce in
@@ -449,6 +471,27 @@ export function createWebApp<Env = unknown>(
   if (options.csp !== undefined && !isCspPolicy(options.csp)) {
     throw new TypeError("[nifra/web] createWebApp `csp` must come from createCspPolicy()")
   }
+  if (options.cspHeader !== undefined) {
+    if (typeof options.cspHeader !== "function") {
+      throw new TypeError("[nifra/web] createWebApp `cspHeader` must be a function")
+    }
+    if (options.csp !== undefined) {
+      throw new TypeError(
+        "[nifra/web] createWebApp takes `csp` or `cspHeader`, not both: `csp` writes its own header",
+      )
+    }
+    if (options.nonce === undefined) {
+      throw new TypeError(
+        "[nifra/web] createWebApp `cspHeader` writes the header of `nonce` documents: pass `nonce`, or use `csp: createCspPolicy(...)`",
+      )
+    }
+    if (options.nonce.onResponse !== undefined) {
+      throw new TypeError(
+        "[nifra/web] createWebApp `cspHeader` and a createNonceResolver({ header }) both write the CSP header: keep one",
+      )
+    }
+  }
+  const nonceCsp = options.cspHeader === undefined ? undefined : nonceCspPolicy(options.cspHeader)
   // Seed the context with the declared `Env` so `app.fetch(req, { env })` / `toFetchHandler(app)` type
   // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via
   // `app.fetch(req, { env })`; this is a compile-time-only seed (`server<Env>()` casts, doesn't store).
@@ -644,7 +687,11 @@ export function createWebApp<Env = unknown>(
     ...(options.staticBoundaryCache === undefined
       ? {}
       : { staticBoundaryCache: options.staticBoundaryCache }),
-    ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
+    ...(options.nonce === undefined
+      ? {}
+      : nonceCsp === undefined
+        ? { nonce: options.nonce }
+        : { nonce: options.nonce, csp: nonceCsp }),
     ...(options.csp === undefined
       ? {}
       : { nonce: cspNonceResolver(options.csp) as NonceResolver<Env>, csp: options.csp }),

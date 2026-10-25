@@ -186,6 +186,12 @@
     "code": "import { renderPage, unsafeInlineScript } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const nonce: string // one per response, from your CSP middleware\n\nconst page = renderPage({\n  adapter,\n  chain: [null],\n  data: null,\n  clientEntry: \"/assets/client.js\",\n  nonce, // reaches the hydration bootstrap, streamed scripts and every island tag\n  head: {\n    script: [{ content: JSON.stringify({ \"@type\": \"Article\" }) }], // inert: JSON only\n    unsafeScript: [unsafeInlineScript(\"window.dataLayer = []\", { nonce })],\n  },\n})"
   },
   {
+    "name": "NONCE_CSP_HEADER",
+    "topic": "Nifra - Framework contract",
+    "slug": "contract",
+    "code": "import { createNonceResolver, createWebApp } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const manifest: import(\"@nifrajs/web\").Manifest\n\n// A fresh nonce on every document, and nifra writes the header from that same value - on pages,\n// status pages, _error, and streamed or deferred documents - whatever rebuilds the Request in front.\nexport const app = createWebApp({\n  adapter,\n  manifest,\n  clientEntry: \"/assets/client.js\",\n  nonce: createNonceResolver(),\n  // `sources`: 'nonce-…' plus a sha256 hash per constant inline script nifra writes.\n  cspHeader: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,\n})"
+  },
+  {
     "name": "PARAM_404",
     "topic": "Nifra - Framework contract",
     "slug": "contract",
