@@ -217,10 +217,11 @@ function jsonResponseWithOwnHeaders(
   result: unknown,
   status: number,
   headers: Record<string, string>,
+  unstamped: boolean,
 ): Response {
   const response = jsonResponse(result, status === 200 ? undefined : { status })
   for (const name of Object.keys(headers)) response.headers.set(name, headers[name]!)
-  return withBody(response)
+  return withBody(response, unstamped)
 }
 
 // The framework-buffered-body marker shared with the Node adapter: a Response carrying it exposes
@@ -256,9 +257,9 @@ export function rememberRenderedResponse(response: Response, hasBody: boolean): 
   return response
 }
 
-/** `rememberRenderedResponse` for a Response the framework built around a body it serialized. */
-function withBody(response: Response): Response {
-  return markResidentBody(response)
+/** Record serialized bodies when response hooks or an in-process client can consume the mark. */
+function withBody(response: Response, unstamped = false): Response {
+  return unstamped && !residentBodiesRecorded ? response : markResidentBody(response)
 }
 
 const HEADER_MUTABILITY_PROBE = "x-nifra-header-probe"
@@ -490,8 +491,9 @@ function tagged(
   response: Response,
   body: string,
   tagResponseBody: ResponseBodyTagOption,
+  unstamped = false,
 ): Response {
-  withBody(response)
+  withBody(response, unstamped)
   return tagResponseBody === false || tagResponseBody === undefined
     ? response
     : markTaggedResponse(
@@ -614,13 +616,14 @@ export function fusedRespond(
   const request = unstamped ? undefined : ctx[CONTEXT_REQUEST]
   if (set === undefined)
     return fusedRespondNoSet(result, tagResponseBody, statics, unstamped, request)
-  return toResponse(result as HandlerResult, set, tagResponseBody, statics, request)
+  return toResponse(result as HandlerResult, set, tagResponseBody, statics, request, unstamped)
 }
 
 /**
  * Render a handler's result. `request` is the request being answered, given when response hooks will
  * write next: a copy or body-less response built here is then recorded as that request's own, so the
  * hooks write it in place instead of copying it again.
+ * `unstamped` is the caller's proof that no response hook follows; unknown callers keep the mark.
  */
 export function toResponse(
   result: HandlerResult,
@@ -628,6 +631,7 @@ export function toResponse(
   tagResponseBody: ResponseBodyTagOption = false,
   statics?: StaticResponseHeaders,
   request?: Request,
+  unstamped = false,
 ): Response {
   if (isResponseResult(result)) {
     const plain = result.plain
@@ -641,6 +645,7 @@ export function toResponse(
         tagResponseBody,
         statics,
         request,
+        unstamped,
       )
     }
     // A buffered page is built from the body it reports, so the bytes its hooks see are the ones sent.
@@ -673,7 +678,7 @@ export function toResponse(
       typeof tagResponseBody === "object" ? tagResponseBody : undefined,
     )
   }
-  return renderValue(result, set, tagResponseBody, statics, request)
+  return renderValue(result, set, tagResponseBody, statics, request, unstamped)
 }
 
 /**
@@ -703,6 +708,7 @@ function renderValue(
   tagResponseBody: ResponseBodyTagOption,
   statics: StaticResponseHeaders | undefined,
   request: Request | undefined,
+  unstamped = false,
 ): Response {
   // The static tier only changes WHICH prebuilt header shape the branches below reach for: the
   // request's own headers are folded on top of the declared defaults once, here.
@@ -732,7 +738,7 @@ function renderValue(
     typeof result === "object" &&
     result !== null
   ) {
-    return jsonResponseWithOwnHeaders(result, status, own)
+    return jsonResponseWithOwnHeaders(result, status, own, unstamped)
   }
   if (own === undefined && result !== undefined) {
     // Fast respond (profiled ~50 ns/req faster on every plain-JSON return): `JSON.stringify` + a
@@ -752,6 +758,7 @@ function renderValue(
           : staticJsonResponse(body, status, statics, JSON_CONTENT_TYPE, init),
         body,
         tagResponseBody,
+        unstamped,
       )
     }
   }
@@ -780,9 +787,9 @@ function renderValue(
   if (IS_DENO && headers !== undefined && !(headers instanceof Headers)) {
     // Deno's own `Response.json` then header writes measured ~10% under stringify, construction and
     // the same writes plus a content-type one; a declared content-type still overrides the default.
-    return jsonResponseWithOwnHeaders(result, status, headers)
+    return jsonResponseWithOwnHeaders(result, status, headers, unstamped)
   }
-  return withBody(jsonResponse(result, init))
+  return withBody(jsonResponse(result, init), unstamped)
 }
 
 // Add a JSON content-type without pre-building a `Headers` instance just to check-and-set one key:

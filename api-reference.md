@@ -2373,8 +2373,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
   Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
-- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request) => Response`
-  Render a handler's result. `request` is the request being answered, given when response hooks will write next: a copy or body-less response built here is then recorded as that request's own, so the hooks write it in place instead of copying it again.
+- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request, unstamped?: boolean) => Response`
+  Render a handler's result. `request` is the request being answered, given when response hooks will write next: a copy or body-less response built here is then recorded as that request's own, so the hooks write it in place instead of copying it again. `unstamped` is the caller's proof that no respon…
 
 ### `@nifrajs/core/effect-ledger`
 

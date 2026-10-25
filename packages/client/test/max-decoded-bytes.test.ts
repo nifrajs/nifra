@@ -118,9 +118,16 @@ describe("maxDecodedBytes", () => {
   })
 
   test("an in-process body the app serialized keeps the whole-read lane", async () => {
-    const app = server().get("/x", () => ({ s: big(10) }))
-    inProcessClient(app)
+    const app = server()
+      .beforeHandle(() => undefined)
+      .beforeHandle(() => undefined)
+      .get("/x", (c) => {
+        c.set.headers["x-value"] = "one"
+        return { s: big(10) }
+      })
+    const api = inProcessClient(app)
     expect(hasResidentBody(await app.fetch(new Request("http://limit.test/x")))).toBe(true)
+    expect((await api.x.get()).data).toEqual({ s: big(10) })
   })
 
   test("a malformed text body still decodes leniently rather than failing", async () => {
