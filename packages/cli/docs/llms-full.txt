@@ -7680,7 +7680,10 @@ pins are installed it would judge the release you are leaving, and the command p
 install to run first instead. With `--write` it also saves the hook report from
 before the edits and, once the target is installed, prints how hook scope changed across the
 upgrade (`--no-hooks` skips that); before then,
-`nifra routes --hooks --since` compares after the install.
+`nifra routes --hooks --since` compares after the install. Run from a CLI whose
+`@nifrajs/core` is not the project's - `bunx @nifrajs/cli@<new>
+        upgrade` before the new release is installed - it takes no hook report, since that
+copy cannot reflect the project's app, and says so in one line.
 `nifra doctor` and
 `nifra check` (NF-D002) point here when a workspace carries more than one version;
 see [mixed nifra versions](/docs/troubleshooting#mixed-versions). A

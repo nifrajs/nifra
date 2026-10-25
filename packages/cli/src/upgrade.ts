@@ -55,6 +55,7 @@ import {
 import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { gitIgnoredSync } from "./internal/git-ignored.ts"
+import { otherProjectCore } from "./local-cli.ts"
 import {
   BUN_LOCK,
   describeChange,
@@ -1617,6 +1618,8 @@ export type UpgradeHookScope =
   | { readonly saved: string; readonly changes: readonly HookReportChange[] }
   | { readonly saved: string; readonly pending: "install" }
   | { readonly error: string; readonly saved?: string }
+  /** This CLI runs another `@nifrajs/core` than the project, whose app it cannot reflect. */
+  | { readonly skipped: "other-core" }
 
 /** The edits `--write` made that the installed packages do not reflect yet. */
 export interface PendingInstall {
@@ -1718,6 +1721,9 @@ function renderHookScope(scope: UpgradeHookScope): string {
     "The new release's hooks run once its packages are installed. After installing, compare against the report saved before the edits:",
     `  nifra routes --hooks --since ${saved}`,
   ]
+  if ("skipped" in scope) {
+    return "Hook scope: not compared, since this CLI runs another @nifrajs/core than the project. Once the release is installed, `nifra routes --hooks` shows it."
+  }
   if ("error" in scope) {
     const head = `Hook scope: not captured (${scope.error}).`
     return scope.saved === undefined ? head : [head, ...since(scope.saved)].join("\n")
@@ -1910,11 +1916,17 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   }
 
   const captureHooks = write && options.hooks !== false
-  const before = captureHooks ? await hookReportBefore(cwd) : undefined
+  // A server() the project's copy builds is not one this CLI's copy can reflect, which is the normal
+  // state of an upgrade run from the new release before it is installed.
+  const otherCore = captureHooks && otherProjectCore(cwd) !== undefined
+  const before = captureHooks && !otherCore ? await hookReportBefore(cwd) : undefined
   const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above) : preview
   const pending = write ? pendingInstall(cwd, plan) : undefined
-  const hooks =
-    before === undefined ? undefined : await hookScopeAcross(cwd, before, pending === undefined)
+  const hooks: UpgradeHookScope | undefined = otherCore
+    ? { skipped: "other-core" }
+    : before === undefined
+      ? undefined
+      : await hookScopeAcross(cwd, before, pending === undefined)
 
   // Verify only makes sense once edits are on disk and installed. Default on after --write; opt out
   // with --no-verify. An uninstalled upgrade passes, so `upgrade --write && bun install` chains.
