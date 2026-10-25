@@ -1,5 +1,9 @@
 # @nifrajs/ag-ui
 
+## 5.7.0
+
+No changes in this release.
+
 ## 5.6.0
 
 No changes in this release.

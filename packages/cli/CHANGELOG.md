@@ -1,5 +1,164 @@
 # @nifrajs/cli
 
+## 5.7.0
+
+### Minor Changes
+
+- 0a29798: An app run by `nifra dev` and `nifra build` names its sign-in cookies for kept pages by exporting
+  `keepAlive` from `backend/framework.ts`, like the other `createWebApp` options there. The dev server,
+  the generated server entry, the static prerender, `nifra mcp`'s render tool and the hydration gate all
+  pass it to `createWebApp`, and a value of the wrong shape is refused at load. The
+  `NIFRA_KEEPALIVE_IDENTITY_COOKIE` report and `nifra doctor` point at that export.
+- 0a29798: `nifra dev`, `build`, `start` and `check` run through the project's own `@nifrajs/cli` when they are
+  started from another install, such as a global or linked CLI, at any version: the app then loads one
+  `@nifrajs/core`. `NIFRA_LOCAL_CLI=0` runs the CLI as invoked. When the project installs no CLI of its
+  own and resolves another `@nifrajs/core` than the running CLI, the command names both paths before it
+  starts. `nifra mcp` hands a session to the project's CLI on the same rule.
+- 0a29798: `nifra contracts snapshot` records each part a route declares (body, query, params, headers, cookies,
+  response, sse and each error status) with its own digest and its top-level fields, and warns for each
+  part whose declared schema it cannot read, which the lock records as `null` and so never guards.
+  `nifra contracts check` and the `nifra check` contract gate catch a change to a headers or cookies
+  schema, name the side, the part and the fields that moved (`body + id: number, - name: string`),
+  name a route that was added or removed, and report a part the lock recorded as `null` as newly
+  covered, with the snapshot to run, rather than as a change. A lock written before parts were recorded
+  keeps comparing by side until the next snapshot, and an older CLI reads the new lock as before.
+  `nifra contracts check --out <file>` reads that lock. `nifra upgrade` notes the locked routes that
+  send a body but record no request schema.
+- d083ad2: `toOpenAPI`, `buildOpenApiDocument` and the `openapi()` plugin list every error the framework answers
+  itself, as the shared `NifraError` component: `500` on every route, `404` on a path whose parameter
+  has a pattern a value can miss, and `429` with a `Retry-After` header where `rateLimit()` covers the
+  route, beside the `400`/`413`/`415`/`422` they already listed. A route's own `errors` schema for a
+  status still wins, which is where an app whose `onError` or `notFound()` writes another body declares
+  it.
+  
+  A query list is declared as `style: form, explode: true`, the repeated keys the parser reads
+  (`?tag=a,b` is the one value `"a,b"`). A boolean read by `t.query`, `t.headers` or `t.cookies` lists
+  the text it accepts (`true`/`1`, `false`/`0`/`-0`, either case) as `x-nifra-boolean-literals`; a schema
+  that does not coerce lists none. `reflectSchema` and the project evidence snapshot record such a schema
+  as `coerces: true`, so a document built from evidence matches one built from the app.
+  
+  `nifra check` adds NF-C054 (info): in a project that builds its document from the running routes
+  (`openapi()`, `buildOpenApiDocument`, `toOpenAPI`), a route registered without a `response` schema,
+  which the document can only describe as a `200` with no body type. Declare the schema, build the
+  document with `nifra openapi`, or mark the route with `// nifra-expect NF-C054: <reason>`.
+- 0e59830: A `t.object` in a route's `query`, `headers` or `cookies` slot converts the text it receives to the
+  types it declares, as `t.query`, `t.headers` and `t.cookies` do: `?archived=true` is `true` and
+  `?page=2` is `2`, where both were a 422. It stays closed, a `body` slot still converts nothing, and a
+  schema compiled with `compileSchema` reads the same text as its source. The OpenAPI document lists
+  the boolean literals such a field accepts. Core takes the converting form a schema offers under
+  `Symbol.for("nifra.schema.textSlot")` on its `validate`, so it ships no conversion code.
+  
+  `nifra check` adds NF-C055 (warn): zod's `z.coerce.boolean()` in a route's `query`, `headers` or
+  `cookies` schema. It is `Boolean(value)`, so `"false"` and `"0"` read as `true`; `z.stringbool()`
+  reads them as false and refuses text it does not know.
+- e7479fe: `nifra upgrade --write` leaves bun.lock as it is, where it dropped the stale `file:` entries before:
+  an install that finds one missing re-resolves every package in the lock to the newest version its
+  range allows, and Bun 1.4.4 also rewrites a lockfileVersion 1 lock as 2. The report lists those
+  entries with the `bun update` that refreshes them and keeps every other pin, and asks for a review of
+  the bun.lock diff, since Bun records each linked package.json as it is on disk. The `--json` plan no
+  longer carries `lockPruned`, and NF-D003 names `bun update` as its only fix.
+
+### Patch Changes
+
+- 0a29798: Every catalog command answers `--help` with its usage, and a missing or unknown subcommand prints the
+  usage after the error, so `nifra contracts --help` and a bare `nifra contracts` both show
+  `snapshot | check`. The `nifra check` report prints a fix that several findings share once, after
+  them, instead of under each one.
+- b141cf4: A stop now tells the load balancer before it drains. `app.onStopping(fn)` runs as `stop()` begins,
+  before in-flight requests drain, and `stop({ delayMs })` (or `gracefulSignals: { delayMs }`, and
+  `signals: { delayMs }` on the Node and Deno adapters) keeps serving that long first, so a balancer
+  polling readiness takes the instance out of rotation while it still answers. `onStop` hooks run after
+  the drain as before, on Node and Deno too.
+  
+  `healthcheck()` readiness is reworked for production probes:
+  
+  - `/ready` answers `503 { status: "stopping" }` from the moment a stop begins, without running a
+    check.
+  - Each check gets an `AbortSignal` and a timeout (`timeoutMs`, default 2 s, settable per check), and
+    reports `timeout` past it.
+  - A check is never called again while an earlier call still runs, probes arriving during a run share
+    it, and a finished run answers probes for `cacheMs` (default 1 s).
+  - A check marked `optional: true` reports `degraded` and keeps `/ready` at `200`.
+  - A check moving between passing and failing is logged once each way (`logger`, default
+    `jsonLogger()`).
+  
+  The `/ready` body changes shape: each check is now `{ status: "pass" | "fail" | "timeout", ms }`
+  (plus `optional: true`) where it was a boolean, and the top-level `status` can also be `degraded` or
+  `stopping`. A monitor that reads the body rather than the status code needs updating.
+  
+  `nifra doctor` counts an `onStopping` hook as graceful-shutdown handling.
+- a97b081: A `bigint` in a JSON answer is written as its decimal string, `{ "id": "9007199254740993" }`, on every
+  runtime and lane: a returned value, `status(...)`, `c.json(...)`, an SSE event, the plain transport
+  codec and `@nifrajs/edge`. A route returning one used to answer a 500. The typed client reads such a
+  field as `string` (it was typed as absent), and `nifra openapi` describes it as a string of digits.
+  
+  `t.bytes()` declares a response field filled with a `Uint8Array` or a `Buffer`. A route whose
+  `response` or `errors` declares one writes every `Uint8Array` in its answer as base64, the typed client
+  reads a `string`, the document says `{ type: "string", contentEncoding: "base64" }`, and a mock fills
+  it with valid base64. A request or `sse` schema that declares it is refused at registration with
+  `RouteConfigError` `RESPONSE_ONLY_SCHEMA`. The step is `withBase64Bytes` from `@nifrajs/core/binary`,
+  for a hand-written schema too. A `Uint8Array` on a route without the field is still the
+  `{ "0": 1, ... }` object `JSON.stringify` writes (a `BigInt64Array`'s entries as decimal strings), and a
+  Node `Buffer` the `{ "type": "Buffer", "data": [...] }` its `toJSON` writes; the client and
+  `nifra openapi` now describe each as written. A hook that answers in the handler's place (a
+  `beforeHandle` that answers first, an `afterHandle` that replaces the answer, an `onError`) has its
+  bytes written as base64 too.
+- 0a29798: A Better Auth session cookie counts as a sign-in cookie for kept pages under any
+  `advanced.cookiePrefix`, so a sign-in or sign-out through `<prefix>.session_token` rotates the identity
+  epoch, and its `session_data` and `dont_remember` cookies are never reported. An app's own
+  `keepAlive.ignoreCookies` entry outranks the suffix. `nifra doctor` notes keep-alive routes in an app
+  whose source renames a session cookie outright (Better Auth's `advanced.cookies.session_token.name`,
+  Auth.js's `cookies.sessionToken.name`, `cookieName`) without naming it in `identityCookies`.
+- 911204f: `nifra check` and `nifra doctor` no longer call a single-copy declaration enforced when `bunfig.toml`
+  preloads the registrar for only one of `bun run` and `bun test`. Each finding lists the commands that
+  still load both copies, and the report names a `preload` line written below a table such as
+  `[install]`, where Bun reads it as that table's key. When `@nifrajs/core` loads twice in a process
+  where no single-copy registrar ran, its warning says so.
+- 4e64586: `nifra upgrade` can add a package that an imported entry needs: when a source file, a Svelte or Vue
+  component included, imports an entry that names it, and the nearest package.json lists it in no
+  dependency field, the upgrade adds it at the target version beside the package the entry belongs to,
+  in each field that package is in. The plan lists each addition with the file that needed it. The
+  5.7.0 recipe uses it for `@nifrajs/authjs`, `@nifrajs/image`, `@nifrajs/i18n` and `@nifrajs/schema`,
+  which apps reached through an adapter until now.
+- b141cf4: `nifra upgrade` skips gitignored files, the way `nifra check` already did, so a backup copy or a
+  generated app inside the project is neither edited nor reported. NF-C007's fix text now names
+  `bytes()` from `@nifrajs/core/binary` for a file or other binary body and `raw<T>()` for a
+  hand-built JSON `Response`.
+- Updated dependencies [0a29798]
+- Updated dependencies [25f97c2]
+- Updated dependencies [b141cf4]
+- Updated dependencies [a97b081]
+- Updated dependencies [0a29798]
+- Updated dependencies [0a29798]
+- Updated dependencies [25f97c2]
+- Updated dependencies [22df027]
+- Updated dependencies [b3d8ac9]
+- Updated dependencies [b141cf4]
+- Updated dependencies [25f97c2]
+- Updated dependencies [67d82f1]
+- Updated dependencies [e7479fe]
+- Updated dependencies [d083ad2]
+- Updated dependencies [25f97c2]
+- Updated dependencies [b141cf4]
+- Updated dependencies [25f97c2]
+- Updated dependencies [b795cd9]
+- Updated dependencies [a57b75c]
+- Updated dependencies [911204f]
+- Updated dependencies [911204f]
+- Updated dependencies [25f97c2]
+- Updated dependencies [0e59830]
+- Updated dependencies [911204f]
+  - @nifrajs/web@5.7.0
+  - @nifrajs/client@5.7.0
+  - @nifrajs/core@5.7.0
+  - @nifrajs/schema@5.7.0
+  - @nifrajs/mcp-db@5.7.0
+  - @nifrajs/testing@5.7.0
+  - @nifrajs/i18n@5.7.0
+  - @nifrajs/mcp@5.7.0
+  - @nifrajs/agent-review@5.7.0
+  - @nifrajs/runner@5.7.0
+
 ## 5.6.0
 
 ### Minor Changes

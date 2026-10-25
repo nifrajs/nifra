@@ -1,5 +1,14 @@
 # @nifrajs/authjs
 
+## 5.7.0
+
+### Minor Changes
+
+- 02bfd9b: `<AuthSessionProvider>` and `useAuthSession()` move from `@nifrajs/web-react/auth` to
+  `@nifrajs/authjs/react`, so the React adapter no longer depends on Auth.js in any form and Auth.js
+  carries its own framework bindings. `react` is an optional peer of `@nifrajs/authjs`; only the
+  `/react` entry imports it. `nifra upgrade` rewrites the import.
+
 ## 5.6.0
 
 No changes in this release.

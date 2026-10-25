@@ -3737,7 +3737,8 @@ threads it as `c.requestId`, and echoes the header.
 covers 404s and errors; route it to your own sink via `log`. The path is the
 matched route template (`/share/:token`), so ids and tokens in a URL stay out of
 the logs, and the query string is never logged; `rawPath: true` logs the real
-path.
+path. A plugin of your own that labels requests by route reads the same template with
+`routeTemplateOf(app)(method, path)` from `@nifrajs/core/server`.
 
 -
 `etag()` - adds a content-hash `ETag` to `GET` `200`s
@@ -7293,7 +7294,10 @@ the default wherever a command edits files.
 
 #### Run and build
 
-Develop, build a deploy directory, and run it.
+Develop, build a deploy directory, and run it. Started from a global or linked install,
+`nifra dev`, `build`, `start` and `check` run
+through the project's own `@nifrajs/cli`, so the app loads one
+`@nifrajs/core`; `NIFRA_LOCAL_CLI=0` runs the CLI as invoked.
 
 Command
 What it does

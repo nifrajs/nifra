@@ -1,5 +1,47 @@
 # @nifrajs/web-vue
 
+## 5.7.0
+
+### Minor Changes
+
+- 86a62c0: `@nifrajs/image` and `@nifrajs/i18n` are optional peers of every UI adapter rather than
+  dependencies, so an app installs them only when it imports the adapter's `/image` or `/i18n` entry.
+  An app that imports either entry adds the matching package beside the adapter; one that already
+  imports it directly, as the image and i18n guides show, needs nothing more.
+
+### Patch Changes
+
+- 0a29798: The development-only keep-alive checks run in a Vite dev browser: `window.__nifraKeepAlive` for the
+  devtools kept-pages list, the kept views it counts, and the `NIFRA_KEEPALIVE_DIRECT_CHILD_CSS` report.
+  They read `process.env.NODE_ENV`, which every bundler replaces, without first asking for a `process`
+  global the browser does not have.
+- e7479fe: A production server bundle checks NODE_ENV at build time, not on each request, in partial prerendering,
+  the Vue adapter's streamed render and the Solid adapter's error serialization. On Node each such read
+  went to the process environment.
+- Updated dependencies [0a29798]
+- Updated dependencies [b141cf4]
+- Updated dependencies [a97b081]
+- Updated dependencies [0a29798]
+- Updated dependencies [0a29798]
+- Updated dependencies [25f97c2]
+- Updated dependencies [22df027]
+- Updated dependencies [b3d8ac9]
+- Updated dependencies [b141cf4]
+- Updated dependencies [25f97c2]
+- Updated dependencies [67d82f1]
+- Updated dependencies [e7479fe]
+- Updated dependencies [d083ad2]
+- Updated dependencies [25f97c2]
+- Updated dependencies [b141cf4]
+- Updated dependencies [b795cd9]
+- Updated dependencies [a57b75c]
+- Updated dependencies [911204f]
+- Updated dependencies [911204f]
+- Updated dependencies [0e59830]
+- Updated dependencies [911204f]
+  - @nifrajs/web@5.7.0
+  - @nifrajs/core@5.7.0
+
 ## 5.6.0
 
 ### Minor Changes
