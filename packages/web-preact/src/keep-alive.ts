@@ -9,6 +9,7 @@
  * own slot's state, so a hidden page never sees another page's params.
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import {
   createSlotParking,
   type KeepAliveRouter,
@@ -33,7 +34,6 @@ import {
   pageCallbacksContext,
   pageVisibilityContext,
 } from "./page-visibility.ts"
-import { routeProps } from "./route-props.ts"
 import { inSlot } from "./slot.ts"
 
 export * from "./client.ts"

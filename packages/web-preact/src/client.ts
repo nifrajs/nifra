@@ -1,4 +1,5 @@
 import type { BoundaryStates, MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 /**
  * @nifrajs/web-preact/client - Preact client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
@@ -18,7 +19,6 @@ import { memo, useSyncExternalStore } from "preact/compat"
 import { useContext } from "preact/hooks"
 import { compose, withRouteContext } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
-import { routeProps } from "./route-props.ts"
 
 // The `_error` boundary chain element - defined in its own (DOM-free) module, re-exported here so
 // nifra's client codegen resolves it from `@nifrajs/web-preact/client` alongside `mountRouter`.
