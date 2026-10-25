@@ -79,5 +79,5 @@ export default defineComponent(
         h("button", { id: "add", type: "submit" }, "add (revalidates)"),
       ]),
     ]),
-  { name: "Todos", props: ["data", "actionData", "pending", "submission"] },
+  { name: "Todos", props: ["data"] },
 )

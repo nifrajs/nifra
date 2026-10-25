@@ -26,6 +26,6 @@ export default defineComponent(
           )
         : null,
     ]),
-  // compose() passes data/actionData/pending/submission as props - declare them so they aren't attrs.
-  { name: "Home", props: ["data", "actionData", "pending", "submission"] },
+  // A page gets only the route props it declares.
+  { name: "Home", props: ["data", "actionData"] },
 )
