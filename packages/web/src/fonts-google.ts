@@ -335,7 +335,7 @@ const slug = (s: string): string =>
   s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-+|(?<!-)-+$/g, "")
 
 /** Host of a URL for error messages - we never echo the full untrusted URL+path. */
 const hostOf = (raw: string): string => {

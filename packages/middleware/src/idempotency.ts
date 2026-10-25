@@ -459,7 +459,10 @@ async function principalDigest(req: Request, headers: readonly string[]): Promis
   }
   if (material === "") return null // no credentials presented - an anonymous caller
   const hash = await crypto.subtle.digest("SHA-256", KEY_ENCODER.encode(material))
-  return toBase64(new Uint8Array(hash)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  return toBase64(new Uint8Array(hash))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "")
 }
 
 /**

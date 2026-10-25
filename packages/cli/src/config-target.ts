@@ -35,7 +35,7 @@ export function writeConfigTarget(appRoot: string, target: string): string | und
   const previous = found?.[2]
   let next: string
   if (found === null) {
-    next = `${text.replace(/\n*$/, "\n")}\n// The deploy target \`nifra build\` emits; \`nifra target <t>\` switches it.\nexport const target = "${target}"\n`
+    next = `${text.replace(/(?<!\n)\n*$/, "\n")}\n// The deploy target \`nifra build\` emits; \`nifra target <t>\` switches it.\nexport const target = "${target}"\n`
   } else {
     // Only the quoted value changes, so a type annotation on the export survives.
     const end = found.index + found[0].length

@@ -1822,7 +1822,7 @@ function dynamicReads(
 function workspacePattern(glob: string): RegExp {
   const source = glob
     .replace(/^\.\//, "")
-    .replace(/\/+$/, "")
+    .replace(/(?<!\/)\/+$/, "")
     .split("/")
     .map((segment) =>
       segment === "**"
@@ -3304,7 +3304,10 @@ const matchers = new Map<string, (file: string) => boolean>()
 function matches(pattern: string, file: string): boolean {
   let match = matchers.get(pattern)
   if (match === undefined) {
-    let spec = pattern.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "")
+    let spec = pattern
+      .replaceAll("\\", "/")
+      .replace(/^\.\//, "")
+      .replace(/(?<!\/)\/+$/, "")
     if (spec === "" || spec === ".") match = () => true
     else if (!/[*?]/.test(spec)) {
       const folder = `${spec}/`

@@ -365,7 +365,10 @@ const latin1 = (bytes: Uint8Array): string => {
 }
 
 export const toBase64Url = (bytes: Uint8Array): string =>
-  btoa(latin1(bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  btoa(latin1(bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "")
 
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/
