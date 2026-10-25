@@ -5278,6 +5278,8 @@ _No named exports (side-effect entrypoint)._
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
 - **HANDOVER_ID** _(const)_ - `HANDOVER_ID: "__nifra-handover"`
   `id` of the inert `<script type="application/json">` a hydrating document hands its page state over in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
+- **HashedFiles** _(type)_ - `type HashedFiles = ReadonlySet<string> | readonly RegExp[] | ((pathname: string) => boolean)`
+  Which files {@link ServePublicDirOptions.hashedFiles} names: paths, patterns, or a predicate.
 - **HostPolicy** _(interface)_ - `interface HostPolicy`
 - **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions`
 - **HostPolicyRule** _(interface)_ - `interface HostPolicyRule`

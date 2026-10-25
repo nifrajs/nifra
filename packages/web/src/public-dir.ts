@@ -46,14 +46,53 @@ export interface ServePublicDirOptions {
    * Ignored when `hashedFiles` is set. */
   readonly hashedPrefix?: string
   /**
-   * Encoded URL paths of the content-hashed files, such as a build manifest's `assets`. When set, only
-   * these are cached immutably and every other file gets the `assets` policy, so a user-authored file
-   * that happens to sit under the hashed prefix still revalidates.
+   * The content-hashed files, matched on the encoded URL path. When set, only these are cached
+   * immutably and every other file gets the `assets` policy, so a user-authored file that happens to
+   * sit under the hashed prefix still revalidates. One of:
+   *
+   * - a set of paths, such as a build manifest's `assets`;
+   * - patterns, for files a pre-build step hashed that no manifest lists:
+   *   `[/^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/]`;
+   * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`.
    */
-  readonly hashedFiles?: ReadonlySet<string>
+  readonly hashedFiles?: HashedFiles
   readonly cache?: PublicDirCache
   /** Optional encoded URL-path allowlist. When present, route misses avoid a filesystem probe. */
   readonly files?: ReadonlySet<string>
+}
+
+/** Which files {@link ServePublicDirOptions.hashedFiles} names: paths, patterns, or a predicate. */
+export type HashedFiles = ReadonlySet<string> | readonly RegExp[] | ((pathname: string) => boolean)
+
+// `Array.isArray` does not narrow a readonly array out of a union.
+const isPatternList = (value: HashedFiles): value is readonly RegExp[] => Array.isArray(value)
+
+/** `hashedFiles` as one test, validated where the handler is built. */
+function hashedTest(
+  hashedFiles: HashedFiles | undefined,
+  prefix: string,
+): (path: string) => boolean {
+  if (hashedFiles === undefined) return (path) => path.startsWith(prefix)
+  if (typeof hashedFiles === "function") return hashedFiles
+  if (isPatternList(hashedFiles)) {
+    const patterns = hashedFiles.map((pattern: unknown) => {
+      if (!(pattern instanceof RegExp)) {
+        throw new TypeError("[nifra/web] servePublicDir hashedFiles patterns must be RegExps")
+      }
+      // A global or sticky RegExp keeps `lastIndex` between tests, so every other match would miss.
+      return pattern.global || pattern.sticky
+        ? new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ""))
+        : pattern
+    })
+    return (path) => patterns.some((pattern) => pattern.test(path))
+  }
+  const set: unknown = hashedFiles
+  if (typeof set !== "object" || set === null || !("has" in set) || typeof set.has !== "function") {
+    throw new TypeError(
+      "[nifra/web] servePublicDir hashedFiles must be a Set of paths, an array of RegExps, or a function",
+    )
+  }
+  return (path) => hashedFiles.has(path)
 }
 
 export const IMMUTABLE = "public, max-age=31536000, immutable"
@@ -137,8 +176,7 @@ export function servePublicDir(
 ): (request: Request) => Promise<Response | undefined> {
   const root = resolve(options.dir)
   const rootReal = realpath(root).catch(() => undefined)
-  const hashedPrefix = options.hashedPrefix ?? "/assets/"
-  const hashedFiles = options.hashedFiles
+  const isHashed = hashedTest(options.hashedFiles, options.hashedPrefix ?? "/assets/")
   const hashed = options.cache?.hashed ?? IMMUTABLE
   const assets = options.cache?.assets ?? ONE_DAY
   const bufferedMax = typeof Bun === "undefined" ? BUFFERED_BODY_MAX : BUN_BUFFERED_BODY_MAX
@@ -183,13 +221,7 @@ export function servePublicDir(
       if (!stat.isFile()) return undefined
       const size = stat.size
       const headers = new Headers({
-        "cache-control": (
-          hashedFiles === undefined
-            ? pathname.startsWith(hashedPrefix)
-            : hashedFiles.has(pathname)
-        )
-          ? hashed
-          : assets,
+        "cache-control": isHashed(pathname) ? hashed : assets,
         // Advertised unconditionally: a client that never sees `accept-ranges` will not attempt a seek,
         // so a video or audio file under `public/` is scrubbable only once this header is present.
         "accept-ranges": "bytes",

@@ -49,6 +49,20 @@ export const app = createWebApp({
 
 app.listen(3000)`
 
+const HASHED_FONTS = `import { fileURLToPath } from "node:url"
+import { servePublicDir } from "@nifrajs/web"
+
+declare const build: { readonly assets: readonly string[] }
+
+// The build manifest's chunks plus the fonts loadGoogleFont wrote into public/fonts/.
+const assets = new Set(build.assets)
+const HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/
+
+export const files = servePublicDir({
+  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
+  hashedFiles: (path) => assets.has(path) || HASHED_FONT.test(path),
+})`
+
 const MIDDLEWARE = `// doc-check: skip - fragment: the use option of the createWebApp call above; @nifrajs/middleware is not installed in the docs sandbox.
 import { requestId, securityHeaders } from "@nifrajs/middleware"
 
@@ -150,10 +164,18 @@ export default function CustomServer() {
           with the one-day policy.
         </li>
         <li>
+          <b>Files hashed before the build.</b> The fonts <code>loadGoogleFont</code> writes into{" "}
+          <code>public/fonts/</code> are in no manifest. <code>hashedFiles</code> also
+          takes an array of patterns or a <code>(path) =&gt; boolean</code> predicate, matched on the
+          encoded URL path; a predicate combines the manifest with a pattern, as below. A global or
+          sticky pattern is used without its flag, so <code>lastIndex</code> never skips a match.
+        </li>
+        <li>
           <b>Where it runs.</b> Register the handlers with <code>app.onRequest</code> inside{" "}
           <code>use</code>, so a static hit never reaches page rendering.
         </li>
       </ul>
+      <CodeBlock code={HASHED_FONTS} />
       <p>
         On Node, <code>serve()</code> from <code>@nifrajs/node</code> can serve the bundle itself before
         the app runs, which keeps the direct request path for everything else:
