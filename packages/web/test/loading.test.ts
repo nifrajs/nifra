@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildClient } from "../src/build.ts"
+import { identityChanged } from "../src/identity.ts"
 import {
   buildManifest,
   type ClientRouter,
@@ -409,6 +410,18 @@ describe("withLoading", () => {
     // The page slot is the current page's again until the fallback takes over.
     expect(h.router.snapshot().routeId).toBe("index")
     expect(h.router.snapshot().pending).toBe(false)
+  })
+
+  test("a navigation a visitor change caught keeps its loading page, and falls back if its next load fails", async () => {
+    const h = harness()
+    await h.router.navigate("/about")
+    expect(chainOf(h)).toEqual([Root, RootLoading])
+    identityChanged()
+    // The first answer was the previous visitor's: the load runs again, and that one fails.
+    h.settle("/about")
+    h.fail("/about")
+    await tick(5)
+    expect(h.fellBack).toEqual(["/about"])
   })
 
   test("a redirect out of the app after the loading page shows replaces the entry", async () => {

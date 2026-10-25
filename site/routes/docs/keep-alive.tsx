@@ -326,8 +326,8 @@ export default function KeepAlive() {
       <p>
         When identity lives in client storage, as a bearer token, call <code>identityChanged()</code>{" "}
         at sign-in and sign-out. It also clears every query client, returns every fetcher to idle,
-        and reloads the page on screen in place. A navigation still loading starts again, and a
-        submit still posting finishes first:
+        and reloads the page on screen in place. A navigation still loading loads once more for the
+        new visitor before it settles, and a submit still posting finishes first:
       </p>
       <CodeBlock code={TOKEN} />
       <p>
