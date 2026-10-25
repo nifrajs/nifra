@@ -196,7 +196,7 @@ beforeAll(async () => {
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the evaluated section declares both functions it returns.
   const bun = (await evaluateEntry(
     entry("bun"),
-    "const server = Bun.serve",
+    "const server = app.listen",
     "; return { staticPath, staticResponse }",
     ["servePublicDir"],
     [servePublicDir],

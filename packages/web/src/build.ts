@@ -1478,8 +1478,9 @@ export function generateServerEntry(options: {
     "routeStyles",
   ]
   lines.push(`import { ${manifestImports.join(", ")} } from "./server-manifest"`)
-  // Cloudflare needs the fetch-handler shape; the others call app.fetch directly.
+  // Cloudflare needs the fetch-handler shape; Bun serves through app.listen(), the rest call app.fetch.
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
+  if (target === "bun") lines.push('import { pathnameOf } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
   if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
   if (target === "deno") {
@@ -1625,23 +1626,15 @@ export function generateServerEntry(options: {
         ]
       : denoStaticResponse(hashedFiles !== undefined)),
   )
-  // Bun.serve and Deno.serve delimit the body themselves, so its declared length is the transport
-  // frame - the guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
-  const markFramed =
-    '(req as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] = true'
   if (target === "bun") {
     lines.push(
-      "const server = Bun.serve({",
-      "  port: Number(Bun.env.PORT ?? 3000),",
-      "  async fetch(req, server) {",
-      "    const { pathname } = new URL(req.url)",
-      // Braced: the next emitted line opens with `(`, which would otherwise call the returned value.
-      `    if (staticPath(pathname) !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}) {`,
-      "      return staticResponse(req)",
-      "    }",
-      `    ${markFramed}`,
-      "    // The socket peer, looked up only when something reads it (as core's own listen() does).",
-      "    return app.fetch(req, { get clientIp() { return server.requestIP(req)?.address } })",
+      "// listen() puts this in front of every route, so a file wins over a page at the same path.",
+      "const server = app.listen(Number(Bun.env.PORT ?? 3000), {",
+      "  static(req) {",
+      "    const pathname = pathnameOf(req.url)",
+      `    return staticPath(pathname) !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}`,
+      "      ? staticResponse(req)",
+      "      : undefined",
       "  },",
       "})",
       // The `${...}` here is literal OUTPUT (a template in the GENERATED file), not a template in this
@@ -1650,7 +1643,10 @@ export function generateServerEntry(options: {
     )
     return `${lines.join("\n")}\n`
   }
-  // deno
+  // Deno.serve delimits the body itself, so its declared length is the transport frame - the
+  // guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
+  const markFramed =
+    '(req as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] = true'
   lines.push(
     "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req, info) => {',

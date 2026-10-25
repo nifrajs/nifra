@@ -283,7 +283,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 40,592, sse 39,315 -> 39,435, mcp 38,714 -> 38,842, valibot 39,425 -> 39,550, typebox-t 65,416 ->
   // 65,557, typebox-form 70,396 -> 70,526 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step
   // that fits.
-  "nifra-bare": 37.7,
+  // listen()'s `static` handler in front of Bun's table and fetch: bare 38,566 -> 38,647 B,
+  // idempotency 42,978 -> 43,069, effect-ledger 40,592 -> 40,686, sse 39,435 -> 39,521, mcp 38,842 ->
+  // 38,939, valibot 39,550 -> 39,637, typebox-t 65,557 -> 65,640, typebox-form 70,526 -> 70,614
+  // (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step that fits.
+  "nifra-bare": 37.8,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -292,15 +296,15 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
-  "nifra-idempotency": 42.0,
-  "nifra-effect-ledger": 39.7,
-  "nifra-mcp": 38.0,
+  "nifra-idempotency": 42.1,
+  "nifra-effect-ledger": 39.8,
+  "nifra-mcp": 38.1,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 38.6,
-  "nifra-valibot": 38.7,
-  "nifra-typebox-t": 64.1,
+  "nifra-valibot": 38.8,
+  "nifra-typebox-t": 64.2,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 68.9,
+  "nifra-typebox-form": 69.0,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

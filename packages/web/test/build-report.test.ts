@@ -270,7 +270,7 @@ interface StaticHandler {
 async function staticHandler(src: string, dir: string, deno = denoFiles): Promise<StaticHandler> {
   const start = src.indexOf("const STATIC_ROOT")
   const end = Math.max(
-    src.indexOf("const server = Bun.serve"),
+    src.indexOf("const server = app.listen"),
     src.indexOf("await serve("),
     src.indexOf("Deno.serve("),
   )
@@ -340,13 +340,14 @@ describe("generateServerEntry", () => {
     expect(src).not.toContain("Bun.file")
   })
 
-  test("bun → self-hosting Bun.serve that serves /assets/* from disk", () => {
+  test("bun → app.listen() with /assets/* served from disk in front of every route", () => {
     const src = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
-    expect(src).toContain("Bun.serve(")
+    // listen() names the socket peer, trusts Bun's framing, and holds Bun's table and stop().
+    expect(src).toContain("const server = app.listen(Number(Bun.env.PORT ?? 3000), {")
+    expect(src).toContain("  static(req) {")
     expect(src).toContain('pathname.startsWith("/assets/")')
-    // The socket peer reaches the app (rateLimit keys on it), and Bun's own framing is trusted.
-    expect(src).toContain("server.requestIP(req)?.address")
-    expect(src).toContain('Symbol.for("nifra.body.trustedFraming")')
+    expect(src).not.toContain("Bun.serve(")
+    expect(src).not.toContain("app.fetch(")
     // Frontend-only (no backend) → no inProcessClient/api line.
     expect(src).not.toContain("inProcessClient")
     expect(src).not.toContain("api:")
