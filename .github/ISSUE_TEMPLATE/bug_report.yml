@@ -1,0 +1,76 @@
+name: Bug report
+description: Something in Nifra does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A security vulnerability goes to a [private advisory](https://github.com/nifrajs/nifra/security/advisories/new), never to a public issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Paste error text as text, not a screenshot.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: A repository link, or the smallest set of files and commands that shows the bug. `bun create nifra repro` gives a starting point.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Nifra version
+      description: The `@nifrajs/*` version from your lockfile.
+      placeholder: "5.6.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      multiple: true
+      options:
+        - Bun
+        - Node
+        - Deno
+        - Cloudflare Workers
+        - Other edge platform
+    validations:
+      required: true
+  - type: input
+    id: runtime-version
+    attributes:
+      label: Runtime version
+      placeholder: "bun 1.4.4 / node 26.12.0 / deno 2.9.7"
+    validations:
+      required: true
+  - type: dropdown
+    id: ui
+    attributes:
+      label: UI library
+      multiple: true
+      options:
+        - React
+        - Vue
+        - Svelte
+        - Solid
+        - Preact
+        - Vanilla (@nifrajs/web-vanilla)
+        - None (API only)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "macOS 15, Ubuntu 24.04, Windows 11"
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`nifra doctor` output"
+      description: Optional. It reports undeclared imports and duplicate copies of Nifra or your UI library, a common cause of hydration and SSR errors.
+      render: text
