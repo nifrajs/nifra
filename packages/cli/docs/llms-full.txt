@@ -15459,9 +15459,18 @@ rewriting requests inside the executor: `witnesses`, `prepareRequest`,
 `isRejected`, `include` and `maxMutationsPerInput` on
 `invariants` reach every L4 run, from `nifra levels` and the
 `nifra_levels` MCP tool alike. `setup` provisions a throwaway target only
-when L4 runs: it is called once, before the first L4 request, and its `teardown`
-always runs after the run, a failing one included. The example keeps its target in memory; a
-database or container belongs in your own `setup`.
+when L4 runs: it is called once, before the run generates its first case, and its
+`teardown` always runs after the run, a failing one included. What a success
+witness must name often exists only once the target is up - a real slug, a row id, a
+signed-in session - so `setup` may return `witnesses` and
+`prepareRequest` too. Its witnesses are merged over the static ones, a
+`"METHOD /path"` in both taking the setup's, and validated the same way; its
+`prepareRequest` replaces the static one. `nifra levels` lists the
+witnesses that came from `setup` under L4, and the `nifra_levels` result
+carries them as `setupWitnesses`. A harness that runs L4 itself merges a setup
+result with `applyInvariantSetup` from `@nifrajs/core/assurance`. The
+example keeps its target in memory; a database or container belongs in your own
+`setup`.
 
 ```ts
 // nifra.assurance.ts
@@ -15473,18 +15482,21 @@ export default defineAssuranceConfig({
   source: createBackend({ rows: new Map() }),
   policy: { rules: [/* ... */] },
   invariants: {
-    // Called once, before the first L4 request - never when this file is imported, so
+    // Called once per L4 run, before its first case - never when this file is imported, so
     // `nifra check` and `nifra assure` provision nothing.
     setup: async () => {
-      const rows = new Map([["row_1", { id: "row_1", owner: "fixture" }]])
+      const id = crypto.randomUUID()
+      const rows = new Map([[id, { id, owner: "fixture" }]])
       const target = createBackend({ rows })
       return {
         executor: (request) => target.fetch(request),
+        // Names the row this run created, so no executor rewrites a placeholder id.
+        witnesses: { "PATCH /rows/:id": { params: { id }, body: { title: "ok" } } },
         teardown: () => rows.clear(), // runs after a failing run too
       }
     },
-    // Known-good inputs for schemas L4 cannot synthesize (an opaque validator, a real id).
-    witnesses: { "PATCH /rows/:id": { params: { id: "row_1" }, body: { title: "ok" } } },
+    // Known-good inputs for schemas L4 cannot synthesize, when they are known up front.
+    witnesses: { "POST /rows": { body: { title: "ok" } } },
     // Attach what the app needs on every case: a session, a signed token.
     prepareRequest: (request) => {
       const headers = new Headers(request.headers)

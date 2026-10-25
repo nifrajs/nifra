@@ -1174,6 +1174,13 @@
     "doc": "/** The minimal shape a nifra `server()` app satisfies - its own `fetch`. */"
   },
   {
+    "name": "AppliedInvariantSetup",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface AppliedInvariantSetup {\n    /** The config with the setup's executor, witnesses and prepareRequest merged over it. */\n    readonly invariants: InvariantsConfig;\n    /** The `\"METHOD /path\"` witness keys the setup returned, in its order. */\n    readonly setupWitnesses: readonly string[];\n}",
+    "doc": "/** One L4 run's options once `invariants.setup` has provisioned its target. */"
+  },
+  {
     "name": "ApprovalBindingError",
     "kind": "class",
     "package": "@nifrajs/core",
@@ -7717,13 +7724,13 @@
     "kind": "type",
     "package": "@nifrajs/core",
     "signature": "export type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>;",
-    "doc": "/** Provisions a throwaway L4 target. Called once, before the first L4 request - never on import. */"
+    "doc": "/**\n * Provisions a throwaway L4 target. Called once per L4 run, before its first case is generated, so\n * the witnesses it returns are known to every case - never on import.\n */"
   },
   {
     "name": "InvariantSetupResult",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface InvariantSetupResult {\n    /** The isolated target for this run. Replaces `invariants.executor`. */\n    readonly executor?: InvariantExecutor;\n    /** Called once the run ends, after a failure too. */\n    readonly teardown?: () => void | Promise<void>;\n}",
+    "signature": "export interface InvariantSetupResult {\n    /** The isolated target for this run. Replaces `invariants.executor`. */\n    readonly executor?: InvariantExecutor;\n    /**\n     * Known-good requests that name what only exists once the target is up - a real slug, a row id,\n     * a signed-in session - keyed by `\"METHOD /path\"`. Merged over `invariants.witnesses`: a key in\n     * both takes this one. Validated as the static ones are.\n     */\n    readonly witnesses?: Readonly<Record<string, ContractWitness>>;\n    /** Replaces `invariants.prepareRequest` for this run, so it can attach what setup created. */\n    readonly prepareRequest?: InvariantRunOptions[\"prepareRequest\"];\n    /** Called once the run ends, after a failure too. */\n    readonly teardown?: () => void | Promise<void>;\n}",
     "doc": "/** What `invariants.setup` provisions for one L4 run. */"
   },
   {
@@ -17462,6 +17469,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function applyHead(head: Meta, path?: string): void;",
     "doc": "/**\n * Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title\n * (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags - static head\n * content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so\n * the first navigation cleanly takes over from the server-rendered head.\n */"
+  },
+  {
+    "name": "applyInvariantSetup",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function applyInvariantSetup(invariants: InvariantsConfig, result: InvariantSetupResult | undefined): AppliedInvariantSetup;",
+    "doc": "/**\n * Merge what `invariants.setup` returned over the static `invariants`, validating it the way\n * `defineAssuranceConfig` validates the static fields: its executor and prepareRequest replace the\n * static ones, and its witnesses are merged over theirs, a key in both taking the setup's. For a\n * harness that runs L4 itself; `nifra levels` calls it once setup resolves.\n */"
   },
   {
     "name": "applyResponseHeaders",

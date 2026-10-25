@@ -1846,6 +1846,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/assurance`
 
+- **AppliedInvariantSetup** _(interface)_ - `interface AppliedInvariantSetup`
+  One L4 run's options once `invariants.setup` has provisioned its target.
 - **AssuranceAttachment** _(type)_ - `type AssuranceAttachment = Omit<AssuranceDeclaration, "scope" | "provenance"> & { readonly scope?: AssuranceScope }`
   Evidence published from OUTSIDE the plugin chain - a deployment shell, a mount site, the call that hands the app to `serve`. `scope` defaults to `global` (retroactive, app-wide) because the shell runs after every route is registered, and `provenance` is always stamped `declared`: nifra did not inst…
 - **AssuranceConfig** _(interface)_ - `interface AssuranceConfig`
@@ -1881,7 +1883,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **InvariantRunOptions** _(interface)_ - `interface InvariantRunOptions`
   Fixture options handed to the L4 contract runner (`runAdversarialContract` in `@nifrajs/testing`).
 - **InvariantSetup** _(type)_ - `type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>`
-  Provisions a throwaway L4 target. Called once, before the first L4 request - never on import.
+  Provisions a throwaway L4 target. Called once per L4 run, before its first case is generated, so the witnesses it returns are known to every case - never on import.
 - **InvariantSetupResult** _(interface)_ - `interface InvariantSetupResult`
   What `invariants.setup` provisions for one L4 run.
 - **InvariantsConfig** _(type)_ - `type InvariantsConfig = InvariantRunOptions & ( | { readonly executor: InvariantExecutor; readonly setup?: InvariantSetup } | { readonly executor?: InvariantExecutor; readonly setup: InvariantSetup } )`
@@ -1892,6 +1894,8 @@ Every public export of every package and documented subpath - name, kind, signat
   How much a {@link securityBaseline} demands. Each level is a superset of the one before it, so raising the level only ever adds findings.
 - **SecurityBaselineOptions** _(interface)_ - `interface SecurityBaselineOptions`
   Tuning for {@link securityBaseline}. Every knob only ever tightens the policy.
+- **applyInvariantSetup** _(function)_ - `applyInvariantSetup: (invariants: InvariantsConfig, result: InvariantSetupResult | undefined) => AppliedInvariantSetup`
+  Merge what `invariants.setup` returned over the static `invariants`, validating it the way `defineAssuranceConfig` validates the static fields: its executor and prepareRequest replace the static ones, and its witnesses are merged over theirs, a key in both taking the setup's. For a harness that run…
 - **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void`
   Publish enforcement evidence from OUTSIDE the plugin chain - the deployment shell that wraps the app, the mount site, or the call that hands it to `serve`. When the thing doing the enforcing is not a nifra plugin (a gateway, a service mesh, an outer framework), the alternative is switching the affe…
 - **defineAssuranceConfig** _(function)_ - `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
