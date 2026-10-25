@@ -349,6 +349,8 @@ test("history entries older than two minutes are pruned and read as unknown", as
   const r = await rig()
   const ws = connect(r)
   const start = Date.now()
+  // A change stamped over a second after `start` would still be inside the window at +121s.
+  setSystemTime(new Date(start))
   const grant = await grantFor(r, ws, { "L:root": ["site:nav"] })
   await change(r, "other:1")
   setSystemTime(new Date(start + 121_000))
