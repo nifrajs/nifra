@@ -1,5 +1,21 @@
 # @nifrajs/cli
 
+## 5.8.0
+
+### Patch Changes
+
+- Updated dependencies [8720338]
+  - @nifrajs/core@5.8.0
+  - @nifrajs/client@5.8.0
+  - @nifrajs/i18n@5.8.0
+  - @nifrajs/mcp@5.8.0
+  - @nifrajs/schema@5.8.0
+  - @nifrajs/testing@5.8.0
+  - @nifrajs/web@5.8.0
+  - @nifrajs/agent-review@5.8.0
+  - @nifrajs/mcp-db@5.8.0
+  - @nifrajs/runner@5.8.0
+
 ## 5.7.0
 
 ### Minor Changes

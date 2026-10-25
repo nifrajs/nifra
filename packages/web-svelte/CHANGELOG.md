@@ -1,5 +1,13 @@
 # @nifrajs/web-svelte
 
+## 5.8.0
+
+### Patch Changes
+
+- Updated dependencies [8720338]
+  - @nifrajs/core@5.8.0
+  - @nifrajs/web@5.8.0
+
 ## 5.7.0
 
 ### Minor Changes
