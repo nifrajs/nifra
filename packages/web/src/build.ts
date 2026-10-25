@@ -1179,13 +1179,15 @@ const solidWebServerPlugin = (from: string): BunPlugin => ({
 })
 
 /** Keeps each of `provided` an import of the runtime's own module. Bun.build's `external` loses to its
- * `browser` stand-in for a Node built-in; an `onResolve` answer does not. */
+ * `browser` stand-in for a Node built-in; an `onResolve` answer does not. Any other built-in resolves
+ * as it would without the plugin. */
 function providedBuiltinsPlugin(provided: ReadonlySet<string>): BunPlugin {
-  const filter = new RegExp(`^(?:${[...provided].map((name) => RegExp.escape(name)).join("|")})$`)
   return {
     name: "nifra:provided-builtins",
     setup(build) {
-      build.onResolve({ filter }, (args) => ({ path: args.path, external: true }))
+      build.onResolve({ filter: /^node:/ }, (args) =>
+        provided.has(args.path) ? { path: args.path, external: true } : undefined,
+      )
     },
   }
 }

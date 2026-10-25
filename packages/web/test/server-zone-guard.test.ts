@@ -177,6 +177,24 @@ describe("a built-in the runtime provides", () => {
     expect(code).not.toContain("POINT_CONVERSION_HYBRID")
   })
 
+  test("leaves every other built-in to the target's own rules", async () => {
+    write(
+      "backend/files.ts",
+      'import { readFileSync } from "node:fs"\nexport const use = () => readFileSync("x", "utf8")\n',
+    )
+    routeUsing("../backend/files.ts")
+    await expect(
+      buildServer({
+        routesDir: join(root, "routes"),
+        serverEntry: join(root, "worker.ts"),
+        outDir: join(root, "dist"),
+        clientEntry: "/assets/entry.js",
+        minify: false,
+        providedBuiltins: ["node:crypto"],
+      }),
+    ).rejects.toThrow("Node built-in(s) reached an edge server bundle: node:fs")
+  })
+
   test("passes the Vite edge build, which refuses it otherwise", async () => {
     hashing()
     const vite = (providedBuiltins: readonly string[] = []) =>
