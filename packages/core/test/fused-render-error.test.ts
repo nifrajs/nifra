@@ -3,7 +3,14 @@ import { t } from "@nifrajs/schema"
 import { type Logger, server } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
 
-const unrenderable = () => ({ n: 10n })
+/** A value `JSON.stringify` throws on. */
+function cyclic(): Record<string, unknown> {
+  const node: Record<string, unknown> = {}
+  node.self = node
+  return node
+}
+
+const unrenderable = () => ({ n: cyclic() })
 
 function loggerInto(sink: string[]): Logger {
   return {
@@ -24,17 +31,17 @@ function harness() {
       finalized += 1
     })
     .get("/contextless", unrenderable)
-    .get("/contextless-async", async () => ({ n: 10n }))
+    .get("/contextless-async", async () => ({ n: cyclic() }))
     .get("/context", (c) => {
       c.set.headers["x-bad"] = "a\r\nb"
       return { ok: true }
     })
-    .get("/context-async", async (c) => ({ n: 10n, at: c.params }))
-    .get("/query", { query: t.object({ a: t.optional(t.string()) }) }, () => ({ n: 10n }))
+    .get("/context-async", async (c) => ({ n: cyclic(), at: c.params }))
+    .get("/query", { query: t.object({ a: t.optional(t.string()) }) }, () => ({ n: cyclic() }))
     .derive(() => ({ user: 1 }))
     .beforeHandle(() => undefined)
     .get("/lifecycle", unrenderable)
-    .post("/lifecycle-body", { body: t.object({ a: t.number() }) }, () => ({ n: 10n }))
+    .post("/lifecycle-body", { body: t.object({ a: t.number() }) }, () => ({ n: cyclic() }))
     .afterHandle((result) => result)
     .get("/lifecycle-after", unrenderable)
   return { app, logged, finalized: () => finalized }
@@ -88,8 +95,8 @@ describe("a fused lane's render error", () => {
     const app = server({ logger: loggerInto(logged) })
       .use(nodeDirect())
       .get("/contextless", unrenderable)
-      .get("/contextless-async", async () => ({ n: 10n }))
-      .get("/context-async", async (c) => ({ n: 10n, at: c.params }))
+      .get("/contextless-async", async () => ({ n: cyclic() }))
+      .get("/context-async", async (c) => ({ n: cyclic(), at: c.params }))
     const outcome = await app.resolveNode(new Request(`http://x${path}`))
     expect(outcome.kind === "json" && outcome.status).toBe(500)
     expect(logged).toEqual(["unhandled request error"])

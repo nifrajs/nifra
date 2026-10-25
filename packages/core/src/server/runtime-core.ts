@@ -6,6 +6,7 @@
  */
 import { createUnboundedRequestBudget, type RequestBudget } from "../budget.ts"
 import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
+import { jsonText } from "./json-text.ts"
 import type { CtxSet, RequestSource } from "./server.ts"
 
 /** A handler returns a `Response` (used as-is) or any value (serialized to JSON). */
@@ -188,7 +189,7 @@ export function status(
       const headers: Record<string, string> = { ...init?.headers }
       if (body === undefined) return new Response(null, { status: code, headers })
       headers["content-type"] ??= JSON_CONTENT_TYPE
-      return new Response(JSON.stringify(body), { status: code, headers })
+      return new Response(jsonText(body), { status: code, headers })
     },
   } as StatusResponse<number, unknown>
 }

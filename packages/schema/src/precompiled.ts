@@ -2,6 +2,7 @@ import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/c
 import type { Static, TSchema } from "@sinclair/typebox"
 import { FormatRegistry } from "@sinclair/typebox"
 import { Errors } from "@sinclair/typebox/errors"
+import { markAnswerStep } from "./answer-step.ts"
 import { ensureDefaultFormats } from "./formats.ts"
 
 export { Kind, OptionalKind, ReadonlyKind } from "@sinclair/typebox"
@@ -18,7 +19,7 @@ export function fromPrecompiled<T extends TSchema>(
   schema: T,
   check: (value: unknown) => boolean,
 ): StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T } {
-  return {
+  const result: StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T } = {
     jsonSchema: schema,
     "~standard": {
       version: 1,
@@ -47,4 +48,6 @@ export function fromPrecompiled<T extends TSchema>(
       types: undefined as unknown as StandardTypes<Static<T>, Static<T>>,
     },
   }
+  markAnswerStep(result["~standard"].validate, schema)
+  return result
 }

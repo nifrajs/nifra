@@ -302,7 +302,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       sources: sourcesOf(initial),
     }
     stampEntry(active.instance)
-    if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
+    // Browser-only code reads `process.env.NODE_ENV` bare: every bundler replaces it, but none replaces
+    // `typeof process`, and a browser has no `process`, so that guard turned these off in Vite dev.
+    if (process.env.NODE_ENV !== "production")
       Reflect.set(globalThis, KEPT_PAGES_GLOBAL, {
         pages: () => describeKept(records.values()),
       })
@@ -508,9 +510,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
             instance: active.instance,
             index: active.index,
             settled: next,
-            epoch: restore.reload ? readEpoch() : active.epoch,
-            // A restore started before an identity signal must not bless its old data, even if
-            // its reload failed and fell back to the kept response.
+            // The epoch and identity the restore started under: a reload's response, or the kept
+            // response a failed reload falls back to, never belongs to a visitor who arrived since.
+            epoch: active.epoch,
             identity: active.identity,
             // A reload that failed shows the kept data, from the kept sources.
             sources: sourcesOf(next) ?? active.sources,
@@ -1144,8 +1146,7 @@ export function createSlotParking(): SlotParking {
         ref = (element) => {
           if (element === null) return
           slotOf(key).page = element
-          if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
-            noteKeptView(key, () => [element])
+          if (process.env.NODE_ENV !== "production") noteKeptView(key, () => [element])
         }
         pageRefs.set(key, ref)
       }
@@ -1202,8 +1203,7 @@ export function createSlotParking(): SlotParking {
         slot.focus = undefined
         if (!slot.shown && !slot.checked) {
           slot.checked = true
-          if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
-            checkSlotCss(slot.entry, page)
+          if (process.env.NODE_ENV !== "production") checkSlotCss(slot.entry, page)
         }
         slot.shown = true
       }
@@ -1214,8 +1214,7 @@ export function createSlotParking(): SlotParking {
         slots.delete(key)
         entryRefs.delete(key)
         pageRefs.delete(key)
-        if (typeof process !== "undefined" && process.env.NODE_ENV !== "production")
-          noteKeptView(key, undefined)
+        if (process.env.NODE_ENV !== "production") noteKeptView(key, undefined)
       }
     },
   }

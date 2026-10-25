@@ -54,6 +54,8 @@ describe("loadApp validates the forwarded fields", () => {
     ["export const csp = 'default-src self'", "`csp` must be the policy"],
     ["export const nonce = 'abc'", "`nonce` must be a nonce resolver function"],
     ["export const live = { publish() {} }", "`live` must be the runtime live() from"],
+    ["export const keepAlive = { identityCookies: 'sid' }", "`keepAlive` must be an object"],
+    ["export const keepAlive = true", "`keepAlive` must be an object"],
     // A misspelled trust declaration must not quietly build an edge app with no caller address.
     ["export const clientIp = 'cf-connecting-ip'", '`clientIp` must be "platform"'],
     ["export const dev = 'quiet'", "`dev` must be an object"],

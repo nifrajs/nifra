@@ -18,6 +18,7 @@ import {
   assertByteLimit,
   capBodyBytes,
   type FormOrigins,
+  jsonResponse,
   type NotFoundHandler,
   type NotFoundInput,
   notFoundInput,
@@ -228,12 +229,13 @@ export class EdgeServer {
         query: () => queryObjectOf(searchOf(request.url)),
         header: (name) => request.headers.get(name),
       }
-      // Serializing the handler's value is inside the boundary: a BigInt or a cycle is a 500 too.
+      // Serializing the handler's value is inside the boundary: a cycle is a 500 too. A `bigint` is
+      // its decimal string, as on core.
       try {
         const out = await handler(c)
         if (out instanceof Response) return out
         // Core answers a handler that returns nothing with an empty 204.
-        return out === undefined ? new Response(null, { status: 204 }) : Response.json(out)
+        return out === undefined ? new Response(null, { status: 204 }) : jsonResponse(out)
       } catch (err) {
         return failureResponse(err)
       }

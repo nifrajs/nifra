@@ -678,6 +678,8 @@ test("anything but a heartbeat or a well-formed watch closes 1008", async () => 
 test("more than 20 watches or 60 frames a minute close 1008; the window resets", async () => {
   const r = await rig()
   const start = Date.now()
+  // The window opens with the socket: a clock tick before it would leave `start + 60_000` short.
+  setSystemTime(new Date(start))
   const ws = connect(r)
   for (let gen = 1; gen <= MAX_WATCHES_PER_MINUTE; gen++) await watch(r, ws, gen, [])
   expect(ws.closed).toBeUndefined()

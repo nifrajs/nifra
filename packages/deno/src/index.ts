@@ -85,11 +85,9 @@ export interface ServeOptions {
   /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
    * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
-   * mirroring nifra's Bun `listen({ gracefulSignals })`.
-   * `{ drainMs }` sets how long in-flight requests get before the stop forces them closed
-   * (default 10_000).
+   * mirroring nifra's Bun `listen({ gracefulSignals })`. The object form is passed to `stop()`.
    */
-  readonly signals?: boolean | { readonly drainMs?: number }
+  readonly signals?: boolean | DenoStopOptions
   /**
    * Serve HTTPS directly, with no proxy in front: `cert` and `key` as PEM text or the files' bytes.
    * Unset, the server speaks plain HTTP, which is what a proxy or platform that terminates TLS
@@ -98,15 +96,40 @@ export interface ServeOptions {
   readonly tls?: { readonly cert: string | Uint8Array; readonly key: string | Uint8Array }
 }
 
+/** How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes. */
+export interface DenoStopOptions {
+  /** How long in-flight requests get to finish before the stop forces them closed. Default 10_000. */
+  readonly drainMs?: number
+  /**
+   * How long the server keeps serving after `stop()` began, before it stops accepting requests:
+   * the time a load balancer takes to see readiness fail. Default 0.
+   */
+  readonly delayMs?: number
+}
+
 export interface DenoServer {
   /** The bound port (resolved when `port: 0` is requested). */
   readonly port: number
   /**
-   * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then
-   * force-close stragglers. A request is in flight until its whole response body is sent, so a
-   * live stream is force-closed at the deadline too. Mirrors nifra's Bun `stop()`.
+   * Run the app's `onStopping` hooks, keep serving for `delayMs`, then stop accepting connections,
+   * let in-flight requests drain (up to `drainMs`), force-close stragglers, and run the app's
+   * `onStop` hooks. A request is in flight until its whole response body is sent, so a live stream
+   * is force-closed at the deadline too. Mirrors nifra's Bun `stop()`.
    */
-  stop(options?: { drainMs?: number }): Promise<void>
+  stop(options?: DenoStopOptions): Promise<void>
+}
+
+/** Agrees with core's `SERVER_LIFECYCLE` by the string alone; the stop tests fail on drift. */
+const SERVER_LIFECYCLE = Symbol.for("@nifrajs/core/server-lifecycle")
+
+/** The app's stop hooks when it is a nifra server; a plain `{ fetch }` handler has none. */
+function lifecycleOf(app: object): (phase: "stopping" | "stopped") => Promise<void> {
+  const run: unknown = Reflect.get(app, SERVER_LIFECYCLE)
+  return typeof run === "function"
+    ? async (phase) => {
+        await Reflect.apply(run, app, [phase])
+      }
+    : async () => {}
 }
 
 const DEFAULT_DRAIN_MS = 10_000
@@ -124,6 +147,7 @@ const pemText = (value: string | Uint8Array): string =>
 export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoServer> {
   // Aborting this signal force-closes the server - used when the drain deadline elapses.
   const controller = new AbortController()
+  let stopping = false
   let closed = false
   let activeRequests = 0
   let idleResolvers: Array<() => void> = []
@@ -257,13 +281,21 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     void stop(signals)
   }
 
-  async function stop({ drainMs = DEFAULT_DRAIN_MS }: { drainMs?: number } = {}): Promise<void> {
-    if (closed) return // idempotent
-    closed = true
+  const lifecycle = lifecycleOf(app)
+  async function stop({
+    drainMs = DEFAULT_DRAIN_MS,
+    delayMs = 0,
+  }: DenoStopOptions = {}): Promise<void> {
+    if (stopping) return // idempotent
+    stopping = true
     if (signals !== undefined) {
       Deno.removeSignalListener("SIGTERM", onSignal)
       Deno.removeSignalListener("SIGINT", onSignal)
     }
+    await lifecycle("stopping")
+    // Requests keep being served through the delay; `closed` refuses them only once the drain starts.
+    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs))
+    closed = true
     // Do not call httpServer.shutdown() until the application handlers have drained. Deno attaches
     // shutdown() and the signal to the same underlying resource; once shutdown() starts, aborting
     // that signal can throw BadResource (and Deno reports the event-listener exception outside this
@@ -280,6 +312,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     if (outcome === "drained") await httpServer.shutdown()
     else controller.abort()
     await httpServer.finished
+    await lifecycle("stopped")
   }
 
   if (signals !== undefined) {

@@ -346,17 +346,22 @@ export async function assertBranchLayouts(
  * The D10 diagnostic in a development build: the fixture's `#main > .list-page` rule no longer matches
  * once the page sits inside its slot wrappers, and the dev client says so once.
  */
-export async function assertDirectChildCssDiagnostic(
-  page: BrowserPage,
-  problems: readonly string[],
-  url: string,
-): Promise<void> {
+/** Open list 1, follow to list 2 and come back: list 2 is then the one page kept. */
+export async function keepListTwo(page: BrowserPage, url: string): Promise<void> {
   await page.goto(`${url}/list/1`)
   await hydrated(page)
   await follow(page, "/list/2")
   await showing(page, "List 2")
   await page.goBack()
   await showing(page, "List 1")
+}
+
+export async function assertDirectChildCssDiagnostic(
+  page: BrowserPage,
+  problems: readonly string[],
+  url: string,
+): Promise<void> {
+  await keepListTwo(page, url)
   const reports = problems.filter((problem) => problem.includes("NIFRA_KEEPALIVE_DIRECT_CHILD_CSS"))
   expect(reports).toHaveLength(1)
   expect(reports[0]).toContain("#main > .list-page")

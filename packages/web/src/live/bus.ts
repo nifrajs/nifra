@@ -7,6 +7,8 @@
  * keeps counting upward, and an entry's age can be read off its seq.
  */
 
+import { KEY_PATTERN } from "./keyring.ts"
+
 /** Something a loader declared with `ctx.live` changed. */
 export interface LiveChange {
   readonly type: "change"
@@ -35,8 +37,11 @@ export interface LiveBusListener {
    * unknown, and delivery resumes with the events after it.
    */
   gap(head: number): void
-  /** The bus is unreachable; the next {@link gap} reports where delivery resumes. */
-  down(): void
+  /**
+   * The bus is unreachable; the next {@link gap} reports where delivery resumes. `error` is what the
+   * last read failed with, when the bus knows.
+   */
+  down(error?: unknown): void
 }
 
 export interface LiveBusSubscription {
@@ -73,5 +78,27 @@ export function memoryBus(): LiveBus {
       listeners.add(listener)
       return { head: last, close: () => listeners.delete(listener) }
     },
+  }
+}
+
+/**
+ * Publish changes from a process that serves no live pages: a worker, or another app whose writes
+ * change what the pages show. Give it the bus the serving processes read; each applies the change as
+ * if it had published it. It needs no grant secret, and reads nothing from the bus.
+ *
+ * ```ts
+ * const publish = livePublisher(redisLiveBus({ send: (command, args) => redis.call(command, ...args) }))
+ * await publish(`org:${orgId}:usage`)
+ * ```
+ */
+export function livePublisher(bus: Pick<LiveBus, "append">): (...keys: string[]) => Promise<void> {
+  return async (...keys) => {
+    for (const key of keys) {
+      if (typeof key !== "string" || !KEY_PATTERN.test(key)) {
+        throw new TypeError("[nifra/web] livePublisher takes keys in the ctx.live() charset")
+      }
+    }
+    if (keys.length === 0) return
+    await bus.append({ type: "change", keys: [...new Set(keys)] })
   }
 }

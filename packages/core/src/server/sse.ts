@@ -22,6 +22,7 @@
  *   }, { keepAlive: 15_000 }))
  */
 import { INSTALL_SSE } from "./install.ts"
+import { jsonText } from "./json-text.ts"
 import type { IdentityPlugin } from "./plugin.ts"
 import type { AnyServer } from "./server.ts"
 import type { SseRuntime } from "./sse-hook.ts"
@@ -92,7 +93,7 @@ export interface TypedSSEStream<Event> {
 export function typedSSEStream<Event>(stream: SSEStream): TypedSSEStream<Event> {
   return {
     send(event, init = {}) {
-      stream.send({ ...init, data: JSON.stringify(event) })
+      stream.send({ ...init, data: jsonText(event) })
     },
     comment(text) {
       stream.send({ comment: text })

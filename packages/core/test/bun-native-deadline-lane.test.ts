@@ -3,6 +3,13 @@ import { NIFRA_DEADLINE_HEADER } from "../src/budget.ts"
 import { server, silentLogger } from "../src/index.ts"
 import { responseObserver } from "../src/response-observer.ts"
 
+/** A value `JSON.stringify` throws on. */
+function cyclic(): Record<string, unknown> {
+  const node: Record<string, unknown> = {}
+  node.self = node
+  return node
+}
+
 /**
  * With `acceptInboundDeadlines`, a route in Bun's native table answers a request that carries no
  * deadline on the table's own lane. That lane must still run the header-only response hooks the
@@ -16,7 +23,7 @@ test("a header-only response hook runs on every lane of the table under acceptIn
     })
     .get("/static", () => ({ ok: true }))
     .get("/users/:id", (c) => ({ id: c.params.id }))
-    .get("/unrenderable", () => ({ count: 1n }))
+    .get("/unrenderable", () => ({ count: cyclic() }))
   const running = app.listen(0, { hostname: "127.0.0.1" })
   const deadline = { headers: { [NIFRA_DEADLINE_HEADER]: String(Date.now() + 60_000) } }
   try {

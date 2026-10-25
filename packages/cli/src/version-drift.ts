@@ -74,7 +74,7 @@ export function collectVersionDrift(cwd: string, cliVersion?: string): VersionDr
         continue
       add(
         recorded,
-        `recorded for ${entry.package} in bun.lock, which Bun never refreshes (NF-D003)`,
+        `recorded for ${entry.package} in bun.lock, stale until \`bun update ${entry.package}\` (NF-D003)`,
       )
     }
   }

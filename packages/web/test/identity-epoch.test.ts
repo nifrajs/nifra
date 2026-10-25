@@ -191,6 +191,34 @@ describe("the identity epoch hook", () => {
     expect(run(["sid.0=v; HttpOnly; Secure"], { hook })).toMatch(EPOCH)
   })
 
+  test("a Better Auth session cookie counts under any cookiePrefix", () => {
+    warn = spyOn(console, "warn").mockImplementation(() => {})
+    const hook = identityEpochHook({}, true)
+    const signIn = [
+      "__Secure-orbit.session_token=t.sig; Max-Age=600; Path=/; HttpOnly; Secure",
+      "__Secure-orbit.session_data=d; Max-Age=300; Path=/; HttpOnly; Secure",
+      "orbit.dont_remember=1; Path=/; HttpOnly",
+    ]
+    expect(run(signIn, { hook })).toMatch(EPOCH)
+    const signOut = run(["orbit.session_token=; Max-Age=0; Path=/; HttpOnly"], {
+      hook,
+      cookie: "orbit.session_token=t.sig",
+    })
+    expect(signOut).toMatch(EPOCH)
+    expect(signOut).not.toContain("Max-Age")
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  test("an app's ignoreCookies entry outranks the Better Auth suffix", () => {
+    const hook = identityEpochHook({ ignoreCookies: ["legacy.session_token"] }, false)
+    expect(run(["legacy.session_token=v; HttpOnly; Secure"], { hook })).toBeUndefined()
+    const named = identityEpochHook(
+      { identityCookies: ["x.session_token"], ignoreCookies: ["x.session_token"] },
+      false,
+    )
+    expect(run(["x.session_token=v; HttpOnly; Secure"], { hook: named })).toMatch(EPOCH)
+  })
+
   test("development reports an unknown HttpOnly cookie that changes, once per name", () => {
     warn = spyOn(console, "warn").mockImplementation(() => {})
     const hook = identityEpochHook({}, true)

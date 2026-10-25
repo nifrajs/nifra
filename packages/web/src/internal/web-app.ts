@@ -299,8 +299,9 @@ export interface CreateWebAppOptions<Env = unknown> {
   /**
    * Which cookies say who is signed in, for an app with a `keepAlive` route. A response that changes
    * or deletes one rotates the readable identity epoch cookie, and every tab drops the pages it kept
-   * for the previous visitor. The session cookies of `@nifrajs/auth`, Better Auth and Auth.js count
-   * under their default names; name any other in `identityCookies`. Development reports, once per
+   * for the previous visitor. The session cookies of `@nifrajs/auth` and Auth.js count under their
+   * default names, Better Auth's under any `cookiePrefix`; name any other in `identityCookies`. An app
+   * run by `nifra dev` and `nifra build` exports this from `backend/framework.ts`. Development reports, once per
    * name, an `HttpOnly` cookie that changes and is in neither list (`NIFRA_KEEPALIVE_IDENTITY_COOKIE`).
    */
   readonly keepAlive?: KeepAliveServerOptions
@@ -654,6 +655,7 @@ export function createWebApp<Env = unknown>(
     ...(ppr === undefined ? {} : { ppr }),
     invalidate,
     liveLoadOf: liveAttachment?.loadOf,
+    liveSeedOf: liveAttachment?.seedOf,
   })
   if (ppr !== undefined) {
     Object.defineProperty(app, PPR_SERVER, { value: ppr.server })

@@ -290,6 +290,16 @@ export default function CustomServer() {
         Deno, pass{" "}
         <code>signals: {"{ drainMs }"}</code> to <code>serve()</code> instead, as above.
       </p>
+      <p>
+        When the platform sends <code>SIGTERM</code> without taking the instance out of rotation first,
+        add <code>delayMs</code>. The stop then runs the app's <code>onStopping</code> hooks, keeps
+        serving for <code>delayMs</code>, and only then drains. <code>healthcheck()</code> answers{" "}
+        <code>503 stopping</code> on <code>/ready</code> from the moment the stop begins, so the
+        delay is the time a load balancer gets to see that and route elsewhere. Register your own{" "}
+        <code>app.onStopping(fn)</code> to stop a poller or queue consumer at the same point;{" "}
+        <code>app.onStop(fn)</code> still runs after the drain, on Bun, Node and Deno alike.{" "}
+        <code>delayMs + drainMs</code> has to fit in the kill grace period.
+      </p>
 
       <h2>Letting check and assure read the app</h2>
       <p>

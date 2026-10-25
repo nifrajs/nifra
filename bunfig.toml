@@ -139,6 +139,9 @@ coveragePathIgnorePatterns = [
   # server or the bench calls, and the fixtures' event handlers run only in the browser (50-57% function).
   "**/web/test/keep-alive-browser.ts",
   "**/web/test/keep-alive-app.ts",
+  # `keep-alive-dev.ts` (75% function, 82.22% line, measured 2026-10-25): its `page.evaluate` callback
+  # runs in the page, and its failure path only when `nifra dev` never prints its banner.
+  "**/web/test/keep-alive-dev.ts",
   "**/web-react/test/fixtures/keep-alive/**",
   "**/web-svelte/test/fixtures/keep-alive/**",
   "**/web-preact/test/fixtures/keep-alive/**",

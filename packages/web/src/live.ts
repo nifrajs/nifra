@@ -14,7 +14,7 @@
  * whole app: every hook, middleware, gate and loader sees the target path, exactly as a navigation.
  * Changes reach open pages over one WebSocket per tab, as opaque tags of the keys they watch.
  */
-import { isSameOriginForm, replacedRequestOf } from "@nifrajs/core/server"
+import { isSameOriginForm, jsonLogger, type Logger, replacedRequestOf } from "@nifrajs/core/server"
 import { websocket } from "@nifrajs/core/ws"
 import {
   LIVE_ATTACH,
@@ -26,10 +26,23 @@ import {
   type LiveRuntimeHandle,
 } from "./internal/live-contract.ts"
 import { queryDigester, querySalt } from "./internal/query-digest.ts"
-import { type LiveBus, type LiveBusEvent, type LiveBusInput, memoryBus } from "./live/bus.ts"
+import {
+  type LiveBus,
+  type LiveBusEvent,
+  type LiveBusInput,
+  type LiveBusSubscription,
+  memoryBus,
+} from "./live/bus.ts"
 import { applyEvent, type LiveCore } from "./live/core.ts"
 import { History, keyHasher } from "./live/history.ts"
-import { CLOSE_CAPACITY, LiveHub, type LiveSocket, tagCache, unref } from "./live/hub.ts"
+import {
+  CLOSE_CAPACITY,
+  CLOSE_GOING_AWAY,
+  LiveHub,
+  type LiveSocket,
+  tagCache,
+  unref,
+} from "./live/hub.ts"
 import {
   HUB_APPEND_PATH,
   HUB_AUTHORITY_PATH,
@@ -52,6 +65,7 @@ import {
   MAX_GRANT_CHARS,
   MAX_KEYS_PER_FRAME,
   type OpenedGrant,
+  SEED_SID,
   SID_PATTERN,
   toBase64Url,
 } from "./live/keyring.ts"
@@ -83,7 +97,7 @@ export type {
   LiveChange,
   LiveRevocation,
 } from "./live/bus.ts"
-export { memoryBus, nextSeq } from "./live/bus.ts"
+export { livePublisher, memoryBus, nextSeq } from "./live/bus.ts"
 
 export interface LiveOptions {
   /**
@@ -148,6 +162,38 @@ export interface LiveOptions {
    * one of them, so leave it off when key names hold anything the viewer should not see.
    */
   readonly queryKeys?: boolean
+  /**
+   * Where the runtime reports what it cannot fix by itself: the bus stopping to answer and answering
+   * again, events lost to a trim, an event it could not apply, a publish it did not read back.
+   * Default `jsonLogger()`; `false` reports nothing. {@link Live.status} has the same state to poll.
+   */
+  readonly logger?: Logger | false
+}
+
+/** What one process's live runtime is doing now; counters run from its start. */
+export interface LiveStatus {
+  /** The keyring is derived and the bus read: grants can be issued. */
+  readonly ready: boolean
+  /**
+   * No grant is issued and no socket kept: the bus (or the Workers hub) is unreachable, or the
+   * runtime was closed. Open pages poll meanwhile.
+   */
+  readonly down: boolean
+  /** Since when `down` has held, in epoch ms. */
+  readonly downSince: number | undefined
+  /** Live sockets open in this process. On Workers the hub holds them, so this is 0. */
+  readonly sockets: number
+  /** Live loads running in this process. */
+  readonly loads: number
+  /** Bus events this process applied. */
+  readonly events: number
+  /** `changed` frames this process sent, one per watching socket: each makes a page reload. */
+  readonly notified: number
+  /**
+   * How long after its append the last event was applied here, in ms. The append time comes from the
+   * bus's clock, so skew between hosts shows in it.
+   */
+  readonly lagMs: number | undefined
 }
 
 /** A live runtime: pass it to `createWebApp({ live })`. */
@@ -170,6 +216,14 @@ export interface Live extends LiveRuntimeHandle {
    * runs that owner's loader, which decides again.
    */
   revokeKey(key: string, subject?: string): Promise<void>
+  /** What this process's runtime is doing now: for a readiness check or metrics. */
+  status(): LiveStatus
+  /**
+   * Stop reading the bus and close every live socket (1001); open pages poll until they reach another
+   * process. Call it before closing the bus's connections, so the reader does not count that as an
+   * outage. A publish after it throws. Idempotent.
+   */
+  close(): Promise<void>
 }
 
 const DEFAULT_LOAD_PATH = "/_nifra/live/load"
@@ -185,6 +239,12 @@ const MAX_HOSTS = 32
 const MAX_HOST_CHARS = 32
 const HOST = /^[a-z0-9-]+$/
 const PAGE_FRAME = "page"
+/**
+ * How old a seed may be when its page exchanges it: the time from the render to the socket's welcome.
+ * The exchanged grant keeps owners no loader re-checked, so this bounds how stale that check is.
+ */
+const SEED_MAX_AGE_SECONDS = 60
+const NO_OWNERS: readonly string[] = []
 /** Renewals re-signed without loaders before one runs them all. */
 const MAX_QUIET_RENEWALS = 2
 /** How long a publish waits to read its own event back; the event is in the log either way. */
@@ -235,7 +295,7 @@ const REFUSE_ALL: RevocationCheck = { grantRevoked: () => true, keyRevoked: () =
 type Queued =
   | { readonly kind: "event"; readonly event: LiveBusEvent }
   | { readonly kind: "gap"; readonly head: number }
-  | { readonly kind: "down" }
+  | { readonly kind: "down"; readonly error: unknown }
 
 /** Create the live runtime for one app. */
 export function live(options: LiveOptions): Live {
@@ -269,6 +329,7 @@ export function live(options: LiveOptions): Live {
   const subjectOf = options.subject
   const queryKeys = options.queryKeys === true
   const production = isProduction()
+  const logger = options.logger === false ? undefined : (options.logger ?? jsonLogger())
   if (hubNamespace !== undefined) {
     if (options.bus !== undefined) {
       throw new TypeError("[nifra/web] live: `hub` and `bus` are exclusive; the hub owns the log")
@@ -291,8 +352,22 @@ export function live(options: LiveOptions): Live {
   const waiters: { readonly seq: number; readonly resolve: () => void }[] = []
   /** A publish already found this process behind the bus; the next applied event clears it. */
   let lagging = false
+  let subscription: LiveBusSubscription | undefined
+  let closed = false
+  let closing: Promise<void> | undefined
+  let closedAt = 0
+  let downSince: number | undefined
+  let events = 0
+  let lagMs: number | undefined
 
   const keyring = createKeyring({ secrets, appId, ttl })
+  let keyringReady = false
+  keyring.then(
+    () => {
+      keyringReady = true
+    },
+    () => {},
+  )
   // One cache for the tags a load hands out and the tags this process's sockets join.
   const tags = keyring.then((ring) => tagCache(ring))
   tags.catch(() => {})
@@ -300,14 +375,16 @@ export function live(options: LiveOptions): Live {
     const ring = await keyring
     // On Workers the hub holds the log: this isolate reads nothing.
     if (hubNamespace !== undefined) return new Promise<Core>(() => {})
-    const subscription = await bus.subscribe({
+    const subscribed = await bus.subscribe({
       event: (event) => enqueue({ kind: "event", event }),
       gap: (head) => enqueue({ kind: "gap", head }),
-      down: () => enqueue({ kind: "down" }),
+      down: (error) => enqueue({ kind: "down", error }),
     })
-    seen = subscription.head
-    const history = new History(subscription.head)
-    const revocations = new Revocations(subscription.head, ttl * 1000)
+    subscription = subscribed
+    if (closed) subscribed.close()
+    seen = subscribed.head
+    const history = new History(subscribed.head)
+    const revocations = new Revocations(subscribed.head, ttl * 1000)
     const hub = new LiveHub(
       ring,
       history,
@@ -326,6 +403,7 @@ export function live(options: LiveOptions): Live {
       publishers,
     )
     core = { ring, history, revocations, hub }
+    if (closed) hub.down = true
     void drain()
     return core
   })()
@@ -385,7 +463,11 @@ export function live(options: LiveOptions): Live {
       await hubCall(namespace, ring, HUB_AUTHORITY_PATH, { subjects, keys }),
     )
     // Unreachable: revocations are unknown, so nothing presented is honored and no grant is issued.
-    if (reply === undefined) return { seq: 0, down: true, revocations: REFUSE_ALL }
+    if (reply === undefined) {
+      downSince ??= Date.now()
+      return { seq: 0, down: true, revocations: REFUSE_ALL }
+    }
+    downSince = undefined
     return { seq: reply.seq, down: false, revocations: new RevocationView(reply) }
   }
 
@@ -404,7 +486,7 @@ export function live(options: LiveOptions): Live {
   }
 
   async function drain(): Promise<void> {
-    if (draining || core === undefined) return
+    if (draining || core === undefined || closed) return
     draining = true
     try {
       for (let item = queue.shift(); item !== undefined; item = queue.shift()) {
@@ -417,26 +499,48 @@ export function live(options: LiveOptions): Live {
 
   async function apply(c: Core, item: Queued): Promise<void> {
     if (item.kind === "down") {
+      if (!c.hub.down) {
+        downSince = Date.now()
+        logger?.error(
+          "live bus unreachable: live sockets closed, open pages poll until it answers",
+          {
+            error: messageOf(item.error),
+          },
+        )
+      }
       c.hub.down = true
       c.hub.closeAll(CLOSE_CAPACITY, "unavailable")
       return
     }
-    if (item.kind === "gap") return forgetUntil(c, item.head)
+    if (item.kind === "gap") {
+      if (c.hub.down) {
+        logger?.info("live bus answering again: live sockets resume", {
+          downMs: Date.now() - (downSince ?? Date.now()),
+        })
+      } else logger?.warn("live bus lost events before this process read them: live sockets resync")
+      return forgetUntil(c, item.head)
+    }
     const event = item.event
     // At-least-once delivery: a repeat is already applied.
     if (!Number.isSafeInteger(event.seq) || event.seq <= seen) return
     try {
       await applyEvent(c, event, hash)
+      events++
+      // The seq is the bus clock's microseconds at the append.
+      lagMs = Math.max(0, Date.now() - Math.floor(event.seq / 1000))
       settle(event.seq)
     } catch (err) {
       // An event this process could not apply leaves its history and revocations unknown.
-      console.error("[nifra/web] live: a bus event could not be applied; closing live sockets", err)
+      logger?.error("live bus event could not be applied: live sockets resync", {
+        error: messageOf(err),
+      })
       forgetUntil(c, event.seq)
     }
   }
 
   /** Everything up to `head` is unknown: refuse older grants, report all owners stale, reconnect. */
   function forgetUntil(c: Core, head: number): void {
+    downSince = undefined
     // Never behind what this process applied: loads already issued watermarks up to `seen`.
     const at = Math.max(head, seen)
     c.history.reset(at)
@@ -460,6 +564,7 @@ export function live(options: LiveOptions): Live {
 
   /** Append to the bus, then wait until this process has applied it, at most {@link APPLY_WAIT_MS}. */
   async function append(input: Parameters<LiveBus["append"]>[0]): Promise<void> {
+    if (closed) throw new Error("[nifra/web] live: the runtime is closed; nothing was published")
     if (hubNamespace !== undefined) return appendToHub(hubNamespace, input)
     await started
     const seq = await bus.append(input)
@@ -479,8 +584,9 @@ export function live(options: LiveOptions): Live {
           if (at !== -1) waiters.splice(at, 1)
           if (!lagging) {
             lagging = true
-            console.error(
-              `[nifra/web] live: this process did not read a publish back from the bus within ${APPLY_WAIT_MS} ms; its sockets miss changes until the bus reader recovers`,
+            logger?.error(
+              "live publish not read back from the bus: this process's sockets miss changes until its reader recovers",
+              { waitedMs: APPLY_WAIT_MS },
             )
           }
           resolve()
@@ -572,7 +678,13 @@ export function live(options: LiveOptions): Live {
         const opened = await auth.ring.open(token, now)
         if (opened === undefined) continue
         const claims = opened.claims
-        if (claims.sid !== body.sid || claims.frame !== body.frame) continue
+        // A seed is exchanged by a load of the page it was rendered with, while it is fresh.
+        const seed =
+          claims.sid === SEED_SID &&
+          body.mode === "load" &&
+          claims.path === path &&
+          now / 1000 - claims.iat <= SEED_MAX_AGE_SECONDS
+        if ((!seed && claims.sid !== body.sid) || claims.frame !== body.frame) continue
         // A navigation presents the grant of the page it leaves: only its layouts can carry over, and
         // only where the layout itself would keep its data. A renewal is for the same page.
         if (claims.path !== path && body.mode === "renew") continue
@@ -652,6 +764,24 @@ export function live(options: LiveOptions): Live {
           return forwardSocket(hubNamespace, req)
         }
         return undefined
+      },
+      seedOf: (req, routeId) => {
+        const c = core
+        // A render never waits on the bus: with no core yet, or none that could vouch, it carries none.
+        if (hubNamespace !== undefined || c === undefined || closed || c.hub.down) return undefined
+        const url = new URL(req.url)
+        const path = canonicalPath(url.pathname + url.search, req.url)
+        if (path === undefined) return undefined
+        const body: LoadBody = {
+          path,
+          sid: SEED_SID,
+          frame: PAGE_FRAME,
+          mode: "load",
+          retain: NO_OWNERS,
+          grants: NO_OWNERS,
+          fill: NO_OWNERS,
+        }
+        return new LoadState(c.ring, false, body, path, seen, undefined, routeId, false)
       },
       loadOf: (req) => {
         // An app hook after the endpoint may hand on a replacement; the load is its original's.
@@ -910,9 +1040,40 @@ export function live(options: LiveOptions): Live {
       }
       await append({ type: "revoke", sub: subject ?? null, key })
     },
+    status() {
+      const hub = core?.hub
+      return {
+        ready: hubNamespace === undefined ? hub !== undefined : keyringReady,
+        down: closed || downSince !== undefined || hub?.down === true,
+        downSince: closed ? (downSince ?? closedAt) : downSince,
+        sockets: hub?.size ?? 0,
+        loads: inflight,
+        events,
+        notified: hub?.notified ?? 0,
+        lagMs,
+      }
+    },
+    close() {
+      closing ??= (async () => {
+        closed = true
+        closedAt = Date.now()
+        subscription?.close()
+        const c = core
+        if (c !== undefined) {
+          c.hub.down = true
+          c.hub.closeAll(CLOSE_GOING_AWAY, "closed")
+        }
+        // A publish waiting to read its event back never will now.
+        for (const waiter of waiters.splice(0)) waiter.resolve()
+      })()
+      return closing
+    },
     [LIVE_ATTACH]: attach,
   }
 }
+
+const messageOf = (error: unknown): string | undefined =>
+  error instanceof Error ? error.message : error === undefined ? undefined : String(error)
 
 /**
  * `app.publish`, holding the app weakly: a dev server builds a new app on every edit, and a discarded

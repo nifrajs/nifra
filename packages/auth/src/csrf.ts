@@ -2,9 +2,12 @@
  * CSRF protection via an **Origin / Referer check** on state-changing requests - OWASP's recommended
  * defense for cookie-authenticated apps. A browser always attaches `Origin` (or at least `Referer`) to
  * a cross-origin or same-origin *unsafe* request; it must match an allowed origin, else `403`. Safe
- * methods (GET/HEAD/OPTIONS) pass. Apply with `app.use(csrf({ origins: ["https://example.com"] }))`.
+ * methods (GET/HEAD/OPTIONS) pass, as do routes listed in `exempt`. Apply with
+ * `app.use(csrf({ origins: ["https://example.com"] }))`.
  */
-import { isSameOriginRequest, type Middleware } from "@nifrajs/core/server"
+import { expandOptionalParams } from "@nifrajs/core/pattern"
+import { Router } from "@nifrajs/core/router"
+import { isSameOriginRequest, type Middleware, pathnameOf } from "@nifrajs/core/server"
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
@@ -19,18 +22,37 @@ export interface CsrfOptions {
    * works). Set it when the proxy rewrites `Host`, so the public origin differs from the worker's.
    */
   readonly origins?: readonly string[]
+  /**
+   * Route patterns whose requests skip the check, for a route no browser calls that proves its sender
+   * another way - a signed payment webhook arrives with no `Origin` at all. Written as routes are
+   * (`/inbound/:vendor`) and matched against the path this server routes, so a different path to
+   * the same handler is still checked. Exempt nothing that acts on a session cookie: a cross-site page
+   * can post to it.
+   */
+  readonly exempt?: readonly string[]
 }
 
 const forbidden = (): Response =>
   Response.json({ ok: false, error: "csrf_failed" }, { status: 403 })
 
+function exemptionOf(patterns: readonly string[]): ((path: string) => boolean) | undefined {
+  if (patterns.length === 0) return undefined
+  const forms = new Set(patterns.flatMap((pattern) => expandOptionalParams(pattern)))
+  const router = new Router<true>()
+  // An exemption names a path whatever the method, so every form sits under one method key.
+  for (const form of forms) router.add("POST", form, true)
+  return (path) => router.find("POST", path).found
+}
+
 export function csrf(options: CsrfOptions = {}): Middleware {
   const configured = options.origins !== undefined ? new Set(options.origins) : undefined
+  const exempt = exemptionOf(options.exempt ?? [])
   instances += 1
   return {
     name: `csrf#${instances}`,
     onRequest(req) {
       if (SAFE_METHODS.has(req.method)) return undefined
+      if (exempt?.(pathnameOf(req.url)) === true) return undefined
       // The same-origin default uses core's check, which accepts an `https:` page reaching an `http:`
       // request URL on the same host - what every TLS-terminating proxy looks like from here.
       const allowed = (candidate: string): boolean =>

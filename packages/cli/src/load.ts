@@ -122,6 +122,9 @@ export interface NifraFramework {
   /** Live data refresh, the runtime `live()` from `@nifrajs/web/live` returns: the app serves its
    * endpoints and the client entry keeps what is on screen fresh, in `nifra dev` and in the build. */
   readonly live?: CreateWebAppOptions["live"]
+  /** Which cookies say who is signed in, for an app with a `keepAlive` route: a sign-in or sign-out
+   * through one drops every tab's kept pages. See `createWebApp`'s `keepAlive`. */
+  readonly keepAlive?: CreateWebAppOptions["keepAlive"]
 }
 
 /** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
@@ -136,6 +139,7 @@ export const FRAMEWORK_WEB_OPTIONS = [
   "i18n",
   "hostPolicy",
   "live",
+  "keepAlive",
 ] as const
 export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
 
@@ -199,6 +203,18 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
       typeof fw.live.clientEntry !== "object")
   ) {
     wrong("live", "the runtime live() from @nifrajs/web/live returns")
+  }
+  if (fw.keepAlive !== undefined) {
+    const names = (value: unknown): boolean =>
+      value === undefined ||
+      (Array.isArray(value) && value.every((name) => typeof name === "string" && name !== ""))
+    if (
+      typeof fw.keepAlive !== "object" ||
+      fw.keepAlive === null ||
+      !names(Reflect.get(fw.keepAlive, "identityCookies")) ||
+      !names(Reflect.get(fw.keepAlive, "ignoreCookies"))
+    )
+      wrong("keepAlive", 'an object such as { identityCookies: ["sid"] }')
   }
   if (fw.publicEnvPrefix !== undefined && typeof fw.publicEnvPrefix !== "string") {
     wrong("publicEnvPrefix", 'a string such as "PUBLIC_", or "" to expose no environment variable')
