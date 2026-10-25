@@ -1,5 +1,13 @@
 # @nifrajs/workbench
 
+## 5.8.0
+
+### Patch Changes
+
+- @nifrajs/coding-agent@5.8.0
+  - @nifrajs/agent-app@5.8.0
+  - @nifrajs/agent-protocol@5.8.0
+
 ## 5.7.0
 
 ### Patch Changes

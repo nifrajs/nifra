@@ -1,5 +1,11 @@
 # @nifrajs/acp
 
+## 5.8.0
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.8.0
+
 ## 5.7.0
 
 ### Patch Changes

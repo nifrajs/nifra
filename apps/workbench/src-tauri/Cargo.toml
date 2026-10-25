@@ -1,6 +1,6 @@
 [package]
 name = "nifra-workbench"
-version = "5.7.0"
+version = "5.8.0"
 description = "Lightweight native shell for Nifra Workbench"
 authors = ["Nifra maintainers"]
 license = "MIT"

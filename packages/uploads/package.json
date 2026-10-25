@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/uploads",
-  "version": "5.7.0",
+  "version": "5.8.0",
   "description": "File-upload hardening for nifra - size + magic-byte type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Edge-safe.",
   "keywords": [
     "bun",

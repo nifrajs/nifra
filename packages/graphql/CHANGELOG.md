@@ -1,5 +1,9 @@
 # @nifrajs/graphql
 
+## 5.8.0
+
+No changes in this release.
+
 ## 5.7.0
 
 No changes in this release.
