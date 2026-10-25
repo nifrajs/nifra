@@ -952,7 +952,7 @@
     "packages/mock/src/reflect-auto.ts": 2,
     "packages/mock/test/mock.test.ts": 8,
     "packages/node/src/index.ts": 66,
-    "packages/node/src/node-stream.ts": 3,
+    "packages/node/src/node-stream.ts": 2,
     "packages/node/test-node/http-edge.test.ts": 4,
     "packages/node/test-node/proxy-native.test.ts": 1,
     "packages/node/test/deferred-responder.test.ts": 8,

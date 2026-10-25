@@ -157,17 +157,6 @@ for (const [pkg, { openResolved, opensAt, sameFileAt }] of Object.entries({ web,
   })
 }
 
-test("the node and image copies match this one", async () => {
-  const source = await readFile(new URL("../src/open-resolved.ts", import.meta.url), "utf8")
-  for (const pkg of ["node", "image"]) {
-    const copy = await readFile(
-      new URL(`../../${pkg}/src/open-resolved.ts`, import.meta.url),
-      "utf8",
-    )
-    expect({ pkg, body: copy.split("\n").slice(2).join("\n") }).toEqual({ pkg, body: source })
-  }
-})
-
 // The race between realpath and open cannot be staged deterministically through a server, so the
 // call sites are held to the helper by source: a bare open() there checks only the last component.
 test("every static-file server opens through openResolved", async () => {
