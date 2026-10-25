@@ -7,6 +7,7 @@
  */
 
 import type { AssuranceEvidence, AssuranceFinding, AssuranceReport } from "./assurance.ts"
+import { canonicalJson } from "./canonical-json.ts"
 import type {
   AssuredCapabilityRoute,
   CapabilityAssuranceReport,
@@ -133,11 +134,6 @@ export interface ProjectEvidenceCompositionPart {
   /** Public pathname prefix to add when the child receives a stripped mount request. */
   readonly pathPrefix?: string
 }
-
-const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : undefined
 
 function schemaPart(value: SchemaReflection | undefined): ProjectEvidenceSchemaPart | undefined {
   if (value === undefined) return undefined
@@ -592,30 +588,9 @@ const mountsPart = (
         ),
       }
 
-function canonicalValue(value: unknown): string {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return JSON.stringify(value)
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value))
-      throw new TypeError("project evidence cannot encode non-finite numbers")
-    return JSON.stringify(value)
-  }
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalValue(item)).join(",")}]`
-  const record = recordOf(value)
-  if (record !== undefined) {
-    return `{${Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalValue(record[key])}`)
-      .join(",")}}`
-  }
-  throw new TypeError(`project evidence cannot encode ${typeof value}`)
-}
-
 /** Stable JSON for logs, MCP, generated artifacts, and snapshot tests. */
 export function serializeProjectEvidence(snapshot: ProjectEvidenceSnapshot): string {
-  return canonicalValue(snapshot)
+  return canonicalJson(snapshot)
 }
 
 /** SHA-256 of the canonical snapshot, useful as a cheap freshness/reference token. */

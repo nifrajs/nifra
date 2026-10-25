@@ -128,7 +128,10 @@ export function hmacSha256Hex(key: string, message: string): string {
 function base64url(bytes: Uint8Array): string {
   let binary = ""
   for (const b of bytes) binary += String.fromCharCode(b)
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "")
 }
 
 /** Constant-time string compare - length-independent of where the first difference is. */

@@ -278,6 +278,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // effect-ledger 40,440 -> 40,468, sse 39,282 -> 39,315, mcp 38,694 -> 38,714, valibot 39,399 ->
   // 39,425, typebox-t 65,376 -> 65,416, typebox-form 70,358 -> 70,396 (Bun 1.4.4); each crossed cap
   // takes the next 0.1 KiB step.
+  // GET and HEAD slots in Bun's table skip the body-cap wrapper: bare 38,453 -> 38,472 B, idempotency
+  // 42,850 -> 42,874, effect-ledger 40,468 -> 40,488, sse 39,315 -> 39,333, mcp 38,714 -> 38,732,
+  // valibot 39,425 -> 39,441, typebox-t 65,416 -> 65,436, typebox-form 70,396 -> 70,416 (Bun 1.4.4);
+  // only the sse and typebox-t caps are crossed.
   // A Bun request's idle-timeout control for `withIdleTimeout()`, and the per-request Bun platform
   // built as a class: bare 38,453 -> 38,566 B, idempotency 42,850 -> 42,978, effect-ledger 40,468 ->
   // 40,592, sse 39,315 -> 39,435, mcp 38,714 -> 38,842, valibot 39,425 -> 39,550, typebox-t 65,416 ->
@@ -287,6 +291,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // idempotency 42,978 -> 43,069, effect-ledger 40,592 -> 40,686, sse 39,435 -> 39,521, mcp 38,842 ->
   // 38,939, valibot 39,550 -> 39,637, typebox-t 65,557 -> 65,640, typebox-form 70,526 -> 70,614
   // (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step that fits.
+  // All of the above together, the idle-timeout control and listen()'s `static` beside the table-slot
+  // change and the idempotency fingerprint: bare 38,659 B, idempotency 43,431, effect-ledger 40,700,
+  // sse 39,532, mcp 38,951, valibot 39,652, typebox-t 65,659, typebox-form 70,630 (Bun 1.4.4); each
+  // crossed cap takes the next 0.1 KiB step that fits.
   "nifra-bare": 37.8,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -296,11 +304,16 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
-  "nifra-idempotency": 42.1,
+  // Core's shared canonical JSON, which refuses a value JSON cannot carry instead of hashing it as
+  // something else: idempotency 42,874 -> 42,982 B (Bun 1.4.4); only the idempotency cap is crossed.
+  // A fingerprint keeps the written text of a JSON number a double would round, behind a sampled scan
+  // 3-7x cheaper than a regex over the body: idempotency 42,982 -> 43,223 B (Bun 1.4.4); only the
+  // idempotency cap is crossed, by three 0.1 KiB steps.
+  "nifra-idempotency": 42.5,
   "nifra-effect-ledger": 39.8,
   "nifra-mcp": 38.1,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.6,
+  "nifra-sse": 38.7,
   "nifra-valibot": 38.8,
   "nifra-typebox-t": 64.2,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
@@ -327,8 +340,12 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // skips its animation when no frame comes: 19,844 -> 19,961 B (Bun 1.4.4). `notFound`, `gone` and
   // `statusPage`, which this row's whole-namespace import keeps and a named import tree-shakes:
   // 19,961 -> 20,178 B (Bun 1.4.4). A `bigint` in the plain transport codec as its decimal string:
-  // 20,178 -> 20,228 B (Bun 1.4.4).
-  "nifra-web-client": 19.8,
+  // 20,178 -> 20,228 B (Bun 1.4.4). Query clients and fetchers drop what they hold on
+  // `identityChanged()` and on a new identity epoch cookie, read once per synchronous run because a
+  // `document.cookie` read costs about 2.4 us in Chromium: 20,228 -> 20,519 B (Bun 1.4.4). Handles
+  // and fetchers a page kept check the epoch on every read, and the page on screen reloads when the
+  // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4).
+  "nifra-web-client": 20.4,
   "nifra-i18n": 4.3,
 }
 

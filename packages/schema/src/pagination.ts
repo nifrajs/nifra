@@ -12,7 +12,10 @@ function toBase64Url(input: string): string {
   const bytes = new TextEncoder().encode(input)
   let binary = ""
   for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "")
 }
 
 /** URL-safe base64 → UTF-8. Throws on malformed input (callers below catch it). */

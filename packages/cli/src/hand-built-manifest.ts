@@ -8,6 +8,7 @@ import { existsSync, readdirSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { Glob } from "bun"
 import { codePositionMask } from "./check.ts"
+import { lineAt } from "./internal/line-at.ts"
 import { expressionEnd } from "./rules/data-guard.ts"
 
 /** A `buildManifest(...)` call whose file list reaches pages under `routes/` but not their halves. */
@@ -31,8 +32,6 @@ export interface ManifestList {
 // Mirrors `isRouteBackendFile` in @nifrajs/web's manifest.
 const BACKEND_HALF = /\.backend\.(?:[cm]?[jt]s)$/
 const LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g
-
-const lineAt = (text: string, index: number): number => text.slice(0, index).split("\n").length
 
 /**
  * The `buildManifest(` calls in `content` whose first argument is spelled out in source: an array of

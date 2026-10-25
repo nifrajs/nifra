@@ -1,8 +1,9 @@
 /**
- * Content-addressing helpers shared by the orchestration module: a SHA-256 hex digest over bytes
- * and a canonical JSON encoding with sorted object keys so a digest is stable across key order.
- * Mirrors `@nifrajs/core`'s idempotency fingerprint (the content-free key precedent).
+ * Content-addressing helpers shared by the orchestration module: a SHA-256 hex digest over bytes,
+ * and core's canonical JSON so a digest is stable across key order.
  */
+
+export { canonicalJson } from "@nifrajs/core/canonical-json"
 
 const encoder = new TextEncoder()
 
@@ -20,24 +21,4 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 /** SHA-256 hex of a UTF-8 string. */
 export function sha256HexOf(text: string): Promise<string> {
   return sha256Hex(encoder.encode(text))
-}
-
-/** Deterministic JSON with recursively sorted object keys. Arrays keep order. Rejects non-finite numbers. */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return JSON.stringify(value)
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new TypeError("non-finite JSON number")
-    return JSON.stringify(value)
-  }
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>
-    const keys = Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort()
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`
-  }
-  throw new TypeError(`cannot canonicalize ${typeof value}`)
 }

@@ -22,6 +22,7 @@ import { codeUnitOrder } from "./code-unit-order.ts"
 import { withoutComments } from "./html-spans.ts"
 import { isIdentitySensitivePackage } from "./identity-policy.ts"
 import { publicUrlPath } from "./public-url.ts"
+import { isRecord } from "./record.ts"
 
 const DEPENDENCY_FIELDS = [
   "dependencies",
@@ -312,9 +313,6 @@ export interface ManifestParityDifference {
   readonly development: unknown
   readonly production: unknown
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const readJson = async (path: string): Promise<Record<string, unknown> | undefined> => {
   try {

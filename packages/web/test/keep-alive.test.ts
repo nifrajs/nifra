@@ -1081,6 +1081,48 @@ describe("keepAliveClient over the client router", () => {
     return { calls, fetchData }
   }
 
+  test("a new epoch a render reads, or the tab sees as it shows, reloads the page on screen", async () => {
+    const visitor = { now: "alice" }
+    const fetchData: FetchRouteData = async () => ({ who: visitor.now })
+    const routeHooks: Record<string, ClientRouteHooks> = { index: { keepAlive: true } }
+    fakeDocument.cookie = "nifra-epoch=a"
+    const keep = keepAliveClient({
+      table: { routes: ["index"], layouts: [] },
+      routeHooks,
+      matchChains: { index: chain("index") },
+      fetchData,
+    })
+    const router = keep.attach(
+      createClientRouter({
+        patterns: [{ routeId: "index", pattern: "/" }],
+        initial: {
+          routeId: "index",
+          params: {},
+          path: "/",
+          data: { who: "alice" },
+          pending: false,
+        },
+        fetchData: keep.fetchData,
+        routeHooks,
+      }),
+    )
+    const settled = () => new Promise((resolve) => setImmediate(resolve))
+    // A response sets the cookie in a task of its own.
+    const signIn = async (who: string, epoch: string) => {
+      await settled()
+      visitor.now = who
+      fakeDocument.cookie = `nifra-epoch=${epoch}`
+    }
+    await signIn("bob", "b")
+    router.snapshot()
+    await settled()
+    expect(router.snapshot().data).toEqual({ who: "bob" })
+    await signIn("carol", "c")
+    dispatchEvent(new Event("visibilitychange"))
+    await settled()
+    expect(router.snapshot().data).toEqual({ who: "carol" })
+  })
+
   test("back to a page left with its boundary open shows both again, then reloads both", async () => {
     const server = served()
     const routeHooks: Record<string, ClientRouteHooks> = {

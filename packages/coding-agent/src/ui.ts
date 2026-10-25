@@ -1,4 +1,5 @@
 import { publicErrorMessage } from "./errors.ts"
+import { isRecord } from "./internal/record.ts"
 
 export type UiExtensionSlot = "sidebar" | "main" | "timeline" | "diff" | "workflow" | "status"
 
@@ -104,8 +105,6 @@ const UI_DENSITIES: ReadonlySet<unknown> = new Set(["compact", "comfortable"])
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 const matches = (pattern: RegExp, value: unknown): value is string =>
   typeof value === "string" && pattern.test(value)
 const isSlot = (value: unknown): value is UiExtensionSlot => UI_SLOTS.has(value)

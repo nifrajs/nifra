@@ -18,8 +18,10 @@ import { MemoryCacheStore, withISR } from "@nifrajs/web"
 import { defineCdnProvider, withCdn } from "@nifrajs/web/cdn"
 
 const SERVICE_KEY = "s".repeat(40)
+const SECOND_KEY = "t".repeat(40)
+const CREDENTIALS = ["authorization", "cookie", "x-service-key"]
 
-/** What the origin answers; `secret` marks a body rendered for a credentialed request. */
+/** What the origin answers; `secret:` and the credential mark a body rendered for a credentialed request. */
 interface Shape {
   readonly status?: (call: number) => number
   readonly headers?: (call: number) => Record<string, string>
@@ -29,30 +31,34 @@ function origin(shape: Shape = {}) {
   let calls = 0
   const handle = (req: Request): Response => {
     calls += 1
-    const credentialed = ["authorization", "cookie", "x-service-key"].some((name) =>
-      req.headers.has(name),
-    )
-    return new Response(`<p>${credentialed ? "secret" : "public"}#${calls}</p>`, {
-      status: shape.status?.(calls) ?? 200,
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "x-nifra-isr-revalidate": "60",
-        ...shape.headers?.(calls),
+    const credential = CREDENTIALS.map((name) => req.headers.get(name)).find((v) => v !== null)
+    return new Response(
+      `<p>${credential == null ? "public" : `secret:${credential}`}#${calls}</p>`,
+      {
+        status: shape.status?.(calls) ?? 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "x-nifra-isr-revalidate": "60",
+          ...shape.headers?.(calls),
+        },
       },
-    })
+    )
   }
   return { handle, calls: () => calls }
 }
 
 type Send = (headers?: Record<string, string>) => Promise<Response>
 
-/** A route behind an authentication stage that accepts only `x-service-key`. */
+/** A route behind an authentication stage that accepts two `x-service-key` principals. */
 function withStage(app: AnyServer, stage: boolean): AnyServer {
   if (!stage) return app
   return app.authenticate({
     id: "service-key",
-    run: (input) =>
-      input.headers.get("x-service-key") === SERVICE_KEY ? authenticated("service") : rejected(),
+    run: (input) => {
+      const key = input.headers.get("x-service-key")
+      if (key === SERVICE_KEY) return authenticated("first")
+      return key === SECOND_KEY ? authenticated("second") : rejected()
+    },
   })
 }
 
@@ -78,6 +84,9 @@ const idempotent = (app: AnyServer): Send => {
       }),
     )
 }
+
+const STAGE_ONLY =
+  "a credential counts only through an authentication stage, whose routes must resolve a principal namespace"
 
 const IDEMPOTENT_REPLAY =
   "a replay answers a retry of the same operation in the same scope; cache-control governs shared caches"
@@ -126,10 +135,10 @@ const LAYERS: readonly Layer[] = [
       ),
     exempt: {
       private: IDEMPOTENT_REPLAY,
-      authorization:
-        "a credential counts only through an authentication stage, whose routes must resolve a principal namespace",
-      cookie:
-        "a credential counts only through an authentication stage, whose routes must resolve a principal namespace",
+      authorization: STAGE_ONLY,
+      cookie: STAGE_ONLY,
+      "second-authorization": STAGE_ONLY,
+      "second-cookie": STAGE_ONLY,
       "read-side":
         "an anonymous request never reaches a stage-protected route, so nothing is stored for it",
     },
@@ -173,6 +182,24 @@ const LAYERS: readonly Layer[] = [
   },
 ]
 
+/** The first caller's answer, stored, must not be what the second caller with other credentials gets. */
+const secondCaller =
+  (stage: boolean, first: Record<string, string>, second: Record<string, string>) =>
+  async (layer: Layer) => {
+    const o = origin()
+    const send = layer.build(o.handle, stage)
+    const credential = (headers: Record<string, string>) => `secret:${Object.values(headers)[0]}`
+    expect(await (await send(first)).text()).toContain(credential(first))
+    const next = await (await send(second)).text()
+    expect({
+      second: next.includes(credential(second)),
+      first: next.includes(credential(first)),
+    }).toEqual({
+      second: true,
+      first: false,
+    })
+  }
+
 const SCENARIOS = [
   {
     id: "authorization",
@@ -206,6 +233,22 @@ const SCENARIOS = [
       expect(anonymous.status).toBe(401)
       expect(await anonymous.text()).not.toContain("secret")
     },
+  },
+  {
+    id: "second-authorization",
+    title: "a response to one Authorization is never handed to a request with another",
+    run: secondCaller(false, { authorization: "Bearer first" }, { authorization: "Bearer second" }),
+  },
+  {
+    id: "second-cookie",
+    title: "a response to one session cookie is never handed to a request with another",
+    run: secondCaller(false, { cookie: "sid=first" }, { cookie: "sid=second" }),
+  },
+  {
+    id: "second-principal",
+    title:
+      "a response to one principal an authentication stage accepted is never handed to another",
+    run: secondCaller(true, { "x-service-key": SERVICE_KEY }, { "x-service-key": SECOND_KEY }),
   },
   {
     id: "read-side",

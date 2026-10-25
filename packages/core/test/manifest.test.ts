@@ -159,7 +159,7 @@ describe("signed versioned Nifra manifest", () => {
         ...built,
         routes: [{ ...built.routes[0]!, schema: { response: { const: Number.NaN } as never } }],
       }),
-    ).toThrow(/non-finite/)
+    ).toThrow(/cannot encode NaN/)
     await expect(
       signNifraManifest(
         { ...built, contentHash: "0".repeat(64) },

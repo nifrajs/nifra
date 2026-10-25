@@ -17,6 +17,8 @@
  *   - which output chunk each module landed in (to name the chunk a leak reached)
  */
 
+import { toPosix } from "./internal/posix-path.ts"
+
 /** One import edge, as the bundler recorded it. */
 export interface GraphImport {
   /** The resolved path, when the bundler resolved it. */
@@ -59,7 +61,7 @@ export interface ClientModuleGraph {
 /** Module ids are graph identifiers, not filesystem paths exposed to an OS API. Bun uses `\\` on
  * Windows, while Rollup and the guards use `/` for suffix matching and stable diagnostics. Normalize at
  * each adapter boundary so every consumer sees one graph shape. */
-const normalizeModuleId = (id: string): string => id.replaceAll("\\", "/")
+const normalizeModuleId = toPosix
 
 /** The slice of Bun's metafile this seam consumes. Not yet in `@types/bun`; shape per the docs. */
 export interface BunMetafileLike {

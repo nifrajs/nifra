@@ -24,6 +24,7 @@ import {
   nextHandoffState,
   type RunSnapshot,
 } from "@nifrajs/agent-protocol"
+import { isRecord } from "./internal/record.ts"
 
 /** Code-unit order, the same in every locale, so a view lists the same ids in the same order everywhere. */
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
@@ -444,14 +445,10 @@ const REGISTRY_IDEMPOTENCY: ReadonlySet<string> = new Set(["none", "request", "d
 const REGISTRY_ISOLATION: ReadonlySet<string> = new Set(["inherit", "process", "sandbox"])
 const HEX64 = /^[0-9a-f]{64}$/
 
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
 function readApproval(
   value: unknown,
 ): { readonly approval: RegistryCapabilityView["approval"]; readonly level?: number } | undefined {
-  if (!isRecordValue(value)) return undefined
+  if (!isRecord(value)) return undefined
   const kind = value.kind
   if (kind === "none" || kind === "required") return { approval: kind }
   if (kind === "threshold" && typeof value.level === "number" && Number.isSafeInteger(value.level))
@@ -465,7 +462,7 @@ function readApproval(
  * an unexpected content field on the record can never reach the returned view.
  */
 export function toRegistryCapabilityView(value: unknown): RegistryCapabilityView | undefined {
-  if (!isRecordValue(value)) return undefined
+  if (!isRecord(value)) return undefined
   const { kind, name, version, schemaDigest, requiredCapabilities, retry, idempotency, isolation } =
     value
   if (
@@ -777,10 +774,6 @@ const STUDIO_FORBIDDEN: ReadonlySet<string> = new Set([
   "path",
 ])
 
-function studioRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
 function studioToken(value: unknown): value is string {
   return typeof value === "string" && STUDIO_TOKEN.test(value)
 }
@@ -797,7 +790,7 @@ function studioSafeKeys(value: Record<string, unknown>, allowed: ReadonlySet<str
 
 /** Project an evidence-only run graph; malformed or content-bearing input is rejected. */
 export function toRunStudioView(value: unknown): RunStudioView | undefined {
-  if (!studioRecord(value)) return undefined
+  if (!isRecord(value)) return undefined
   const allowed = new Set([
     "runId",
     "planId",
@@ -826,7 +819,7 @@ export function toRunStudioView(value: unknown): RunStudioView | undefined {
   const seen = new Set<string>()
   for (const raw of value.nodes) {
     if (
-      !studioRecord(raw) ||
+      !isRecord(raw) ||
       !studioSafeKeys(
         raw,
         new Set([
@@ -893,7 +886,7 @@ export function toEvidenceTimelineView(value: unknown): readonly EvidenceTimelin
   const rows: EvidenceTimelineView[] = []
   for (const raw of value) {
     if (
-      !studioRecord(raw) ||
+      !isRecord(raw) ||
       !studioSafeKeys(
         raw,
         new Set([
@@ -943,7 +936,7 @@ export function toEvidenceTimelineView(value: unknown): readonly EvidenceTimelin
 
 export function toEvalComparisonView(value: unknown): EvalComparisonView | undefined {
   if (
-    !studioRecord(value) ||
+    !isRecord(value) ||
     !studioSafeKeys(value, new Set(["suiteId", "comparisons", "regressions"])) ||
     !studioToken(value.suiteId) ||
     !Array.isArray(value.comparisons) ||
@@ -954,7 +947,7 @@ export function toEvalComparisonView(value: unknown): EvalComparisonView | undef
   const comparisons: Array<EvalComparisonView["comparisons"][number]> = []
   for (const raw of value.comparisons) {
     if (
-      !studioRecord(raw) ||
+      !isRecord(raw) ||
       !studioSafeKeys(raw, new Set(["caseId", "rubricId", "code", "regressionId"])) ||
       !studioToken(raw.caseId) ||
       !studioToken(raw.rubricId) ||
@@ -984,7 +977,7 @@ export function toFaultInjectionViews(value: unknown): readonly FaultInjectionVi
   const views: FaultInjectionView[] = []
   for (const raw of value) {
     if (
-      !studioRecord(raw) ||
+      !isRecord(raw) ||
       !studioSafeKeys(raw, new Set(["id", "kind", "scheduleToken", "regressionId", "ok"])) ||
       !studioToken(raw.id) ||
       !studioToken(raw.kind) ||
@@ -1171,10 +1164,6 @@ const REVIEW_VIEW_FORBIDDEN = new Set([
   "payload",
 ])
 
-function reviewViewRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
 function reviewViewSafeKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
   return Object.keys(value).every(
     (key) => !REVIEW_VIEW_FORBIDDEN.has(key.toLowerCase()) && allowed.has(key),
@@ -1182,7 +1171,7 @@ function reviewViewSafeKeys(value: Record<string, unknown>, allowed: ReadonlySet
 }
 
 function reviewViewEvidence(value: unknown): value is ReviewViewEvidence {
-  if (!reviewViewRecord(value)) return false
+  if (!isRecord(value)) return false
   return (
     reviewViewSafeKeys(value, new Set(["source", "token", "digest", "path"])) &&
     typeof value.source === "string" &&
@@ -1268,7 +1257,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
   let scope: ReviewView["scope"]
   if (value.scope !== undefined) {
     if (
-      !reviewViewRecord(value.scope) ||
+      !isRecord(value.scope) ||
       !reviewViewSafeKeys(
         value.scope,
         new Set([
@@ -1309,7 +1298,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
   const checkFindingIds = new Map<string, readonly string[]>()
   for (const raw of value.checks) {
     if (
-      !reviewViewRecord(raw) ||
+      !isRecord(raw) ||
       !reviewViewSafeKeys(
         raw,
         new Set([
@@ -1329,7 +1318,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
       typeof raw.required !== "boolean" ||
       typeof raw.status !== "string" ||
       !REVIEW_VIEW_STATUSES.has(raw.status) ||
-      !reviewViewRecord(raw.counts) ||
+      !isRecord(raw.counts) ||
       !reviewViewSafeKeys(
         raw.counts,
         new Set(["findings", "errors", "warnings", "info", "outOfScope"]),
@@ -1373,7 +1362,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
   const findingById = new Map<string, ReviewViewFinding>()
   for (const raw of value.findings) {
     if (
-      !reviewViewRecord(raw) ||
+      !isRecord(raw) ||
       !reviewViewSafeKeys(
         raw,
         new Set(["id", "check", "code", "severity", "category", "location", "evidence", "fix"]),
@@ -1397,7 +1386,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
     let location: ReviewViewFinding["location"]
     if (raw.location !== undefined) {
       if (
-        !reviewViewRecord(raw.location) ||
+        !isRecord(raw.location) ||
         !reviewViewSafeKeys(raw.location, new Set(["path", "line", "column"])) ||
         !reviewViewPath(raw.location.path) ||
         (raw.location.line !== undefined && !reviewViewInt(raw.location.line, 1)) ||
@@ -1424,7 +1413,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
     let fix: ReviewViewFinding["fix"]
     if (raw.fix !== undefined) {
       if (
-        !reviewViewRecord(raw.fix) ||
+        !isRecord(raw.fix) ||
         !reviewViewSafeKeys(raw.fix, new Set(["recipe"])) ||
         typeof raw.fix.recipe !== "string" ||
         !REVIEW_VIEW_FIX_RECIPES.has(raw.fix.recipe)
@@ -1451,7 +1440,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
     if (!Array.isArray(value.fixes) || value.fixes.length > 256) return undefined
     for (const raw of value.fixes) {
       if (
-        !reviewViewRecord(raw) ||
+        !isRecord(raw) ||
         !reviewViewSafeKeys(raw, new Set(["recipe", "status", "changedPaths", "reasonCode"])) ||
         typeof raw.recipe !== "string" ||
         !REVIEW_VIEW_FIX_RECIPES.has(raw.recipe) ||
@@ -1530,7 +1519,7 @@ function parseReviewViewReport(value: Record<string, unknown>): ReviewView | und
 
 /** Project a review report or host RPC result into a bounded, content-free browser view. */
 export function toReviewView(value: unknown): ReviewView | undefined {
-  if (!reviewViewRecord(value)) return undefined
+  if (!isRecord(value)) return undefined
   if (
     !Object.hasOwn(value, "report") &&
     Object.hasOwn(value, "ok") &&
@@ -1570,7 +1559,7 @@ export function toReviewView(value: unknown): ReviewView | undefined {
         value.status as number | null,
         value.ok ? "invalid-report" : "unavailable",
       )
-    const report = reviewViewRecord(value.report) ? parseReviewViewReport(value.report) : undefined
+    const report = isRecord(value.report) ? parseReviewViewReport(value.report) : undefined
     return report === undefined
       ? reviewUnavailableView(value.status as number | null, "invalid-report")
       : Object.freeze({

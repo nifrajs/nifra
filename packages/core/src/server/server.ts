@@ -6846,6 +6846,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * semantics remain in the plan; this closure only supplies native params and deadline fallback. */
   private compileBunNativeHandler(
     entry: RouteEntry,
+    method: string,
     paramNames: readonly string[],
     fused: FusedWebRunner | undefined,
     signal: AbortSignal | undefined,
@@ -6885,8 +6886,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               this.wrapWebResponse,
             )
         : undefined)
+    // The cap is never marked on a GET or HEAD, the only methods a GET or HEAD slot is handed, so those
+    // slots skip the wrapper and its read of the method on every request.
     const capped: FusedWebRunner | undefined =
-      inner === undefined || bodyLimit === undefined
+      inner === undefined || bodyLimit === undefined || method === "GET" || method === "HEAD"
         ? inner
         : (source, params, search, fusedSignal, fusedBudget, platform, nativeContext) => {
             const method = source.method
@@ -7069,6 +7072,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const fused = mayUseFusedNative ? entry.execution.fusedWeb : undefined
       const handler = this.compileBunNativeHandler(
         entry,
+        method,
         paramNames,
         fused,
         unboundedSignal,

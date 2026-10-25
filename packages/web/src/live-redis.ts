@@ -27,6 +27,8 @@
  * Every entry also carries a running count, so a reader that fell behind a trim - or lost the
  * connection - reports the gap instead of skipping what it missed.
  */
+
+import { isRecord } from "./internal/record.ts"
 import type { LiveBus, LiveBusEvent, LiveBusListener } from "./live/bus.ts"
 
 /** Send one Redis command and resolve with its reply, as any client's raw-command call does. */
@@ -261,9 +263,6 @@ function eventOf(body: unknown, seq: number): LiveBusEvent | undefined {
   }
   return undefined
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 /** A Redis integer reply or numeric string as a non-negative safe integer, else 0. */
 function countOf(value: unknown): number {

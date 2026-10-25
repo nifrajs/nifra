@@ -1,6 +1,7 @@
 import { realpath, stat } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { isRecord } from "./internal/record.ts"
 
 export interface SmokeApp {
   fetch(request: Request): Response | Promise<Response>
@@ -132,10 +133,6 @@ function hasControlCharacter(value: string, includeBackslash = false): boolean {
     if (code <= 0x1f || code === 0x7f || (includeBackslash && code === 0x5c)) return true
   }
   return false
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function validStatus(value: unknown): value is number {

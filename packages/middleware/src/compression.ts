@@ -1,5 +1,6 @@
 import { repeatedPrefixOf, withResponseObserver } from "@nifrajs/core/response-observer"
 import { defineRouterPlugin, type Middleware, type ResponseHeadersView } from "@nifrajs/core/server"
+import { concatBytes } from "./_chunks.ts"
 import { FIXED_DEFLATE_MAX, fixedDeflate } from "./_fixed-deflate.ts"
 
 export interface CompressionOptions {
@@ -42,16 +43,6 @@ function acceptsGzip(value: string | null): boolean {
 }
 
 const GZIP_ENCODER = new TextEncoder()
-
-const concat = (chunks: readonly Uint8Array[], total: number): Uint8Array => {
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
-}
 
 const gzipHeaders = (source: Headers): Headers => {
   const headers = new Headers(source)
@@ -173,7 +164,7 @@ async function compressRawBody(
     while (total < threshold) {
       const { done, value } = await reader.read()
       if (done) {
-        return new Response(concat(buffered, total).slice(), {
+        return new Response(concatBytes(buffered, total).slice(), {
           status: response.status,
           statusText: response.statusText,
           headers: response.headers,
@@ -497,7 +488,7 @@ function segmentedGzip(
         view.setUint32(2, crc >>> 0, true)
         view.setUint32(6, size >>> 0, true)
         parts.push(trailer)
-        controller.enqueue(concat(parts, total(parts)))
+        controller.enqueue(concatBytes(parts, total(parts)))
         controller.close()
         return
       }
@@ -517,7 +508,7 @@ function segmentedGzip(
         parts.push(await deflate(rest, history()))
         remember(rest)
       }
-      controller.enqueue(concat(parts, total(parts)))
+      controller.enqueue(concatBytes(parts, total(parts)))
     },
     cancel: (reason) => reader.cancel(reason),
   })

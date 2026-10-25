@@ -59,6 +59,7 @@ import { statSync } from "node:fs"
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { BunPlugin } from "bun"
+import { escapeRegExp } from "./internal/escape-regexp.ts"
 
 /**
  * Extensions worth a version. Source and data only: an asset (`.css`, `.svg`, an image) either has no
@@ -70,16 +71,6 @@ const VERSIONED = /\.(?:mts|cts|mjs|cjs|tsx|jsx|ts|js|svelte|vue|mdx|md|json)$/
 /** Source this module can load and rewrite itself, when no framework plugin claims the file first. */
 const REWRITABLE = "mts|cts|mjs|cjs|tsx|jsx|ts|js"
 
-/**
- * The `onLoad` filter, which has to do the whole job of selecting app source: a **runtime** `onLoad`
- * handler may not decline a file it was offered (Bun raises `onLoad() expects an object returned`), so
- * anything this matches is loaded here - and a dependency's `.js` loaded as ESM when the package meant
- * CJS would break the app. Hence the shape: under the app root, no `node_modules` segment at any depth,
- * no dot-directory (`.nifra-bun/`, `.git/`), and a source extension, with an optional cache-busting
- * query. It mirrors {@link SsrGraph}'s ownership test; keep the two in step.
- */
-const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-
 /** All path spellings Bun has used for an absolute Windows module id. */
 const pathForms = (path: string): string[] => {
   const native = plainPath(path)
@@ -89,6 +80,14 @@ const pathForms = (path: string): string[] => {
   return [...new Set(forms)]
 }
 
+/**
+ * The `onLoad` filter, which has to do the whole job of selecting app source: a **runtime** `onLoad`
+ * handler may not decline a file it was offered (Bun raises `onLoad() expects an object returned`), so
+ * anything this matches is loaded here - and a dependency's `.js` loaded as ESM when the package meant
+ * CJS would break the app. Hence the shape: under the app root, no `node_modules` segment at any depth,
+ * no dot-directory (`.nifra-bun/`, `.git/`), and a source extension, with an optional cache-busting
+ * query. It mirrors {@link SsrGraph}'s ownership test; keep the two in step.
+ */
 const appSourceFilter = (root: string): RegExp => {
   const roots = pathForms(root).map(escapeRegExp).join("|")
   return new RegExp(

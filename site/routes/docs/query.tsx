@@ -56,6 +56,14 @@ export default function Query() {
         depends on: <code>useQuery(key, fn, {"{ live: [`post:${id}`] }"})</code> refetches whenever
         the server publishes one of them.
       </p>
+      <h2>Sign-in and sign-out</h2>
+      <p>
+        A cached query never answers for the next visitor. <code>identityChanged()</code> from{" "}
+        <code>@nifrajs/web/client</code> clears every query client in the page: mounted queries go
+        back to pending and refetch, the rest are dropped. In an app with a{" "}
+        <a href="/docs/keep-alive#sign-in">keepAlive</a> route, the identity epoch cookie a sign-in
+        or sign-out response rotates does the same on the client&apos;s next read.
+      </p>
       <p>
         It's the same agnostic core under every adapter: the cache, dedup, and invalidation logic
         live in <code>@nifrajs/web</code>; each binding is a thin wrapper in its framework&apos;s own

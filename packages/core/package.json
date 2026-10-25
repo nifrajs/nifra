@@ -105,6 +105,11 @@
       "types": "./dist/budget.d.ts",
       "default": "./dist/budget.js"
     },
+    "./canonical-json": {
+      "bun": "./src/canonical-json.ts",
+      "types": "./dist/canonical-json.d.ts",
+      "default": "./dist/canonical-json.js"
+    },
     "./idempotency": {
       "bun": "./src/idempotency.ts",
       "types": "./dist/idempotency.d.ts",

@@ -73,7 +73,7 @@ function srcsetUrls(value: string): string[] {
     const url = value.slice(start, at)
     if (url === "") break
     if (url.endsWith(",")) {
-      found.push(url.replace(/,+$/, ""))
+      found.push(url.replace(/(?<!,),+$/, ""))
       continue
     }
     found.push(url)

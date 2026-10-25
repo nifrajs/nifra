@@ -107,7 +107,7 @@ export function parseByteRange(value: string | null, size: number): ByteRangeRes
   if (value.length > MAX_RANGE_HEADER_LENGTH) return { kind: "none" }
   const single = parseSingleRange(value, size)
   if (single !== undefined) return single
-  const match = /^bytes\s*=\s*(.+)$/i.exec(value)
+  const match = /^bytes\s*=\s*(\S.*)$/i.exec(value)
   if (match === null) return { kind: "none" }
   const source = match[1]!
   let separators = 0

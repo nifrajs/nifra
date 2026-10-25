@@ -150,3 +150,15 @@ export function pathnameOf(url: string): string {
   }
   return url.slice(start, end)
 }
+
+/**
+ * A `Vary` header value (`null` when the response has none) that names each of `names` once, matched
+ * without regard to case. `Vary: *` already covers every request header, so it comes back unchanged.
+ */
+export function varyOn(value: string | null, names: readonly string[]): string {
+  if (value === null || value.trim() === "") return names.join(", ")
+  const fields = value.split(",").map((field) => field.trim().toLowerCase())
+  if (fields.includes("*")) return value
+  const missing = names.filter((name) => !fields.includes(name.toLowerCase()))
+  return missing.length === 0 ? value : `${value}, ${missing.join(", ")}`
+}

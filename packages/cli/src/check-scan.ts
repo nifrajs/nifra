@@ -12,6 +12,8 @@ import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { gitIgnored } from "./internal/git-ignored.ts"
+import { lineAt } from "./internal/line-at.ts"
+import { toPosix } from "./internal/posix-path.ts"
 import { scriptKindOf } from "./internal/script-kind.ts"
 import type { SourceFacts } from "./internal/source-facts.ts"
 import {
@@ -79,7 +81,7 @@ const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
 
 /** Paths crossing the scanner boundary are project-relative identifiers, not filesystem paths. Keep
  * them stable across runtimes so rules, diagnostics, ignore globs, and import chains have one shape. */
-const normalizeProjectPath = (path: string): string => path.replaceAll("\\", "/")
+const normalizeProjectPath = toPosix
 
 // Browser code by path, mirroring `@nifrajs/web/zones`: a suffix decides first, then the folder. A
 // route's backend half (`x.backend.ts`), `backend/` and `*.fn.ts` run on the server only.
@@ -217,10 +219,6 @@ interface SimpleFetchCall {
   readonly start: number
   readonly end: number
 }
-
-/** Line number (1-based) of a match index within `content`. */
-const lineAt = (content: string, index: number): number =>
-  content.slice(0, index).split("\n").length
 
 function parseQuotedLiteral(raw: string): string | undefined {
   try {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
-import { epochOf } from "../src/identity.ts"
+import { documentEpoch, epochOf } from "../src/identity.ts"
 import {
   buildManifest,
   createWebApp,
@@ -42,6 +42,32 @@ let warn: ReturnType<typeof spyOn> | undefined
 afterEach(() => {
   warn?.mockRestore()
   warn = undefined
+})
+
+test("documentEpoch reads the cookies once per synchronous run", async () => {
+  const described = Object.getOwnPropertyDescriptor(globalThis, "document")
+  let reads = 0
+  let cookie = "theme=dark; nifra-epoch=one"
+  Object.defineProperty(globalThis, "document", {
+    value: {
+      get cookie() {
+        reads++
+        return cookie
+      },
+    },
+    configurable: true,
+  })
+  try {
+    // A run that already read before this test began holds its value until it ends.
+    await Promise.resolve()
+    expect([documentEpoch(), documentEpoch(), reads]).toEqual(["one", "one", 1])
+    cookie = "nifra-epoch=two"
+    await Promise.resolve()
+    expect([documentEpoch(), reads]).toEqual(["two", 2])
+  } finally {
+    if (described === undefined) Reflect.deleteProperty(globalThis, "document")
+    else Object.defineProperty(globalThis, "document", described)
+  }
 })
 
 describe("the identity epoch hook", () => {

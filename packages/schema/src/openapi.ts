@@ -258,7 +258,7 @@ function mapSchemaRecord(record: SchemaRecord, visit: Visit): SchemaRecord {
   return visit(changed ?? record)
 }
 
-const DEFINITION_REF = /^#\/\$defs\/([^/]*)(.*)$/
+const DEFINITION_REF = /^#\/\$defs\/([^/]*)((?:\/.*)?)$/
 
 /** A `#` pointer into the schema's own root: not into its `$defs`, and not a document `components` ref. */
 const isRootRef = (ref: string): boolean =>

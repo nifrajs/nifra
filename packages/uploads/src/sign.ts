@@ -32,7 +32,10 @@ const toBase64Url = (buf: ArrayBuffer): string => {
   const bytes = new Uint8Array(buf)
   let s = ""
   for (const byte of bytes) s += String.fromCharCode(byte)
-  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  return btoa(s)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "")
 }
 
 // Canonical unpadded base64url only. `atob` skips whitespace and ignores a final group's unused bits,

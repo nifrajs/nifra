@@ -45,7 +45,9 @@ import type * as TS from "typescript"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE, retiredRootFiles } from "./app-files.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { configPathReader, type StaticConfigPath } from "./internal/config-paths.ts"
+import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { createKindProbe, hasWebConfig } from "./internal/nifra-project.ts"
+import { toPosix } from "./internal/posix-path.ts"
 import { createSpecifierResolver, isFile } from "./internal/project-specifiers.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
 import { type OutputSchemaEntry, planOutputSchemas } from "./output-schemas.ts"
@@ -170,8 +172,6 @@ export interface LayoutMigrationOptions {
 
 /** A file's text, as the migration sees it before writing. */
 type Files = Map<string, string>
-
-const toPosix = (path: string): string => path.replaceAll("\\", "/")
 
 /** A specifier without its `?query` or `#hash`; a leading `#` names a package.json import. Cut by
  * index, since `/[?#].*$/` retries from every `#` and is quadratic on a long run of them. */
@@ -465,8 +465,6 @@ function filterExportList(
   const leading = node.getFullText(sf).slice(0, node.getStart(sf) - node.getFullStart())
   return `${leading}export ${node.isTypeOnly ? "type " : ""}{ ${kept.join(", ")} }${from}${terminatorOf(sf, node)}`
 }
-
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 const joinStatements = (texts: readonly string[]): string => {
   const body = texts.join("").replace(/^\s*\n/, "")
@@ -1822,7 +1820,7 @@ function dynamicReads(
 function workspacePattern(glob: string): RegExp {
   const source = glob
     .replace(/^\.\//, "")
-    .replace(/\/+$/, "")
+    .replace(/(?<!\/)\/+$/, "")
     .split("/")
     .map((segment) =>
       segment === "**"
@@ -3304,7 +3302,10 @@ const matchers = new Map<string, (file: string) => boolean>()
 function matches(pattern: string, file: string): boolean {
   let match = matchers.get(pattern)
   if (match === undefined) {
-    let spec = pattern.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "")
+    let spec = pattern
+      .replaceAll("\\", "/")
+      .replace(/^\.\//, "")
+      .replace(/(?<!\/)\/+$/, "")
     if (spec === "" || spec === ".") match = () => true
     else if (!/[*?]/.test(spec)) {
       const folder = `${spec}/`

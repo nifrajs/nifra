@@ -11,13 +11,16 @@
     "@nifrajs/core": "workspace:*",
     "@nifrajs/devtools": "workspace:*",
     "@nifrajs/graphql": "workspace:*",
+    "@nifrajs/i18n": "workspace:*",
     "@nifrajs/mcp": "workspace:*",
+    "@nifrajs/mcp-db": "workspace:*",
     "@nifrajs/middleware": "workspace:*",
     "@nifrajs/otel": "workspace:*",
     "@nifrajs/schema": "workspace:*",
     "@nifrajs/testing": "workspace:*",
     "@nifrajs/web": "workspace:*",
     "graphql": "17.0.2",
+    "scslre": "0.3.0",
     "typescript": "6.0.3"
   }
 }

@@ -17,6 +17,7 @@ import type { CheckResult } from "./check.ts"
 import type { CommandCtx, CommandSpec } from "./command-catalog.ts"
 import type { Diagnostic } from "./diagnostics.ts"
 import { diagnosticCompatibilityOf, toSarifLog } from "./diagnostics.ts"
+import { isRecord } from "./internal/record.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { LEGACY_RULE_CODES } from "./rules/legacy.ts"
 
@@ -198,10 +199,6 @@ const REVIEW_INPUT_SCHEMA = {
   },
   additionalProperties: false,
 } as const
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
 
 function optionalBoolean(raw: Record<string, unknown>, key: string): boolean | undefined {
   const value = raw[key]
