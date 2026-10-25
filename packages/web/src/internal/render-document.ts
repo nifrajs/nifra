@@ -565,38 +565,36 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     const policy = cspHeaderValue(csp, adapter, nonce)
     if (policy !== undefined) headers["content-security-policy"] = policy
   }
-  const renderProps: RenderProps = {
-    ...(options.serverComponents === undefined
-      ? {}
-      : { serverComponents: options.serverComponents }),
+  // Each optional prop is assigned only when supplied (exactOptionalPropertyTypes): a conditional
+  // spread per field cost every document request a copy.
+  const renderProps: { -readonly [K in keyof RenderProps]: RenderProps[K] } = {
     data: forComponent,
     actionData: actionSplit?.forComponent,
-    // `params`/`path` thread the matched route + URL to the adapter's `useParams`/`useLocation` so they
-    // render SSR-correct. Spread only when supplied (exactOptionalPropertyTypes) - an adapter with no
-    // router bindings simply never reads them.
-    ...(options.params !== undefined ? { params: options.params } : {}),
-    ...(options.path !== undefined ? { path: options.path } : {}),
-    // Same rule for `search`: the validated query the adapter's `useSearch` reads, spread only when the
-    // caller supplied it (a non-router render never has it).
-    ...(options.search !== undefined ? { search: options.search } : {}),
-    // Spread only when present, so a page-only render produces exactly the props it did before.
-    ...(options.layoutData !== undefined
-      ? { layoutData: layoutSplits.map((split) => split.forComponent) }
-      : {}),
-    ...(boundarySplit !== undefined
-      ? { boundaries: boundarySplit.forComponent as BoundaryStates }
-      : {}),
-    ...(options.matchChain !== undefined ? { matchChain: options.matchChain } : {}),
-    ...(locale === undefined ? {} : { locale }),
   }
+  if (options.serverComponents !== undefined)
+    renderProps.serverComponents = options.serverComponents
+  // `params`/`path` thread the matched route + URL to the adapter's `useParams`/`useLocation` so they
+  // render SSR-correct; an adapter with no router bindings simply never reads them. `search` is the
+  // validated query the adapter's `useSearch` reads (a non-router render never has it).
+  if (options.params !== undefined) renderProps.params = options.params
+  if (options.path !== undefined) renderProps.path = options.path
+  if (options.search !== undefined) renderProps.search = options.search
+  if (options.layoutData !== undefined)
+    renderProps.layoutData = layoutSplits.map((split) => split.forComponent)
+  if (boundarySplit !== undefined)
+    renderProps.boundaries = boundarySplit.forComponent as BoundaryStates
+  if (options.matchChain !== undefined) renderProps.matchChain = options.matchChain
+  if (locale !== undefined) renderProps.locale = locale
 
-  const { swapSlot, ...documentOptions } = options
+  const swapSlot = options.swapSlot
   const slots = options.slots
   if (swapSlot !== undefined && allDeferred.length === 0 && adapter.renderSlot !== undefined) {
-    const slotPage = (slotHtml: string | undefined): MaybePromise<RenderedPage> =>
-      slotHtml === undefined
-        ? renderPageResult(documentOptions)
-        : new BufferedRenderedPage(slotHtml, status, swapHeaders(headers, swapSlot))
+    const slotPage = (slotHtml: string | undefined): MaybePromise<RenderedPage> => {
+      if (slotHtml !== undefined)
+        return new BufferedRenderedPage(slotHtml, status, swapHeaders(headers, swapSlot))
+      const { swapSlot: _swapSlot, ...documentOptions } = options
+      return renderPageResult(documentOptions)
+    }
     const out = adapter.renderSlot(chain, renderProps, swapSlot)
     return out instanceof Promise ? out.then(slotPage) : slotPage(out)
   }
