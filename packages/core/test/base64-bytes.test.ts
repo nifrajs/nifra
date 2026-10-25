@@ -4,6 +4,7 @@ import { t as form } from "@nifrajs/schema/form"
 import { fromPrecompiled } from "@nifrajs/schema/precompiled"
 import { RouteConfigError } from "../src/errors.ts"
 import { server, silentLogger, status } from "../src/index.ts"
+import { reflectHooks } from "../src/reflection.ts"
 import { responseContract } from "../src/server/response-contract-lane.ts"
 import { streaming } from "../src/server/sse.ts"
 
@@ -107,6 +108,65 @@ describe("a t.bytes() response field", () => {
       text: `{"name":"a","data":"${BASE64}"}`,
     })
   })
+})
+
+describe("a hook that answers in the handler's place on a t.bytes() route", () => {
+  const app = server({ logger: silentLogger })
+    .beforeHandle(function early(c) {
+      return c.req.url.endsWith("/early") ? { name: "early", data: bytes } : undefined
+    })
+    .afterHandle(function replaced(_result, c) {
+      return c.req.url.endsWith("/after") ? status(201, { name: "after", data: bytes }) : undefined
+    })
+    .onError(function failed() {
+      return status(409, { name: "error", data: bytes })
+    })
+    .get("/early", { response: file }, () => ({ name: "a", data: bytes }))
+    .get("/after", { response: file }, () => ({ name: "a", data: bytes }))
+    .get(
+      "/error",
+      { response: file, errors: { 409: file } },
+      (): { name: string; data: Uint8Array } => {
+        throw new Error("boom")
+      },
+    )
+    .get("/plain", () => ({ data: new Uint8Array([1]) }))
+
+  test("has its bytes written as base64 too", async () => {
+    expect(await body(app, "/early")).toEqual({
+      status: 200,
+      text: `{"name":"early","data":"${BASE64}"}`,
+    })
+    expect(await body(app, "/after")).toEqual({
+      status: 201,
+      text: `{"name":"after","data":"${BASE64}"}`,
+    })
+    expect(await body(app, "/error")).toEqual({
+      status: 409,
+      text: `{"name":"error","data":"${BASE64}"}`,
+    })
+  })
+
+  test("is still reported by its own name", () => {
+    const names = (path: string) =>
+      reflectHooks(app)
+        .routes.find((route) => route.path === path)
+        ?.hooks.map((hook) => `${hook.kind} ${hook.name}`)
+    expect(names("/early")).toEqual(names("/plain"))
+    expect(names("/early")).toEqual([
+      "beforeHandle early",
+      "afterHandle replaced",
+      "onError failed",
+    ])
+  })
+})
+
+test("a cycle in an answer is refused at once, however wide it fans out", async () => {
+  type Node = { name: string; data: Uint8Array; children: { parent: Node }[] }
+  const root: Node = { name: "root", data: bytes, children: [] }
+  for (let i = 0; i < 8; i++) root.children.push({ parent: root })
+  const app = server({ logger: silentLogger }).get("/tree", { response: file }, () => root)
+  expect((await body(app, "/tree")).status).toBe(500)
 })
 
 describe("a Uint8Array without a t.bytes() field", () => {

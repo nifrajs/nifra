@@ -261,10 +261,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // sse 38,790 -> 38,894, valibot 38,902 -> 38,998, typebox-form 68,853 -> 68,957 (Bun 1.4.4); each
   // crossed cap takes the next 0.1 KiB step.
   // A `bigint` in a JSON answer written as its decimal string, and the registration step a
-  // `t.bytes()` response field takes (its base64 walk ships only with `t`): bare 38,018 -> 38,305 B,
-  // idempotency 42,427 -> 42,702, effect-ledger 40,029 -> 40,327, sse 38,894 -> 39,163, mcp 38,290 ->
-  // 38,578, valibot 38,998 -> 39,267, typebox-t 63,958 -> 64,984, typebox-form 68,957 -> 69,968
-  // (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step.
+  // `t.bytes()` response field takes around the handler and the hooks that answer in its place (its
+  // base64 walk ships only with `t`): bare 38,018 -> 38,326 B, idempotency 42,427 -> 42,708,
+  // effect-ledger 40,029 -> 40,337, sse 38,894 -> 39,179, mcp 38,290 -> 38,593, valibot 38,998 ->
+  // 39,288, typebox-t 63,958 -> 65,228, typebox-form 68,957 -> 70,229 (Bun 1.4.4); each crossed cap
+  // takes the next 0.1 KiB step.
   "nifra-bare": 37.5,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -280,9 +281,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 38.3,
   "nifra-valibot": 38.4,
-  "nifra-typebox-t": 63.5,
+  "nifra-typebox-t": 63.7,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 68.4,
+  "nifra-typebox-form": 68.6,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

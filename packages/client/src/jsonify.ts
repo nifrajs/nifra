@@ -8,7 +8,8 @@ import type { Base64BytesBrand, BinaryResponse, RawResponse } from "@nifrajs/cor
  *   objects (a top-level `undefined` remains `undefined`, which is useful for bodyless statuses such as
  *   `204`)
  * - a `t.bytes()` field → its base64 `string`; any other typed array → the `{ "0": n, ... }` object
- *   `JSON.stringify` writes for it (a `Buffer` → what its `toJSON` writes)
+ *   `JSON.stringify` writes for it, a `BigInt64Array`'s entries as decimal strings (a `Buffer` → what
+ *   its `toJSON` writes)
  * - arrays and plain objects recurse; optionality (`?`) is preserved
  *
  * Pragmatic by design: `Map`/`Set`/class instances/custom `toJSON` are treated as
@@ -24,6 +25,8 @@ type NumberArray =
   | Uint32Array
   | Float32Array
   | Float64Array
+
+type BigIntArray = BigInt64Array | BigUint64Array
 
 type JsonifyNumberArray<T> = Base64BytesBrand extends keyof T
   ? string
@@ -58,14 +61,16 @@ export type Jsonify<T> = [unknown] extends [T]
               ? never
               : T extends undefined
                 ? undefined
-                : T extends NumberArray
-                  ? JsonifyNumberArray<T>
-                  : T extends ReadonlyArray<infer U>
-                    ? Array<Jsonify<U>>
-                    : T extends object
-                      ? {
-                          [K in keyof T as [JsonifyObjectProperty<T[K]>] extends [never]
-                            ? never
-                            : K]: JsonifyObjectProperty<T[K]>
-                        }
-                      : never
+                : T extends BigIntArray
+                  ? { [index: number]: string }
+                  : T extends NumberArray
+                    ? JsonifyNumberArray<T>
+                    : T extends ReadonlyArray<infer U>
+                      ? Array<Jsonify<U>>
+                      : T extends object
+                        ? {
+                            [K in keyof T as [JsonifyObjectProperty<T[K]>] extends [never]
+                              ? never
+                              : K]: JsonifyObjectProperty<T[K]>
+                          }
+                        : never

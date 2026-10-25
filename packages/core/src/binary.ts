@@ -65,7 +65,7 @@ export type Base64BytesBrand = typeof NIFRA_BASE64
 /** A `t.bytes()` field: a `Uint8Array` in the handler, a base64 string on the wire and in the client. */
 export type Base64Bytes = Uint8Array & { readonly [NIFRA_BASE64]?: true }
 
-export type { AnswerStep, JsonReplyContext } from "./server/answer-step.ts"
+export type { AnswerStages, AnswerStep, JsonReplyContext } from "./server/answer-step.ts"
 export { withBase64Bytes } from "./server/base64-answers.ts"
 
 /** What can be sent as bytes without being re-encoded on the way out. */

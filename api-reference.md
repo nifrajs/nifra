@@ -1890,6 +1890,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/binary`
 
+- **AnswerStages** _(interface)_ - `interface AnswerStages`
+  What can answer a route: its handler, and each hook whose return value takes the handler's place - a `beforeHandle` that answers first, an `afterHandle` that replaces the answer, an `onError` that answers an error. Each takes the request's context, as a `JsonReplyContext`.
 - **AnswerStep** _(interface)_ - `interface AnswerStep`
 - **Base64Bytes** _(type)_ - `type Base64Bytes = Uint8Array & { readonly [NIFRA_BASE64]?: true }`
   A `t.bytes()` field: a `Uint8Array` in the handler, a base64 string on the wire and in the client.
@@ -1909,8 +1911,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **bytes** _(function)_ - `bytes: (body: BinaryBody, options?: BytesOptions) => BinaryResponse`
 - **raw** _(function)_ - `raw: <T>(response: Response) => RawResponse<T>`
   Brand a hand-built `Response` with the payload type `T` its body serializes to, so a route that must return a `Response` directly still types `res.data` as `Jsonify<T>` on the client instead of `never`. Use it for the endpoints that build their own `Response` - a token minted by a third-party SDK, …
-- **withBase64Bytes** _(function)_ - `withBase64Bytes: <C extends JsonReplyContext>(handler: (context: C) => unknown) => (context: C) => unknown`
-  Wrap a route handler so every `Uint8Array` in its answer leaves as base64.
+- **withBase64Bytes** _(function)_ - `withBase64Bytes: <S extends AnswerStages>(stages: S) => S`
+  A route's handler and answering hooks, each wrapped so every `Uint8Array` it answers leaves as base64.
 
 ### `@nifrajs/core/body-parser`
 

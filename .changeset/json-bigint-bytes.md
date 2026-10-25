@@ -19,5 +19,8 @@ reads a `string`, the document says `{ type: "string", contentEncoding: "base64"
 it with valid base64. A request or `sse` schema that declares it is refused at registration with
 `RouteConfigError` `RESPONSE_ONLY_SCHEMA`. The step is `withBase64Bytes` from `@nifrajs/core/binary`,
 for a hand-written schema too. A `Uint8Array` on a route without the field is still the
-`{ "0": 1, ... }` object `JSON.stringify` writes, and the client and `nifra openapi` now describe it as
-that object.
+`{ "0": 1, ... }` object `JSON.stringify` writes (a `BigInt64Array`'s entries as decimal strings), and a
+Node `Buffer` the `{ "type": "Buffer", "data": [...] }` its `toJSON` writes; the client and
+`nifra openapi` now describe each as written. A hook that answers in the handler's place (a
+`beforeHandle` that answers first, an `afterHandle` that replaces the answer, an `onError`) has its
+bytes written as base64 too.

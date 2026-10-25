@@ -293,7 +293,8 @@ export const t = {
   /**
    * Bytes in a JSON response, as a base64 string. The handler returns a `Uint8Array` (or a `Buffer`); a
    * route whose `response` or `errors` declares this field writes every `Uint8Array` in its answer as
-   * base64, and the typed client reads a `string`. Response-only for now: a request or `sse` schema
+   * base64, the one a `beforeHandle`, `afterHandle` or `onError` hook answers in the handler's place
+   * included, and the typed client reads a `string`. Response-only for now: a request or `sse` schema
    * that declares it is refused when the route is registered.
    */
   bytes: (): NifraSchema<TUnsafe<Base64Bytes>> => {

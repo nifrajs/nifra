@@ -27,6 +27,22 @@ const IDS_SCHEMA = {
   },
   required: ["id", "data"],
 }
+// A `BigInt64Array` writes each entry as a `bigint` does; a Node `Buffer` writes what its `toJSON` does.
+const ARRAYS_SCHEMA = {
+  type: "object",
+  properties: {
+    wide: { type: "object", additionalProperties: IDS_SCHEMA.properties.id },
+    buffer: {
+      type: "object",
+      properties: {
+        type: { const: "Buffer" },
+        data: { type: "array", items: { type: "integer", minimum: 0, maximum: 255 } },
+      },
+      required: ["type", "data"],
+    },
+  },
+  required: ["wide", "buffer"],
+}
 
 describe("inferOpenAPIResponses", () => {
   test("reflects inferred success and status bodies without executing the backend", async () => {
@@ -60,6 +76,9 @@ describe("inferOpenAPIResponses", () => {
         '  .get("/users/:id", (c) => c.params.id === "missing" ? status(404, { error: "not_found" }) : { id: c.params.id })',
         '  .get("/empty", () => status(204))',
         '  .get("/ids", () => ({ id: 1n, data: new Uint8Array(2) }))',
+        '  .get("/arrays", () => ({ wide: new BigInt64Array(1), buffer }))',
+        "declare class Buffer extends Uint8Array {}",
+        "declare const buffer: Buffer",
       ].join("\n"),
       "utf8",
     )
@@ -78,6 +97,7 @@ describe("inferOpenAPIResponses", () => {
     })
     expect(result.responses["GET /empty"]?.["204"]).toEqual({})
     expect(result.responses["GET /ids"]?.["200"]?.schema).toEqual(IDS_SCHEMA)
+    expect(result.responses["GET /arrays"]?.["200"]?.schema).toEqual(ARRAYS_SCHEMA)
   })
 })
 
@@ -113,6 +133,9 @@ test("reflects response schemas through the TypeScript 7 semantic adapter", asyn
       '.get("/users/:id", (c) => c.params.id === "missing" ? status(404, { error: "not_found" }) : { id: c.params.id })',
       '.get("/empty", () => status(204))',
       '.get("/ids", () => ({ id: 1n, data: new Uint8Array(2) }))',
+      '.get("/arrays", () => ({ wide: new BigInt64Array(1), buffer }))',
+      "declare class Buffer extends Uint8Array {}",
+      "declare const buffer: Buffer",
     ].join("\n"),
     "utf8",
   )
@@ -131,4 +154,5 @@ test("reflects response schemas through the TypeScript 7 semantic adapter", asyn
   })
   expect(result.responses["GET /empty"]?.["204"]).toEqual({})
   expect(result.responses["GET /ids"]?.["200"]?.schema).toEqual(IDS_SCHEMA)
+  expect(result.responses["GET /arrays"]?.["200"]?.schema).toEqual(ARRAYS_SCHEMA)
 })

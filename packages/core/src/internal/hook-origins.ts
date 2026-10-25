@@ -112,6 +112,16 @@ export function tagSource(wrapper: unknown, source: unknown): void {
   if (isRef(wrapper)) sources.set(wrapper, source)
 }
 
+/** A wrapper that runs in `hook`'s place on one route, reported as `hook` is. */
+export function tagStandIn(wrapper: unknown, hook: unknown): void {
+  if (!isRef(wrapper) || !isRef(hook)) return
+  const origin = origins.get(hook)
+  if (origin !== undefined) origins.set(wrapper, origin)
+  const scope = scopes.get(hook)
+  if (scope !== undefined) scopes.set(wrapper, scope)
+  sources.set(wrapper, hook)
+}
+
 /** Pair each scoped wrapper with the hook it gates and the scope it gates it by. */
 export function tagScoped(
   originals: readonly unknown[],

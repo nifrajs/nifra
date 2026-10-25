@@ -2642,7 +2642,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       lanes,
       routeAssurance,
     } = compiled
-    handler = withAnswerSteps(schema, method, path, handler)
+    // A schema that writes its answer its own way (`t.bytes()`) wraps every stage that can answer.
+    const stages = withAnswerSteps(schema, method, path, {
+      handler,
+      beforeHandle: this.beforeHandleHooks,
+      afterHandle: this.afterHandleHooks,
+      onError: this.onErrorHooks,
+    })
+    handler = stages.handler
+    const { beforeHandle, afterHandle, onError } = stages
     if (idempotent !== undefined && this.idempotencyRuntime !== undefined) {
       handler = this.idempotencyRuntime.wrapHandler(handler)
     }
@@ -2670,8 +2678,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         ? this.buildFusedBodyDeriveBeforeAfterRunner(
             handler as unknown as InternalHandler,
             this.derives[0]!,
-            this.beforeHandleHooks[0]!,
-            this.afterHandleHooks[0],
+            beforeHandle[0]!,
+            afterHandle[0],
             schema?.body as StandardSchemaV1,
             bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
@@ -2679,7 +2687,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           ? this.buildFusedDeriveBeforeRunner(
               handler as unknown as InternalHandler,
               this.derives[0]!,
-              this.beforeHandleHooks[0]!,
+              beforeHandle[0]!,
               undefined,
               schema?.query,
               bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -2688,8 +2696,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             ? this.buildFusedDeriveBeforeRunner(
                 handler as unknown as InternalHandler,
                 this.derives[0]!,
-                this.beforeHandleHooks[0]!,
-                this.afterHandleHooks[0],
+                beforeHandle[0]!,
+                afterHandle[0],
                 schema?.query,
                 bodyLimit ?? UNLIMITED_BODY_BYTES,
               )
@@ -2715,8 +2723,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               ? this.buildFusedBodyDeriveBeforeAfter(
                   handler as unknown as InternalHandler,
                   this.derives[0]!,
-                  this.beforeHandleHooks[0]!,
-                  this.afterHandleHooks[0],
+                  beforeHandle[0]!,
+                  afterHandle[0],
                   schema?.body as StandardSchemaV1,
                   bodyLimit ?? UNLIMITED_BODY_BYTES,
                 )
@@ -2724,7 +2732,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                 ? this.buildFusedDeriveBefore(
                     handler as unknown as InternalHandler,
                     this.derives[0]!,
-                    this.beforeHandleHooks[0]!,
+                    beforeHandle[0]!,
                     schema?.query,
                     bodyLimit ?? UNLIMITED_BODY_BYTES,
                   )
@@ -2732,8 +2740,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                   ? this.buildFusedDeriveBeforeAfter(
                       handler as unknown as InternalHandler,
                       this.derives[0]!,
-                      this.beforeHandleHooks[0]!,
-                      this.afterHandleHooks[0]!,
+                      beforeHandle[0]!,
+                      afterHandle[0]!,
                       schema?.query,
                       bodyLimit ?? UNLIMITED_BODY_BYTES,
                     )
@@ -2743,9 +2751,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       handler: handler as unknown as InternalHandler,
       derives: this.derives,
       authStages: compiled.authStages,
-      beforeHandle: this.beforeHandleHooks,
-      afterHandle: this.afterHandleHooks,
-      onError: this.onErrorHooks,
+      beforeHandle,
+      afterHandle,
+      onError,
       decorations: routeDecorations,
       hasDecorations,
       bodySchema: schema?.body,
@@ -2774,9 +2782,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       authStages: [...compiled.authStages],
       decorations: routeDecorations,
       hasDecorations,
-      beforeHandle: [...this.beforeHandleHooks],
-      afterHandle: [...this.afterHandleHooks],
-      onError: [...this.onErrorHooks],
+      beforeHandle: [...beforeHandle],
+      afterHandle: [...afterHandle],
+      onError: [...onError],
       lifecycleHookLane: lanes.lifecycleHookLane,
       around: [...this.aroundHooks],
       execution,

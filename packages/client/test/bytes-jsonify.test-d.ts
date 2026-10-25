@@ -22,6 +22,12 @@ export type _declaredBytes = Expect<Equal<Jsonify<{ data: Base64Bytes }>, { data
 export type _plainBytes = Expect<Equal<Jsonify<Uint8Array>, { [index: number]: number }>>
 export type _otherTypedArray = Expect<Equal<Jsonify<Float64Array>, { [index: number]: number }>>
 export type _buffer = Expect<Equal<Jsonify<Buffer>, { type: "Buffer"; data: number[] }>>
+export type _bigintArrays = Expect<
+  Equal<
+    Jsonify<{ signed: BigInt64Array; unsigned: BigUint64Array }>,
+    { signed: { [index: number]: string }; unsigned: { [index: number]: string } }
+  >
+>
 
 // A handler hands a declared field a plain `Uint8Array`.
 export const _accepts: Base64Bytes = new Uint8Array(4)

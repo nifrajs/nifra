@@ -55,6 +55,26 @@ const NUMBER_ARRAYS: ReadonlySet<string> = new Set([
   "Float64Array",
 ])
 const NUMBER_ARRAY_SCHEMA: JsonSchema = { type: "object", additionalProperties: { type: "number" } }
+/** A `BigInt64Array` or `BigUint64Array`: keyed by index too, each entry a `bigint`'s decimal string. */
+const BIGINT_ARRAYS: ReadonlySet<string> = new Set(["BigInt64Array", "BigUint64Array"])
+const BIGINT_ARRAY_SCHEMA: JsonSchema = { type: "object", additionalProperties: BIGINT_SCHEMA }
+/** What a Node `Buffer`'s `toJSON` writes in place of the index object. */
+const BUFFER_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    type: { const: "Buffer" },
+    data: { type: "array", items: { type: "integer", minimum: 0, maximum: 255 } },
+  },
+  required: ["type", "data"],
+}
+
+/** The schema of a typed array or `Buffer` named `name`, as `JSON.stringify` writes it. */
+function binarySchema(name: string | undefined): JsonSchema | undefined {
+  if (name === undefined) return undefined
+  if (name === "Buffer") return BUFFER_SCHEMA
+  if (BIGINT_ARRAYS.has(name)) return BIGINT_ARRAY_SCHEMA
+  return NUMBER_ARRAYS.has(name) ? NUMBER_ARRAY_SCHEMA : undefined
+}
 
 function schemaForType(
   ts: TypeScriptApi,
@@ -110,7 +130,8 @@ function schemaForType(
   }
 
   if (type.symbol?.name === "Date") return { type: "string", format: "date-time" }
-  if (NUMBER_ARRAYS.has(type.symbol?.name ?? "")) return NUMBER_ARRAY_SCHEMA
+  const binary = binarySchema(type.symbol?.name)
+  if (binary !== undefined) return binary
   if ((type.flags & ts.TypeFlags.Object) === 0) return undefined
 
   seen.add(type)
@@ -309,7 +330,8 @@ async function schemaForType7(
 
   const symbol = await input.getSymbol()
   if (symbol?.name === "Date") return { type: "string", format: "date-time" }
-  if (NUMBER_ARRAYS.has(symbol?.name ?? "")) return NUMBER_ARRAY_SCHEMA
+  const binary = binarySchema(symbol?.name)
+  if (binary !== undefined) return binary
   if ((input.flags & objectFlag) === 0) return undefined
 
   seen.add(input)
