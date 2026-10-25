@@ -1,6 +1,7 @@
 /** Deterministic, signed route manifest: contract × assurance × capabilities × classification. */
 
 import type { AssuranceReport } from "./assurance.ts"
+import { canonicalJson } from "./canonical-json.ts"
 import type { CapabilityAssuranceReport } from "./capabilities.ts"
 import {
   type DataClassification,
@@ -78,27 +79,6 @@ function hasControlCharacter(value: string): boolean {
   return false
 }
 
-function canonicalValue(value: unknown): string {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return JSON.stringify(value)
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value))
-      throw new TypeError("nifra manifest cannot encode non-finite numbers")
-    return JSON.stringify(value)
-  }
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalValue(item)).join(",")}]`
-  if (typeof value === "object") {
-    const record = value as Readonly<Record<string, unknown>>
-    return `{${Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalValue(record[key])}`)
-      .join(",")}}`
-  }
-  throw new TypeError(`nifra manifest cannot encode ${typeof value}`)
-}
-
 function manifestBody(manifest: Pick<NifraManifest, "manifestVersion" | "routes">): {
   readonly manifestVersion: 1
   readonly routes: readonly NifraManifestRoute[]
@@ -110,17 +90,17 @@ function manifestBody(manifest: Pick<NifraManifest, "manifestVersion" | "routes"
 export function canonicalManifest(
   manifest: Pick<NifraManifest, "manifestVersion" | "routes">,
 ): string {
-  return canonicalValue(manifestBody(manifest))
+  return canonicalJson(manifestBody(manifest))
 }
 
 /** Byte-stable artifact serialization (including `contentHash`). */
 export function serializeNifraManifest(manifest: NifraManifest): string {
-  return canonicalValue(manifest)
+  return canonicalJson(manifest)
 }
 
 /** Byte-stable serialization for the detached signature sidecar. */
 export function serializeNifraManifestSignature(signature: NifraManifestSignature): string {
-  return canonicalValue(signature)
+  return canonicalJson(signature)
 }
 
 /** Parse the detached sidecar before selecting its operator-controlled public key. */

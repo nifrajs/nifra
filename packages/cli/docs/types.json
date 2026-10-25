@@ -18055,7 +18055,14 @@
     "kind": "function",
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function canonicalJson(value: unknown): string;",
-    "doc": "/** Deterministic JSON with recursively sorted object keys. Arrays keep order. Rejects non-finite numbers. */"
+    "doc": "/** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */"
+  },
+  {
+    "name": "canonicalJson",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function canonicalJson(value: unknown): string;",
+    "doc": "/** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */"
   },
   {
     "name": "canonicalManifest",

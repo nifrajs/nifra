@@ -10,6 +10,8 @@
  * unit-tested without a server. A durable store (cross-restart) implements the same interface.
  */
 
+import { canonicalJson } from "./canonical-json.ts"
+
 /** Whether a route's idempotency is satisfied by an in-process store or a durable (cross-restart) one. */
 export type IdempotencyScope = "request" | "durable"
 
@@ -177,25 +179,6 @@ export async function computeIdempotencyFingerprint(
   let hex = ""
   for (let i = 0; i < bytes.length; i++) hex += (bytes[i] as number).toString(16).padStart(2, "0")
   return hex
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return JSON.stringify(value)
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new TypeError("non-finite JSON number")
-    return JSON.stringify(value)
-  }
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>
-    const entries = Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    return `{${entries.join(",")}}`
-  }
-  throw new TypeError("unsupported JSON value")
 }
 
 /** Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request. */

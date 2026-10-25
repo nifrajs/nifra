@@ -1416,7 +1416,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
   Assert a record serializes within the hard cap. Public reference records are content-free.
 - **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string`
-  Deterministic JSON with recursively sorted object keys. Arrays keep order. Rejects non-finite numbers.
+  The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry.
 - **compileRunPlan** _(function)_ - `compileRunPlan: (source: RunPlan | unknown, options: CompileOptions) => WorkflowStep`
   Compile `source` (a RunPlan or its serialized form) into a single WorkflowStep. The input is always re-parsed through {@link parseRunPlan}, so a malformed or content-bearing plan fails closed.
 - **compileRunPlanLayers** _(function)_ - `compileRunPlanLayers: (source: RunPlan | unknown, options: CompileOptions) => readonly WorkflowStep[]`
@@ -1969,6 +1969,11 @@ Every public export of every package and documented subpath - name, kind, signat
   Parse the canonical deadline header without trusting or clamping it.
 - **withDeadlineHeader** _(function)_ - `withDeadlineHeader: (input: DeadlineHeadersInit, budget: RequestBudget, reserveMs?: number) => Headers`
   Add this budget's absolute deadline to an outbound request.
+
+### `@nifrajs/core/canonical-json`
+
+- **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string`
+  The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry.
 
 ### `@nifrajs/core/capabilities`
 
@@ -4859,7 +4864,6 @@ _No named exports (side-effect entrypoint)._
 - **ContractCoverageGapCode** _(type)_ - `type ContractCoverageGapCode`
 - **ContractExpectedResponse** _(interface)_ - `interface ContractExpectedResponse`
 - **ContractLabHandler** _(interface)_ - `interface ContractLabHandler`
-  Runtime-neutral HTTP contract witnesses.
 - **ContractLabRuntimeAdapter** _(interface)_ - `interface ContractLabRuntimeAdapter`
 - **ContractLabServer** _(interface)_ - `interface ContractLabServer`
 - **ContractLabWitness** _(interface)_ - `interface ContractLabWitness`
@@ -5075,7 +5079,6 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/testing/contract-lab`
 
 - **ContractLabHandler** _(interface)_ - `interface ContractLabHandler`
-  Runtime-neutral HTTP contract witnesses.
 - **ContractLabRuntimeAdapter** _(interface)_ - `interface ContractLabRuntimeAdapter`
 - **ContractLabServer** _(interface)_ - `interface ContractLabServer`
 - **ContractLabWitness** _(interface)_ - `interface ContractLabWitness`

@@ -3,7 +3,7 @@
  * uses this only in its test/CI surface, while the resulting capability matrix is portable JSON evidence.
  */
 
-import { isRecord } from "./internal/record.ts"
+import { canonicalJson } from "@nifrajs/core/canonical-json"
 
 /** What a certification check receives besides the adapter under test. */
 export interface CertificationContext {
@@ -76,16 +76,6 @@ export class AdapterCertificationError extends Error {
 const TOKEN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
 const TARGET_NAME = /^@?[a-z0-9][a-z0-9._:-]*(?:\/[a-z0-9][a-z0-9._:-]*)?$/
 const MAX_CHECKS = 128
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
-  if (isRecord(value))
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
-      .join(",")}}`
-  return JSON.stringify(value)
-}
 
 const boundedTargetText = (value: string): boolean =>
   value.length >= 1 &&
@@ -223,7 +213,7 @@ export async function certifyAdapter<Adapter>(options: {
     checks,
     capabilities,
   }
-  return { ...body, evidenceHash: await sha256(canonical(body)) }
+  return { ...body, evidenceHash: await sha256(canonicalJson(body)) }
 }
 
 export function assertAdapterCertification(report: AdapterCertificationReport): void {
@@ -235,7 +225,7 @@ export async function verifyAdapterCertification(
   report: AdapterCertificationReport,
 ): Promise<boolean> {
   const { evidenceHash, ...body } = report
-  return evidenceHash === (await sha256(canonical(body)))
+  return evidenceHash === (await sha256(canonicalJson(body)))
 }
 
 // ── Standard profiles ───────────────────────────────────────────────────────────────────────────

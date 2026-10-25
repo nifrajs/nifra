@@ -13,6 +13,7 @@
  * incomparable against explicit tolerances, and every regression carries a stable, addressable id.
  */
 
+import { canonicalJson } from "@nifrajs/core/canonical-json"
 import { type FailureDirective, FailureInjectedError, runFailureScenario } from "./failure-lab.ts"
 import { type FaultProfile, runFaultProfile } from "./fault-profile.ts"
 import { type EffectLedger, type IdempotencyProof, proveIdempotency } from "./idempotency.ts"
@@ -256,7 +257,7 @@ export async function runAgentFailureMatrix(
     const regressionId = `${caseId}/${scheduleToken}`
     cases.push({ id: caseId, kind: entry.kind, scheduleToken, ok: report.ok, regressionId })
   }
-  const digest = await sha256(canonical({ version: 1, seed, cases }))
+  const digest = await sha256(canonicalJson({ version: 1, seed, cases }))
   return Object.freeze({
     version: 1,
     seed,
@@ -357,7 +358,7 @@ export async function runAgentEvalComposition(
   }
   const ok = regressionIds.length === 0 && components.every((entry) => entry.ok)
   const digest = await sha256(
-    canonical({ version: 1, suite: suite.digest, components, regressionIds }),
+    canonicalJson({ version: 1, suite: suite.digest, components, regressionIds }),
   )
   return Object.freeze({
     version: 1,
@@ -380,16 +381,6 @@ export function assertAgentEval(report: AgentEvalCompositionReport): void {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
-  if (isRecord(value))
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
-      .join(",")}}`
-  return JSON.stringify(value)
-}
 
 async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
@@ -535,11 +526,11 @@ export function defineAgentEvalSuite(spec: AgentEvalSuiteSpec): AgentEvalSuite {
         cases.push({
           caseId,
           verdicts: Object.freeze(verdicts),
-          digest: await sha256(canonical({ caseId, verdicts })),
+          digest: await sha256(canonicalJson({ caseId, verdicts })),
         })
       }
       const digest = await sha256(
-        canonical({
+        canonicalJson({
           suiteId: spec.id,
           suiteVersion: version,
           rubricShapes,
@@ -567,7 +558,7 @@ async function shapeOf(rubric: RubricSpec): Promise<RubricShape> {
     scoreMax: rubric.score.max,
     higherIsBetter,
   }
-  return Object.freeze({ ...projection, digest: await sha256(canonical(projection)) })
+  return Object.freeze({ ...projection, digest: await sha256(canonicalJson(projection)) })
 }
 
 // ── Baseline comparison ───────────────────────────────────────────────────────────────────────
@@ -613,7 +604,7 @@ export async function compareAgentEvalBaseline(
   const regressions = comparisons
     .filter((entry) => failOn.has(entry.code))
     .map((entry) => entry.regressionId)
-  const digest = await sha256(canonical({ suiteId: current.suiteId, comparisons }))
+  const digest = await sha256(canonicalJson({ suiteId: current.suiteId, comparisons }))
   return Object.freeze({
     suiteId: current.suiteId,
     comparisons: Object.freeze(comparisons),

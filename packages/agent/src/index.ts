@@ -10,6 +10,7 @@
  */
 
 import { canAttempt, type RequestBudget } from "@nifrajs/core/budget"
+import { canonicalJson } from "@nifrajs/core/canonical-json"
 import type { ExecutionPolicyAdapter } from "@nifrajs/core/execution-policy"
 import type { EffectCost } from "@nifrajs/core/ledger"
 import { type StandardIssue, type StandardSchemaV1, validateStandard } from "@nifrajs/core/schema"
@@ -1192,17 +1193,6 @@ async function inputDigestOf(input: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(canonicalJson(input))
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value)
-      .filter(([, field]) => field !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    return `{${entries.map(([key, field]) => `${JSON.stringify(key)}:${canonicalJson(field)}`).join(",")}}`
-  }
-  return JSON.stringify(value) ?? "null"
 }
 
 function freezeState(state: AgentTurnState): AgentTurnState {

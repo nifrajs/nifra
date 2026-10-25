@@ -291,7 +291,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
-  "nifra-idempotency": 41.9,
+  // Core's shared canonical JSON, which refuses a value JSON cannot carry instead of hashing it as
+  // something else: idempotency 42,874 -> 42,982 B (Bun 1.4.4); only the idempotency cap is crossed.
+  "nifra-idempotency": 42.0,
   "nifra-effect-ledger": 39.6,
   "nifra-mcp": 37.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
