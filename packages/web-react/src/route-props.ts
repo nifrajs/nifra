@@ -9,5 +9,6 @@ export function routeProps(
 ): RenderProps {
   const props = snapshotProps(state, searchSchemas, matchChains)
   // Where a navigation is heading, for `useNavigation().location` and `NavLink`'s `isPending`.
-  return state.pendingPath === undefined ? props : { ...props, pendingPath: state.pendingPath }
+  if (state.pendingPath !== undefined) props.pendingPath = state.pendingPath
+  return props
 }

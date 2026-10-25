@@ -7,6 +7,7 @@ import type { MountRouterOptions, RouterState } from "../router.ts"
 import { searchOfChain } from "../search.ts"
 
 type Schemas = NonNullable<MountRouterOptions["searchSchemas"]>[string]
+type BuiltProps = { -readonly [K in keyof RenderProps]: RenderProps[K] }
 const NO_SCHEMAS: Schemas = []
 let lastSearch:
   | {
@@ -23,24 +24,23 @@ const searchFor = (schemas: Schemas = NO_SCHEMAS, raw: string): Record<string, u
   return lastSearch.search
 }
 
-/** The props a route renders with for one router snapshot. */
+/**
+ * The props a route renders with for one router snapshot: a new object on every call, so the caller may
+ * add a field of its own before rendering with it.
+ */
 export function routeProps(
   state: RouterState,
   searchSchemas: MountRouterOptions["searchSchemas"],
   matchChains?: MountRouterOptions["matchChains"],
-): RenderProps {
-  const matchChain = matchChains?.[state.routeId]
+): BuiltProps {
   // While an intercept boundary holds a target the URL is the target's; the route's props describe the
   // page underneath, so they read the page's own path.
   const path = state.intercepted?.pagePath ?? state.path
   const q = path.indexOf("?")
-  const rawSearch = q === -1 ? "" : path.slice(q)
-  return {
+  // Optional fields are written after the literal: a conditional `...{}` spread allocates and copies
+  // through the generic path, 5x the instructions per call on JSC and 11x on V8.
+  const props: BuiltProps = {
     data: state.data,
-    ...(state.serverComponents === undefined ? {} : { serverComponents: state.serverComponents }),
-    // Each layout's own loader data. Without it a layout renders `data: null` on the client while the
-    // server rendered it with its data - a hydration mismatch on the first paint.
-    ...(state.layoutData !== undefined ? { layoutData: state.layoutData } : {}),
     actionData: state.actionData,
     pending: state.pending,
     // The same `params`/`path` the server render received, so the routing hooks and `useMatches` read
@@ -49,9 +49,15 @@ export function routeProps(
     path,
     // The route's typed search from the URL query and its schema chain (layout schemas, then the
     // page's), the same `searchOfChain` the server ran, so `useSearch` hydrates with no drift.
-    search: searchFor(searchSchemas?.[state.routeId], rawSearch),
-    ...(state.submission ? { submission: state.submission } : {}),
-    ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
-    ...(matchChain !== undefined ? { matchChain } : {}),
+    search: searchFor(searchSchemas?.[state.routeId], q === -1 ? "" : path.slice(q)),
   }
+  if (state.serverComponents !== undefined) props.serverComponents = state.serverComponents
+  // Each layout's own loader data. Without it a layout renders `data: null` on the client while the
+  // server rendered it with its data - a hydration mismatch on the first paint.
+  if (state.layoutData !== undefined) props.layoutData = state.layoutData
+  if (state.submission) props.submission = state.submission
+  if (state.boundaries !== undefined) props.boundaries = state.boundaries
+  const matchChain = matchChains?.[state.routeId]
+  if (matchChain !== undefined) props.matchChain = matchChain
+  return props
 }
