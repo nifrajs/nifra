@@ -181,6 +181,58 @@ export async function computeIdempotencyFingerprint(
   return hex
 }
 
+const isDigit = (code: number): boolean => code >= 48 && code <= 57
+const isDigitOrDot = (code: number): boolean => isDigit(code) || code === 46
+
+/**
+ * Whether `text` may hold a JSON number no double holds exactly: one written with 16+ digits (a dot
+ * counted) or with a negative exponent of 3+ digits. Any other number round-trips exactly, or
+ * overflows to Infinity, which canonical JSON refuses. A match inside a string only costs the slower
+ * parse.
+ */
+function mayHoldLossyNumber(text: string): boolean {
+  // A run of 16 digits or dots covers an index that is 15 mod 16, so only those indexes are probed.
+  for (let i = 15; i < text.length; i += 16) {
+    if (!isDigitOrDot(text.charCodeAt(i))) continue
+    let start = i
+    while (isDigitOrDot(text.charCodeAt(start - 1))) start--
+    let end = i + 1
+    while (isDigitOrDot(text.charCodeAt(end))) end++
+    if (end - start >= 16) return true
+  }
+  // A negative exponent follows "e-" or "E-"; "-" is the rarer character to search for.
+  for (let i = text.indexOf("-"); i !== -1; i = text.indexOf("-", i + 1)) {
+    if ((text.charCodeAt(i - 1) | 32) !== 101) continue
+    let digit = i + 1
+    while (text.charCodeAt(digit) === 48) digit++
+    if (
+      isDigit(text.charCodeAt(digit)) &&
+      isDigit(text.charCodeAt(digit + 1)) &&
+      isDigit(text.charCodeAt(digit + 2))
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+/** A `JSON.parse` reviver that keeps a lossy number's own text and reads every other value as usual. */
+function keepLossyNumberText(
+  _key: string,
+  value: unknown,
+  context?: { readonly source?: string },
+): unknown {
+  if (typeof value !== "number") return value
+  const source = context?.source
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the member is optional, so an engine without JSON.rawJSON leaves it undefined.
+  const rawJson = (JSON as JSON & { readonly rawJSON?: (text: string) => unknown }).rawJSON
+  // Unable to keep the text, the caller fingerprints the exact bytes rather than a rounded number.
+  if (source === undefined || rawJson === undefined) {
+    throw new TypeError("no JSON number source text")
+  }
+  return mayHoldLossyNumber(source) ? rawJson(source) : value
+}
+
 /** Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request. */
 export function canonicalizeIdempotencyBody(
   body: Uint8Array,
@@ -189,7 +241,11 @@ export function canonicalizeIdempotencyBody(
   const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase() ?? ""
   if (mediaType !== "application/json" && !mediaType.endsWith("+json")) return body
   try {
-    return encoder.encode(canonicalJson(JSON.parse(new TextDecoder().decode(body))))
+    const text = new TextDecoder().decode(body)
+    const parsed: unknown = mayHoldLossyNumber(text)
+      ? JSON.parse(text, keepLossyNumberText)
+      : JSON.parse(text)
+    return encoder.encode(canonicalJson(parsed))
   } catch {
     // Invalid JSON is rejected by the validation/body lane. Preserve its raw bytes for a stable
     // fingerprint until that rejection releases the reservation.

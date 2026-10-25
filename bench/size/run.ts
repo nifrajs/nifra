@@ -293,7 +293,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
   // Core's shared canonical JSON, which refuses a value JSON cannot carry instead of hashing it as
   // something else: idempotency 42,874 -> 42,982 B (Bun 1.4.4); only the idempotency cap is crossed.
-  "nifra-idempotency": 42.0,
+  // A fingerprint keeps the written text of a JSON number a double would round, behind a sampled scan
+  // 3-7x cheaper than a regex over the body: idempotency 42,982 -> 43,223 B (Bun 1.4.4); only the
+  // idempotency cap is crossed, by three 0.1 KiB steps.
+  "nifra-idempotency": 42.3,
   "nifra-effect-ledger": 39.6,
   "nifra-mcp": 37.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
