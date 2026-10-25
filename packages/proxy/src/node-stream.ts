@@ -151,7 +151,7 @@ export function claimableWebStream(
               }
               // Bounded drain: past DRAIN_BYTE_CAP stop pulling and destroy, so a slow client cannot
               // hold the socket open by trickling an over-cap body forever.
-              drained += (step.value as Uint8Array).byteLength
+              drained += step.value.byteLength
               if (drained > DRAIN_BYTE_CAP) {
                 finish()
                 return
