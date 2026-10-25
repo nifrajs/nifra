@@ -7139,6 +7139,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * `tls` serves HTTPS directly: `app.listen(443, { tls: { cert, key } })` with PEM text or bytes.
    * Requests then arrive with `https:` URLs. Behind a proxy or a platform that terminates TLS, leave
    * it unset.
+   *
+   * `static` sees every request before the app does, the ones Bun's route table serves included, so
+   * a file it answers wins over any route at the same path. It returns the file's response, or
+   * `undefined` to let the app route the request. No hook of the app runs for a request it answers.
+   * `@nifrajs/web`'s Bun build serves its client bundle and public files this way.
    */
   listen(
     port: number,
@@ -7147,6 +7152,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       readonly hostname?: string
       readonly idleTimeoutSec?: number
       readonly tls?: ListenTlsOptions
+      readonly static?: (request: Request) => MaybePromise<Response | undefined>
     },
   ): RunningServer {
     if (typeof Bun === "undefined") {
@@ -7235,17 +7241,40 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     const nativeRoutes =
       wsHandlers === undefined ? this.buildBunNativeRoutes(fallback, peer) : undefined
+    const first = options?.static
+    const before = <S, A>(
+      inner: (req: Request, server: S) => MaybePromise<A>,
+    ): ((req: Request, server: S) => MaybePromise<A | Response>) =>
+      first === undefined
+        ? inner
+        : (req, server) => {
+            const answer = first(req)
+            if (answer === undefined) return inner(req, server)
+            return answer instanceof Promise
+              ? answer.then((response) => response ?? inner(req, server))
+              : answer
+          }
+    // Bun runs a table handler without `fetch`, so each one gets the same front as the fallback.
+    if (first !== undefined && nativeRoutes !== undefined) {
+      for (const path in nativeRoutes) {
+        const methods = nativeRoutes[path]!
+        for (const method of BUN_TABLE_METHODS) {
+          const handler = methods[method]
+          if (handler !== undefined) methods[method] = before(handler)
+        }
+      }
+    }
     const sockets = new Set<{ close(code?: number): void }>()
     this.bunSockets = sockets
     const running = (wsHandlers === undefined
       ? Bun.serve({
           ...listening,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-          fetch: fallback,
+          fetch: before(fallback),
         })
       : Bun.serve<BunWsData>({
           ...listening,
-          fetch: (req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout),
+          fetch: before((req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout)),
           // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
           // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.

@@ -186,8 +186,6 @@ export function isHostPolicy(value: unknown): value is HostPolicy {
   return typeof value === "object" && value !== null && HOST_POLICY in value
 }
 
-const BUN_NATIVE_REQUEST_SAFE = Symbol.for("@nifrajs/core/bun-native-request-safe")
-
 /** The path of a Node view's URL, `<protocol>://<host><target>`: the adapter has refused a host
  * holding `/`, `?`, `#` or `@` and resolved the target's dot segments, so it starts at the first `/`
  * after the scheme and ends where core's routing ends it. */
@@ -203,17 +201,16 @@ const targetPath = (url: string): string => {
 }
 
 /** A host policy as request middleware, for `createWebApp`: header-only, so its Node twin keeps the
- * direct lane. */
+ * direct lane. It refuses pages of every method, so Bun's route table, which skips request hooks,
+ * must not serve an app that has one. */
 export function hostPolicyGate(
   policy: HostPolicy,
   buildAssets: BuildAssetSet | undefined,
 ): Middleware {
-  const gate: Middleware = {
+  return {
     name: "nifra-host-policy",
     onRequest: (request) => policy.check(request, buildAssets),
     onNodeRequest: (request: NodeRequestContext) =>
       policy.refusal(request.header("host") ?? "", targetPath(request.url), buildAssets),
   }
-  Object.defineProperty(gate, BUN_NATIVE_REQUEST_SAFE, { value: true })
-  return gate
 }

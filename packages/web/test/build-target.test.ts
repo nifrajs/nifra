@@ -278,6 +278,38 @@ test("--target bun caches only the build's content-hashed files as immutable", a
   }
 }, 60_000)
 
+test("--target bun serves a public file over a page that matches its path, from Bun's own table", async () => {
+  // A root `[slug]` page is one Bun serves from its route table, without the fetch fallback.
+  writeFileSync(join(routesDir, "[slug].tsx"), "export default function Slug() { return null }\n")
+  mkdirSync(join(projectRoot, "public"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *\n")
+  const outDir = join(projectRoot, "dist-bun-shadow")
+  await buildTarget("bun", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-bun-shadow"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+  })
+  const proc = Bun.spawn([process.execPath, join(outDir, "server.js")], {
+    env: { ...process.env, PORT: "0" },
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  try {
+    const base = await listening(proc.stdout)
+    const robots = await fetch(`${base}/robots.txt`)
+    expect(robots.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+    expect(await robots.text()).toBe("User-agent: *\n")
+    const page = await fetch(`${base}/hello`)
+    expect(page.status).toBe(200)
+    expect(await page.text()).toContain("<p>nifra</p>")
+  } finally {
+    proc.kill()
+    await proc.exited
+  }
+}, 60_000)
+
 // The partner-domain shape: every host but the app's own renders only the public surface.
 const HOST_POLICY_MODULE =
   'import { createHostPolicy } from "@nifrajs/web"\n' +
