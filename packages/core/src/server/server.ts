@@ -713,7 +713,8 @@ function resolvedSource(req: Request, url: string): RequestSource {
 const HOST_AUTHORITY = /^(?:\[[0-9a-f:.%]+\]|[\w.-]+)(?::(\d{1,5}))?$/i
 
 // Clients repeat one Host on every request; comparing to the last valid one is ~7x cheaper than the regex.
-let lastValidHost = ""
+// `null` until one passes, so an empty Host is never taken as the cached one.
+let lastValidHost: string | null = null
 
 // A port past 65535, or an IPv6 literal no URL parser takes (`[1:2]`), is refused as Node refuses it:
 // no URL can be built on either, so resolving a dot segment against one threw out of `fetch`.
@@ -733,10 +734,11 @@ const invalidHost = (host: string): boolean => {
  * its dot segments are resolved; so does Bun when HTTP/1.0 leaves the Host out, and its route table
  * matched `/files/..` raw. Such a request is served as `localhost`, as Node and Deno serve it.
  * `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every
- * header.
+ * header. On Bun only a target that needs resolving is checked unless `validateHost` is set.
  */
-const requestTarget = (req: Request): string | boolean => {
-  if (!rawRequestTargets && !unparsedBunTargets) return false
+const requestTarget = (req: Request, validateHost: boolean): string | boolean => {
+  if (!rawRequestTargets && !(unparsedBunTargets && (validateHost || needsResolving(req.url))))
+    return false
   const host = headerOf(req, "host")
   if (host !== null && invalidHost(host)) {
     if (rawRequestTargets) return true
@@ -1270,6 +1272,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly formOrigins: FormOrigins | undefined
   /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
   private readonly trustBodyFraming: boolean
+  private readonly validateHost: boolean
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
   private readonly wsUpgradeTimeoutMs: number
@@ -1414,6 +1417,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.protoPoisoning = options.protoPoisoning ?? "reject"
     this.formOrigins = options.formOrigins
     this.trustBodyFraming = options.trustBodyFraming ?? false
+    this.validateHost = options.validateHost ?? false
     const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
     assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
     this.maxBodyBytes = maxBodyBytes
@@ -3391,7 +3395,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
     // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
-    const target = requestTarget(req)
+    const target = requestTarget(req, this.validateHost)
     if (target === true) return jsonError(400, "invalid_host")
     if (target !== false) {
       const rebuilt = withResolvedTarget(req, target)
@@ -3895,7 +3899,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The adapter answers a pass by handing this same object to `fetch`.
     const received = req
     // The handshake routes the path `fetch` would: Host checked, dot segments resolved (see `fetch`).
-    const target = requestTarget(req)
+    const target = requestTarget(req, this.validateHost)
     if (target === true) {
       return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
     }
@@ -7048,9 +7052,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         peer,
         fallback,
       )
-      // The table matched the target as sent; one `fetch` refuses or rewrites goes through it.
-      tableAt(path, pattern.segments)[method as Method] = (request, server) =>
-        requestTarget(request) ? fallback(request, server) : handler(request, server)
+      // The table matched the target as sent; one `fetch` refuses or rewrites goes through it. Left
+      // off, `validateHost` costs nothing here: the table holds no wildcard, a `..` parameter falls
+      // back, and reading the Host on every request measured about 6% of a bare route.
+      tableAt(path, pattern.segments)[method as Method] = this.validateHost
+        ? (request, server) =>
+            requestTarget(request, true) ? fallback(request, server) : handler(request, server)
+        : handler
       count += 1
       if (paramNames.length > 0) {
         below.add(pattern.segments.length + method)

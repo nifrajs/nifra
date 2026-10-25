@@ -263,10 +263,12 @@ describe("a WebSocket handshake runs the route chain an HTTP GET runs", () => {
     expect(await rawUpgradeStatus(running.port, "/socket", { authorization: GOOD })).toBe(101)
   })
 
-  test("a handshake with a Host no URL can be built on is refused, as HTTP refuses it", async () => {
+  test("with validateHost a handshake with a Host no URL can be built on is refused, as HTTP refuses it", async () => {
     // Bun hands such a request over with its target unparsed; `upgrade()` would read a URL the app
     // cannot parse.
-    const app = base().ws("/socket", { upgrade: (c) => ({ path: new URL(c.req.url).pathname }) })
+    const app = server({ validateHost: true })
+      .use(websocket())
+      .ws("/socket", { upgrade: (c) => ({ path: new URL(c.req.url).pathname }) })
     running = app.listen(0, { hostname: "127.0.0.1" })
     for (const host of INVALID_HOSTS) {
       expect({ host, status: await rawUpgradeStatus(running.port, "/socket", {}, host) }).toEqual({
@@ -277,9 +279,11 @@ describe("a WebSocket handshake runs the route chain an HTTP GET runs", () => {
     expect(await rawUpgradeStatus(running.port, "/socket")).toBe(101)
   })
 
-  test("a handshake with a Host sent twice or one Node and Deno refuse is refused", async () => {
+  test("with validateHost a handshake with a Host sent twice or one Node and Deno refuse is refused", async () => {
     // Bun builds the URL on such a Host while `upgrade()` would read the header as sent.
-    const app = base().ws("/socket", { upgrade: (c) => ({ host: c.req.headers.get("host") }) })
+    const app = server({ validateHost: true })
+      .use(websocket())
+      .ws("/socket", { upgrade: (c) => ({ host: c.req.headers.get("host") }) })
     running = app.listen(0, { hostname: "127.0.0.1" })
     const refusedHosts = [...REPEATED_HOSTS, ...PARSEABLE_INVALID_HOSTS]
     const statuses: unknown[] = []
