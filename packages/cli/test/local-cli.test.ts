@@ -8,7 +8,8 @@ import { LOCAL_CLI_ENV } from "../src/local-cli.ts"
 // through the project's copy, even at the same version, or warn naming both copies of core.
 
 const CLI = resolve(import.meta.dir, "../src/cli.ts")
-const VERSION = "5.6.0"
+// The running CLI's own version, so the project copy below is at the same version on every release.
+const VERSION: string = (await Bun.file(resolve(import.meta.dir, "../package.json")).json()).version
 const grounds: string[] = []
 afterAll(async () => {
   await Promise.all(grounds.map((dir) => rm(dir, { recursive: true, force: true })))
@@ -63,7 +64,7 @@ test("a project command runs through the project's CLI at the same version, args
   const out = await run(dir, ["check", "--json"])
   expect(out.exit).toBe(0)
   expect(JSON.parse(out.stdout)).toEqual({ args: ["check", "--json"], local: "0" })
-  expect(out.stderr).toContain("is not the project's; running its @nifrajs/cli 5.6.0 from")
+  expect(out.stderr).toContain(`is not the project's; running its @nifrajs/cli ${VERSION} from`)
   expect(out.stderr).toContain(join(dir, "node_modules", "@nifrajs", "cli"))
 })
 
