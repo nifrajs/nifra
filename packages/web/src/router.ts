@@ -1259,7 +1259,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
     }
     const fetcher: Fetcher = {
-      snapshot: () => fState,
+      // A fetcher outlives the `fetcher(key)` call that made it, so its read checks the epoch too.
+      snapshot: () => {
+        checkFetchersEpoch()
+        return fState
+      },
       subscribe: (l) => {
         fListeners.add(l)
         return () => {

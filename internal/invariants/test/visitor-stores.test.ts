@@ -9,6 +9,10 @@
  * nothing a later visitor sees. A new store, or an entry whose store is gone, fails until someone
  * decides which it is. A scenario still open runs as failing, so the fix that closes it fails here
  * until its entry moves out of OPEN.
+ *
+ * Scenarios only read back through the paths someone wrote down. The sweep below calls every function
+ * a page can reach on a module's client and the handles it hands out, so a new function, or a module
+ * of visitor data no surface reaches, fails until it is swept or says why not.
  */
 import { expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
@@ -51,7 +55,7 @@ const ENTRIES: readonly (readonly [string, readonly string[]])[] = [
           "router",
           "query",
           "await",
-          "island",
+          ...(adapter === "web-react" ? ["island"] : []),
           "fn",
           "server-components/client",
         ],
@@ -63,19 +67,24 @@ const ENTRIES: readonly (readonly [string, readonly string[]])[] = [
 ]
 
 /** The source file a package subpath resolves to under Bun, or undefined for one that ships none. */
-function sourceOf(pkg: string, subpath: string): string | undefined {
-  const dir = join(ROOT, "packages", pkg)
+function exportOf(pkg: string, subpath: string): unknown {
   const manifest: { exports?: Record<string, unknown> } = JSON.parse(
-    readFileSync(join(dir, "package.json"), "utf8"),
+    readFileSync(join(ROOT, "packages", pkg, "package.json"), "utf8"),
   )
-  const target = manifest.exports?.[subpath === "." ? "." : `./${subpath}`]
+  return manifest.exports?.[subpath === "." ? "." : `./${subpath}`]
+}
+
+function sourceOf(pkg: string, subpath: string): string | undefined {
+  const target = exportOf(pkg, subpath)
   const path =
     typeof target === "string"
       ? target
       : typeof target === "object" && target !== null
         ? Reflect.get(target, "bun")
         : undefined
-  return typeof path === "string" && /\.tsx?$/.test(path) ? join(dir, path) : undefined
+  return typeof path === "string" && /\.tsx?$/.test(path)
+    ? join(ROOT, "packages", pkg, path)
+    : undefined
 }
 
 function resolveImport(from: string, specifier: string): string | undefined {
@@ -273,6 +282,7 @@ type Change = (visit: Visit) => Promise<void>
 const pages = [
   { routeId: "index", pattern: "/" },
   { routeId: "me", pattern: "/me" },
+  { routeId: "warm", pattern: "/warm" },
 ]
 const start = { routeId: "index", params: {}, path: "/", data: null, pending: false }
 const routerFor = (visit: Visit) =>
@@ -281,9 +291,14 @@ const routerFor = (visit: Visit) =>
     initial: start,
     fetchData: async () => ({ who: visit.who }),
   })
-const feed = { initialPageParam: 0, getNextPageParam: () => undefined }
+const feed = {
+  initialPageParam: 0,
+  getNextPageParam: (_page: unknown, pages: readonly unknown[]) =>
+    pages.length < 2 ? pages.length : undefined,
+}
 
-/** Each scenario loads as the first visitor, changes visitor, and returns what the second sees. */
+/** Each scenario loads as the first visitor, changes visitor, and returns what the second sees: through
+ * what the page held from before the change, then through a fresh read. */
 const SCENARIOS = [
   {
     id: "router-prefetch",
@@ -316,9 +331,10 @@ const SCENARIOS = [
     run: async (change: Change) => {
       const visit: Visit = { who: "first" }
       const router = routerFor(visit)
-      await router.fetcher("account").load("/me")
+      const held = router.fetcher("account")
+      await held.load("/me")
       await change(visit)
-      return router.fetcher("account").snapshot().data
+      return [held.snapshot().data, router.fetcher("account").snapshot().data]
     },
   },
   {
@@ -326,11 +342,12 @@ const SCENARIOS = [
     title: "a query cached for the first visitor is not what the second reads",
     run: async (change: Change) => {
       const visit: Visit = { who: "first" }
-      const queries = createQueryClient({ now: () => 0 })
+      const queries = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
       const load = async () => ({ who: visit.who })
-      await queries.query(["me"], load).fetch()
+      const held = queries.query(["me"], load)
+      await held.fetch()
       await change(visit)
-      return queries.query(["me"], load).snapshot().data
+      return [held.snapshot().data, await held.fetch(), queries.query(["me"], load).snapshot().data]
     },
   },
   {
@@ -340,9 +357,14 @@ const SCENARIOS = [
       const visit: Visit = { who: "first" }
       const queries = createQueryClient({ now: () => 0 })
       const load = async () => ({ who: visit.who })
-      await queries.infiniteQuery(["feed"], load, feed).fetch()
+      const held = queries.infiniteQuery(["feed"], load, feed)
+      await held.fetch()
       await change(visit)
-      return queries.infiniteQuery(["feed"], load, feed).snapshot().data
+      return [
+        held.snapshot().data,
+        await held.fetchNextPage(),
+        queries.infiniteQuery(["feed"], load, feed).snapshot().data,
+      ]
     },
   },
   {
@@ -371,7 +393,7 @@ const OPEN: Readonly<Partial<Record<ScenarioId, string>>> = {}
 /** How a page hears that the visitor changed. */
 const CHANGES: readonly (readonly [
   string,
-  (run: (change: Change) => Promise<unknown>) => Promise<unknown>,
+  <T>(run: (change: Change) => Promise<T>) => Promise<T>,
 ])[] = [
   [
     "identityChanged()",
@@ -402,25 +424,279 @@ const CHANGES: readonly (readonly [
   ],
 ]
 
+/** Runs as a page: query clients a server builds per request are never adopted. */
+async function asPage<T>(run: () => Promise<T>): Promise<T> {
+  const held = Object.getOwnPropertyDescriptor(globalThis, "window")
+  Object.defineProperty(globalThis, "window", { value: globalThis, configurable: true })
+  try {
+    return await run()
+  } finally {
+    if (held === undefined) Reflect.deleteProperty(globalThis, "window")
+    else Object.defineProperty(globalThis, "window", held)
+  }
+}
+
 for (const scenario of SCENARIOS)
   for (const [change, through] of CHANGES) {
     const open = OPEN[scenario.id]
     const title = `${scenario.title}, after ${change}${open === undefined ? "" : ` - open: ${open}`}`
-    const check = async () => {
-      // A page: query clients a server builds per request are never adopted.
-      const held = Object.getOwnPropertyDescriptor(globalThis, "window")
-      Object.defineProperty(globalThis, "window", { value: globalThis, configurable: true })
-      try {
+    const check = () =>
+      asPage(async () => {
         const seen = await through(scenario.run)
         expect(JSON.stringify(seen) ?? "").not.toContain("first")
-      } finally {
-        if (held === undefined) Reflect.deleteProperty(globalThis, "window")
-        else Object.defineProperty(globalThis, "window", held)
-      }
-    }
+      })
     if (open === undefined) test(title, check)
     else test.failing(title, check)
   }
+
+// The scenarios read back through paths someone chose, and a review found reads they missed. The
+// sweep reads back through every function a page can reach on what it holds of a store: the store
+// itself and each handle it hands out, kept with a subscriber and kept past its last one. After a
+// visitor change, each call, and what the page holds once it settles, must come out the same whether
+// the earlier loads answered for the first visitor or already for the second.
+
+/** Something a page holds of a store; `kind` names which arguments its functions are called with. */
+interface Held {
+  readonly name: string
+  readonly kind: string
+  readonly value: object
+}
+
+interface Page {
+  readonly held: readonly Held[]
+  /** Arguments for each `kind.function`. */
+  readonly calls: Readonly<Record<string, readonly unknown[]>>
+  /** What the page shows once everything has settled, by part. */
+  readonly settled: () => Readonly<Record<string, unknown>>
+  readonly close?: () => void
+}
+
+interface Surface {
+  readonly name: string
+  /** The modules whose visitor data this surface reaches. */
+  readonly files: readonly string[]
+  /** Loads everything as `visit.who` and returns what the page holds. */
+  readonly open: (visit: Visit) => Promise<Page>
+}
+
+interface Numbered {
+  readonly who: string
+  readonly n: number
+}
+
+// The first visitor's feed reaches further both ways than the second's.
+const paged = {
+  initialPageParam: 0,
+  getNextPageParam: (last: Numbered) => (last.who === "first" && last.n === 0 ? 1 : undefined),
+  getPreviousPageParam: (head: Numbered) => (head.who === "first" ? head.n - 1 : undefined),
+}
+
+const SURFACES: readonly Surface[] = [
+  {
+    name: "a query client",
+    files: ["packages/web/src/query.ts"],
+    open: async (visit) => {
+      const queries = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
+      const me = async () => ({ who: visit.who })
+      const page = async (n: number): Promise<Numbered> => ({ who: visit.who, n })
+      const query = queries.query(["me"], me)
+      const mountedQuery = queries.query(["mine"], me)
+      const feed = queries.infiniteQuery(["feed"], page, paged)
+      const mountedFeed = queries.infiniteQuery(["mine", "feed"], page, paged)
+      mountedQuery.subscribe(() => {})
+      mountedFeed.subscribe(() => {})
+      await Promise.all([query.fetch(), mountedQuery.fetch(), feed.fetch(), mountedFeed.fetch()])
+      await Promise.all([feed.fetchNextPage(), mountedFeed.fetchNextPage()])
+      queries.hydrate({
+        queries: [{ key: ["hydrated"], data: { who: visit.who }, updatedAt: 0 }],
+        infiniteQueries: [
+          {
+            key: ["seeded"],
+            data: { pages: [{ who: visit.who, n: 0 }], pageParams: [0] },
+            updatedAt: 0,
+          },
+        ],
+      })
+      const handles = [query, mountedQuery, feed, mountedFeed]
+      return {
+        held: [
+          { name: "client", kind: "client", value: queries },
+          { name: "query", kind: "query", value: query },
+          { name: "mounted query", kind: "query", value: mountedQuery },
+          { name: "feed", kind: "feed", value: feed },
+          { name: "mounted feed", kind: "feed", value: mountedFeed },
+        ],
+        calls: {
+          "client.query": [["hydrated"], me],
+          "client.infiniteQuery": [["seeded"], page, paged],
+          "client.invalidateQueries": [["me"]],
+          "client.getQueryData": [["hydrated"]],
+          "client.setQueryData": [["me"], (prev: unknown) => ({ prev })],
+          "client.prefetchQuery": [["hydrated"], me],
+          "client.dehydrate": [],
+          "client.hydrate": [{ queries: [] }],
+          "client.clear": [],
+          "query.snapshot": [],
+          "query.subscribe": [() => {}],
+          "query.fetch": [],
+          "query.refetch": [],
+          "feed.snapshot": [],
+          "feed.subscribe": [() => {}],
+          "feed.fetch": [],
+          "feed.refetch": [],
+          "feed.fetchNextPage": [],
+          "feed.fetchPreviousPage": [],
+          "feed.hasNextPage": [],
+          "feed.hasPreviousPage": [],
+        },
+        settled: () => ({
+          handles: handles.map((handle) => handle.snapshot()),
+          cache: queries.dehydrate(),
+        }),
+      }
+    },
+  },
+  {
+    name: "the router",
+    files: ["packages/web/src/router.ts"],
+    open: async (visit) => {
+      const fetching = Object.getOwnPropertyDescriptor(globalThis, "fetch")
+      Object.defineProperty(globalThis, "fetch", {
+        value: async () => Response.json({ who: visit.who }),
+        configurable: true,
+        writable: true,
+      })
+      const router = routerFor(visit)
+      await router.navigate("/me")
+      await router.navigate("/")
+      await router.prefetch("/warm")
+      const fetcher = router.fetcher("account")
+      const mounted = router.fetcher("mine")
+      mounted.subscribe(() => {})
+      await Promise.all([fetcher.load("/me"), mounted.load("/me")])
+      return {
+        held: [
+          { name: "router", kind: "router", value: router },
+          { name: "fetcher", kind: "fetcher", value: fetcher },
+          { name: "mounted fetcher", kind: "fetcher", value: mounted },
+        ],
+        calls: {
+          "router.match": ["/me"],
+          "router.snapshot": [],
+          "router.subscribe": [() => {}],
+          "router.navigate": ["/warm"],
+          "router.submit": ["/me", "x"],
+          "router.hydrate": [],
+          "router.invalidate": [],
+          "router.prefetch": ["/me"],
+          "router.fetcher": ["account"],
+          "router.fetchers": [],
+          "router.subscribeFetchers": [() => {}],
+          "fetcher.snapshot": [],
+          "fetcher.subscribe": [() => {}],
+          "fetcher.load": ["/warm"],
+          "fetcher.submit": ["/me", "x"],
+        },
+        settled: () => ({
+          page: router.snapshot(),
+          fetchers: router.fetchers().map((each) => each.snapshot()),
+        }),
+        close: () => {
+          if (fetching === undefined) Reflect.deleteProperty(globalThis, "fetch")
+          else Object.defineProperty(globalThis, "fetch", fetching)
+        },
+      }
+    },
+  },
+]
+
+const ON_SCREEN =
+  "the page on screen keeps what it loaded for the first visitor: nothing reloads it when the visitor changes"
+
+/** What still answers differently for what the first visitor loaded, each with why: a call's return
+ * as `surface: held.function`, a settled part as `surface: part`. */
+const SWEEP_OPEN: Readonly<Record<string, string>> = {
+  "the router: router.snapshot": ON_SCREEN,
+  "the router: page": ON_SCREEN,
+}
+
+/** A returned value as a page would use it: a handle by what it shows, a function as itself. */
+function shape(value: unknown): unknown {
+  if (typeof value === "function") return "function"
+  const snapshot: unknown =
+    typeof value === "object" && value !== null ? Reflect.get(value, "snapshot") : undefined
+  return typeof snapshot === "function" ? { shows: Reflect.apply(snapshot, value, []) } : value
+}
+
+const flushed = () => new Promise((settle) => setImmediate(settle))
+
+for (const surface of SURFACES)
+  for (const [change, through] of CHANGES)
+    test(`every call on what a page holds of ${surface.name} answers the same after ${change}, whoever the earlier loads answered for`, async () => {
+      const listed = await asPage(() => surface.open({ who: "second" }))
+      listed.close?.()
+      const answer = (holder: string, fn: string, who: Visit["who"]) =>
+        asPage(() =>
+          through(async (changeVisitor) => {
+            const visit: Visit = { who }
+            const page = await surface.open(visit)
+            try {
+              await changeVisitor(visit)
+              const held = page.held.find((each) => each.name === holder)
+              if (held === undefined) throw new Error(`nothing held as ${holder}`)
+              let returned: unknown
+              try {
+                const args = page.calls[`${held.kind}.${fn}`] ?? []
+                returned = shape(await Reflect.apply(Reflect.get(held.value, fn), held.value, args))
+              } catch (error) {
+                returned = { threw: String(error) }
+              }
+              await flushed()
+              const parts = Object.entries(page.settled())
+              return {
+                returned: JSON.stringify(returned) ?? "undefined",
+                settled: parts.map(([part, value]): readonly [string, string] => [
+                  part,
+                  JSON.stringify(value) ?? "undefined",
+                ]),
+              }
+            } finally {
+              page.close?.()
+            }
+          }),
+        )
+      const problems: string[] = []
+      const swept = new Set<string>()
+      const differed = new Set<string>()
+      const compare = (what: string, first: string, second: string) => {
+        if (first === second) return
+        const open = `${surface.name}: ${what}`
+        if (SWEEP_OPEN[open] === undefined)
+          problems.push(`${what}: ${first} - for the second visitor: ${second}`)
+        else differed.add(open)
+      }
+      for (const held of listed.held)
+        for (const [fn, value] of Object.entries(held.value)) {
+          if (typeof value !== "function") continue
+          const call = `${held.kind}.${fn}`
+          swept.add(call)
+          if (listed.calls[call] === undefined) {
+            problems.push(`${call}: not swept; give it arguments`)
+            continue
+          }
+          const first = await answer(held.name, fn, "first")
+          const second = await answer(held.name, fn, "second")
+          compare(`${held.name}.${fn}`, first.returned, second.returned)
+          for (const [index, [part, shown]] of first.settled.entries())
+            compare(part, shown, second.settled[index]?.[1] ?? "")
+        }
+      for (const call of Object.keys(listed.calls))
+        if (!swept.has(call)) problems.push(`${call}: no such function`)
+      for (const open of Object.keys(SWEEP_OPEN))
+        if (open.startsWith(`${surface.name}: `) && !differed.has(open))
+          problems.push(`${open}: answers the same now; take it out of SWEEP_OPEN`)
+      expect(problems).toEqual([])
+    })
 
 /** A test elsewhere that proves an identity change keeps this store's data from the next visitor. */
 interface Elsewhere {
@@ -693,6 +969,15 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
   "packages/web/src/server-components/value.ts": { "seen@componentValue": ONE_CALL },
 }
 
+// The scan passes an entry it cannot read as source, so a misspelled or renamed one would pass too,
+// with every module only it imports unscanned.
+test("every entry the scan starts from is one its package exports", () => {
+  const missing = ENTRIES.flatMap(([pkg, subpaths]) =>
+    subpaths.filter((subpath) => exportOf(pkg, subpath) === undefined).map((s) => `${pkg} ${s}`),
+  )
+  expect(missing).toEqual([])
+})
+
 test("every store a page keeps past one call is enrolled, as visitor data with its proof or as not", () => {
   const unknown: string[] = []
   const stale: string[] = []
@@ -704,6 +989,25 @@ test("every store a page keeps past one call is enrolled, as visitor data with i
     for (const store of Object.keys(entries))
       if (found.get(file)?.includes(store) !== true) stale.push(`${file} ${store}`)
   expect({ unknown, stale }).toEqual({ unknown: [], stale: [] })
+})
+
+/** Modules holding visitor data that no surface sweeps yet, each with what proves it instead. */
+const UNSWEPT: Readonly<Record<string, string>> = {
+  "packages/web/src/keep-alive.ts":
+    "needs a DOM and the History API to keep pages; the tests KEEP_ALIVE_DROPS names drop its pages by hand",
+  "packages/web/src/server-components/client.ts":
+    "needs a component manifest and a DOM to mount into; the test SCOPE_CLEARS names clears it by hand",
+}
+
+test("every module holding visitor data is swept, or says why not", () => {
+  const holding = Object.entries(STORES)
+    .filter(([, entries]) => Object.values(entries).some((entry) => typeof entry === "object"))
+    .map(([file]) => file)
+  const swept = new Set(SURFACES.flatMap((surface) => surface.files))
+  expect({
+    unswept: holding.filter((file) => !swept.has(file) && UNSWEPT[file] === undefined),
+    stale: Object.keys(UNSWEPT).filter((file) => swept.has(file) || !holding.includes(file)),
+  }).toEqual({ unswept: [], stale: [] })
 })
 
 test("every proof a store names exists", () => {

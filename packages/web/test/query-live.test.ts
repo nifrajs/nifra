@@ -329,6 +329,46 @@ test("a fetch in flight when the epoch changes never publishes", async () => {
   })
 })
 
+test("a held handle's read after a new epoch shows the fetch it starts, which the mounted refetch joins", async () => {
+  await withEpoch(async (rotate) => {
+    const c = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
+    const g = gated()
+    const one = c.query(["me"], g.fn)
+    const feed = c.infiniteQuery(["feed"], g.fn, firstPage)
+    const offs = [one.subscribe(() => {}), feed.subscribe(() => {})]
+    void one.fetch()
+    void feed.fetch()
+    g.resolve(0, "first")
+    g.resolve(1, "first")
+    await flush()
+    await rotate("two")
+    void one.fetch()
+    void feed.fetch()
+    await flush()
+    expect([one.snapshot(), feed.snapshot()].map((s) => [s.status, s.isFetching])).toEqual([
+      ["pending", true],
+      ["pending", true],
+    ])
+    expect(g.calls()).toBe(4)
+    g.resolve(2, "second")
+    g.resolve(3, "second")
+    await flush()
+    expect([one.snapshot().data, feed.snapshot().data?.pages]).toEqual(["second", ["second"]])
+    for (const off of offs) off()
+  })
+})
+
+test("a handle kept past its last subscriber reads nothing of the previous visitor", async () => {
+  const c = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
+  let who = "first"
+  const held = c.query(["me"], async () => who)
+  await held.fetch()
+  c.clear()
+  who = "second"
+  expect(held.snapshot().status).toBe("pending")
+  expect(await held.fetch()).toBe("second")
+})
+
 test("the registry lets go of query clients the page dropped", async () => {
   for (let i = 0; i < 40; i++) createQueryClient({ now: () => 0 }).setQueryData(["k"], i)
   // A WeakRef holds its target until the job that made it ends.
