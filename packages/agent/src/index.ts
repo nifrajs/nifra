@@ -10,6 +10,7 @@
  */
 
 import { canAttempt, type RequestBudget } from "@nifrajs/core/budget"
+import { canonicalJson } from "@nifrajs/core/canonical-json"
 import type { ExecutionPolicyAdapter } from "@nifrajs/core/execution-policy"
 import type { EffectCost } from "@nifrajs/core/ledger"
 import { type StandardIssue, type StandardSchemaV1, validateStandard } from "@nifrajs/core/schema"
@@ -23,6 +24,7 @@ import {
   type ToolError,
   type ToolIdempotencyStore,
 } from "@nifrajs/core/tool-contract"
+import { asRecord } from "./internal/record.ts"
 
 export {
   approximateContextTokens,
@@ -483,6 +485,42 @@ export interface AgentTurnInput {
   readonly resume?: {
     readonly continuation: AgentPendingContinuation
     readonly approval?: ToolApproval
+  }
+}
+
+const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
+
+/**
+ * The `resume` of an {@link AgentTurnInput} read from an untrusted wire value, or `undefined` when it
+ * is not one. Every agent transport parses a resume with this, so a continuation is accepted on the
+ * same terms however it arrives.
+ */
+export function parseAgentResume(raw: unknown): AgentTurnInput["resume"] | undefined {
+  const record = asRecord(raw)
+  if (record === undefined) return undefined
+  const continuation = asRecord(record.continuation)
+  if (continuation === undefined) return undefined
+  const kind = continuation.kind
+  if (typeof kind !== "string" || !PENDING_KINDS.includes(kind as AgentPendingKind))
+    return undefined
+  if (typeof continuation.effectId !== "string") return undefined
+  if (continuation.tool !== undefined && typeof continuation.tool !== "string") return undefined
+  const approval = asRecord(record.approval)
+  return {
+    continuation: {
+      kind: kind as AgentPendingKind,
+      ...(continuation.tool === undefined ? {} : { tool: continuation.tool as string }),
+      ...(Object.hasOwn(continuation, "input") ? { input: continuation.input } : {}),
+      effectId: continuation.effectId,
+    },
+    ...(approval !== undefined && typeof approval.granted === "boolean"
+      ? {
+          approval: {
+            granted: approval.granted,
+            ...(typeof approval.reason === "string" ? { reason: approval.reason } : {}),
+          },
+        }
+      : {}),
   }
 }
 
@@ -1155,17 +1193,6 @@ async function inputDigestOf(input: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(canonicalJson(input))
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value)
-      .filter(([, field]) => field !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    return `{${entries.map(([key, field]) => `${JSON.stringify(key)}:${canonicalJson(field)}`).join(",")}}`
-  }
-  return JSON.stringify(value) ?? "null"
 }
 
 function freezeState(state: AgentTurnState): AgentTurnState {

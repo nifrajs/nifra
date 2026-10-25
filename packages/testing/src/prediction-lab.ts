@@ -29,6 +29,7 @@ import {
   type PredictionStoreSnapshot,
   toWebMcpTool,
 } from "@nifrajs/webmcp"
+import { isRecord } from "./internal/record.ts"
 
 export type PredictionLabTarget = "prediction" | "projection"
 
@@ -108,10 +109,6 @@ const mcpContext: McpToolContext = {
   signal: new AbortController().signal,
   requestId: null,
   reportProgress: () => {},
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 /** Strict cart-add input: unknown fields rejected, so hostile extras are provably invalid. */

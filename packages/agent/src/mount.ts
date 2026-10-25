@@ -45,21 +45,20 @@ import {
 } from "./events.ts"
 import {
   type AgentDefinition,
-  type AgentPendingKind,
   type AgentPorts,
   type AgentRunResult,
-  type AgentTurnInput,
   combineAgentTelemetry,
   createAgentState,
+  parseAgentResume,
   resumeAgent,
   runAgent,
 } from "./index.ts"
+import { asRecord } from "./internal/record.ts"
 
 const DEFAULT_PATH = "/agent"
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
-const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
 const LAST_EVENT_ID_PATTERN = /^\d{1,15}$/
 const TURN_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
 
@@ -157,7 +156,7 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
     return jsonResponse(400, { error: "invalid_turn_id" })
   const turnId = turnIdRaw ?? crypto.randomUUID()
 
-  const resume = parseResume(body.resume)
+  const resume = parseAgentResume(body.resume)
   let log = options.evidenceLog
   if (log !== undefined && options.evidenceOwner !== undefined) {
     let owner: string
@@ -422,40 +421,6 @@ function projectResult<Output>(
     return { ...base, reason: result.reason, pending: result.pending }
   }
   return base
-}
-
-function parseResume(raw: unknown): AgentTurnInput["resume"] | undefined {
-  const record = asRecord(raw)
-  if (record === undefined) return undefined
-  const continuation = asRecord(record.continuation)
-  if (continuation === undefined) return undefined
-  const kind = continuation.kind
-  if (typeof kind !== "string" || !PENDING_KINDS.includes(kind as AgentPendingKind))
-    return undefined
-  if (typeof continuation.effectId !== "string") return undefined
-  if (continuation.tool !== undefined && typeof continuation.tool !== "string") return undefined
-  const approval = asRecord(record.approval)
-  return {
-    continuation: {
-      kind: kind as AgentPendingKind,
-      ...(continuation.tool === undefined ? {} : { tool: continuation.tool as string }),
-      ...(Object.hasOwn(continuation, "input") ? { input: continuation.input } : {}),
-      effectId: continuation.effectId,
-    },
-    ...(approval !== undefined && typeof approval.granted === "boolean"
-      ? {
-          approval: {
-            granted: approval.granted,
-            ...(typeof approval.reason === "string" ? { reason: approval.reason } : {}),
-          },
-        }
-      : {}),
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
-  return value as Record<string, unknown>
 }
 
 function jsonResponse(status: number, body: unknown): Response {

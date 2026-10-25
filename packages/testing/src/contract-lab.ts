@@ -6,6 +6,8 @@
  * and this module compares the wire contract without importing any runtime-specific implementation.
  */
 
+import { canonicalJson } from "@nifrajs/core/canonical-json"
+
 export interface ContractLabHandler {
   fetch(request: Request): Response | Promise<Response>
 }
@@ -86,18 +88,6 @@ export const contractLabWitnesses: readonly ContractLabWitness[] = Object.freeze
   },
 ])
 
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
-  if (value !== null && typeof value === "object") {
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
-}
-
 function witnessRequest(origin: string, witness: ContractLabWitness): Request {
   return new Request(`${origin}${witness.request.path}`, {
     method: witness.request.method,
@@ -122,12 +112,12 @@ async function assertWitnessResponse(
     response.status !== witness.expected.status ||
     contentType !== expectedContentType ||
     !headersMatch ||
-    canonical(actual) !== canonical(witness.expected.body)
+    canonicalJson(actual) !== canonicalJson(witness.expected.body)
   ) {
     throw new Error(
       `contract witness ${witness.id} failed: expected ${witness.expected.status} ` +
-        `${expectedContentType} ${canonical(witness.expected.body)}, got ${response.status} ` +
-        `${contentType || "(missing content type)"} ${canonical(actual)}`,
+        `${expectedContentType} ${canonicalJson(witness.expected.body)}, got ${response.status} ` +
+        `${contentType || "(missing content type)"} ${canonicalJson(actual)}`,
     )
   }
 }

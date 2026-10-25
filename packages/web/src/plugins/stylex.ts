@@ -6,6 +6,7 @@
  * existing virtual stylesheet seam, and run the same transform without CSS for SSR.
  */
 import type { BunPlugin } from "bun"
+import { escapeRegExp } from "../internal/escape-regexp.ts"
 import {
   createStylesheetEmitter,
   devServerCompile,
@@ -149,8 +150,6 @@ const loadSyntaxPlugins = async (
   ])
   return { flow, jsx, typescript }
 }
-
-const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 const containsStylexImport = (source: string, importSources: readonly string[]): boolean =>
   importSources.some((specifier) => {

@@ -15,6 +15,8 @@ import { isSensitiveFieldName } from "@nifrajs/web/zones"
 import type * as TSApi from "typescript"
 import { codePositionMask } from "./check-scan.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { lineAt } from "./internal/line-at.ts"
+import { toPosix } from "./internal/posix-path.ts"
 import {
   loadProjectTypeScript,
   type TypeScriptApi,
@@ -506,8 +508,6 @@ interface ProbeResult {
   readonly warnings: readonly string[]
 }
 
-const posix = (path: string): string => path.replaceAll("\\", "/")
-
 const PROBE_HELPERS = [
   "type __NifraReturned<M, F extends string> = M extends { readonly [K in F]: (...args: any) => infer R } ? Awaited<R> : never",
   'type __NifraDeclared<M, N extends string> = M extends { readonly [K in N]: infer S } ? S extends { readonly "~standard": { readonly types?: infer T } } ? NonNullable<T> extends { readonly output: infer O } ? O : never : never : never',
@@ -520,7 +520,7 @@ function probeSource(routes: readonly ProbeRoute[]): {
   const lines = [...PROBE_HELPERS]
   const names = new Map<string, string>()
   routes.forEach((route, i) => {
-    const rel = posix(route.file)
+    const rel = toPosix(route.file)
     lines.push(
       `import type * as __nifra_m${i} from ${JSON.stringify(rel.startsWith(".") ? rel : `./${rel}`)}`,
     )
@@ -701,7 +701,7 @@ async function readShapes(
   let close: (() => Promise<void>) | undefined
   try {
     await writeFile(probePath, probe, "utf8")
-    const include = [...routes.map((route) => posix(route.file)), basename(probePath)]
+    const include = [...routes.map((route) => toPosix(route.file)), basename(probePath)]
     await writeFile(
       probeConfigPath,
       JSON.stringify(
@@ -810,7 +810,7 @@ function overlaidHost(
   contents: ReadonlyMap<string, string>,
 ): TSApi.CompilerHost {
   const host = ts.createCompilerHost(options, true)
-  const key = (file: string): string => posix(ts.sys.resolvePath(file))
+  const key = (file: string): string => toPosix(ts.sys.resolvePath(file))
   const overlay = new Map([...contents].map(([file, text]) => [key(file), text]))
   const folders = new Set<string>()
   for (const file of overlay.keys())
@@ -893,7 +893,6 @@ interface Target {
   readonly declaration: SchemaDeclaration | null | undefined
 }
 
-const lineAt = (text: string, index: number): number => text.slice(0, index).split("\n").length
 const lineStart = (text: string, index: number): number => text.lastIndexOf("\n", index - 1) + 1
 
 /** The start of the comment block directly above the line at `start`, or `start`. */
@@ -1183,7 +1182,7 @@ function routeBackends(dir: string): string[] {
   const routes = join(dir, "routes")
   if (!existsSync(routes)) return []
   return readdirSync(routes, { recursive: true, encoding: "utf8" })
-    .map((file) => posix(join("routes", file)))
+    .map((file) => toPosix(join("routes", file)))
     .filter((file) => ROUTE_BACKEND_TS.test(file) && !file.split("/").includes("node_modules"))
     .sort(codeUnitOrder)
 }

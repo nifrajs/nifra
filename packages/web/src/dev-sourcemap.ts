@@ -9,6 +9,7 @@
 
 import { isAbsolute, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { isRecord } from "./internal/record.ts"
 import {
   decodeMappings,
   inlineSourceMap,
@@ -105,10 +106,6 @@ function lookup(
 // ---------------------------------------------------------------------------------------------------
 // Fetching
 // ---------------------------------------------------------------------------------------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
 
 const SOURCE_MAPPING_URL = /[#@]\s*sourceMappingURL=([^\s'"]+)\s*$/
 

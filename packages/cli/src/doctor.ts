@@ -40,6 +40,7 @@ import {
 import { collectStaleMcpPins, type StaleMcpPin } from "./init-agents.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
+import { isRecord } from "./internal/record.ts"
 import {
   bunLockDir,
   type StaleLinkLock,
@@ -317,9 +318,6 @@ const depNames = (pkg: Record<string, unknown>, field: string): string[] => {
     ? Object.keys(deps as Record<string, unknown>)
     : []
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const MAX_WORKSPACE_IMPORTERS = 2_048
 function workspacePatterns(pkg: Record<string, unknown>): string[] {

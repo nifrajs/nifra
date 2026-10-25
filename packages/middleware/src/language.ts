@@ -1,5 +1,10 @@
 import { withResponseObserver } from "@nifrajs/core/response-observer"
-import { type ContextPlugin, defineContextPlugin, type Middleware } from "@nifrajs/core/server"
+import {
+  type ContextPlugin,
+  defineContextPlugin,
+  type Middleware,
+  varyOn,
+} from "@nifrajs/core/server"
 
 export interface LanguageMatch {
   readonly language: string
@@ -79,15 +84,6 @@ export function pickLanguage<const L extends readonly string[]>(
     }
   }
   return { language: defaultLanguage, matched: "default" }
-}
-
-/** `value` naming each of `names` once; `Vary: *` already covers every request header. */
-function varyOn(value: string | null, names: readonly string[]): string {
-  if (value === null || value.trim() === "") return names.join(", ")
-  const fields = value.split(",").map((field) => field.trim().toLowerCase())
-  if (fields.includes("*")) return value
-  const missing = names.filter((name) => !fields.includes(name.toLowerCase()))
-  return missing.length === 0 ? value : `${value}, ${missing.join(", ")}`
 }
 
 /**

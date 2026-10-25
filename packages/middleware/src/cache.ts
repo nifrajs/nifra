@@ -1,4 +1,5 @@
 import { isAuthenticatedRequest, type Middleware } from "@nifrajs/core/server"
+import { type ChunkReader, concatBytes, replayFrom } from "./_chunks.ts"
 import { type MaybePromise, withHeaders } from "./_utils.ts"
 
 export interface CachedResponse {
@@ -166,57 +167,6 @@ function defaultKey(req: Request, vary: readonly string[]): string {
 type ReadBytes =
   | { readonly bytes: Uint8Array; readonly response: Response }
   | { readonly response: Response }
-
-interface ChunkReader {
-  read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array }>
-  cancel(reason?: unknown): Promise<void>
-  releaseLock(): void
-}
-
-const concatBytes = (chunks: readonly Uint8Array[], total: number): Uint8Array => {
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
-}
-
-function replayFrom(res: Response, chunks: readonly Uint8Array[], reader: ChunkReader): Response {
-  let released = false
-  const release = (): void => {
-    if (!released) {
-      released = true
-      reader.releaseLock()
-    }
-  }
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(chunk)
-    },
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read()
-        if (done || value === undefined) {
-          release()
-          controller.close()
-        } else {
-          controller.enqueue(value)
-        }
-      } catch (error) {
-        release()
-        controller.error(error)
-      }
-    },
-    cancel: (reason) => reader.cancel(reason).finally(release),
-  })
-  return new Response(stream, {
-    status: res.status,
-    statusText: res.statusText,
-    headers: res.headers,
-  })
-}
 
 async function readBytesCapped(res: Response, maxBytes: number): Promise<ReadBytes> {
   const body = res.body

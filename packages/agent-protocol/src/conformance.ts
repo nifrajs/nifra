@@ -4,6 +4,7 @@
  * host ships it. It uses no test runner; assert on the returned report in whichever one you use.
  */
 import { type AgentBackend, type AgentSessionSnapshot, agentEventProblem } from "./index.ts"
+import { isRecord } from "./internal/record.ts"
 
 export interface AgentBackendConformanceOptions {
   /** A fresh backend for each scenario. The kit closes every session it opens. */
@@ -44,10 +45,6 @@ const TERMINAL: ReadonlySet<unknown> = new Set([
   "session.stopped",
 ])
 const DEFAULT_TIMEOUT_MS = 10_000
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-}
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined

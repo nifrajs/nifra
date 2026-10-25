@@ -9,6 +9,8 @@
  * these contracts. Raw payloads travel only through an {@link ArtifactPort} the caller owns.
  */
 
+import { isRecord } from "./internal/record.ts"
+
 /** Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`. */
 export const RUN_PLAN_VERSION = 1 as const
 
@@ -183,10 +185,6 @@ export class RunContractError extends Error {
     super(`orchestration contract: ${reason}`)
     this.name = "RunContractError"
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function assertNoForbiddenKeys(record: Record<string, unknown>, where: string): void {

@@ -6,6 +6,9 @@
  * framework, model provider, or UI code into an application.
  */
 
+import { isRecord } from "./internal/record.ts"
+
+/** The session protocol version every snapshot and event carries; one with another version is refused. */
 export const AGENT_PROTOCOL_VERSION = 1 as const
 
 export type AgentSessionStatus = "idle" | "running" | "waiting" | "completed" | "failed" | "stopped"
@@ -668,10 +671,6 @@ function isLowSurrogate(code: number): boolean {
   return code >= 0xdc00 && code <= 0xdfff
 }
 
-function agentRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-}
-
 function agentToken(value: unknown): value is string {
   return typeof value === "string" && AGENT_TOKEN_RE.test(value)
 }
@@ -704,7 +703,7 @@ function boundedAgentValue(
       value.length <= AGENT_MAX_ARRAY &&
       value.every((item) => boundedAgentValue(item, depth + 1, state))
     )
-  if (!agentRecord(value) || Object.keys(value).length > AGENT_MAX_OBJECT_KEYS) return false
+  if (!isRecord(value) || Object.keys(value).length > AGENT_MAX_OBJECT_KEYS) return false
   return Object.entries(value).every(
     ([key, child]) => agentText(key, 128, false) && boundedAgentValue(child, depth + 1, state),
   )
@@ -765,7 +764,7 @@ function planEntriesProblem(value: unknown, field: string): AgentProblem {
     return `${field} must be an array of at most ${AGENT_MAX_ARRAY} entries`
   for (const [index, entry] of value.entries()) {
     const at = `${field}[${index}]`
-    if (!agentRecord(entry)) return `${at} must be an object`
+    if (!isRecord(entry)) return `${at} must be an object`
     const problem =
       textProblem(entry.content, `${at}.content`, AGENT_MAX_PLAN_ENTRY) ??
       (typeof entry.status === "string" && AGENT_PLAN_STATUSES.has(entry.status)
@@ -781,7 +780,7 @@ function planEntriesProblem(value: unknown, field: string): AgentProblem {
 }
 
 function errorProblem(value: unknown, field: string): AgentProblem {
-  if (!agentRecord(value)) return `${field} must be an object`
+  if (!isRecord(value)) return `${field} must be an object`
   return (
     tokenProblem(value.code, `${field}.code`) ??
     textProblem(value.message, `${field}.message`, AGENT_MAX_TEXT, false) ??
@@ -790,7 +789,7 @@ function errorProblem(value: unknown, field: string): AgentProblem {
 }
 
 function snapshotProblem(value: unknown, sessionId: unknown, field: string): AgentProblem {
-  if (!agentRecord(value)) return `${field} must be an object`
+  if (!isRecord(value)) return `${field} must be an object`
   if (value.version !== AGENT_PROTOCOL_VERSION)
     return `${field}.version must be ${AGENT_PROTOCOL_VERSION}`
   if (value.id !== sessionId) return `${field}.id must be the event's sessionId`
@@ -810,7 +809,7 @@ function snapshotProblem(value: unknown, sessionId: unknown, field: string): Age
 }
 
 function repairTaskProblem(value: unknown, field: string): AgentProblem {
-  if (!agentRecord(value)) return `${field} must be an object`
+  if (!isRecord(value)) return `${field} must be an object`
   return (
     tokenProblem(value.id, `${field}.id`) ??
     (value.verification === "check" ||
@@ -848,7 +847,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
  * content, so the text is safe to log or show; `undefined` when it is valid.
  */
 export function agentEventProblem(value: unknown): string | undefined {
-  if (!agentRecord(value)) return "event must be an object"
+  if (!isRecord(value)) return "event must be an object"
   if (value.version !== AGENT_PROTOCOL_VERSION) return `version must be ${AGENT_PROTOCOL_VERSION}`
   const base =
     tokenProblem(value.sessionId, "sessionId") ??

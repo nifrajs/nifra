@@ -8,6 +8,7 @@ import {
   type Middleware,
   replacedRequestOf,
 } from "@nifrajs/core/server"
+import { concatBytes } from "./_chunks.ts"
 
 /**
  * Idempotency keys for unsafe requests - a client retrying a `POST` (dropped connection, impatient
@@ -324,16 +325,6 @@ interface ByteReader {
   releaseLock(): void
 }
 
-const concat = (chunks: readonly Uint8Array[], total: number): Uint8Array => {
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
-}
-
 function parseLength(value: string | null): number | undefined {
   if (value === null) return undefined
   if (!/^(?:0|[1-9]\d*)$/.test(value)) return undefined
@@ -409,7 +400,7 @@ async function captureBody(
       const { done, value } = await reader.read()
       if (done) {
         reader.releaseLock()
-        const bytes = concat(chunks, total)
+        const bytes = concatBytes(chunks, total)
         return { bytes, response: responseWithBody(res, bodyFor(bytes)) }
       }
       chunks.push(value)

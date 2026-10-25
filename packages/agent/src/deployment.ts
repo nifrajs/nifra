@@ -6,6 +6,8 @@
  * only a capability report declaring real OS isolation can admit a hostile-code plan.
  */
 
+import { isRecord } from "./internal/record.ts"
+
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const MAX_LIMIT = 10_000_000_000
 
@@ -161,10 +163,6 @@ export class DeploymentError extends Error {
     super(`deployment ${code}`)
     this.name = "DeploymentError"
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function boundedToken(

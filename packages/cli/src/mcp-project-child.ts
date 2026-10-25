@@ -9,6 +9,7 @@
  * prefixed with the request's token, so anything project code prints cannot be read as an answer.
  */
 
+import { isRecord } from "./internal/record.ts"
 import { detectMonorepo } from "./load.ts"
 import { projectResources } from "./mcp-context.ts"
 import { createCachedAppLoader, projectTools } from "./mcp-exec.ts"
@@ -109,9 +110,6 @@ export async function answerProjectRequest(
   }
 }
 
-const isArgs = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-
 function parseRequest(text: string): { token: string; request: ProjectChildRequest } | undefined {
   let value: unknown
   try {
@@ -119,12 +117,12 @@ function parseRequest(text: string): { token: string; request: ProjectChildReque
   } catch {
     return undefined
   }
-  if (!isArgs(value)) return undefined
+  if (!isRecord(value)) return undefined
   const { token, op, name, uri, args } = value
   if (typeof token !== "string" || !/^[0-9a-f-]{16,64}$/.test(token)) return undefined
   if (op === "monorepo" || op === "surface") return { token, request: { op } }
   if (op === "resource" && typeof uri === "string") return { token, request: { op, uri } }
-  if ((op === "tool" || op === "prompt") && typeof name === "string" && isArgs(args)) {
+  if ((op === "tool" || op === "prompt") && typeof name === "string" && isRecord(args)) {
     return { token, request: { op, name, args } }
   }
   return undefined

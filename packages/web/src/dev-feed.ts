@@ -38,6 +38,7 @@ import {
   type DiagnosticFrame,
   isConsoleDiagnostic,
 } from "./diagnostic.ts"
+import { isRecord } from "./internal/record.ts"
 import { createRedactor } from "./internal/secret-scan.ts"
 import { originalPosition, ssrSourceMaps } from "./internal/source-map.ts"
 
@@ -768,9 +769,6 @@ function createPersistence(root: string): Persistence {
     },
   }
 }
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 function isPersistedError(value: unknown): value is DevErrorEntry {
   return (

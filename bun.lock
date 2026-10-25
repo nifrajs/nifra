@@ -352,6 +352,7 @@
         "@nifrajs/agent": "workspace:*",
         "@nifrajs/agent-protocol": "workspace:*",
         "@nifrajs/agent-review": "workspace:*",
+        "@nifrajs/core": "workspace:*",
         "@nifrajs/jobs": "workspace:*",
         "@nifrajs/pi": "workspace:*",
       },
