@@ -168,7 +168,7 @@ contract-first registry.
 prevent extra fields from reaching the wire. That covers a `status(...)` or `c.json(...)` reply a
 handler returns or throws, a hook returns, or `onError` answers with. `warn` preserves the original
 payload during migration. The contract judges what JSON writes: a `toJSON` hook's output, and a
-`Date` as its ISO string, so a timestamp column declares `t.string({ format: "date-time" })`.
+`Date` as its ISO string, so a timestamp column declares `t.date()` and may hold the `Date`.
 Raw `Response`, streams, redirects, and `mountFetch` remain explicit transport escape hatches and
 must be governed by assurance/static review.
 

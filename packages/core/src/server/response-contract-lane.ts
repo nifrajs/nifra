@@ -38,10 +38,10 @@
  * object. So a value's hooks are applied first, as the serializer would, and that result is validated
  * and sent: a class whose `toJSON` adds a private field fails a closed schema instead of passing on its
  * public ones. `strip` keeps the declared fields of what the hook writes, so a hook that writes `id`
- * from private state keeps it. A `Date` is judged as the ISO string its own hook writes, so a
- * `t.string({ format: "date-time" })` field holding a database timestamp passes; only where the schema
- * declares `t.date()` does it stay a `Date`. A schema without `jsonSchema` (zod, valibot) cannot say
- * where that is, so it is shown every `Date` as one.
+ * from private state keeps it. A `Date` is judged as the ISO string its own hook writes too, so a
+ * `t.string({ format: "date-time" })` or `t.date()` field holding a database timestamp passes: a
+ * schema that carries its JSON Schema is checked as JSON carries it. A schema without one (zod,
+ * valibot) cannot say which place expects a string, so it is shown every `Date` as one.
  *
  * ## What enforcement costs
  *
@@ -151,12 +151,12 @@ type Projector = (value: unknown) => unknown
 
 const projectors = new WeakMap<object, Projector | null>()
 
-/** The projector for a schema's JSON Schema, compiled once per schema. `dates` is
- * {@link writesDates} of `node`. */
-function projectorOf(node: object, dates: boolean): Projector | undefined {
+/** The projector for a schema's JSON Schema, compiled once per schema. It writes each `Date` as it
+ * descends, as every schema that carries its JSON Schema is judged. */
+function projectorOf(node: object): Projector | undefined {
   let found = projectors.get(node)
   if (found === undefined) {
-    found = compileProjector(node, dates) ?? null
+    found = compileProjector(node) ?? null
     projectors.set(node, found)
   }
   return found ?? undefined
@@ -173,21 +173,21 @@ const objectField = (node: object, key: string): object | undefined => {
   return typeof value === "object" && value !== null ? value : undefined
 }
 
-function compileProjector(node: unknown, dates: boolean): Projector | undefined {
+function compileProjector(node: unknown): Projector | undefined {
   if (typeof node !== "object" || node === null) return undefined
   const schema: object = node
   const type: unknown = Reflect.get(schema, "type")
   const branches: unknown = Reflect.get(schema, "anyOf") ?? Reflect.get(schema, "oneOf")
-  if (Array.isArray(branches)) return compileUnion(branches, dates)
+  if (Array.isArray(branches)) return compileUnion(branches)
   if (type === "array") {
     const items: unknown = Reflect.get(schema, "items")
-    const item = Array.isArray(items) ? undefined : compileProjector(items, dates)
+    const item = Array.isArray(items) ? undefined : compileProjector(items)
     return item === undefined
       ? undefined
       : (value) => {
           if (!Array.isArray(value)) return value
           const out: unknown[] = []
-          for (let i = 0; i < value.length; i++) out.push(item(writtenAt(value[i], i, dates)))
+          for (let i = 0; i < value.length; i++) out.push(item(writtenAt(value[i], i, true)))
           return out
         }
   }
@@ -196,7 +196,7 @@ function compileProjector(node: unknown, dates: boolean): Projector | undefined 
   const keys = Object.keys(properties)
   const nested = new Map<string, Projector>()
   for (const key of keys) {
-    const projector = compileProjector(Reflect.get(properties, key), dates)
+    const projector = compileProjector(Reflect.get(properties, key))
     if (projector !== undefined) nested.set(key, projector)
   }
   const patterns: Array<readonly [RegExp, Projector | undefined]> = []
@@ -207,7 +207,7 @@ function compileProjector(node: unknown, dates: boolean): Projector | undefined 
     } catch {
       return undefined // a pattern this engine can't read: the validator judges the value whole
     }
-    patterns.push([pattern, compileProjector(child, dates)])
+    patterns.push([pattern, compileProjector(child)])
   }
   const closed = Reflect.get(schema, "additionalProperties") === false
   if (!closed && nested.size === 0 && patterns.every(([, projector]) => projector === undefined))
@@ -222,10 +222,10 @@ function compileProjector(node: unknown, dates: boolean): Projector | undefined 
       define(
         out,
         key,
-        projector === undefined ? value[key] : projector(writtenAt(value[key], key, dates)),
+        projector === undefined ? value[key] : projector(writtenAt(value[key], key, true)),
       )
     }
-    if (patterns.length > 0) projectPatternKeys(value, out, declared, patterns, closed, dates)
+    if (patterns.length > 0) projectPatternKeys(value, out, declared, patterns, closed)
     return out
   }
 }
@@ -240,16 +240,16 @@ const hasField = (value: Record<string, unknown>, key: string): boolean =>
  * routed apart; two object branches are told apart only by a discriminator (see
  * {@link compileDiscriminated}). A branch that could hold anything (`{}`, `$ref`, `allOf`) stops it.
  */
-function compileUnion(branches: readonly unknown[], dates: boolean): Projector | undefined {
+function compileUnion(branches: readonly unknown[]): Projector | undefined {
   const objects: object[] = []
   const arrays: object[] = []
   if (!sortBranches(branches, objects, arrays)) return undefined
-  const forArray = arrays.length === 1 ? compileProjector(arrays[0], dates) : undefined
+  const forArray = arrays.length === 1 ? compileProjector(arrays[0]) : undefined
   const forObject =
     objects.length === 1
-      ? compileProjector(objects[0], dates)
+      ? compileProjector(objects[0])
       : objects.length > 1
-        ? compileDiscriminated(objects, dates)
+        ? compileDiscriminated(objects)
         : undefined
   if (forArray === undefined && forObject === undefined) return undefined
   return (value) => {
@@ -283,8 +283,8 @@ function sortBranches(branches: readonly unknown[], objects: object[], arrays: o
  * branch needed. The first such key in the first branch's declared order is used. A value whose tag
  * names no branch is left to the validator, which rejects it.
  */
-function compileDiscriminated(branches: readonly object[], dates: boolean): Projector | undefined {
-  const projectors = branches.map((branch) => compileProjector(branch, dates))
+function compileDiscriminated(branches: readonly object[]): Projector | undefined {
+  const projectors = branches.map((branch) => compileProjector(branch))
   const first = branches[0]
   if (first === undefined || projectors.every((projector) => projector === undefined))
     return undefined
@@ -356,7 +356,6 @@ function projectPatternKeys(
   declared: ReadonlySet<string>,
   patterns: ReadonlyArray<readonly [RegExp, Projector | undefined]>,
   closed: boolean,
-  dates: boolean,
 ): void {
   for (const key of Object.keys(value)) {
     if (declared.has(key)) continue
@@ -369,7 +368,7 @@ function projectPatternKeys(
       }
     if (matches === 0) continue
     if (matches === 1 && projector !== undefined)
-      define(out, key, projector(writtenAt(value[key], key, dates)))
+      define(out, key, projector(writtenAt(value[key], key, true)))
     else if (closed) define(out, key, value[key])
   }
 }
@@ -382,8 +381,6 @@ function define(out: Record<string, unknown>, key: string, value: unknown): void
 }
 
 const DATE_TO_JSON = Date.prototype.toJSON
-/** The JSON Schema key `t.date()` sets. */
-const DATE_KEY = "x-nifra-date"
 
 // Deeper than this, the copying walk takes over with its own cycle check.
 const MAX_HOOK_SCAN_DEPTH = 64
@@ -492,217 +489,6 @@ function wireChildren(value: unknown, path: object[], dates: boolean): unknown {
     index++
   }
   path.pop()
-  return out ?? value
-}
-
-const dateSchemas = new WeakMap<object, boolean>()
-
-/** Whether a JSON Schema node has room for a `Date` as such: it or a node in it is a `t.date()`, or
- * a `$ref` this cannot follow. */
-function holdsDate(node: object): boolean {
-  let found = dateSchemas.get(node)
-  if (found === undefined) {
-    found = declaresDate(node, 0)
-    dateSchemas.set(node, found)
-  }
-  return found
-}
-
-function declaresDate(node: unknown, depth: number): boolean {
-  if (typeof node !== "object" || node === null) return false
-  if (depth > MAX_HOOK_SCAN_DEPTH || keepsDate(node)) return true
-  for (const child of Object.values(node)) if (declaresDate(child, depth + 1)) return true
-  return false
-}
-
-const isRef = (node: object): boolean => Object.hasOwn(node, "$ref")
-const keepsDate = (node: object): boolean => Reflect.get(node, DATE_KEY) === true || isRef(node)
-
-/** Whether every `Date` under `node` is judged as what its hook writes: it holds no `t.date()`. */
-const writesDates = (node: object): boolean => !holdsDate(node)
-
-/** Push `node` and its `anyOf` / `oneOf` / `allOf` branches, nested ones flattened, onto `out`. */
-function branchesOf(node: unknown, out: object[]): object[] {
-  if (typeof node !== "object" || node === null) return out
-  out.push(node)
-  for (const combinator of ["anyOf", "oneOf", "allOf"]) {
-    const branches: unknown = Reflect.get(node, combinator)
-    if (Array.isArray(branches)) for (const branch of branches) branchesOf(branch, out)
-  }
-  return out
-}
-
-/** The nodes that describe field `key` of an object described by `nodes`. */
-function fieldNodes(nodes: readonly object[], key: string): object[] {
-  const out: object[] = []
-  for (const node of nodes) {
-    const properties = objectField(node, "properties")
-    let matched = properties !== undefined && Object.hasOwn(properties, key)
-    if (matched && properties !== undefined) branchesOf(Reflect.get(properties, key), out)
-    for (const [source, child] of Object.entries(objectField(node, "patternProperties") ?? {}))
-      if (patternMatches(source, key)) {
-        branchesOf(child, out)
-        matched = true
-      }
-    if (!matched) branchesOf(Reflect.get(node, "additionalProperties"), out)
-  }
-  return out
-}
-
-/** The nodes that describe item `index` of an array described by `nodes`. */
-function itemNodes(nodes: readonly object[], index: number): object[] {
-  const out: object[] = []
-  for (const node of nodes) {
-    const items: unknown = Reflect.get(node, "items")
-    const prefix: unknown = Reflect.get(node, "prefixItems")
-    const tuple = Array.isArray(prefix) ? prefix : Array.isArray(items) ? items : undefined
-    if (tuple === undefined) branchesOf(items, out)
-    else if (index < tuple.length) branchesOf(tuple[index], out)
-    else branchesOf(tuple === prefix ? items : Reflect.get(node, "additionalItems"), out)
-  }
-  return out
-}
-
-const tupleLength = (node: object): number => {
-  const tuple: unknown = Reflect.get(node, "prefixItems") ?? Reflect.get(node, "items")
-  return Array.isArray(tuple) ? tuple.length : 0
-}
-
-const keyPatterns = new Map<string, RegExp | null>()
-
-/** A pattern this engine can't read is taken to match, so its node stays in view. */
-function patternMatches(source: string, key: string): boolean {
-  let pattern = keyPatterns.get(source)
-  if (pattern === undefined) {
-    try {
-      pattern = new RegExp(source, "u")
-    } catch {
-      pattern = null
-    }
-    keyPatterns.set(source, pattern)
-  }
-  return pattern === null || pattern.test(key)
-}
-
-/**
- * `value` with each `Date` judged as what its hook writes, but where the schema node at its place is
- * a `t.date()`. Compiled once per schema, since the `t.date()` route it serves sends many of them.
- */
-type DateWriter = (value: unknown) => unknown
-
-const KEEP_ALL: DateWriter = (value) => value
-const WRITE_ALL: DateWriter = (value) => wireValueOf(value, true)
-
-const dateWriters = new WeakMap<object, DateWriter>()
-
-function dateWriterOf(node: object): DateWriter {
-  let found = dateWriters.get(node)
-  if (found === undefined) {
-    found = compileDates(branchesOf(node, []), 0)
-    dateWriters.set(node, found)
-  }
-  return found
-}
-
-/**
- * The writer for a place `nodes` (union branches flattened) describe. Below a `$ref`, which this does
- * not follow, a `Date` stays one. An undeclared field is written only where `patternProperties` or an
- * `additionalProperties` schema describes it: elsewhere the schema refuses it or takes anything.
- */
-function compileDates(nodes: readonly object[], depth: number): DateWriter {
-  if (!nodes.some(holdsDate)) return WRITE_ALL
-  if (depth > MAX_HOOK_SCAN_DEPTH || nodes.some(isRef)) return KEEP_ALL
-  const keep = nodes.some(keepsDate)
-  const declared = new Set<string>()
-  for (const node of nodes)
-    for (const key of Object.keys(objectField(node, "properties") ?? {})) declared.add(key)
-  const described = nodes.some(
-    (node) =>
-      objectField(node, "patternProperties") !== undefined ||
-      objectField(node, "additionalProperties") !== undefined,
-  )
-  const fields: DateFields = {
-    declared,
-    writers: [...declared].map((key) => [key, compileDates(fieldNodes(nodes, key), depth + 1)]),
-    undeclared: described ? undeclaredWriters(nodes, depth + 1) : undefined,
-  }
-  // The last writer is for every item past the longest tuple.
-  const items = Array.from({ length: Math.max(0, ...nodes.map(tupleLength)) + 1 }, (_, i) =>
-    compileDates(itemNodes(nodes, i), depth + 1),
-  )
-  return (value) => {
-    if (typeof value !== "object" || value === null) return value
-    if (isDate(value, Reflect.get(value, "toJSON")))
-      return keep ? value : Reflect.apply(DATE_TO_JSON, value, [])
-    return Array.isArray(value) ? writeItems(value, items) : writeFields(value, fields)
-  }
-}
-
-interface DateFields {
-  readonly declared: ReadonlySet<string>
-  readonly writers: ReadonlyArray<readonly [string, DateWriter]>
-  /** The writer for a key `declared` lacks, when the schema describes one. */
-  readonly undeclared: ((key: string) => DateWriter) | undefined
-}
-
-/** The writer for an undeclared key: it depends only on which patterns the key matches. */
-function undeclaredWriters(nodes: readonly object[], depth: number): (key: string) => DateWriter {
-  const sources = new Set<string>()
-  for (const node of nodes)
-    for (const source of Object.keys(objectField(node, "patternProperties") ?? {}))
-      sources.add(source)
-  const bySet = new Map<string, DateWriter>()
-  return (key) => {
-    let matched = ""
-    for (const source of sources) matched += patternMatches(source, key) ? "1" : "0"
-    let writer = bySet.get(matched)
-    if (writer === undefined) {
-      writer = compileDates(fieldNodes(nodes, key), depth)
-      bySet.set(matched, writer)
-    }
-    return writer
-  }
-}
-
-function writeItems(value: readonly unknown[], items: readonly DateWriter[]): unknown {
-  const last = items.length - 1
-  let out: unknown[] | undefined
-  for (let i = 0; i < value.length; i++) {
-    const item: unknown = value[i]
-    // Every writer returns a primitive as it came.
-    if (typeof item !== "object" || item === null) continue
-    const written = (items[i < last ? i : last] ?? WRITE_ALL)(item)
-    if (written !== item) out ??= value.slice()
-    if (out !== undefined) out[i] = written
-  }
-  return out ?? value
-}
-
-function writeFields(value: object, fields: DateFields): unknown {
-  const { declared, writers, undeclared } = fields
-  let out: Record<string, unknown> | undefined
-  // An index loop: iterating allocates per row. A declared field is read as the validator reads it,
-  // a prototype getter included.
-  for (let i = 0; i < writers.length; i++) {
-    const entry = writers[i]
-    if (entry === undefined) continue
-    const field: unknown = Reflect.get(value, entry[0])
-    if (typeof field !== "object" || field === null) continue
-    const written = entry[1](field)
-    if (written === field) continue
-    out ??= { ...value }
-    define(out, entry[0], written)
-  }
-  if (undeclared !== undefined)
-    for (const key of Object.keys(value)) {
-      if (declared.has(key)) continue
-      const field: unknown = Reflect.get(value, key)
-      if (typeof field !== "object" || field === null) continue
-      const written = undeclared(key)(field)
-      if (written === field) continue
-      out ??= { ...value }
-      define(out, key, written)
-    }
   return out ?? value
 }
 
@@ -829,6 +615,14 @@ interface ContractPolicy {
 const STRIP: ContractPolicy = { strip: true, report: undefined }
 const KEEP: ContractPolicy = { strip: false, report: undefined }
 
+/** Set by `@nifrajs/schema` on the validate of a `t` schema with a `t.date()`: the check for a value
+ * as JSON writes it. */
+const VALIDATE_WIRE: unique symbol = Symbol.for("nifra.schema.validateWire")
+
+type ContractValidate = StandardSchemaV1["~standard"]["validate"] & {
+  readonly [VALIDATE_WIRE]?: unknown
+}
+
 function checkContract(
   definition: ResponseContractDefinition,
   result: unknown,
@@ -877,9 +671,9 @@ function validateContract(
   replace: (value: unknown) => unknown,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
   const node = jsonSchemaOf(schema)
-  // Without a `t.date()` in the schema, a `Date` is a hook like any other: one walk writes them all.
-  const dates = node !== undefined && writesDates(node)
-  const project = policy.strip && node !== undefined ? projectorOf(node, dates) : undefined
+  // A `Date` is a hook like any other for a schema that carries its JSON Schema: one walk writes them.
+  const dates = node !== undefined
+  const project = policy.strip && node !== undefined ? projectorOf(node) : undefined
   // Naming what was stripped compares against everything the payload writes, so it walks it whole.
   const hooks =
     project === undefined || policy.report !== undefined || mode === "warn"
@@ -888,10 +682,14 @@ function validateContract(
   const before = hooks === 0 ? payload : wireValue(payload, "", [], dates)
   // The projection applies the hook of each value it descends into and reads only declared fields,
   // so a quiet strip never enumerates the payload's own keys. What it copies whole is walked after.
-  const written =
-    project === undefined ? before : wireValueOf(project(writtenAt(before, "", dates)), dates)
-  const sent = node === undefined || dates ? written : dateWriterOf(node)(written)
-  const settled = schema["~standard"].validate(sent)
+  const sent =
+    project === undefined ? before : wireValueOf(project(writtenAt(before, "", true)), true)
+  // A `t` schema's check for a value as JSON carries it: its `t.date()` strings stay strings, where
+  // the plain validate would hand back the `Date`s a request's handler receives.
+  const validate: ContractValidate = schema["~standard"].validate
+  const wire = validate[VALIDATE_WIRE]
+  const settled: StandardResult<unknown> | Promise<StandardResult<unknown>> =
+    typeof wire === "function" ? wire(sent) : schema["~standard"].validate(sent)
   // When hooks wrote the payload, `warn` sends what they wrote here rather than calling them again,
   // so a hook that answers differently on a second call cannot send what was not judged. A `Date`'s
   // own hook always answers the same, so a payload only they wrote is sent as it came.

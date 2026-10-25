@@ -1323,46 +1323,43 @@ describe("checkResponseContract", () => {
     })
   })
 
-  test("a Date is judged by the JSON Schema node at its place", () => {
+  test("a schema with a JSON Schema is shown each Date as the string it writes", () => {
     const AT = new Date(0)
     const ISO = AT.toISOString()
-    const DATE = { type: "string", format: "date-time", "x-nifra-date": true }
-    const TEXT = { type: "string" }
     // A schema that accepts anything shows what it was handed.
     const spy: StandardSchemaV1 = {
       "~standard": { version: 1, vendor: "test", validate: (input) => ({ value: input }) },
     }
-    const judged = (jsonSchema: object, value: unknown): unknown => {
-      const schema = { ...spy, jsonSchema }
+    const judged = (schema: StandardSchemaV1, value: unknown): unknown => {
       const outcome = checkResponseContract(schema, value, "enforce")
       return "value" in outcome ? outcome.value : outcome
     }
-    expect(judged(DATE, AT)).toBe(AT)
-    expect(judged({ type: "object", properties: { a: TEXT } }, { a: AT })).toEqual({ a: ISO })
-    expect(judged({ type: "array", prefixItems: [DATE, TEXT], items: DATE }, [AT, AT, AT])).toEqual(
-      [AT, ISO, AT],
-    )
-    expect(
-      judged({ type: "array", items: [DATE, TEXT], additionalItems: TEXT }, [AT, AT, AT]),
-    ).toEqual([AT, ISO, ISO])
-    const both = {
-      allOf: [
-        { type: "object", properties: { a: DATE } },
-        { type: "object", properties: { b: TEXT } },
-      ],
-    }
-    // An undeclared field the schema takes whatever it holds is left as it is.
-    expect(judged(both, { a: AT, b: AT, c: AT })).toEqual({ a: AT, b: ISO, c: AT })
-    const rest = { type: "object", properties: { a: DATE }, additionalProperties: TEXT }
-    expect(judged(rest, { a: AT, z: AT })).toEqual({ a: AT, z: ISO })
-    // Past a `$ref` this does not follow, a Date stays one.
-    const referred = { type: "object", properties: { a: { $ref: "#/$defs/at" }, b: TEXT } }
-    expect(judged(referred, { a: { at: AT }, b: AT })).toEqual({ a: { at: AT }, b: ISO })
-    // A pattern this engine cannot read may name the key, so its date node holds.
-    const unread = { type: "object", patternProperties: { "(": DATE, "^b": TEXT } }
-    expect(judged(unread, { a: AT })).toEqual({ a: AT })
-    const read = { type: "object", patternProperties: { "^a": DATE, "^b": TEXT } }
-    expect(judged(read, { a: AT, b: AT, c: AT })).toEqual({ a: AT, b: ISO, c: ISO })
+    const described = { ...spy, jsonSchema: { type: "object" } }
+    expect(judged(described, { a: AT, b: [AT], c: { d: AT } })).toEqual({
+      a: ISO,
+      b: [ISO],
+      c: { d: ISO },
+    })
+    const text = { ...spy, jsonSchema: { type: "string" } }
+    expect(judged(text, AT)).toBe(ISO)
+    // Nothing says how a schema without one reads a Date, so it is handed the Date.
+    expect(judged(spy, { a: AT })).toEqual({ a: AT })
+  })
+
+  test("a t.date() place takes the RFC 3339 string a Date is written as, and sends it on", async () => {
+    const schema = t.object({ at: t.date(), maybe: t.union([t.date(), t.null()]) })
+    for (const sent of [
+      { at: "2026-10-25T12:00:00.000Z", maybe: null },
+      { at: "2026-10-25T14:00:00+02:00", maybe: "2026-10-25T12:00:00Z" },
+    ])
+      expect(await checkResponseContract(schema, sent, "enforce")).toEqual({
+        kind: "ok",
+        value: sent,
+      })
+    for (const at of ["2026-02-30T00:00:00Z", "2026-10-25 12:00:00Z", "2026-10-25T12:00:00", "1"])
+      expect(await checkResponseContract(schema, { at, maybe: null }, "enforce")).toMatchObject({
+        kind: "violation",
+      })
   })
 })
 

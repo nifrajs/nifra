@@ -19,6 +19,7 @@ import {
 import { fromTypeBox, type NifraSchema } from "./adapter.ts"
 import { BYTES_KEY } from "./answer-step.ts"
 import { fileOps, refuseFile } from "./file-kind.ts"
+import { isDateTime } from "./formats.ts"
 
 type Props = Record<string, NifraSchema>
 
@@ -70,8 +71,12 @@ function isJsonValue(value: unknown, depth: number): boolean {
   return true
 }
 
+// The handler's `Date`, or the RFC 3339 string it is written as and a request carries; validate
+// hands a request's string on as a `Date` (see ./decode.ts).
 const isValidDate = (_: unknown, value: unknown): boolean =>
-  value instanceof Date && !Number.isNaN(value.getTime())
+  value instanceof Date
+    ? !Number.isNaN(value.getTime())
+    : typeof value === "string" && isDateTime(value, false)
 
 // The handler's value, or the base64 a response contract sees once the route has written it.
 const isBytes = (_: unknown, value: unknown): boolean =>
@@ -274,12 +279,19 @@ export const t = {
     return fromTypeBox(Type.Unsafe<JsonValue>({ [Kind]: JSON_KIND, "x-nifra-json": true }))
   },
   /**
-   * A `Date` for page data: `loaderOutput`, `actionOutput` and a server function's `output`. The
-   * loader may return a `Date` or an ISO 8601 string; the page receives a `Date`, on the server render
-   * and in the browser alike. A request body or a `backend/app.ts` response is plain JSON, which has
-   * no dates: use `t.string({ format: "date-time" })` there. A handler may still return a `Date` for
-   * that field, as a database driver hands back a timestamp: `responseContract()` judges it as the
-   * ISO string it is written as.
+   * A `Date` in your code, an RFC 3339 `date-time` string on the wire (JSON Schema and OpenAPI say
+   * `type: "string", format: "date-time"`).
+   *
+   * - A route's `response` or `errors`: the handler returns a `Date` (a timestamp column) or such a
+   *   string; the JSON carries the string, and the typed client reads a `string`.
+   * - A request's `body`, `query` or `params`, and a server function's `input`: the string is checked
+   *   (calendar included, so no `2026-02-30`) and the handler receives a `Date`.
+   * - Page data (`loaderOutput`, `actionOutput`, a server function's `output`): the loader returns a
+   *   `Date` or an ISO 8601 string, and the page receives a `Date` on the server render and in the
+   *   browser alike.
+   *
+   * In a union, a string becomes a `Date` only under the first branch that accepts the value, so
+   * `t.union([t.date(), t.string()])` hands over a `Date`.
    */
   date: (): NifraSchema<TUnsafe<Date>> => {
     if (!TypeRegistry.Has(DATE_KIND)) TypeRegistry.Set(DATE_KIND, isValidDate)
