@@ -277,7 +277,9 @@ export const t = {
    * A `Date` for page data: `loaderOutput`, `actionOutput` and a server function's `output`. The
    * loader may return a `Date` or an ISO 8601 string; the page receives a `Date`, on the server render
    * and in the browser alike. A request body or a `backend/app.ts` response is plain JSON, which has
-   * no dates: use `t.string({ format: "date-time" })` there.
+   * no dates: use `t.string({ format: "date-time" })` there. A handler may still return a `Date` for
+   * that field, as a database driver hands back a timestamp: `responseContract()` judges it as the
+   * ISO string it is written as.
    */
   date: (): NifraSchema<TUnsafe<Date>> => {
     if (!TypeRegistry.Has(DATE_KIND)) TypeRegistry.Set(DATE_KIND, isValidDate)

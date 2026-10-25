@@ -105,9 +105,13 @@ function nodeFor(shape: Shape, depth: number): fc.Arbitrary<Node> {
 function fitFor(shape: Shape, depth: number): fc.Arbitrary<Node> {
   switch (shape.kind) {
     case "string":
-      return fc
-        .string({ unit: fc.constantFrom(..."ab"), maxLength: 3 })
-        .map((value): Node => ({ kind: "string", value }))
+      return fc.oneof(
+        fc
+          .string({ unit: fc.constantFrom(..."ab"), maxLength: 3 })
+          .map((value): Node => ({ kind: "string", value })),
+        // Written as its ISO string, as a database timestamp is.
+        fc.integer({ min: 0, max: 4e12 }).map((ms): Node => ({ kind: "date", ms })),
+      )
     case "number":
       return fc.integer({ min: -9, max: 9 }).map((value): Node => ({ kind: "number", value }))
     case "boolean":
@@ -179,9 +183,10 @@ function build(node: Node): unknown {
   }
 }
 
-/** What the serializer writes, with each `Date` it writes as itself marked: the contract holds a
- * `Date` to a date schema, so a date and a string with the same text are told apart. A `Date` a
- * hook returns is not one of these; the serializer writes it by its fields, as `{}`. */
+/** What the serializer writes, with each `Date` it writes as itself marked: a date schema holds a
+ * `Date`, so a date and a string with the same text are told apart, while a string schema holds the
+ * text either way. A `Date` a hook returns is not one of these; the serializer writes it by its
+ * fields, as `{}`. */
 function written(value: unknown): unknown {
   return JSON.parse(
     JSON.stringify(value, function (this: Record<string, unknown>, key, out: unknown) {
@@ -206,6 +211,7 @@ function unmarked(value: unknown): unknown {
 function fits(shape: Shape, value: unknown): boolean {
   switch (shape.kind) {
     case "string":
+      return typeof value === "string" || isDate(value)
     case "number":
     case "boolean":
       return typeof value === shape.kind
