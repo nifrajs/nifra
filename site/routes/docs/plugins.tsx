@@ -536,7 +536,8 @@ export default function Plugins() {
           covers 404s and errors; route it to your own sink via <code>log</code>. The path is the
           matched route template (<code>/share/:token</code>), so ids and tokens in a URL stay out of
           the logs, and the query string is never logged; <code>rawPath: true</code> logs the real
-          path.
+          path. A plugin of your own that labels requests by route reads the same template with{" "}
+          <code>routeTemplateOf(app)(method, path)</code> from <code>@nifrajs/core/server</code>.
         </li>
         <li>
           <code>etag()</code> - adds a content-hash <code>ETag</code> to <code>GET</code> <code>200</code>s

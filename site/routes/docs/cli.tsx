@@ -137,7 +137,12 @@ export default function Cli() {
         the default wherever a command edits files.
       </p>
       <h3 id="run-and-build">Run and build</h3>
-      <p>Develop, build a deploy directory, and run it.</p>
+      <p>
+        Develop, build a deploy directory, and run it. Started from a global or linked install,{" "}
+        <code>nifra dev</code>, <code>build</code>, <code>start</code> and <code>check</code> run
+        through the project&apos;s own <code>@nifrajs/cli</code>, so the app loads one{" "}
+        <code>@nifrajs/core</code>; <code>NIFRA_LOCAL_CLI=0</code> runs the CLI as invoked.
+      </p>
       <table className="cmd-table">
         <thead>
           <tr>
