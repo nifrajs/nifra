@@ -10,6 +10,7 @@ import {
   installedEngines,
   openPage,
 } from "../../web/test/keep-alive-browser.ts"
+import { ROUTE_PROP_NAMES } from "./fixtures/route-props.ts"
 
 const engines = await installedEngines()
 
@@ -170,6 +171,38 @@ for (const engine of engines) {
       }, href)
       await titled(page, title)
     }
+
+    test("a page or layout that does not declare a route prop gets no attribute for it", async () => {
+      const { page, problems } = await open()
+      await page.goto(`${app(production).url}/list/1`)
+      await page.waitForFunction(() => document.documentElement.hasAttribute("data-nifra-hydrated"))
+      // Each element's attributes that are named after a route prop. HTML lowercases attribute names.
+      const strays = () =>
+        page.evaluate(
+          (names) =>
+            [...document.querySelectorAll("body *")].flatMap((element) =>
+              element
+                .getAttributeNames()
+                .filter((name) => names.includes(name))
+                .map((name) => `${element.tagName.toLowerCase()}.${element.className} ${name}`),
+            ),
+          ROUTE_PROP_NAMES.map((name) => name.toLowerCase()),
+        )
+      const seen: Record<string, string[]> = { hydrated: await strays() }
+      // The detail page declares only `params`, the home page nothing; both mount on the client.
+      await go(page, "/detail/1", "Detail 1")
+      seen.detail = await strays()
+      await page.evaluate(() =>
+        document.querySelector<HTMLAnchorElement>('nav a[href="/"]')?.click(),
+      )
+      await page.waitForFunction(() => document.querySelector(".home") !== null)
+      seen.home = await strays()
+      await go(page, "/list/2", "List 2")
+      seen.list = await strays()
+      expect(seen).toEqual({ hydrated: [], detail: [], home: [], list: [] })
+      expect(problems).toEqual([])
+      await page.close()
+    }, 30_000)
 
     test("a layout inside a kept branch hides and shows with the branch", async () => {
       const { page, problems } = await open()
