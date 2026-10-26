@@ -1,8 +1,9 @@
 /**
  * A sign-in, a sign-out or a switch to another account rotates the identity epoch, so every tab drops
  * the pages it kept for the previous visitor; anything else the same visitor does keeps it, or every
- * renewal would reload every open page. Each session integration nifra ships runs every operation
- * through `createWebApp`'s hook, in each of its modes. The registry at the end fails when the hook
+ * renewal would reload every open page. A write to other session data keeps it once the app names
+ * the keys that say who its visitor is, and rotates it until then. Each session integration nifra
+ * ships runs every operation through `createWebApp`'s hook, in each of its modes. The registry at the end fails when the hook
  * learns a session cookie that no integration here covers.
  */
 import { describe, expect, test } from "bun:test"
@@ -73,12 +74,21 @@ interface Steps {
   readonly signOut: Visit
   /** Ending a session by emptying it rather than deleting it. */
   readonly clear: Step
+  /** The same visitor writes session data that does not say who they are. */
+  readonly writeOther: Step
+  /** Whether the session knows which of its data says who the visitor is. */
+  readonly identityKeys: boolean
 }
 
-const nifraSessions = (store: boolean, rolling: boolean) => (): Steps => {
+const nifraSessions = (store: boolean, rolling: boolean, identityKeys: boolean) => (): Steps => {
   // Each request a second after the last, so a rolling expiry moves every time.
   let clock = Date.now()
-  const options = { secret: SECRET, rolling, now: () => clock }
+  const options = {
+    secret: SECRET,
+    rolling,
+    now: () => clock,
+    ...(identityKeys ? { identity: ["userId" as const] } : {}),
+  }
   const sessions = createSessions<{ userId: string; cart: number }>(
     store ? { ...options, store: new MemorySessionStore() } : options,
   )
@@ -95,7 +105,7 @@ const nifraSessions = (store: boolean, rolling: boolean) => (): Steps => {
       .post("/sign-in-keeping/:user", (c) => signIn(c, c.params.user, true))
       .post("/cart", async (c) => {
         const session = await sessions.get(c)
-        session.set("cart", 1)
+        session.set("cart", (session.get("cart") ?? 0) + 1)
         await sessions.commit(c, session)
         return "ok"
       })
@@ -136,6 +146,8 @@ const nifraSessions = (store: boolean, rolling: boolean) => (): Steps => {
     read: visit("GET", "/read"),
     signOut: visit("POST", "/sign-out"),
     clear: visit("POST", "/clear"),
+    writeOther: visit("POST", "/cart"),
+    identityKeys,
   }
 }
 
@@ -180,18 +192,26 @@ const authjsSessions = (): Steps => {
     read: async (jar) => void (await send(jar, "/read")),
     signOut: (jar) => post(jar, "/api/auth/signout", {}),
     clear: { none: "Auth.js ends a session only by signing out" },
+    writeOther: {
+      none: "Auth.js holds a session's data in its token, which changes only by update()",
+    },
+    identityKeys: true,
   }
 }
 
+const NIFRA_MODES = Object.fromEntries(
+  [false, true].flatMap((store) =>
+    [true, false].flatMap((rolling) =>
+      [false, true].map((identityKeys) => [
+        `${store ? "store" : "cookie"} mode, ${rolling ? "rolling" : "absolute"}${identityKeys ? ", identity keys" : ""}`,
+        nifraSessions(store, rolling, identityKeys),
+      ]),
+    ),
+  ),
+)
+
 const INTEGRATIONS: Readonly<Record<string, Integration>> = {
-  "@nifrajs/auth": {
-    modes: {
-      "cookie mode, rolling": nifraSessions(false, true),
-      "cookie mode, absolute": nifraSessions(false, false),
-      "store mode, rolling": nifraSessions(true, true),
-      "store mode, absolute": nifraSessions(true, false),
-    },
-  },
+  "@nifrajs/auth": { modes: NIFRA_MODES },
   "@nifrajs/authjs": { modes: { "JWT session": authjsSessions } },
 }
 
@@ -202,12 +222,18 @@ const OPERATIONS: Readonly<
     {
       readonly from: "nobody" | "ada" | "anonymous"
       readonly act: (steps: Steps) => Step
-      readonly changes: boolean
+      readonly changes: boolean | ((steps: Steps) => boolean)
     }
   >
 > = {
   "the same visitor's session renews": { from: "ada", act: (s) => s.renew, changes: false },
   "the same visitor reads a page": { from: "ada", act: (s) => s.read, changes: false },
+  // Without identity keys the server cannot tell a cart from a role, so any write counts.
+  "the same visitor writes other session data": {
+    from: "ada",
+    act: (s) => s.writeOther,
+    changes: (s) => !s.identityKeys,
+  },
   "a visitor signs in": { from: "nobody", act: (s) => s.signIn("ada"), changes: true },
   "a visitor signs in over an anonymous session": {
     from: "anonymous",
@@ -243,9 +269,10 @@ const OPEN: Readonly<Record<string, string>> = {}
 for (const [integration, { modes }] of Object.entries(INTEGRATIONS)) {
   describe(integration, () => {
     for (const [mode, open] of Object.entries(modes)) {
-      for (const [operation, { from, act, changes }] of Object.entries(OPERATIONS)) {
+      for (const [operation, { from, act, changes: changesFor }] of Object.entries(OPERATIONS)) {
         const name = `${integration} ${mode}: ${operation}`
         const steps = open()
+        const changes = typeof changesFor === "function" ? changesFor(steps) : changesFor
         const start =
           from === "anonymous" ? steps.anonymous : from === "ada" ? steps.signIn("ada") : undefined
         const step = act(steps)

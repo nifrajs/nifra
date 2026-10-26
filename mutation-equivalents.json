@@ -3,9 +3,9 @@
     {
       "op": "condition->false",
       "fn": "make",
-      "code": "stored: store === undefined ? undefined : snapshot(init.data),",
-      "from": "store === undefined",
-      "reason": "Cookie mode never reads the snapshot; the check only skips a JSON.stringify on each load."
+      "code": "store === undefined && identity === undefined ? undefined : snapshot(identityOf(init.data)),",
+      "from": "store === undefined && identity === undefined",
+      "reason": "Cookie mode without identity never reads the snapshot; the check only skips a JSON.stringify on each load."
     },
     {
       "op": "condition->false",
@@ -559,31 +559,45 @@
     },
     {
       "op": "condition->false",
-      "fn": "sessionData",
+      "fn": "sessionOf",
       "code": "if (typeof payload !== \"object\" || payload === null) return undefined",
       "from": "typeof payload !== \"object\" || payload === null",
       "reason": "The parsed text starts with {, so the payload is a non-null object here; the check only narrows its type."
     },
     {
       "op": "binary ||->&&",
-      "fn": "sessionData",
+      "fn": "sessionOf",
       "code": "if (typeof payload !== \"object\" || payload === null) return undefined",
       "from": "||",
       "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
     },
     {
       "op": "condition->false",
-      "fn": "sessionData",
+      "fn": "sessionOf",
       "code": "if (!(\"data\" in payload) || !(\"expiresAt\" in payload)) return undefined",
       "from": "!(\"data\" in payload) || !(\"expiresAt\" in payload)",
       "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
     },
     {
       "op": "binary ||->&&",
-      "fn": "sessionData",
+      "fn": "sessionOf",
       "code": "if (!(\"data\" in payload) || !(\"expiresAt\" in payload)) return undefined",
       "from": "||",
       "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
+    },
+    {
+      "op": "condition->true",
+      "fn": "sessionOf",
+      "code": "? { data, tag: \"tag\" in payload ? payload.tag : undefined }",
+      "from": "\"tag\" in payload",
+      "reason": "A payload without a tag reads it as undefined either way; the check only narrows the type."
+    },
+    {
+      "op": "return undefined",
+      "fn": "sameVisitor",
+      "code": "if (now === undefined || before === undefined) return false",
+      "from": "return false",
+      "reason": "The only caller reads the result in an || chain, where undefined and false both fall through."
     }
   ],
   "packages/web/src/internal/share-data.ts": [

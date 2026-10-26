@@ -118,6 +118,45 @@ describe("the identity epoch hook", () => {
     }
   })
 
+  test("a cookie-mode session with a tag on both sides compares the tags, not the data", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const signed = (data: string, tag: string | undefined, expiresAt: number) =>
+      encodeURIComponent(
+        `{"data":${data},"expiresAt":${expiresAt}${tag === undefined ? "" : `,"tag":${tag}`}}`,
+      ) + `.sig${expiresAt}`
+    const ada = '{"userId":"ada"}'
+    const cart = '{"userId":"ada","cart":1}'
+    const t1 = '"aaaaaaaaaaaa"'
+    const t2 = '"bbbbbbbbbbbb"'
+    const cases: readonly (readonly [
+      string,
+      string,
+      string | undefined,
+      string | undefined,
+      boolean,
+    ])[] = [
+      ["the same tag over other data", cart, t1, t1, true],
+      ["another tag over the same data", ada, t1, t2, false],
+      ["a tag only after, over the same data", ada, undefined, t1, true],
+      ["a tag only before, over the same data", ada, t1, undefined, true],
+      ["a tag only after, over other data", cart, undefined, t1, false],
+      ["tags that are not strings, over other data", cart, "1", "1", false],
+    ]
+    for (const [name, after, before, now, renews] of cases) {
+      const epoch = run(
+        [`nifra_session=${signed(after, now, 2000)}; Max-Age=600; HttpOnly; Secure`],
+        {
+          cookie: `nifra_session=${signed(ada, before, 1000)}; __Host-nifra-epoch=${held}`,
+        },
+      )
+      expect({ name, renews: epoch?.startsWith(`__Host-nifra-epoch=${held};`) }).toEqual({
+        name,
+        renews,
+      })
+      expect(epoch).toMatch(EPOCH)
+    }
+  })
+
   test("a changed value that is not a cookie-mode session rotates, whatever it holds", () => {
     const held = "0123456789abcdef0123456789abcdef"
     for (const [before, after] of [

@@ -1132,3 +1132,181 @@ describe("session - expiry modes + cookie options", () => {
     })
   })
 })
+
+describe("session - identity names the data that says who the visitor is", () => {
+  type Bag = Record<string, unknown>
+  type BagSession = Awaited<ReturnType<SessionManager<Bag>["get"]>>
+  // The tag a cookie carries: after `*` in store mode, inside the signed payload in cookie mode.
+  const tagOf = (cookie: string): unknown => {
+    const value = cookie.slice(0, cookie.lastIndexOf("."))
+    if (value.startsWith("{")) return Reflect.get(JSON.parse(value), "tag")
+    return /\*([A-Za-z0-9_-]{12})$/.exec(value)?.[1]
+  }
+  const setup = (store: boolean, identity?: readonly string[]) => {
+    let t = 1000
+    const sessions = createSessions<Bag>({
+      secret: SECRET,
+      now: () => t,
+      ...(store ? { store: new MemorySessionStore() } : {}),
+      ...(identity === undefined ? {} : { identity }),
+    })
+    const visit = async (
+      cookie: string | undefined,
+      act: (s: BagSession) => void = () => {},
+    ): Promise<string> => {
+      t += 1000
+      const c = ctx(cookie === undefined ? {} : { nifra_session: cookie })
+      const session = await sessions.get(c.context)
+      act(session)
+      await sessions.commit(c.context, session)
+      return lastCookie(c.setCalls)
+    }
+    return { sessions, visit }
+  }
+  const signIn = (s: BagSession): void => {
+    s.set("userId", "ada")
+    s.set("role", { name: "admin" })
+    s.set("cart", 0)
+  }
+  const OTHER: Readonly<Record<string, (s: BagSession) => void>> = {
+    "nothing written": () => {},
+    "another key's value": (s) => s.set("cart", 1),
+    "a key added": (s) => s.set("theme", "dark"),
+    "a key removed": (s) => s.unset("cart"),
+  }
+  const IDENTITY: Readonly<Record<string, (s: BagSession) => void>> = {
+    "another user": (s) => s.set("userId", "bob"),
+    "another role": (s) => s.set("role", { name: "viewer" }),
+    "a role changed in place": (s) => {
+      const role = s.get("role")
+      if (typeof role === "object" && role !== null) Reflect.set(role, "name", "viewer")
+    },
+    "the user removed": (s) => s.unset("userId"),
+    "everything cleared": (s) => s.clear(),
+  }
+
+  for (const store of [true, false]) {
+    const mode = store ? "store mode" : "cookie mode"
+
+    test(`${mode}: a write to data it does not name keeps the tag`, async () => {
+      for (const [change, act] of Object.entries(OTHER)) {
+        const { visit } = setup(store, ["userId", "role"])
+        const signedIn = await visit(undefined, signIn)
+        const next = await visit(signedIn, act)
+        expect(tagOf(signedIn)).toBeString()
+        expect({ change, tag: tagOf(next) }).toEqual({ change, tag: tagOf(signedIn) })
+      }
+    })
+
+    test(`${mode}: a change to data it names writes a new tag`, async () => {
+      for (const [change, act] of Object.entries(IDENTITY)) {
+        const { visit } = setup(store, ["userId", "role"])
+        const signedIn = await visit(undefined, signIn)
+        const next = await visit(signedIn, act)
+        expect({ change, tag: typeof tagOf(next), same: tagOf(next) === tagOf(signedIn) }).toEqual({
+          change,
+          tag: "string",
+          same: false,
+        })
+      }
+    })
+  }
+
+  for (const store of [true, false]) {
+    test(`${store ? "store" : "cookie"} mode: each commit of one session object compares with what it last wrote`, async () => {
+      const { sessions, visit } = setup(store, ["userId"])
+      const c = ctx({ nifra_session: await visit(undefined, signIn) })
+      const session = await sessions.get(c.context)
+      const commit = async (act: (s: BagSession) => void) => {
+        act(session)
+        await sessions.commit(c.context, session)
+        return tagOf(lastCookie(c.setCalls))
+      }
+      const bob = await commit((s) => s.set("userId", "bob"))
+      const bobAgain = await commit((s) => s.set("cart", 2))
+      const ada = await commit((s) => s.set("userId", "ada"))
+      expect([bobAgain === bob, ada === bob]).toEqual([true, false])
+    })
+  }
+
+  test("cookie mode: a regenerated session takes a new tag over the same data", async () => {
+    const { sessions, visit } = setup(false, ["userId"])
+    const signedIn = await visit(undefined, signIn)
+    const c = ctx({ nifra_session: signedIn })
+    const session = await sessions.get(c.context)
+    sessions.regenerate(session)
+    await sessions.commit(c.context, session)
+    const regenerated = lastCookie(c.setCalls)
+    expect([typeof tagOf(regenerated), tagOf(regenerated) === tagOf(signedIn)]).toEqual([
+      "string",
+      false,
+    ])
+    await sessions.commit(c.context, session)
+    expect(tagOf(lastCookie(c.setCalls))).toBe(tagOf(regenerated))
+    expect((await sessions.get(ctx({ nifra_session: regenerated }).context)).get("userId")).toBe(
+      "ada",
+    )
+  })
+
+  test("cookie mode without identity writes no tag, and drops one it is sent", async () => {
+    const tagged = await setup(false, ["userId"]).visit(undefined, signIn)
+    const { sessions, visit } = setup(false)
+    expect(tagOf(await visit(undefined, signIn))).toBeUndefined()
+    const next = await visit(tagged)
+    expect(tagOf(next)).toBeUndefined()
+    expect((await sessions.get(ctx({ nifra_session: next }).context)).get("userId")).toBe("ada")
+  })
+
+  test("cookie mode: a cookie without a tag, or with a malformed one, takes a fresh tag", async () => {
+    const { sessions, visit } = setup(false, ["userId"])
+    const untagged = await setup(false).visit(undefined, signIn)
+    const malformed = await signSession(
+      JSON.stringify({ data: { userId: "ada" }, expiresAt: 10_000_000, tag: "short" }),
+    )
+    for (const cookie of [untagged, malformed]) {
+      const next = await visit(cookie)
+      expect(tagOf(next)).toMatch(/^[A-Za-z0-9_-]{12}$/)
+      expect((await sessions.get(ctx({ nifra_session: next }).context)).get("userId")).toBe("ada")
+    }
+  })
+
+  test("store mode: a cookie written before tags keeps its form across writes to other data", async () => {
+    const store = new MemorySessionStore()
+    const sessions = createSessions<Bag>({ secret: SECRET, store, identity: ["userId"] })
+    await store.set("older-session-id", { data: { userId: "u1" }, expiresAt: 10_000_000_000_000 })
+    const older = await signSession("older-session-id")
+    const c = ctx({ nifra_session: older })
+    const session = await sessions.get(c.context)
+    session.set("cart", 1)
+    await sessions.commit(c.context, session)
+    expect(lastCookie(c.setCalls)).toBe(older)
+  })
+
+  test("store mode: a value the data inherits is not identity", async () => {
+    const store = new MemorySessionStore()
+    const sessions = createSessions<Bag>({ secret: SECRET, store, identity: ["userId"] })
+    const c = ctx()
+    const fresh = await sessions.get(c.context)
+    fresh.set("cart", 1)
+    await sessions.commit(c.context, fresh)
+    const cookie = lastCookie(c.setCalls)
+    const id = idOf(cookie)
+    const record = await store.get(id)
+    if (record === undefined) throw new Error("no record")
+    await store.set(id, {
+      ...record,
+      data: Object.assign(Object.create({ userId: "ghost" }), record.data),
+    })
+    const next = ctx({ nifra_session: cookie })
+    await sessions.commit(next.context, await sessions.get(next.context))
+    expect(lastCookie(next.setCalls)).toBe(cookie)
+  })
+
+  test("identity must name at least one key the data has", () => {
+    expect(() => createSessions<Bag>({ secret: SECRET, identity: [] })).toThrow(
+      /must name at least one data key/,
+    )
+    // @ts-expect-error a key the data does not have
+    createSessions<{ userId: string }>({ secret: SECRET, identity: ["nope"] })
+  })
+})

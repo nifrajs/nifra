@@ -6,8 +6,8 @@
  * the request's, or the cookie is deleted, the response also sets a fresh epoch with the same lifetime,
  * so the epoch expires with an idle session. A rolling session re-sending the same value with a new
  * lifetime re-sends the epoch it holds with that lifetime, so the two keep expiring together. So does
- * an `@nifrajs/auth` cookie-mode session re-signed with the same data and a later expiry, and a cookie
- * an integration that can read its own tokens names as re-issued to the same visitor.
+ * an `@nifrajs/auth` cookie-mode session re-signed with the same tag, or without one the same data,
+ * and a cookie an integration that can read its own tokens names as re-issued to the same visitor.
  */
 import { type CookieOptions, parseCookies } from "@nifrajs/core/server"
 import { EPOCH_COOKIE, LOCAL_EPOCH_COOKIE } from "../identity.ts"
@@ -116,10 +116,11 @@ const parseSetCookies = (joined: string, now: number): SetCookie[] => {
   return cookies
 }
 
-// An `@nifrajs/auth` cookie-mode value is `{"data":...,"expiresAt":...}.<signature>`, and the server
-// knows nothing of its visitor beyond `data`: two values with the same data are the same visitor. The
-// request's value is unverified, so a forged one can only keep that browser's own pages.
-const sessionData = (value: string): string | undefined => {
+// An `@nifrajs/auth` cookie-mode value is `{"data":...,"expiresAt":...}.<signature>`, with a `"tag"`
+// once the app names the data keys that say who its visitor is. Two values with the same tag, or
+// without one the same data, are the same visitor: the server knows nothing of a visitor beyond its
+// data. The request's value is unverified, so a forged one can only keep that browser's own pages.
+const sessionOf = (value: string): { readonly data: object; readonly tag: unknown } | undefined => {
   const at = value.lastIndexOf(".")
   if (value[0] !== "{" || at === -1) return undefined
   let payload: unknown
@@ -132,13 +133,17 @@ const sessionData = (value: string): string | undefined => {
   if (!("data" in payload) || !("expiresAt" in payload)) return undefined
   const { data, expiresAt } = payload
   return typeof expiresAt === "number" && typeof data === "object" && data !== null
-    ? JSON.stringify(data)
+    ? { data, tag: "tag" in payload ? payload.tag : undefined }
     : undefined
 }
 
-const sameData = (sent: string, set: string): boolean => {
-  const data = sessionData(set)
-  return data !== undefined && data === sessionData(sent)
+const sameVisitor = (sent: string, set: string): boolean => {
+  const now = sessionOf(set)
+  const before = sessionOf(sent)
+  if (now === undefined || before === undefined) return false
+  return typeof now.tag === "string" && typeof before.tag === "string"
+    ? now.tag === before.tag
+    : JSON.stringify(now.data) === JSON.stringify(before.data)
 }
 
 const randomEpoch = (): string => {
@@ -204,7 +209,7 @@ export function identityEpochHook(
       if (
         now === before ||
         (isIdentity(base) &&
-          (sameData(before, now) ||
+          (sameVisitor(before, now) ||
             (now !== "" &&
               before !== "" &&
               vouched?.some((v) => v.trim() === cookie.name) === true)))
