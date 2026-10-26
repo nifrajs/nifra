@@ -1,4 +1,5 @@
 import { canonicalizeReviewReport, digestReviewReport } from "./canonical.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import {
   REVIEW_REPORT_VERSION,
   type ReviewCategory,
@@ -159,10 +160,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function hasOwn(record: Record<string, unknown>, key: string): boolean {
   return Object.hasOwn(record, key)
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
 }
 
 class ParseGuard {
@@ -718,7 +715,7 @@ function assertSortedUnique<T>(
     const current = key(value)
     if (previous !== undefined) {
       if (current === previous) fail(duplicateCode, path)
-      if (compareText(current, previous) < 0) fail("non-canonical", path)
+      if (codeUnitOrder(current, previous) < 0) fail("non-canonical", path)
     }
     previous = current
   }

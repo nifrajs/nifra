@@ -1,3 +1,4 @@
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import type {
   ReviewCheckResult,
   ReviewEvidenceRef,
@@ -12,42 +13,38 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null
 }
 
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
-}
-
 function optionalText(value: string | undefined): string {
   return value ?? ""
 }
 
 function compareEvidence(left: ReviewEvidenceRef, right: ReviewEvidenceRef): number {
   return (
-    compareText(left.source, right.source) ||
-    compareText(left.token, right.token) ||
-    compareText(left.digest, right.digest) ||
-    compareText(optionalText(left.path), optionalText(right.path))
+    codeUnitOrder(left.source, right.source) ||
+    codeUnitOrder(left.token, right.token) ||
+    codeUnitOrder(left.digest, right.digest) ||
+    codeUnitOrder(optionalText(left.path), optionalText(right.path))
   )
 }
 
 function compareFinding(left: ReviewFinding, right: ReviewFinding): number {
-  return compareText(left.id, right.id)
+  return codeUnitOrder(left.id, right.id)
 }
 
 function compareCheck(
   left: Pick<ReviewCheckResult, "id">,
   right: Pick<ReviewCheckResult, "id">,
 ): number {
-  return compareText(left.id, right.id)
+  return codeUnitOrder(left.id, right.id)
 }
 
 function compareFix(left: ReviewFixResult, right: ReviewFixResult): number {
   const leftPaths = left.changedPaths?.join("\u0000") ?? ""
   const rightPaths = right.changedPaths?.join("\u0000") ?? ""
   return (
-    compareText(left.recipe, right.recipe) ||
-    compareText(left.status, right.status) ||
-    compareText(leftPaths, rightPaths) ||
-    compareText(optionalText(left.reasonCode), optionalText(right.reasonCode))
+    codeUnitOrder(left.recipe, right.recipe) ||
+    codeUnitOrder(left.status, right.status) ||
+    codeUnitOrder(leftPaths, rightPaths) ||
+    codeUnitOrder(optionalText(left.reasonCode), optionalText(right.reasonCode))
   )
 }
 
@@ -63,7 +60,7 @@ function canonicalValue(value: unknown): string {
   if (!isPlainRecord(value))
     throw new TypeError("review canonical value must contain plain objects")
 
-  const keys = Object.keys(value).sort(compareText)
+  const keys = Object.keys(value).sort(codeUnitOrder)
   return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalValue(value[key])}`).join(",")}}`
 }
 
@@ -117,7 +114,7 @@ function sortedChecks(
         info: entry.counts.info,
         outOfScope: entry.counts.outOfScope,
       },
-      findingIds: [...entry.findingIds].sort(compareText),
+      findingIds: [...entry.findingIds].sort(codeUnitOrder),
       evidence: sortedEvidence(entry.evidence),
       ...(entry.reasonCode === undefined ? {} : { reasonCode: entry.reasonCode }),
     }))
@@ -131,7 +128,7 @@ function sortedFixes(value: readonly ReviewFixResult[]): readonly ReviewFixResul
       status: entry.status,
       ...(entry.changedPaths === undefined
         ? {}
-        : { changedPaths: [...entry.changedPaths].sort(compareText) }),
+        : { changedPaths: [...entry.changedPaths].sort(codeUnitOrder) }),
       ...(entry.reasonCode === undefined ? {} : { reasonCode: entry.reasonCode }),
     }))
     .sort(compareFix)
@@ -151,7 +148,7 @@ export function canonicalizeReviewReport(report: ReviewReport): string {
       kind: report.scope.kind,
       state: report.scope.state,
       ...(report.scope.gitRef === undefined ? {} : { gitRef: report.scope.gitRef }),
-      changedPaths: [...report.scope.changedPaths].sort(compareText),
+      changedPaths: [...report.scope.changedPaths].sort(codeUnitOrder),
       pathDigest: report.scope.pathDigest,
       outOfScopeCount: report.scope.outOfScopeCount,
       ...(report.scope.reasonCode === undefined ? {} : { reasonCode: report.scope.reasonCode }),

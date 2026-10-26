@@ -4,6 +4,7 @@
  */
 
 import { canonicalJson } from "@nifrajs/core/canonical-json"
+import { sha256Hex } from "./internal/sha256-hex.ts"
 
 /** What a certification check receives besides the adapter under test. */
 export interface CertificationContext {
@@ -97,11 +98,6 @@ function validateTarget(target: CertificationTarget | undefined): void {
     if (value !== undefined && !boundedTargetText(value))
       throw new TypeError("certification target paths must be bounded and control-free")
   }
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
 function validateProfile<Adapter>(profile: AdapterCertificationProfile<Adapter>): void {
@@ -213,7 +209,7 @@ export async function certifyAdapter<Adapter>(options: {
     checks,
     capabilities,
   }
-  return { ...body, evidenceHash: await sha256(canonicalJson(body)) }
+  return { ...body, evidenceHash: await sha256Hex(canonicalJson(body)) }
 }
 
 export function assertAdapterCertification(report: AdapterCertificationReport): void {
@@ -225,7 +221,7 @@ export async function verifyAdapterCertification(
   report: AdapterCertificationReport,
 ): Promise<boolean> {
   const { evidenceHash, ...body } = report
-  return evidenceHash === (await sha256(canonicalJson(body)))
+  return evidenceHash === (await sha256Hex(canonicalJson(body)))
 }
 
 // ── Standard profiles ───────────────────────────────────────────────────────────────────────────

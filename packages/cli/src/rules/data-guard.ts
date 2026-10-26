@@ -8,7 +8,6 @@
  * refuses (an object, array, string, number or boolean) and a warning otherwise, since only running
  * the loader proves what an expression evaluates to.
  */
-import { realpathSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
 import { isSensitiveFieldName } from "@nifrajs/web/zones"
 import { codePositionMask } from "../check-scan.ts"
@@ -16,6 +15,7 @@ import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { lineAt } from "../internal/line-at.ts"
 import { createSpecifierResolver } from "../internal/project-specifiers.ts"
+import { realpathOrSelf } from "../internal/realpath-or-self.ts"
 import type { CheckRule } from "./index.ts"
 import { zonedFiles } from "./zones.ts"
 
@@ -452,13 +452,7 @@ export const sensitiveOutputRule: CheckRule = {
   async scan(ctx) {
     const findings: Diagnostic[] = []
     const resolve = createSpecifierResolver()
-    const realRoot = (() => {
-      try {
-        return realpathSync(ctx.root)
-      } catch {
-        return ctx.root
-      }
-    })()
+    const realRoot = realpathOrSelf(ctx.root)
     const sources = new Map<string, SchemaSource | undefined>()
     const sourceOf = (file: string): SchemaSource | undefined => {
       if (!sources.has(file)) {

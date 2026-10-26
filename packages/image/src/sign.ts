@@ -8,6 +8,8 @@
  * leaves the bytes you pass in.
  */
 
+import { bytesToHex } from "./internal/hex.ts"
+
 // FIPS 180-4 SHA-256 round constants.
 // biome-ignore format: the 64 constants read best as an 8×8 grid.
 const K = new Uint32Array([
@@ -112,16 +114,10 @@ function hmacSha256(key: Uint8Array, message: Uint8Array): Uint8Array {
 
 const encoder = new TextEncoder()
 
-const hex = (bytes: Uint8Array): string => {
-  let s = ""
-  for (const b of bytes) s += b.toString(16).padStart(2, "0")
-  return s
-}
-
 /** HMAC-SHA256 of `message` under `key` (both UTF-8 strings) → lowercase hex. The primitive behind URL
  * signing; exported for tests (RFC 4231 vectors) and advanced use. */
 export function hmacSha256Hex(key: string, message: string): string {
-  return hex(hmacSha256(encoder.encode(key), encoder.encode(message)))
+  return bytesToHex(hmacSha256(encoder.encode(key), encoder.encode(message)))
 }
 
 /** base64url (RFC 4648 §5, unpadded) of a byte array - URL-safe, compact (43 chars for a 32-byte tag). */

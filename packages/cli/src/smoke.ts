@@ -1,6 +1,7 @@
 import { realpath, stat } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { hasControlCharacter } from "./internal/control-character.ts"
 import { isRecord } from "./internal/record.ts"
 
 export interface SmokeApp {
@@ -127,14 +128,6 @@ const MAX_SMOKE_HEADER_VALUE_LENGTH = 8_192
 const HTTP_TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 const SCHEME_PREFIX = /^[A-Za-z][A-Za-z0-9+.-]*:/
 
-function hasControlCharacter(value: string, includeBackslash = false): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index)
-    if (code <= 0x1f || code === 0x7f || (includeBackslash && code === 0x5c)) return true
-  }
-  return false
-}
-
 function validStatus(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599
 }
@@ -147,7 +140,8 @@ function validRelativePath(value: unknown): value is string {
     value.startsWith("/") &&
     !value.startsWith("//") &&
     !SCHEME_PREFIX.test(value) &&
-    !hasControlCharacter(value, true)
+    !hasControlCharacter(value) &&
+    !value.includes("\\")
   )
 }
 
