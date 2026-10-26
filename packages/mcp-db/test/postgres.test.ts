@@ -419,6 +419,23 @@ describe("plans", () => {
     let deep: unknown = { "Relation Name": "deep", Schema: "public" }
     for (let level = 0; level < 300; level++) deep = { Plan: deep }
     expect(planReads(deep).relations).toEqual([])
+    // A FROM-clause function with no schema resolves on the search path; two qualified calls of one
+    // name stay apart.
+    expect(
+      planReads([
+        {
+          Plan: {
+            "Node Type": "Function Scan",
+            "Function Name": "unqualified",
+            Filter: "(a.f(1) AND b.f(2))",
+          },
+        },
+      ]).calls,
+    ).toEqual([
+      { schema: null, name: "unqualified" },
+      { schema: "a", name: "f" },
+      { schema: "b", name: "f" },
+    ])
     expect(planDocument([{ "QUERY PLAN": '[{"Plan":{}}]' }])).toEqual([{ Plan: {} }])
     expect(planDocument([{ "QUERY PLAN": [{ Plan: {} }] }])).toEqual([{ Plan: {} }])
     expect(planDocument([])).toBeUndefined()
@@ -721,6 +738,10 @@ describe("grant gate", () => {
     expect(
       grantRefusal("reader", hiddenReach(granted, judgeExposure(granted, {}, undefined))),
     ).toBeUndefined()
+    // A relation hidden whole has no masked columns of its own.
+    expect(
+      judgeExposure([exposure("secrets", { password_hash: true })], scope, masked).masked.size,
+    ).toBe(0)
   })
 
   test("the refusal lists four and counts the rest", () => {
@@ -731,6 +752,9 @@ describe("grant gate", () => {
     expect(isDbRefusal(refused) ? refused.message : "").toContain("public.d.password_hash")
     expect(isDbRefusal(refused) ? refused.message : "").toContain(", and 2 more;")
     expect(isDbRefusal(refused) ? refused.message : "").not.toContain("public.e.")
+    const four = exposures.slice(0, 4)
+    const all = grantRefusal("r", hiddenReach(four, judgeExposure(four, {}, masked)))
+    expect(isDbRefusal(all) ? all.message : "").not.toContain(" more")
   })
 
   test("a whole-row or no-column view read, and a view over an out-of-schema relation, hide the view", () => {
@@ -750,6 +774,7 @@ describe("grant gate", () => {
     const exposures = [
       exposure("users", { id: true, email: true, password_hash: false }),
       exposure("secrets", { value: false }),
+      exposure("orders", { id: true }),
     ]
     const denied = (errno: string, message: string) =>
       partialGrantRefusal(Object.assign(new Error(message), { errno }), exposures)
@@ -762,26 +787,32 @@ describe("grant gate", () => {
       code: "NIFRA_DB_COLUMN_REFUSED",
     })
     expect(denied("42501", "permission denied for table secrets")).toBeUndefined()
+    expect(denied("42501", "permission denied for table orders")).toBeUndefined()
+    expect(partialGrantRefusal(null, exposures)).toBeUndefined()
     expect(denied("42501", "permission denied for function f")).toBeUndefined()
     expect(denied("42P01", "permission denied for table users")).toBeUndefined()
     expect(partialGrantRefusal("permission denied for table users", exposures)).toBeUndefined()
   })
 
   test("over a scripted client: refused before the statement, and a column denial is named", async () => {
-    const exposureRows = (passwordReadable: boolean) => ({
-      rows: [
-        {
-          schema: "public",
-          name: "users",
-          kind: "r",
-          readable: true,
-          names: ["id", "password_hash"],
-          granted: [true, passwordReadable],
-          ancestors: null,
-          reads: null,
-        },
-      ],
-    })
+    // A driver may hand json back as its text.
+    const exposureRows = (passwordReadable: boolean, asText = false) => {
+      const json = (value: unknown) => (asText ? JSON.stringify(value) : value)
+      return {
+        rows: [
+          {
+            schema: "public",
+            name: "users",
+            kind: "r",
+            readable: true,
+            names: json(["id", "password_hash"]),
+            granted: json([true, passwordReadable]),
+            ancestors: null,
+            reads: null,
+          },
+        ],
+      }
+    }
     const options = { ...QUERY, redaction: { column: masked } }
     const broad = fakeClient([
       [/current_user::text AS role/, { rows: [ROLE_ROW] }],
@@ -791,6 +822,13 @@ describe("grant gate", () => {
       "NIFRA_DB_ROLE_GRANTS",
     )
     expect(broad.log.some((line) => line.startsWith("DECLARE"))).toBe(false)
+    const text = fakeClient([
+      [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+      [/AS readable/, exposureRows(true, true)],
+    ])
+    expect(code(await queryPostgres(text.client, "SELECT id FROM users", options))).toBe(
+      "NIFRA_DB_ROLE_GRANTS",
+    )
     const narrow = fakeClient([
       [/current_user::text AS role/, { rows: [ROLE_ROW] }],
       [/AS readable/, exposureRows(false)],
@@ -821,6 +859,7 @@ describe("grant gate", () => {
     expect(definerRefusal("reader", many, undefined)?.message).toContain(
       "s.f0(), s.f1(), s.f2(), s.f3(), and 2 more,",
     )
+    expect(definerRefusal("reader", many.slice(0, 4), undefined)?.message).not.toContain(" more")
     const scripted = fakeClient([
       [/current_user::text AS role/, { rows: [ROLE_ROW] }],
       [/AS readable/, { rows: [] }],
@@ -1065,6 +1104,64 @@ describe("query layers over a scripted client", () => {
     )
     expect(code(await scoped(plan([], [["public", "dblink"]])))).toBe("NIFRA_DB_FUNCTION_REFUSED")
     expect(code(await scoped(plan([], [["pg_catalog", "generate_series"]])))).toBeUndefined()
+  })
+
+  test("a scan's narrowed row holding a masked column is refused; its full row is left to the parent", async () => {
+    const columns = ["id", "email", "password_hash", "api_key"]
+    const counted = async (
+      output: readonly string[],
+      masks: readonly string[] = ["password_hash"],
+    ) => {
+      const { client } = fakeClient([
+        [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+        procRule,
+        [
+          /^EXPLAIN \(VERBOSE/,
+          {
+            rows: [
+              {
+                "QUERY PLAN": [
+                  {
+                    Plan: {
+                      "Node Type": "Aggregate",
+                      Output: ["count(*)"],
+                      Plans: [
+                        {
+                          "Node Type": "Seq Scan",
+                          "Relation Name": "users",
+                          Schema: "public",
+                          Alias: "u",
+                          Output: output.map((column) => `u.${column}`),
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        [
+          /AS column/,
+          { rows: columns.map((column) => ({ schema: "public", name: "users", column })) },
+        ],
+        [/^FETCH/, { values: [] }],
+      ])
+      return queryPostgres(client, "SELECT count(*) FROM users", {
+        ...QUERY,
+        redaction: { column: (name: string) => masks.includes(name) },
+      })
+    }
+    expect(code(await counted(columns))).toBeUndefined()
+    expect(await counted(["id", "password_hash"])).toMatchObject({
+      code: "NIFRA_DB_COLUMN_REFUSED",
+      message: "the query reads users.password_hash, masked as a credential",
+    })
+    expect(await counted(["password_hash", "api_key"], ["password_hash", "api_key"])).toMatchObject(
+      {
+        message: "the query reads users.password_hash, users.api_key, masked as credentials",
+      },
+    )
   })
 
   test("the function allowlist reads pg_proc for the statement's calls before planning, and the plan's after", async () => {
