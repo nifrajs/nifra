@@ -760,9 +760,10 @@ export interface ResponseContractRuntime {
   ): ResponseContractOutcome | Promise<ResponseContractOutcome>
   /**
    * What a `c.json(body)` reply with this status writes, each `toJSON` hook applied as `check` judges
-   * it, so the reply's bytes and its check share one call of each.
+   * it, so the reply's bytes and its check share one call of each. Without it, as from a plugin of
+   * an older copy of core, the reply writes `body` as given.
    */
-  write(definition: ResponseContractDefinition, body: unknown, status: number | undefined): unknown
+  write?(definition: ResponseContractDefinition, body: unknown, status: number | undefined): unknown
 }
 
 interface ResponseContractInstallable {

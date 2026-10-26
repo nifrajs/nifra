@@ -351,7 +351,9 @@ export class RequestContext implements RawContext {
     // check share one call of each `toJSON` hook, a `Date`'s included.
     const contract = this.jsonContract
     const value =
-      contract === undefined ? body : contract.runtime.write(contract.definition, body, i?.status)
+      contract?.runtime.write === undefined
+        ? body
+        : contract.runtime.write(contract.definition, body, i?.status)
     let reply: Response | undefined
     if (DEFERS_RESPONSE) {
       const defer = deferredResponderFor()

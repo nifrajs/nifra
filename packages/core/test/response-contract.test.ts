@@ -10,6 +10,7 @@ import {
   silentLogger,
   status,
 } from "../src/index.ts"
+import { INSTALL_RESPONSE_CONTRACT } from "../src/server/install.ts"
 import {
   checkResponseContract,
   type ResponseContractReport,
@@ -1490,4 +1491,19 @@ describe("the Bun native lane cannot bypass the contract", () => {
       await running.stop()
     }
   })
+})
+
+test("a runtime without write, as an older copy of the plugin installs, still serves c.json", async () => {
+  const bodies: unknown[] = []
+  const app = server()
+  app[INSTALL_RESPONSE_CONTRACT]({
+    mode: "warn",
+    check: (_definition, result, context) => {
+      bodies.push(context?.jsonBody)
+      return { kind: "ok", value: result }
+    },
+  })
+  const routed = app.get("/r", { response: t.object({ id: t.number() }) }, (c) => c.json({ id: 1 }))
+  const res = await routed.fetch(new Request("http://x/r"))
+  expect([res.status, await res.json(), bodies]).toEqual([200, { id: 1 }, [{ id: 1 }]])
 })
