@@ -1,11 +1,15 @@
 {
   "auth-session": {
     "files": ["packages/auth/src/session.ts"],
-    "tests": ["packages/auth/test"]
+    "tests": ["packages/auth/test", "internal/invariants/test/identity-epoch.test.ts"]
   },
   "authjs": {
     "files": ["packages/authjs/src/index.ts"],
-    "tests": ["packages/authjs/test/authjs.test.ts", "packages/authjs/test/client.test.ts"]
+    "tests": [
+      "packages/authjs/test/authjs.test.ts",
+      "packages/authjs/test/client.test.ts",
+      "internal/invariants/test/identity-epoch.test.ts"
+    ]
   },
   "mcp-db-postgres": {
     "files": [
@@ -58,7 +62,8 @@
       "packages/web/test/without-query.test.ts",
       "packages/web/test/store-signature.test.ts",
       "internal/invariants/test/visitor-stores.test.ts",
-      "internal/invariants/test/stored-responses.test.ts"
+      "internal/invariants/test/stored-responses.test.ts",
+      "internal/invariants/test/identity-epoch.test.ts"
     ]
   }
 }
