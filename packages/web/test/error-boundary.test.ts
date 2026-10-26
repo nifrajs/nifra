@@ -8,18 +8,10 @@ import {
   redirect,
   renderPage,
 } from "../src/index.ts"
+import { streamOf } from "./streams.ts"
 
 // Stub adapter: emits `chain=<len>:<data>` so assertions can see the chain length + the props.data
 // (which, for an error page, is the serialized `{ name, message }`).
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>
     streamOf(`<p>chain=${chain.length}:${JSON.stringify(props.data)}</p>`),

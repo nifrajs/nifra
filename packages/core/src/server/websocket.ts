@@ -388,9 +388,17 @@ export function attachWebSocket<
 
 const WS_MESSAGE_DECODER = new TextDecoder()
 
-// `@nifrajs/deno` runs a generated copy of this and `assertCloseArgs` (scripts/gen-vendored.ts), so the
-// two reference nothing else in this module.
-/** Whether a message is over `cap` UTF-8 bytes, without encoding a text one: each UTF-16 unit takes
+// `@nifrajs/deno` and `@nifrajs/node` run generated copies of `UTF8_BUFFER`, `exceedsPayloadCap`,
+// `utf8ExceedsCap` and `assertCloseArgs` (scripts/gen-vendored.ts), so these reference nothing else
+// in this module.
+/** Bun, Node, Deno and workerd from about 2026 expose `Buffer`, whose native `byteLength` sizes text
+ * without copying it; a Worker on an older compatibility date has none. */
+const UTF8_BUFFER: { byteLength(text: string): number } | undefined = Reflect.get(
+  globalThis,
+  "Buffer",
+)
+
+/** Whether a message is over `cap` UTF-8 bytes, without copying a text one: each UTF-16 unit takes
  * 1-3 bytes (a surrogate pair 4 for its 2, a lone surrogate the 3 of U+FFFD), so only a length
  * between those bounds is counted. */
 export function exceedsPayloadCap(
@@ -401,6 +409,13 @@ export function exceedsPayloadCap(
   const units = message.length
   if (units > cap) return true
   if (units * 3 <= cap) return false
+  if (UTF8_BUFFER === undefined) return utf8ExceedsCap(message, cap)
+  return UTF8_BUFFER.byteLength(message) > cap
+}
+
+/** `exceedsPayloadCap`'s count where the runtime has no `Buffer`, one UTF-16 unit at a time. */
+export function utf8ExceedsCap(message: string, cap: number): boolean {
+  const units = message.length
   let bytes = 0
   for (let i = 0; i < units; i++) {
     const unit = message.charCodeAt(i)

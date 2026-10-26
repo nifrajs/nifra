@@ -233,7 +233,7 @@ interface Entry extends LiveFields {
   readonly listeners: Set<() => void>
   // Entry-level operations (assigned by makeEntry; reused by query/prefetch/setQueryData/invalidate).
   setState: (next: QueryState) => void
-  /** `forChange`: a reload for a visitor change, which takes a change while it runs as its own. */
+  /** `forChange`: a reload for a visitor change, counted while it runs (see `landed`). */
   run: (force: boolean, forChange?: boolean) => Promise<unknown>
   // Assigned once just after construction (the handle's closures reference this entry); not readonly.
   handle: QueryHandle
@@ -354,7 +354,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       const promise = (async () => {
         try {
           const data = await entry.fn()
-          landed(forChange)
+          landed(forChange, seen)
           if (seen !== visitor) return await again()
           // A newer generation (a later invalidate/refetch) owns the entry now - discard this result
           // rather than publishing pre-mutation data as fresh or clearing `invalidated`. The fetch
@@ -366,7 +366,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           entry.setState(successState(data, now()))
           return data
         } catch (error) {
-          landed(forChange)
+          landed(forChange, seen)
           if (seen !== visitor) return await again()
           if (gen === entry.generation) {
             entry.answeredFor = seen
@@ -680,7 +680,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       const p = (async () => {
         try {
           const data = await build()
-          landed(forChange)
+          landed(forChange, seen)
           if (seen !== visitor) return await again()
           if (gen !== generation) return data
           invalidated = false
@@ -689,7 +689,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           setState(successState(data, now()))
           return data
         } catch (error) {
-          landed(forChange)
+          landed(forChange, seen)
           if (seen !== visitor) return await again()
           if (gen === generation) {
             answeredFor = seen
@@ -835,10 +835,11 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   // Every query drops its data at once; the call returned refetches the mounted ones, and the fetch
   // that starts tells their subscribers. One a read started since is joined, and told them already.
-  // The refetches for a change seen at a read take a change while they run as their own; those for
-  // `clear()` hear one as any load does.
-  const forget = (forChange: boolean): (() => void) => {
+  // The refetches for a change seen at a read are counted while they run; those for `clear()` hear a
+  // change as any load does.
+  const forget = (forChange: boolean, last = false): (() => void) => {
     visitor++
+    if (last) lastFor = visitor
     seeded.clear()
     const mounted: (() => void)[] = []
     // Entries stay, emptied: a handle kept past its last subscriber, or a call loading again into one,
@@ -861,23 +862,24 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     forget(false)()
   }
   // A new identity epoch cookie: what the client holds was loaded for the previous visitor. Reads run
-  // while a component renders, so the data goes at once and mounted queries hear once it is over.
-  // While the reloads a change started run, a new epoch is theirs: a server that rotates it on every
-  // response costs one reload, never a loop. Another tab's sign-in inside that window goes unseen
-  // here; `identityChanged()` in this tab never does.
+  // while a component renders, so the data goes at once and mounted queries hear once it is over. A
+  // new epoch while the reloads for a change run is another change, whose reloads take any epoch
+  // during them as theirs: a server that rotates it on every response costs two reloads, never a loop.
   let epoch = documentEpoch()
-  // One count per visitor change, and the reloads for one still in flight.
+  // One count per visitor change, the reloads for one still in flight, and the change whose reloads
+  // take a new epoch as their own.
   let visitor = 0
   let reloading = 0
+  let lastFor = -1
   const checkEpoch = (): void => {
     const current = documentEpoch()
     if (current === epoch) return
     epoch = current
-    if (reloading === 0) queueMicrotask(forget(true))
+    if (reloading === 0 || lastFor !== visitor) queueMicrotask(forget(true, reloading > 0))
   }
-  // A load that lands hears a new epoch as a read would; a reload for a change takes it as its own.
-  const landed = (forChange: boolean): void => {
-    if (forChange) epoch = documentEpoch()
+  // A load that lands hears a new epoch as a read would, unless it reloads for that last change.
+  const landed = (forChange: boolean, seen: number): void => {
+    if (forChange && seen === lastFor) epoch = documentEpoch()
     else checkEpoch()
   }
 

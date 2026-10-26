@@ -101,6 +101,125 @@ describe("the identity epoch hook", () => {
     ).toBe(`nifra-epoch=${held}; Path=/; SameSite=Lax; Expires=${expires}`)
   })
 
+  test("a cookie-mode session re-signed with the same data renews the epoch it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const signed = (data: string, expiresAt: number) =>
+      encodeURIComponent(`{"data":${data},"expiresAt":${expiresAt}}`) + `.sig${expiresAt}`
+    const renew = (data: string) =>
+      run([`nifra_session=${signed(data, 2000)}; Max-Age=600; HttpOnly; Secure`], {
+        cookie: `nifra_session=${signed('{"userId":"ada"}', 1000)}; __Host-nifra-epoch=${held}`,
+      })
+    expect(renew('{"userId":"ada"}')).toBe(
+      `__Host-nifra-epoch=${held}; Path=/; SameSite=Lax; Secure; Max-Age=600`,
+    )
+    for (const data of ['{"userId":"bob"}', "{}", '{"userId":"ada","cart":1}']) {
+      expect({ data, epoch: renew(data) }).toEqual({ data, epoch: expect.stringMatching(EPOCH) })
+      expect(renew(data)).not.toContain(held)
+    }
+  })
+
+  test("a cookie-mode session with a tag on both sides compares the tags, not the data", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const signed = (data: string, tag: string | undefined, expiresAt: number) =>
+      encodeURIComponent(
+        `{"data":${data},"expiresAt":${expiresAt}${tag === undefined ? "" : `,"tag":${tag}`}}`,
+      ) + `.sig${expiresAt}`
+    const ada = '{"userId":"ada"}'
+    const cart = '{"userId":"ada","cart":1}'
+    const t1 = '"aaaaaaaaaaaa"'
+    const t2 = '"bbbbbbbbbbbb"'
+    const cases: readonly (readonly [
+      string,
+      string,
+      string | undefined,
+      string | undefined,
+      boolean,
+    ])[] = [
+      ["the same tag over other data", cart, t1, t1, true],
+      ["another tag over the same data", ada, t1, t2, false],
+      ["a tag only after, over the same data", ada, undefined, t1, true],
+      ["a tag only before, over the same data", ada, t1, undefined, true],
+      ["a tag only after, over other data", cart, undefined, t1, false],
+      ["tags that are not strings, over other data", cart, "1", "1", false],
+    ]
+    for (const [name, after, before, now, renews] of cases) {
+      const epoch = run(
+        [`nifra_session=${signed(after, now, 2000)}; Max-Age=600; HttpOnly; Secure`],
+        {
+          cookie: `nifra_session=${signed(ada, before, 1000)}; __Host-nifra-epoch=${held}`,
+        },
+      )
+      expect({ name, renews: epoch?.startsWith(`__Host-nifra-epoch=${held};`) }).toEqual({
+        name,
+        renews,
+      })
+      expect(epoch).toMatch(EPOCH)
+    }
+  })
+
+  test("a changed value that is not a cookie-mode session rotates, whatever it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    for (const [before, after] of [
+      ['{"data":{},"expiresAt":1}', '{"data":{},"expiresAt":2}'],
+      // Unsigned, yet JSON once the last character is cut, or once leading space is trimmed.
+      ['{"data":{},"expiresAt":1}}', '{"data":{},"expiresAt":2}}'],
+      [' {"data":{},"expiresAt":1}.a', ' {"data":{},"expiresAt":2}.b'],
+      ['{"data":{}}.a', '{"data":{}}.b'],
+      ['{"data":1,"expiresAt":1}.a', '{"data":1,"expiresAt":2}.b'],
+      ["{not json.a", "{not json.b"],
+      ["tok.a", "tok.b"],
+    ] as const) {
+      const epoch = run([`nifra_session=${encodeURIComponent(after)}; Max-Age=600; HttpOnly`], {
+        cookie: `nifra_session=${encodeURIComponent(before)}; __Host-nifra-epoch=${held}`,
+      })
+      expect({ before, epoch }).toEqual({ before, epoch: expect.stringMatching(EPOCH) })
+      expect(epoch).not.toContain(held)
+    }
+  })
+
+  test("a cookie the response names as re-issued to the same visitor renews the epoch it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const vouch = (lines: readonly string[], cookie: string, renewed: string) => {
+      const headers = new Headers({ "x-nifra-identity-renewed": renewed })
+      for (const line of lines) headers.append("set-cookie", line)
+      identityEpochHook({}, false)(headers, {
+        url: "https://app.test/api/auth/session",
+        header: (name) => (name === "cookie" ? cookie : null),
+      })
+      return {
+        epoch: headers.getSetCookie().slice(lines.length)[0],
+        header: headers.get("x-nifra-identity-renewed"),
+      }
+    }
+    const token = "authjs.session-token"
+    expect(
+      vouch(
+        [`${token}=new; Max-Age=600; HttpOnly`],
+        `${token}=old; __Host-nifra-epoch=${held}`,
+        token,
+      ),
+    ).toEqual({
+      epoch: `__Host-nifra-epoch=${held}; Path=/; SameSite=Lax; Secure; Max-Age=600`,
+      header: null,
+    })
+    // It covers only the cookies it names, never a deletion or a first sign-in.
+    for (const [lines, cookie] of [
+      [
+        [`${token}=new; Max-Age=600`, "nifra_session=b; Max-Age=600"],
+        `${token}=old; nifra_session=a`,
+      ],
+      [[`${token}=; Max-Age=0`], `${token}=old`],
+      [[`${token}=new; Max-Age=600`], ""],
+    ] as const) {
+      const { epoch, header } = vouch(lines, `${cookie}; __Host-nifra-epoch=${held}`, token)
+      expect({ lines, header, rotated: epoch !== undefined && !epoch.includes(held) }).toEqual({
+        lines,
+        header: null,
+        rotated: true,
+      })
+    }
+  })
+
   test("a renewal whose epoch is gone or not one nifra wrote sets a fresh one", () => {
     for (const cookie of ["nifra_session=abc.sig", "nifra_session=abc.sig; __Host-nifra-epoch=x"]) {
       const epoch = run(["nifra_session=abc.sig; Max-Age=600; HttpOnly; Secure"], { cookie })

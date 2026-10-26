@@ -13,16 +13,7 @@ import {
 import { varyOnDataHeader } from "../src/internal/response-controls.ts"
 import { MemoryCacheStore, openCacheChannel, withISR } from "../src/isr.ts"
 import { DATA_HEADER, REDIRECT_HEADER, STATUS_HEADER } from "../src/router.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
+import { streamOf } from "./streams.ts"
 
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>

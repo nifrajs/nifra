@@ -8,6 +8,7 @@
 import type { ComponentClientAdapter, ComponentClientRoot } from "../server-components/client.ts"
 import type { ComponentRecord } from "../server-components/types.ts"
 import { onPageRelease, PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "./page-events.ts"
+import { isRecord } from "./record.ts"
 
 /** One hole's fill, as the PPR runtime keeps it. */
 export interface HoleFill {
@@ -95,9 +96,6 @@ export interface HoleHost {
   /** The parked host is the adapter's again. */
   unpark(): void
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null
 
 /** A fill the server deferred: the NDJSON stream settles its promise. */
 const settledFill = (fill: unknown): Promise<unknown> =>

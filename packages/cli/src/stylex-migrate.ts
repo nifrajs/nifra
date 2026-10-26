@@ -7,6 +7,7 @@
  */
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
+import { isRecord } from "./internal/record.ts"
 
 export interface MigrationIssue {
   readonly file: string
@@ -595,9 +596,6 @@ const PSEUDO_VARIANTS: Readonly<Record<string, string>> = {
 
 const CLASS_ATTRIBUTE =
   /\bclassName\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*(?:"([^"]*)"|'([^']*)')\s*\}|\{([\s\S]*?)\})/g
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null
 
 const cloneStyle = (style: StyleObject): StyleObject => {
   const result: Record<string, string | number | StyleObject> = {}

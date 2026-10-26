@@ -5,6 +5,7 @@ import { buildTarget, checkHostReach, generateServerEntry } from "../src/build.t
 import { discoverRoutes } from "../src/fs.ts"
 import type { RenderAdapter } from "../src/index.ts"
 import { createWebApp } from "../src/index.ts"
+import { streamOf } from "./streams.ts"
 
 // #5 end-to-end: `nifra build --target <t>` packages buildClient + buildServer (+ prerender) into one
 // dist/. The CLI is a thin wrapper over `buildTarget`; this exercises the engine directly on a tiny app.
@@ -16,16 +17,6 @@ const WORKSPACE_TMP_BASE = `${import.meta.dir}/.tmp-build-target-`
 let projectRoot: string
 let routesDir: string
 
-// A one-chunk byte stream - the minimal `renderToStream` an adapter returns (mirrors render.test.ts).
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 const stubAdapter: RenderAdapter = {
   renderToStream: (chain, props) =>
     streamOf(`<p>nifra chain=${chain.length}:${JSON.stringify(props.data)}</p>`),

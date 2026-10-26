@@ -13,6 +13,7 @@ import {
 import { outputGuard } from "../src/internal/output-guard.ts"
 import { MemoryCacheStore, withISR } from "../src/isr.ts"
 import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
+import { streamOf } from "./streams.ts"
 
 /**
  * Hostile requests from attack classes that have broken other full-stack frameworks: a page reached
@@ -20,16 +21,6 @@ import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
  * another visitor or poisoned by a data response, a server function called cross-site, a head tag
  * or loader value that closes its element, and a schema key that runs as generated code.
  */
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes)
-      controller.close()
-    },
-  })
-}
 
 // Renders the chain and the loader data, so a test can see which page answered and what it got.
 const stub: RenderAdapter = {

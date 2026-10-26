@@ -33,6 +33,7 @@ import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import { jsonText } from "./generated/json-text.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { parseByteRange } from "./generated/range.ts"
+import { plainRenderHeaders } from "./generated/render-headers.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
 import { RESPONSE_OWNED_HEADERS } from "./generated/response-owned-headers.ts"
 import {
@@ -45,6 +46,7 @@ import {
   type StaticMount,
   staticMountsOf,
 } from "./generated/static-file.ts"
+import { assertCloseArgs } from "./generated/ws-close.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
 import { writeTextFrame } from "./ws-frame.ts"
@@ -345,17 +347,6 @@ interface NodeResponseResult {
     readonly headers?: Readonly<Record<string, string>>
     readonly body: unknown
   }
-}
-
-/** Mirror of core's `plainRenderHeaders`: the render's own headers on top of `c.set.headers`, always
- * a fresh record when it has any, because the writers below mutate what they are handed and a
- * `status(...)` value is commonly hoisted and reused across requests. */
-function plainRenderHeaders(
-  own: Readonly<Record<string, string>> | undefined,
-  ambient: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (own === undefined) return ambient
-  return ambient === undefined ? { ...own } : { ...ambient, ...own }
 }
 
 function isResponseResult(value: unknown): value is NodeResponseResult {
@@ -3000,30 +2991,6 @@ type WsServerCtor = new (options: { noServer: true; maxPayload?: number }) => Ws
 /** A non-literal specifier so TS treats `import(...)` as `any` - `ws` is an optional peer with no
  * `@types/ws` dependency here (the surface is structurally typed via {@link WsServer}/{@link WsSocket}). */
 const WS_MODULE_SPECIFIER = "ws"
-
-/** Node copy of core's `assertCloseArgs`: a close RFC 6455 forbids throws a `RangeError` before `ws`
- * sees it. `ws` marks the socket closing before it checks the code, so a refused close left the socket
- * half-open: its later sends dropped and the peer's close never answered. */
-function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
-  if (code === undefined) {
-    if (reason !== undefined && reason !== "")
-      throw new RangeError("ws.close(): a reason needs a code")
-    return
-  }
-  if (
-    !Number.isInteger(code) ||
-    !(
-      (code >= 1000 && code <= 1003) ||
-      (code >= 1007 && code <= 1014) ||
-      (code >= 3000 && code <= 4999)
-    )
-  )
-    throw new RangeError(
-      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
-    )
-  if (reason !== undefined && Buffer.byteLength(reason) > 123)
-    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
-}
 
 /** Lazily build a noServer `ws` `WebSocketServer`, or `undefined` if `ws` isn't installed. */
 async function loadWsServer(maxPayloadBytes?: number): Promise<WsServer | undefined> {

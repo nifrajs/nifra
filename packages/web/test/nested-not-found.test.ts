@@ -15,19 +15,10 @@ import {
 } from "../src/index.ts"
 import { DATA_HEADER, STATUS_HEADER } from "../src/router.ts"
 import { isBackendHalf, splitRouteHalves } from "./_route-halves.ts"
+import { streamOf } from "./streams.ts"
 
 // A `_404` below the routes root answers for its own part of the app: the unmatched URLs under its
 // directory and `notFound()` from the routes beneath it, inside the layouts around it.
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 
 // Emits what was rendered as JSON, so a test reads the chain and the props back.
 const stub: RenderAdapter = {

@@ -6,16 +6,7 @@ import {
   type Manifest,
   type RenderAdapter,
 } from "../src/index.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
+import { streamOf } from "./streams.ts"
 
 describe("fontFace()", () => {
   test("defaults to font-display: swap and infers format() from the extension", () => {

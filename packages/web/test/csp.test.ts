@@ -16,16 +16,7 @@ import {
   withISR,
 } from "../src/index.ts"
 import { openCacheChannel } from "../src/isr.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
+import { streamOf } from "./streams.ts"
 
 // An adapter with a constant inline hydration script, like Solid's `_$HY` bootstrap.
 const adapter: RenderAdapter = {

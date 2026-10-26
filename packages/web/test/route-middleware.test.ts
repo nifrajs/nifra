@@ -17,20 +17,11 @@ import {
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER, REDIRECT_HEADER } from "../src/router.ts"
+import { streamOf } from "./streams.ts"
 
 // A directory's `_layout.backend.ts` may export `middleware`. It runs before the layouts, loaders and
 // action of every route in its directory and below, outermost first, and answers the request by
 // returning or throwing a response. A directory needs no frontend layout to have middleware.
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 
 // Emits what was rendered as JSON, so a test reads the chain and the data back.
 const stub: RenderAdapter = {
