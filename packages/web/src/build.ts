@@ -1515,8 +1515,8 @@ export function generateServerEntry(options: {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
   // Bun serves the client bundle through `servePublicDir` and Node through @nifrajs/node's own reader,
-  // both on core's static-file policy. Deno bundles for the browser condition, where `node:fs` is a
-  // stub, so its entry runs the same checks on Deno's own file API.
+  // both on core's static-file policy. Deno's entry runs the same checks on Deno's own file API:
+  // `servePublicDir` over Deno's `node:fs` took 1.2-2.1x the instructions per file request.
   const nodeFs = target === "bun" || target === "node"
   const prerendered = Object.entries(options.prerenderedPages ?? {})
   if (prerendered.length > 0 && !nodeFs) {
