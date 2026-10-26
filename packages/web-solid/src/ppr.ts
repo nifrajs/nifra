@@ -1,4 +1,4 @@
-import { initialHtml } from "@nifrajs/web/internal/hole-runtime"
+import { type HoleState, initialHtml } from "@nifrajs/web/internal/hole-runtime"
 import { createComponent, createMemo, type JSX, untrack } from "solid-js"
 import { Dynamic, isServer } from "solid-js/web"
 import { Await } from "./await.ts"
@@ -13,15 +13,6 @@ export interface HoleDefinition<Data> {
   readonly render: (data: Data) => JSX.Element
   readonly fallback?: () => JSX.Element
   readonly interactive?: boolean
-}
-
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
- * `fill` that host's refill when the page reloads. */
-interface HoleState {
-  readonly status: "unresolved" | "pending" | "ready" | "error"
-  readonly data?: unknown
-  readonly ppr?: true
-  readonly fill?: unknown
 }
 
 export interface HoleProps<Data> {

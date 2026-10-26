@@ -7,21 +7,15 @@ import type {
   BlockerFunction,
   BlockerState,
   NavigateFunction,
-  NavigateOptions,
-  NavigateTargetInput,
   RenderProps,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
-import {
-  getBrowserNavigate,
-  IDLE_BLOCKER,
-  registerBlocker,
-  resolveNavigate,
-} from "@nifrajs/web/client"
+import { IDLE_BLOCKER, registerBlocker } from "@nifrajs/web/client"
 // Its own subpath, so an app that never calls `useMatches` never bundles it.
 import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
+import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
 import { getContext } from "svelte"
 /**
  * `@nifrajs/web-svelte/router` - Svelte routing bindings over the agnostic `@nifrajs/web` history layer,
@@ -94,12 +88,7 @@ export function useMatches(): () => readonly UIMatch[] {
  * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops
  * before then / on the server. */
 export function useNavigate(): NavigateFunction {
-  return ((to: string | number | NavigateTargetInput, options?: NavigateOptions) => {
-    const navigate = getBrowserNavigate()
-    if (navigate === undefined) return
-    const resolved = resolveNavigate(to, options)
-    navigate(resolved.to, resolved.options)
-  }) as NavigateFunction
+  return navigateNow
 }
 
 /**

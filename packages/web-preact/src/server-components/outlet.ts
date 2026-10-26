@@ -1,6 +1,7 @@
+import { type MountedOutlet, mountOutlet, outletHtml } from "@nifrajs/web/internal/component-outlet"
 import {
   type ComponentClientAdapter,
-  ComponentController,
+  type ComponentController,
   type ServerComponent as ComponentHandle,
   type ComponentKey,
   type ComponentState,
@@ -50,44 +51,17 @@ function ComponentRange(props: {
   const record = props.record
   const host = useRef<HTMLElement>(null)
   // Preact owns the shell while the controller owns its independently hydrated native children.
-  const initial = useRef({
-    __html: `<nifra-component data-nifra-component="${record.instance}">${record.html}</nifra-component>`,
-  })
-  const active = useRef<ComponentController | undefined>(undefined)
+  const initial = useRef(outletHtml(record))
+  const mounted = useRef<MountedOutlet | undefined>(undefined)
   const lifecycle = useRef(props)
   lifecycle.current = props
   useLayoutEffect(() => {
-    const options = lifecycle.current
-    if (options.controller === undefined && options.clientAdapter === undefined)
-      throw new Error("component_contract")
-    const element = host.current?.firstElementChild
-    if (!(element instanceof HTMLElement) || element.localName !== "nifra-component")
-      throw new Error("component_contract")
-    const controller =
-      options.controller ??
-      new ComponentController({
-        state: options.state,
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The effect rejects missing adapters before creating a controller; callers with a controller bypass this expression.
-        adapter: options.clientAdapter as ComponentClientAdapter,
-        onError: (code) => lifecycle.current.onError?.(code),
-      })
-    active.current = controller
-    void controller
-      .mount(element, record.instance)
-      .catch(() => controller.reportError("component_failed"))
-    return () => {
-      void (
-        options.controller === undefined
-          ? controller.dispose()
-          : controller.unmount(record.instance, element)
-      ).catch(() => controller.reportError("component_failed"))
-    }
+    const outlet = mountOutlet(lifecycle, host.current?.firstElementChild, record.instance)
+    mounted.current = outlet
+    return outlet?.teardown
   }, [record.instance])
   useLayoutEffect(() => {
-    if (active.current !== undefined)
-      void active.current
-        .adopt(props.state)
-        .catch(() => active.current?.reportError("component_failed"))
+    mounted.current?.adopt(props.state)
   }, [props.state])
   return h("nifra-component-outlet", {
     ref: host,

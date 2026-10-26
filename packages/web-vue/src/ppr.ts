@@ -1,4 +1,9 @@
-import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
+import {
+  type HoleHost,
+  type HoleState,
+  holeHost,
+  initialHtml,
+} from "@nifrajs/web/internal/hole-runtime"
 import {
   createSSRApp,
   defineComponent,
@@ -21,15 +26,6 @@ export interface HoleDefinition<Data> {
   render(data: Data): VNodeChild
   readonly fallback?: VNodeChild
   readonly interactive?: boolean
-}
-
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
- * `fill` that host's refill when the page reloads. */
-interface HoleState {
-  readonly status: "unresolved" | "pending" | "ready" | "error"
-  readonly data?: unknown
-  readonly ppr?: true
-  readonly fill?: unknown
 }
 
 export interface HoleProps<Data> {

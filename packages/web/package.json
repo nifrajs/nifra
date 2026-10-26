@@ -238,6 +238,16 @@
       "types": "./dist/internal/client-call.d.ts",
       "default": "./dist/internal/client-call.js"
     },
+    "./internal/client-server-fn": {
+      "bun": "./src/internal/client-server-fn.ts",
+      "types": "./dist/internal/client-server-fn.d.ts",
+      "default": "./dist/internal/client-server-fn.js"
+    },
+    "./internal/hydration-assurance": {
+      "bun": "./src/internal/hydration-assurance.ts",
+      "types": "./dist/internal/hydration-assurance.d.ts",
+      "default": "./dist/internal/hydration-assurance.js"
+    },
     "./internal/keep-alive-mount": {
       "bun": "./src/internal/keep-alive-mount.ts",
       "types": "./dist/internal/keep-alive-mount.d.ts",
@@ -277,6 +287,16 @@
       "bun": "./src/internal/matches-runtime.ts",
       "types": "./dist/internal/matches-runtime.d.ts",
       "default": "./dist/internal/matches-runtime.js"
+    },
+    "./internal/navigate-runtime": {
+      "bun": "./src/internal/navigate-runtime.ts",
+      "types": "./dist/internal/navigate-runtime.d.ts",
+      "default": "./dist/internal/navigate-runtime.js"
+    },
+    "./internal/component-outlet": {
+      "bun": "./src/internal/component-outlet.ts",
+      "types": "./dist/internal/component-outlet.d.ts",
+      "default": "./dist/internal/component-outlet.js"
     },
     "./internal/route-props-runtime": {
       "bun": "./src/internal/route-props-runtime.ts",

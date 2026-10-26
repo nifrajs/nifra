@@ -10,6 +10,7 @@
  * and focus before Vue hides a page and puts them back when it is shown again.
  */
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { assuranceHook } from "@nifrajs/web/internal/hydration-assurance"
 import { propsByState, SLOT_ROOT, slotChildren } from "@nifrajs/web/internal/keep-alive-mount"
 import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import {
@@ -274,18 +275,8 @@ export function mountRouter(options: KeepAliveMountOptions): void {
     },
   })
   const app = createSSRApp(Root)
-  const warning = assuranceWarning()
+  const warning = assuranceHook("onWarning")
   if (warning !== undefined) app.config.warnHandler = (message) => warning(message)
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
   app.mount(container as Element)
-}
-
-function assuranceWarning(): ((message: string) => void) | undefined {
-  const value = Reflect.get(globalThis, Symbol.for("nifra.hydration.assurance"))
-  if (typeof value !== "object" || value === null) return undefined
-  const callback: unknown = Reflect.get(value, "onWarning")
-  if (typeof callback !== "function") return undefined
-  return (message) => {
-    Reflect.apply(callback, undefined, [message])
-  }
 }
