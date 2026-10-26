@@ -5,8 +5,13 @@ import { setBrowserNavigate } from "../src/navigation.ts"
 afterEach(() => setBrowserNavigate(undefined))
 
 describe("navigateNow", () => {
-  test("does nothing before a browser navigate is registered", () => {
-    expect(navigateNow("/a")).toBeUndefined()
+  test("does nothing before a browser navigate is registered, and keeps nothing for one", () => {
+    navigateNow("/a")
+    const calls: unknown[] = []
+    setBrowserNavigate((to) => {
+      calls.push(to)
+    })
+    expect(calls).toEqual([])
   })
 
   test("hands the registered navigate each target resolved at call time", () => {
