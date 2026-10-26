@@ -960,7 +960,9 @@ async function renamedInSources(
   root: string,
   dirs: readonly string[],
 ): Promise<string | undefined> {
-  for (const dir of dirs) {
+  for (const resolved of dirs) {
+    // root is a realpath; a resolved dir can still hold a Windows 8.3 name such as RUNNER~1.
+    const dir = await realpath(resolved).catch(() => resolved)
     if (dir.startsWith(root + sep) || dir.split(sep).includes("node_modules")) continue
     let found: string | undefined
     await walkSource(
