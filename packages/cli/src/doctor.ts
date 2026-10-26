@@ -227,9 +227,9 @@ export interface DoctorResult {
   /**
    * Route files that export `keepAlive` in an app where nothing names its sign-in cookie: no
    * `identityCookies`, `rotateIdentityEpoch()` or `identityChanged()`, and either no `@nifrajs/auth`,
-   * Better Auth or Auth.js dependency or a source file (`renamedIn`) that gives the session cookie a
-   * name of its own. A sign-out there may leave the previous visitor's kept pages. Advisory (never
-   * folded into `ok`).
+   * Better Auth or Auth.js dependency or a source file (`renamedIn`: the app's, or one in a wrapper
+   * package the app owns) that gives the session cookie a name of its own. A sign-out there may
+   * leave the previous visitor's kept pages. Advisory (never folded into `ok`).
    */
   readonly keepAliveIdentity?: { readonly routes: readonly string[]; readonly renamedIn?: string }
   /**
@@ -898,11 +898,21 @@ const MAX_AUTH_WALK = 2000
  * installed and linked graph (real paths, so a workspace package and its own install count once),
  * with the dependency chain that reaches it. The app's own dependencies are checked by the caller.
  * A package declared but not installed - an unmet peer or optional dependency - is not reached.
+ * `renamedIn` is the first file of a source package on that chain outside the app's tree (a workspace
+ * sibling, a `file:` or `link:` package) that renames the session cookie: the app's own scan never
+ * reads it.
  */
 async function reachableAuthPackage(
   cwd: string,
   pkg: Record<string, unknown>,
-): Promise<{ readonly package: string; readonly via: readonly string[] } | undefined> {
+): Promise<
+  | {
+      readonly package: string
+      readonly via: readonly string[]
+      readonly renamedIn: string | undefined
+    }
+  | undefined
+> {
   let root: string
   try {
     root = await realpath(cwd)
@@ -913,8 +923,9 @@ async function reachableAuthPackage(
   const queue: {
     readonly dir: string
     readonly via: readonly string[]
+    readonly dirs: readonly string[]
     readonly pkg: Record<string, unknown>
-  }[] = [{ dir: root, via: [], pkg }]
+  }[] = [{ dir: root, via: [], dirs: [], pkg }]
   for (let next = 0; next < queue.length && visited.size < MAX_AUTH_WALK; next++) {
     const current = queue[next]
     if (current === undefined) break
@@ -925,12 +936,39 @@ async function reachableAuthPackage(
     for (const name of [...names].sort(codeUnitOrder)) {
       const path = resolvePackageFrom(current.dir, name)
       if (path === undefined) continue
-      if (next > 0 && KNOWN_AUTH_PACKAGES.includes(name)) return { package: name, via: current.via }
+      if (next > 0 && KNOWN_AUTH_PACKAGES.includes(name)) {
+        const renamedIn = await renamedInSources(root, current.dirs)
+        return { package: name, via: current.via, renamedIn }
+      }
       if (visited.has(path)) continue
       visited.add(path)
       const meta = await readJson(join(path, "package.json"))
-      if (meta !== undefined) queue.push({ dir: path, via: [...current.via, name], pkg: meta })
+      if (meta !== undefined) {
+        queue.push({
+          dir: path,
+          via: [...current.via, name],
+          dirs: [...current.dirs, path],
+          pkg: meta,
+        })
+      }
     }
+  }
+  return undefined
+}
+
+async function renamedInSources(
+  root: string,
+  dirs: readonly string[],
+): Promise<string | undefined> {
+  for (const dir of dirs) {
+    if (dir.startsWith(root + sep) || dir.split(sep).includes("node_modules")) continue
+    let found: string | undefined
+    await walkSource(dir, (rel, content) => {
+      if (found === undefined && RENAMED_SESSION.test(content)) {
+        found = displayPath(root, join(dir, rel))
+      }
+    })
+    if (found !== undefined) return found
   }
   return undefined
 }
@@ -1020,6 +1058,7 @@ export async function collectDoctorResult(
   // A wrapper package the app owns may be what brings the auth library in.
   const reachedAuth =
     keptRoutes.length === 0 || directAuth ? undefined : await reachableAuthPackage(cwd, pkg)
+  renamedIn ??= reachedAuth?.renamedIn
   const knownAuth = directAuth || reachedAuth !== undefined
   const keepAliveIdentity =
     keptRoutes.length === 0 || (reachedAuth !== undefined && renamedIn === undefined)

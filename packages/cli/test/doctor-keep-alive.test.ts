@@ -187,3 +187,38 @@ test("an auth library a wrapper declares counts only once it is installed", asyn
     expect(installed.keepAliveIdentityCovered?.package).toBe("better-auth")
   }
 })
+
+test("a wrapper outside the app's tree that renames the session cookie keeps the warning", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "nifra-keep-alive-doctor-"))
+  roots.push(workspace)
+  const root = join(workspace, "apps/web")
+  writeAppFile(
+    root,
+    "package.json",
+    JSON.stringify({
+      name: "app",
+      dependencies: { "@nifrajs/web": "5.0.0", "@workspace/session": "workspace:*" },
+    }),
+  )
+  writeAppFile(root, "routes/list.tsx", KEPT)
+  linkPackage(root, "@workspace/session", "../../packages/session", { "better-auth": "1.0.0" })
+  install(workspace, "better-auth")
+  expect((await collectDoctorResult(root)).keepAliveIdentityCovered?.via).toEqual([
+    "@workspace/session",
+  ])
+
+  writeAppFile(
+    workspace,
+    "packages/session/src/auth.ts",
+    'betterAuth({ advanced: { cookies: { session_token: { name: "sid" } } } })\n',
+  )
+  const result = await collectDoctorResult(root)
+  expect(result.keepAliveIdentity).toEqual({
+    routes: ["routes/list.tsx"],
+    renamedIn: "../../packages/session/src/auth.ts",
+  })
+  expect(result.keepAliveIdentityCovered).toBeUndefined()
+  expect(doctorReport(result).join("\n")).toContain(
+    "../../packages/session/src/auth.ts renames the session cookie",
+  )
+})
