@@ -8,6 +8,7 @@ import { Kind, type Static, type TSchema } from "@sinclair/typebox"
 import { type TypeCheck, TypeCompiler } from "@sinclair/typebox/compiler"
 import { Value } from "@sinclair/typebox/value"
 import { markAnswerStep } from "./answer-step.ts"
+import { type BranchCheck, compileDecoder, type Decoder, declaresDate } from "./decode.ts"
 import { ensureDefaultFormats } from "./formats.ts"
 import { COERCES, TEXT_SLOT } from "./marks.ts"
 
@@ -219,6 +220,15 @@ function convertFlat(plan: CoercionPlan, value: unknown): unknown {
  */
 const VALIDATE_PROJECTED = Symbol.for("nifra.schema.validateProjected")
 
+/**
+ * On a `fromTypeBox` validate that decodes, read by core's response contract: the same check for a
+ * value as JSON writes it, which hands the value back as it came rather than turning its `t.date()`
+ * strings into the `Date`s a request's handler receives.
+ */
+const VALIDATE_WIRE = Symbol.for("nifra.schema.validateWire")
+
+const unchanged: Decoder = (value) => value
+
 const isSchemaNode = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 const isTypeBoxSchema = (value: unknown): value is TSchema =>
@@ -273,6 +283,37 @@ function withoutKeyChecks(node: unknown): unknown {
   return out ?? node
 }
 
+/** A check of one union branch, compiled unless the branch could not be. */
+const branchCheck: BranchCheck = (branch) => {
+  if (!isTypeBoxSchema(branch)) return () => false
+  if (!hasCompileHazard(branch) && !("document" in globalThis))
+    try {
+      const check = TypeCompiler.Compile(branch)
+      return (value) => check.Check(value)
+    } catch {
+      // No dynamic codegen here (edge): the branch is checked eval-free.
+    }
+  return (value) => Value.Check(branch, value)
+}
+
+/** `checked`, then the `t.date()` strings it passed handed on as `Date`s. */
+function decodingAfter<T extends TSchema>(
+  schema: T,
+  checked: (value: unknown) => StandardResult<Static<T>>,
+): (value: unknown) => StandardResult<Static<T>> {
+  // Built when a first value passes.
+  let decode: Decoder | undefined
+  const decoding = (value: unknown): StandardResult<Static<T>> => {
+    const outcome = checked(value)
+    if (outcome.issues !== undefined) return outcome
+    decode ??= compileDecoder(schema, branchCheck) ?? unchanged
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: decoding turns only the `t.date()` strings the check passed into the `Date`s `Static<T>` names there.
+    return { value: decode(outcome.value) as Static<T> }
+  }
+  Object.defineProperty(decoding, VALIDATE_WIRE, { value: checked })
+  return decoding
+}
+
 /**
  * Wrap a TypeBox schema as a `NifraSchema`.
  *
@@ -313,38 +354,40 @@ export function fromTypeBox<T extends TSchema>(
   // without 'unsafe-eval', or Trusted Types, the compile attempt is a violation the browser logs and
   // reports, once per schema, before the fallback below catches it.
   let evalFree = hasCompileHazard(schema) || "document" in globalThis
+  const checked = (value: unknown): StandardResult<Static<T>> => {
+    // Install the standard string formats before the first Compile/Check. Driven from this
+    // reachable path (not a top-level import side effect) so a production bundle can't
+    // tree-shake the registration away - see ./formats.ts. Idempotent, ~free after first call.
+    ensureDefaultFormats()
+    // Coerce first when asked (query schemas): `Value.Convert` turns "20"→20 per the schema, so the
+    // compiled/eval-free Check below sees the target type. A non-convertible value (e.g. "abc" for an
+    // integer) is left as-is and fails Check → a proper 400.
+    const input = coerce
+      ? coercionPlan !== null
+        ? convertFlat(coercionPlan, value)
+        : Value.Convert(schema, value)
+      : value
+    if (compiled === undefined && !evalFree) {
+      try {
+        compiled = TypeCompiler.Compile(schema)
+      } catch {
+        // Dynamic codegen disallowed (edge): take the eval-free path for this schema.
+        evalFree = true
+      }
+    }
+    if (compiled !== undefined) {
+      if (compiled.Check(input)) return { value: input as Static<T> }
+      return { issues: firstIssues(compiled.Errors(input)) }
+    }
+    if (Value.Check(schema, input)) return { value: input as Static<T> }
+    return { issues: firstIssues(Value.Errors(schema, input)) }
+  }
   const result: NifraSchema<T> = {
     "~standard": {
       version: 1,
       vendor: "nifra",
-      validate: (value: unknown): StandardResult<Static<T>> => {
-        // Install the standard string formats before the first Compile/Check. Driven from this
-        // reachable path (not a top-level import side effect) so a production bundle can't
-        // tree-shake the registration away - see ./formats.ts. Idempotent, ~free after first call.
-        ensureDefaultFormats()
-        // Coerce first when asked (query schemas): `Value.Convert` turns "20"→20 per the schema, so the
-        // compiled/eval-free Check below sees the target type. A non-convertible value (e.g. "abc" for an
-        // integer) is left as-is and fails Check → a proper 400.
-        const input = coerce
-          ? coercionPlan !== null
-            ? convertFlat(coercionPlan, value)
-            : Value.Convert(schema, value)
-          : value
-        if (compiled === undefined && !evalFree) {
-          try {
-            compiled = TypeCompiler.Compile(schema)
-          } catch {
-            // Dynamic codegen disallowed (edge): take the eval-free path for this schema.
-            evalFree = true
-          }
-        }
-        if (compiled !== undefined) {
-          if (compiled.Check(input)) return { value: input as Static<T> }
-          return { issues: firstIssues(compiled.Errors(input)) }
-        }
-        if (Value.Check(schema, input)) return { value: input as Static<T> }
-        return { issues: firstIssues(Value.Errors(schema, input)) }
-      },
+      // A schema without a `t.date()` is validated by the check alone, so it pays nothing for decoding.
+      validate: declaresDate(schema) ? decodingAfter(schema, checked) : checked,
       // Phantom: `types` carries no runtime value; this cast supplies the
       // compile-time `Static<T>` that nifra's `InferOutput` reads to type `c.body`.
       types: undefined as unknown as StandardTypes<Static<T>, Static<T>>,

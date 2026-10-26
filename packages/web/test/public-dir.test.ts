@@ -177,6 +177,81 @@ test("with hashedFiles, only the listed files are immutable, under the prefix or
   })
 })
 
+test("hashedFiles patterns or a predicate make a file immutable; every other file keeps the day", async () => {
+  await withDir(async (dir) => {
+    await mkdir(join(dir, "fonts"), { recursive: true })
+    await mkdir(join(dir, "assets"), { recursive: true })
+    await writeFile(join(dir, "fonts", "inter-0123456789abcdef.woff2"), "font")
+    await writeFile(join(dir, "fonts", "inter.woff2"), "font")
+    await writeFile(join(dir, "assets", "app-a1b2c3.js"), "//")
+    await writeFile(join(dir, "logo.svg"), "<svg/>")
+    const font = /^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/
+    const assets = new Set(["/assets/app-a1b2c3.js"])
+    const cacheOf = async (serve: ReturnType<typeof servePublicDir>, path: string) =>
+      (await serve(get(path)))?.headers.get("cache-control")
+    const immutable = "public, max-age=31536000, immutable"
+    const day = "public, max-age=86400"
+
+    const byPattern = servePublicDir({ dir, hashedFiles: [font] })
+    // A global RegExp keeps lastIndex between tests; asking twice proves it does not here.
+    const byGlobal = servePublicDir({ dir, hashedFiles: [new RegExp(font.source, "g")] })
+    const byPredicate = servePublicDir({
+      dir,
+      hashedFiles: (path) => assets.has(path) || font.test(path),
+    })
+    expect(
+      await Promise.all([
+        cacheOf(byPattern, "/fonts/inter-0123456789abcdef.woff2"),
+        cacheOf(byPattern, "/fonts/inter.woff2"),
+        cacheOf(byPattern, "/assets/app-a1b2c3.js"),
+        cacheOf(byGlobal, "/fonts/inter-0123456789abcdef.woff2"),
+        cacheOf(byGlobal, "/fonts/inter-0123456789abcdef.woff2"),
+        cacheOf(byPredicate, "/fonts/inter-0123456789abcdef.woff2"),
+        cacheOf(byPredicate, "/assets/app-a1b2c3.js"),
+        cacheOf(byPredicate, "/logo.svg"),
+      ]),
+    ).toEqual([immutable, day, day, immutable, immutable, immutable, immutable, day])
+  })
+})
+
+test("hashedFiles takes a set-like object that is not a Set", async () => {
+  await withDir(async (dir) => {
+    await mkdir(join(dir, "assets"), { recursive: true })
+    await writeFile(join(dir, "assets", "app-a1b2c3.js"), "//")
+    await writeFile(join(dir, "assets", "logo.png"), "png")
+    const paths = new Set(["/assets/app-a1b2c3.js"])
+    const setLike = {
+      size: paths.size,
+      has: (path: string) => paths.has(path),
+      [Symbol.iterator]: () => paths.values(),
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a structural set with only the members the runtime check reads.
+    const serve = servePublicDir({ dir, hashedFiles: setLike as never })
+    const cacheOf = async (path: string) => (await serve(get(path)))?.headers.get("cache-control")
+    expect([await cacheOf("/assets/app-a1b2c3.js"), await cacheOf("/assets/logo.png")]).toEqual([
+      "public, max-age=31536000, immutable",
+      "public, max-age=86400",
+    ])
+  })
+})
+
+test("hashedFiles of any other shape is refused when the handler is built", () => {
+  // A Map's `has` tests keys, so this one would otherwise make the file it maps to false immutable.
+  const map = new Map([["/assets/app.js", false]])
+  for (const hashedFiles of [
+    ["/assets/app.js"],
+    "/assets/",
+    { size: 1 },
+    { has: () => true },
+    map,
+  ]) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: wrong shapes on purpose, for the runtime check plain JavaScript callers reach.
+    expect(() => servePublicDir({ dir: "/tmp", hashedFiles: hashedFiles as never })).toThrow(
+      /servePublicDir hashedFiles/,
+    )
+  }
+})
+
 test("path traversal is rejected, including encoded and NUL forms", async () => {
   await withDir(async (dir) => {
     const root = join(dir, "public")
