@@ -1507,3 +1507,22 @@ test("a runtime without write, as an older copy of the plugin installs, still se
   const res = await routed.fetch(new Request("http://x/r"))
   expect([res.status, await res.json(), bodies]).toEqual([200, { id: 1 }, [{ id: 1 }]])
 })
+
+test("a route without a contract leaves no contract field on its context", async () => {
+  let own: boolean | undefined
+  // An onError hook puts the route on the general execution lane, where a contract is attached.
+  const app = server()
+    .onError(() => undefined)
+    .post("/p", { body: t.object({ n: t.number() }) }, (c) => {
+      own = Object.hasOwn(c, "jsonContract")
+      return c.json({ ok: true })
+    })
+  const res = await app.fetch(
+    new Request("http://x/p", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"n":1}',
+    }),
+  )
+  expect([res.status, own]).toEqual([200, false])
+})
