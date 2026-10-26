@@ -34,12 +34,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: mcp-db-postgres, shard: 0, shards: 6, postgres: true }
-          - { target: mcp-db-postgres, shard: 1, shards: 6, postgres: true }
-          - { target: mcp-db-postgres, shard: 2, shards: 6, postgres: true }
-          - { target: mcp-db-postgres, shard: 3, shards: 6, postgres: true }
-          - { target: mcp-db-postgres, shard: 4, shards: 6, postgres: true }
-          - { target: mcp-db-postgres, shard: 5, shards: 6, postgres: true }
+          - { target: mcp-db-postgres, shard: 0, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 1, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 2, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 3, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 4, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 5, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 6, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 7, shards: 8, postgres: true }
           - { target: web-router, shard: 0, shards: 2, postgres: false }
           - { target: web-router, shard: 1, shards: 2, postgres: false }
           - { target: web-keep-alive, shard: 0, shards: 2, postgres: false }

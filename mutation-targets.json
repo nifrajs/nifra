@@ -10,7 +10,9 @@
   "mcp-db-postgres": {
     "files": [
       "packages/mcp-db/src/internal/pg-exec.ts",
+      "packages/mcp-db/src/internal/pg-grants.ts",
       "packages/mcp-db/src/internal/pg-lexer.ts",
+      "packages/mcp-db/src/internal/pg-scope.ts",
       "packages/mcp-db/src/internal/shared.ts",
       "packages/mcp-db/src/postgres.ts"
     ],
