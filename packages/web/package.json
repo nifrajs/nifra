@@ -238,6 +238,11 @@
       "types": "./dist/internal/client-call.d.ts",
       "default": "./dist/internal/client-call.js"
     },
+    "./internal/client-server-fn": {
+      "bun": "./src/internal/client-server-fn.ts",
+      "types": "./dist/internal/client-server-fn.d.ts",
+      "default": "./dist/internal/client-server-fn.js"
+    },
     "./internal/hydration-assurance": {
       "bun": "./src/internal/hydration-assurance.ts",
       "types": "./dist/internal/hydration-assurance.d.ts",

@@ -9,7 +9,8 @@
  */
 
 import type { ServerFnReference } from "@nifrajs/web/fn"
-import { clientServerFn, createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
+import { createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
+import { clientServerFn } from "@nifrajs/web/internal/client-server-fn"
 import { type Accessor, createSignal, onCleanup } from "solid-js"
 
 /** A server function's state accessor plus the call itself. */

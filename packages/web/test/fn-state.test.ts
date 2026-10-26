@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { clientServerFn, createServerFnStore, idleServerFnState } from "../src/fn-state.ts"
+import { createServerFnStore, idleServerFnState } from "../src/fn-state.ts"
 
 /**
  * The state machine five adapters share. The two cases worth the most here are the ones that only
@@ -171,14 +171,5 @@ describe("subscribe", () => {
     off()
     await store.call(undefined)
     expect(count).toBe(afterFirst)
-  })
-})
-
-describe("clientServerFn", () => {
-  test("is the reference it was handed, typed as the one-argument stub", async () => {
-    const stub = async (input: { readonly n: number }) => input.n * 2
-    const fn = clientServerFn(stub)
-    expect(fn).toBe(stub)
-    expect(await createServerFnStore(fn).call({ n: 2 })).toBe(4)
   })
 })

@@ -9,7 +9,8 @@
  */
 
 import type { ServerFnReference } from "@nifrajs/web/fn"
-import { clientServerFn, createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
+import { createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
+import { clientServerFn } from "@nifrajs/web/internal/client-server-fn"
 import { useMemo, useRef, useSyncExternalStore } from "react"
 
 /** A server function's state plus the call itself. */

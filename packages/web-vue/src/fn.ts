@@ -9,7 +9,8 @@
  */
 
 import type { ServerFnReference } from "@nifrajs/web/fn"
-import { clientServerFn, createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
+import { createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
+import { clientServerFn } from "@nifrajs/web/internal/client-server-fn"
 import { onScopeDispose, type ShallowRef, shallowRef } from "vue"
 
 /** A server function's state ref plus the call itself. */

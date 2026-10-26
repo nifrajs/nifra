@@ -9,12 +9,8 @@
  */
 
 import type { ServerFnReference } from "@nifrajs/web/fn"
-import {
-  clientServerFn,
-  createServerFnStore,
-  idleServerFnState,
-  type ServerFnState,
-} from "@nifrajs/web/fn-state"
+import { createServerFnStore, idleServerFnState, type ServerFnState } from "@nifrajs/web/fn-state"
+import { clientServerFn } from "@nifrajs/web/internal/client-server-fn"
 import { type Readable, readable } from "svelte/store"
 
 /** A server function's readable state plus the call itself. */
