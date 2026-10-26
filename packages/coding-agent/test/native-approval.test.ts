@@ -9,7 +9,7 @@ import type {
 } from "@nifrajs/agent-protocol"
 import { APPROVAL_NEVER_EXPIRES_AT, type ApprovalTimeout } from "../src/approvals.ts"
 import { CodingAgentHost } from "../src/host.ts"
-import { type NativeApprovalPort, NifraBackend } from "../src/native.ts"
+import { type NativeApprovalPort, type NativeModelRequest, NifraBackend } from "../src/native.ts"
 import { ReplayBackend } from "../src/replay.ts"
 import { FileSessionStore } from "../src/sessions.ts"
 
@@ -48,12 +48,15 @@ function makeNativeBackend(options: {
   readonly execute?: (input: unknown, context: { readonly signal: AbortSignal }) => unknown
 }) {
   const executed: unknown[] = []
+  const requests: NativeModelRequest[] = []
   const backend = new NifraBackend({
     model: {
-      complete: ({ messages }) =>
-        messages.some((message) => message.role === "tool")
+      complete: (request) => {
+        requests.push(request)
+        return request.messages.some((message) => message.role === "tool")
           ? { type: "text", text: "done" }
-          : { type: "tool", name: "write_file", input: { path: "safe.txt" } },
+          : { type: "tool", name: "write_file", input: { path: "safe.txt" } }
+      },
     },
     tools: [
       {
@@ -72,7 +75,10 @@ function makeNativeBackend(options: {
       ? {}
       : { approvalTimeoutMs: options.approvalTimeoutMs }),
   })
-  return { backend, executed }
+  /** What the model was told about the tool call in its latest request. */
+  const toolMessage = (): string | undefined =>
+    requests.at(-1)?.messages.find((message) => message.role === "tool")?.text
+  return { backend, executed, requests, toolMessage }
 }
 
 async function startApprovalTurn(
@@ -187,7 +193,7 @@ describe("NifraBackend native approvals", () => {
   })
 
   test("reports a bounded distinct denial error without executing the tool", async () => {
-    const { backend, executed } = makeNativeBackend({})
+    const { backend, executed, toolMessage } = makeNativeBackend({})
     const { events, iterator, required } = await startApprovalTurn(backend)
     expect(
       await backend.resolveApproval("native", required.approvalId, false, "x".repeat(10_000)),
@@ -198,19 +204,85 @@ describe("NifraBackend native approvals", () => {
     expect(completed?.ok).toBe(false)
     expect(completed?.error?.code).toBe("APPROVAL_DENIED")
     expect(completed?.error?.message.length).toBeLessThanOrEqual(512)
+    expect(toolMessage()).toStartWith("APPROVAL_DENIED: approval denied for write_file: xxx")
+    expect(toolMessage()?.length).toBeLessThanOrEqual(512)
     expect(executed).toHaveLength(0)
     await backend.close("native")
   })
 
+  test("a denial's reason reaches the model's next request", async () => {
+    const { backend, executed, requests, toolMessage } = makeNativeBackend({})
+    const { events, iterator, required } = await startApprovalTurn(backend)
+    await backend.resolveApproval("native", required.approvalId, false, "write under tmp/ instead")
+    await drain(iterator, events)
+
+    const completed = events.find((event) => event.type === "tool.completed")
+    expect(requests).toHaveLength(2)
+    expect(toolMessage()).toBe(
+      "APPROVAL_DENIED: approval denied for write_file: write under tmp/ instead",
+    )
+    expect(toolMessage()).toBe(`${completed?.error?.code}: ${completed?.error?.message}`)
+    expect(executed).toHaveLength(0)
+    await backend.close("native")
+  })
+
+  const unexplained: ReadonlyArray<{
+    readonly name: string
+    readonly options: Parameters<typeof makeNativeBackend>[0]
+    readonly answer?: (backend: NifraBackend, approvalId: string) => Promise<unknown>
+    readonly expected: string
+  }> = [
+    {
+      name: "a denial with no reason",
+      options: {},
+      answer: (backend, id) => backend.resolveApproval("native", id, false),
+      expected: "APPROVAL_DENIED: approval denied for write_file",
+    },
+    {
+      name: "a denial with a blank reason",
+      options: {},
+      answer: (backend, id) => backend.resolveApproval("native", id, false, "  "),
+      expected: "APPROVAL_DENIED: approval denied for write_file",
+    },
+    {
+      name: "a timeout",
+      options: { approvalTimeoutMs: 5 },
+      expected: "APPROVAL_TIMEOUT: approval timed out for write_file",
+    },
+    {
+      name: "a port that answers false",
+      options: { approval: { request: () => false } },
+      expected: "APPROVAL_DENIED: approval denied for write_file",
+    },
+    {
+      name: "a port that rejects",
+      options: { approval: { request: () => Promise.reject(new Error("broker down")) } },
+      expected: "APPROVAL_FAILED: approval failed for write_file: approval callback failed",
+    },
+  ]
+  for (const { name, options, answer, expected } of unexplained)
+    test(`the model reads ${name} as one plain line`, async () => {
+      const { backend, executed, toolMessage } = makeNativeBackend(options)
+      const { events, iterator, required } = await startApprovalTurn(backend)
+      await answer?.(backend, required.approvalId)
+      await drain(iterator, events)
+
+      expect(toolMessage()).toBe(expected)
+      expect(executed).toHaveLength(0)
+      await backend.close("native")
+    })
+
   test("fails a pending approval closed on cancellation", async () => {
-    const { backend, executed } = makeNativeBackend({})
+    const { backend, executed, requests } = makeNativeBackend({})
     const { events, iterator, required } = await startApprovalTurn(backend)
     await backend.cancel("native", "user cancelled")
     await drain(iterator, events)
 
     expect(events.some((event) => isApprovalResolved(event) && !event.approved)).toBe(true)
     expect(events.find((event) => isApprovalResolved(event))?.reason).toBe("approval cancelled")
+    expect(events.at(-1)?.type).toBe("session.stopped")
     expect(await backend.resolveApproval("native", required.approvalId, true)).toBeUndefined()
+    expect(requests).toHaveLength(1)
     expect(executed).toHaveLength(0)
   })
 

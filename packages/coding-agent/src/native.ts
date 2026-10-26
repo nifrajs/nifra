@@ -495,15 +495,20 @@ export class NifraBackend implements AgentBackend {
           this.assertCurrentTurn(session, stream, turnId, signal)
           if (!resolution.approved) {
             const code = resolution.errorCode ?? "APPROVAL_DENIED"
+            const message = boundedApprovalMessage(code, tool.name, resolution.reason)
             this.emit(session, {
               type: "tool.completed",
               turnId,
               callId,
               name: tool.name,
               ok: false,
-              error: agentError(code, boundedApprovalMessage(code, tool.name, resolution.reason)),
+              error: agentError(code, message),
             })
-            this.remember(session, { role: "tool", name: tool.name, text: code })
+            this.remember(session, {
+              role: "tool",
+              name: tool.name,
+              text: boundedApprovalText(`${code}: ${message}`, 512),
+            })
             continue
           }
         }
@@ -732,7 +737,9 @@ export class NifraBackend implements AgentBackend {
     clearTimeout(pending.timer)
     pending.signal.removeEventListener("abort", pending.onAbort)
     this.pendingApprovals.delete(approvalId)
-    const boundedReason = reason === undefined ? undefined : boundedApprovalText(reason, 512)
+    // A blank reason is no reason; bounding it would put the "native tool" placeholder in its place.
+    const boundedReason =
+      reason === undefined || reason.trim() === "" ? undefined : boundedApprovalText(reason, 512)
     const resolution: NativeApprovalResolution = Object.freeze({
       approved,
       ...(boundedReason === undefined ? {} : { reason: boundedReason }),
@@ -937,7 +944,7 @@ function boundedApprovalMessage(
             ? "approval closed"
             : "approval failed"
   const name = boundedApprovalText(toolName, 128)
-  const suffix = reason === undefined || reason === "approval denied" ? "" : `: ${reason}`
+  const suffix = reason === undefined || reason === base ? "" : `: ${reason}`
   return boundedApprovalText(`${base} for ${name}${suffix}`, 512)
 }
 
