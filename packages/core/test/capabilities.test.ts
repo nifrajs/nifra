@@ -455,3 +455,17 @@ describe("capability assurance", () => {
     })
   })
 })
+
+describe("capability ids", () => {
+  const route = (id: string) => () => server().get("/", { capabilities: [id] }, () => ({}))
+
+  test("join lowercase segments with `.`, `-` or `_`", () => {
+    for (const id of ["db.read", "db.read-only", "db.read_only", "tool.execute.archive_notes"])
+      expect(route(id)).not.toThrow()
+  })
+
+  test("refuse an empty segment, whichever separator leaves it", () => {
+    for (const id of ["db..read", "db.-read", "db__read", "db._read", "db.read_", "_db", "Db.read"])
+      expect(route(id)).toThrow(/invalid capability id/)
+  })
+})
