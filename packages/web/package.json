@@ -233,6 +233,11 @@
       "types": "./dist/fn-state.d.ts",
       "default": "./dist/fn-state.js"
     },
+    "./internal/client-call": {
+      "bun": "./src/internal/client-call.ts",
+      "types": "./dist/internal/client-call.d.ts",
+      "default": "./dist/internal/client-call.js"
+    },
     "./internal/dev-reserved": {
       "bun": "./src/internal/dev-reserved.ts",
       "types": "./dist/internal/dev-reserved.d.ts",
