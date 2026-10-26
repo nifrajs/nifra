@@ -6,10 +6,12 @@ import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
  * use Svelte's `hydrate` (reconcile against the SSR markup). Kept in its own entry so server code
  * stays out of the client bundle.
  */
+import { assuranceHook } from "@nifrajs/web/internal/hydration-assurance"
 import { hydrate as svelteHydrate } from "svelte"
 import Chain from "./Chain.svelte"
 import { setMountedRouter } from "./fetcher.ts"
 import Router from "./Router.svelte"
+import { warningsTo } from "./warnings.ts"
 
 // The `_error` boundary marker - Chain.svelte renders it as a <svelte:boundary>. Re-exported here so
 // nifra's client codegen resolves it from `@nifrajs/web-svelte/client` alongside `mountRouter`.
@@ -20,32 +22,18 @@ export interface HydrationAssuranceOptions {
   readonly onWarning?: (message: string) => void
 }
 
-function assuranceWarning(): ((message: string) => void) | undefined {
-  const value = (globalThis as unknown as Record<PropertyKey, unknown>)[
-    Symbol.for("nifra.hydration.assurance")
-  ]
-  if (typeof value !== "object" || value === null) return undefined
-  const callback = (value as { onWarning?: unknown }).onWarning
-  return typeof callback === "function" ? (callback as (message: string) => void) : undefined
-}
-
 export function hydrate(
   chain: readonly unknown[],
   props: RenderProps,
   container: unknown,
   options?: HydrationAssuranceOptions,
 ): void {
-  const warning = options?.onWarning ?? assuranceWarning()
-  const originalWarn = console.warn
-  if (warning !== undefined) console.warn = (...args) => warning(args.map(String).join(" "))
-  try {
+  warningsTo(options?.onWarning ?? assuranceHook("onWarning"), () =>
     svelteHydrate(Chain, {
       target: container as Element,
       props: { chain, props, data: props.data, layoutData: props.layoutData },
-    })
-  } finally {
-    if (warning !== undefined) console.warn = originalWarn
-  }
+    }),
+  )
 }
 
 /** Testing hook used by verification runners to observe Svelte warnings and identity. */
@@ -63,15 +51,10 @@ export const hydrationAssuranceHook = Object.freeze({
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, matchChains, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
-  const warning = assuranceWarning()
-  const originalWarn = console.warn
-  if (warning !== undefined) console.warn = (...args) => warning(args.map(String).join(" "))
-  try {
+  warningsTo(assuranceHook("onWarning"), () =>
     svelteHydrate(Router, {
       target: container as Element,
       props: { router, routes, searchSchemas, matchChains },
-    })
-  } finally {
-    if (warning !== undefined) console.warn = originalWarn
-  }
+    }),
+  )
 }

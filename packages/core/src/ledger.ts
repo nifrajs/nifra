@@ -15,6 +15,7 @@
  */
 
 import { validCapabilityId } from "./internal/capability-runtime.ts"
+import { bytesToHex, sha256Hex } from "./internal/hex.ts"
 
 /** Lifecycle phase of one effect. `intent` precedes execution; the rest describe its outcome. */
 export type EffectPhase = "intent" | "committed" | "failed" | "compensated"
@@ -341,17 +342,6 @@ function canonicalEntry(entry: EffectEntry): string {
   )
 }
 
-const encoder = new TextEncoder()
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)))
-  let hex = ""
-  for (let index = 0; index < digest.length; index++) {
-    hex += (digest[index] as number).toString(16).padStart(2, "0")
-  }
-  return hex
-}
-
 export interface MemoryLedgerSinkOptions {
   /** Retain at most this many sealed ledgers (oldest evicted first). Default 1000. */
   readonly maxLedgers?: number
@@ -440,11 +430,7 @@ export async function computeEffectDigest(
   const mac = new Uint8Array(
     await crypto.subtle.sign("HMAC", cryptoKey, payload as unknown as ArrayBuffer),
   )
-  let hex = ""
-  for (let index = 0; index < mac.length; index++) {
-    hex += (mac[index] as number).toString(16).padStart(2, "0")
-  }
-  return hex
+  return bytesToHex(mac)
 }
 
 const EFFECT_LEDGER = Symbol("nifra.effect.ledger")

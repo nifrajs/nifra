@@ -1,3 +1,4 @@
+import { safeEnv } from "./internal/safe-env.ts"
 import { runBoundedProcess } from "./process.ts"
 
 export interface NifraContextOptions {
@@ -51,54 +52,4 @@ export async function runNifraContext(options: NifraContextOptions): Promise<Nif
       error: error instanceof Error ? error.message : String(error),
     }
   }
-}
-
-function safeEnv(
-  overrides: Readonly<Record<string, string | undefined>> | undefined,
-): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const name of new Set([
-    "PATH",
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "TERM",
-    "CI",
-    ...(process.platform === "win32"
-      ? [
-          "SystemRoot",
-          "WINDIR",
-          "TEMP",
-          "TMP",
-          "USERPROFILE",
-          "LOCALAPPDATA",
-          "APPDATA",
-          "COMSPEC",
-          "PATHEXT",
-          "BUN_INSTALL",
-          "HOMEDRIVE",
-          "HOMEPATH",
-          "USERNAME",
-          "USERDOMAIN",
-          "ProgramData",
-          "ProgramFiles",
-          "ProgramFiles(x86)",
-        ]
-      : []),
-    ...Object.keys(overrides ?? {}),
-  ])) {
-    const value =
-      overrides !== undefined && Object.hasOwn(overrides, name) ? overrides[name] : readEnv(name)
-    if (value !== undefined) result[name] = value
-  }
-  return result
-}
-
-function readEnv(name: string): string | undefined {
-  const exact = process.env[name]
-  if (exact !== undefined || process.platform !== "win32") return exact
-  const key = Object.keys(process.env).find(
-    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
-  )
-  return key === undefined ? undefined : process.env[key]
 }

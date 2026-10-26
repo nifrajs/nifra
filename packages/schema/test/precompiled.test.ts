@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { StandardSchemaV1 } from "@nifrajs/core/schema"
 import fc from "fast-check"
+import ts from "typescript"
 import { compileSchema } from "../src/compile.ts"
 import { t as formT } from "../src/form.ts"
 import { t } from "../src/index.ts"
@@ -122,5 +123,158 @@ describe("static schema compilation", () => {
     expect(() =>
       compileSchema(t.string(), { ...options, exportName: "schema;sideEffect()" }),
     ).toThrow("identifier")
+    // The checker's own for-of is rewritten; the same text inside a literal must not be.
+    expect(() => compileSchema(t.literal("for(const value: any of array)"), options)).toThrow(
+      "whose text holds",
+    )
   })
+})
+
+describe("generated module source", () => {
+  // One schema per shape the checker code differs on, each with a value it accepts and one it refuses.
+  const SOURCES: Record<string, { source: string; valid: unknown; invalid: unknown }> = {
+    list: {
+      source: "Type.Array(Type.String(), { minItems: 1, maxItems: 3 })",
+      valid: ["a"],
+      invalid: [1],
+    },
+    unique: {
+      source: "Type.Array(Type.String(), { uniqueItems: true })",
+      valid: ["a", "b"],
+      invalid: ["a", "a"],
+    },
+    counted: {
+      source:
+        "Type.Array(Type.Number(), { contains: Type.Literal(1), minContains: 1, maxContains: 2 })",
+      valid: [1, 2],
+      invalid: [2, 3],
+    },
+    pair: {
+      source: "Type.Tuple([Type.String(), Type.Number()])",
+      valid: ["a", 1],
+      invalid: [1, "a"],
+    },
+    byName: {
+      source: "Type.Record(Type.String(), Type.Array(Type.Integer()))",
+      valid: { a: [1] },
+      invalid: { a: [1.5] },
+    },
+    byIndex: {
+      source: "Type.Record(Type.Number(), Type.String())",
+      valid: { 0: "a" },
+      invalid: { 0: 1 },
+    },
+    nested: {
+      source:
+        "Type.Object({ rows: Type.Array(Type.Object({ tags: Type.Array(Type.String()), note: Type.Optional(Type.String()), id: Type.Readonly(Type.String()) })), grid: Type.Array(Type.Array(Type.Number())) }, { additionalProperties: false })",
+      valid: { rows: [{ tags: ["a"], id: "r" }], grid: [[1], []] },
+      invalid: { rows: [{ tags: [1], id: "r" }], grid: [] },
+    },
+    text: {
+      source: 'Type.String({ pattern: "^a", format: "email" })',
+      valid: "a@b.co",
+      invalid: "b@b.co",
+    },
+    either: {
+      source:
+        'Type.Union([Type.Null(), Type.Array(Type.Object({ id: Type.String() })), Type.Literal("x")])',
+      valid: [{ id: "a" }],
+      invalid: [{ id: 1 }],
+    },
+    both: {
+      source:
+        "Type.Intersect([Type.Object({ id: Type.String() }), Type.Object({ n: Type.Number() })], { unevaluatedProperties: false })",
+      valid: { id: "a", n: 1 },
+      invalid: { id: "a", n: 1, extra: true },
+    },
+    tree: {
+      source:
+        'Type.Module({ Tree: Type.Object({ id: Type.String(), children: Type.Array(Type.Ref("Tree")) }) }).Import("Tree")',
+      valid: { id: "a", children: [{ id: "b", children: [] }] },
+      invalid: { id: "a", children: [{ id: "b" }] },
+    },
+    shaped: {
+      source: 'Type.TemplateLiteral([Type.Literal("a"), Type.Number()])',
+      valid: "a1",
+      invalid: "b1",
+    },
+    binary: {
+      source: "Type.Object({ at: Type.Date(), bytes: Type.Uint8Array(), big: Type.BigInt() })",
+      valid: { at: new Date(0), bytes: new Uint8Array(1), big: 1n },
+      invalid: { at: new Date(0), bytes: [1], big: 1n },
+    },
+    sized: {
+      source:
+        "Type.Object({ a: Type.Optional(Type.String()) }, { minProperties: 1, maxProperties: 2, additionalProperties: Type.Number() })",
+      valid: { a: "x", b: 1 },
+      invalid: {},
+    },
+  }
+
+  test(
+    "typechecks under strict options and answers as the source validator",
+    async () => {
+      const root = mkdtempSync(join(dir, "modules-"))
+      const sourceFile = join(root, "source.ts")
+      writeFileSync(
+        sourceFile,
+        [
+          'import { Type } from "@sinclair/typebox"',
+          `import { fromTypeBox } from ${JSON.stringify(join(import.meta.dir, "../src/index.ts"))}`,
+          ...Object.entries(SOURCES).map(
+            ([name, { source }]) => `export const ${name} = fromTypeBox(${source})`,
+          ),
+        ].join("\n"),
+      )
+      const sources: Record<string, Parameters<typeof compileSchema>[0]> = await import(sourceFile)
+      const files = [sourceFile]
+      for (const [name, { valid, invalid }] of Object.entries(SOURCES)) {
+        const source = sources[name]
+        if (source === undefined) throw new Error(`no export ${name}`)
+        const file = join(root, `${name}.ts`)
+        writeFileSync(file, compileSchema(source, { source: "./source.ts", exportName: name }))
+        files.push(file)
+        const compiled: StandardSchemaV1 = (await import(file))[name]
+        for (const value of [valid, invalid])
+          expect({ name, value, outcome: result(compiled, value) }).toEqual({
+            name,
+            value,
+            outcome: result(source, value),
+          })
+        expect({ name, valid: result(compiled, valid).issues }).toEqual({ name, valid: undefined })
+        expect(result(compiled, invalid).issues).toBeDefined()
+      }
+      const program = ts.createProgram(files, {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        lib: ["lib.esnext.d.ts"],
+        types: [],
+        strict: true,
+        noUncheckedIndexedAccess: true,
+        exactOptionalPropertyTypes: true,
+        noImplicitReturns: true,
+        noUnusedLocals: true,
+        noUnusedParameters: true,
+        verbatimModuleSyntax: true,
+        isolatedModules: true,
+        allowImportingTsExtensions: true,
+        noEmit: true,
+        skipLibCheck: true,
+        paths: {
+          "@nifrajs/schema/precompiled": [join(import.meta.dir, "../src/precompiled.ts")],
+          "@nifrajs/core/schema": [join(import.meta.dir, "../../core/src/schema/standard.ts")],
+        },
+      })
+      const diagnostics = ts
+        .getPreEmitDiagnostics(program)
+        .filter((diagnostic) => diagnostic.file?.fileName.startsWith(root))
+        .map(
+          (diagnostic) =>
+            `${diagnostic.file?.fileName.slice(root.length + 1)} TS${diagnostic.code}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`,
+        )
+      expect(diagnostics).toEqual([])
+    },
+    { timeout: 60_000 },
+  )
 })

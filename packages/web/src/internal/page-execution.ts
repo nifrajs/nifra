@@ -4,6 +4,7 @@ import {
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
 } from "@nifrajs/core/mount"
 import {
+  carryRequestLocals,
   isSameOriginForm,
   type Platform,
   type ResponseResult,
@@ -2280,6 +2281,8 @@ export function createPageRequestExecutor<Env = unknown>(
             signal:
               c.signal === undefined ? c.req.signal : AbortSignal.any([c.signal, c.req.signal]),
           })
+          // The owner page's GET answers the same visitor's action, so it reads the action's locals.
+          carryRequestLocals(c.req, request)
           progressiveActionData.set(request, actionResult)
           try {
             const response = await options.rerenderOwnerGET(request, c)

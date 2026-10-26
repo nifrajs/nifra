@@ -25,6 +25,7 @@ import {
   type ToolIdempotencyStore,
 } from "@nifrajs/core/tool-contract"
 import { asRecord } from "./internal/record.ts"
+import { sha256Hex } from "./internal/sha256-hex.ts"
 
 export {
   approximateContextTokens,
@@ -1189,10 +1190,8 @@ export class AgentResumeMismatchError extends Error {
   }
 }
 
-async function inputDigestOf(input: unknown): Promise<string> {
-  const bytes = new TextEncoder().encode(canonicalJson(input))
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")
+function inputDigestOf(input: unknown): Promise<string> {
+  return sha256Hex(canonicalJson(input))
 }
 
 function freezeState(state: AgentTurnState): AgentTurnState {

@@ -17,6 +17,7 @@ import type { CheckResult } from "./check.ts"
 import type { CommandCtx, CommandSpec } from "./command-catalog.ts"
 import type { Diagnostic } from "./diagnostics.ts"
 import { diagnosticCompatibilityOf, toSarifLog } from "./diagnostics.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { isRecord } from "./internal/record.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { LEGACY_RULE_CODES } from "./rules/legacy.ts"
@@ -43,10 +44,6 @@ export class ReviewInputError extends Error {
 const REVIEW_INPUT_KEYS = new Set(["strict", "diff", "sarif", "fix", "dryRun", "write", "json"])
 const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const SAFE_GIT_REF = /^[A-Za-z0-9][A-Za-z0-9._/@+-]{0,255}$/
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
-}
 
 const CHECK_IDS: readonly ReviewCheckId[] = [
   "typecheck",
@@ -482,7 +479,7 @@ async function diffScope(cwd: string, ref: string): Promise<ReviewScope> {
   const untracked = await runGit(cwd, ["ls-files", "--others", "--exclude-standard", "-z", "--"])
   if (!changed.ok || !untracked.ok) throw new ReviewInputError("invalid git scope")
   const paths = [...new Set([...nulPaths(changed.stdout), ...nulPaths(untracked.stdout)])].sort(
-    compareText,
+    codeUnitOrder,
   )
   if (
     paths.some(
@@ -627,14 +624,17 @@ async function composeCollectedReport(
       const leftLocation = normalizedLocation(cwd, left.diagnostic.file, left.diagnostic.line)
       const rightLocation = normalizedLocation(cwd, right.diagnostic.file, right.diagnostic.line)
       return (
-        compareText(normalizedCode(left.diagnostic.code), normalizedCode(right.diagnostic.code)) ||
-        compareText(
+        codeUnitOrder(
+          normalizedCode(left.diagnostic.code),
+          normalizedCode(right.diagnostic.code),
+        ) ||
+        codeUnitOrder(
           normalizedSeverity(left.diagnostic.severity),
           normalizedSeverity(right.diagnostic.severity),
         ) ||
-        compareText(leftLocation?.path ?? "", rightLocation?.path ?? "") ||
+        codeUnitOrder(leftLocation?.path ?? "", rightLocation?.path ?? "") ||
         (leftLocation?.line ?? 0) - (rightLocation?.line ?? 0) ||
-        compareText(left.diagnostic.fix?.recipe ?? "", right.diagnostic.fix?.recipe ?? "") ||
+        codeUnitOrder(left.diagnostic.fix?.recipe ?? "", right.diagnostic.fix?.recipe ?? "") ||
         left.index - right.index
       )
     })
@@ -770,7 +770,7 @@ async function composeCollectedReport(
             findings.flatMap((finding) => (finding.fix === undefined ? [] : [finding.fix.recipe])),
           ),
         ]
-          .sort(compareText)
+          .sort(codeUnitOrder)
           .map((recipe): ReviewFixResult => ({ recipe, status: "planned" }))
       : undefined
   const draft: ReviewReportDraft = {
@@ -822,7 +822,7 @@ async function safeChangedPaths(cwd: string, paths: readonly string[]): Promise<
     if (relativePath.length > 0 && relativePath !== ".." && !relativePath.startsWith("../"))
       result.push(relativePath)
   }
-  return [...new Set(result)].sort(compareText)
+  return [...new Set(result)].sort(codeUnitOrder)
 }
 
 async function applyRequestedFixes(

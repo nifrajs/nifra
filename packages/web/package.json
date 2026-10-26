@@ -233,6 +233,26 @@
       "types": "./dist/fn-state.d.ts",
       "default": "./dist/fn-state.js"
     },
+    "./internal/client-call": {
+      "bun": "./src/internal/client-call.ts",
+      "types": "./dist/internal/client-call.d.ts",
+      "default": "./dist/internal/client-call.js"
+    },
+    "./internal/client-server-fn": {
+      "bun": "./src/internal/client-server-fn.ts",
+      "types": "./dist/internal/client-server-fn.d.ts",
+      "default": "./dist/internal/client-server-fn.js"
+    },
+    "./internal/hydration-assurance": {
+      "bun": "./src/internal/hydration-assurance.ts",
+      "types": "./dist/internal/hydration-assurance.d.ts",
+      "default": "./dist/internal/hydration-assurance.js"
+    },
+    "./internal/keep-alive-mount": {
+      "bun": "./src/internal/keep-alive-mount.ts",
+      "types": "./dist/internal/keep-alive-mount.d.ts",
+      "default": "./dist/internal/keep-alive-mount.js"
+    },
     "./internal/dev-reserved": {
       "bun": "./src/internal/dev-reserved.ts",
       "types": "./dist/internal/dev-reserved.d.ts",

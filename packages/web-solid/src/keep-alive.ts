@@ -9,13 +9,8 @@
  * in place, synchronously, so the DOM half runs right after each publish.
  */
 import type { MountRouterOptions, RouterState } from "@nifrajs/web"
-import {
-  createSlotParking,
-  type KeepAliveRouter,
-  type KeepAliveTable,
-  type SlotNode,
-  slotTree,
-} from "@nifrajs/web/keep-alive"
+import { keptMount } from "@nifrajs/web/internal/keep-alive-mount"
+import type { KeepAliveRouter, KeepAliveTable, SlotNode } from "@nifrajs/web/keep-alive"
 import { createMemo, createSignal } from "solid-js"
 import { hydrate as solidHydrate } from "solid-js/web"
 import { setMountedRouter } from "./fetcher.ts"
@@ -36,12 +31,10 @@ export interface KeepAliveMountOptions extends MountRouterOptions {
  * wrappers the server rendered), so hydration claims the document as it is.
  */
 export function mountRouter(options: KeepAliveMountOptions): void {
-  const { router, routes, searchSchemas, container, keepAlive: table } = options
+  const { router, searchSchemas, container } = options
   const matchChains = options.matchChains ?? {}
   setMountedRouter(router)
-  const parking = createSlotParking()
-  let committed: readonly SlotNode[] | undefined
-  router.beforePublish((next) => parking.before(slotTree(next, matchChains, table, committed)))
+  const kept = keptMount(options)
 
   let current: readonly SlotNode[] = []
   let publish: ((state: RouterState) => void) | undefined
@@ -50,24 +43,19 @@ export function mountRouter(options: KeepAliveMountOptions): void {
     const [state, setState] = createSignal(router.snapshot())
     publish = (next) => setState(() => next)
     const tree = createMemo(() => {
-      current = slotTree(state(), matchChains, table, current)
+      current = kept.tree(state(), current)
       return current
     })
     const mount: KeepAliveViewMount = {
+      ...kept,
       propsOf: (of) => routeProps(of, searchSchemas, matchChains, (read) => createMemo(read)),
-      chainOf: (of) => routes[of.routeId] ?? [],
-      entry: parking.entry,
-      page: parking.page,
     }
     return KeepAliveView({ tree, shown: mount.propsOf(state), mount })
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
   }, container as Element)
   // Solid has updated the document by the time a publish returns: park what it hid, restore what it
   // showed again.
-  const after = (): void => {
-    committed = current
-    parking.after(current)
-  }
+  const after = (): void => kept.after(current)
   after()
   router.subscribe(() => {
     publish?.(router.snapshot())

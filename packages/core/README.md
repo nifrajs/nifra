@@ -113,9 +113,13 @@ route. Split groups before the compiler reports `TS2589`, rather than weakening 
   concurrency, filters, cancellation, and token-only metrics. A worker invocation always terminates.
 - **`bigint` in plain JSON.** A JSON answer writes a `bigint` as its decimal string
   (`{ "id": "9007199254740993" }`) instead of failing with a 500, and the typed client reads a
-  `string`. A `Uint8Array` is base64 only where the response schema declares `t.bytes()` from
-  `@nifrajs/schema`; elsewhere it is the `{ "0": 1, ... }` object `JSON.stringify` writes, and a
-  Node `Buffer` is the `{ "type": "Buffer", "data": [...] }` its `toJSON` writes.
+  `string`. A `BigInt` wrapper object (`Object(1n)`) is not a `bigint`: its answer fails with a 500.
+  One moved onto `Object.prototype` is written as `{}` instead by Bun in an answer that holds no
+  `Date`, and one moved onto any plain or `null` prototype is written as `{}` on every runtime when a
+  plain `Date` sits on the answer's first row. A `Uint8Array` is base64 only where the response
+  schema declares `t.bytes()` from `@nifrajs/schema`; elsewhere it is the `{ "0": 1, ... }` object
+  `JSON.stringify` writes, and a Node `Buffer` is the `{ "type": "Buffer", "data": [...] }` its
+  `toJSON` writes.
 - **Rich wire values (opt in).** `@nifrajs/core/wire` round-trips dates, bigints, maps, sets, binary,
   shared references, and cycles through JSON transports. Decoding validates every reachable shape,
   preserves owned `__proto__` keys without prototype mutation, and enforces configurable node, depth,
@@ -167,7 +171,8 @@ contract-first registry.
 `responseContract("enforce")` before the routes it should cover to validate JSON/status payloads and
 prevent extra fields from reaching the wire. That covers a `status(...)` or `c.json(...)` reply a
 handler returns or throws, a hook returns, or `onError` answers with. `warn` preserves the original
-payload during migration.
+payload during migration. The contract judges what JSON writes: a `toJSON` hook's output, and a
+`Date` as its ISO string, so a timestamp column declares `t.date()` and may hold the `Date`.
 Raw `Response`, streams, redirects, and `mountFetch` remain explicit transport escape hatches and
 must be governed by assurance/static review.
 

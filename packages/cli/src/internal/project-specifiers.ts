@@ -7,8 +7,9 @@
  * Never `Bun.resolveSync`: it can install a missing package and remembers answers for the life of the
  * process, and the MCP server is long-lived. A resolver caches what it reads for one check run only.
  */
-import { readFileSync, realpathSync, statSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
 import { basename, dirname, extname, isAbsolute, join } from "node:path"
+import { realpathOrSelf } from "./realpath-or-self.ts"
 
 /** `(absolute importing file, specifier)` to the real path of the file it loads, or `undefined`. */
 export type SpecifierResolver = (fromFile: string, specifier: string) => string | undefined
@@ -132,14 +133,6 @@ export const isFile = (path: string): boolean => {
     return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false
   } catch {
     return false
-  }
-}
-
-const real = (path: string): string => {
-  try {
-    return realpathSync(path)
-  } catch {
-    return path
   }
 }
 
@@ -479,7 +472,7 @@ export function createSpecifierResolver(options: SpecifierResolverOptions = {}):
       found = viaImports(fromFile, specifier) ?? viaTsconfig(fromFile, specifier)
     else found = viaTsconfig(fromFile, specifier)
     if (found === undefined) return undefined
-    const path = real(found)
+    const path = realpathOrSelf(found)
     return /[\\/]node_modules[\\/]/.test(path) ? undefined : path
   }
 }

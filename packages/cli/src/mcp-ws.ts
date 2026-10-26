@@ -6,6 +6,8 @@
  * general-purpose network client.
  */
 
+import { hasControlCharacter } from "./internal/control-character.ts"
+import { redirectConsoleToStderr } from "./mcp-io.ts"
 import { loadBackend } from "./mcp-run.ts"
 
 const DEFAULT_TIMEOUT_MS = 3_000
@@ -52,14 +54,6 @@ export interface WebSocketVerificationResult {
 
 const errString = (err: unknown): string =>
   err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-
-function hasControlCharacter(value: string): boolean {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i)
-    if (code < 0x20 || code === 0x7f) return true
-  }
-  return false
-}
 
 function fail(
   path: string,
@@ -169,17 +163,6 @@ async function dataToString(data: unknown): Promise<string> {
 
 function closeInfo(event: CloseEvent): CloseInfo {
   return { code: event.code, reason: event.reason, wasClean: event.wasClean }
-}
-
-function redirectConsoleToStderr(): void {
-  const write = (level: string, args: unknown[]): void => {
-    Bun.stderr.write(`[${level}] ${args.map((arg) => String(arg)).join(" ")}\n`)
-  }
-  console.debug = (...args: unknown[]) => write("debug", args)
-  console.info = (...args: unknown[]) => write("info", args)
-  console.log = (...args: unknown[]) => write("log", args)
-  console.warn = (...args: unknown[]) => write("warn", args)
-  console.error = (...args: unknown[]) => write("error", args)
 }
 
 export async function runWebSocket(

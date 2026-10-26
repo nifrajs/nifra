@@ -60,7 +60,8 @@ export default function Query() {
       <p>
         A cached query never answers for the next visitor. <code>identityChanged()</code> from{" "}
         <code>@nifrajs/web/client</code> clears every query client in the page: mounted queries go
-        back to pending and refetch, the rest are dropped. In an app with a{" "}
+        back to pending and refetch, the rest drop their data. A fetch still loading loads once more
+        for the new visitor before it settles. In an app with a{" "}
         <a href="/docs/keep-alive#sign-in">keepAlive</a> route, the identity epoch cookie a sign-in
         or sign-out response rotates does the same on the client&apos;s next read.
       </p>

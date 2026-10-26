@@ -245,6 +245,7 @@ export {
 } from "./nonce.ts"
 // public/ - user-authored static files, served identically in dev and production by one handler.
 export {
+  type HashedFiles,
   type PrerenderedPageReaderOptions,
   type PublicDirCache,
   prerenderedPageReader,

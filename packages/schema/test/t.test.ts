@@ -237,10 +237,20 @@ describe("t.json", () => {
 })
 
 describe("t.date", () => {
-  test("accepts a valid Date and nothing else", async () => {
+  test("accepts a valid Date, or an RFC 3339 date-time it hands on as one", async () => {
     const at = new Date("2026-10-07T12:00:00.000Z")
     expect(await validateStandard(t.date(), at)).toEqual({ ok: true, value: at })
-    for (const value of [new Date(Number.NaN), "2026-10-07T12:00:00Z", 0, null]) {
+    for (const written of ["2026-10-07T12:00:00Z", "2026-10-07t14:00:00.000+02:00"])
+      expect(await validateStandard(t.date(), written)).toEqual({ ok: true, value: at })
+    for (const value of [
+      new Date(Number.NaN),
+      "2026-02-30T12:00:00Z",
+      "2026-10-07T12:00:00",
+      "2026-10-07T23:59:60Z",
+      "2026-10-07",
+      0,
+      null,
+    ]) {
       expect((await validateStandard(t.date(), value)).ok).toBe(false)
     }
   })

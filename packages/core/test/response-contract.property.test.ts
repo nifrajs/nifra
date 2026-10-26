@@ -105,15 +105,25 @@ function nodeFor(shape: Shape, depth: number): fc.Arbitrary<Node> {
 function fitFor(shape: Shape, depth: number): fc.Arbitrary<Node> {
   switch (shape.kind) {
     case "string":
-      return fc
-        .string({ unit: fc.constantFrom(..."ab"), maxLength: 3 })
-        .map((value): Node => ({ kind: "string", value }))
+      return fc.oneof(
+        fc
+          .string({ unit: fc.constantFrom(..."ab"), maxLength: 3 })
+          .map((value): Node => ({ kind: "string", value })),
+        // Written as its ISO string, as a database timestamp is.
+        fc.integer({ min: 0, max: 4e12 }).map((ms): Node => ({ kind: "date", ms })),
+      )
     case "number":
       return fc.integer({ min: -9, max: 9 }).map((value): Node => ({ kind: "number", value }))
     case "boolean":
       return fc.boolean().map((value): Node => ({ kind: "boolean", value }))
     case "date":
-      return fc.integer({ min: 0, max: 4e12 }).map((ms): Node => ({ kind: "date", ms }))
+      return fc.integer({ min: 0, max: 4e12 }).chain((ms) =>
+        fc.constantFrom<Node>(
+          { kind: "date", ms },
+          // A handler may also hand back the string a `Date` is written as.
+          { kind: "string", value: new Date(ms).toISOString() },
+        ),
+      )
     case "array":
       return fc
         .array(nodeFor(shape.item, depth + 1), { maxLength: depth > 2 ? 1 : 3 })
@@ -179,9 +189,10 @@ function build(node: Node): unknown {
   }
 }
 
-/** What the serializer writes, with each `Date` it writes as itself marked: the contract holds a
- * `Date` to a date schema, so a date and a string with the same text are told apart. A `Date` a
- * hook returns is not one of these; the serializer writes it by its fields, as `{}`. */
+/** What the serializer writes, with each `Date` it writes as itself marked: a date schema holds a
+ * `Date`, so a date and a string with the same text are told apart, while a string schema holds the
+ * text either way. A `Date` a hook returns is not one of these; the serializer writes it by its
+ * fields, as `{}`. */
 function written(value: unknown): unknown {
   return JSON.parse(
     JSON.stringify(value, function (this: Record<string, unknown>, key, out: unknown) {
@@ -192,6 +203,8 @@ function written(value: unknown): unknown {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 const isDate = (value: unknown): boolean =>
   isRecord(value) && Object.keys(value).length === 1 && typeof value.$date === "string"
@@ -206,11 +219,12 @@ function unmarked(value: unknown): unknown {
 function fits(shape: Shape, value: unknown): boolean {
   switch (shape.kind) {
     case "string":
+      return typeof value === "string" || isDate(value)
     case "number":
     case "boolean":
       return typeof value === shape.kind
     case "date":
-      return isDate(value)
+      return isDate(value) || (typeof value === "string" && ISO.test(value))
     case "array":
       return Array.isArray(value) && value.every((item) => fits(shape.item, item))
     case "object": {

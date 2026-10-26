@@ -275,21 +275,30 @@ function scan(): ReadonlyMap<string, readonly string[]> {
 interface Visit {
   /** The visitor the app's loaders and fetches answer for. */
   who: "first" | "second"
+  /** The server the sweep's loads go to; a scenario's are answered as asked. */
+  server?: Server
 }
 
 type Change = (visit: Visit) => Promise<void>
+
+/** The visitor changes, and the server answers every load asked from here on as the sweep set it. */
+function becomeSecond(visit: Visit): void {
+  visit.who = "second"
+  if (visit.server !== undefined) visit.server.mode = visit.server.next
+}
 
 const pages = [
   { routeId: "index", pattern: "/" },
   { routeId: "me", pattern: "/me" },
   { routeId: "warm", pattern: "/warm" },
+  { routeId: "cold", pattern: "/cold" },
 ]
 const start = { routeId: "index", params: {}, path: "/", data: null, pending: false }
 const routerFor = (visit: Visit) =>
   createClientRouter({
     patterns: pages,
     initial: start,
-    fetchData: async () => ({ who: visit.who }),
+    fetchData: () => served(visit),
   })
 const feed = {
   initialPageParam: 0,
@@ -399,7 +408,7 @@ const CHANGES: readonly (readonly [
     "identityChanged()",
     (run) =>
       run(async (visit) => {
-        visit.who = "second"
+        becomeSecond(visit)
         identityChanged()
       }),
   ],
@@ -413,7 +422,7 @@ const CHANGES: readonly (readonly [
         // A response sets the cookie in a task of its own.
         return await run(async (visit) => {
           await Promise.resolve()
-          visit.who = "second"
+          becomeSecond(visit)
           document.cookie = "nifra-epoch=second"
         })
       } finally {
@@ -453,7 +462,80 @@ for (const scenario of SCENARIOS)
 // sweep reads back through every function a page can reach on what it holds of a store: the store
 // itself and each handle it hands out, kept with a subscriber and kept past its last one. After a
 // visitor change, each call, and what the page holds once it settles, must come out the same whether
-// the earlier loads answered for the first visitor or already for the second.
+// the earlier loads answered for the first visitor or already for the second, and a call the change
+// caught mid-load as that call made once the change landed. The change lands before the call or while
+// its first load is in flight, and the server then answers, fails every load, or rotates the epoch on
+// every response. A call's promise settles only once the page shows what the call ends with, and
+// reports a load it waited on that failed, so a caller that awaits it sees the outcome; and a server
+// that rotates the epoch on every response costs as many loads however long it keeps rotating.
+
+/** What the server does with a load asked once the visitor has changed. */
+const SERVERS = ["answers", "fails every load", "rotates the epoch on every response"] as const
+
+type ServerMode = (typeof SERVERS)[number]
+
+// A rotating server stops after this many rotations, or twice as many: a page whose loads are bounded
+// makes as many either way, and one that loads again on every rotation makes more the longer it goes.
+const ROTATIONS = 20
+
+interface Server {
+  /** Unset until the visitor has changed, then {@link next}. */
+  mode: ServerMode | undefined
+  readonly next: ServerMode
+  /** Loads asked once the visitor has changed. */
+  loads: number
+  /** Of those, the ones that failed. */
+  failed: number
+  rotations: number
+  readonly maxRotations: number
+  /** Holds the next load asked until it opens. */
+  held: Gate | undefined
+  /** A held load is waiting. */
+  waiting: boolean
+  closed: boolean
+}
+
+interface Gate {
+  readonly opened: Promise<void>
+  readonly open: () => void
+}
+
+function gate(): Gate {
+  let open = () => {}
+  const opened = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { opened, open }
+}
+
+/** One load, answered as the server was when it was asked: a held load still in flight at the change
+ * fares the same in both runs, and differs only in the visitor it answers for. */
+async function served(visit: Visit): Promise<{ who: Visit["who"] }> {
+  const server = visit.server
+  if (server === undefined) return { who: visit.who }
+  const asked = { who: visit.who, mode: server.mode }
+  const held = server.held
+  if (held !== undefined) {
+    server.held = undefined
+    server.waiting = true
+    await held.opened
+  }
+  if (asked.mode === undefined || server.closed) return { who: asked.who }
+  server.loads++
+  if (asked.mode === "fails every load") {
+    server.failed++
+    throw new Error("the server is unavailable")
+  }
+  if (
+    asked.mode === "rotates the epoch on every response" &&
+    server.rotations < server.maxRotations
+  ) {
+    const document: unknown = Reflect.get(globalThis, "document")
+    if (typeof document === "object" && document !== null)
+      Reflect.set(document, "cookie", `nifra-epoch=r${++server.rotations}`)
+  }
+  return { who: asked.who }
+}
 
 /** Something a page holds of a store; `kind` names which arguments its functions are called with. */
 interface Held {
@@ -462,10 +544,27 @@ interface Held {
   readonly value: object
 }
 
+/** Several argument lists for one function, each swept on its own. */
+class Each {
+  constructor(readonly lists: readonly (readonly unknown[])[]) {}
+}
+
+const listsOf = (entry: readonly unknown[] | Each | undefined): readonly (readonly unknown[])[] =>
+  entry === undefined ? [] : entry instanceof Each ? entry.lists : [entry]
+
 interface Page {
   readonly held: readonly Held[]
   /** Arguments for each `kind.function`. */
-  readonly calls: Readonly<Record<string, readonly unknown[]>>
+  readonly calls: Readonly<Record<string, readonly unknown[] | Each>>
+  /** For a call that returns a promise on a holder that shows nothing itself, what the call ends
+   * with, or why it ends with nothing the page shows. Any other ends with what its holder shows. */
+  readonly ends?: Readonly<Record<string, (() => unknown) | string>>
+  /** Each call that resolves although a load failed while it was pending, with why that is its
+   * outcome. Any other reports the failure. */
+  readonly quiet?: Readonly<Record<string, string>>
+  /** Each call that posts an action, with why it answers as its POST did when the change lands while
+   * that POST is in flight, rather than as the call made after the change: no POST runs twice. */
+  readonly posts?: Readonly<Record<string, string>>
   /** What the page shows once everything has settled, by part. It is read twice, a render and the
    * one after what that render started has landed: a new epoch cookie is seen at a read. */
   readonly settled: () => Readonly<Record<string, unknown>>
@@ -485,6 +584,16 @@ interface Numbered {
   readonly n: number
 }
 
+/** A component showing `handle`: it renders after each change it hears, and a render reads the epoch
+ * cookie, so a page that reloads on every new epoch keeps loading as long as the server rotates it. */
+const mount = (handle: {
+  subscribe: (listener: () => void) => () => void
+  snapshot: () => unknown
+}): (() => void) =>
+  handle.subscribe(() => {
+    setImmediate(() => handle.snapshot())
+  })
+
 // The first visitor's feed reaches further both ways than the second's.
 const paged = {
   initialPageParam: 0,
@@ -498,14 +607,13 @@ const SURFACES: readonly Surface[] = [
     files: ["packages/web/src/query.ts"],
     open: async (visit) => {
       const queries = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
-      const me = async () => ({ who: visit.who })
-      const page = async (n: number): Promise<Numbered> => ({ who: visit.who, n })
+      const me = () => served(visit)
+      const page = async (n: number): Promise<Numbered> => ({ ...(await served(visit)), n })
       const query = queries.query(["me"], me)
       const mountedQuery = queries.query(["mine"], me)
       const feed = queries.infiniteQuery(["feed"], page, paged)
       const mountedFeed = queries.infiniteQuery(["mine", "feed"], page, paged)
-      mountedQuery.subscribe(() => {})
-      mountedFeed.subscribe(() => {})
+      const mounted = [mount(mountedQuery), mount(mountedFeed)]
       await Promise.all([query.fetch(), mountedQuery.fetch(), feed.fetch(), mountedFeed.fetch()])
       await Promise.all([feed.fetchNextPage(), mountedFeed.fetchNextPage()])
       queries.hydrate({
@@ -530,10 +638,13 @@ const SURFACES: readonly Surface[] = [
         calls: {
           "client.query": [["hydrated"], me],
           "client.infiniteQuery": [["seeded"], page, paged],
-          "client.invalidateQueries": [["me"]],
+          "client.invalidateQueries": new Each([[["me"]], [["mine"]]]),
           "client.getQueryData": [["hydrated"]],
           "client.setQueryData": [["me"], (prev: unknown) => ({ prev })],
-          "client.prefetchQuery": [["hydrated"], me],
+          "client.prefetchQuery": new Each([
+            [["hydrated"], me],
+            [["cold"], me],
+          ]),
           "client.dehydrate": [],
           "client.hydrate": [{ queries: [] }],
           "client.clear": [],
@@ -550,10 +661,17 @@ const SURFACES: readonly Surface[] = [
           "feed.hasNextPage": [],
           "feed.hasPreviousPage": [],
         },
+        ends: {
+          "client.prefetchQuery": () =>
+            [["hydrated"], ["cold"]].map((key) => queries.getQueryData(key)),
+        },
         settled: () => ({
           handles: handles.map((handle) => handle.snapshot()),
           cache: queries.dehydrate(),
         }),
+        close: () => {
+          for (const unmount of mounted) unmount()
+        },
       }
     },
   },
@@ -563,7 +681,7 @@ const SURFACES: readonly Surface[] = [
     open: async (visit) => {
       const fetching = Object.getOwnPropertyDescriptor(globalThis, "fetch")
       Object.defineProperty(globalThis, "fetch", {
-        value: async () => Response.json({ who: visit.who }),
+        value: async () => Response.json(await served(visit)),
         configurable: true,
         writable: true,
       })
@@ -571,9 +689,11 @@ const SURFACES: readonly Surface[] = [
       await router.navigate("/me")
       await router.navigate("/")
       await router.prefetch("/warm")
+      // Every page but the one on screen: visited, warmed and never loaded.
+      const elsewhere = pages.filter((each) => each.pattern !== "/").map((each) => each.pattern)
       const fetcher = router.fetcher("account")
       const mounted = router.fetcher("mine")
-      mounted.subscribe(() => {})
+      const shown = [mount(router), mount(mounted)]
       await Promise.all([fetcher.load("/me"), mounted.load("/me")])
       return {
         held: [
@@ -585,24 +705,48 @@ const SURFACES: readonly Surface[] = [
           "router.match": ["/me"],
           "router.snapshot": [],
           "router.subscribe": [() => {}],
-          "router.navigate": ["/warm"],
-          "router.submit": ["/me", "x"],
+          "router.navigate": new Each(elsewhere.map((path) => [path])),
+          "router.submit": new Each(elsewhere.map((path) => [path, "x"])),
           "router.hydrate": [],
           "router.invalidate": [],
-          "router.prefetch": ["/me"],
+          "router.prefetch": new Each(elsewhere.map((path) => [path])),
           "router.fetcher": ["account"],
           "router.fetchers": [],
           "router.subscribeFetchers": [() => {}],
           "fetcher.snapshot": [],
           "fetcher.subscribe": [() => {}],
-          "fetcher.load": ["/warm"],
-          "fetcher.submit": ["/me", "x"],
+          "fetcher.load": new Each(elsewhere.map((path) => [path])),
+          "fetcher.submit": new Each(elsewhere.map((path) => [path, "x"])),
         },
-        settled: () => ({
-          page: router.snapshot(),
-          fetchers: router.fetchers().map((each) => each.snapshot()),
-        }),
+        ends: {
+          "router.prefetch":
+            "it warms a page for a later navigation; the page on screen is not its",
+          "router.hydrate":
+            "it runs the page's client loader once, at boot, and no page here has one: it loads nothing",
+        },
+        quiet: {
+          "router.prefetch":
+            "warming is best-effort: a failed one leaves the navigation to load the page",
+          "fetcher.submit":
+            "a submit answers for its own POST; the page's reload for a visitor change, and refreshing what shows a route it changed, are best-effort",
+        },
+        posts: {
+          "router.submit": ACTION_ONCE,
+          "fetcher.submit": ACTION_ONCE,
+        },
+        settled: () => {
+          // A page going as a document shows nothing more.
+          const { actionData, ...page } = router.snapshot()
+          const fetchers = router.fetchers().map((each) => each.snapshot())
+          return {
+            page: page.documentLoad === undefined ? page : { documentLoad: page.documentLoad },
+            actionData,
+            fetchers: fetchers.map(({ actionData: _, ...shown }) => shown),
+            "fetcher actionData": fetchers.map((each) => each.actionData),
+          }
+        },
         close: () => {
+          for (const unmount of shown) unmount()
           if (fetching === undefined) Reflect.deleteProperty(globalThis, "fetch")
           else Object.defineProperty(globalThis, "fetch", fetching)
         },
@@ -613,11 +757,17 @@ const SURFACES: readonly Surface[] = [
 
 const RELOADING =
   "the page on screen reloads in place: until the reload lands it shows as it was loaded, pending"
+const ACTION_ONCE =
+  "the action ran or failed as the server took its POST; posting it again for the visitor now here would run it twice"
+const ANSWERED =
+  "an action's answer stands: a visitor change while its POST is in flight is most often that POST's own sign-in or sign-out"
 
 /** What still answers differently for what the first visitor loaded, each with why: a call's return
  * as `surface: held.function`, a settled part as `surface: part`. */
 const SWEEP_OPEN: Readonly<Record<string, string>> = {
   "the router: router.snapshot": RELOADING,
+  "the router: actionData": ANSWERED,
+  "the router: fetcher actionData": ANSWERED,
 }
 
 /** A returned value as a page would use it: a handle by what it shows, a function as itself. */
@@ -630,75 +780,363 @@ function shape(value: unknown): unknown {
 
 const flushed = () => new Promise((settle) => setImmediate(settle))
 
-for (const surface of SURFACES)
+/** Turns until the server has had no new load for one; a page that loads on every rotation stops
+ * once the server does. */
+async function quiet(server: Server): Promise<void> {
+  for (
+    let seen = -1, turns = 0;
+    seen !== server.loads && turns < 4 * server.maxRotations;
+    turns++
+  ) {
+    seen = server.loads
+    await flushed()
+  }
+}
+
+const TIMINGS = ["before the call", "while its first load is in flight"] as const
+
+type Parts = readonly (readonly [string, string])[]
+
+interface Answer {
+  readonly at: (typeof TIMINGS)[number]
+  /** False when the change was to land during the call's first load and the call asked for none:
+   * what it answered was read before the change. */
+  readonly applies: boolean
+  /** Why a call that returned a promise has nothing to check what it ended with against. */
+  readonly unsaid: string | undefined
+  readonly returned: string
+  /** What the call ended with when its promise settled, and once the page had settled; none for a
+   * call that returns no promise or ends with nothing the page shows. */
+  readonly ends: readonly [string, string] | undefined
+  readonly settled: Parts
+  readonly loads: number
+  /** It resolved although a load failed while it was pending. */
+  readonly swallowed: boolean
+}
+
+const partsOf = (page: Page): Parts =>
+  Object.entries(page.settled()).map(([part, value]): readonly [string, string] => [
+    part,
+    JSON.stringify(value) ?? "undefined",
+  ])
+
+/** Runs under a document, so a server can set the epoch cookie whichever way the visitor changes. */
+async function withDocument<T>(run: () => Promise<T>): Promise<T> {
+  const held = Object.getOwnPropertyDescriptor(globalThis, "document")
+  if (held !== undefined) return run()
+  Object.defineProperty(globalThis, "document", {
+    value: { cookie: "nifra-epoch=first" },
+    configurable: true,
+  })
+  try {
+    return await run()
+  } finally {
+    Reflect.deleteProperty(globalThis, "document")
+  }
+}
+
+/** What a call on `held` ends with, by `ends` or what the holder shows. */
+function endsOf(page: Page, held: Held, fn: string): (() => unknown) | string {
+  const declared = page.ends?.[`${held.kind}.${fn}`]
+  if (declared !== undefined) return declared
+  const snapshot: unknown = Reflect.get(held.value, "snapshot")
+  return typeof snapshot === "function"
+    ? () => Reflect.apply(snapshot, held.value, [])
+    : `${held.kind} shows nothing itself; say in ends what ${held.kind}.${fn} ends with`
+}
+
+// A call quiet about a failure, or an answer that differs, in one change and timing only still is:
+// `quiet` and SWEEP_OPEN entries are judged once every change and timing has run.
+const seen = new Map<string, Set<string>>()
+const seenAs = (what: string): Set<string> => {
+  const all = seen.get(what) ?? new Set<string>()
+  seen.set(what, all)
+  return all
+}
+const quietedBy = (surface: string) => seenAs(`quieted by ${surface}`)
+const compared = seenAs("compared")
+const differed = seenAs("differed")
+const sweeps = new Map<string, number>()
+
+for (const surface of SURFACES) {
   for (const [change, through] of CHANGES)
-    test(`every call on what a page holds of ${surface.name} answers the same after ${change}, whoever the earlier loads answered for`, async () => {
-      const listed = await asPage(() => surface.open({ who: "second" }))
-      listed.close?.()
-      const answer = (holder: string, fn: string, who: Visit["who"]) =>
-        asPage(() =>
-          through(async (changeVisitor) => {
-            const visit: Visit = { who }
-            const page = await surface.open(visit)
-            try {
-              await changeVisitor(visit)
-              const held = page.held.find((each) => each.name === holder)
-              if (held === undefined) throw new Error(`nothing held as ${holder}`)
-              let returned: unknown
-              try {
-                const args = page.calls[`${held.kind}.${fn}`] ?? []
-                returned = shape(await Reflect.apply(Reflect.get(held.value, fn), held.value, args))
-              } catch (error) {
-                returned = { threw: String(error) }
-              }
-              await flushed()
-              page.settled()
-              await flushed()
-              const parts = Object.entries(page.settled())
-              return {
-                returned: JSON.stringify(returned) ?? "undefined",
-                settled: parts.map(([part, value]): readonly [string, string] => [
-                  part,
-                  JSON.stringify(value) ?? "undefined",
-                ]),
-              }
-            } finally {
-              page.close?.()
-            }
-          }),
-        )
-      const problems: string[] = []
-      const swept = new Set<string>()
-      const differed = new Set<string>()
-      const compare = (what: string, first: string, second: string) => {
-        if (first === second) return
-        const open = `${surface.name}: ${what}`
-        if (SWEEP_OPEN[open] === undefined)
-          problems.push(`${what}: ${first} - for the second visitor: ${second}`)
-        else differed.add(open)
-      }
-      for (const held of listed.held)
-        for (const [fn, value] of Object.entries(held.value)) {
-          if (typeof value !== "function") continue
-          const call = `${held.kind}.${fn}`
-          swept.add(call)
-          if (listed.calls[call] === undefined) {
-            problems.push(`${call}: not swept; give it arguments`)
-            continue
-          }
-          const first = await answer(held.name, fn, "first")
-          const second = await answer(held.name, fn, "second")
-          compare(`${held.name}.${fn}`, first.returned, second.returned)
-          for (const [index, [part, shown]] of first.settled.entries())
-            compare(part, shown, second.settled[index]?.[1] ?? "")
+    for (const timing of TIMINGS)
+      test(`every call on what a page holds of ${surface.name}, after ${change} ${timing}, settles with what it ends with and answers the same whoever the earlier loads answered for, in a bounded number of loads`, async () => {
+        sweeps.set(surface.name, (sweeps.get(surface.name) ?? 0) + 1)
+        const listed = await asPage(() => surface.open({ who: "second" }))
+        listed.close?.()
+        const answer = (
+          holder: string,
+          fn: string,
+          list: number,
+          who: Visit["who"],
+          mode: ServerMode,
+          maxRotations = ROTATIONS,
+          at: (typeof TIMINGS)[number] = timing,
+        ) =>
+          asPage(() =>
+            withDocument(() =>
+              through(async (changeVisitor): Promise<Answer> => {
+                const server: Server = {
+                  mode: undefined,
+                  next: mode,
+                  loads: 0,
+                  failed: 0,
+                  rotations: 0,
+                  maxRotations,
+                  held: undefined,
+                  waiting: false,
+                  closed: false,
+                }
+                const visit: Visit = { who }
+                const page = await surface.open(visit)
+                visit.server = server
+                const asked = gate()
+                try {
+                  const changed = () => changeVisitor(visit)
+                  const held = page.held.find((each) => each.name === holder)
+                  if (held === undefined) throw new Error(`nothing held as ${holder}`)
+                  const ends = endsOf(page, held, fn)
+                  const read = () =>
+                    typeof ends === "string" ? "" : (JSON.stringify(ends()) ?? "undefined")
+                  if (at === "before the call") await changed()
+                  else server.held = asked
+                  let atSettle: string | undefined
+                  let promised = false
+                  let swallowed = false
+                  let done = false
+                  let pending: Promise<unknown>
+                  const failedBefore = server.failed
+                  try {
+                    const args = listsOf(page.calls[`${held.kind}.${fn}`])[list] ?? []
+                    const result: unknown = Reflect.apply(
+                      Reflect.get(held.value, fn),
+                      held.value,
+                      args,
+                    )
+                    promised = result instanceof Promise
+                    pending =
+                      result instanceof Promise
+                        ? result.then(
+                            (value: unknown) => {
+                              atSettle = read()
+                              swallowed = server.failed > failedBefore
+                              return shape(value)
+                            },
+                            (error: unknown) => {
+                              atSettle = read()
+                              return { threw: String(error) }
+                            },
+                          )
+                        : Promise.resolve(shape(result))
+                  } catch (error) {
+                    pending = Promise.resolve({ threw: String(error) })
+                  }
+                  void pending.then(() => {
+                    done = true
+                  })
+                  let applies = true
+                  if (at !== "before the call") {
+                    // The change lands once the call's first load waits, or not at all for a call
+                    // that settles or keeps from loading for its turns.
+                    for (let turn = 0; turn < 4 && !server.waiting && !done; turn++) await flushed()
+                    applies = server.waiting
+                    server.held = undefined
+                    await changed()
+                    asked.open()
+                  }
+                  const returned = await pending
+                  await quiet(server)
+                  page.settled()
+                  await quiet(server)
+                  return {
+                    at,
+                    applies,
+                    unsaid:
+                      promised && typeof ends === "string" && ends.includes("say in ends")
+                        ? ends
+                        : undefined,
+                    returned: JSON.stringify(returned) ?? "undefined",
+                    ends:
+                      atSettle === undefined || typeof ends === "string"
+                        ? undefined
+                        : [atSettle, read()],
+                    settled: partsOf(page),
+                    loads: server.loads,
+                    swallowed,
+                  }
+                } finally {
+                  server.closed = true
+                  asked.open()
+                  page.close?.()
+                }
+              }),
+            ),
+          )
+        const problems: string[] = []
+        const swept = new Set<string>()
+        const compare = (
+          what: string,
+          mode: ServerMode,
+          first: string,
+          second: string,
+          label = what,
+          against = "for the second visitor",
+        ) => {
+          const open = `${surface.name}: ${what}`
+          compared.add(open)
+          if (first === second) return
+          if (SWEEP_OPEN[open] === undefined)
+            problems.push(`${label}, server ${mode}: ${first} - ${against}: ${second}`)
+          else differed.add(open)
         }
-      for (const call of Object.keys(listed.calls))
-        if (!swept.has(call)) problems.push(`${call}: no such function`)
-      for (const open of Object.keys(SWEEP_OPEN))
-        if (open.startsWith(`${surface.name}: `) && !differed.has(open))
-          problems.push(`${open}: answers the same now; take it out of SWEEP_OPEN`)
-      expect(problems).toEqual([])
-    })
+        for (const held of listed.held)
+          for (const [fn, value] of Object.entries(held.value)) {
+            if (typeof value !== "function") continue
+            const call = `${held.kind}.${fn}`
+            swept.add(call)
+            if (listed.calls[call] === undefined) {
+              problems.push(`${call}: not swept; give it arguments`)
+              continue
+            }
+            const lists = listsOf(listed.calls[call])
+            for (const [list, args] of lists.entries()) {
+              const name = `${held.name}.${fn}`
+              const named =
+                lists.length > 1 ? `${name}(${JSON.stringify(args).slice(1, -1)})` : name
+              for (const mode of SERVERS) {
+                let first = await answer(held.name, fn, list, "first", mode)
+                let second = await answer(held.name, fn, list, "second", mode)
+                // One that loads for neither answered before the change. One that loads for only one
+                // visitor settles at once for the other, so the change can land only before it there.
+                if (!first.applies && !second.applies) continue
+                if (!first.applies)
+                  first = await answer(
+                    held.name,
+                    fn,
+                    list,
+                    "first",
+                    mode,
+                    ROTATIONS,
+                    "before the call",
+                  )
+                if (!second.applies)
+                  second = await answer(
+                    held.name,
+                    fn,
+                    list,
+                    "second",
+                    mode,
+                    ROTATIONS,
+                    "before the call",
+                  )
+                const unsaid = first.unsaid ?? second.unsaid
+                if (unsaid !== undefined && !problems.includes(unsaid)) problems.push(unsaid)
+                compare(name, mode, first.returned, second.returned, named)
+                for (const [index, [part, shown]] of first.settled.entries())
+                  compare(
+                    part,
+                    mode,
+                    shown,
+                    second.settled[index]?.[1] ?? "",
+                    `${part} after ${named}`,
+                  )
+                // A call the change caught mid-load ends as the same call made once it landed.
+                if (second.at !== "before the call") {
+                  const after = await answer(
+                    held.name,
+                    fn,
+                    list,
+                    "second",
+                    mode,
+                    ROTATIONS,
+                    "before the call",
+                  )
+                  const caught = `${named} caught by the change`
+                  if (listed.posts?.[call] === undefined)
+                    compare(name, mode, second.returned, after.returned, caught, "made after it")
+                  for (const [index, [part, shown]] of second.settled.entries())
+                    compare(
+                      part,
+                      mode,
+                      shown,
+                      after.settled[index]?.[1] ?? "",
+                      `${part} after ${caught}`,
+                      "made after it",
+                    )
+                }
+                for (const [whose, run] of [
+                  ["first", first],
+                  ["second", second],
+                ] as const) {
+                  const [atSettle, final] = run.ends ?? ["", ""]
+                  if (atSettle !== final)
+                    problems.push(
+                      `${named} settles before what it ends with does, server ${mode}, earlier loads for the ${whose} visitor: ${atSettle} - then ${final}`,
+                    )
+                }
+                // The outcome a caller sees is the server's: a load it waited on that failed is reported.
+                for (const [whose, run] of [
+                  ["first", first],
+                  ["second", second],
+                ] as const)
+                  if (run.swallowed && listed.quiet?.[call] === undefined) {
+                    problems.push(
+                      `${named} resolves though a load failed while it was pending, earlier loads for the ${whose} visitor`,
+                    )
+                  } else if (run.swallowed) quietedBy(surface.name).add(call)
+                if (mode !== "rotates the epoch on every response") continue
+                for (const [whose, run] of [
+                  ["first", first],
+                  ["second", second],
+                ] as const) {
+                  const longer = await answer(
+                    held.name,
+                    fn,
+                    list,
+                    whose,
+                    mode,
+                    2 * ROTATIONS,
+                    run.at,
+                  )
+                  if (longer.loads !== run.loads)
+                    problems.push(
+                      `${named}, earlier loads for the ${whose} visitor: ${run.loads} loads against a server that rotates the epoch ${ROTATIONS} times, ${longer.loads} against one that rotates ${2 * ROTATIONS} times`,
+                    )
+                }
+              }
+            }
+          }
+        for (const call of Object.keys(listed.calls))
+          if (!swept.has(call)) problems.push(`${call}: no such function`)
+        for (const [call, ends] of Object.entries(listed.ends ?? {}))
+          if (!swept.has(call)) problems.push(`${call}: ends for no such function`)
+          else if (typeof ends === "string" && ends.includes("say in ends")) problems.push(ends)
+        for (const call of Object.keys(listed.quiet ?? {}))
+          if (!swept.has(call)) problems.push(`${call}: quiet for no such function`)
+        for (const call of Object.keys(listed.posts ?? {}))
+          if (!swept.has(call)) problems.push(`${call}: posts for no such function`)
+        expect(problems).toEqual([])
+      })
+  test(`every call quiet about a failure on what a page holds of ${surface.name}, and every answer of it still open, still is somewhere in the sweep`, async () => {
+    // A filtered run sees only some of the sweep.
+    if (sweeps.get(surface.name) !== CHANGES.length * TIMINGS.length) return
+    const listed = await asPage(() => surface.open({ who: "second" }))
+    listed.close?.()
+    expect([
+      ...Object.keys(listed.quiet ?? {})
+        .filter((call) => !quietedBy(surface.name).has(call))
+        .map((call) => `${call}: reports every failure now; take it out of quiet`),
+      ...Object.keys(SWEEP_OPEN)
+        .filter((open) => open.startsWith(`${surface.name}: `) && !differed.has(open))
+        .map((open) =>
+          compared.has(open)
+            ? `${open}: answers the same now; take it out of SWEEP_OPEN`
+            : `${open}: nothing answers there`,
+        ),
+    ]).toEqual([])
+  })
+}
 
 /** A test elsewhere that proves an identity change keeps this store's data from the next visitor. */
 interface Elsewhere {
@@ -774,27 +1212,20 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "byId@createTransportCodecRegistry": "codecs the app registers",
     "byMedia@createTransportCodecRegistry": "codecs the app registers",
   },
-  "packages/web-preact/src/client.ts": { "held@memoized": MEMO },
   "packages/web-preact/src/keep-alive.ts": {
-    "held@memoized": MEMO,
-    "nodes@childrenOf": "the slot tree of one render, read through context",
-    "props@mountRouter": RENDER_PROPS,
     slotsElements: "one element per slot parent, keyed by its id",
   },
+  "packages/web-preact/src/memo-chain.ts": { "held@memoized": MEMO },
   "packages/web-preact/src/slot.ts": { slotted: MEMO },
-  "packages/web-react/src/client.ts": { "held@memoized": MEMO },
   "packages/web-react/src/keep-alive.ts": {
-    "held@memoized": MEMO,
-    "nodes@childrenOf": "the slot tree of one render, read through context",
-    "props@mountRouter": RENDER_PROPS,
     slotsElements: "one element per slot parent, keyed by its id",
   },
+  "packages/web-react/src/memo-chain.ts": { "held@memoized": MEMO },
   "packages/web-react/src/server-components/client.ts": {
     "#listeners@FlightRoot": LISTENERS,
     "<expr>@prepareTree": ONE_CALL,
   },
   "packages/web-react/src/slot.ts": { slotted: MEMO },
-  "packages/web-svelte/src/keep-alive.ts": { "props@mountRouter": RENDER_PROPS },
   "packages/web-vanilla/src/html.ts": {
     callSites: "parsed templates, weakly keyed by the template's strings",
   },
@@ -804,9 +1235,7 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "names@declaredBy": "a component's declared prop names",
   },
   "packages/web-vue/src/keep-alive.ts": {
-    "children@mountRouter": "the slot tree of the router's latest state",
     "kept@mountRouter": KEPT_VIEW,
-    "props@mountRouter": RENDER_PROPS,
     "slots@mountRouter": "one component per slot key, named for <KeepAlive include>",
   },
   "packages/web/src/client.ts": {
@@ -838,6 +1267,10 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     readers: ISLAND_GRAPH,
     "subs@computed": ISLAND_GRAPH,
     "subs@signal": ISLAND_GRAPH,
+  },
+  "packages/web/src/internal/keep-alive-mount.ts": {
+    "nodes@slotChildren": "the slot tree of one render, by parent",
+    "props@propsByState": RENDER_PROPS,
   },
   "packages/web/src/internal/live-queries.ts": {
     queries: "mounted queries and the live tick each registered at",
