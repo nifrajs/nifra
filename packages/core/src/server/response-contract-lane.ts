@@ -63,7 +63,7 @@ import {
   type StandardSchemaV1,
 } from "../schema/standard.ts"
 import { INSTALL_RESPONSE_CONTRACT } from "./install.ts"
-import { jsonText } from "./json-text.ts"
+import { DATE_TO_JSON, define, jsonText, readsShippedTime } from "./json-text.ts"
 import type { IdentityPlugin } from "./plugin.ts"
 import { isResponseResult, status } from "./runtime-core.ts"
 import type { AnyServer } from "./server.ts"
@@ -373,31 +373,11 @@ function projectPatternKeys(
 }
 
 /** `__proto__` is a declared name like any other here; plain assignment would set the prototype. */
-function define(out: Record<string, unknown>, key: string, value: unknown): void {
-  if (key === "__proto__")
-    Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
-  else out[key] = value
-}
-
-const DATE_TO_JSON = Date.prototype.toJSON
-// What `Date.prototype.toJSON` reads a `Date`'s time value through.
-const DATE_TO_PRIMITIVE = Date.prototype[Symbol.toPrimitive]
-const DATE_VALUE_OF = Date.prototype.valueOf
-
 // Deeper than this, the copying walk takes over with its own cycle check.
 const MAX_HOOK_SCAN_DEPTH = 64
 
 const isDate = (value: object, hook: unknown): value is Date =>
   hook === DATE_TO_JSON && value instanceof Date
-
-/**
- * Whether `date` reaches the `@@toPrimitive` and `valueOf` that `Date.prototype.toJSON` reads its time
- * value through as they ship, on itself, its class or `Date.prototype`. Then its steps, taken here,
- * give what the call would: `null` for a time value that is not finite, else what its `toISOString`
- * answers, called through it as `toJSON` calls it.
- */
-const readsShippedTime = (date: Date): boolean =>
-  date[Symbol.toPrimitive] === DATE_TO_PRIMITIVE && date.valueOf === DATE_VALUE_OF
 
 /**
  * Whether `value` holds a `toJSON` hook, a `Date`'s only when `dates` writes them. Stops at the first

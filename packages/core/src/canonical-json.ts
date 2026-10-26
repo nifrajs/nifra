@@ -7,8 +7,7 @@
  * `Map` or class instance, a function, a symbol, a bigint. A `JSON.rawJSON` value is written verbatim.
  */
 
-// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the member is optional, so an engine without JSON.rawJSON leaves it undefined.
-const isRawJson = (JSON as JSON & { readonly isRawJSON?: (value: unknown) => boolean }).isRawJSON
+import { isPlainPrototype, isRawJson } from "./server/json-text.ts"
 
 /** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */
 export function canonicalJson(value: unknown): string {
@@ -27,8 +26,7 @@ export function canonicalJson(value: unknown): string {
     const proto: unknown = Object.getPrototypeOf(value)
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: isRawJSON vouched for it, and a raw JSON value keeps its text in `rawJSON`.
     if (proto === null && isRawJson?.(value) === true) return (value as { rawJSON: string }).rawJSON
-    // Any prototype whose own prototype is null passes, which admits another realm's plain object.
-    if (proto === null || proto === Object.prototype || Object.getPrototypeOf(proto) === null) {
+    if (isPlainPrototype(proto)) {
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a non-array object with a plain or null prototype; only its own string keys are read.
       const record = value as Readonly<Record<string, unknown>>
       const members: string[] = []

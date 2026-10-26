@@ -10,6 +10,7 @@
  */
 import { tagStandIn } from "../internal/hook-origins.ts"
 import type { AnswerStages, JsonReplyContext } from "./answer-step.ts"
+import { define } from "./json-text.ts"
 import { isResponseResult, status } from "./runtime-core.ts"
 
 // Deeper than any real payload.
@@ -22,11 +23,6 @@ function base64(bytes: Uint8Array): string {
   for (let i = 0; i < bytes.length; i += CHUNK)
     binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
   return btoa(binary)
-}
-
-function define(out: object, key: string, value: unknown): void {
-  // `out[key] = value` for "__proto__" would replace the prototype instead of adding the field.
-  Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
 }
 
 /**
@@ -52,7 +48,7 @@ function encoded(value: unknown, depth: number, path: Set<object>): unknown {
       }
       return out ?? value
     }
-    let out: object | undefined
+    let out: Record<string, unknown> | undefined
     for (const key of Object.keys(value)) {
       const item: unknown = Reflect.get(value, key)
       const next = encoded(item, depth + 1, path)
