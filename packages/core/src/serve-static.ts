@@ -165,7 +165,11 @@ async function readStatic(
     // Unreadable under the prefix: a 404 (not an SSR 404 page), unless the mount falls through.
     return missing()
   } finally {
-    await handle?.close().catch(() => {})
+    try {
+      await handle?.close()
+    } catch {
+      // A close that fails changes nothing about the answer already chosen.
+    }
   }
 }
 
