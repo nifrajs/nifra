@@ -897,6 +897,7 @@ const MAX_AUTH_WALK = 2000
  * The known auth package nearest the app among the packages it depends on, followed through the
  * installed and linked graph (real paths, so a workspace package and its own install count once),
  * with the dependency chain that reaches it. The app's own dependencies are checked by the caller.
+ * A package declared but not installed - an unmet peer or optional dependency - is not reached.
  */
 async function reachableAuthPackage(
   cwd: string,
@@ -922,9 +923,10 @@ async function reachableAuthPackage(
       for (const name of Object.keys(depRecord(current.pkg, field) ?? {})) names.add(name)
     }
     for (const name of [...names].sort(codeUnitOrder)) {
-      if (next > 0 && KNOWN_AUTH_PACKAGES.includes(name)) return { package: name, via: current.via }
       const path = resolvePackageFrom(current.dir, name)
-      if (path === undefined || visited.has(path)) continue
+      if (path === undefined) continue
+      if (next > 0 && KNOWN_AUTH_PACKAGES.includes(name)) return { package: name, via: current.via }
+      if (visited.has(path)) continue
       visited.add(path)
       const meta = await readJson(join(path, "package.json"))
       if (meta !== undefined) queue.push({ dir: path, via: [...current.via, name], pkg: meta })
