@@ -380,12 +380,24 @@ function define(out: Record<string, unknown>, key: string, value: unknown): void
 }
 
 const DATE_TO_JSON = Date.prototype.toJSON
+// What `Date.prototype.toJSON` reads a `Date`'s time value through.
+const DATE_TO_PRIMITIVE = Date.prototype[Symbol.toPrimitive]
+const DATE_VALUE_OF = Date.prototype.valueOf
 
 // Deeper than this, the copying walk takes over with its own cycle check.
 const MAX_HOOK_SCAN_DEPTH = 64
 
-const isDate = (value: object, hook: unknown): boolean =>
+const isDate = (value: object, hook: unknown): value is Date =>
   hook === DATE_TO_JSON && value instanceof Date
+
+/**
+ * Whether `date` reaches the `@@toPrimitive` and `valueOf` that `Date.prototype.toJSON` reads its time
+ * value through as they ship, on itself, its class or `Date.prototype`. Then its steps, taken here,
+ * give what the call would: `null` for a time value that is not finite, else what its `toISOString`
+ * answers, called through it as `toJSON` calls it.
+ */
+const readsShippedTime = (date: Date): boolean =>
+  date[Symbol.toPrimitive] === DATE_TO_PRIMITIVE && date.valueOf === DATE_VALUE_OF
 
 /**
  * Whether `value` holds a `toJSON` hook, a `Date`'s only when `dates` writes them. Stops at the first
@@ -429,7 +441,12 @@ const wireValue = (value: unknown, key: string | number, path: object[], dates: 
 function writtenAt(value: unknown, key: string | number, dates: boolean): unknown {
   if (typeof value !== "object" || value === null) return value
   const hook: unknown = Reflect.get(value, "toJSON")
-  if (typeof hook !== "function" || (!dates && isDate(value, hook))) return value
+  if (typeof hook !== "function") return value
+  if (isDate(value, hook)) {
+    if (!dates) return value
+    if (readsShippedTime(value))
+      return Number.isFinite(value.valueOf()) ? value.toISOString() : null
+  }
   return fieldsOf(Reflect.apply(hook, value, [String(key)]))
 }
 

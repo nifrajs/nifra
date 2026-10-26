@@ -530,6 +530,60 @@ describe("a Date in the payload", () => {
     }
   })
 
+  test("a Date is written as its toJSON writes it, whichever method it overrides and where", async () => {
+    let at = AT
+    const app = server({ logger: silentLogger })
+      .use(responseContract("enforce"))
+      .get("/at", { response: t.object({ at: t.union([t.string(), t.null()]) }) }, () => ({
+        at: stamp(at),
+      }))
+    const sent = async (date: Date) => {
+      at = date
+      const expected = JSON.stringify({ at: date })
+      return { text: await (await app.fetch(new Request("http://t/at"))).text(), expected }
+    }
+    for (const date of [AT, new Date(Number.NaN), new Date(8.64e15), new Date(-8.64e15)]) {
+      const { text, expected } = await sent(date)
+      expect(text).toBe(expected)
+    }
+    // Each method `Date.prototype.toJSON` calls, overridden on the instance, a subclass and
+    // `Date.prototype` itself, with answers that change what it writes: a time value that is not
+    // finite, and a `valueOf` whose string or object answer `toJSON` reads past to `toISOString`.
+    const overrides: ReadonlyArray<readonly [PropertyKey, () => unknown]> = [
+      [Symbol.toPrimitive, () => Number.NaN],
+      ["valueOf", () => Number.NaN],
+      ["valueOf", () => "text"],
+      ["valueOf", () => ({})],
+      ["toISOString", () => "custom"],
+    ]
+    for (const [method, answer] of overrides) {
+      for (const where of ["own", "class", "global"] as const) {
+        const override = { value: answer, configurable: true, writable: true }
+        const shipped = Object.getOwnPropertyDescriptor(Date.prototype, method)
+        let date = new Date(AT)
+        if (where === "own") Object.defineProperty(date, method, override)
+        if (where === "class") {
+          class Stamp extends Date {}
+          Object.defineProperty(Stamp.prototype, method, override)
+          date = new Stamp(AT.getTime())
+        }
+        if (where === "global") Object.defineProperty(Date.prototype, method, override)
+        try {
+          const { text, expected } = await sent(date)
+          expect({ method: String(method), answer: String(answer()), where, text }).toEqual({
+            method: String(method),
+            answer: String(answer()),
+            where,
+            text: expected,
+          })
+        } finally {
+          if (where === "global" && shipped !== undefined)
+            Object.defineProperty(Date.prototype, method, shipped)
+        }
+      }
+    }
+  })
+
   test("strip drops an undeclared field beside a Date, and names it", async () => {
     const reports: ResponseContractReport[] = []
     const app = server({ logger: silentLogger })
