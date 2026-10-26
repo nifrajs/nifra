@@ -38,8 +38,10 @@
  * object. So a value's hooks are applied first, as the serializer would, and that result is validated
  * and sent: a class whose `toJSON` adds a private field fails a closed schema instead of passing on its
  * public ones. `strip` keeps the declared fields of what the hook writes, so a hook that writes `id`
- * from private state keeps it. A `Date` is the exception; it stays a `Date` for a date schema and is
- * written as its ISO string.
+ * from private state keeps it. A `Date` is judged as the ISO string its own hook writes too, so a
+ * `t.string({ format: "date-time" })` or `t.date()` field holding a database timestamp passes: a
+ * schema that carries its JSON Schema is checked as JSON carries it. A schema without one (zod,
+ * valibot) cannot say which place expects a string, so it is shown every `Date` as one.
  *
  * ## What enforcement costs
  *
@@ -148,16 +150,21 @@ type Projector = (value: unknown) => unknown
 
 const projectors = new WeakMap<object, Projector | null>()
 
-/** The projector for a schema's JSON Schema, compiled once per schema. */
-function projectorOf(schema: StandardSchemaV1): Projector | undefined {
-  const node: unknown = Reflect.get(schema, "jsonSchema")
-  if (typeof node !== "object" || node === null) return undefined
+/** The projector for a schema's JSON Schema, compiled once per schema. It writes each `Date` as it
+ * descends, as every schema that carries its JSON Schema is judged. */
+function projectorOf(node: object): Projector | undefined {
   let found = projectors.get(node)
   if (found === undefined) {
     found = compileProjector(node) ?? null
     projectors.set(node, found)
   }
   return found ?? undefined
+}
+
+/** The JSON Schema a schema carries as `jsonSchema` (every `@nifrajs/schema` `t` schema), if any. */
+function jsonSchemaOf(schema: StandardSchemaV1): object | undefined {
+  const node: unknown = Reflect.get(schema, "jsonSchema")
+  return typeof node === "object" && node !== null ? node : undefined
 }
 
 const objectField = (node: object, key: string): object | undefined => {
@@ -179,7 +186,7 @@ function compileProjector(node: unknown): Projector | undefined {
       : (value) => {
           if (!Array.isArray(value)) return value
           const out: unknown[] = []
-          for (let i = 0; i < value.length; i++) out.push(item(writtenAt(value[i], i)))
+          for (let i = 0; i < value.length; i++) out.push(item(writtenAt(value[i], i, true)))
           return out
         }
   }
@@ -211,7 +218,11 @@ function compileProjector(node: unknown): Projector | undefined {
     for (const key of closed ? keys : nested.keys()) {
       if (!hasField(value, key)) continue
       const projector = nested.get(key)
-      define(out, key, projector === undefined ? value[key] : projector(writtenAt(value[key], key)))
+      define(
+        out,
+        key,
+        projector === undefined ? value[key] : projector(writtenAt(value[key], key, true)),
+      )
     }
     if (patterns.length > 0) projectPatternKeys(value, out, declared, patterns, closed)
     return out
@@ -356,7 +367,7 @@ function projectPatternKeys(
       }
     if (matches === 0) continue
     if (matches === 1 && projector !== undefined)
-      define(out, key, projector(writtenAt(value[key], key)))
+      define(out, key, projector(writtenAt(value[key], key, true)))
     else if (closed) define(out, key, value[key])
   }
 }
@@ -369,20 +380,38 @@ function define(out: Record<string, unknown>, key: string, value: unknown): void
 }
 
 const DATE_TO_JSON = Date.prototype.toJSON
+// What `Date.prototype.toJSON` reads a `Date`'s time value through.
+const DATE_TO_PRIMITIVE = Date.prototype[Symbol.toPrimitive]
+const DATE_VALUE_OF = Date.prototype.valueOf
 
 // Deeper than this, the copying walk takes over with its own cycle check.
 const MAX_HOOK_SCAN_DEPTH = 64
 
-/** Whether `value` holds a `toJSON` hook other than a `Date`'s. Allocates nothing: most payloads
- * have none, and this is the price every contracted response pays. */
-function hasHook(value: object, depth: number): boolean {
+const isDate = (value: object, hook: unknown): value is Date =>
+  hook === DATE_TO_JSON && value instanceof Date
+
+/**
+ * Whether `date` reaches the `@@toPrimitive` and `valueOf` that `Date.prototype.toJSON` reads its time
+ * value through as they ship, on itself, its class or `Date.prototype`. Then its steps, taken here,
+ * give what the call would: `null` for a time value that is not finite, else what its `toISOString`
+ * answers, called through it as `toJSON` calls it.
+ */
+const readsShippedTime = (date: Date): boolean =>
+  date[Symbol.toPrimitive] === DATE_TO_PRIMITIVE && date.valueOf === DATE_VALUE_OF
+
+/**
+ * Whether `value` holds a `toJSON` hook, a `Date`'s only when `dates` writes them. Stops at the first
+ * and allocates nothing: most payloads have none, and this is the price every contracted response
+ * pays.
+ */
+function hasHook(value: object, depth: number, dates: boolean): boolean {
   if (depth > MAX_HOOK_SCAN_DEPTH) return true
   const hook: unknown = Reflect.get(value, "toJSON")
-  if (typeof hook === "function") return !(hook === DATE_TO_JSON && value instanceof Date)
+  if (typeof hook === "function") return dates || !isDate(value, hook)
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
       const item: unknown = value[i]
-      if (typeof item === "object" && item !== null && hasHook(item, depth + 1)) return true
+      if (typeof item === "object" && item !== null && hasHook(item, depth + 1, dates)) return true
     }
     return false
   }
@@ -390,7 +419,7 @@ function hasHook(value: object, depth: number): boolean {
   for (const key in value) {
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `key` was enumerated from `value`; `Reflect.get` here halves the speed of this for-in.
     const field: unknown = (value as Record<string, unknown>)[key]
-    if (typeof field === "object" && field !== null && hasHook(field, depth + 1)) return true
+    if (typeof field === "object" && field !== null && hasHook(field, depth + 1, dates)) return true
   }
   return false
 }
@@ -398,22 +427,26 @@ function hasHook(value: object, depth: number): boolean {
 /**
  * What `JSON.stringify` writes for `value`: every `toJSON` hook applied as the serializer applies it,
  * so the contract judges the bytes that go out rather than fields a hook then replaces. Copies only the
- * containers above a hook. A `Date` keeps its object, since its own hook writes nothing but the ISO
- * string a date schema declares.
+ * containers above a hook. A `Date` keeps its object unless `dates`.
  */
-const wireValueOf = (value: unknown): unknown =>
-  typeof value === "object" && value !== null && hasHook(value, 0)
-    ? wireValue(value, "", [])
+const wireValueOf = (value: unknown, dates: boolean): unknown =>
+  typeof value === "object" && value !== null && hasHook(value, 0, dates)
+    ? wireValue(value, "", [], dates)
     : value
 
-const wireValue = (value: unknown, key: string | number, path: object[]): unknown =>
-  wireChildren(writtenAt(value, key), path)
+const wireValue = (value: unknown, key: string | number, path: object[], dates: boolean): unknown =>
+  wireChildren(writtenAt(value, key, dates), path, dates)
 
 /** `value` as the serializer takes it under `key`: its own hook applied, its fields still as they are. */
-function writtenAt(value: unknown, key: string | number): unknown {
+function writtenAt(value: unknown, key: string | number, dates: boolean): unknown {
   if (typeof value !== "object" || value === null) return value
   const hook: unknown = Reflect.get(value, "toJSON")
-  if (typeof hook !== "function" || (hook === DATE_TO_JSON && value instanceof Date)) return value
+  if (typeof hook !== "function") return value
+  if (isDate(value, hook)) {
+    if (!dates) return value
+    if (readsShippedTime(value))
+      return Number.isFinite(value.valueOf()) ? value.toISOString() : null
+  }
   return fieldsOf(Reflect.apply(hook, value, [String(key)]))
 }
 
@@ -431,33 +464,36 @@ function fieldsOf(value: unknown): unknown {
   return fields
 }
 
-function wireChildren(value: unknown, path: object[]): unknown {
+/** `value` with each of its fields written; a container is copied once, when a first field changes. */
+function wireChildren(value: unknown, path: object[], dates: boolean): unknown {
   // A cycle is left as it is for `JSON.stringify` to refuse.
   if (typeof value !== "object" || value === null || path.includes(value)) return value
   path.push(value)
+  // A primitive is written as it is, so only an object field is walked.
   if (Array.isArray(value)) {
     let items: unknown[] | undefined
     for (let i = 0; i < value.length; i++) {
       const item: unknown = value[i]
-      const written = wireValue(item, i, path)
-      if (written !== item) items ??= value.slice(0, i)
-      if (items !== undefined) items[i] = written
+      if (typeof item !== "object" || item === null) continue
+      const written = wireValue(item, i, path, dates)
+      if (written === item) continue
+      items ??= value.slice()
+      items[i] = written
     }
     path.pop()
     return items ?? value
   }
-  const keys = Object.keys(value)
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every key read below comes from `Object.keys(value)`; `Reflect.get` costs a call per field.
+  const record = value as Record<string, unknown>
   let out: Record<string, unknown> | undefined
-  let index = 0
-  for (const name of keys) {
-    const field: unknown = Reflect.get(value, name)
-    const written = wireValue(field, name, path)
-    if (written !== field && out === undefined) {
-      out = {}
-      for (const earlier of keys.slice(0, index)) define(out, earlier, Reflect.get(value, earlier))
-    }
-    if (out !== undefined) define(out, name, written)
-    index++
+  for (const name of Object.keys(record)) {
+    const field = record[name]
+    if (typeof field !== "object" || field === null) continue
+    const written = wireValue(field, name, path, dates)
+    if (written === field) continue
+    // A spread copies the own enumerable fields JSON writes, faster than one assignment each.
+    out ??= { ...record }
+    define(out, name, written)
   }
   path.pop()
   return out ?? value
@@ -586,6 +622,14 @@ interface ContractPolicy {
 const STRIP: ContractPolicy = { strip: true, report: undefined }
 const KEEP: ContractPolicy = { strip: false, report: undefined }
 
+/** Set by `@nifrajs/schema` on the validate of a `t` schema with a `t.date()`: the check for a value
+ * as JSON writes it. */
+const VALIDATE_WIRE: unique symbol = Symbol.for("nifra.schema.validateWire")
+
+type ContractValidate = StandardSchemaV1["~standard"]["validate"] & {
+  readonly [VALIDATE_WIRE]?: unknown
+}
+
 function checkContract(
   definition: ResponseContractDefinition,
   result: unknown,
@@ -633,19 +677,32 @@ function validateContract(
   policy: ContractPolicy,
   replace: (value: unknown) => unknown,
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
-  const project = policy.strip ? projectorOf(schema) : undefined
+  const node = jsonSchemaOf(schema)
+  // A `Date` is a hook like any other for a schema that carries its JSON Schema: one walk writes them.
+  const dates = node !== undefined
+  const project = policy.strip && node !== undefined ? projectorOf(node) : undefined
   // Naming what was stripped compares against everything the payload writes, so it walks it whole.
-  const before =
-    project === undefined || policy.report !== undefined || mode === "warn"
-      ? wireValueOf(payload)
-      : payload
+  const hooks =
+    (project === undefined || policy.report !== undefined || mode === "warn") &&
+    typeof payload === "object" &&
+    payload !== null &&
+    hasHook(payload, 0, dates)
+  const before = hooks ? wireValue(payload, "", [], dates) : payload
   // The projection applies the hook of each value it descends into and reads only declared fields,
   // so a quiet strip never enumerates the payload's own keys. What it copies whole is walked after.
-  const sent = project === undefined ? before : wireValueOf(project(writtenAt(before, "")))
-  const settled = schema["~standard"].validate(sent)
-  // When hooks wrote the payload, `warn` sends what they wrote here rather than calling them again,
-  // so a hook that answers differently on a second call cannot send what was not judged.
-  const shown = mode === "warn" && before !== payload ? replace(before) : served
+  const sent =
+    project === undefined ? before : wireValueOf(project(writtenAt(before, "", true)), true)
+  // A `t` schema's check for a value as JSON carries it: its `t.date()` strings stay strings, where
+  // the plain validate would hand back the `Date`s a request's handler receives.
+  const validate: ContractValidate = schema["~standard"].validate
+  const wire = validate[VALIDATE_WIRE]
+  const settled: StandardResult<unknown> | Promise<StandardResult<unknown>> =
+    typeof wire === "function" ? wire(sent) : schema["~standard"].validate(sent)
+  // When hooks wrote the payload, `warn` sends what they wrote here rather than calling them again:
+  // a hook that answers differently on a second call cannot send what was not judged, and the
+  // serializer does not write a `Date` twice. A contracted route's `c.json` reply has none left, as
+  // `write` applied them when the reply was built.
+  const shown = mode === "warn" && hooks ? replace(before) : served
   return settled instanceof Promise
     ? settled.then((r) => interpret(r, before, shown, mode, replace, policy.report))
     : interpret(settled, before, shown, mode, replace, policy.report)
@@ -701,6 +758,12 @@ export interface ResponseContractRuntime {
       readonly jsonBody?: unknown
     },
   ): ResponseContractOutcome | Promise<ResponseContractOutcome>
+  /**
+   * What a `c.json(body)` reply with this status writes, each `toJSON` hook applied as `check` judges
+   * it, so the reply's bytes and its check share one call of each. Without it, as from a plugin of
+   * an older copy of core, the reply writes `body` as given.
+   */
+  write?(definition: ResponseContractDefinition, body: unknown, status: number | undefined): unknown
 }
 
 interface ResponseContractInstallable {
@@ -771,6 +834,10 @@ export function responseContract(
   }
   const runtime: ResponseContractRuntime = {
     mode,
+    write: (definition, body, status) => {
+      const schema = schemaFor(definition, status ?? 200)
+      return schema === undefined ? body : wireValueOf(body, jsonSchemaOf(schema) !== undefined)
+    },
     check: (definition, result, context) => {
       const jsonReply =
         result instanceof Response && result === context?.jsonReply

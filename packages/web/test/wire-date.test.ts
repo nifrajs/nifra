@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { responseContract } from "@nifrajs/core/response-contract"
 import { t } from "@nifrajs/schema"
 import { DEFERRED_RUNTIME, MAP_DEFERRED_SOURCE, parseNdjsonData } from "../src/deferred.ts"
 import { buildManifest, createWebApp, type RenderAdapter, type RouteModule } from "../src/index.ts"
@@ -188,5 +189,34 @@ describe("a page end to end", () => {
     const text = await res.text()
     expect(text).toContain(TAG)
     expect(at(parsePageData(text), "at")).toBeInstanceOf(Date)
+  })
+
+  test("beside an enforced response contract, page data still revives while a route's Date is its ISO string", async () => {
+    const contracted = createWebApp({
+      adapter,
+      clientEntry: "/c.js",
+      manifest: buildManifest(
+        ["_error.tsx", "page.tsx", "page.backend.ts"],
+        (file) => async () => (file === "page.backend.ts" ? backend : { default: file }),
+      ),
+      use: (web) => {
+        web.use(responseContract("enforce", { extra: "strip" })).get(
+          "/row",
+          { response: t.object({ createdAt: t.string({ format: "date-time" }) }) },
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a `Date` is written as the declared ISO string, which no static type can say.
+          () => ({ createdAt: new Date(AT) as never, passwordHash: "SECRET" }),
+        )
+      },
+    })
+    rendered = undefined
+    expect(await (await contracted.fetch(new Request("http://x/page"))).text()).toContain(TAG)
+    expect(at(rendered, "at")).toBeInstanceOf(Date)
+    const data = await contracted.fetch(
+      new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }),
+    )
+    expect(at(parsePageData(await data.text()), "at")).toBeInstanceOf(Date)
+    const row = await contracted.fetch(new Request("http://x/row"))
+    expect(row.status).toBe(200)
+    expect(await row.json()).toEqual({ createdAt: AT })
   })
 })

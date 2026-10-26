@@ -16,6 +16,7 @@ import type {
 } from "./capabilities.ts"
 import type { ResponseClassification } from "./classification.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { sha256Hex } from "./internal/hex.ts"
 import { evidenceProvenance } from "./internal/route-assurance.ts"
 import {
   type JsonSchema,
@@ -595,7 +596,5 @@ export function serializeProjectEvidence(snapshot: ProjectEvidenceSnapshot): str
 
 /** SHA-256 of the canonical snapshot, useful as a cheap freshness/reference token. */
 export async function digestProjectEvidence(snapshot: ProjectEvidenceSnapshot): Promise<string> {
-  const bytes = new TextEncoder().encode(serializeProjectEvidence(snapshot))
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
-  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+  return sha256Hex(serializeProjectEvidence(snapshot))
 }

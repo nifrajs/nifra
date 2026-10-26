@@ -11,6 +11,7 @@
  */
 
 import { canonicalJson } from "./canonical-json.ts"
+import { bytesToHex } from "./internal/hex.ts"
 
 /** Whether a route's idempotency is satisfied by an in-process store or a durable (cross-restart) one. */
 export type IdempotencyScope = "request" | "durable"
@@ -174,11 +175,7 @@ export async function computeIdempotencyFingerprint(
   const material = new Uint8Array(head.length + body.length)
   material.set(head, 0)
   material.set(body, head.length)
-  const digest = await crypto.subtle.digest("SHA-256", material)
-  const bytes = new Uint8Array(digest)
-  let hex = ""
-  for (let i = 0; i < bytes.length; i++) hex += (bytes[i] as number).toString(16).padStart(2, "0")
-  return hex
+  return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", material)))
 }
 
 const isDigit = (code: number): boolean => code >= 48 && code <= 57

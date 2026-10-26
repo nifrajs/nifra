@@ -1,4 +1,5 @@
 import { digestReviewReport } from "./canonical.ts"
+import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { parseReviewReport } from "./parser.ts"
 import {
   REVIEW_REPORT_VERSION,
@@ -11,10 +12,6 @@ import {
   type ReviewScope,
 } from "./types.ts"
 
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
-}
-
 function copyEvidence(value: readonly ReviewEvidenceRef[]): readonly ReviewEvidenceRef[] {
   return [...value]
     .map((entry) => ({
@@ -25,10 +22,10 @@ function copyEvidence(value: readonly ReviewEvidenceRef[]): readonly ReviewEvide
     }))
     .sort(
       (left, right) =>
-        compareText(left.source, right.source) ||
-        compareText(left.token, right.token) ||
-        compareText(left.digest, right.digest) ||
-        compareText(left.path ?? "", right.path ?? ""),
+        codeUnitOrder(left.source, right.source) ||
+        codeUnitOrder(left.token, right.token) ||
+        codeUnitOrder(left.digest, right.digest) ||
+        codeUnitOrder(left.path ?? "", right.path ?? ""),
     )
 }
 
@@ -37,7 +34,7 @@ function copyScope(value: ReviewScope): ReviewScope {
     kind: value.kind,
     state: value.state,
     ...(value.gitRef === undefined ? {} : { gitRef: value.gitRef }),
-    changedPaths: [...value.changedPaths].sort(compareText),
+    changedPaths: [...value.changedPaths].sort(codeUnitOrder),
     pathDigest: value.pathDigest,
     outOfScopeCount: value.outOfScopeCount,
     ...(value.reasonCode === undefined ? {} : { reasonCode: value.reasonCode }),
@@ -78,7 +75,7 @@ function copyCheck(value: ReviewCheckResult): ReviewCheckResult {
       info: value.counts.info,
       outOfScope: value.counts.outOfScope,
     },
-    findingIds: [...value.findingIds].sort(compareText),
+    findingIds: [...value.findingIds].sort(codeUnitOrder),
     evidence: copyEvidence(value.evidence),
     ...(value.reasonCode === undefined ? {} : { reasonCode: value.reasonCode }),
   }
@@ -90,7 +87,7 @@ function copyFix(value: ReviewFixResult): ReviewFixResult {
     status: value.status,
     ...(value.changedPaths === undefined
       ? {}
-      : { changedPaths: [...value.changedPaths].sort(compareText) }),
+      : { changedPaths: [...value.changedPaths].sort(codeUnitOrder) }),
     ...(value.reasonCode === undefined ? {} : { reasonCode: value.reasonCode }),
   }
 }
@@ -125,17 +122,17 @@ export async function composeReviewReport(input: ReviewReportDraft): Promise<Rev
   const scope = copyScope(input.scope)
   const checks = [...input.checks]
     .map(copyCheck)
-    .sort((left, right) => compareText(left.id, right.id))
+    .sort((left, right) => codeUnitOrder(left.id, right.id))
   const findings = [...input.findings]
     .map(copyFinding)
-    .sort((left, right) => compareText(left.id, right.id))
+    .sort((left, right) => codeUnitOrder(left.id, right.id))
   const fixes =
     input.fixes === undefined
       ? undefined
       : [...input.fixes].map(copyFix).sort((left, right) => {
           const leftKey = `${left.recipe}\u0000${left.status}\u0000${left.changedPaths?.join("\u0000") ?? ""}`
           const rightKey = `${right.recipe}\u0000${right.status}\u0000${right.changedPaths?.join("\u0000") ?? ""}`
-          return compareText(leftKey, rightKey)
+          return codeUnitOrder(leftKey, rightKey)
         })
   const outcome = deriveOutcome(input.strict, scope, checks, findings, fixes)
   const unsigned: ReviewReport = {

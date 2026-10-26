@@ -20,7 +20,7 @@ import {
   ImageProcessingError,
   type OutputFormat,
 } from "./backend.ts"
-
+import { sha256Hex } from "./internal/hex.ts"
 import { openResolved } from "./open-resolved.ts"
 import { verifyImageParams } from "./sign.ts"
 
@@ -265,7 +265,7 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
 
     // A strong validator describes the bytes actually emitted. Hashing request parameters here would
     // falsely return 304 when a mutable local/remote source changes at the same URL.
-    const etag = `"${await sha256(out.bytes)}"`
+    const etag = `"${await sha256Hex(out.bytes)}"`
     const headers = new Headers({
       "Cache-Control":
         signedCacheControl ??
@@ -505,15 +505,6 @@ function ifNoneMatch(req: Request, etag: string): boolean {
   if (header === null) return false
   if (header.trim() === "*") return true
   return header.split(",").some((t) => t.trim() === etag)
-}
-
-/** Collision-resistant content digest for a strong representation validator. */
-async function sha256(bytes: Uint8Array): Promise<string> {
-  // Copy so a backend-owned mutable buffer cannot change while Web Crypto is reading it.
-  const stable = new Uint8Array(bytes.byteLength)
-  stable.set(bytes)
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", stable))
-  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
 function errorResponse(

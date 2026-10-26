@@ -88,11 +88,22 @@ export interface ContractCaseContext {
 export interface InvariantSetupResult {
   /** The isolated target for this run. Replaces `invariants.executor`. */
   readonly executor?: InvariantExecutor
+  /**
+   * Known-good requests that name what only exists once the target is up - a real slug, a row id,
+   * a signed-in session - keyed by `"METHOD /path"`. Merged over `invariants.witnesses`: a key in
+   * both takes this one. Validated as the static ones are.
+   */
+  readonly witnesses?: Readonly<Record<string, ContractWitness>>
+  /** Replaces `invariants.prepareRequest` for this run, so it can attach what setup created. */
+  readonly prepareRequest?: InvariantRunOptions["prepareRequest"]
   /** Called once the run ends, after a failure too. */
   readonly teardown?: () => void | Promise<void>
 }
 
-/** Provisions a throwaway L4 target. Called once, before the first L4 request - never on import. */
+/**
+ * Provisions a throwaway L4 target. Called once per L4 run, before its first case is generated, so
+ * the witnesses it returns are known to every case - never on import.
+ */
 // biome-ignore lint/suspicious/noConfusingVoidType: `void` lets a setup that provisions nothing be written as `async () => {}`.
 export type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>
 
@@ -655,27 +666,66 @@ function assertInvariantsConfig(invariants: InvariantsConfig): void {
   if (invariants.executor === undefined && invariants.setup === undefined) {
     throw new TypeError("route assurance: invariants needs an executor or a setup")
   }
-  const witnesses: unknown = invariants.witnesses
-  if (witnesses !== undefined) {
-    if (witnesses === null || typeof witnesses !== "object" || Array.isArray(witnesses)) {
-      throw new TypeError(
-        'route assurance: invariants.witnesses must map "METHOD /path" to a witness',
-      )
-    }
-    for (const [key, witness] of Object.entries(witnesses)) {
-      if (witness === null || typeof witness !== "object" || Array.isArray(witness)) {
-        throw new TypeError(
-          `route assurance: invariants.witnesses[${JSON.stringify(key)}] must be an object`,
-        )
-      }
-    }
-  }
+  assertWitnesses(invariants.witnesses, "invariants.witnesses")
   const max = invariants.maxMutationsPerInput
   if (max !== undefined && (!Number.isSafeInteger(max) || max < 1)) {
     throw new RangeError(
       "route assurance: invariants.maxMutationsPerInput must be a positive integer",
     )
   }
+}
+
+function assertWitnesses(witnesses: unknown, label: string): void {
+  if (witnesses === undefined) return
+  if (witnesses === null || typeof witnesses !== "object" || Array.isArray(witnesses)) {
+    throw new TypeError(`route assurance: ${label} must map "METHOD /path" to a witness`)
+  }
+  for (const [key, witness] of Object.entries(witnesses)) {
+    if (witness === null || typeof witness !== "object" || Array.isArray(witness)) {
+      throw new TypeError(`route assurance: ${label}[${JSON.stringify(key)}] must be an object`)
+    }
+  }
+}
+
+/** One L4 run's options once `invariants.setup` has provisioned its target. */
+export interface AppliedInvariantSetup {
+  /** The config with the setup's executor, witnesses and prepareRequest merged over it. */
+  readonly invariants: InvariantsConfig
+  /** The `"METHOD /path"` witness keys the setup returned, in its order. */
+  readonly setupWitnesses: readonly string[]
+}
+
+/**
+ * Merge what `invariants.setup` returned over the static `invariants`, validating it the way
+ * `defineAssuranceConfig` validates the static fields: its executor and prepareRequest replace the
+ * static ones, and its witnesses are merged over theirs, a key in both taking the setup's. For a
+ * harness that runs L4 itself; `nifra levels` calls it once setup resolves.
+ */
+export function applyInvariantSetup(
+  invariants: InvariantsConfig,
+  result: InvariantSetupResult | undefined,
+): AppliedInvariantSetup {
+  if (result === undefined) return Object.freeze({ invariants, setupWitnesses: [] })
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    throw new TypeError("route assurance: invariants.setup() must resolve to an object or nothing")
+  }
+  for (const name of ["executor", "prepareRequest", "teardown"] as const) {
+    const value: unknown = result[name]
+    if (value !== undefined && typeof value !== "function") {
+      throw new TypeError(`route assurance: invariants.setup().${name} must be a function`)
+    }
+  }
+  assertWitnesses(result.witnesses, "invariants.setup().witnesses")
+  const setupWitnesses = Object.freeze(Object.keys(result.witnesses ?? {}))
+  const merged: InvariantsConfig = {
+    ...invariants,
+    ...(result.executor === undefined ? {} : { executor: result.executor }),
+    ...(result.prepareRequest === undefined ? {} : { prepareRequest: result.prepareRequest }),
+    ...(result.witnesses === undefined
+      ? {}
+      : { witnesses: Object.freeze({ ...invariants.witnesses, ...result.witnesses }) }),
+  }
+  return Object.freeze({ invariants: Object.freeze(merged), setupWitnesses })
 }
 
 function frozenInvariantsConfig(invariants: InvariantsConfig): InvariantsConfig {

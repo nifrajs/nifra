@@ -16,7 +16,7 @@
  * anything fails. Pure scanners (`scanFetchText`, `scanServerOnlyImports`) are unit-tested.
  */
 
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { declaredSide, specifierPackage } from "@nifrajs/web/zones"
@@ -36,6 +36,7 @@ import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts
 import { installedManifest } from "./internal/installed-package.ts"
 import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-project.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
+import { realpathOrSelf } from "./internal/realpath-or-self.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
 import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 import {
@@ -462,13 +463,7 @@ async function buildProjectScan(
     // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
     // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
     // The resolver answers with real paths, so the project root is read as one too.
-    const realCwd = (() => {
-      try {
-        return realpathSync(cwd)
-      } catch {
-        return cwd
-      }
-    })()
+    const realCwd = realpathOrSelf(cwd)
     const resolveSpecifier = createSpecifierResolver()
     const sourceFacts =
       sqlCompiler === undefined

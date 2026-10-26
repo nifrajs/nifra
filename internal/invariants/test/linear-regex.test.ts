@@ -163,6 +163,10 @@ const BUILT: Readonly<Record<string, Entry>> = {
     count: 1,
     reason: "escaped secrets as alternatives, no quantifier",
   },
+  "packages/schema/src/decode.ts": {
+    count: 1,
+    reason: "a `patternProperties` key of the app's own schema",
+  },
   "packages/web-solid/src/plugin.ts": { count: 1, reason: BUNDLER_FILTER },
   "packages/web-vue/src/index.ts": {
     count: 1,
@@ -194,6 +198,10 @@ const BUILT: Readonly<Record<string, Entry>> = {
     reason: "constant extension and suffix alternatives, and a constant marker",
   },
   "packages/web/src/prerender.ts": { count: 1, reason: "constant names, escaped" },
+  "packages/web/src/public-dir.ts": {
+    count: 1,
+    reason: "the app's own `hashedFiles` pattern, copied without the global and sticky flags",
+  },
   "packages/web/src/zones.ts": { count: 2, reason: "constant suffix alternatives" },
 }
 

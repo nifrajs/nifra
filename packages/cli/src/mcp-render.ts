@@ -19,7 +19,9 @@ import {
   CHILD_OUTPUT_MAX_BYTES,
   readBoundedLines,
   readBoundedStream,
+  redirectConsoleToStderr,
   serializeBoundedJson,
+  workerReplyWriter,
 } from "./mcp-io.ts"
 import { frameworkWebAppOptions } from "./web-app-options.ts"
 
@@ -83,25 +85,6 @@ interface RenderWorkerMessage {
   readonly input?: { readonly requests?: unknown }
 }
 
-/** Send console output to stderr so it never corrupts the newline-delimited JSON-RPC on stdout (mirrors
- * `mcp-run`'s worker). A loader that logs would otherwise inject noise into a response line. */
-function redirectConsoleToStderr(): void {
-  const write = (level: string, args: unknown[]): void => {
-    Bun.stderr.write(`[${level}] ${args.map((arg) => String(arg)).join(" ")}\n`)
-  }
-  console.debug = (...args: unknown[]) => write("debug", args)
-  console.info = (...args: unknown[]) => write("info", args)
-  console.log = (...args: unknown[]) => write("log", args)
-  console.warn = (...args: unknown[]) => write("warn", args)
-  console.error = (...args: unknown[]) => write("error", args)
-}
-
-function safeResponseId(value: unknown): number | string | null {
-  if (typeof value === "number" && Number.isSafeInteger(value)) return value
-  if (typeof value === "string" && value.length <= 128) return value
-  return null
-}
-
 /**
  * Warm-worker loop (`--worker`): build the web app ONCE, then SSR each `{ id, input: { requests } }` line
  * against that hot app and reply `{ id, output }`. The parent (`mcp.ts`'s warm-render handler) spawns this,
@@ -113,13 +96,9 @@ async function runWorker(cwd: string): Promise<void> {
   // Build once; the same `{ error }` is returned for every request if the build failed, so an agent sees
   // the actionable message and the parent restarts the worker on the next file change.
   const built = await buildWebApp(cwd)
-  const send = (id: unknown, output: unknown): void => {
-    const responseId = safeResponseId(id)
-    const encoded = serializeBoundedJson({ id: responseId, output }, CHILD_OUTPUT_MAX_BYTES - 1)
-    process.stdout.write(
-      `${encoded ?? JSON.stringify({ id: responseId, output: { error: "worker output exceeded the size limit" } })}\n`,
-    )
-  }
+  const send = workerReplyWriter((line) => {
+    process.stdout.write(line)
+  })
   for await (const item of readBoundedLines(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)) {
     if (item.kind === "too-large") {
       send(null, { error: `worker input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` })

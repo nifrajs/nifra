@@ -2,6 +2,7 @@ import { createReadStream } from "node:fs"
 import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises"
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { isRecord } from "./internal/record.ts"
+import { sha256HexOf } from "./orchestration/hash.ts"
 import { sessionFileStem } from "./sessions.ts"
 
 /** Version of the evidence-only legacy session file format. */
@@ -73,7 +74,7 @@ export async function stableSessionEventCode(
   type: string,
 ): Promise<{ readonly code: string; readonly replaced: boolean }> {
   if (KNOWN_EVENT_CODES.has(type)) return { code: type, replaced: false }
-  const digest = await sha256Hex(type)
+  const digest = await sha256HexOf(type)
   return { code: `legacy.unknown.${digest.slice(0, 16)}`, replaced: true }
 }
 
@@ -148,7 +149,7 @@ export async function migrateLegacySession(
     }
     const record: SessionEvidenceRecord = {
       ...base,
-      digest: await sha256Hex(JSON.stringify(base)),
+      digest: await sha256HexOf(JSON.stringify(base)),
     }
     parseSessionEvidenceRecord(record)
     records.push(Object.freeze(record))
@@ -158,12 +159,12 @@ export async function migrateLegacySession(
 
   const lines = records.map((record) => JSON.stringify(record))
   const content = lines.length === 0 ? "" : `${lines.join("\n")}\n`
-  const digest = await sha256Hex(content)
+  const digest = await sha256HexOf(content)
   const targetFile = join(targetRoot, `${sessionFileStem(sessionId)}.jsonl`)
   await commitTarget(targetRoot, targetFile, content, options.signal)
   // Re-read the committed target and validate every line before the caller treats this as active.
   const committed = await readEvidenceTarget(targetFile, sessionId, Buffer.byteLength(content))
-  if (committed.records.length !== records.length || (await sha256Hex(committed.raw)) !== digest)
+  if (committed.records.length !== records.length || (await sha256HexOf(committed.raw)) !== digest)
     throw new SessionMigrationError("target_validation", "committed evidence target changed")
   for (let index = 0; index < committed.records.length; index++) {
     const actual = committed.records[index]!
@@ -348,7 +349,7 @@ async function readEvidenceTarget(
       count: record.count,
       ...(record.pinned === true ? { pinned: true } : {}),
     }
-    if ((await sha256Hex(JSON.stringify(base))) !== record.digest)
+    if ((await sha256HexOf(JSON.stringify(base))) !== record.digest)
       throw new SessionMigrationError("target_validation", "target record digest is invalid")
     previousSeq = record.seq
     records.push(record)
@@ -399,11 +400,6 @@ function assertNotAborted(signal?: AbortSignal): void {
 
 function randomToken(): string {
   return crypto.randomUUID().replaceAll("-", "")
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
-  return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
 function canonicalRecord(record: SessionEvidenceRecord): string {

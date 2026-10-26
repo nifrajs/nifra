@@ -223,6 +223,48 @@ describe("nifra upgrade --write", () => {
     expect(saved?.routes.length).toBe(3)
   }, 30_000)
 
+  test("a CLI running another core than the project skips the capture with one line", async () => {
+    const root = upgradable("upgrade-other-core-")
+    // The project installs an older release of its own, as before `bun install` picks up the new one.
+    writeAppFile(
+      root,
+      "node_modules/@nifrajs/core/package.json",
+      JSON.stringify({
+        name: "@nifrajs/core",
+        version: "4.0.0",
+        type: "module",
+        exports: { ".": "./server.js", "./server": "./server.js" },
+      }),
+    )
+    writeAppFile(
+      root,
+      "node_modules/@nifrajs/core/server.js",
+      // Like a real second copy: its merge() refuses a server() this CLI's copy did not build.
+      `export const server = () => ({ onRequest() { return this }, group() { return this }, get() { return this }, merge() { throw new Error("merge() requires a server() from this copy of @nifrajs/core, and 3 copies are loaded") } })\n`,
+    )
+    const { result, out } = await capture(() =>
+      runUpgrade(root, { version: "4.0.2", cliVersion: "4.0.2", write: true, verify: false }),
+    )
+    expect(result).toBe(true)
+    expect(out).toContain(
+      "Hook scope: not compared, since this CLI runs another @nifrajs/core than the project. Once the release is installed, `nifra routes --hooks` shows it.",
+    )
+    expect(out).not.toContain("not captured")
+    expect(out).not.toContain("copies are loaded")
+    expect(await Bun.file(join(root, HOOKS_BEFORE_UPGRADE_FILE)).exists()).toBe(false)
+
+    const json = await capture(() =>
+      runUpgrade(root, {
+        version: "4.0.2",
+        cliVersion: "4.0.2",
+        write: true,
+        verify: false,
+        json: true,
+      }),
+    )
+    expect(JSON.parse(json.out).hooks).toEqual({ skipped: "other-core" })
+  }, 30_000)
+
   test("--no-hooks leaves hook scope out", async () => {
     const root = upgradable("upgrade-no-hooks-")
     const { result, out } = await capture(() =>

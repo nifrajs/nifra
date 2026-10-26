@@ -282,6 +282,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 42,850 -> 42,874, effect-ledger 40,468 -> 40,488, sse 39,315 -> 39,333, mcp 38,714 -> 38,732,
   // valibot 39,425 -> 39,441, typebox-t 65,416 -> 65,436, typebox-form 70,396 -> 70,416 (Bun 1.4.4);
   // only the sse and typebox-t caps are crossed.
+  // That GET/HEAD skip together with the request-locals link and t.date() below: bare 38,514 B,
+  // effect-ledger 40,554, typebox-form 72,301 (Bun 1.4.4); these three caps take the next 0.1 KiB step.
   // A plain `Date` in a JSON answer written ahead of the serializer when the first row holds one:
   // bare 38,472 -> 38,862 B, idempotency 43,247 -> 43,629, effect-ledger 40,488 -> 40,892, sse
   // 39,333 -> 39,722, mcp 38,732 -> 39,131, valibot 39,438 -> 39,858, typebox-t 65,436 -> 65,833,
@@ -289,7 +291,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // That writer reading each getter once, the accessor check and the copy-first walk: bare 38,862 ->
   // 38,920 B, sse 39,722 -> 39,786, typebox-t 65,833 -> 65,915, typebox-form 70,797 -> 70,865
   // (Bun 1.4.4); only these four caps are crossed.
-  "nifra-bare": 38.1,
+  // The Date writer on top of the request-locals, response-contract and t.date() work: bare 39,025 B,
+  // idempotency 43,785, effect-ledger 41,026, sse 39,892, mcp 39,297, valibot 40,018, typebox-t
+  // 67,811, typebox-form 72,778 (Bun 1.4.4); each cap takes the next 0.1 KiB step.
+  "nifra-bare": 38.2,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -298,20 +303,30 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
+  // Request locals carried across the kernel's request copies (mount strip, target resolution, the
+  // transport and idempotency lanes): bare 38,453 -> 38,495 B, idempotency 42,850 -> 42,915, sse
+  // 39,315 -> 39,370, typebox-t 65,416 -> 65,496, typebox-form 70,396 -> 70,452 (Bun 1.4.4). Only
+  // the four caps crossed take the next 0.1 KiB step.
   // Core's shared canonical JSON, which refuses a value JSON cannot carry instead of hashing it as
   // something else: idempotency 42,874 -> 42,982 B (Bun 1.4.4); only the idempotency cap is crossed.
   // A fingerprint keeps the written text of a JSON number a double would round, behind a sampled scan
   // 3-7x cheaper than a regex over the body: idempotency 42,982 -> 43,223 B (Bun 1.4.4); only the
   // idempotency cap is crossed, by three 0.1 KiB steps.
-  "nifra-idempotency": 42.7,
-  "nifra-effect-ledger": 40.0,
-  "nifra-mcp": 38.3,
+  // A route's context carries its response contract, so a contracted `c.json` reply is written once
+  // for its bytes and its check: bare 38,502 -> 38,543 B, idempotency 43,293 -> 43,328, mcp 38,773 ->
+  // 38,816, valibot 39,475 -> 39,512 (Bun 1.4.4). The two caps crossed take the next 0.1 KiB step.
+  // A request's t.date() strings handed on as Dates by a schema-directed decoder, and date-time and
+  // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
+  // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
+  "nifra-idempotency": 42.8,
+  "nifra-effect-ledger": 40.1,
+  "nifra-mcp": 38.4,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.9,
-  "nifra-valibot": 39.0,
-  "nifra-typebox-t": 64.4,
+  "nifra-sse": 39.0,
+  "nifra-valibot": 39.1,
+  "nifra-typebox-t": 66.3,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 69.3,
+  "nifra-typebox-form": 71.1,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

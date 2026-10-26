@@ -1,4 +1,4 @@
-import { defineRouterPlugin } from "@nifrajs/core/server"
+import { carryRequestLocals, defineRouterPlugin } from "@nifrajs/core/server"
 
 export interface TrailingSlashOptions {
   /** Redirect (default) or route internally with a rewritten URL. */
@@ -47,14 +47,17 @@ function route(
   mode: "redirect" | "rewrite",
   status: 301 | 302 | 307 | 308,
 ) {
-  return mode === "rewrite"
-    ? new Request(url.toString(), req)
-    : // Redirects need no authority. Using the request's Host here would reflect an untrusted Host
-      // header into an absolute open redirect before the adapter's host policy has a chance to run.
-      new Response(null, {
-        status,
-        headers: { location: relativeLocation(url) },
-      })
+  if (mode === "rewrite") {
+    const rewritten = new Request(url.toString(), req)
+    carryRequestLocals(req, rewritten)
+    return rewritten
+  }
+  // Redirects need no authority. Using the request's Host here would reflect an untrusted Host
+  // header into an absolute open redirect before the adapter's host policy has a chance to run.
+  return new Response(null, {
+    status,
+    headers: { location: relativeLocation(url) },
+  })
 }
 
 function methodsOf(methods: readonly string[] | undefined): ReadonlySet<string> {
