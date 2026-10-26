@@ -70,6 +70,20 @@ Deno.test("passes a 204 (no body) through correctly", async () => {
   }
 })
 
+Deno.test("the old `signals` option is refused and names gracefulSignals", () => {
+  const options = { hostname: "127.0.0.1", port: 0, signals: true }
+  let message = ""
+  try {
+    Reflect.apply(serve, undefined, [{ fetch: () => new Response("") }, options])
+  } catch (error) {
+    message = error instanceof TypeError ? error.message : ""
+  }
+  assert(
+    message.includes("gracefulSignals"),
+    `expected a TypeError naming gracefulSignals, got "${message}"`,
+  )
+})
+
 Deno.test("a throwing app yields a flat 500 (no leak)", async () => {
   const running = await serve(
     {

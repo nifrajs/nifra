@@ -312,7 +312,7 @@ async function staticHandler(src: string, dir: string, deno = denoFiles): Promis
 
 interface DenoServeOptions {
   readonly port: number
-  readonly signals?: unknown
+  readonly gracefulSignals?: unknown
   static(request: Request): Response | Promise<Response | undefined> | undefined
 }
 
@@ -573,9 +573,9 @@ describe("generateServerEntry", () => {
       expect(entry(target)).not.toContain("server:")
     }
     const node = await nodeServeOptions(entry("node"), "/srv/app/")
-    expect(node.signals).toEqual(selfHost.gracefulSignals)
+    expect(node.gracefulSignals).toEqual(selfHost.gracefulSignals)
     const deno = await denoServeOptions(entry("deno"), tmpdir())
-    expect(deno.signals).toEqual(selfHost.gracefulSignals)
+    expect(deno.gracefulSignals).toEqual(selfHost.gracefulSignals)
     for (const target of ["cloudflare", "vercel"] as const) {
       expect(entry(target)).toBe(bare(target))
     }

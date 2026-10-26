@@ -1096,10 +1096,15 @@ test("inherits the app-level requestTimeoutMs (503) through app.fetch", async ()
   expect(await res.json()).toEqual({ ok: false, error: "request_timeout" })
 })
 
-test("signals:true installs SIGTERM/SIGINT handlers that stop the server, then cleans up", async () => {
+test("the old `signals` option is refused and names gracefulSignals", () => {
+  const options = { hostname: "127.0.0.1", port: 0, signals: true }
+  expect(() => Reflect.apply(serve, undefined, [demoApp(), options])).toThrow("gracefulSignals")
+})
+
+test("gracefulSignals: true installs SIGTERM/SIGINT handlers that stop the server, then cleans up", async () => {
   const sigtermBefore = process.listenerCount("SIGTERM")
   const sigintBefore = process.listenerCount("SIGINT")
-  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0, signals: true })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0, gracefulSignals: true })
   expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore + 1)
   expect(process.listenerCount("SIGINT")).toBe(sigintBefore + 1)
 

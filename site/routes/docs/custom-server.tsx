@@ -77,7 +77,7 @@ import { serve, serveStatic } from "@nifrajs/node"
 await serve(app, {
   port: 3000,
   static: serveStatic({ dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets }),
-  signals: { drainMs: 8_000 },
+  gracefulSignals: { drainMs: 8_000 },
 })`
 
 const BUILD_SERVER = `// doc-check: skip - fragment: a build script; the routes and entry paths are your app's.
@@ -310,8 +310,8 @@ export default function CustomServer() {
         should stop routing to the instance first, as most platforms do before they send{" "}
         <code>SIGTERM</code>. Keep <code>drainMs</code> under your platform's kill grace period:{" "}
         <code>docker stop</code> waits 10 seconds. <code>true</code> uses the default. On Node and
-        Deno, pass{" "}
-        <code>signals: {"{ drainMs }"}</code> to <code>serve()</code> instead, as above.
+        Deno, pass the same{" "}
+        <code>gracefulSignals: {"{ drainMs }"}</code> to <code>serve()</code> instead, as above.
       </p>
       <p>
         When the platform sends <code>SIGTERM</code> without taking the instance out of rotation first,

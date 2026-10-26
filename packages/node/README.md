@@ -91,18 +91,18 @@ range-set that selects nothing gets 416, and several disjoint ranges get the who
 ## Graceful shutdown on signals
 
 Opt in to SIGTERM/SIGINT handling so a `docker stop` / Ctrl-C drains in-flight requests
-before exit (mirrors Bun's `listen({ gracefulSignals })` - off by default, since owning
-process signals should be a deliberate choice):
+before exit (the same `gracefulSignals` as Bun's `server({ gracefulSignals })` - off by default,
+since owning process signals should be a deliberate choice):
 
 ```ts
-await serve(app, { port: 3000, signals: true })
+await serve(app, { port: 3000, gracefulSignals: true })
 ```
 
 In-flight requests get 10 s to finish before the stop forces them closed. Set the window to fit
 the platform's kill grace period:
 
 ```ts
-await serve(app, { port: 3000, signals: { drainMs: 8_000 } })
+await serve(app, { port: 3000, gracefulSignals: { drainMs: 8_000 } })
 ```
 
 ## What you get for free

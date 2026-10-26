@@ -813,15 +813,15 @@ export interface ServeOptions {
   readonly canonicalHost?: string
   /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
-   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
-   * mirroring nifra's Bun `listen({ gracefulSignals })`. The object form is passed to `stop()`.
+   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as
+   * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.
    *
    * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap
    * are *not* set here - they live inside `app.fetch`, so they already apply through
    * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /
    * `headersTimeout` (60s) defaults.
    */
-  readonly signals?: boolean | NodeStopOptions
+  readonly gracefulSignals?: boolean | NodeStopOptions
   /**
    * Sees every request before the app does, so a file it answers wins over any route at the same
    * path. It returns the file's response, or `undefined` to let the app route the request. No hook
@@ -1473,6 +1473,11 @@ export function serveStatic(
 }
 
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
+  if ("signals" in options) {
+    throw new TypeError(
+      "[nifra/node] `signals` is now `gracefulSignals`, as on Bun's server options",
+    )
+  }
   activateAsyncContextFrame()
   enableNodeDirect(app)
   const report = errorReporterOf(app)
@@ -1601,7 +1606,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
 
   // Opt-in: own SIGTERM/SIGINT so `docker stop` / Ctrl-C drains in-flight requests
   // before exit. `stop` is hoisted, so `onSignal` can reference it.
-  const signals = options.signals === true ? {} : options.signals || undefined
+  const signals = options.gracefulSignals === true ? {} : options.gracefulSignals || undefined
   const onSignal = (): void => {
     void stop(signals)
   }

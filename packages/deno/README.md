@@ -24,8 +24,8 @@ a Bun-`listen()`-style graceful `stop()` and opt-in signals.
 ## Graceful shutdown on signals
 
 ```ts
-await serve(app, { port: 3000, signals: true }) // SIGTERM/SIGINT → graceful stop()
-await serve(app, { port: 3000, signals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
+await serve(app, { port: 3000, gracefulSignals: true }) // SIGTERM/SIGINT → graceful stop()
+await serve(app, { port: 3000, gracefulSignals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
 ```
 
 ## Files ahead of the app

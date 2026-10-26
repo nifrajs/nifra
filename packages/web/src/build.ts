@@ -1597,7 +1597,8 @@ export function generateServerEntry(options: {
     ...(clientIpHeader !== undefined
       ? [`  server: { clientIp: { header: ${JSON.stringify(clientIpHeader)} } },`]
       : []),
-    // Bun's listen() installs the handlers the app's own options ask for; the adapters take `signals`.
+    // Bun's listen() installs the handlers the app's own options ask for; the adapters take the same
+    // `gracefulSignals` as a serve() option.
     ...(target === "bun" && gracefulSignals !== undefined
       ? [`  server: { gracefulSignals: ${gracefulSignals} },`]
       : []),
@@ -1655,7 +1656,7 @@ export function generateServerEntry(options: {
     lines.push(
       "await serve(app, {",
       "  port: Number(process.env.PORT ?? 3000),",
-      ...(gracefulSignals !== undefined ? [`  signals: ${gracefulSignals},`] : []),
+      ...(gracefulSignals !== undefined ? [`  gracefulSignals: ${gracefulSignals},`] : []),
       "  static: serveStatic([",
       "    {",
       '      dir: fileURLToPath(new URL("./assets/", import.meta.url)),',
@@ -1726,7 +1727,7 @@ export function generateServerEntry(options: {
     "const server = await serve(app, {",
     "  // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
     '  port: Number(Deno.env.get("PORT") ?? "3000"),',
-    ...(gracefulSignals !== undefined ? [`  signals: ${gracefulSignals},`] : []),
+    ...(gracefulSignals !== undefined ? [`  gracefulSignals: ${gracefulSignals},`] : []),
     "  static(req) {",
     "    const { pathname } = new URL(req.url)",
     "    const filePath = staticPath(pathname)",

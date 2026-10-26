@@ -86,10 +86,10 @@ export interface ServeOptions {
   readonly hostname?: string
   /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
-   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
-   * mirroring nifra's Bun `listen({ gracefulSignals })`. The object form is passed to `stop()`.
+   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as
+   * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.
    */
-  readonly signals?: boolean | DenoStopOptions
+  readonly gracefulSignals?: boolean | DenoStopOptions
   /**
    * Serve HTTPS directly, with no proxy in front: `cert` and `key` as PEM text or the files' bytes.
    * Unset, the server speaks plain HTTP, which is what a proxy or platform that terminates TLS
@@ -160,6 +160,11 @@ const pemText = (value: string | Uint8Array): string =>
  * (matters for `port: 0`).
  */
 export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoServer> {
+  if ("signals" in options) {
+    throw new TypeError(
+      "[nifra/deno] `signals` is now `gracefulSignals`, as on Bun's server options",
+    )
+  }
   // Aborting this signal force-closes the server - used when the drain deadline elapses.
   const controller = new AbortController()
   let stopping = false
@@ -320,7 +325,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     }
   }
 
-  const signals = options.signals === true ? {} : options.signals || undefined
+  const signals = options.gracefulSignals === true ? {} : options.gracefulSignals || undefined
   const onSignal = (): void => {
     void stop(signals)
   }
