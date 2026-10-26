@@ -705,6 +705,40 @@ test("serve runs serveStatic's mounts itself and never calls its function", asyn
   expect(calls).toBe(0)
 })
 
+test("allow sees the host the app sees, on Node's request and as a Web handler", async () => {
+  const seen: string[] = []
+  const files = serveStatic({
+    dir,
+    allow: (host) => {
+      seen.push(host)
+      return true
+    },
+  })
+  running = await serve(app, {
+    hostname: "127.0.0.1",
+    port: 0,
+    canonicalHost: "canonical.test",
+    static: files,
+  })
+  expect((await fetch(`http://127.0.0.1:${running.port}/assets/app.js`)).status).toBe(200)
+  expect((await files(new Request("http://canonical.test/assets/app.js")))?.status).toBe(200)
+  expect(seen).toEqual(["canonical.test", "canonical.test"])
+})
+
+test("a file that grows after its stat is sent at the stat's length", async () => {
+  const size = 2 * 1024 * 1024
+  const name = join(dir, "growing.bin")
+  await writeFile(name, new Uint8Array(size))
+  try {
+    const response = await serveStatic({ dir, prefix: "/" })(new Request("http://x/growing.bin"))
+    await writeFile(name, new Uint8Array(1024), { flag: "a" })
+    expect(response?.headers.get("content-length")).toBe(String(size))
+    expect((await response?.arrayBuffer())?.byteLength).toBe(size)
+  } finally {
+    await rm(name, { force: true })
+  }
+})
+
 test("`static` refuses a mount object and names serveStatic", () => {
   // The shape this adapter took before `static` became a function, which the types now refuse.
   const options = { hostname: "127.0.0.1", port: 0, static: { dir } }

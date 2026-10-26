@@ -230,6 +230,14 @@ export default function CustomServer() {
           governs pages and the API only.
         </li>
         <li>
+          <b>In your own server.</b> <code>static</code> runs before the app, so a file would skip
+          the policy. Give each mount the check the generated entries use:{" "}
+          <code>
+            {"allow: (host, pathname) => hostPolicy.allows(host, pathname, buildAssets)"}
+          </code>
+          . A path it refuses reaches the app, which applies the policy and answers 404.
+        </li>
+        <li>
           <b>In development.</b> <code>nifra dev</code> serves the bundle and <code>public/</code>{" "}
           ahead of the app, so only pages and the API are checked there.
         </li>

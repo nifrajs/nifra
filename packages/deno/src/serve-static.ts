@@ -183,6 +183,8 @@ async function readStatic(
       return new Response(body, { status: plan.status, headers })
     }
     // Untagged by this read: a file past the snapshot size, or one a mount's own `etag` names.
+    // Unbounded, yet a file that grew since its stat sends no more: Deno.serve stops at the
+    // content-length. Any JS between this stream and the socket costs 1.4x the instructions.
     if (plan.status === 200) return new Response(opened.readable, { status: 200, headers })
     if (length <= CONTENT_SNAPSHOT_MAX) {
       await opened.seek(start, Deno.SeekMode.Start)

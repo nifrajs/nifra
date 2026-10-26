@@ -37,3 +37,36 @@ Deno.test("serveStatic passes a request no mount takes on synchronously", () => 
   assertEquals(handler(new Request("http://x/elsewhere")), undefined, "no prefix")
   assertEquals(handler(new Request("http://x/x/shared.txt", { method: "POST" })), undefined, "POST")
 })
+
+Deno.test("a file that grows after its stat is sent at the stat's length, and the connection stays usable", async () => {
+  // The one directory `test:deno` grants writes to.
+  const dir = new URL("./.tmp-static-grow/", import.meta.url)
+  await Deno.mkdir(dir, { recursive: true })
+  const size = 2 * 1024 * 1024
+  const file = new URL("./growing.bin", dir)
+  await Deno.writeFile(file, new Uint8Array(size))
+  const running = await serve(
+    server().get("/*", (c) => c.text("app")),
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      static: serveStatic({ dir, prefix: "/" }),
+    },
+  )
+  try {
+    const base = `http://127.0.0.1:${running.port}`
+    const response = await fetch(`${base}/growing.bin`)
+    await Deno.writeFile(file, new Uint8Array(1024), { append: true })
+    assertEquals(response.headers.get("content-length"), String(size), "declared length")
+    assertEquals((await response.arrayBuffer()).byteLength, size, "bytes sent")
+    const next = await fetch(`${base}/growing.bin`)
+    assertEquals(
+      [next.status, (await next.arrayBuffer()).byteLength],
+      [200, size + 1024],
+      "next request",
+    )
+  } finally {
+    await running.stop()
+    await Deno.remove(dir, { recursive: true })
+  }
+})

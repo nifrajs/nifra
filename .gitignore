@@ -103,3 +103,4 @@ dv-*/
 
 # Output of scripts/mutate.ts (kill matrix, survivors, summary).
 /.mutation/
+packages/deno/test/.tmp-*/

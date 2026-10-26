@@ -11185,6 +11185,14 @@ through the worker). Vercel serves files from its CDN before the function runs, 
 governs pages and the API only.
 
 -
+**In your own server.** `static` runs before the app, so a file would skip
+the policy. Give each mount the check the generated entries use:
+`
+            allow: (host, pathname) => hostPolicy.allows(host, pathname, buildAssets)
+          `
+. A path it refuses reaches the app, which applies the policy and answers 404.
+
+-
 **In development.** `nifra dev` serves the bundle and `public/`
 ahead of the app, so only pages and the API are checked there.
 

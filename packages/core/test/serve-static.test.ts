@@ -157,3 +157,20 @@ test("a matching validator answers 304, and a range past the end 416", async () 
   const past = await get({ headers: { range: "bytes=1000-2000" } })
   expect([past.status, past.headers.get("content-range")]).toEqual([416, "bytes */8"])
 })
+
+test("a file that grows after its stat is sent at the stat's length", async () => {
+  const { appendFileSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs")
+  const { join } = await import("node:path")
+  const { tmpdir } = await import("node:os")
+  const dir = mkdtempSync(join(tmpdir(), "nifra-serve-static-grow-"))
+  const size = 2 * 1024 * 1024
+  try {
+    writeFileSync(join(dir, "growing.bin"), new Uint8Array(size))
+    const response = await serveStatic({ dir, prefix: "/" })(new Request("http://x/growing.bin"))
+    appendFileSync(join(dir, "growing.bin"), new Uint8Array(1024))
+    expect(response?.headers.get("content-length")).toBe(String(size))
+    expect((await response?.arrayBuffer())?.byteLength).toBe(size)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

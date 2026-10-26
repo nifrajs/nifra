@@ -1126,10 +1126,9 @@ async function readStatic(
       headers["content-length"] = String(body.byteLength)
       return { kind: "body", status: plan.status, headers, body }
     }
-    const stream =
-      plan.status === 200
-        ? opened.createReadStream()
-        : opened.createReadStream({ start, end: start + length - 1 })
+    // Bounded by the stat's length even for a whole file: one that grew since would overrun its
+    // content-length.
+    const stream = opened.createReadStream({ start, end: start + length - 1 })
     return {
       kind: "response",
       // Claimable rather than `Readable.toWeb`: served straight from disk to the socket when this
@@ -1647,7 +1646,8 @@ function handle(
         staticState,
         0,
         staticPathOf(nodeReq.url ?? "/"),
-        () => rawHost(nodeReq) ?? "",
+        // The host the app sees, as the Web lane's URL carries it.
+        () => host,
         method,
         nodeReq,
       )
