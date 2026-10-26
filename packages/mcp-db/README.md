@@ -96,7 +96,8 @@ Each layer refuses on its own, in this order:
    a SECURITY DEFINER function either (one outside `pg_catalog`, or an aggregate over one) unless
    `allowFunctions` names it: such a function reads with its owner's rights wherever a query reaches
    it, through an operator, a cast, a view folded at plan time or another function's body, and only
-   the EXECUTE privilege is checked on every one of those paths.
+   the EXECUTE privilege is checked on every one of those paths. Either refusal names each grantee the
+   role holds the privilege through.
 6. **Function allowlist.** Every function the statement names, and every one its plan calls (inside
    views too), is looked up in `pg_proc`, each overload the name can resolve to. A built-in or
    extension function must be immutable or stable and parallel safe (a few value-only ones such as
@@ -118,14 +119,18 @@ Each layer refuses on its own, in this order:
 
 `explainPostgres` returns the plan (with `analyze`, executed inside the same transaction),
 `readPostgresSchema` reads tables, columns, keys and indexes from `pg_catalog`, and `postgresRoleSql`
-writes the SQL for the role the grant gate accepts, without running it: `GRANT SELECT` on each allowed
-schema; a `REVOKE` for each excluded table, its partitions and children, and each view or
-materialized view that reads hidden data; and, for a table with a masked column (pass the same
-`redaction`), a `REVOKE` followed by a column-level `GRANT` of its other columns. Run it again after
-adding a table or view: default privileges grant every column of a new one. A SECURITY DEFINER
-function every role may execute is listed in comments with the `REVOKE EXECUTE ... FROM PUBLIC` the
-gate needs (pass the same `allowFunctions` to skip the ones you trust); they are comments because
-revoking from PUBLIC reaches every other role. A query that names a column the role may not read is
+writes the SQL for the role the grant gate accepts, without running it: `GRANT USAGE` on each allowed
+schema and `GRANT SELECT` on all tables in each allowed schema; a `REVOKE` for each excluded table,
+its partitions and children, and each view or materialized view that reads hidden data; and, for a
+table with a masked column (pass the same `redaction`), a `REVOKE` followed by a column-level `GRANT`
+of its other columns. Run it again after adding a table or view: default privileges grant every
+column of a new one. A privilege reaches a role through PUBLIC, a grant to the role itself, or a role
+whose privileges it has, and a `REVOKE` from one leaves the others. So a grant that would still
+expose hidden data, to PUBLIC or (for a role that exists) to a role it inherits from, is listed in
+comments with its `REVOKE`, and so is each SECURITY DEFINER function the role may execute, grantee by
+grantee (pass the same `allowFunctions` to skip the ones you trust). Only a grant to the role itself
+is revoked by a statement; the rest are comments because they reach other roles. The grant gate's
+refusal names the same grantees. A query that names a column the role may not read is
 refused with `NIFRA_DB_COLUMN_REFUSED`, naming the columns it may.
 
 The live tests run against a throwaway server: set `NIFRA_TEST_POSTGRES_URL` to its superuser URL.

@@ -57,6 +57,7 @@ const ROLE = {
   fileFunction: `nifra_live_filefn_${run}`,
   generated: `nifra_live_generated_${run}`,
   granted: `nifra_live_granted_${run}`,
+  group: `nifra_live_group_${run}`,
 }
 const TIMEOUT_MS = 5_000
 const SCOPE = { schemas: ["public"], exclude: ["secrets", "audit"] }
@@ -628,9 +629,10 @@ describe.skipIf(SKIP)(SUITE, () => {
     const refused = await queryPostgres(reader, "SELECT count(*) FROM orders", MASKED)
     expect(refused).toMatchObject({ code: "NIFRA_DB_ROLE_GRANTS" })
     const message = isDbRefusal(refused) ? refused.message : ""
+    const via = serverVersion >= 140000 ? '"pg_read_all_data"' : JSON.stringify(ROLE.reader)
     for (const hidden of [
-      "public.audit (devDatabase.exclude leaves it out)",
-      "public.audit_2026 (it inherits from public.audit, which devDatabase.exclude leaves out)",
+      `public.audit (devDatabase.exclude leaves it out; granted to ${via})`,
+      `public.audit_2026 (it inherits from public.audit, which devDatabase.exclude leaves out; granted to ${via})`,
     ]) {
       expect(message).toContain(hidden)
     }
@@ -743,6 +745,79 @@ describe.skipIf(SKIP)(SUITE, () => {
       } finally {
         await asOwner(`REVOKE EXECUTE ON FUNCTION ${grant} FROM "${ROLE.granted}"`)
       }
+    }
+  })
+
+  test("a refusal names each grant the role reads through, and nifra db role revokes every one", async () => {
+    const granted = engineClient(ROLE.granted)
+    const su = engineClient()
+    const roleSql = async (role: string) => {
+      const sql = await postgresRoleSql(su, {
+        ...SCOPE,
+        timeoutMs: TIMEOUT_MS,
+        role,
+        redaction: { column: masked },
+      })
+      if (isDbRefusal(sql)) throw new Error(sql.message)
+      return sql.statements
+    }
+    const fn = '"public"."folded_secret"(integer)'
+    const grants = [
+      "GRANT SELECT ON secrets TO PUBLIC",
+      `GRANT SELECT (password_hash) ON users TO "${ROLE.group}"`,
+      `GRANT EXECUTE ON FUNCTION folded_secret(int) TO "${ROLE.group}", "${ROLE.granted}"`,
+    ]
+    await asOwner(`GRANT "${ROLE.group}" TO "${ROLE.granted}"`)
+    try {
+      for (const grant of grants) await asOwner(grant)
+      const tables = await queryPostgres(granted, "SELECT 1", MASKED)
+      expect(code(tables)).toBe("NIFRA_DB_ROLE_GRANTS")
+      for (const listed of [
+        "public.secrets (devDatabase.exclude leaves it out; granted to PUBLIC)",
+        `public.users.password_hash (masked as a credential; granted to "${ROLE.group}")`,
+      ]) {
+        expect(isDbRefusal(tables) ? tables.message : "").toContain(listed)
+      }
+      const written = await roleSql(ROLE.granted)
+      expect(
+        written.filter((line) => line.includes("folded_secret") || /^-- REVOKE SELECT/.test(line)),
+      ).toEqual([
+        '-- REVOKE SELECT ON TABLE "public"."secrets" FROM PUBLIC;',
+        `-- REVOKE SELECT ("password_hash") ON TABLE "public"."users" FROM "${ROLE.group}";`,
+        `REVOKE EXECUTE ON FUNCTION ${fn} FROM "${ROLE.granted}";`,
+        `-- REVOKE EXECUTE ON FUNCTION ${fn} FROM "${ROLE.group}";`,
+      ])
+      // A role the SQL would create holds only PUBLIC's grants.
+      const fresh = await roleSql(`nifra_live_absent_${run}`)
+      expect(fresh).toContain('-- REVOKE SELECT ON TABLE "public"."secrets" FROM PUBLIC;')
+      expect(
+        fresh.some((line) => line.includes(ROLE.group) || line.includes("folded_secret")),
+      ).toBe(false)
+      // Applied as written, the SQL leaves nothing for the gate to refuse.
+      await asOwner("REVOKE SELECT ON secrets FROM PUBLIC")
+      await asOwner(`REVOKE SELECT (password_hash) ON users FROM "${ROLE.group}"`)
+      const definers = await queryPostgres(granted, "SELECT 1", MASKED)
+      expect(code(definers)).toBe("NIFRA_DB_ROLE_GRANTS")
+      expect(isDbRefusal(definers) ? definers.message : "").toContain(
+        `public.folded_secret(integer) (granted to "${ROLE.granted}", "${ROLE.group}")`,
+      )
+      for (const line of written) {
+        if (!line.includes("folded_secret")) continue
+        await asOwner(line.replace(/^-- /, ""))
+      }
+      expect(code(await queryPostgres(granted, "SELECT 1", MASKED))).toBeUndefined()
+      if (serverVersion >= 140000) {
+        expect(await roleSql(ROLE.reader)).toContain(
+          `-- "${ROLE.reader}" has the privileges of pg_read_all_data, which reads every table past these REVOKEs: revoke that membership.`,
+        )
+      }
+    } finally {
+      await asOwner(`REVOKE "${ROLE.group}" FROM "${ROLE.granted}"`)
+      await asOwner("REVOKE SELECT ON secrets FROM PUBLIC")
+      await asOwner(`REVOKE SELECT (password_hash) ON users FROM "${ROLE.group}"`)
+      await asOwner(
+        `REVOKE EXECUTE ON FUNCTION folded_secret(int) FROM "${ROLE.group}", "${ROLE.granted}"`,
+      )
     }
   })
 

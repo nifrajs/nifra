@@ -89,7 +89,7 @@ jobs:
         run: |
           docker run -d --name nifra-pg18 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:55432:5432 \
             postgres:18@sha256:1a5b3e745bbd82d6deb146505e504da3c2f248cac15e431951b148fbe4f8613a
-          for attempt in $(seq 60); do
+          for _ in $(seq 60); do
             pg_isready -q -h 127.0.0.1 -p 55432 -U postgres && break
             sleep 1
           done

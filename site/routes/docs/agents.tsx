@@ -630,9 +630,13 @@ export default function Agents() {
         apply its SQL, and connect as that role; run it again after adding a table or view, since
         default privileges grant every column of a new one. The role may not execute a SECURITY
         DEFINER function either (or an aggregate over one): it reads with its owner's rights through
-        an operator, a cast, a view or another function, where no allowlist sees its name. Revoke
-        EXECUTE on it from PUBLIC (<code>nifra db role</code> lists the statements as comments, since
-        they reach other roles), or name it in <code>devDatabase.allowFunctions</code> to trust it.
+        an operator, a cast, a view or another function, where no allowlist sees its name. Name it in{" "}
+        <code>devDatabase.allowFunctions</code> to trust it. Otherwise the refusal names each grantee
+        the role holds the privilege through, and every one must be revoked: PUBLIC, the role itself,
+        and any role whose privileges it has, since a REVOKE from PUBLIC leaves a direct or inherited
+        grant in place. <code>nifra db role</code> writes the REVOKE from the role itself as a statement
+        and the others as comments, since they reach other roles; it lists the same for a table or
+        column grant that would still expose hidden data.
       </p>
       <h3 id="db-query-off">NIFRA_DB_QUERY_OFF</h3>
       <p>

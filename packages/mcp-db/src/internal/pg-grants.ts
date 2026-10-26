@@ -178,33 +178,158 @@ export function judgeExposure(
 
 const LISTED = 4
 
-/** Refuse a role that may itself read anything the verdict hides. */
-export function grantRefusal(
-  role: string,
+/** A relation as a whole (`column` null) or one of its columns. */
+export interface GrantTarget {
+  readonly relation: PlanRelation
+  readonly column: string | null
+}
+
+/** Hidden data the role may read: a relation hidden whole or a masked column. */
+export interface HiddenReach extends GrantTarget {
+  readonly reason: string
+}
+
+/** What the role may itself read of what the verdict hides. */
+export function hiddenReach(
   exposures: readonly Exposure[],
   verdict: ExposureVerdict,
-): DbRefusal | undefined {
-  const readable: string[] = []
+): HiddenReach[] {
+  const reach: HiddenReach[] = []
   for (const exposure of exposures) {
     const key = verdict.key(exposure.relation)
     const reason = verdict.hidden.get(key)
     if (reason !== undefined) {
-      if (exposure.readable) readable.push(`${named(exposure.relation)} (${reason})`)
+      if (exposure.readable) reach.push({ relation: exposure.relation, column: null, reason })
       continue
     }
     const masked = new Set(verdict.masked.get(key) ?? [])
     for (const column of exposure.columns) {
       if (column.readable && masked.has(column.name)) {
-        readable.push(`${named(exposure.relation)}.${column.name} (masked as a credential)`)
+        reach.push({
+          relation: exposure.relation,
+          column: column.name,
+          reason: "masked as a credential",
+        })
       }
     }
   }
+  return reach
+}
+
+/** A grant through which a role holds a privilege. */
+export interface Held {
+  /** `null` is PUBLIC. */
+  readonly grantee: string | null
+  /** The column a column-level grant covers; `null` for a grant on the whole object. */
+  readonly column: string | null
+  /** Held as a member of `pg_read_all_data`, which no REVOKE on the object removes. */
+  readonly member: boolean
+}
+
+/** The grants each object is held through, keyed by {@link reachKey} or {@link definerLabel}. */
+export type HeldBy = ReadonlyMap<string, readonly Held[]>
+
+export const reachKey = (target: GrantTarget): string =>
+  JSON.stringify([target.relation.schema, target.relation.name, target.column])
+
+const holders = (held: readonly Held[] | undefined): string => {
+  const names = new Set(
+    (held ?? []).map((grant) =>
+      grant.grantee === null ? "PUBLIC" : JSON.stringify(grant.grantee),
+    ),
+  )
+  return names.size === 0 ? "" : `granted to ${[...names].join(", ")}`
+}
+
+const grantsOf = (privilege: string, what: string): string =>
+  `revoke each grant that gives the role ${privilege} on ${what} (to PUBLIC, to the role, or to a role whose privileges it has)`
+
+/** Refuse a role that may itself read anything the verdict hides, naming the grants it reads through. */
+export function grantRefusal(
+  role: string,
+  reach: readonly HiddenReach[],
+  held?: HeldBy,
+): DbRefusal | undefined {
+  const readable = reach.map((reach) => {
+    const via = holders(held?.get(reachKey(reach)))
+    const label = `${named(reach.relation)}${reach.column === null ? "" : `.${reach.column}`}`
+    return `${label} (${reach.reason}${via === "" ? "" : `; ${via}`})`
+  })
   if (readable.length === 0) return undefined
   const more = readable.length > LISTED ? `, and ${readable.length - LISTED} more` : ""
   return dbRefusal(
     "NIFRA_DB_ROLE_GRANTS",
-    `role ${JSON.stringify(role)} may read ${readable.slice(0, LISTED).join(", ")}${more}; the database must refuse what the declaration hides, so connect as a role that cannot read it`,
+    `role ${JSON.stringify(role)} may read ${readable.slice(0, LISTED).join(", ")}${more}; the database must refuse what the declaration hides, so ${grantsOf("SELECT", "it")} or connect as a role that cannot read it`,
   )
+}
+
+const grantee = (value: unknown): string | null => (typeof value === "string" ? value : null)
+
+/**
+ * The grants through which `role` holds SELECT on each target: on the relation, on a column (every
+ * column for a relation hidden whole), or as a member of `pg_read_all_data`. Only PUBLIC's grants
+ * when `role` is null, as for a role not created yet. Read for a refusal and for the role SQL, not
+ * before each query: a REVOKE from one grantee leaves the role every other path.
+ */
+export async function readSelectGrants(
+  connection: PgConnection,
+  role: string | null,
+  targets: readonly GrantTarget[],
+): Promise<HeldBy> {
+  if (targets.length === 0) return new Map()
+  const listed = targets.map((target) => [
+    target.relation.schema,
+    target.relation.name,
+    target.column,
+  ])
+  const rows = records(
+    await connection`
+    WITH target AS (
+      SELECT t ->> 0 AS schema, t ->> 1 AS name, t ->> 2 AS col
+      FROM pg_catalog.json_array_elements(${listed}::json) t
+    ), rel AS (
+      SELECT target.schema, target.name, target.col, c.oid, c.relacl, c.relowner
+      FROM target JOIN pg_catalog.pg_namespace n ON n.nspname = target.schema
+      JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = target.name
+    ), held AS (
+      SELECT rel.schema, rel.name, rel.col, NULL::text AS granted, g.grantee, false AS member
+      FROM rel CROSS JOIN LATERAL
+        pg_catalog.aclexplode(COALESCE(rel.relacl, pg_catalog.acldefault('r', rel.relowner))) g
+      WHERE g.privilege_type = 'SELECT'
+      UNION ALL
+      SELECT rel.schema, rel.name, rel.col, a.attname::text, g.grantee, false
+      FROM rel JOIN pg_catalog.pg_attribute a ON a.attrelid = rel.oid AND a.attnum > 0
+        AND NOT a.attisdropped AND (rel.col IS NULL OR a.attname = rel.col)
+      CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) g
+      WHERE g.privilege_type = 'SELECT'
+      UNION ALL
+      SELECT rel.schema, rel.name, rel.col, NULL, r.oid, true
+      FROM rel JOIN pg_catalog.pg_roles r ON r.rolname = 'pg_read_all_data'
+    )
+    SELECT * FROM (
+      SELECT DISTINCT schema, name, col, granted, member,
+        CASE WHEN grantee = 0 THEN NULL ELSE pg_catalog.pg_get_userbyid(grantee)::text END AS holder
+      FROM held
+      WHERE grantee = 0 OR pg_catalog.pg_has_role(${role}::text::name, grantee, 'USAGE')
+    ) d
+    ORDER BY d.schema COLLATE "C", d.name COLLATE "C", d.col COLLATE "C" NULLS FIRST,
+      d.holder COLLATE "C" NULLS FIRST, d.granted COLLATE "C" NULLS FIRST`,
+  )
+  const held = new Map<string, Held[]>()
+  for (const row of rows) {
+    const key = reachKey({
+      relation: { schema: String(row.schema), name: String(row.name) },
+      column: grantee(row.col),
+    })
+    const list = held.get(key) ?? []
+    list.push({
+      grantee: grantee(row.holder),
+      column: grantee(row.granted),
+      member: row.member === true,
+    })
+    held.set(key, list)
+  }
+  return held
 }
 
 /** A function the role may execute that runs SECURITY DEFINER code: its own body or, for an aggregate, a support function's. */
@@ -266,20 +391,68 @@ export function unacceptedDefiners(
   )
 }
 
-/** Refuse a role that may execute SECURITY DEFINER code `allow` does not accept. */
+export const definerLabel = (definer: Definer): string =>
+  `${definer.schema}.${definer.name}(${definer.args})`
+
+/**
+ * The grants through which `role` holds EXECUTE on each definer, keyed by {@link definerLabel}; only
+ * PUBLIC's when `role` is null. Read for a refusal and for the role SQL, like {@link readSelectGrants}.
+ */
+export async function readExecuteGrants(
+  connection: PgConnection,
+  role: string | null,
+  definers: readonly Definer[],
+): Promise<HeldBy> {
+  if (definers.length === 0) return new Map()
+  const listed = definers.map((definer) => [definer.schema, definer.name, definer.args])
+  const rows = records(
+    await connection`
+    SELECT * FROM (
+      SELECT DISTINCT n.nspname::text AS schema, p.proname::text AS name,
+        pg_catalog.pg_get_function_identity_arguments(p.oid) AS args,
+        CASE WHEN g.grantee = 0 THEN NULL ELSE pg_catalog.pg_get_userbyid(g.grantee)::text END AS holder
+      FROM pg_catalog.json_array_elements(${listed}::json) t
+      JOIN pg_catalog.pg_namespace n ON n.nspname = t ->> 0
+      JOIN pg_catalog.pg_proc p ON p.pronamespace = n.oid AND p.proname = t ->> 1
+        AND pg_catalog.pg_get_function_identity_arguments(p.oid) = t ->> 2
+      CROSS JOIN LATERAL
+        pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) g
+      WHERE g.privilege_type = 'EXECUTE'
+        AND (g.grantee = 0 OR pg_catalog.pg_has_role(${role}::text::name, g.grantee, 'USAGE'))
+    ) d
+    ORDER BY d.schema COLLATE "C", d.name COLLATE "C", d.args COLLATE "C", d.holder COLLATE "C" NULLS FIRST`,
+  )
+  const held = new Map<string, Held[]>()
+  for (const row of rows) {
+    const key = definerLabel({
+      schema: String(row.schema),
+      name: String(row.name),
+      args: String(row.args),
+    })
+    const list = held.get(key) ?? []
+    list.push({ grantee: grantee(row.holder), column: null, member: false })
+    held.set(key, list)
+  }
+  return held
+}
+
+/** Refuse a role that may execute SECURITY DEFINER code `allow` does not accept, naming the grants. */
 export function definerRefusal(
   role: string,
   definers: readonly Definer[],
   allow: readonly string[] | undefined,
+  held?: HeldBy,
 ): DbRefusal | undefined {
-  const open = unacceptedDefiners(definers, allow).map(
-    (definer) => `${definer.schema}.${definer.name}(${definer.args})`,
-  )
+  const open = unacceptedDefiners(definers, allow).map((definer) => {
+    const label = definerLabel(definer)
+    const via = holders(held?.get(label))
+    return via === "" ? label : `${label} (${via})`
+  })
   if (open.length === 0) return undefined
   const more = open.length > LISTED ? `, and ${open.length - LISTED} more` : ""
   return dbRefusal(
     "NIFRA_DB_ROLE_GRANTS",
-    `role ${JSON.stringify(role)} may execute ${open.slice(0, LISTED).join(", ")}${more}, which run SECURITY DEFINER code with their owner's rights wherever a query reaches them (through an operator, a cast, a view or another function), so revoke EXECUTE from PUBLIC or name them in allowFunctions`,
+    `role ${JSON.stringify(role)} may execute ${open.slice(0, LISTED).join(", ")}${more}, which run SECURITY DEFINER code with their owner's rights wherever a query reaches them (through an operator, a cast, a view or another function), so ${grantsOf("EXECUTE", "them")} or name them in allowFunctions`,
   )
 }
 

@@ -14,8 +14,10 @@ import {
   definerRefusal,
   type Exposure,
   grantRefusal,
+  hiddenReach,
   judgeExposure,
   partialGrantRefusal,
+  reachKey,
 } from "../src/internal/pg-grants.ts"
 import {
   functionCalls,
@@ -690,10 +692,13 @@ describe("grant gate", () => {
       exposure("secrets", { value: true }),
       exposure("users", { id: true, password_hash: true }),
     ]
-    const refused = grantRefusal("reader", exposures, judgeExposure(exposures, scope, masked))
+    const refused = grantRefusal(
+      "reader",
+      hiddenReach(exposures, judgeExposure(exposures, scope, masked)),
+    )
     expect(code(refused)).toBe("NIFRA_DB_ROLE_GRANTS")
     expect(isDbRefusal(refused) ? refused.message : "").toBe(
-      'role "reader" may read public.secret_copy (it is a view that reads public.secrets, which is hidden), public.secrets (devDatabase.exclude leaves it out), public.users.password_hash (masked as a credential); the database must refuse what the declaration hides, so connect as a role that cannot read it',
+      'role "reader" may read public.secret_copy (it is a view that reads public.secrets, which is hidden), public.secrets (devDatabase.exclude leaves it out), public.users.password_hash (masked as a credential); the database must refuse what the declaration hides, so revoke each grant that gives the role SELECT on it (to PUBLIC, to the role, or to a role whose privileges it has) or connect as a role that cannot read it',
     )
     expect(isDbRefusal(refused) ? refused.fix : "").toContain("nifra db role")
     const granted = [
@@ -709,16 +714,20 @@ describe("grant gate", () => {
       exposure("secrets", { value: false }),
       exposure("users", { id: true, password_hash: false }),
     ]
-    expect(grantRefusal("reader", granted, judgeExposure(granted, scope, masked))).toBeUndefined()
+    expect(
+      grantRefusal("reader", hiddenReach(granted, judgeExposure(granted, scope, masked))),
+    ).toBeUndefined()
     // Without masking, only exclusion hides anything.
-    expect(grantRefusal("reader", granted, judgeExposure(granted, {}, undefined))).toBeUndefined()
+    expect(
+      grantRefusal("reader", hiddenReach(granted, judgeExposure(granted, {}, undefined))),
+    ).toBeUndefined()
   })
 
   test("the refusal lists four and counts the rest", () => {
     const exposures = ["a", "b", "c", "d", "e", "f"].map((name) =>
       exposure(name, { password_hash: true }),
     )
-    const refused = grantRefusal("r", exposures, judgeExposure(exposures, {}, masked))
+    const refused = grantRefusal("r", hiddenReach(exposures, judgeExposure(exposures, {}, masked)))
     expect(isDbRefusal(refused) ? refused.message : "").toContain("public.d.password_hash")
     expect(isDbRefusal(refused) ? refused.message : "").toContain(", and 2 more;")
     expect(isDbRefusal(refused) ? refused.message : "").not.toContain("public.e.")
@@ -826,6 +835,111 @@ describe("grant gate", () => {
       allowFunctions: ["owner_hash", "sum_secret"],
     })
     expect(code(accepted)).not.toBe("NIFRA_DB_ROLE_GRANTS")
+  })
+
+  test("a refusal names each grant a hidden read or a SECURITY DEFINER call is held through", () => {
+    const exposures = [
+      exposure("secrets", { value: true }),
+      exposure("users", { id: true, password_hash: true }),
+    ]
+    const reach = hiddenReach(exposures, judgeExposure(exposures, scope, masked))
+    const [secrets, hash] = reach
+    if (secrets === undefined || hash === undefined) throw new Error("expected two reads")
+    const held = new Map([
+      [
+        reachKey(secrets),
+        [
+          { grantee: null, column: null, member: false },
+          { grantee: "app_read", column: null, member: false },
+          { grantee: "app_read", column: "value", member: false },
+        ],
+      ],
+      [reachKey(hash), [{ grantee: "pg_read_all_data", column: null, member: true }]],
+    ])
+    expect(grantRefusal("reader", reach, held)?.message).toStartWith(
+      'role "reader" may read public.secrets (devDatabase.exclude leaves it out; granted to PUBLIC, "app_read"), public.users.password_hash (masked as a credential; granted to "pg_read_all_data");',
+    )
+    const definers = [
+      { schema: "public", name: "Owner_Hash", args: "integer" },
+      { schema: "app", name: "sum_secret", args: "x numeric" },
+    ]
+    const executes = new Map([
+      [
+        "app.sum_secret(x numeric)",
+        [
+          { grantee: null, column: null, member: false },
+          { grantee: "reader", column: null, member: false },
+        ],
+      ],
+    ])
+    expect(definerRefusal("reader", definers, undefined, executes)?.message).toStartWith(
+      'role "reader" may execute public.Owner_Hash(integer), app.sum_secret(x numeric) (granted to PUBLIC, "reader"), which run',
+    )
+  })
+
+  test("over a scripted client: the grants are read only for a refusal, and named in it", async () => {
+    const exposureRow = (readable: boolean) => ({
+      schema: "public",
+      name: "secrets",
+      kind: "r",
+      readable,
+      names: ["value"],
+      granted: [readable],
+      ancestors: null,
+      reads: null,
+    })
+    const scripted = (readable: boolean, definers: readonly Record<string, unknown>[]) =>
+      fakeClient([
+        [/current_user::text AS role/, { rows: [ROLE_ROW] }],
+        [/AS readable/, { rows: [exposureRow(readable)] }],
+        [
+          /WITH target AS/,
+          (values) => ({
+            rows:
+              values[1] === ROLE_ROW.role
+                ? [
+                    {
+                      schema: "public",
+                      name: "secrets",
+                      col: null,
+                      granted: null,
+                      member: false,
+                      holder: "app_read",
+                    },
+                  ]
+                : [],
+          }),
+        ],
+        [/WITH reach AS/, { rows: definers }],
+        [
+          /privilege_type = 'EXECUTE'/,
+          (values) => ({
+            rows:
+              values[1] === ROLE_ROW.role
+                ? [{ schema: "app", name: "sum_secret", args: "", holder: null }]
+                : [],
+          }),
+        ],
+      ])
+    const grantsRead = (log: readonly string[]) =>
+      log.filter((line) => line.includes("aclexplode")).length
+    const tables = scripted(true, [])
+    const refused = await queryPostgres(tables.client, "SELECT 1", QUERY)
+    expect(isDbRefusal(refused) ? refused.message : "").toContain(
+      'public.secrets (devDatabase.exclude leaves it out; granted to "app_read")',
+    )
+    expect(grantsRead(tables.log)).toBe(1)
+    const definer = scripted(false, [{ schema: "app", name: "sum_secret", args: "" }])
+    const unguarded = await queryPostgres(definer.client, "SELECT 1", QUERY)
+    expect(isDbRefusal(unguarded) ? unguarded.message : "").toContain(
+      "may execute app.sum_secret() (granted to PUBLIC), which run",
+    )
+    expect(grantsRead(definer.log)).toBe(1)
+    const clean = scripted(false, [])
+    expect(code(await queryPostgres(clean.client, "SELECT 1", QUERY))).not.toBe(
+      "NIFRA_DB_ROLE_GRANTS",
+    )
+    expect(grantsRead(clean.log)).toBe(0)
   })
 })
 
@@ -1385,6 +1499,112 @@ describe("schema and role SQL over a scripted client", () => {
       '-- REVOKE EXECUTE ON FUNCTION "public"."Owner Hash"(id integer) FROM PUBLIC;',
     )
     expect(sql.statements.join("\n")).not.toContain('"trusted"')
+  })
+
+  test("for a role that exists, names every grant it reads hidden data or SECURITY DEFINER code through", async () => {
+    const role = "nifra_dev_reader"
+    const scripted = fakeClient([
+      [
+        /current_database\(\)::text AS database/,
+        { rows: [{ database: "app", version: 180000, present: true }] },
+      ],
+      [
+        /AS readable/,
+        {
+          rows: [
+            relation("public", "secrets", ["value"]),
+            relation("public", "users", ["id", "password_hash"]),
+          ],
+        },
+      ],
+      [
+        /WITH target AS/,
+        (values) => ({
+          rows:
+            values[1] === role
+              ? [
+                  {
+                    schema: "public",
+                    name: "secrets",
+                    col: null,
+                    granted: null,
+                    member: false,
+                    holder: null,
+                  },
+                  {
+                    schema: "public",
+                    name: "secrets",
+                    col: null,
+                    granted: null,
+                    member: false,
+                    holder: role,
+                  },
+                  {
+                    schema: "public",
+                    name: "secrets",
+                    col: null,
+                    granted: null,
+                    member: true,
+                    holder: "pg_read_all_data",
+                  },
+                  {
+                    schema: "public",
+                    name: "users",
+                    col: "password_hash",
+                    granted: "password_hash",
+                    member: false,
+                    holder: "app read",
+                  },
+                  {
+                    schema: "public",
+                    name: "users",
+                    col: "password_hash",
+                    granted: "password_hash",
+                    member: false,
+                    holder: "app read",
+                  },
+                ]
+              : [],
+        }),
+      ],
+      [
+        /WITH reach AS/,
+        (values) => ({
+          rows: values[0] === role ? [{ schema: "public", name: "f", args: "" }] : [],
+        }),
+      ],
+      [
+        /privilege_type = 'EXECUTE'/,
+        (values) => ({
+          rows:
+            values[1] === role
+              ? [
+                  { schema: "public", name: "f", args: "", holder: null },
+                  { schema: "public", name: "f", args: "", holder: role },
+                ]
+              : [],
+        }),
+      ],
+    ])
+    const sql = await postgresRoleSql(scripted.client, {
+      timeoutMs: 1000,
+      exclude: ["secrets"],
+      redaction: { column: (name) => name === "password_hash" },
+    })
+    if (isDbRefusal(sql)) throw new Error(sql.message)
+    expect(sql.statements.slice(-11)).toEqual([
+      'REVOKE SELECT ON TABLE "public"."secrets" FROM "nifra_dev_reader";',
+      'REVOKE SELECT ON TABLE "public"."users" FROM "nifra_dev_reader";',
+      'GRANT SELECT ("id") ON TABLE "public"."users" TO "nifra_dev_reader";',
+      '-- "nifra_dev_reader" has the privileges of pg_read_all_data, which reads every table past these REVOKEs: revoke that membership.',
+      "-- These grants still let the role read what the REVOKEs above take away. The grant gate refuses it until each is revoked (grant SELECT back to the roles that need it):",
+      '-- REVOKE SELECT ON TABLE "public"."secrets" FROM PUBLIC;',
+      '-- REVOKE SELECT ("password_hash") ON TABLE "public"."users" FROM "app read";',
+      "-- The role may execute these, which run SECURITY DEFINER code with their owner's rights past the grants above.",
+      "-- The grant gate refuses it until EXECUTE on each is revoked from every grantee below (grant it back to the roles that call it) or the function is named in devDatabase.allowFunctions:",
+      'REVOKE EXECUTE ON FUNCTION "public"."f"() FROM "nifra_dev_reader";',
+      '-- REVOKE EXECUTE ON FUNCTION "public"."f"() FROM PUBLIC;',
+    ])
   })
 
   test("Postgres 14+ with nothing excluded grants the allowed schemas only, never pg_read_all_data", async () => {

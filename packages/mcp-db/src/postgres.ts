@@ -46,13 +46,19 @@ import {
   WRAPPER_CALLS,
 } from "./internal/pg-exec.ts"
 import {
+  definerLabel,
   definerRefusal,
   type Exposure,
+  type GrantTarget,
   grantRefusal,
+  hiddenReach,
   judgeExposure,
   partialGrantRefusal,
+  reachKey,
   readDefiners,
+  readExecuteGrants,
   readExposure,
+  readSelectGrants,
   unacceptedDefiners,
 } from "./internal/pg-grants.ts"
 import { functionCalls, lintPostgres, type PgCall, withoutTerminator } from "./internal/pg-lexer.ts"
@@ -367,10 +373,24 @@ async function gated<T>(
     if (refusal !== undefined) return refusal
     const exposures = await readExposure(connection, options.schemas ?? ["public"])
     const verdict = judgeExposure(exposures, options, options.redaction?.column)
-    const ungranted = grantRefusal(role.role, exposures, verdict)
+    // The grants are read only to name them in a refusal: both readers skip the query for nothing.
+    const reach = hiddenReach(exposures, verdict)
+    const ungranted = grantRefusal(
+      role.role,
+      reach,
+      await readSelectGrants(connection, role.role, reach),
+    )
     if (ungranted !== undefined) return ungranted
-    const definers = await readDefiners(connection, role.role)
-    const unguarded = definerRefusal(role.role, definers, options.allowFunctions)
+    const definers = unacceptedDefiners(
+      await readDefiners(connection, role.role),
+      options.allowFunctions,
+    )
+    const unguarded = definerRefusal(
+      role.role,
+      definers,
+      undefined,
+      await readExecuteGrants(connection, role.role, definers),
+    )
     if (unguarded !== undefined) return unguarded
     const statement = withoutTerminator(sql.trim())
     const called = await functionRefusal(
@@ -673,12 +693,15 @@ export interface PostgresRoleSql {
 
 /**
  * Write the SQL for a login role that can read the allowed schemas and nothing the declaration hides:
- * `GRANT SELECT` per schema plus default privileges, then a `REVOKE` for each excluded table, its
- * partitions and children, and each view or materialized view that reads hidden data, and, for a table
- * with a masked column, a `REVOKE` followed by a column-level `GRANT` of the other columns. That is
- * what the grant gate checks before each query. A SECURITY DEFINER function every role may execute is
- * listed in comments with the `REVOKE ... FROM PUBLIC` the gate needs, since that reaches other roles. `pg_read_all_data` is never used: it reaches every
- * schema, present and future, and overrides a REVOKE. Nothing is executed.
+ * `USAGE` on each allowed schema, `SELECT` on its tables plus default privileges, then a `REVOKE` for
+ * each excluded table, its partitions and children, and each view or materialized view that reads
+ * hidden data, and, for a table with a masked column, a `REVOKE` followed by a column-level `GRANT` of
+ * the other columns. That is what the grant gate checks before each query. A grant the role would
+ * still read hidden data through (to PUBLIC, or, for a role that exists, to a role whose privileges it
+ * has) is listed in comments with the `REVOKE` the gate needs, since that reaches other roles; so is
+ * each SECURITY DEFINER function the role may execute, where a grant to the role itself is revoked
+ * outright. `pg_read_all_data` is never used: it reaches every schema, present and future, and
+ * overrides a REVOKE. Nothing is executed.
  */
 export async function postgresRoleSql(
   client: PostgresClient,
@@ -690,8 +713,11 @@ export async function postgresRoleSql(
     const [facts] = records(
       await connection`
       SELECT pg_catalog.current_database()::text AS database,
-        pg_catalog.current_setting('server_version_num')::int AS version`,
+        pg_catalog.current_setting('server_version_num')::int AS version,
+        EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ${role}) AS present`,
     )
+    // A role this SQL creates holds only what PUBLIC holds; one that exists may hold more.
+    const holder = facts?.present === true ? role : null
     const exposures = await readExposure(connection, schemas)
     const verdict = judgeExposure(exposures, options, options.redaction?.column)
     const database = String(facts?.database ?? "")
@@ -712,12 +738,37 @@ export async function postgresRoleSql(
         `ALTER DEFAULT PRIVILEGES IN SCHEMA ${quoteIdent(schema)} GRANT SELECT ON TABLES TO ${who};`,
       )
     }
+    const targets = exposures.flatMap((exposure): GrantTarget[] => {
+      const key = verdict.key(exposure.relation)
+      if (verdict.hidden.has(key)) return [{ relation: exposure.relation, column: null }]
+      return (verdict.masked.get(key) ?? []).map((column) => ({
+        relation: exposure.relation,
+        column,
+      }))
+    })
+    const held = await readSelectGrants(connection, holder, targets)
+    const grantee = (name: string | null) => (name === null ? "PUBLIC" : quoteIdent(name))
+    // Comments, not statements: revoking from PUBLIC or a role others share changes what they may do.
+    const shared = new Set<string>()
+    let member = false
     for (const exposure of exposures) {
       const key = verdict.key(exposure.relation)
       const table = `${quoteIdent(exposure.relation.schema)}.${quoteIdent(exposure.relation.name)}`
       const masked = verdict.masked.get(key)
       if (!verdict.hidden.has(key) && masked === undefined) continue
       statements.push(`REVOKE SELECT ON TABLE ${table} FROM ${who};`)
+      const columns = masked ?? [null]
+      for (const column of columns) {
+        // The table-level REVOKE above also takes back every column grant to the role itself.
+        for (const grant of held.get(reachKey({ relation: exposure.relation, column })) ?? []) {
+          if (grant.member) member = true
+          else if (grant.grantee !== role) {
+            shared.add(
+              `-- REVOKE SELECT ${grant.column === null ? "" : `(${quoteIdent(grant.column)}) `}ON TABLE ${table} FROM ${grantee(grant.grantee)};`,
+            )
+          }
+        }
+      }
       if (masked === undefined) continue
       const shown = exposure.columns.filter((column) => !masked.includes(column.name))
       if (shown.length > 0) {
@@ -726,19 +777,38 @@ export async function postgresRoleSql(
         )
       }
     }
-    // Comments, not statements: revoking from PUBLIC changes what every other role may call.
+    if (member) {
+      statements.push(
+        `-- ${who} has the privileges of pg_read_all_data, which reads every table past these REVOKEs: revoke that membership.`,
+      )
+    }
+    if (shared.size > 0) {
+      statements.push(
+        "-- These grants still let the role read what the REVOKEs above take away. The grant gate refuses it until each is revoked (grant SELECT back to the roles that need it):",
+        ...shared,
+      )
+    }
     const definers = unacceptedDefiners(
-      await readDefiners(connection, "public"),
+      await readDefiners(connection, holder ?? "public"),
       options.allowFunctions,
     )
     if (definers.length > 0) {
+      const executes = await readExecuteGrants(connection, holder, definers)
+      const own: string[] = []
+      const others: string[] = []
+      for (const definer of definers) {
+        const fn = `${quoteIdent(definer.schema)}.${quoteIdent(definer.name)}(${definer.args})`
+        const grants = executes.get(definerLabel(definer)) ?? []
+        for (const grant of grants.length > 0 ? grants : [{ grantee: null }]) {
+          if (grant.grantee === role) own.push(`REVOKE EXECUTE ON FUNCTION ${fn} FROM ${who};`)
+          else others.push(`-- REVOKE EXECUTE ON FUNCTION ${fn} FROM ${grantee(grant.grantee)};`)
+        }
+      }
       statements.push(
-        "-- Every role may execute these, which run SECURITY DEFINER code with their owner's rights past the grants above.",
-        "-- The grant gate refuses the role until each is revoked from PUBLIC (grant EXECUTE back to the roles that call it) or named in devDatabase.allowFunctions:",
-        ...definers.map(
-          (definer) =>
-            `-- REVOKE EXECUTE ON FUNCTION ${quoteIdent(definer.schema)}.${quoteIdent(definer.name)}(${definer.args}) FROM PUBLIC;`,
-        ),
+        "-- The role may execute these, which run SECURITY DEFINER code with their owner's rights past the grants above.",
+        "-- The grant gate refuses it until EXECUTE on each is revoked from every grantee below (grant it back to the roles that call it) or the function is named in devDatabase.allowFunctions:",
+        ...own,
+        ...others,
       )
     }
     return { role, database, serverVersionNum: version, statements }

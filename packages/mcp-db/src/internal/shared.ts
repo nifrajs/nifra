@@ -65,7 +65,7 @@ const REFUSAL_FIXES: Readonly<Record<DbRefusalCode, string>> = {
   NIFRA_DB_EXTENSION:
     "Connect as a role that cannot use the extension or language, or name it in devDatabase.allowExtensions to accept that a query can reach outside this database.",
   NIFRA_DB_ROLE_GRANTS:
-    "Connect as the role `nifra db role` writes: apply the SQL it prints. It grants only the unmasked columns and revokes the excluded tables and the views that read hidden data, so the database refuses them itself. Run it again after adding a table or view: default privileges grant every column of a new one. A SECURITY DEFINER function the role may execute reads past those grants: revoke EXECUTE on it from PUBLIC, or name it in devDatabase.allowFunctions to trust it.",
+    "Connect as the role `nifra db role` writes: apply the SQL it prints. It grants only the unmasked columns and revokes the excluded tables and the views that read hidden data, so the database refuses them itself. Run it again after adding a table or view: default privileges grant every column of a new one. A SECURITY DEFINER function the role may execute reads past those grants: revoke EXECUTE on it from every grantee the refusal names (PUBLIC, the role itself, or a role whose privileges it has), or name it in devDatabase.allowFunctions to trust it.",
   NIFRA_DB_QUERY_OFF:
     "devDatabase.query is false. Remove it to allow read-only queries, or use `nifra db schema`.",
   NIFRA_DB_WRITE_REFUSED:
