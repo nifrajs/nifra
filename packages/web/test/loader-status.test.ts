@@ -9,16 +9,7 @@ import {
   statusPage,
 } from "../src/index.ts"
 import { DATA_HEADER, STATUS_HEADER } from "../src/router.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
+import { streamOf } from "./streams.ts"
 
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>

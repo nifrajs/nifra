@@ -109,7 +109,7 @@ export function plainNodeOutcome(plain: PlainRender, set: CtxSet): NodeServeOutc
   return {
     kind: "json",
     status: plain.status,
-    headers: plainRenderHeaders(plain, set),
+    headers: plainRenderHeaders(plain.headers, set._headers),
     cookies: set._cookies,
     body: plain.body === undefined || isBodylessStatus(plain.status) ? null : jsonText(plain.body),
   }

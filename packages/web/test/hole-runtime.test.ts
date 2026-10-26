@@ -263,6 +263,25 @@ test("a deferred refill that fails shows the error slot", async () => {
   expect(host.attributes.get("aria-busy")).toBe("false")
 })
 
+test("an array is no fill: an interactive root never renders it as props", async () => {
+  runtime({})
+  const updates: unknown[] = []
+  const driven = holeHost("summary", hostOf(new FakeHost()), () => ({
+    update: (props) => {
+      updates.push(props)
+      return true
+    },
+    dispose: () => {},
+  }))
+  driven.refill({ v: 1, html: "a", props: { n: 1 } })
+  await flush()
+  driven.refill([{ v: 1, html: "b", props: { n: 2 } }])
+  await flush()
+  driven.refill({ v: 1, html: "c", props: { n: 3 } })
+  await flush()
+  expect(updates).toEqual([{ n: 3 }])
+})
+
 test("a host renders a blocking render's settled HTML, and nothing for a deferred fill", () => {
   expect(initialHtml({ v: 1, html: "<section>a</section>" })).toBe("<section>a</section>")
   expect(initialHtml({ __nifra_deferred: true, html: "x" })).toBe("")

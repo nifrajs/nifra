@@ -9,14 +9,7 @@ import {
   type ShouldRevalidateArgs,
 } from "../src/index.ts"
 import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> =>
-  new ReadableStream({
-    start(c) {
-      c.enqueue(new TextEncoder().encode(s))
-      c.close()
-    },
-  })
+import { streamOf } from "./streams.ts"
 
 /** Serializes `layoutData` so the SERVER contract is assertable without touching a real adapter. */
 const stub: RenderAdapter = {

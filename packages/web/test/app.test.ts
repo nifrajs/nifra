@@ -17,6 +17,7 @@ import {
   webProjectEvidence,
 } from "../src/index.ts"
 import { openCacheChannel } from "../src/isr.ts"
+import { streamOf } from "./streams.ts"
 
 // The in-process backend mount target - the symbol-keyed `BackendMount` shape `inProcessClient(app)`
 // returns. Reproduced here so the web test exercises the real `createWebApp` `/api/*` auto-mount
@@ -25,17 +26,6 @@ import { openCacheChannel } from "../src/isr.ts"
 const inProcessBridge = (app: { fetch(request: Request): Response | Promise<Response> }) => ({
   [NIFRA_BACKEND_MOUNT]: (request: Request) => Promise.resolve(app.fetch(request)),
 })
-
-// Turn a string into a one-chunk byte stream - the minimal `renderToStream` an adapter returns.
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 
 // Stub adapter - exercises createWebApp + routing with no Solid/React/DOM. It emits the chain
 // length + the loader data (+ actionData when an action ran), so assertions can see them all.

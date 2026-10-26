@@ -11,8 +11,10 @@ import {
   FORBIDDEN_CLOSES,
   REPORT_CAP,
   SERVER_CLOSE_REPORTS,
+  sizingMistakes,
 } from "../../core/test/ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
+import { exceedsPayloadCap, utf8ExceedsCap } from "../src/generated/ws-close.ts"
 import { type NodeServer, serve } from "../src/index.ts"
 import { PUBLISHED, publishFeedApp, publishRoundTrip } from "./ws-publish-fixture.ts"
 
@@ -88,6 +90,11 @@ describe("@nifrajs/node WebSocket payload caps", () => {
     server({ wsMaxPayloadBytes: cap })
       .use(websocket())
       .ws("/", { message: (ws, data) => ws.send(data) })
+
+  test("the generated close check counts UTF-8 bytes natively and by unit", () => {
+    expect(sizingMistakes(exceedsPayloadCap)).toEqual([])
+    expect(sizingMistakes(utf8ExceedsCap)).toEqual([])
+  })
 
   test("each mounted child keeps its own cap, whichever upgrades first", async () => {
     const app = server()

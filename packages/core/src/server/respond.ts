@@ -39,7 +39,7 @@ function headersInit(set: CtxSet): Record<string, string> | Headers | undefined 
 function plainRenderSet(plain: PlainRender, set: CtxSet): CtxSet {
   return {
     status: plain.status,
-    _headers: plainRenderHeaders(plain, set),
+    _headers: plainRenderHeaders(plain.headers, set._headers),
     _cookies: set._cookies,
   } as CtxSet
 }

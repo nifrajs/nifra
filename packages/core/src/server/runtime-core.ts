@@ -114,21 +114,20 @@ export function isResponseResult(value: unknown): value is ResponseResult {
 }
 
 /**
- * The headers a plain render ships: its own on top of whatever the request left in `c.set.headers`,
- * so an ambient header (a request id, say) survives an early exit the way it survives an ordinary
- * return, and a header named at the exit site still wins.
+ * The headers a plain render ships: its `own` on top of the `ambient` ones the request left in
+ * `c.set.headers`, so an ambient header (a request id, say) survives an early exit the way it
+ * survives an ordinary return, and a header named at the exit site still wins.
  *
  * Always a fresh object when the render has headers of its own: the node writers mutate the record
  * they are handed (content-type, content-length, cookies), and a `status(...)` value is commonly
  * hoisted to module scope and answered from on every request.
  */
 export function plainRenderHeaders(
-  plain: PlainRender,
-  set: CtxSet,
+  own: Readonly<Record<string, string>> | undefined,
+  ambient: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
-  const own = plain.headers
-  if (own === undefined) return set._headers
-  return set._headers === undefined ? { ...own } : { ...set._headers, ...own }
+  if (own === undefined) return ambient
+  return ambient === undefined ? { ...own } : { ...ambient, ...own }
 }
 
 /**

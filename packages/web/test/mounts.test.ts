@@ -5,14 +5,7 @@ import { server } from "@nifrajs/core/server"
 import { websocket } from "@nifrajs/core/ws"
 import { cors } from "../../middleware/src/index.ts"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> =>
-  new ReadableStream({
-    start(c) {
-      c.enqueue(new TextEncoder().encode(s))
-      c.close()
-    },
-  })
+import { streamOf } from "./streams.ts"
 
 const stub: RenderAdapter = {
   renderToStream: () => streamOf("<p>page</p>"),
