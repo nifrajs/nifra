@@ -7,9 +7,16 @@ import type {
   AgentApprovalResolvedEvent,
   AgentEvent,
 } from "@nifrajs/agent-protocol"
-import { APPROVAL_NEVER_EXPIRES_AT, type ApprovalTimeout } from "../src/approvals.ts"
+import { APPROVAL_NEVER_EXPIRES_AT } from "../src/approvals.ts"
 import { CodingAgentHost } from "../src/host.ts"
-import { type NativeApprovalPort, type NativeModelRequest, NifraBackend } from "../src/native.ts"
+import {
+  type NativeApprovalPort,
+  type NativeApprovalRequest,
+  type NativeModelRequest,
+  type NativeReviewAnswer,
+  NifraBackend,
+  type NifraBackendOptions,
+} from "../src/native.ts"
 import { ReplayBackend } from "../src/replay.ts"
 import { FileSessionStore } from "../src/sessions.ts"
 
@@ -42,9 +49,10 @@ async function drain(iterator: AsyncIterator<AgentEvent>, events: AgentEvent[]):
   }
 }
 
-function makeNativeBackend(options: {
-  readonly approval?: NativeApprovalPort
-  readonly approvalTimeoutMs?: ApprovalTimeout
+function makeNativeBackend({
+  execute,
+  ...backendOptions
+}: Pick<NifraBackendOptions, "approval" | "approvalTimeoutMs" | "reviewTimeoutMs"> & {
   readonly execute?: (input: unknown, context: { readonly signal: AbortSignal }) => unknown
 }) {
   const executed: unknown[] = []
@@ -66,14 +74,11 @@ function makeNativeBackend(options: {
         requiresApproval: true,
         execute: (input, context) => {
           executed.push(input)
-          return options.execute?.(input, { signal: context.signal }) ?? "written"
+          return execute?.(input, { signal: context.signal }) ?? "written"
         },
       },
     ],
-    ...(options.approval === undefined ? {} : { approval: options.approval }),
-    ...(options.approvalTimeoutMs === undefined
-      ? {}
-      : { approvalTimeoutMs: options.approvalTimeoutMs }),
+    ...backendOptions,
   })
   /** What the model was told about the tool call in its latest request. */
   const toolMessage = (): string | undefined =>
@@ -589,4 +594,334 @@ describe('NifraBackend approvalTimeoutMs: "never"', () => {
       expect(host.pendingApprovals).toHaveLength(0)
       expect(executed).toHaveLength(0)
     }))
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((settle, fail) => {
+    resolve = settle
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+/**
+ * A port whose review answers with `answer` and whose request approves, recording every call. A
+ * review that has started resolves `reviewing`, so a test can act while it is still unsettled.
+ */
+function reviewingPort(
+  answer: (input: NativeApprovalRequest) => NativeReviewAnswer | PromiseLike<NativeReviewAnswer>,
+) {
+  const reviewed: NativeApprovalRequest[] = []
+  const requested: NativeApprovalRequest[] = []
+  const reviewing = deferred<NativeApprovalRequest>()
+  const port: NativeApprovalPort = {
+    request: (input) => {
+      requested.push(input)
+      return true
+    },
+    review: (input) => {
+      reviewed.push(input)
+      reviewing.resolve(input)
+      return answer(input)
+    },
+  }
+  return { port, reviewed, requested, reviewing: reviewing.promise }
+}
+
+async function runTurn(backend: NifraBackend, signal?: AbortSignal) {
+  await backend.createSession({ cwd: "/workspace", sessionId: "native" })
+  const events: AgentEvent[] = []
+  const iterator = backend
+    .send({ sessionId: "native", message: "write the file", ...(signal ? { signal } : {}) })
+    [Symbol.asyncIterator]()
+  return { events, iterator }
+}
+
+const approvalEvents = (events: readonly AgentEvent[]) =>
+  events.filter((event) => event.type.startsWith("approval."))
+
+describe("NifraBackend approval review", () => {
+  test("an allow runs the tool with no approval events", async () => {
+    const { port, reviewed, requested } = reviewingPort(() => ({ decision: "allow" }))
+    const { backend, executed } = makeNativeBackend({ approval: port })
+    const { events, iterator } = await runTurn(backend)
+    await drain(iterator, events)
+
+    const started = events.find((event) => event.type === "tool.started")
+    const completed = events.find((event) => event.type === "tool.completed")
+    expect(reviewed).toEqual([
+      expect.objectContaining({
+        sessionId: "native",
+        callId: started?.type === "tool.started" ? started.callId : "missing",
+        action: "write_file",
+        capability: "filesystem.write",
+        input: { path: "safe.txt" },
+      }),
+    ])
+    expect(reviewed[0]?.approvalId).toMatch(/^nifra-approval-[A-Za-z0-9-]{36}$/)
+    expect(completed?.ok).toBe(true)
+    expect(executed).toEqual([{ path: "safe.txt" }])
+    expect(approvalEvents(events)).toEqual([])
+    expect(requested).toEqual([])
+    expect(events.at(-1)?.type).toBe("session.completed")
+    await backend.close("native")
+  })
+
+  test("a deny refuses the tool and its reason reaches the event and the model", async () => {
+    const { port, requested } = reviewingPort(async () => ({
+      decision: "deny",
+      reason: "writes outside src/ need a person",
+    }))
+    const { backend, executed, toolMessage } = makeNativeBackend({ approval: port })
+    const { events, iterator } = await runTurn(backend)
+    await drain(iterator, events)
+
+    const completed = events.find((event) => event.type === "tool.completed")
+    expect(completed?.ok).toBe(false)
+    expect(completed?.error).toEqual({
+      code: "REVIEW_DENIED",
+      message: "review denied for write_file: writes outside src/ need a person",
+    })
+    expect(toolMessage()).toBe(
+      "REVIEW_DENIED: review denied for write_file: writes outside src/ need a person",
+    )
+    expect(executed).toEqual([])
+    expect(approvalEvents(events)).toEqual([])
+    expect(requested).toEqual([])
+    await backend.close("native")
+  })
+
+  test("a deny's reason is bounded and a blank one is left out", async () => {
+    for (const [reason, expected] of [
+      ["y".repeat(10_000), undefined],
+      [" ", "REVIEW_DENIED: review denied for write_file"],
+    ] as const) {
+      const { port } = reviewingPort(() => ({ decision: "deny", reason }))
+      const { backend, toolMessage } = makeNativeBackend({ approval: port })
+      const { events, iterator } = await runTurn(backend)
+      await drain(iterator, events)
+
+      const completed = events.find((event) => event.type === "tool.completed")
+      expect(completed?.error?.message.length).toBeLessThanOrEqual(512)
+      expect(toolMessage()?.length).toBeLessThanOrEqual(512)
+      if (expected !== undefined) expect(toolMessage()).toBe(expected)
+      await backend.close("native")
+    }
+  })
+
+  test("an ask raises the approval the review saw, and request decides it", async () => {
+    const { port, reviewed, requested } = reviewingPort(() => ({ decision: "ask" }))
+    const { backend, executed } = makeNativeBackend({ approval: port })
+    const { events, iterator } = await runTurn(backend)
+    await drain(iterator, events)
+
+    const required = events.find(isApprovalRequired)
+    expect(required?.approvalId).toBe(reviewed[0]?.approvalId ?? "missing")
+    expect(reviewed).toHaveLength(1)
+    expect(requested).toEqual(reviewed)
+    expect(events.find(isApprovalResolved)?.approved).toBe(true)
+    expect(executed).toHaveLength(1)
+    await backend.close("native")
+  })
+
+  const notAnswers: ReadonlyArray<readonly [string, () => unknown]> = [
+    [
+      "a throw",
+      () => {
+        throw new Error("reviewer crashed")
+      },
+    ],
+    ["a rejection", () => Promise.reject(new Error("reviewer unavailable"))],
+    ["undefined", () => undefined],
+    ["null", () => null],
+    ["a bare string", () => "allow"],
+    ["true", () => true],
+    ["an array", () => ["allow"]],
+    ["an unknown decision", () => ({ decision: "yes" })],
+    ["a differently cased decision", () => ({ decision: "Allow" })],
+    ["a deny with no reason", () => ({ decision: "deny" })],
+    ["a deny with a reason that is not a string", () => ({ decision: "deny", reason: 7 })],
+    [
+      "an answer whose decision getter throws",
+      () => ({
+        get decision(): string {
+          throw new Error("trap")
+        },
+      }),
+    ],
+    [
+      "a thenable whose then throws",
+      () => ({
+        // biome-ignore lint/suspicious/noThenProperty: the review answers with a hostile thenable.
+        then() {
+          throw new Error("trap")
+        },
+      }),
+    ],
+  ]
+  for (const [name, answer] of notAnswers)
+    test(`${name} counts as ask`, async () => {
+      const { port, requested } = reviewingPort(
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the answer is deliberately outside the type, as an untyped review (plain JS, a model's parsed output) would give it.
+        answer as () => NativeReviewAnswer,
+      )
+      const { backend, executed } = makeNativeBackend({ approval: port })
+      const { events, iterator } = await runTurn(backend)
+      await drain(iterator, events)
+
+      expect(events.filter(isApprovalRequired)).toHaveLength(1)
+      expect(requested).toHaveLength(1)
+      expect(executed).toHaveLength(1)
+      await backend.close("native")
+    })
+
+  for (const end of ["cancel", "turn signal", "close"] as const)
+    test(`a ${end} during a review stops the turn and ignores a later allow`, async () => {
+      const answer = deferred<NativeReviewAnswer>()
+      const { port, requested, reviewing } = reviewingPort(() => answer.promise)
+      const { backend, executed, requests } = makeNativeBackend({ approval: port })
+      const turn = new AbortController()
+      const { events, iterator } = await runTurn(backend, turn.signal)
+      const done = drain(iterator, events)
+      await reviewing
+      if (end === "cancel") await backend.cancel("native", "user cancelled")
+      else if (end === "turn signal") turn.abort("turn ended")
+      else await backend.close("native")
+      answer.resolve({ decision: "allow" })
+      await done
+      await Bun.sleep(0)
+
+      expect(executed).toEqual([])
+      expect(approvalEvents(events)).toEqual([])
+      expect(requested).toEqual([])
+      expect(requests).toHaveLength(1)
+      expect(events.some((event) => event.type === "tool.completed")).toBe(false)
+      if (end !== "close") expect(events.at(-1)?.type).toBe("session.stopped")
+      if (end !== "close") await backend.close("native")
+    })
+
+  test("an abort releases a review that never settles at once", () =>
+    withFakeTimers(async () => {
+      const { port, requested, reviewing } = reviewingPort(() => new Promise(() => {}))
+      const { backend, executed } = makeNativeBackend({ approval: port })
+      const { events, iterator } = await runTurn(backend)
+      const done = drain(iterator, events)
+      await reviewing
+      expect(jest.getTimerCount()).toBe(1)
+      await backend.cancel("native", "user cancelled")
+      await done
+
+      expect(jest.getTimerCount()).toBe(0)
+      expect(events.at(-1)?.type).toBe("session.stopped")
+      expect(approvalEvents(events)).toEqual([])
+      expect(requested).toEqual([])
+      expect(executed).toEqual([])
+      await backend.close("native")
+    }))
+
+  test("a review that never settles goes on to an approval after reviewTimeoutMs", () =>
+    withFakeTimers(async () => {
+      const { port, requested, reviewing } = reviewingPort(() => new Promise(() => {}))
+      const { backend, executed } = makeNativeBackend({ approval: port, reviewTimeoutMs: 1_000 })
+      const { events, iterator } = await runTurn(backend)
+      const required = readUntil(iterator, events, isApprovalRequired)
+      await reviewing
+      jest.advanceTimersByTime(999)
+      expect(requested).toEqual([])
+      jest.advanceTimersByTime(1)
+      await required
+      await drain(iterator, events)
+
+      expect(requested).toHaveLength(1)
+      expect(executed).toHaveLength(1)
+      await backend.close("native")
+    }))
+
+  test("the default reviewTimeoutMs is 30 s", () =>
+    withFakeTimers(async () => {
+      const { port, requested, reviewing } = reviewingPort(() => new Promise(() => {}))
+      const { backend } = makeNativeBackend({ approval: port })
+      const { events, iterator } = await runTurn(backend)
+      const required = readUntil(iterator, events, isApprovalRequired)
+      await reviewing
+      jest.advanceTimersByTime(29_999)
+      expect(requested).toEqual([])
+      jest.advanceTimersByTime(1)
+      await required
+      expect(requested).toHaveLength(1)
+      await backend.close("native")
+    }))
+
+  test("an allow that arrives after the deadline, before the late timer, still asks", async () => {
+    const answer = deferred<NativeReviewAnswer>()
+    const { port, requested, reviewing } = reviewingPort(() => answer.promise)
+    const { backend } = makeNativeBackend({ approval: port, reviewTimeoutMs: 60_000 })
+    const { events, iterator } = await runTurn(backend)
+    await reviewing
+    // A busy or suspended host: the clock passes the deadline before the timeout timer runs.
+    setSystemTime(new Date(Date.now() + 120_000))
+    try {
+      answer.resolve({ decision: "allow" })
+      const required = await readUntil(iterator, events, isApprovalRequired)
+      expect(requested.map((input) => input.approvalId)).toEqual([required.approvalId])
+    } finally {
+      setSystemTime()
+    }
+    await backend.close("native")
+  })
+
+  test("concurrent calls are reviewed apart, and an allow approves only its own call", async () => {
+    const answers = new Map<string, ReturnType<typeof deferred<NativeReviewAnswer>>>()
+    const reviewed: NativeApprovalRequest[] = []
+    const both = deferred<void>()
+    const { backend, executed } = makeNativeBackend({
+      approval: {
+        request: () => true,
+        review: (input) => {
+          reviewed.push(input)
+          const answer = deferred<NativeReviewAnswer>()
+          answers.set(input.sessionId, answer)
+          if (answers.size === 2) both.resolve()
+          return answer.promise
+        },
+      },
+    })
+    const turns = await Promise.all(
+      ["a", "b"].map(async (sessionId) => {
+        await backend.createSession({ cwd: "/workspace", sessionId })
+        const events: AgentEvent[] = []
+        const iterator = backend.send({ sessionId, message: "write" })[Symbol.asyncIterator]()
+        return { events, done: drain(iterator, events) }
+      }),
+    )
+    await both.promise
+    answers.get("a")?.resolve({ decision: "allow" })
+    await turns[0]?.done
+    expect(executed).toHaveLength(1)
+    expect(turns[1]?.events.some((event) => event.type === "tool.completed")).toBe(false)
+
+    answers.get("b")?.resolve({ decision: "deny", reason: "not this one" })
+    await turns[1]?.done
+    expect(executed).toHaveLength(1)
+    expect(turns[1]?.events.find((event) => event.type === "tool.completed")?.error?.code).toBe(
+      "REVIEW_DENIED",
+    )
+    expect(new Set(reviewed.map((input) => input.approvalId)).size).toBe(2)
+    expect(new Set(reviewed.map((input) => input.callId)).size).toBe(2)
+    await backend.close("a")
+    await backend.close("b")
+  })
+
+  test("rejects a reviewTimeoutMs outside 1 ms to 10 minutes", () => {
+    const model = { complete: () => ({ type: "text" as const, text: "ok" }) }
+    const invalid: readonly unknown[] = [0, -1, 1.5, 10 * MINUTE_MS + 1, Number.NaN, "never", null]
+    for (const reviewTimeoutMs of invalid)
+      expect(() => Reflect.construct(NifraBackend, [{ model, reviewTimeoutMs }])).toThrow(
+        RangeError,
+      )
+    for (const reviewTimeoutMs of [1, 10 * MINUTE_MS])
+      expect(() => new NifraBackend({ model, reviewTimeoutMs })).not.toThrow()
+  })
 })

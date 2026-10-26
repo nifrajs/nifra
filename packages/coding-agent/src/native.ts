@@ -117,19 +117,34 @@ function parseNativeModelResponse(value: unknown): NativeModelResponse {
   throw new TypeError("native model response is invalid")
 }
 
+/** One tool call an approval port is asked about. */
+export interface NativeApprovalRequest {
+  readonly sessionId: string
+  /** Stable, bounded identifier for this approval boundary. */
+  readonly approvalId: string
+  readonly turnId: string
+  readonly callId: string
+  readonly action: string
+  readonly capability: string
+  readonly tool: NativeTool
+  readonly input: unknown
+  readonly signal: AbortSignal
+}
+
+/** A review's decision on one tool call. A deny's reason reaches the model. */
+export type NativeReviewAnswer =
+  | { readonly decision: "allow" }
+  | { readonly decision: "deny"; readonly reason: string }
+  | { readonly decision: "ask" }
+
 export interface NativeApprovalPort {
-  request(input: {
-    readonly sessionId: string
-    /** Stable, bounded identifier for this approval boundary. */
-    readonly approvalId: string
-    readonly turnId: string
-    readonly callId: string
-    readonly action: string
-    readonly capability: string
-    readonly tool: NativeTool
-    readonly input: unknown
-    readonly signal: AbortSignal
-  }): boolean | PromiseLike<boolean>
+  request(input: NativeApprovalRequest): boolean | PromiseLike<boolean>
+  /**
+   * Decides before anyone is asked. Anything but a valid answer counts as "ask", and so does a
+   * review still unsettled after `reviewTimeoutMs`; "ask" raises the approval as if there were no
+   * review. An allow or a deny emits no approval events.
+   */
+  review?(input: NativeApprovalRequest): NativeReviewAnswer | PromiseLike<NativeReviewAnswer>
 }
 
 export interface NifraBackendOptions {
@@ -142,6 +157,11 @@ export interface NifraBackendOptions {
    * its turn, or session close.
    */
   readonly approvalTimeoutMs?: ApprovalTimeout
+  /**
+   * Longest the approval port's `review` may take before the call goes on to an approval (default
+   * 30 s, at most 10 minutes).
+   */
+  readonly reviewTimeoutMs?: number
   readonly maxSteps?: number
   /** Longest message `send` accepts (default 64 KiB). */
   readonly maxMessageChars?: number
@@ -165,6 +185,19 @@ type NativeApprovalFailureCode =
   | "APPROVAL_TIMEOUT"
   | "APPROVAL_CLOSED"
   | "APPROVAL_FAILED"
+  | "REVIEW_DENIED"
+
+const APPROVAL_FAILURE_TEXT: Readonly<Record<NativeApprovalFailureCode, string>> = {
+  APPROVAL_DENIED: "approval denied",
+  APPROVAL_CANCELLED: "approval cancelled",
+  APPROVAL_TIMEOUT: "approval timed out",
+  APPROVAL_CLOSED: "approval closed",
+  APPROVAL_FAILED: "approval failed",
+  REVIEW_DENIED: "review denied",
+}
+
+const DEFAULT_REVIEW_TIMEOUT_MS = 30_000
+const MAX_REVIEW_TIMEOUT_MS = 10 * 60_000
 
 interface NativeApprovalResolution {
   readonly approved: boolean
@@ -250,6 +283,16 @@ export class NifraBackend implements AgentBackend {
       throw new RangeError(
         'nifra backend: approvalTimeoutMs must be between 1ms and 24h, or "never"',
       )
+    const reviewTimeoutMs = this.options.reviewTimeoutMs
+    if (
+      reviewTimeoutMs !== undefined &&
+      !(
+        Number.isSafeInteger(reviewTimeoutMs) &&
+        reviewTimeoutMs >= 1 &&
+        reviewTimeoutMs <= MAX_REVIEW_TIMEOUT_MS
+      )
+    )
+      throw new RangeError("nifra backend: reviewTimeoutMs must be between 1ms and 10 minutes")
   }
 
   async createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
@@ -617,7 +660,7 @@ export class NifraBackend implements AgentBackend {
     this.clearTurn(session, stream, session.turnId)
   }
 
-  private requestApproval(
+  private async requestApproval(
     session: NativeSession,
     turnId: string,
     callId: string,
@@ -625,9 +668,74 @@ export class NifraBackend implements AgentBackend {
     input: unknown,
     signal: AbortSignal,
   ): Promise<NativeApprovalResolution> {
-    const approvalId = `nifra-approval-${crypto.randomUUID()}`
-    const action = boundedApprovalText(tool.name, 512)
-    const capability = boundedApprovalText(tool.capabilities?.[0] ?? `tool:${tool.name}`, 128)
+    const request: NativeApprovalRequest = Object.freeze({
+      sessionId: session.id,
+      approvalId: `nifra-approval-${crypto.randomUUID()}`,
+      turnId,
+      callId,
+      action: boundedApprovalText(tool.name, 512),
+      capability: boundedApprovalText(tool.capabilities?.[0] ?? `tool:${tool.name}`, 128),
+      tool,
+      input,
+      signal,
+    })
+    const port = this.options.approval
+    const review = port?.review
+    if (typeof review === "function") {
+      const reviewed = await this.review(session, request, () => review.call(port, request))
+      if (reviewed !== undefined) return reviewed
+      // An abort between the review settling and this line must not raise an approval.
+      if (signal.aborted) return approvalStopped(session)
+    }
+    return this.askApproval(session, request)
+  }
+
+  /**
+   * Settles on an allow, a deny, or the turn's abort, and on undefined for everything that goes on
+   * to an approval: an ask, a malformed answer, a throw or rejection, and a late answer.
+   */
+  private review(
+    session: NativeSession,
+    request: NativeApprovalRequest,
+    call: () => NativeReviewAnswer | PromiseLike<NativeReviewAnswer>,
+  ): Promise<NativeApprovalResolution | undefined> {
+    const { signal } = request
+    const timeoutMs = this.options.reviewTimeoutMs ?? DEFAULT_REVIEW_TIMEOUT_MS
+    // As with an approval, a timer that fires late must not let a late allow through.
+    const deadline = Date.now() + timeoutMs
+    return new Promise((resolve) => {
+      let settled = false
+      const settle = (resolution: NativeApprovalResolution | undefined): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        signal.removeEventListener("abort", onAbort)
+        resolve(resolution)
+      }
+      const onAbort = (): void => settle(approvalStopped(session))
+      const timer = setTimeout(() => settle(undefined), timeoutMs)
+      unrefTimer(timer)
+      signal.addEventListener("abort", onAbort, { once: true })
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
+      try {
+        void Promise.resolve(call()).then(
+          (answer) => settle(Date.now() < deadline ? reviewResolution(answer) : undefined),
+          () => settle(undefined),
+        )
+      } catch {
+        settle(undefined)
+      }
+    })
+  }
+
+  private askApproval(
+    session: NativeSession,
+    request: NativeApprovalRequest,
+  ): Promise<NativeApprovalResolution> {
+    const { approvalId, turnId, callId, action, capability, signal } = request
     let pending!: NativePendingApproval
     const promise = new Promise<NativeApprovalResolution>((resolve) => {
       const onAbort = (): void => {
@@ -645,7 +753,7 @@ export class NifraBackend implements AgentBackend {
         timer = setTimeout(() => {
           this.settleApproval(session, approvalId, false, "approval timed out", "APPROVAL_TIMEOUT")
         }, timeoutMs)
-        ;(timer as unknown as { unref?: () => void }).unref?.()
+        unrefTimer(timer)
       }
       pending = {
         id: approvalId,
@@ -675,19 +783,7 @@ export class NifraBackend implements AgentBackend {
     if (signal.aborted) pending.onAbort()
     else if (this.options.approval !== undefined) {
       try {
-        void Promise.resolve(
-          this.options.approval.request({
-            sessionId: session.id,
-            approvalId,
-            turnId,
-            callId,
-            action,
-            capability,
-            tool,
-            input,
-            signal,
-          }),
-        ).then(
+        void Promise.resolve(this.options.approval.request(request)).then(
           (approved) =>
             this.settleApproval(
               session,
@@ -933,19 +1029,38 @@ function boundedApprovalMessage(
   toolName: string,
   reason: string | undefined,
 ): string {
-  const base =
-    code === "APPROVAL_DENIED"
-      ? "approval denied"
-      : code === "APPROVAL_TIMEOUT"
-        ? "approval timed out"
-        : code === "APPROVAL_CANCELLED"
-          ? "approval cancelled"
-          : code === "APPROVAL_CLOSED"
-            ? "approval closed"
-            : "approval failed"
+  const base = APPROVAL_FAILURE_TEXT[code]
   const name = boundedApprovalText(toolName, 128)
   const suffix = reason === undefined || reason === base ? "" : `: ${reason}`
   return boundedApprovalText(`${base} for ${name}${suffix}`, 512)
+}
+
+/** How an approval ends when its turn is aborted: closed with its session, else cancelled. */
+function approvalStopped(session: NativeSession): NativeApprovalResolution {
+  return session.closed
+    ? { approved: false, reason: "approval closed", errorCode: "APPROVAL_CLOSED" }
+    : { approved: false, reason: "approval cancelled", errorCode: "APPROVAL_CANCELLED" }
+}
+
+// A review is host code: a shape it gets wrong, or a getter that throws, asks instead.
+function reviewResolution(answer: unknown): NativeApprovalResolution | undefined {
+  try {
+    if (answer === null || typeof answer !== "object" || !("decision" in answer)) return undefined
+    const { decision } = answer
+    if (decision === "allow") return { approved: true }
+    if (decision !== "deny" || !("reason" in answer)) return undefined
+    const { reason } = answer
+    if (typeof reason !== "string") return undefined
+    return reason.trim() === ""
+      ? { approved: false, errorCode: "REVIEW_DENIED" }
+      : { approved: false, errorCode: "REVIEW_DENIED", reason: boundedApprovalText(reason, 512) }
+  } catch {
+    return undefined
+  }
+}
+
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  ;(timer as unknown as { unref?: () => void }).unref?.()
 }
 
 function failedStream(error: unknown): AgentEventStream {
