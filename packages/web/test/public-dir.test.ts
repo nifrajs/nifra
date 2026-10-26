@@ -214,8 +214,37 @@ test("hashedFiles patterns or a predicate make a file immutable; every other fil
   })
 })
 
+test("hashedFiles takes a set-like object that is not a Set", async () => {
+  await withDir(async (dir) => {
+    await mkdir(join(dir, "assets"), { recursive: true })
+    await writeFile(join(dir, "assets", "app-a1b2c3.js"), "//")
+    await writeFile(join(dir, "assets", "logo.png"), "png")
+    const paths = new Set(["/assets/app-a1b2c3.js"])
+    const setLike = {
+      size: paths.size,
+      has: (path: string) => paths.has(path),
+      [Symbol.iterator]: () => paths.values(),
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a structural set with only the members the runtime check reads.
+    const serve = servePublicDir({ dir, hashedFiles: setLike as never })
+    const cacheOf = async (path: string) => (await serve(get(path)))?.headers.get("cache-control")
+    expect([await cacheOf("/assets/app-a1b2c3.js"), await cacheOf("/assets/logo.png")]).toEqual([
+      "public, max-age=31536000, immutable",
+      "public, max-age=86400",
+    ])
+  })
+})
+
 test("hashedFiles of any other shape is refused when the handler is built", () => {
-  for (const hashedFiles of [["/assets/app.js"], "/assets/", { size: 1 }]) {
+  // A Map's `has` tests keys, so this one would otherwise make the file it maps to false immutable.
+  const map = new Map([["/assets/app.js", false]])
+  for (const hashedFiles of [
+    ["/assets/app.js"],
+    "/assets/",
+    { size: 1 },
+    { has: () => true },
+    map,
+  ]) {
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: wrong shapes on purpose, for the runtime check plain JavaScript callers reach.
     expect(() => servePublicDir({ dir: "/tmp", hashedFiles: hashedFiles as never })).toThrow(
       /servePublicDir hashedFiles/,

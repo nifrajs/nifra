@@ -87,7 +87,15 @@ function hashedTest(
     return (path) => patterns.some((pattern) => pattern.test(path))
   }
   const set: unknown = hashedFiles
-  if (typeof set !== "object" || set === null || !("has" in set) || typeof set.has !== "function") {
+  // A Map has `has` too, but it tests keys, so a path it maps to `false` would still be immutable.
+  if (
+    typeof set !== "object" ||
+    set === null ||
+    set instanceof Map ||
+    !("has" in set && typeof set.has === "function") ||
+    !("size" in set && typeof set.size === "number") ||
+    !(Symbol.iterator in set && typeof set[Symbol.iterator] === "function")
+  ) {
     throw new TypeError(
       "[nifra/web] servePublicDir hashedFiles must be a Set of paths, an array of RegExps, or a function",
     )
