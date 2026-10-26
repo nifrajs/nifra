@@ -1,7 +1,6 @@
-import { fileURLToPath } from "node:url"
 import { inProcessClient } from "@nifrajs/client"
-import { pathnameOf } from "@nifrajs/core/server"
-import { createWebApp, servePublicDir } from "@nifrajs/web"
+import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
+import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
 import { backend } from "./backend/app"
 import { machineSurfaceFor } from "./backend/machine-surfaces"
@@ -22,18 +21,17 @@ const app = createWebApp({
 const built: unknown = await Bun.file(new URL("./assets/manifest.json", import.meta.url)).json()
 const hashed: unknown =
   typeof built === "object" && built !== null ? Reflect.get(built, "assets") : []
-const assets = servePublicDir({
-  dir: fileURLToPath(new URL("./", import.meta.url)),
-  hashedFiles: new Set(
-    Array.isArray(hashed) ? hashed.filter((path) => typeof path === "string") : [],
-  ),
+const assets = serveStatic({
+  dir: new URL("./assets/", import.meta.url),
+  hashedFiles: Array.isArray(hashed) ? hashed.filter((path) => typeof path === "string") : [],
+  cacheControl: ONE_DAY,
 })
 
 const server = app.listen(Number(Bun.env.PORT ?? 3000), {
   static(req) {
     const machineSurface = machineSurfaceFor(req)
     if (machineSurface !== undefined) return machineSurface
-    return pathnameOf(req.url).startsWith("/assets/") ? assets(req) : undefined
+    return assets(req)
   },
 })
 console.log(`nifra (Bun) → http://localhost:${server.port}`)

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, setSystemTime, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from "bun:test"
 import { createHash } from "node:crypto"
 import {
   mkdir,
@@ -14,6 +14,12 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
+import {
+  STATIC_MOUNT_CASES,
+  STATIC_MOUNTS_APP,
+  staticMountAnswer,
+  staticMounts,
+} from "../../core/test/static-mounts.ts"
 import { type NodeServer, type ServeStaticOptions, serve, serveStatic } from "../src/index.ts"
 
 let dir = ""
@@ -484,7 +490,7 @@ test("cacheControl applies to files not served immutable", async () => {
   await other.text()
 })
 
-test("/.well-known is served by default, as servePublicDir serves it", async () => {
+test("/.well-known is served by default", async () => {
   await mkdir(join(dir, ".well-known"), { recursive: true })
   await writeFile(join(dir, ".well-known", "security.txt"), "Contact: x")
   const base = await startWithStatic()
@@ -786,3 +792,34 @@ test("cleanup", async () => {
   await rm(dir, { recursive: true, force: true })
   expect(true).toBe(true)
 })
+
+// Native: serve() runs the mounts on Node's own request. Web: a plain function around the same
+// handler, so the mounts answer a Web Request and the app gets one too.
+for (const lane of ["native", "web"] as const) {
+  describe(`the shared mount matrix, ${lane} lane`, () => {
+    let matrix: NodeServer | undefined
+    let base = ""
+    beforeAll(async () => {
+      const handler = serveStatic(staticMounts())
+      matrix = await serve(
+        server()
+          .get("/*", (c) => c.text(STATIC_MOUNTS_APP))
+          .post("/*", (c) => c.text(STATIC_MOUNTS_APP)),
+        {
+          hostname: "127.0.0.1",
+          port: 0,
+          static: lane === "native" ? handler : (request) => handler(request),
+        },
+      )
+      base = `http://127.0.0.1:${matrix.port}`
+    })
+    afterAll(async () => {
+      await matrix?.stop({ drainMs: 0 })
+    })
+    for (const [name, path, method, expected] of STATIC_MOUNT_CASES) {
+      test(name, async () => {
+        expect(await staticMountAnswer(base, path, method, expected)).toEqual(expected)
+      })
+    }
+  })
+}

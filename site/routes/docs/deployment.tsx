@@ -282,15 +282,16 @@ export default function Deployment() {
       <p>
         The servers <code>nifra build --target node</code> and <code>--target deno</code> emit run
         on these adapters, so the app installs the one for its target, from the same release as{" "}
-        <code>@nifrajs/web</code>. The Deno adapter's <code>static</code> sees every request first:
-        it answers with a file's response, or <code>undefined</code> to let the app route it. The
-        generated Deno server serves its client bundle and <code>public/</code> files that way.
+        <code>@nifrajs/web</code>. Each server's <code>static</code> sees every request first: it
+        answers with a file's response, or <code>undefined</code> to let the app route it. The
+        generated servers serve their client bundle and <code>public/</code> files that way.
       </p>
       <p>
-        Self-hosting (no CDN in front)? Hand <code>@nifrajs/node</code>'s <code>serve</code> a{" "}
-        <code>serveStatic</code> mount and it serves the client bundle from disk - traversal-guarded,
-        content-typed, with an immutable cache - before the app runs, leaving the SSR fast path
-        untouched:{" "}
+        Self-hosting (no CDN in front)? Hand <code>serve</code> a <code>serveStatic</code> mount, from{" "}
+        <code>@nifrajs/node</code> or <code>@nifrajs/deno</code> (on Bun,{" "}
+        <code>@nifrajs/core/serve-static</code> for <code>listen()</code>), and it serves the client
+        bundle from disk - traversal-guarded, content-typed, with an immutable cache - before the app
+        runs, leaving the SSR fast path untouched:{" "}
         <code>
           serve(app, {'{ port, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) }'})
         </code>

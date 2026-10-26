@@ -53,7 +53,15 @@ authority. If neither option is set, treat the host in `request.url` as client-c
 `@nifrajs/deno`'s `serve()`: a function from the Web `Request` to the file's `Response`, or
 `undefined` to let the app route it. `static: serveStatic({ dir })` serves a directory for GET and
 HEAD requests, and this adapter runs it on Node's own request, so every other request keeps the
-app's direct lane. Any other function needs a Web `Request` for every request.
+app's direct lane. Any other function needs a Web `Request` for every request, which roughly
+doubles the cost of a small route.
+
+`serveStatic` takes one mount or a list, with the same options as Bun's
+`@nifrajs/core/serve-static` and `@nifrajs/deno`'s: `dir`, `prefix` (default `/assets`),
+`immutable`, `hashedFiles` (paths, RegExps or a predicate), `cacheControl`, `files`, `allow`,
+`headers`, `dotfiles` and `fallthrough`. A path under a mount's prefix that it cannot serve answers
+404 (400 malformed, 403 traversing) unless the mount sets `fallthrough: true`, which hands it to the
+next mount and then the app.
 
 A served directory is a
 public asset directory and must contain nothing private: no secrets, source maps, build
@@ -69,7 +77,7 @@ an application or object-storage path with its own validation policy.
 
 Every file carries `Accept-Ranges: bytes`. A file up to 256 KiB is read whole and carries a strong
 `ETag` from exactly the bytes served: 128 bits of their SHA-256, the same for the same bytes on every
-instance and on `servePublicDir`. A replacement that keeps a file's size and timestamps still changes
+instance and on every runtime's `serveStatic`. A replacement that keeps a file's size and timestamps still changes
 its tag. The tag is remembered per file version (device, inode, size, mtime and ctime): a file over
 4 KiB reuses it without hashing when a second stat after the read shows the same version, and a
 `HEAD` or a `304` for that tag is answered from the stat without reading the file at all. A
@@ -84,7 +92,7 @@ file is dated only once that change is more than 2 s old, so a write during the 
 later second than the date it was sent with. Explicit
 validator headers still apply. `If-None-Match` takes precedence over `If-Modified-Since`; a matching
 condition gets a bodyless 304. `Range` on GET is parsed by a copy of `@nifrajs/core/range`, the parser
-`servePublicDir` uses, and gated by `If-Range`: it must name the file's strong tag, or its exact date
+every runtime's `serveStatic` uses, and gated by `If-Range`: it must name the file's strong tag, or its exact date
 when the file has no strong tag. One range (overlapping or adjacent ones merge into one) gets 206, a
 range-set that selects nothing gets 416, and several disjoint ranges get the whole file.
 

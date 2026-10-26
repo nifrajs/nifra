@@ -7,8 +7,8 @@ export const meta = docsMeta(
   "Run a page app from your own server entry with createWebApp: static and hashed files, a strict CSP on nifra's nonce, middleware order, loader error logging, graceful shutdown, and nifra check settings.",
 )
 
-const FULL_APP = `import { fileURLToPath } from "node:url"
-import { createCspPolicy, createWebApp, servePublicDir } from "@nifrajs/web"
+const FULL_APP = `import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
+import { createCspPolicy, createWebApp } from "@nifrajs/web"
 import type { Manifest, RenderAdapter } from "@nifrajs/web"
 
 // From your build: the framework adapter, the route manifest, and what buildClient() returned.
@@ -23,11 +23,16 @@ declare const build: {
 declare const errors: { capture(error: unknown, tags: Record<string, string>): void }
 
 // buildClient({ outDir: "dist/assets" }) writes the chunks where their /assets/ URLs point.
-const bundle = servePublicDir({
-  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
-  hashedFiles: new Set(build.assets),
-})
-const publicFiles = servePublicDir({ dir: fileURLToPath(new URL("./public/", import.meta.url)) })
+const files = serveStatic([
+  { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets, cacheControl: ONE_DAY },
+  {
+    dir: new URL("./public/", import.meta.url),
+    prefix: "/",
+    immutable: false,
+    cacheControl: ONE_DAY,
+    fallthrough: true,
+  },
+])
 
 const csp = createCspPolicy({
   header: ({ sources }) => \`default-src 'self'; script-src 'self' \${sources}; object-src 'none'\`,
@@ -41,23 +46,22 @@ export const app = createWebApp({
   styles: build.css ?? [],
   csp,
   server: { requestTimeoutMs: 15_000, gracefulSignals: { drainMs: 8_000 } },
-  use: (app) => {
-    app.onRequest(async (request) => (await bundle(request)) ?? (await publicFiles(request)))
-  },
   onLoaderError: (error, { route }) => errors.capture(error, { route }),
 })
 
-app.listen(3000)`
+app.listen(3000, { static: files })`
 
-const HASHED_FONTS = `import { fileURLToPath } from "node:url"
-import { servePublicDir } from "@nifrajs/web"
+const HASHED_FONTS = `import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
 
 // The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.
 const HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/
 
-export const publicFiles = servePublicDir({
-  dir: fileURLToPath(new URL("./public/", import.meta.url)),
+export const publicFiles = serveStatic({
+  dir: new URL("./public/", import.meta.url),
+  prefix: "/",
   hashedFiles: [HASHED_FONT],
+  cacheControl: ONE_DAY,
+  fallthrough: true,
 })`
 
 const MIDDLEWARE = `// doc-check: skip - fragment: the use option of the createWebApp call above; @nifrajs/middleware is not installed in the docs sandbox.
@@ -72,7 +76,7 @@ createWebApp({
 })`
 
 const NODE_SERVE = `// doc-check: skip - fragment: app and build are the createWebApp app and buildClient() output above.
-import { serve, serveStatic } from "@nifrajs/node"
+import { serve, serveStatic } from "@nifrajs/node" // or "@nifrajs/deno"
 
 await serve(app, {
   port: 3000,
@@ -143,43 +147,43 @@ export default function CustomServer() {
 
       <h2>Static and hashed files</h2>
       <p>
-        <code>servePublicDir</code> from <code>@nifrajs/web</code> serves a directory on Bun, Node and
-        Deno. It answers <code>GET</code> and <code>HEAD</code> only, refuses paths that leave the
-        directory or name a hidden file, sets the content type and <code>nosniff</code>, handles range
-        requests, and returns <code>undefined</code> on a miss so the request falls through to your
-        routes.
+        <code>serveStatic</code> serves directories under URL prefixes, with the same options on every
+        runtime: import it from <code>@nifrajs/core/serve-static</code> on Bun, and from{" "}
+        <code>@nifrajs/node</code> or <code>@nifrajs/deno</code> there. Pass it as{" "}
+        <code>static</code>, which runs before every route. It answers <code>GET</code> and{" "}
+        <code>HEAD</code> only, refuses paths that leave the directory or name a hidden file, sets the
+        content type and <code>nosniff</code>, and handles range requests. A path no mount's prefix
+        covers reaches your routes.
       </p>
       <ul>
         <li>
-          <b>Hashed build output.</b> Pass <code>buildClient()</code>'s <code>assets</code> as{" "}
-          <code>hashedFiles</code>: those files get <code>immutable</code> for a year, and anything
-          else in the directory gets one day. Write the build to <code>outDir: "dist/assets"</code> so
-          a chunk's <code>/assets/...</code> URL is also its path under <code>dist/</code>.
+          <b>Hashed build output.</b> A mount's <code>prefix</code> defaults to <code>/assets</code>.
+          Pass <code>buildClient()</code>'s <code>assets</code> as <code>hashedFiles</code>: those
+          files get <code>immutable</code> for a year, and any other file gets{" "}
+          <code>cacheControl</code>. A missing file under the prefix is a <code>404</code>, never a
+          rendered page.
         </li>
         <li>
-          <b>Your own files.</b> A second handler on <code>public/</code> serves them at the root,
-          with the one-day policy.
+          <b>Your own files.</b> A second mount on <code>public/</code> serves them at{" "}
+          <code>/</code>, with <code>fallthrough: true</code> so a path it has no file for reaches
+          your routes.
         </li>
         <li>
           <b>Files hashed before the build.</b> The fonts <code>loadGoogleFont</code> writes into{" "}
-          <code>public/fonts/</code> are in no manifest, so the <code>public/</code> handler names
-          them with an array of patterns, matched on the encoded URL path, as below. A handler that
-          serves both the build and such files takes a <code>(path) =&gt; boolean</code> predicate
-          instead, with <code>assets</code> as <code>new Set(build.assets)</code>:{" "}
-          <code>(path) =&gt; assets.has(path) || HASHED_FONT.test(path)</code>. A global or
-          sticky pattern in the array is used without that flag, so <code>lastIndex</code> never
-          skips a match; a predicate runs as written, so keep the patterns it tests free of{" "}
-          <code>g</code> and <code>y</code>.
-        </li>
-        <li>
-          <b>Where it runs.</b> Register the handlers with <code>app.onRequest</code> inside{" "}
-          <code>use</code>, so a static hit never reaches page rendering.
+          <code>public/fonts/</code> are in no manifest, so the <code>public/</code> mount names them
+          with an array of patterns, matched on the encoded URL path, as below. A mount that serves
+          both the build and such files takes a <code>(path) =&gt; boolean</code> predicate instead,
+          with <code>assets</code> as <code>new Set(build.assets)</code>:{" "}
+          <code>(path) =&gt; assets.has(path) || HASHED_FONT.test(path)</code>. A global or sticky
+          pattern in the array is used without that flag, so <code>lastIndex</code> never skips a
+          match; a predicate runs as written, so keep the patterns it tests free of <code>g</code>{" "}
+          and <code>y</code>.
         </li>
       </ul>
       <CodeBlock code={HASHED_FONTS} />
       <p>
-        On Node, <code>serve()</code> from <code>@nifrajs/node</code> can serve the bundle itself before
-        the app runs, which keeps the direct request path for everything else:
+        On Node and Deno, <code>serve()</code> takes the same mounts. On Node they run before the app
+        builds a Web request, which keeps the direct request path for everything else:
       </p>
       <CodeBlock code={NODE_SERVE} />
 

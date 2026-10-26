@@ -32,18 +32,18 @@ import { type BodyReadState, NodeBodyRead } from "./body-read.ts"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import { jsonText } from "./generated/json-text.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
-import { type ByteRange, parseByteRange } from "./generated/range.ts"
+import { parseByteRange } from "./generated/range.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
 import { RESPONSE_OWNED_HEADERS } from "./generated/response-owned-headers.ts"
 import {
   CONTENT_SNAPSHOT_MAX,
   contentTags,
-  contentTypeOf,
-  ifRangeAllowsPartial,
   isHiddenPath,
-  isNotModified,
-  lastModifiedOf,
-  streamedLastModifiedOf,
+  matchStatic,
+  planStatic,
+  type ServeStaticOptions,
+  type StaticMount,
+  staticMountsOf,
 } from "./generated/static-file.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
@@ -738,56 +738,7 @@ function applySetToNodeHeaders(
   return out
 }
 
-/**
- * One directory {@link serveStatic} serves (e.g. the client build) under a URL prefix - so a
- * self-hosted Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On
- * Cloudflare/Vercel the platform serves assets; this is for `node server.js`.)
- */
-export interface ServeStaticOptions {
-  /** Directory to read files from - an absolute path or a `file://` URL (`new URL("./assets/", import.meta.url)`). */
-  readonly dir: string | URL
-  /** URL prefix these files are served under. Default `"/assets"`. Use `"/"` to serve the whole dir. */
-  readonly prefix?: string
-  /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */
-  readonly immutable?: boolean
-  /**
-   * URL paths of the content-hashed files, such as a client build manifest's `assets`. When set,
-   * `immutable` applies only to these; any other file is sent with its validators and no
-   * `cache-control`, so a file that keeps its name across deploys still revalidates.
-   */
-  readonly hashedFiles?: Iterable<string>
-  /**
-   * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside
-   * `hashedFiles`). Unset, such a file carries only its validators.
-   */
-  readonly cacheControl?: string
-  /**
-   * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under
-   * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so
-   * a mount over a directory that also holds the server bundle can expose just the build's listed
-   * files. A later mount over the same paths can still serve the rest.
-   */
-  readonly files?: Iterable<string>
-  /**
-   * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to
-   * `host` (its Host header). `false` passes the request on, without touching the filesystem, to the
-   * next mount and then the app - the seam a host policy uses so a host's refused file meets the
-   * app's own refusal instead of being served.
-   */
-  readonly allow?: (host: string, pathname: string) => boolean
-  /** Extra headers merged onto every served file. */
-  readonly headers?: Readonly<Record<string, string>>
-  /**
-   * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is
-   * served. Default `"deny"`: answered `404` - the same response as a missing file, so probing
-   * can't distinguish "hidden" from "absent". Dotfiles land in build output by accident, not by
-   * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.
-   * `/.well-known` is public by definition (RFC 8615) and always served, as `servePublicDir` does.
-   * The rule applies to the requested path and again to the file it resolves to, so a visible name
-   * linking to `.env` is denied too. Set `"allow"` if the directory deliberately holds dotfiles.
-   */
-  readonly dotfiles?: "deny" | "allow"
-}
+export type { HashedFiles, ServeStaticOptions } from "./generated/static-file.ts"
 
 export interface ServeOptions {
   readonly port: number
@@ -1056,97 +1007,26 @@ function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefin
   return policy.canonicalHost ?? normalized
 }
 
-interface StaticState {
-  readonly root: string
-  readonly prefix: string // normalized: "/assets" (no trailing slash) or "/"
-  readonly immutable: boolean
-  readonly hashedFiles: ReadonlySet<string> | undefined
-  readonly cacheControl: string | undefined
-  readonly files: ReadonlySet<string> | undefined
-  readonly allow: ((host: string, pathname: string) => boolean) | undefined
-  readonly headers: Readonly<Record<string, string>> | undefined
-  readonly denyDotfiles: boolean
+/** A mount's directory as this adapter reads it. */
+function rootOf(dir: string | URL): string {
+  return resolve(typeof dir === "string" ? dir : fileURLToPath(dir))
 }
 
-function staticHeadersOf(
-  input: Readonly<Record<string, string>> | undefined,
-): Readonly<Record<string, string>> | undefined {
-  if (input === undefined) return undefined
-  const headers = Object.create(null) as Record<string, string>
-  for (const [name, value] of Object.entries(input)) headers[name.toLowerCase()] = value
-  return headers
+/** The request target as sent, without its query. */
+function staticPathOf(url: string): string {
+  const query = url.indexOf("?")
+  return query === -1 ? url : url.slice(0, query)
 }
 
-function staticStateOf(options: ServeStaticOptions): StaticState {
-  const root = resolve(typeof options.dir === "string" ? options.dir : fileURLToPath(options.dir))
-  const raw = options.prefix ?? "/assets"
-  // Index scans, not `/^\/+|\/+$/g` - the trailing-run half backtracks quadratically.
-  let from = 0
-  while (from < raw.length && raw.charCodeAt(from) === 47 /* '/' */) from++
-  let to = raw.length
-  while (to > from && raw.charCodeAt(to - 1) === 47) to--
-  const prefix = raw === "/" ? "/" : `/${raw.slice(from, to)}`
-  return {
-    root,
-    prefix,
-    immutable: options.immutable !== false,
-    hashedFiles: options.hashedFiles === undefined ? undefined : new Set(options.hashedFiles),
-    cacheControl: options.cacheControl,
-    files: options.files === undefined ? undefined : new Set(options.files),
-    allow: options.allow,
-    headers: staticHeadersOf(options.headers),
-    denyDotfiles: options.dotfiles !== "allow",
-  }
+function refusalOf(status: 400 | 403 | 404): Response {
+  return new Response(status === 400 ? "Bad Request" : status === 403 ? "Forbidden" : "Not Found", {
+    status,
+  })
 }
 
-/**
- * Resolve a request URL to a file under the served root - **synchronously**, so non-matching requests
- * stay on the app's sync fast path. Returns `"pass"` (let the app handle it), a rejection `Response`
- * (malformed encoding / NUL / `..` traversal out of root), or a confined absolute file path to read.
- */
-function staticMatch(
-  state: StaticState,
-  req: Pick<IncomingMessage, "url" | "rawHeaders">,
-): "pass" | { readonly reject: Response } | { readonly file: string; readonly immutable: boolean } {
-  const rawUrl = req.url ?? "/"
-  const query = rawUrl.indexOf("?")
-  const path = query === -1 ? rawUrl : rawUrl.slice(0, query)
-  const underPrefix =
-    state.prefix === "/" ? true : path === state.prefix || path.startsWith(`${state.prefix}/`)
-  if (!underPrefix || (state.files !== undefined && !state.files.has(path))) return "pass"
-  if (state.allow !== undefined && !state.allow(rawHost(req) ?? "", path)) return "pass"
-  let rel: string
-  try {
-    rel = decodeURIComponent(state.prefix === "/" ? path : path.slice(state.prefix.length))
-  } catch {
-    return { reject: new Response("Bad Request", { status: 400 }) }
-  }
-  rel = rel.replace(/^\/+/, "")
-  if (rel === "" || rel.endsWith("/")) return "pass" // a directory request → the app decides
-  if (rel.includes("\0")) return { reject: new Response("Bad Request", { status: 400 }) }
-  // Reject traversal in the REQUEST form before it ever reaches the filesystem path join: a `..`
-  // path segment (or a backslash Windows would treat as a separator) has no legitimate use in an
-  // asset URL. Segment-precise on purpose - a filename merely CONTAINING `..` (`logo..png`) is legal.
-  // The same segment pass covers dotfiles: the check runs post-decode, so `%2E`-spelled dots are
-  // already plain `.` here. Denied dotfiles answer 404, not 403 - identical to a missing file, so
-  // probing can't distinguish "hidden" from "absent" (traversal keeps its 403: `..` is an attack
-  // shape, and there is nothing behind it to conceal).
-  const segments = rel.split("/")
-  if (segments.includes("..") || rel.includes("\\")) {
-    return { reject: new Response("Forbidden", { status: 403 }) }
-  }
-  if (state.denyDotfiles && isHiddenPath(rel)) {
-    return { reject: new Response("Not Found", { status: 404 }) }
-  }
-  const file = resolve(state.root, rel)
-  // Confine to the served directory - the resolved path must sit at or below root.
-  const contained = relative(state.root, file)
-  if (contained.startsWith("..") || isAbsolute(contained)) {
-    return { reject: new Response("Forbidden", { status: 403 }) }
-  }
-  const immutable =
-    state.immutable && (state.hashedFiles === undefined || state.hashedFiles.has(path))
-  return { file, immutable }
+/** The answer a mount gives a path it took but cannot serve, or `undefined` to pass it on. */
+function staticRefusal(mount: StaticMount, status: 403 | 404): Response | undefined {
+  return mount.fallthrough ? undefined : refusalOf(status)
 }
 
 // One per process: the tag of a file served from any mount is remembered by its real path.
@@ -1157,27 +1037,8 @@ function headerOf(headers: IncomingHttpHeaders, name: string): string | null {
   return typeof value === "string" ? value : null
 }
 
-/**
- * The one range to send, `"unsatisfiable"` (416), or `undefined` to send the whole file: no header,
- * one core's parser ignores, several disjoint ranges (RFC 9110 lets a server ignore Range), or an
- * `If-Range` validator that no longer matches the file.
- */
-function staticByteRange(
-  headers: IncomingHttpHeaders,
-  size: number,
-  etag: string | undefined,
-  lastModified: number | undefined,
-): ByteRange | "unsatisfiable" | undefined {
-  const range = headers.range
-  if (typeof range !== "string") return undefined
-  if (!ifRangeAllowsPartial(headerOf(headers, "if-range"), etag, lastModified)) return undefined
-  const parsed = parseByteRange(range, size)
-  if (parsed.kind === "unsatisfiable") return "unsatisfiable"
-  return parsed.kind === "satisfiable" && parsed.ranges.length === 1 ? parsed.ranges[0] : undefined
-}
-
 // Up to this many bytes are read whole through the pinned descriptor and written in one call, with
-// no Response or stream; a larger body streams from the descriptor. The same cut as servePublicDir.
+// no Response or stream; a larger body streams from the descriptor. The same cut as Bun's reader.
 const STATIC_BUFFERED_MAX = CONTENT_SNAPSHOT_MAX
 
 /** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
@@ -1194,133 +1055,93 @@ async function readPinned(handle: FileHandle, start: number, length: number): Pr
 
 type StaticOutcome = Exclude<NodeServeOutcome, { readonly kind: "json" }>
 
+/**
+ * The answer for `rel` under `mount`, or `undefined` when the mount falls through on a file it cannot
+ * serve.
+ */
 async function readStatic(
-  file: string,
+  mount: StaticMount,
+  rel: string,
   immutable: boolean,
-  state: StaticState,
-  method: string,
+  method: "GET" | "HEAD",
   requestHeaders: IncomingHttpHeaders,
-): Promise<StaticOutcome> {
-  let handle: Awaited<ReturnType<typeof openResolved>> | undefined
+): Promise<StaticOutcome | undefined> {
+  const missing = (status: 403 | 404 = 404): StaticOutcome | undefined => {
+    const response = staticRefusal(mount, status)
+    return response === undefined ? undefined : { kind: "response", response }
+  }
+  const file = resolve(mount.root, rel)
+  // A drive or root in the decoded name (`C:/x` on Windows) leaves the directory without a `..`.
+  const contained = relative(mount.root, file)
+  if (contained.startsWith("..") || isAbsolute(contained)) return missing(403)
+  let handle: FileHandle | undefined
   try {
-    // Defense-in-depth: the lexical `..` guard in staticMatch can't catch a symlink INSIDE root that
+    // Defense-in-depth: the lexical `..` guard in matchStatic can't catch a symlink INSIDE root that
     // points outside it. Resolve first, check containment on the RESOLVED name, and open that -
     // never open the requested path and re-resolve it afterwards. A local attacker who can write
     // inside the served tree wins that ordering: swap a link between the open and the lookup and the
     // descriptor already streaming refers to an external file while the lookup answers with a
     // contained path. openResolved closes the remainder - `realpath` returned a name with no links
     // left in it, so one appearing in any component before the open is an attack, not a layout.
-    const [realFile, realRoot] = await Promise.all([realpath(file), realpath(state.root)])
+    const [realFile, realRoot] = await Promise.all([realpath(file), realpath(mount.root)])
     // A link out of root, or a visible name linking to a dotfile inside it, answers as a missing file
     // does: unlike a `..` in the request, the name exists, and a distinct status would say so.
-    if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
-      return { kind: "response", response: new Response("Not Found", { status: 404 }) }
-    }
-    if (state.denyDotfiles && isHiddenPath(realFile.slice(realRoot.length + 1))) {
-      return { kind: "response", response: new Response("Not Found", { status: 404 }) }
-    }
+    if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) return missing()
+    if (mount.denyDotfiles && isHiddenPath(realFile.slice(realRoot.length + 1))) return missing()
     const opened = await openResolved(realFile)
     handle = opened
     const stat = await opened.stat()
     if (!stat.isFile()) {
       await opened.close()
-      return { kind: "response", response: new Response("Not Found", { status: 404 }) }
+      return missing()
     }
-    const headers: Record<string, string> = { ...state.headers }
-    if (headers["cache-control"] === undefined) {
-      const cacheControl = immutable ? "public, max-age=31536000, immutable" : state.cacheControl
-      if (cacheControl !== undefined) headers["cache-control"] = cacheControl
-    }
-    const streamed = stat.size > STATIC_BUFFERED_MAX
-    const modified = streamed ? streamedLastModifiedOf(stat) : lastModifiedOf(stat)
-    // A date this reader chose for a streamed body is weak; a caller's own stays theirs to vouch for.
-    const weakDate = streamed && headers["last-modified"] === undefined
-    if (modified !== undefined) headers["last-modified"] ??= new Date(modified).toUTCString()
-    const parsedLastModified = Date.parse(headers["last-modified"] ?? "")
-    const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
-    const ifNoneMatch = headerOf(requestHeaders, "if-none-match")
-    const ifModifiedSince = headerOf(requestHeaders, "if-modified-since")
-    // The whole file, when tagging it had to read it: the response is then served from these bytes.
     let whole: Uint8Array | undefined
-    if (headers.etag === undefined && !streamed) {
-      // A HEAD or a 304 sends none of the file, so the tag remembered for this settled version
-      // answers it from the stat alone: a write since that tag would show in the stat.
-      const known = STATIC_TAGS.cached(realFile, stat)
-      if (
-        known !== undefined &&
-        (method === "HEAD" || isNotModified(ifNoneMatch, ifModifiedSince, known, lastModified))
-      ) {
-        headers.etag = known
-      } else {
-        whole = await readPinned(opened, 0, stat.size)
-        headers.etag = await STATIC_TAGS.ofSnapshot(realFile, stat, whole, () => opened.stat())
-      }
+    const plan = await planStatic(
+      mount,
+      immutable,
+      { method, header: (name) => headerOf(requestHeaders, name) },
+      {
+        path: realFile,
+        version: stat,
+        readWhole: async () => {
+          whole = await readPinned(opened, 0, stat.size)
+          return whole
+        },
+        restat: () => opened.stat(),
+        tags: STATIC_TAGS,
+        parseRange: parseByteRange,
+      },
+    )
+    if (!plan.body) {
+      await opened.close()
+      return { kind: "body", status: plan.status, headers: plan.headers, body: "" }
     }
-    // Custom validators are response headers, not decoration: compare the exact values the client saw.
-    const etag = headers.etag
-    // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
-    if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
-      await handle.close()
-      delete headers["content-length"]
-      delete headers["content-type"]
-      return { kind: "body", status: 304, headers, body: "" }
-    }
-    // The file served, not the name asked for: a link is typed by its target, as servePublicDir does.
-    headers["content-type"] = contentTypeOf(realFile)
-    // Never let a client sniff a served file into a more dangerous type (e.g. an .svg as active content).
-    headers["x-content-type-options"] = "nosniff"
-    headers["accept-ranges"] = "bytes"
-    // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
-    const range =
-      method === "GET"
-        ? staticByteRange(requestHeaders, stat.size, etag, weakDate ? undefined : lastModified)
-        : undefined
-    if (range === "unsatisfiable") {
-      await handle.close()
-      headers["content-range"] = `bytes */${stat.size}`
-      delete headers["content-length"]
-      delete headers["content-type"]
-      return { kind: "body", status: 416, headers, body: "" }
-    }
-    let status = 200
-    if (range !== undefined) {
-      status = 206
-      headers["content-range"] = `bytes ${range.start}-${range.end}/${stat.size}`
-      headers["content-length"] = String(range.end - range.start + 1)
-    } else {
-      headers["content-length"] = String(stat.size)
-    }
-    if (method === "HEAD") {
-      await handle.close()
-      return { kind: "body", status, headers, body: "" }
-    }
-    const start = range === undefined ? 0 : range.start
-    const length = range === undefined ? stat.size : range.end - range.start + 1
+    const { start, length, headers } = plan
     if (length <= STATIC_BUFFERED_MAX) {
       const body =
         whole === undefined
-          ? await readPinned(handle, start, length)
+          ? await readPinned(opened, start, length)
           : whole.subarray(start, start + length)
-      await handle.close()
+      await opened.close()
       headers["content-length"] = String(body.byteLength)
-      return { kind: "body", status, headers, body }
+      return { kind: "body", status: plan.status, headers, body }
     }
     const stream =
-      range === undefined
-        ? handle.createReadStream()
-        : handle.createReadStream({ start: range.start, end: range.end })
+      plan.status === 200
+        ? opened.createReadStream()
+        : opened.createReadStream({ start, end: start + length - 1 })
     return {
       kind: "response",
       // Claimable rather than `Readable.toWeb`: served straight from disk to the socket when this
       // response reaches the writer untouched, and read as an ordinary Web stream by anything that
       // gets to it first (a middleware that rewrites or compresses the body, say), which refuses
       // the claim and takes the conversion instead.
-      response: new Response(claimableWebStream(stream), { status, headers }),
+      response: new Response(claimableWebStream(stream), { status: plan.status, headers }),
     }
   } catch {
     await handle?.close().catch(() => {})
-    // Missing/unreadable under the static prefix → 404 (don't fall through to an SSR 404 page).
-    return { kind: "response", response: new Response("Not Found", { status: 404 }) }
+    // Missing or unreadable under the prefix: a 404 (not an SSR 404 page), unless the mount falls through.
+    return missing()
   }
 }
 
@@ -1407,22 +1228,9 @@ function closeAfterResponses(socket: ResponseSocket): void {
 
 const NATIVE_MOUNTS = Symbol("nifra.node.static-mounts")
 
-function nativeMountsOf(handler: object): readonly StaticState[] | undefined {
+function nativeMountsOf(handler: object): readonly StaticMount[] | undefined {
   const mounts: unknown = Reflect.get(handler, NATIVE_MOUNTS)
   return Array.isArray(mounts) ? mounts : undefined
-}
-
-/** The parts of Node's request {@link staticMatch} and {@link readStatic} read, from a Web request. */
-function staticViewOf(request: Request): {
-  readonly url: string
-  readonly headers: IncomingHttpHeaders
-  readonly rawHeaders: string[]
-} {
-  const url = new URL(request.url)
-  const headers: IncomingHttpHeaders = {}
-  for (const [name, value] of request.headers) headers[name] = value
-  // A Web request names its host in its URL; a Host header may be absent.
-  return { url: url.pathname + url.search, headers, rawHeaders: ["host", url.host] }
 }
 
 function staticOutcomeResponse(outcome: StaticOutcome): Response {
@@ -1441,10 +1249,41 @@ function staticOutcomeResponse(outcome: StaticOutcome): Response {
 }
 
 /**
+ * Serve `path` from `mounts`, starting at `from`: the first mount that takes it answers, and one that
+ * falls through on a file it cannot serve hands it to the next. `undefined` when none takes it, so a
+ * request no mount's prefix covers never leaves the caller's synchronous lane. `request.headers` is
+ * read only once a mount takes the path: on Node's request it builds the header object.
+ */
+function serveMounts(
+  mounts: readonly StaticMount[],
+  from: number,
+  path: string,
+  host: () => string,
+  method: "GET" | "HEAD",
+  request: { readonly headers: IncomingHttpHeaders },
+): Promise<StaticOutcome | undefined> | undefined {
+  for (let i = from; i < mounts.length; i++) {
+    const mount = mounts[i]
+    if (mount === undefined) break
+    const matched = matchStatic(mount, path, host)
+    if (matched === "pass") continue
+    // matchStatic passes what a falling-through mount refuses, so a status here is always answered.
+    if ("status" in matched) {
+      return Promise.resolve({ kind: "response", response: refusalOf(matched.status) })
+    }
+    return readStatic(mount, matched.rel, matched.immutable, method, request.headers).then(
+      (outcome) => outcome ?? serveMounts(mounts, i + 1, path, host, method, request),
+    )
+  }
+  return undefined
+}
+
+/**
  * The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the
  * first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to
  * {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the
- * app on its direct lane. Called with a Web `Request`, it answers the same way.
+ * app on its direct lane. Called with a Web `Request`, it answers the same way. Bun's
+ * `@nifrajs/core/serve-static` and `@nifrajs/deno` take the same mounts.
  *
  * @example
  * ```ts
@@ -1454,19 +1293,17 @@ function staticOutcomeResponse(outcome: StaticOutcome): Response {
 export function serveStatic(
   mounts: ServeStaticOptions | readonly ServeStaticOptions[],
 ): (request: Request) => Promise<Response | undefined> | undefined {
-  const states = ("dir" in mounts ? [mounts] : mounts).map(staticStateOf)
+  const states = staticMountsOf(mounts, rootOf)
   const handler = (request: Request): Promise<Response | undefined> | undefined => {
-    if (request.method !== "GET" && request.method !== "HEAD") return undefined
-    const view = staticViewOf(request)
-    for (const state of states) {
-      const matched = staticMatch(state, view)
-      if (matched === "pass") continue
-      if ("reject" in matched) return Promise.resolve(matched.reject)
-      return readStatic(matched.file, matched.immutable, state, request.method, view.headers).then(
-        staticOutcomeResponse,
-      )
-    }
-    return undefined
+    const method = request.method
+    if (method !== "GET" && method !== "HEAD") return undefined
+    const url = new URL(request.url)
+    const headers: IncomingHttpHeaders = {}
+    for (const [name, value] of request.headers) headers[name] = value
+    // A Web request names its host in its URL; a Host header may be absent.
+    return serveMounts(states, 0, url.pathname, () => url.host, method, { headers })?.then((outcome) =>
+      outcome === undefined ? undefined : staticOutcomeResponse(outcome),
+    )
   }
   Object.defineProperty(handler, NATIVE_MOUNTS, { value: states })
   return handler
@@ -1746,7 +1583,7 @@ function handle(
   nodeReq: IncomingMessage,
   nodeRes: ServerResponse,
   getProtocol: RequestProtocolResolver,
-  staticState: readonly StaticState[] | undefined,
+  staticState: readonly StaticMount[] | undefined,
   hostPolicy: HostPolicy,
   staticHandler?: (request: Request) => Response | Promise<Response | undefined> | undefined,
 ): void | Promise<void> {
@@ -1802,24 +1639,44 @@ function handle(
 
   // Static files first (GET/HEAD). The match is synchronous, so a non-asset request never leaves the
   // app's sync fast path below; only a prefix hit reads from disk (and async-writes the file).
-  if (staticState !== undefined && (nodeReq.method === "GET" || nodeReq.method === "HEAD")) {
-    for (const mount of staticState) {
-      const matched = staticMatch(mount, nodeReq)
-      if (matched === "pass") continue
-      if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
-      return readStatic(
-        matched.file,
-        matched.immutable,
-        mount,
-        nodeReq.method ?? "GET",
-        nodeReq.headers,
-      ).then(
-        (outcome) => writeOutcomeSafely(outcome, nodeRes, nodeReq.method),
+  const method = nodeReq.method
+  if (staticState !== undefined && (method === "GET" || method === "HEAD")) {
+    let served: Promise<StaticOutcome | undefined> | undefined
+    try {
+      served = serveMounts(
+        staticState,
+        0,
+        staticPathOf(nodeReq.url ?? "/"),
+        () => rawHost(nodeReq) ?? "",
+        method,
+        nodeReq,
+      )
+    } catch {
+      writeInternalError(nodeRes)
+      return
+    }
+    if (served !== undefined) {
+      return served.then(
+        (outcome) =>
+          outcome === undefined
+            ? toApp(app, nodeReq, nodeRes, protocol, host, platform)
+            : writeOutcomeSafely(outcome, nodeRes, method),
         () => failWrite(nodeRes),
       )
     }
   }
+  return toApp(app, nodeReq, nodeRes, protocol, host, platform)
+}
 
+/** The app's answer for a request no static mount took. */
+function toApp(
+  app: FetchHandler,
+  nodeReq: IncomingMessage,
+  nodeRes: ServerResponse,
+  protocol: RequestProtocol,
+  host: string,
+  platform: NodePlatform | undefined,
+): void | Promise<void> {
   // A mounted handler may advertise a native Node lane. Core has already checked route precedence
   // and every global lifecycle gate before returning this selection. The handler writes directly to
   // `nodeRes`; `false` means its optional transport was unavailable, so the same untouched source

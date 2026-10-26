@@ -210,6 +210,11 @@
       "types": "./dist/static-file.d.ts",
       "default": "./dist/static-file.js"
     },
+    "./serve-static": {
+      "bun": "./src/serve-static.ts",
+      "types": "./dist/serve-static.d.ts",
+      "default": "./dist/serve-static.js"
+    },
     "./file-type": {
       "bun": "./src/file-type.ts",
       "types": "./dist/file-type.d.ts",

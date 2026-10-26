@@ -19,6 +19,9 @@
  */
 import { assertCloseArgs, exceedsPayloadCap } from "./generated/ws-close.ts"
 
+export type { HashedFiles, ServeStaticOptions } from "./generated/static-file.ts"
+export { serveStatic } from "./serve-static.ts"
+
 // WebSocket types: structurally mirrored from `@nifrajs/core` so this adapter keeps zero dependency on
 // nifra (and `deno check` never has to resolve `@nifrajs/core`'s types). The WS dispatch is inlined below,
 // mirroring core's `attachWebSocket`; kept in lockstep by the live `deno run` WS round-trip.
@@ -99,8 +102,8 @@ export interface ServeOptions {
   /**
    * Sees every request before the app does, so a file it answers wins over any route at the same
    * path. It returns the file's response, or `undefined` to let the app route the request. No hook
-   * of the app runs for a request it answers. `@nifrajs/web`'s Deno build serves its client bundle
-   * and public files this way.
+   * of the app runs for a request it answers. {@link serveStatic} builds one for files on disk, and
+   * `@nifrajs/web`'s Deno build serves its client bundle and public files through it.
    */
   readonly static?: (request: Request) => Response | Promise<Response | undefined> | undefined
 }

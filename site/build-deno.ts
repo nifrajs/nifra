@@ -35,6 +35,8 @@ const { worker } = await buildServer({
   outDir: `${dir}/.build-deno`,
   clientEntry: client.entry,
   plugins: [mdx],
+  // @nifrajs/deno's serveStatic tags files with node:crypto, which Deno provides itself.
+  providedBuiltins: ["node:crypto"],
 })
 
 cpSync(worker, `${dist}/server-deno.js`)

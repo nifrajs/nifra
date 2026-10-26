@@ -59,9 +59,11 @@ function patterned(size: number): Uint8Array {
 
 /** `app.fetch` in this process: the lane with no HTTP parser in front of the app. */
 export async function startBunFetch(publicDir: string): Promise<Lane> {
-  const { createDifferentialApp } = await import("../fixtures/runtime-differential/app.ts")
-  const { servePublicDir } = await import("@nifrajs/web")
-  const app = createDifferentialApp({ staticFiles: servePublicDir({ dir: publicDir }) })
+  const { createDifferentialApp, staticMount } = await import(
+    "../fixtures/runtime-differential/app.ts"
+  )
+  const { serveStatic } = await import("@nifrajs/core/serve-static")
+  const app = createDifferentialApp({ staticFiles: serveStatic(staticMount(publicDir)) })
   return inProcessLane("bun-fetch", (request) => app.fetch(request))
 }
 
@@ -94,9 +96,11 @@ function inProcessLane(
 
 /** `app.listen()` - Bun.serve with the app's native route table. */
 export async function startBunServe(publicDir: string): Promise<Lane> {
-  const { createDifferentialApp } = await import("../fixtures/runtime-differential/app.ts")
-  const { servePublicDir } = await import("@nifrajs/web")
-  const app = createDifferentialApp({ staticFiles: servePublicDir({ dir: publicDir }) })
+  const { createDifferentialApp, staticMount } = await import(
+    "../fixtures/runtime-differential/app.ts"
+  )
+  const { serveStatic } = await import("@nifrajs/core/serve-static")
+  const app = createDifferentialApp({ staticFiles: serveStatic(staticMount(publicDir)) })
   const running = app.listen(0, { hostname: "127.0.0.1" })
   return {
     name: "bun-serve",

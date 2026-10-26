@@ -21,7 +21,7 @@
     "test:rest": "bun run scripts/tolerant-test.ts packages/mcp/test packages/mcp-db/test scripts internal/invariants/test",
     "test:all": "bun run scripts/test-all.ts",
     "test:contention": "bun scripts/cpu-contention.ts -- bun run test",
-    "test:deno": "cd packages/deno && deno check src/index.ts && deno test --allow-net --allow-env=NODE_ENV --no-check test",
+    "test:deno": "cd packages/deno && deno check src/index.ts && deno test --allow-net --allow-env=NODE_ENV --allow-read=../core/test/fixtures/static-mounts --no-check test",
     "test:node": "bun run scripts/link-for-node.ts && node --test packages/*/test-node/*.test.ts",
     "test:postgres": "bun test packages/mcp-db/test/postgres-live.test.ts packages/mcp-db/test/postgres-canary.test.ts packages/cli/test/db-tool.test.ts",
     "typecheck": "bun run scripts/typecheck.ts",

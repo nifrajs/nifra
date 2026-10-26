@@ -17,7 +17,19 @@ import { join, sep } from "node:path"
 // copyPublicDir lives in build.ts: it is build-time (Bun.Glob + node:fs) and public-dir.ts is
 // reachable from the client bundle graph, where a Bun builtin import fails the browser build.
 import { copyPublicDir } from "../src/build.ts"
-import { resolvePublicPath, servePublicDir } from "../src/public-dir.ts"
+import { ONE_DAY, type ServeStaticOptions, serveStatic } from "@nifrajs/core/serve-static"
+import { resolvePublicPath } from "../src/public-dir.ts"
+
+// The mount `nifra dev` and a self-hosted build serve `public/` with: every path, anything it cannot
+// serve left to the app, and a day's cache for a file outside the content-hashed ones.
+const servePublic = (options: Pick<ServeStaticOptions, "dir" | "files" | "hashedFiles">) =>
+  serveStatic({
+    prefix: "/",
+    fallthrough: true,
+    cacheControl: ONE_DAY,
+    hashedFiles: (path) => path.startsWith("/assets/"),
+    ...options,
+  })
 
 const withDir = async (fn: (dir: string) => Promise<void>): Promise<void> => {
   const dir = await mkdtemp(join(tmpdir(), "nifra-public-"))
@@ -37,7 +49,7 @@ test("a mutable streamed file never advertises a validator for an earlier read",
     const path = join(dir, "stream.bin")
     const body = "a".repeat(2 * 1024 * 1024)
     await writeFile(path, body)
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
     const response = await serve(get("/stream.bin"))
     await writeFile(path, "b".repeat(body.length))
     expect(response?.headers.get("etag")).toBeNull()
@@ -61,7 +73,7 @@ test("a settled streamed file is dated for revalidation, never for resuming a ra
     const path = join(dir, "video.bin")
     const body = "v".repeat(256 * 1024 + 1)
     await writeFile(path, body)
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
     // Just written: a write landing mid-stream could share its HTTP-date second, so it stays undated.
     const fresh = await serve(get("/video.bin"))
     expect(fresh?.headers.get("last-modified")).toBeNull()
@@ -91,7 +103,7 @@ test("a settled streamed file is dated for revalidation, never for resuming a ra
 test("serves a public file and falls through on a miss", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "favicon.ico"), "icon-bytes")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     const hit = await serve(get("/favicon.ico"))
     expect(hit?.status).toBe(200)
@@ -108,7 +120,7 @@ test("serves nested extensionless files such as ACME challenges", async () => {
     const challengeDir = join(dir, ".well-known", "acme-challenge")
     await mkdir(challengeDir, { recursive: true })
     await writeFile(join(challengeDir, "token"), "challenge-body")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     const response = await serve(get("/.well-known/acme-challenge/token"))
     expect(response?.status).toBe(200)
@@ -123,7 +135,7 @@ test("never follows a publicDir symlink outside the configured root", async () =
     await writeFile(join(dir, "secret.txt"), "TOPSECRET")
     await symlink(join(dir, "secret.txt"), join(root, "leak.txt"))
 
-    const serve = servePublicDir({ dir: root })
+    const serve = servePublic({ dir: root })
     expect(await serve(get("/leak.txt"))).toBeUndefined()
     await expect(copyPublicDir(root, join(dir, "out"))).rejects.toThrow(/symlink/)
   })
@@ -135,7 +147,7 @@ test("a precomputed public-file set rejects page routes before filesystem lookup
     // this; more importantly, every page render would pay a stat.
     await mkdir(join(dir, "jobs"), { recursive: true })
     await writeFile(join(dir, "jobs", "index.html"), "should not be served")
-    const serve = servePublicDir({ dir, files: new Set(["/.well-known/acme-challenge/token"]) })
+    const serve = servePublic({ dir, files: new Set(["/.well-known/acme-challenge/token"]) })
     expect(await serve(get("/jobs"))).toBeUndefined()
     expect(await serve(get("/jobs/senior-engineer"))).toBeUndefined()
   })
@@ -146,7 +158,7 @@ test("cache-control differs by subtree: hashed immutable, public/ revalidating",
     await mkdir(join(dir, "assets"), { recursive: true })
     await writeFile(join(dir, "assets", "app-a1b2c3.js"), "//")
     await writeFile(join(dir, "logo.svg"), "<svg/>")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     // Content-hashed output can be cached forever; the hash changes when the bytes do.
     expect((await serve(get("/assets/app-a1b2c3.js")))?.headers.get("cache-control")).toBe(
@@ -164,13 +176,13 @@ test("with hashedFiles, only the listed files are immutable, under the prefix or
     await mkdir(join(dir, "assets"), { recursive: true })
     await writeFile(join(dir, "assets", "app-a1b2c3.js"), "//")
     await writeFile(join(dir, "assets", "logo.png"), "png")
-    const serve = servePublicDir({ dir, hashedFiles: new Set(["/assets/app-a1b2c3.js"]) })
+    const serve = servePublic({ dir, hashedFiles: new Set(["/assets/app-a1b2c3.js"]) })
     const cacheOf = async (path: string) => (await serve(get(path)))?.headers.get("cache-control")
 
     expect(await cacheOf("/assets/app-a1b2c3.js")).toBe("public, max-age=31536000, immutable")
     expect(await cacheOf("/assets/logo.png")).toBe("public, max-age=86400")
     // Without the list the prefix still decides, as before.
-    const byPrefix = servePublicDir({ dir })
+    const byPrefix = servePublic({ dir })
     expect((await byPrefix(get("/assets/logo.png")))?.headers.get("cache-control")).toBe(
       "public, max-age=31536000, immutable",
     )
@@ -187,15 +199,15 @@ test("hashedFiles patterns or a predicate make a file immutable; every other fil
     await writeFile(join(dir, "logo.svg"), "<svg/>")
     const font = /^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/
     const assets = new Set(["/assets/app-a1b2c3.js"])
-    const cacheOf = async (serve: ReturnType<typeof servePublicDir>, path: string) =>
+    const cacheOf = async (serve: ReturnType<typeof servePublic>, path: string) =>
       (await serve(get(path)))?.headers.get("cache-control")
     const immutable = "public, max-age=31536000, immutable"
     const day = "public, max-age=86400"
 
-    const byPattern = servePublicDir({ dir, hashedFiles: [font] })
+    const byPattern = servePublic({ dir, hashedFiles: [font] })
     // A global RegExp keeps lastIndex between tests; asking twice proves it does not here.
-    const byGlobal = servePublicDir({ dir, hashedFiles: [new RegExp(font.source, "g")] })
-    const byPredicate = servePublicDir({
+    const byGlobal = servePublic({ dir, hashedFiles: [new RegExp(font.source, "g")] })
+    const byPredicate = servePublic({
       dir,
       hashedFiles: (path) => assets.has(path) || font.test(path),
     })
@@ -226,7 +238,7 @@ test("hashedFiles takes a set-like object that is not a Set", async () => {
       [Symbol.iterator]: () => paths.values(),
     }
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a structural set with only the members the runtime check reads.
-    const serve = servePublicDir({ dir, hashedFiles: setLike as never })
+    const serve = servePublic({ dir, hashedFiles: setLike as never })
     const cacheOf = async (path: string) => (await serve(get(path)))?.headers.get("cache-control")
     expect([await cacheOf("/assets/app-a1b2c3.js"), await cacheOf("/assets/logo.png")]).toEqual([
       "public, max-age=31536000, immutable",
@@ -239,15 +251,15 @@ test("hashedFiles of any other shape is refused when the handler is built", () =
   // A Map's `has` tests keys, so this one would otherwise make the file it maps to false immutable.
   const map = new Map([["/assets/app.js", false]])
   for (const hashedFiles of [
-    ["/assets/app.js"],
+    [/^\/assets\//, "/assets/app.js"],
     "/assets/",
     { size: 1 },
     { has: () => true },
     map,
   ]) {
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: wrong shapes on purpose, for the runtime check plain JavaScript callers reach.
-    expect(() => servePublicDir({ dir: "/tmp", hashedFiles: hashedFiles as never })).toThrow(
-      /servePublicDir hashedFiles/,
+    expect(() => servePublic({ dir: "/tmp", hashedFiles: hashedFiles as never })).toThrow(
+      /serveStatic hashedFiles/,
     )
   }
 })
@@ -258,7 +270,7 @@ test("path traversal is rejected, including encoded and NUL forms", async () => 
     await mkdir(root, { recursive: true })
     await writeFile(join(root, "ok.txt"), "inside")
     await writeFile(join(dir, "secret.txt"), "OUTSIDE - must never be served")
-    const serve = servePublicDir({ dir: root })
+    const serve = servePublic({ dir: root })
 
     for (const attack of [
       "/../secret.txt",
@@ -306,7 +318,7 @@ test("path traversal is rejected, including encoded and NUL forms", async () => 
 test("HEAD matches GET's headers without a body; other methods fall through", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "a.txt"), "body")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
     const head = await serve(get("/a.txt", "HEAD"))
     expect(head?.status).toBe(200)
     expect(await head?.text()).toBe("")
@@ -353,7 +365,7 @@ test("copyPublicDir mirrors the tree and reports URL paths", async () => {
     }
 
     // The copied output serves through the same handler.
-    const serve = servePublicDir({ dir: to })
+    const serve = servePublic({ dir: to })
     expect(await (await serve(get("/robots.txt")))?.text()).toBe("User-agent: *")
     expect(await (await serve(get("/.well-known/acme-challenge/token")))?.text()).toBe("acme")
   })
@@ -377,7 +389,7 @@ test("copyPublicDir encodes URL paths the way a request URL does", async () => {
       expect(copied, `${name} must be recorded as the browser requests it`).toContain(requested)
     }
     // And the recorded path still resolves back to the file on disk.
-    const serve = servePublicDir({ dir: to, files: new Set(copied) })
+    const serve = servePublic({ dir: to, files: new Set(copied) })
     for (const name of names) {
       const requested = new URL(`http://x/${name}`).pathname
       expect(await (await serve(get(requested)))?.text()).toBe(name)
@@ -387,7 +399,7 @@ test("copyPublicDir encodes URL paths the way a request URL does", async () => {
 
 test("a missing public/ directory is not an error", async () => {
   await withDir(async (dir) => {
-    const serve = servePublicDir({ dir: join(dir, "does-not-exist") })
+    const serve = servePublic({ dir: join(dir, "does-not-exist") })
     expect(await serve(get("/whatever.txt"))).toBeUndefined()
   })
 })
@@ -401,7 +413,7 @@ test.skipIf(process.platform === "win32")(
       const server = createServer()
       await new Promise<void>((resolve) => server.listen(join(dir, "live.sock"), resolve))
       try {
-        expect(await servePublicDir({ dir })(get("/live.sock"))).toBeUndefined()
+        expect(await servePublic({ dir })(get("/live.sock"))).toBeUndefined()
       } finally {
         await new Promise<void>((resolve) => server.close(() => resolve()))
       }
@@ -412,7 +424,7 @@ test.skipIf(process.platform === "win32")(
 test("a directory is not served as a public file", async () => {
   await withDir(async (dir) => {
     await mkdir(join(dir, "assets"))
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
     expect(await serve(get("/assets"))).toBeUndefined()
   })
 })
@@ -430,7 +442,7 @@ test("a symlinked DIRECTORY inside publicDir cannot leak its contents either", a
 
     await expect(copyPublicDir(root, join(dir, "out"))).rejects.toThrow(/symlink/)
     // And nothing under it is servable.
-    const serve = servePublicDir({ dir: root })
+    const serve = servePublic({ dir: root })
     expect(await serve(get("/linked/secret.txt"))).toBeUndefined()
   })
 })
@@ -443,7 +455,7 @@ const ranged = (path: string, headers: Record<string, string>, method = "GET") =
 test("serves a byte range as 206 with content-range", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.bin"), "0123456789")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     const full = await serve(get("/clip.bin"))
     expect(full?.headers.get("accept-ranges")).toBe("bytes")
@@ -459,7 +471,7 @@ test("serves a byte range as 206 with content-range", async () => {
 test("a suffix range and an open-ended range both resolve against the real size", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.bin"), "0123456789")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     const suffix = await serve(ranged("/clip.bin", { range: "bytes=-3" }))
     expect(suffix?.headers.get("content-range")).toBe("bytes 7-9/10")
@@ -474,7 +486,7 @@ test("a suffix range and an open-ended range both resolve against the real size"
 test("an unsatisfiable range is 416 and a malformed one is ignored", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.bin"), "0123456789")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     const unsatisfiable = await serve(ranged("/clip.bin", { range: "bytes=99-200" }))
     expect(unsatisfiable?.status).toBe(416)
@@ -490,7 +502,7 @@ test("an unsatisfiable range is 416 and a malformed one is ignored", async () =>
 test("multiple ranges fall back to the full body rather than buffering multipart", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.bin"), "0123456789")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     const multi = await serve(ranged("/clip.bin", { range: "bytes=0-1,8-9" }))
     expect(multi?.status).toBe(200)
@@ -504,7 +516,7 @@ test("small bodies are read whole and large ones streamed, with the same bytes e
     const sizes = [0, 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024, 1024 * 1024 + 7]
     const files = sizes.map((size) => Uint8Array.from({ length: size }, (_, i) => (i * 31) % 251))
     await Promise.all(files.map((bytes, i) => writeFile(join(dir, `f${i}.bin`), bytes)))
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     for (const [i, bytes] of files.entries()) {
       const whole = await serve(new Request(`http://local/f${i}.bin`))
@@ -547,7 +559,7 @@ test("over Bun.serve, a body up to 1 MiB declares its length whole and ranged", 
     for (const [i, size] of sizes.entries()) {
       await writeFile(join(dir, `w${i}.bin`), new Uint8Array(size).fill(i + 1))
     }
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -581,7 +593,7 @@ test("over Bun.serve, a body up to 1 MiB declares its length whole and ranged", 
 test("HEAD reports the same headers GET does, and the whole representation under Range", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.txt"), "0123456789")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     const getResponse = await serve(get("/clip.txt"))
     const headResponse = await serve(get("/clip.txt", "HEAD"))
@@ -604,7 +616,7 @@ test("HEAD reports the same headers GET does, and the whole representation under
 test("If-Modified-Since produces a 304 and If-Range guards partial answers", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "clip.bin"), "0123456789")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
     const first = await serve(get("/clip.bin"))
     const lastModified = first?.headers.get("last-modified") ?? ""
     const etag = first?.headers.get("etag") ?? ""
@@ -635,7 +647,7 @@ test("a file a copy dated is tagged, not dated, and a same-size replacement chan
     const path = join(dir, "kept.txt")
     await writeFile(path, "first")
     await utimes(path, 1, 1)
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
     const first = await serve(get("/kept.txt"))
     const etag = first?.headers.get("etag") ?? ""
     expect([etag, first?.headers.get("last-modified")]).toEqual([tagOf("first"), null])
@@ -658,7 +670,7 @@ test("only whole snapshots have validators, including after a same-size replacem
   setSystemTime(new Date(Date.now() + 10_000))
   try {
     await withDir(async (dir) => {
-      const serve = servePublicDir({ dir })
+      const serve = servePublic({ dir })
       for (const [name, body] of [
         ["small.txt", "first"],
         // Past the rehash cut, a remembered tag is reused once a restat shows the same version.
@@ -730,7 +742,7 @@ test("a HEAD or a 304 of a remembered version reads none of the file", async () 
   const reads = await countFileReads()
   try {
     await withDir(async (dir) => {
-      const serve = servePublicDir({ dir })
+      const serve = servePublic({ dir })
       const body = "k".repeat(8 * 1024)
       const path = join(dir, "kept.txt")
       await writeFile(path, body)
@@ -769,7 +781,7 @@ test("hides dot-segments other than .well-known", async () => {
     await writeFile(join(dir, ".git", "config"), "[core]")
     await mkdir(join(dir, ".well-known"), { recursive: true })
     await writeFile(join(dir, ".well-known", "security.txt"), "Contact: x")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     expect(await serve(get("/.env"))).toBeUndefined()
     expect(await serve(get("/%2eenv"))).toBeUndefined()
@@ -782,7 +794,7 @@ test("a visible name linking to a hidden file inside the root is hidden too", as
   await withDir(async (dir) => {
     await writeFile(join(dir, ".env"), "SECRET=1")
     await symlink(join(dir, ".env"), join(dir, "visible.txt"))
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
     expect(await serve(get("/visible.txt"))).toBeUndefined()
   })
 })
@@ -792,7 +804,7 @@ test("declares the media type from the extension and forbids sniffing", async ()
     await writeFile(join(dir, "app.js"), "1")
     await writeFile(join(dir, "font.WOFF2"), "1")
     await writeFile(join(dir, "blob"), "1")
-    const serve = servePublicDir({ dir })
+    const serve = servePublic({ dir })
 
     const js = await serve(get("/app.js"))
     expect(js?.headers.get("content-type")).toBe("text/javascript; charset=utf-8")
@@ -806,7 +818,9 @@ test("declares the media type from the extension and forbids sniffing", async ()
 
 test("does not depend on the Bun global, so the Node and Deno adapters can serve public/", async () => {
   // A `Bun.file` here once made every public/ hit throw `Bun is not defined` off Bun.
-  const source = await Bun.file(join(import.meta.dir, "..", "src", "public-dir.ts")).text()
+  const source = await Bun.file(
+    join(import.meta.dir, "..", "..", "core", "src", "serve-static.ts"),
+  ).text()
   const code = source
     .split("\n")
     .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))

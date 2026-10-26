@@ -59,13 +59,13 @@ export const VENDORED: readonly VendoredCopy[] = [
   },
   {
     source: "packages/core/src/static-file.ts",
-    targets: ["packages/node/src/generated/static-file.ts"],
-    why: "Copied so @nifrajs/node types and hides served files exactly as core does, without depending on it.",
+    targets: ["packages/node/src/generated/static-file.ts", "packages/deno/src/generated/static-file.ts"],
+    why: "Copied so each adapter matches, types and answers served files exactly as core does, without depending on it.",
   },
   {
     source: "packages/core/src/range.ts",
-    targets: ["packages/node/src/generated/range.ts"],
-    why: "Copied so @nifrajs/node parses byte ranges exactly as core does, without depending on it.",
+    targets: ["packages/node/src/generated/range.ts", "packages/deno/src/generated/range.ts"],
+    why: "Copied so each adapter parses byte ranges exactly as core does, without depending on it.",
   },
   {
     source: "packages/core/src/server/json-text.ts",
@@ -73,9 +73,13 @@ export const VENDORED: readonly VendoredCopy[] = [
     why: "Copied so @nifrajs/node writes JSON exactly as core does, without depending on it.",
   },
   {
-    source: "packages/web/src/open-resolved.ts",
-    targets: ["packages/node/src/open-resolved.ts", "packages/image/src/open-resolved.ts"],
-    why: "Copied so every static-file server opens a resolved name the same way, without depending on @nifrajs/web.",
+    source: "packages/core/src/open-resolved.ts",
+    targets: [
+      "packages/web/src/open-resolved.ts",
+      "packages/node/src/open-resolved.ts",
+      "packages/image/src/open-resolved.ts",
+    ],
+    why: "Copied so every static-file server opens a resolved name the same way, without a public export for it.",
   },
   {
     source: "packages/create-nifra/src/agent-files.ts",
