@@ -2068,7 +2068,7 @@ const anyPending = useFetchers().some((f) => f.snapshot().pending)
 ```
 
 A fetcher holds nothing for the next visitor: `identityChanged()` returns every
-fetcher to idle. In an app with a [keepAlive](/docs/keep-alive#sign-in) route, so
+fetcher to idle, and a load still in flight loads once more for the new visitor. In an app with a [keepAlive](/docs/keep-alive#sign-in) route, so
 does the identity epoch cookie a sign-in or sign-out response rotates, on the next
 `useFetcher` read.
 
@@ -3183,7 +3183,8 @@ the server publishes one of them.
 
 A cached query never answers for the next visitor. `identityChanged()` from
 `@nifrajs/web/client` clears every query client in the page: mounted queries go
-back to pending and refetch, the rest are dropped. In an app with a
+back to pending and refetch, the rest drop their data. A fetch still loading loads once more
+for the new visitor before it settles. In an app with a
 [keepAlive](/docs/keep-alive#sign-in) route, the identity epoch cookie a sign-in
 or sign-out response rotates does the same on the client's next read.
 
@@ -3617,10 +3618,12 @@ export const app = server()
   // The child sees a copy of the request with /billing stripped, and reads the same value.
   .mount({ path: "/billing", app: billing, stripPrefix: true })
 
-// A wrapper that rebuilds the request carries the values itself.
+// A wrapper that rebuilds the request carries the values itself. It keeps the host, which the
+// same-origin check on a form POST compares with the browser's Origin.
 export const fetch = (req: Request): Response | Promise<Response> => {
   const url = new URL(req.url)
-  url.host = "app.internal"
+  if (!url.pathname.startsWith("/v1/")) return app.fetch(req)
+  url.pathname = url.pathname.slice("/v1".length)
   const rebuilt = new Request(url.href, req)
   carryRequestLocals(req, rebuilt)
   return app.fetch(rebuilt)
@@ -5469,9 +5472,10 @@ rewritten onto, or set `trustHost` when a proxy you control fixes the host. Give
 ### Set up a session manager
 
 `createSessions` signs the cookie (HMAC, verified constant-time) and always marks it
-`HttpOnly`. In **store mode** the cookie is just an opaque id and the data lives in
-a `SessionStore`; in **cookie mode** (no store) the data is signed into the cookie.
-`MemorySessionStore` is prod-guarded. Production store mode needs a strongly
+`HttpOnly`. In **store mode** the cookie is an opaque id, with a tag that changes
+whenever the data that says who the visitor is does, and the data lives in a
+`SessionStore`; in **cookie mode** (no store) the data is signed into the
+cookie. `MemorySessionStore` is prod-guarded. Production store mode needs a strongly
 consistent shared `SessionStore`, such as a transactional adapter or Durable Object.
 Every instance must observe completed writes and deletes, including revocation markers.
 
@@ -5491,6 +5495,13 @@ session lives at most `maxAge`, whatever expiry its payload names. Upgrading fro
 session-shaped value the app signs with the same secret through `signValue` reads
 as a session.
 
+`identity` names the data keys that say who the visitor is: the user id, and any
+key that changes what a page may show, such as an organization or a role. The cookie's tag,
+in either mode, then changes only when one of them does, so
+[keep-alive](/docs/keep-alive#sign-in) keeps the pages it holds across a commit
+that writes a cart or a preference. Unset, every key counts. A key left out that decides what
+a page shows lets the next visitor of a browser see the pages kept for the previous one.
+
 ```ts
 // backend/auth.ts - one session manager, created on first use so the secret is read at request time.
 // Store mode keeps data server-side; cookie mode (no store) is stateless.
@@ -5500,6 +5511,7 @@ let manager: ReturnType<typeof createSessions> | undefined
 export const getSessions = () => (manager ??= createSessions({
   secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret
   store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore
+  // identity: ["userId", "orgId", "role"],     // the keys that say who the visitor is; unset, all of them
   // cookie: { secure: false },                 // local http dev only
 }))
 ```
@@ -7695,7 +7707,8 @@ pins are installed it would judge the release you are leaving, and the command p
 install to run first instead. With `--write` it also saves the hook report from
 before the edits and, once the target is installed, prints how hook scope changed across the
 upgrade (`--no-hooks` skips that); before then,
-`nifra routes --hooks --since` compares after the install. Run from a CLI whose
+`nifra routes --hooks --since .nifra/hooks-before-upgrade.json` compares after the
+install. Run from a CLI whose
 `@nifrajs/core` is not the project's - `bunx @nifrajs/cli@<new>
         upgrade` before the new release is installed - it takes no hook report, since that
 copy cannot reflect the project's app, and says so in one line.
@@ -11044,10 +11057,14 @@ with the one-day policy.
 
 -
 **Files hashed before the build.** The fonts `loadGoogleFont` writes into
-`public/fonts/` are in no manifest. `hashedFiles` also
-takes an array of patterns or a `(path) => boolean` predicate, matched on the
-encoded URL path; a predicate combines the manifest with a pattern, as below. A global or
-sticky pattern is used without its flag, so `lastIndex` never skips a match.
+`public/fonts/` are in no manifest, so the `public/` handler names
+them with an array of patterns, matched on the encoded URL path, as below. A handler that
+serves both the build and such files takes a `(path) => boolean` predicate
+instead, with `assets` as `new Set(build.assets)`:
+`(path) => assets.has(path) || HASHED_FONT.test(path)`. A global or
+sticky pattern in the array is used without that flag, so `lastIndex` never
+skips a match; a predicate runs as written, so keep the patterns it tests free of
+`g` and `y`.
 
 -
 **Where it runs.** Register the handlers with `app.onRequest` inside
@@ -11057,15 +11074,12 @@ sticky pattern is used without its flag, so `lastIndex` never skips a match.
 import { fileURLToPath } from "node:url"
 import { servePublicDir } from "@nifrajs/web"
 
-declare const build: { readonly assets: readonly string[] }
-
-// The build manifest's chunks plus the fonts loadGoogleFont wrote into public/fonts/.
-const assets = new Set(build.assets)
+// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.
 const HASHED_FONT = /^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/
 
-export const files = servePublicDir({
-  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
-  hashedFiles: (path) => assets.has(path) || HASHED_FONT.test(path),
+export const publicFiles = servePublicDir({
+  dir: fileURLToPath(new URL("./public/", import.meta.url)),
+  hashedFiles: [HASHED_FONT],
 })
 ```
 
@@ -12369,7 +12383,24 @@ with the session cookie's lifetime. A tab that reads a new epoch drops every pag
 tells the other tabs of the origin to do the same. A sign-out by a native form post, or a
 session that expires while the visitor is away, is covered the same way: back compares the
 epoch before it shows a kept page. The page on screen reloads in place at the next render or
-navigation that reads the new epoch, and shows as it was, pending, until the reload lands.
+navigation that reads the new epoch, and shows as it was, pending, until the reload lands. If
+that reload fails, or a navigation or submit away from the page does, the browser loads the
+URL as a document in its place, replacing the history entry. Without
+`installHistory`, the router names that URL in `documentLoad` and
+keeps what it shows.
+
+A response that renews the same visitor's session keeps the epoch: a session cookie re-sent
+with a new lifetime, or an `@nifrajs/auth` session committed again with the same
+data. Any change to an `@nifrajs/auth` session's data rotates it, in either mode,
+so a sign-in or sign-out shows even when the session id stays the same. With
+[
+`identity`
+](/docs/auth)
+set on `createSessions`, only a change to the keys it names rotates it, and a write
+to a cart or a preference keeps it. An Auth.js session
+read writes a new token every time; mounted through `@nifrajs/authjs`, it keeps
+the epoch when both tokens decrypt and every claim but the times Auth.js renews matches.
+Auth.js mounted any other way rotates it on each read.
 
 The session cookies of `@nifrajs/auth` and Auth.js count under their default
 names, and Better Auth's under any `cookiePrefix`. Name any other, such as one
@@ -12404,8 +12435,9 @@ export const api = server().post("/switch-account", (c) => {
 
 When identity lives in client storage, as a bearer token, call `identityChanged()`
 at sign-in and sign-out. It also clears every query client, returns every fetcher to idle,
-and reloads the page on screen in place. A navigation still loading loads once more for the
-new visitor before it settles, and a submit still posting finishes first:
+and reloads the page on screen in place. A navigation, fetcher load or query fetch still
+loading loads once more for the new visitor before it settles, and a submit still posting
+finishes first:
 
 ```ts
 import { identityChanged } from "@nifrajs/web/client"
@@ -17301,9 +17333,13 @@ route. Split groups before the compiler reports `TS2589`, rather than weakening 
   concurrency, filters, cancellation, and token-only metrics. A worker invocation always terminates.
 - **`bigint` in plain JSON.** A JSON answer writes a `bigint` as its decimal string
   (`{ "id": "9007199254740993" }`) instead of failing with a 500, and the typed client reads a
-  `string`. A `Uint8Array` is base64 only where the response schema declares `t.bytes()` from
-  `@nifrajs/schema`; elsewhere it is the `{ "0": 1, ... }` object `JSON.stringify` writes, and a
-  Node `Buffer` is the `{ "type": "Buffer", "data": [...] }` its `toJSON` writes.
+  `string`. A `BigInt` wrapper object (`Object(1n)`) is not a `bigint`: its answer fails with a 500.
+  One moved onto `Object.prototype` is written as `{}` instead by Bun in an answer that holds no
+  `Date`, and one moved onto any plain or `null` prototype is written as `{}` on every runtime when a
+  plain `Date` sits on the answer's first row. A `Uint8Array` is base64 only where the response
+  schema declares `t.bytes()` from `@nifrajs/schema`; elsewhere it is the `{ "0": 1, ... }` object
+  `JSON.stringify` writes, and a Node `Buffer` is the `{ "type": "Buffer", "data": [...] }` its
+  `toJSON` writes.
 - **Rich wire values (opt in).** `@nifrajs/core/wire` round-trips dates, bigints, maps, sets, binary,
   shared references, and cycles through JSON transports. Decoding validates every reachable shape,
   preserves owned `__proto__` keys without prototype mutation, and enforces configurable node, depth,
@@ -19179,6 +19215,8 @@ await Bun.write(
 The server imports `body` from `./generated/users.ts` and uses it as its route schema. The generated
 source-schema import is type-only and disappears from the deployed bundle. Regenerate when the source
 schema changes. Custom string formats must be registered in the serving process, as with ordinary schemas.
+The generated module typechecks under `strict`, `noUnusedLocals` and `noUnusedParameters`, and Node runs
+it with its built-in type stripping.
 
 Compilation refuses coercing schemas (`t.query`, `t.form` and the other request-slot schemas), a
 schema whose `validate` does more than check its `jsonSchema`, custom registry kinds such as dates/deferred values,

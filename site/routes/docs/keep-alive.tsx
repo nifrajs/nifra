@@ -305,7 +305,25 @@ export default function KeepAlive() {
         tells the other tabs of the origin to do the same. A sign-out by a native form post, or a
         session that expires while the visitor is away, is covered the same way: back compares the
         epoch before it shows a kept page. The page on screen reloads in place at the next render or
-        navigation that reads the new epoch, and shows as it was, pending, until the reload lands.
+        navigation that reads the new epoch, and shows as it was, pending, until the reload lands. If
+        that reload fails, or a navigation or submit away from the page does, the browser loads the
+        URL as a document in its place, replacing the history entry. Without{" "}
+        <code>installHistory</code>, the router names that URL in <code>documentLoad</code> and
+        keeps what it shows.
+      </p>
+      <p>
+        A response that renews the same visitor's session keeps the epoch: a session cookie re-sent
+        with a new lifetime, or an <code>@nifrajs/auth</code> session committed again with the same
+        data. Any change to an <code>@nifrajs/auth</code> session's data rotates it, in either mode,
+        so a sign-in or sign-out shows even when the session id stays the same. With{" "}
+        <a href="/docs/auth">
+          <code>identity</code>
+        </a>{" "}
+        set on <code>createSessions</code>, only a change to the keys it names rotates it, and a write
+        to a cart or a preference keeps it. An Auth.js session
+        read writes a new token every time; mounted through <code>@nifrajs/authjs</code>, it keeps
+        the epoch when both tokens decrypt and every claim but the times Auth.js renews matches.
+        Auth.js mounted any other way rotates it on each read.
       </p>
       <p>
         The session cookies of <code>@nifrajs/auth</code> and Auth.js count under their default
@@ -326,8 +344,9 @@ export default function KeepAlive() {
       <p>
         When identity lives in client storage, as a bearer token, call <code>identityChanged()</code>{" "}
         at sign-in and sign-out. It also clears every query client, returns every fetcher to idle,
-        and reloads the page on screen in place. A navigation still loading loads once more for the
-        new visitor before it settles, and a submit still posting finishes first:
+        and reloads the page on screen in place. A navigation, fetcher load or query fetch still
+        loading loads once more for the new visitor before it settles, and a submit still posting
+        finishes first:
       </p>
       <CodeBlock code={TOKEN} />
       <p>

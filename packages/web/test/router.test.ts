@@ -1152,7 +1152,7 @@ describe("createClientRouter", () => {
     }
     const IDLE = { pending: false, data: undefined }
 
-    test("identityChanged() returns every fetcher to idle and tells it, and drops a load in flight", async () => {
+    test("identityChanged() returns every fetcher to idle and tells it, and a load in flight loads again", async () => {
       const state = { whoami: "alice", version: 0 }
       let release = (): void => {}
       const held = new Promise<void>((resolve) => {
@@ -1175,11 +1175,15 @@ describe("createClientRouter", () => {
         told++
       })
       const loading = r.fetcher("late").load("/users/8")
+      state.whoami = "bob"
       identityChanged()
       expect([r.fetcher("cart").snapshot(), told]).toEqual([IDLE, 1])
       release()
       await loading
-      expect(r.fetcher("late").snapshot()).toEqual(IDLE)
+      expect(r.fetcher("late").snapshot()).toEqual({
+        pending: false,
+        data: { id: "8", whoami: "bob", version: 0 },
+      })
     })
 
     test("a new identity epoch returns fetchers to idle on the next read, and tells them after it", async () => {
@@ -1224,6 +1228,30 @@ describe("createClientRouter", () => {
           actionData: { ok: true },
         })
       })
+    })
+
+    test("a fetcher submit keeps its answer, and stays pending, when the visitor changes during its POST", async () => {
+      const r = routerFor({ whoami: "alice", version: 0 })
+      const cart = r.fetcher("cart")
+      await cart.load("/users/7")
+      let answer = (_response: Response): void => {}
+      const realFetch = globalThis.fetch
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router only posts the action through it here.
+      globalThis.fetch = ((_url: string, _init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          answer = resolve
+        })) as typeof fetch
+      try {
+        const posting = cart.submit("/cart", new URLSearchParams())
+        await settled()
+        identityChanged()
+        expect(cart.snapshot()).toEqual({ pending: true, data: undefined })
+        answer(Response.json({ ok: true }))
+        await posting
+      } finally {
+        globalThis.fetch = realFetch
+      }
+      expect(cart.snapshot()).toEqual({ pending: false, data: undefined, actionData: { ok: true } })
     })
 
     const settled = () => new Promise((resolve) => setImmediate(resolve))
@@ -1515,7 +1543,7 @@ describe("createClientRouter", () => {
       ])
     })
 
-    test("a server that rotates the epoch on every response costs a load one more, never a loop", async () => {
+    test("a server that rotates the epoch on every response costs a bounded number of loads, never a loop", async () => {
       await withEpoch(async (rotate) => {
         const state = { whoami: "alice", version: 0 }
         let rotations = 0
@@ -1539,10 +1567,11 @@ describe("createClientRouter", () => {
         await render()
         expect(fetches).toBe(2)
 
-        // A reload for a visitor change takes the change its own response makes as its own.
+        // A reload for a visitor change loads once more for the change its own response makes, and
+        // takes the next as its own.
         identityChanged()
         await render()
-        expect([fetches, r.snapshot().pending]).toEqual([3, false])
+        expect([fetches, r.snapshot().pending]).toEqual([4, false])
       })
     })
   })

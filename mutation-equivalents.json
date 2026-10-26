@@ -1,4 +1,43 @@
 {
+  "packages/auth/src/session.ts": [
+    {
+      "op": "condition->false",
+      "fn": "make",
+      "code": "store === undefined && identity === undefined ? undefined : snapshot(identityOf(init.data)),",
+      "from": "store === undefined && identity === undefined",
+      "reason": "Cookie mode without identity never reads the snapshot; the check only skips a JSON.stringify on each load."
+    },
+    {
+      "op": "condition->false",
+      "fn": "loadFromRaw",
+      "code": "family === id ? undefined : store.get(revokedKey(family)),",
+      "from": "family === id",
+      "reason": "When the family is the id, its marker is the id's own marker, which the same Promise.all already reads."
+    },
+    {
+      "op": "condition->false",
+      "fn": "destroy",
+      "code": "const unsigned = raw === undefined ? null : await unsign(raw)",
+      "from": "raw === undefined",
+      "reason": "unsign then checks the text \"undefined\", which carries no valid signature, so it returns null as the branch does."
+    },
+    {
+      "op": "condition->false",
+      "fn": "destroy",
+      "code": "const id = unsigned === null ? null : (DATA_TAG.exec(unsigned)?.[1] ?? unsigned)",
+      "from": "unsigned === null",
+      "reason": "DATA_TAG.exec coerces null to the string \"null\", which carries no tag, so the id stays null."
+    }
+  ],
+  "packages/authjs/src/index.ts": [
+    {
+      "op": "condition->false",
+      "fn": "claimsOf",
+      "code": "payload === null",
+      "from": "payload === null",
+      "reason": "Object.keys(null) throws, and the catch around the comparison returns the response without the header."
+    }
+  ],
   "packages/coding-agent/src/subagents.ts": [
     {
       "op": "condition->false",
@@ -508,6 +547,57 @@
       "code": "if (calls.length === 0) return undefined",
       "from": "calls.length === 0",
       "reason": "With no calls the lookup returns no rows, so the loop ends in the same undefined."
+    }
+  ],
+  "packages/web/src/internal/identity-epoch.ts": [
+    {
+      "op": "condition->true",
+      "fn": "identityEpochHook",
+      "code": "if (vouched !== undefined) headers.delete(RENEWED)",
+      "from": "vouched !== undefined",
+      "reason": "Deleting a header the response does not carry changes nothing."
+    },
+    {
+      "op": "condition->false",
+      "fn": "sessionOf",
+      "code": "if (typeof payload !== \"object\" || payload === null) return undefined",
+      "from": "typeof payload !== \"object\" || payload === null",
+      "reason": "The parsed text starts with {, so the payload is a non-null object here; the check only narrows its type."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "sessionOf",
+      "code": "if (typeof payload !== \"object\" || payload === null) return undefined",
+      "from": "||",
+      "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
+    },
+    {
+      "op": "condition->false",
+      "fn": "sessionOf",
+      "code": "if (!(\"data\" in payload) || !(\"expiresAt\" in payload)) return undefined",
+      "from": "!(\"data\" in payload) || !(\"expiresAt\" in payload)",
+      "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "sessionOf",
+      "code": "if (!(\"data\" in payload) || !(\"expiresAt\" in payload)) return undefined",
+      "from": "||",
+      "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
+    },
+    {
+      "op": "condition->true",
+      "fn": "sessionOf",
+      "code": "? { data, tag: \"tag\" in payload ? payload.tag : undefined }",
+      "from": "\"tag\" in payload",
+      "reason": "A payload without a tag reads it as undefined either way; the check only narrows the type."
+    },
+    {
+      "op": "return undefined",
+      "fn": "sameVisitor",
+      "code": "if (now === undefined || before === undefined) return false",
+      "from": "return false",
+      "reason": "The only caller reads the result in an || chain, where undefined and false both fall through."
     }
   ],
   "packages/web/src/internal/share-data.ts": [

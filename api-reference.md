@@ -710,14 +710,14 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionCookieOptions** _(type)_ - `type SessionCookieOptions = Pick<CookieOptions, "secure" | "sameSite" | "path" | "domain">`
   Cookie attributes a session may tune. `httpOnly` is **not** offered - a session cookie is always HttpOnly; `maxAge`/`expires` are derived from the session's lifetime.
 - **SessionManager** _(interface)_ - `interface SessionManager<Data extends Record<string, unknown> = Record<string, unknown>>`
-- **SessionOptions** _(interface)_ - `interface SessionOptions`
+- **SessionOptions** _(interface)_ - `interface SessionOptions<Data extends Record<string, unknown> = Record<string, unknown>>`
 - **SessionRecord** _(interface)_ - `interface SessionRecord`
   A persisted session - its data plus an absolute expiry (ms epoch).
 - **SessionStore** _(interface)_ - `interface SessionStore`
   Pluggable session backend (store mode). Reads must observe completed writes and deletes, including revocation markers, across all instances. Eventual consistency cannot provide logout guarantees. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionSto…
 - **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
   The response a guard denies a missing session with, in place of the default `401` JSON.
-- **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`
+- **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions<Data>) => SessionManager<Data>`
 - **csrf** _(function)_ - `csrf: (options?: CsrfOptions) => Middleware`
 - **isAuthorized** _(function)_ - `isAuthorized: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<boolean>`
   Evaluate a policy, failing closed for any non-true result.

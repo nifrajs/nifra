@@ -358,6 +358,48 @@ test("a held handle's read after a new epoch shows the fetch it starts, which th
   })
 })
 
+test("a new epoch while a change's reloads run loads them once more, and one after that is theirs", async () => {
+  await withEpoch(async (rotate) => {
+    const c = createQueryClient({ now: () => 0 })
+    const g = gated()
+    const pages = gated()
+    const one = c.query(["me"], g.fn)
+    const feed = c.infiniteQuery(["feed"], pages.fn, firstPage)
+    const offs = [one.subscribe(() => {}), feed.subscribe(() => {})]
+    void one.fetch()
+    void feed.fetch()
+    g.resolve(0, "first")
+    pages.resolve(0, "first")
+    await flush()
+    await rotate("two")
+    one.snapshot()
+    await flush()
+    expect([g.calls(), pages.calls()]).toEqual([2, 2])
+    // Another tab's sign-in lands while the reloads run.
+    await rotate("three")
+    g.resolve(1, "second")
+    pages.resolve(1, "second")
+    await flush()
+    expect([g.calls(), pages.calls(), one.snapshot().status, feed.snapshot().status]).toEqual([
+      3,
+      3,
+      "pending",
+      "pending",
+    ])
+    await rotate("four")
+    g.resolve(2, "third")
+    pages.resolve(2, "third")
+    await flush()
+    expect([one.snapshot().data, feed.snapshot().data?.pages, g.calls(), pages.calls()]).toEqual([
+      "third",
+      ["third"],
+      3,
+      3,
+    ])
+    for (const off of offs) off()
+  })
+})
+
 test("a handle kept past its last subscriber reads nothing of the previous visitor", async () => {
   const c = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
   let who = "first"
@@ -400,6 +442,83 @@ test("a refetch that fails after clear is let go: the query shows the error", as
   expect(feed.snapshot().status).toBe("error")
   offPlain()
   offFeed()
+})
+
+test("a fetch a visitor change catches answers with what the reload the change started showed", async () => {
+  const g = gated()
+  const pages = gated()
+  const c = createQueryClient({ now: () => 0 })
+  const handle = c.query(["k"], g.fn)
+  const feed = c.infiniteQuery(["feed"], pages.fn, firstPage)
+  const offs = [handle.subscribe(() => {}), feed.subscribe(() => {})]
+  const caught = handle.fetch()
+  const caughtFeed = feed.fetch()
+  c.clear()
+  g.resolve(1, "mine")
+  pages.resolve(1, "mine")
+  await flush()
+  g.resolve(0, "theirs")
+  pages.resolve(0, "theirs")
+  expect(await caught).toBe("mine")
+  expect((await caughtFeed).pages).toEqual(["mine"])
+  expect([g.calls(), pages.calls()]).toEqual([2, 2])
+  for (const off of offs) off()
+})
+
+test("a fetch a visitor change catches rejects with a later load's failure for the new visitor", async () => {
+  const g = gated()
+  const pages = gated()
+  const c = createQueryClient({ now: () => 0 })
+  const handle = c.query(["k"], g.fn)
+  const feed = c.infiniteQuery(["feed"], pages.fn, firstPage)
+  const offs = [handle.subscribe(() => {}), feed.subscribe(() => {})]
+  const caught = handle.fetch().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const caughtFeed = feed.fetch().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  c.clear()
+  g.resolve(1, "mine")
+  pages.resolve(1, "mine")
+  await flush()
+  void handle.refetch().catch(() => {})
+  void feed.refetch().catch(() => {})
+  const down = new Error("down")
+  g.reject(2, down)
+  pages.reject(2, down)
+  await flush()
+  g.resolve(0, "theirs")
+  pages.resolve(0, "theirs")
+  expect(await caught).toBe(down)
+  expect(await caughtFeed).toBe(down)
+  expect([handle.snapshot().error, feed.snapshot().error]).toEqual([down, down])
+  expect([g.calls(), pages.calls()]).toEqual([3, 3])
+  for (const off of offs) off()
+})
+
+test("an infinite fetch a change catches with no reload under way loads again, on a handle the cache let go of too", async () => {
+  let t = 0
+  const kept = gated()
+  const gone = gated()
+  const c = createQueryClient({ now: () => t, gcTime: 10 })
+  const keptFeed = c.infiniteQuery(["kept"], kept.fn, firstPage)
+  const goneFeed = c.infiniteQuery(["gone"], gone.fn, firstPage)
+  goneFeed.subscribe(() => {})()
+  const caughtKept = keptFeed.fetch()
+  const caughtGone = goneFeed.fetch()
+  t = 20
+  expect(c.infiniteQuery(["gone"], gone.fn, firstPage)).not.toBe(goneFeed)
+  c.clear()
+  kept.resolve(0, "theirs")
+  gone.resolve(0, "theirs")
+  await flush()
+  kept.resolve(1, "mine")
+  gone.resolve(1, "mine")
+  expect((await caughtKept).pages).toEqual(["mine"])
+  expect((await caughtGone).pages).toEqual(["mine"])
 })
 
 /** Run `body` as a page does before its live client has loaded: no seam installed yet. */

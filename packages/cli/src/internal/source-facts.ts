@@ -723,7 +723,8 @@ export function createSourceFacts(
         else if (local !== undefined) handlers.push(...local)
         else if (!ts.isObjectLiteralExpression(argument) || declaresResponse(ts, argument)) return
       }
-      if (handlers.length > 0 && handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
+      // Every registration takes a handler: `headers.get("etag")` and `map.get("/")` are reads.
+      if (handlers.length === 0 || handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
         return
       routes.push({
         position: node.expression.name.getStart(source),
@@ -792,10 +793,14 @@ export function createSourceFacts(
         !ts.isStringLiteralLike(first)
       )
         return
-      for (const argument of rest) {
-        let options = unwrapExpression(ts, argument)
-        const named = ts.isIdentifier(options) ? consts.get(options.text) : undefined
-        if (named !== undefined) options = unwrapExpression(ts, named)
+      const arguments_ = rest.map((argument) => {
+        const value = unwrapExpression(ts, argument)
+        const named = ts.isIdentifier(value) ? consts.get(value.text) : undefined
+        return named === undefined ? value : unwrapExpression(ts, named)
+      })
+      // Every registration takes a handler: `config.get("key", { query })` is not a route.
+      if (arguments_.every((value) => ts.isObjectLiteralExpression(value))) return
+      for (const options of arguments_) {
         if (!ts.isObjectLiteralExpression(options)) continue
         for (const property of options.properties) {
           if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property))

@@ -99,12 +99,23 @@ const linkPackage = (
   name: string,
   at: string,
   dependencies: Record<string, string>,
+  field = "dependencies",
 ) => {
-  writeAppFile(root, `${at}/package.json`, JSON.stringify({ name, version: "1.0.0", dependencies }))
+  writeAppFile(
+    root,
+    `${at}/package.json`,
+    JSON.stringify({ name, version: "1.0.0", [field]: dependencies }),
+  )
   const link = join(root, "node_modules", ...name.split("/"))
   mkdirSync(join(link, ".."), { recursive: true })
   symlinkSync(join(root, at), link, "dir")
 }
+const install = (root: string, name: string) =>
+  writeAppFile(
+    root,
+    `node_modules/${name}/package.json`,
+    JSON.stringify({ name, version: "1.0.0" }),
+  )
 
 test("a workspace package that brings Better Auth in turns the warning into a note", async () => {
   const root = app(
@@ -115,6 +126,7 @@ test("a workspace package that brings Better Auth in turns the warning into a no
     "@workspace/auth-core": "workspace:*",
   })
   linkPackage(root, "@workspace/auth-core", "packages/auth-core", { "better-auth": "1.0.0" })
+  install(root, "better-auth")
   const result = await collectDoctorResult(root)
   expect(result.ok).toBe(true)
   expect(result.keepAliveIdentity).toBeUndefined()
@@ -149,10 +161,67 @@ test("a wrapper that reaches no auth library keeps the warning, and a rename in 
     },
   )
   linkPackage(renamed, "@workspace/session", "packages/session", { "better-auth": "1.0.0" })
+  install(renamed, "better-auth")
   const result = await collectDoctorResult(renamed)
   expect(result.keepAliveIdentity).toEqual({
     routes: ["routes/list.tsx"],
     renamedIn: "lib/auth.ts",
   })
   expect(result.keepAliveIdentityCovered).toBeUndefined()
+})
+
+test("an auth library a wrapper declares counts only once it is installed", async () => {
+  for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+    const root = app(
+      { "@nifrajs/web": "5.0.0", "@workspace/session": "workspace:*" },
+      { "routes/list.tsx": KEPT },
+    )
+    linkPackage(root, "@workspace/session", "packages/session", { "better-auth": "1.0.0" }, field)
+    const missing = await collectDoctorResult(root)
+    expect(missing.keepAliveIdentity).toEqual({ routes: ["routes/list.tsx"] })
+    expect(missing.keepAliveIdentityCovered).toBeUndefined()
+
+    install(root, "better-auth")
+    const installed = await collectDoctorResult(root)
+    expect(installed.keepAliveIdentity).toBeUndefined()
+    expect(installed.keepAliveIdentityCovered?.package).toBe("better-auth")
+  }
+})
+
+test.each([
+  "ts",
+  "js",
+])("a wrapper outside the app's tree that renames the session cookie in .%s keeps the warning", async (ext) => {
+  const workspace = mkdtempSync(join(tmpdir(), "nifra-keep-alive-doctor-"))
+  roots.push(workspace)
+  const root = join(workspace, "apps/web")
+  writeAppFile(
+    root,
+    "package.json",
+    JSON.stringify({
+      name: "app",
+      dependencies: { "@nifrajs/web": "5.0.0", "@workspace/session": "workspace:*" },
+    }),
+  )
+  writeAppFile(root, "routes/list.tsx", KEPT)
+  linkPackage(root, "@workspace/session", "../../packages/session", { "better-auth": "1.0.0" })
+  install(workspace, "better-auth")
+  expect((await collectDoctorResult(root)).keepAliveIdentityCovered?.via).toEqual([
+    "@workspace/session",
+  ])
+
+  writeAppFile(
+    workspace,
+    `packages/session/src/auth.${ext}`,
+    'betterAuth({ advanced: { cookies: { session_token: { name: "sid" } } } })\n',
+  )
+  const result = await collectDoctorResult(root)
+  expect(result.keepAliveIdentity).toEqual({
+    routes: ["routes/list.tsx"],
+    renamedIn: `../../packages/session/src/auth.${ext}`,
+  })
+  expect(result.keepAliveIdentityCovered).toBeUndefined()
+  expect(doctorReport(result).join("\n")).toContain(
+    `../../packages/session/src/auth.${ext} renames the session cookie`,
+  )
 })

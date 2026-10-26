@@ -58,6 +58,7 @@ const full = {
   kept: [],
   restored: false,
   revalidating: false,
+  documentLoad: "/items/7",
 } satisfies Required<RouterState>
 
 const bare: RouterState = {

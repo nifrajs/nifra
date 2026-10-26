@@ -75,7 +75,7 @@
     "name": "SETUP",
     "topic": "Nifra - Auth & sessions",
     "slug": "auth",
-    "code": "// backend/auth.ts - one session manager, created on first use so the secret is read at request time.\n// Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore } from \"@nifrajs/auth\"\n\nlet manager: ReturnType<typeof createSessions> | undefined\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret\n  store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore\n  // cookie: { secure: false },                 // local http dev only\n}))"
+    "code": "// backend/auth.ts - one session manager, created on first use so the secret is read at request time.\n// Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore } from \"@nifrajs/auth\"\n\nlet manager: ReturnType<typeof createSessions> | undefined\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret\n  store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore\n  // identity: [\"userId\", \"orgId\", \"role\"],     // the keys that say who the visitor is; unset, all of them\n  // cookie: { secure: false },                 // local http dev only\n}))"
   },
   {
     "name": "BACKEND",
@@ -243,7 +243,7 @@
     "name": "HASHED_FONTS",
     "topic": "Nifra - Custom server (createWebApp)",
     "slug": "custom-server",
-    "code": "import { fileURLToPath } from \"node:url\"\nimport { servePublicDir } from \"@nifrajs/web\"\n\ndeclare const build: { readonly assets: readonly string[] }\n\n// The build manifest's chunks plus the fonts loadGoogleFont wrote into public/fonts/.\nconst assets = new Set(build.assets)\nconst HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/\n\nexport const files = servePublicDir({\n  dir: fileURLToPath(new URL(\"./dist/\", import.meta.url)),\n  hashedFiles: (path) => assets.has(path) || HASHED_FONT.test(path),\n})"
+    "code": "import { fileURLToPath } from \"node:url\"\nimport { servePublicDir } from \"@nifrajs/web\"\n\n// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.\nconst HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/\n\nexport const publicFiles = servePublicDir({\n  dir: fileURLToPath(new URL(\"./public/\", import.meta.url)),\n  hashedFiles: [HASHED_FONT],\n})"
   },
   {
     "name": "ACTION",
@@ -567,7 +567,7 @@
     "name": "REQUEST_LOCALS",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",
-    "code": "import { carryRequestLocals, requestLocal, server } from \"@nifrajs/core/server\"\n\n// One slot per value. A WeakMap<Request, T> would lose it at the first copy of the request.\nconst requestId = requestLocal<string>()\n\nconst billing = server().get(\"/invoices\", (c) => ({ requestId: requestId.get(c.req) }))\n\nexport const app = server()\n  .onRequest((req) => {\n    requestId.set(req, req.headers.get(\"x-request-id\") ?? crypto.randomUUID())\n  })\n  // The child sees a copy of the request with /billing stripped, and reads the same value.\n  .mount({ path: \"/billing\", app: billing, stripPrefix: true })\n\n// A wrapper that rebuilds the request carries the values itself.\nexport const fetch = (req: Request): Response | Promise<Response> => {\n  const url = new URL(req.url)\n  url.host = \"app.internal\"\n  const rebuilt = new Request(url.href, req)\n  carryRequestLocals(req, rebuilt)\n  return app.fetch(rebuilt)\n}"
+    "code": "import { carryRequestLocals, requestLocal, server } from \"@nifrajs/core/server\"\n\n// One slot per value. A WeakMap<Request, T> would lose it at the first copy of the request.\nconst requestId = requestLocal<string>()\n\nconst billing = server().get(\"/invoices\", (c) => ({ requestId: requestId.get(c.req) }))\n\nexport const app = server()\n  .onRequest((req) => {\n    requestId.set(req, req.headers.get(\"x-request-id\") ?? crypto.randomUUID())\n  })\n  // The child sees a copy of the request with /billing stripped, and reads the same value.\n  .mount({ path: \"/billing\", app: billing, stripPrefix: true })\n\n// A wrapper that rebuilds the request carries the values itself. It keeps the host, which the\n// same-origin check on a form POST compares with the browser's Origin.\nexport const fetch = (req: Request): Response | Promise<Response> => {\n  const url = new URL(req.url)\n  if (!url.pathname.startsWith(\"/v1/\")) return app.fetch(req)\n  url.pathname = url.pathname.slice(\"/v1\".length)\n  const rebuilt = new Request(url.href, req)\n  carryRequestLocals(req, rebuilt)\n  return app.fetch(rebuilt)\n}"
   },
   {
     "name": "SESSION_TIERS",

@@ -52,15 +52,12 @@ app.listen(3000)`
 const HASHED_FONTS = `import { fileURLToPath } from "node:url"
 import { servePublicDir } from "@nifrajs/web"
 
-declare const build: { readonly assets: readonly string[] }
-
-// The build manifest's chunks plus the fonts loadGoogleFont wrote into public/fonts/.
-const assets = new Set(build.assets)
+// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.
 const HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/
 
-export const files = servePublicDir({
-  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
-  hashedFiles: (path) => assets.has(path) || HASHED_FONT.test(path),
+export const publicFiles = servePublicDir({
+  dir: fileURLToPath(new URL("./public/", import.meta.url)),
+  hashedFiles: [HASHED_FONT],
 })`
 
 const MIDDLEWARE = `// doc-check: skip - fragment: the use option of the createWebApp call above; @nifrajs/middleware is not installed in the docs sandbox.
@@ -165,10 +162,14 @@ export default function CustomServer() {
         </li>
         <li>
           <b>Files hashed before the build.</b> The fonts <code>loadGoogleFont</code> writes into{" "}
-          <code>public/fonts/</code> are in no manifest. <code>hashedFiles</code> also
-          takes an array of patterns or a <code>(path) =&gt; boolean</code> predicate, matched on the
-          encoded URL path; a predicate combines the manifest with a pattern, as below. A global or
-          sticky pattern is used without its flag, so <code>lastIndex</code> never skips a match.
+          <code>public/fonts/</code> are in no manifest, so the <code>public/</code> handler names
+          them with an array of patterns, matched on the encoded URL path, as below. A handler that
+          serves both the build and such files takes a <code>(path) =&gt; boolean</code> predicate
+          instead, with <code>assets</code> as <code>new Set(build.assets)</code>:{" "}
+          <code>(path) =&gt; assets.has(path) || HASHED_FONT.test(path)</code>. A global or
+          sticky pattern in the array is used without that flag, so <code>lastIndex</code> never
+          skips a match; a predicate runs as written, so keep the patterns it tests free of{" "}
+          <code>g</code> and <code>y</code>.
         </li>
         <li>
           <b>Where it runs.</b> Register the handlers with <code>app.onRequest</code> inside{" "}
