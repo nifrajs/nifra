@@ -436,6 +436,16 @@ describe("createWebApp({ nonce, cspHeader })", () => {
     expect(res.headers.get("cache-control")).toBe("private, no-store")
   })
 
+  test("a nonce outside the CSP base64 grammar never reaches the header", async () => {
+    const app = nonceApp(
+      manifestOf({ "/": () => ({ default: "home" }) }),
+      createNonceResolver({ generate: () => "x' 'unsafe-inline" }),
+    )
+    const res = await app.fetch(new Request("http://x/"))
+    const policy = res.headers.get("content-security-policy") ?? ""
+    expect([res.status >= 500, policy.includes("unsafe-inline")]).toEqual([true, false])
+  })
+
   test("an API response gets no header, and `undefined` from the callback sends none", async () => {
     const withApi = (cspHeader: typeof header | (() => undefined)) =>
       createWebApp({

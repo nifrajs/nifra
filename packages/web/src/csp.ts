@@ -213,6 +213,9 @@ export function cspDocumentNonce(
 export const cspCandidateNonce = (policy: CspPolicy, requested: string | undefined): string =>
   requested ?? policy[CSP_POLICY].generate()
 
+// CSP's base64-value grammar: any other character would end the source and write more policy.
+const NONCE_VALUE = /^[A-Za-z0-9+/_-]+={0,2}$/
+
 /** The Content-Security-Policy value for one document, or `undefined` when the policy sends none. */
 export function cspHeaderValue(
   policy: CspPolicy,
@@ -221,9 +224,12 @@ export function cspHeaderValue(
 ): string | undefined {
   const { sources } = preparedSources(policy, adapter)
   const state = policy[CSP_POLICY]
-  return nonce === undefined
-    ? state.header({ sources })
-    : state.header({ sources: `${sources} 'nonce-${nonce}'`, nonce })
+  if (nonce === undefined) return state.header({ sources })
+  if (!NONCE_VALUE.test(nonce))
+    throw new TypeError(
+      "[nifra/web] a CSP nonce must be base64 or base64url characters (A-Z a-z 0-9 + / - _, then up to two =)",
+    )
+  return state.header({ sources: `${sources} 'nonce-${nonce}'`, nonce })
 }
 
 /** The per-request nonce source for a page executor under `policy`: generated eagerly so `meta` can
