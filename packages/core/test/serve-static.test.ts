@@ -2,6 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { serveStatic } from "../src/serve-static.ts"
 import { server } from "../src/server.ts"
 import {
+  HASHED_FILES_EXPECTED,
+  HASHED_FILES_REFUSAL,
+  hashedFilesAnswers,
+  hashedFilesRefusals,
   STATIC_MOUNT_CASES,
   STATIC_MOUNTS_APP,
   staticMountAnswer,
@@ -113,30 +117,13 @@ test("each body lane answers whole, ranged and HEAD requests with the file's byt
 })
 
 test("hashedFiles marks the files it names immutable, in each form it takes", async () => {
-  const dir = new URL("./fixtures/static-mounts/two/", import.meta.url)
-  const IMMUTABLE = "public, max-age=31536000, immutable"
-  const forms = {
-    paths: ["/only-two.txt"],
-    patterns: [/only-two/],
-    // Tested twice below: a global RegExp must not keep `lastIndex` between paths.
-    global: [/only-two/g],
-    predicate: (path: string) => path === "/only-two.txt",
+  for (const [form, answers] of Object.entries(await hashedFilesAnswers(serveStatic))) {
+    expect([form, answers]).toEqual([form, HASHED_FILES_EXPECTED])
   }
-  for (const [name, hashedFiles] of Object.entries(forms)) {
-    const handler = serveStatic({ dir, prefix: "/", hashedFiles, cacheControl: "no-cache" })
-    const cacheOf = async (path: string) =>
-      (await handler(new Request(`http://x${path}`)))?.headers.get("cache-control")
-    expect([name, await cacheOf("/only-two.txt"), await cacheOf("/only-two.txt")]).toEqual([
-      name,
-      IMMUTABLE,
-      IMMUTABLE,
-    ])
-    expect([name, await cacheOf("/shared.txt")]).toEqual([name, "no-cache"])
-  }
-  for (const hashedFiles of [new Map([["/only-two.txt", false]]), [1], 7]) {
-    expect(() => Reflect.apply(serveStatic, undefined, [{ dir, hashedFiles }])).toThrow(
-      "hashedFiles must be paths, an array of RegExps, or a function",
-    )
+  for (const message of hashedFilesRefusals((options) =>
+    Reflect.apply(serveStatic, undefined, [options]),
+  )) {
+    expect(message).toContain(HASHED_FILES_REFUSAL)
   }
 })
 

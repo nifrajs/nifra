@@ -1,5 +1,9 @@
 import { server } from "@nifrajs/core"
 import {
+  HASHED_FILES_EXPECTED,
+  HASHED_FILES_REFUSAL,
+  hashedFilesAnswers,
+  hashedFilesRefusals,
   STATIC_MOUNT_CASES,
   STATIC_MOUNTS_APP,
   staticMountAnswer,
@@ -68,5 +72,16 @@ Deno.test("a file that grows after its stat is sent at the stat's length, and th
   } finally {
     await running.stop()
     await Deno.remove(dir, { recursive: true })
+  }
+})
+
+Deno.test("hashedFiles marks the files it names immutable, in each form it takes", async () => {
+  for (const [form, answers] of Object.entries(await hashedFilesAnswers(serveStatic))) {
+    assertEquals(answers, HASHED_FILES_EXPECTED, form)
+  }
+  for (const message of hashedFilesRefusals((options) =>
+    Reflect.apply(serveStatic, undefined, [options]),
+  )) {
+    assertEquals(message?.includes(HASHED_FILES_REFUSAL), true, `refused: ${message}`)
   }
 })

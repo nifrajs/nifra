@@ -15,6 +15,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import {
+  HASHED_FILES_EXPECTED,
+  HASHED_FILES_REFUSAL,
+  hashedFilesAnswers,
+  hashedFilesRefusals,
   STATIC_MOUNT_CASES,
   STATIC_MOUNTS_APP,
   staticMountAnswer,
@@ -736,6 +740,17 @@ test("a file that grows after its stat is sent at the stat's length", async () =
     expect((await response?.arrayBuffer())?.byteLength).toBe(size)
   } finally {
     await rm(name, { force: true })
+  }
+})
+
+test("hashedFiles marks the files it names immutable, in each form it takes", async () => {
+  for (const [form, answers] of Object.entries(await hashedFilesAnswers(serveStatic))) {
+    expect([form, answers]).toEqual([form, HASHED_FILES_EXPECTED])
+  }
+  for (const message of hashedFilesRefusals((options) =>
+    Reflect.apply(serveStatic, undefined, [options]),
+  )) {
+    expect(message).toContain(HASHED_FILES_REFUSAL)
   }
 })
 

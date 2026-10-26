@@ -6,7 +6,7 @@
  * `fixtures/static-mounts/`, checked in so Deno's suite reads it with a read grant for that folder
  * alone. The file imports only types: each suite passes its own `serveStatic` the same list.
  */
-import type { ServeStaticOptions } from "../src/static-file.ts"
+import type { HashedFiles, ServeStaticOptions } from "../src/static-file.ts"
 
 /** What the app answers a request no mount takes. */
 export const STATIC_MOUNTS_APP = "answered by the app"
@@ -144,4 +144,60 @@ export async function staticMountAnswer(
   const headers: Record<string, string | null> = {}
   for (const name of Object.keys(expected.headers)) headers[name] = response.headers.get(name)
   return { status: response.status, body, headers }
+}
+
+type StaticHandler = (request: Request) => Promise<Response | undefined> | undefined
+
+/** Each form `hashedFiles` takes, each naming `/only-two.txt` alone. */
+const HASHED_FILES_FORMS: Readonly<Record<string, HashedFiles>> = {
+  paths: ["/only-two.txt"],
+  patterns: [/only-two/],
+  // Asked twice: a global RegExp must not keep `lastIndex` between paths.
+  global: [/only-two/g],
+  predicate: (path) => path === "/only-two.txt",
+}
+
+/** What {@link hashedFilesAnswers} reads for every form: the named file twice, then another. */
+export const HASHED_FILES_EXPECTED = [IMMUTABLE, IMMUTABLE, "no-cache"]
+
+/** Values `hashedFiles` refuses with a TypeError carrying {@link HASHED_FILES_REFUSAL}. */
+export const HASHED_FILES_REFUSED: readonly unknown[] = [
+  new Map([["/only-two.txt", false]]),
+  [1],
+  7,
+]
+export const HASHED_FILES_REFUSAL = "hashedFiles must be paths, an array of RegExps, or a function"
+
+/** The `cache-control` each form of `hashedFiles` gives, by form, through the suite's `serveStatic`. */
+export async function hashedFilesAnswers(
+  serveStatic: (options: ServeStaticOptions) => StaticHandler,
+): Promise<Record<string, (string | null | undefined)[]>> {
+  const dir = new URL("./fixtures/static-mounts/two/", import.meta.url)
+  const answers: Record<string, (string | null | undefined)[]> = {}
+  for (const [name, hashedFiles] of Object.entries(HASHED_FILES_FORMS)) {
+    const handler = serveStatic({ dir, prefix: "/", hashedFiles, cacheControl: "no-cache" })
+    const cacheOf = async (path: string) =>
+      (await handler(new Request(`http://x${path}`)))?.headers.get("cache-control")
+    answers[name] = [
+      await cacheOf("/only-two.txt"),
+      await cacheOf("/only-two.txt"),
+      await cacheOf("/shared.txt"),
+    ]
+  }
+  return answers
+}
+
+/** The message each refused `hashedFiles` value throws, or `undefined` when one is accepted. */
+export function hashedFilesRefusals(
+  serveStatic: (options: unknown) => unknown,
+): (string | undefined)[] {
+  const dir = new URL("./fixtures/static-mounts/two/", import.meta.url)
+  return HASHED_FILES_REFUSED.map((hashedFiles) => {
+    try {
+      serveStatic({ dir, hashedFiles })
+      return undefined
+    } catch (error) {
+      return error instanceof TypeError ? error.message : String(error)
+    }
+  })
 }
