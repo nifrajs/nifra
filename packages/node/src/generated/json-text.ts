@@ -32,31 +32,44 @@ const isPlainDate = (value: object): value is Date =>
 const PROBE_DEPTH = 4
 const PROBE_FIELDS = 64
 
+// The value of `key` on `value`, or `ACCESSOR` for an accessor, whose getter only the serializer may
+// run. `__lookupGetter__` answers without building a descriptor, which costs more than the read.
+const ACCESSOR: unique symbol = Symbol()
+const lookupGetter: (this: object, key: PropertyKey) => unknown = Reflect.get(
+  Object.prototype,
+  "__lookupGetter__",
+)
+const fieldOf = (value: object, key: PropertyKey): unknown =>
+  lookupGetter.call(value, key) === undefined
+    ? // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a property of any object may be read by key; no getter backs this one
+      (value as Record<PropertyKey, unknown>)[key]
+    : ACCESSOR
+
 /**
  * Whether a plain `Date` sits on `value`'s first path: an object's fields, a list's first item, a few
- * levels down. Allocates nothing, so a payload whose first row holds none costs only this look.
+ * levels down, with no accessor on the way.
  */
 function datesAhead(value: object, depth: number): boolean {
   if (value instanceof Date) return isPlainDate(value)
   if (depth === 0) return false
   if (Array.isArray(value)) {
-    const first: unknown = value[0]
+    const first = fieldOf(value, 0)
     return typeof first === "object" && first !== null && datesAhead(first, depth - 1)
   }
-  let fields = 0
-  for (const key in value) {
-    if (++fields > PROBE_FIELDS) return false
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `key` was enumerated from `value`; `Reflect.get` here halves the speed of this for-in.
-    const field: unknown = (value as Record<string, unknown>)[key]
+  const keys = Object.keys(value)
+  if (keys.length > PROBE_FIELDS) return false
+  for (const key of keys) {
+    const field = fieldOf(value, key)
+    if (field === ACCESSOR) return false
     if (typeof field === "object" && field !== null && datesAhead(field, depth - 1)) return true
   }
   return false
 }
 
 /**
- * `value` with each plain `Date` in it written as its JSON, copying only the containers above one.
- * What has a hook of its own, a byte view, a list of another class and a cycle are left as they are,
- * for the serializer.
+ * `value` with each plain `Date` in it written as its JSON, every container under it copied first: a
+ * copy reads each getter once, and the serializer reads only copies. What has a hook of its own, a byte
+ * view, a list of another class and a cycle are left as they are, for the serializer.
  */
 function datesWritten(value: object, path: object[]): unknown {
   if (isPlainDate(value)) return Number.isFinite(value.valueOf()) ? value.toISOString() : null
@@ -66,56 +79,47 @@ function datesWritten(value: object, path: object[]): unknown {
     path.includes(value)
   )
     return value
-  path.push(value)
-  let out: object | undefined
   if (Array.isArray(value)) {
-    if (Object.getPrototypeOf(value) === Array.prototype) {
-      let items: unknown[] | undefined
-      for (let i = 0; i < value.length; i++) {
-        const item: unknown = value[i]
-        if (typeof item !== "object" || item === null) continue
-        const written = datesWritten(item, path)
-        if (written === item) continue
-        items ??= value.slice()
-        items[i] = written
-      }
-      out = items
+    if (Object.getPrototypeOf(value) !== Array.prototype) return value
+    path.push(value)
+    const items: unknown[] = value.slice()
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (typeof item === "object" && item !== null) items[i] = datesWritten(item, path)
     }
-  } else {
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every key read below comes from `Object.keys(value)`; `Reflect.get` costs a call per field.
-    const record = value as Record<string, unknown>
-    let fields: Record<string, unknown> | undefined
-    for (const name of Object.keys(record)) {
-      const field = record[name]
-      if (typeof field !== "object" || field === null) continue
-      const written = datesWritten(field, path)
-      if (written === field) continue
-      // A spread copies the own enumerable fields JSON writes, faster than one assignment each.
-      fields ??= { ...record }
-      if (name === "__proto__")
-        Object.defineProperty(fields, name, {
-          value: written,
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        })
-      else fields[name] = written
-    }
-    out = fields
+    path.pop()
+    return items
+  }
+  path.push(value)
+  // A spread copies the own enumerable fields JSON writes, faster than one assignment each.
+  const fields: Record<string, unknown> = { ...value }
+  for (const name of Object.keys(fields)) {
+    const field = fields[name]
+    if (typeof field !== "object" || field === null) continue
+    const written = datesWritten(field, path)
+    if (written === field) continue
+    if (name === "__proto__")
+      Object.defineProperty(fields, name, {
+        value: written,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
+    else fields[name] = written
   }
   path.pop()
-  return out ?? value
+  return fields
 }
 
 /**
  * `value` as `JSON.stringify` takes it, with each plain `Date` already written when its first row
- * holds one: the engine's serializer leaves its fast path at a `Date`, several times slower. The probe
- * and the copy read those fields once more than the serializer does.
+ * holds one: the engine's serializer leaves its fast path at a `Date`, several times slower. A value
+ * holding an accessor goes as it came, so each getter runs once, in the serializer.
  */
-export const withDatesWritten = (value: unknown): unknown =>
-  typeof value === "object" && value !== null && datesAhead(value, PROBE_DEPTH)
-    ? datesWritten(value, [])
-    : value
+export function withDatesWritten(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || !datesAhead(value, PROBE_DEPTH)) return value
+  return datesWritten(value, [])
+}
 
 /**
  * `JSON.stringify`, with each `bigint` written as its decimal string. Typed as the lib types

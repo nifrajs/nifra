@@ -179,3 +179,52 @@ describe("a Date in a JSON answer", () => {
     }
   })
 })
+
+describe("an accessor in a JSON answer", () => {
+  /** A record whose `name` field is an accessor, counting its reads; `first` is what the first read gets. */
+  const counted = (first: unknown, later: unknown) => {
+    let reads = 0
+    const record = Object.defineProperty({ id: 1, at: AT }, "late", {
+      get: () => (reads++ === 0 ? first : later),
+      enumerable: true,
+    })
+    return { record, reads: () => reads }
+  }
+  const placements: ReadonlyArray<readonly [string, (record: object) => unknown]> = [
+    ["the first row", (record) => [record]],
+    ["a later row", (record) => [{ id: 0, at: AT }, record]],
+    ["nested", (record) => ({ page: { items: [record] } })],
+    ["the top", (record) => record],
+  ]
+
+  test("has its getter run once, by the serializer, on every writer", async () => {
+    for (const [where, place] of placements) {
+      for (const write of [
+        (value: unknown) => jsonText(value),
+        (value: unknown) => jsonResponse(value).text(),
+      ]) {
+        const { record, reads } = counted(AT, "later")
+        const value = place(record)
+        const text = await write(value)
+        expect({ where, reads: reads(), text }).toEqual({
+          where,
+          reads: 1,
+          text: expected(place(counted(AT, "later").record)),
+        })
+      }
+    }
+  })
+
+  test("an accessor list item has its getter run once", () => {
+    let reads = 0
+    const rows = Object.defineProperty([{ at: AT }, null], 1, {
+      get: () => {
+        reads++
+        return { at: AT }
+      },
+      enumerable: true,
+    })
+    expect(jsonText(rows)).toBe(expected([{ at: AT }, { at: AT }]))
+    expect(reads).toBe(1)
+  })
+})

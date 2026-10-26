@@ -286,7 +286,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // bare 38,472 -> 38,862 B, idempotency 43,247 -> 43,629, effect-ledger 40,488 -> 40,892, sse
   // 39,333 -> 39,722, mcp 38,732 -> 39,131, valibot 39,438 -> 39,858, typebox-t 65,436 -> 65,833,
   // typebox-form 70,416 -> 70,797 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step.
-  "nifra-bare": 38.0,
+  // That writer reading each getter once, the accessor check and the copy-first walk: bare 38,862 ->
+  // 38,920 B, sse 39,722 -> 39,786, typebox-t 65,833 -> 65,915, typebox-form 70,797 -> 70,865
+  // (Bun 1.4.4); only these four caps are crossed.
+  "nifra-bare": 38.1,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -304,11 +307,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-effect-ledger": 40.0,
   "nifra-mcp": 38.3,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.8,
+  "nifra-sse": 38.9,
   "nifra-valibot": 39.0,
-  "nifra-typebox-t": 64.3,
+  "nifra-typebox-t": 64.4,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 69.2,
+  "nifra-typebox-form": 69.3,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
@@ -336,8 +339,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // `document.cookie` read costs about 2.4 us in Chromium: 20,228 -> 20,519 B (Bun 1.4.4). Handles
   // and fetchers a page kept check the epoch on every read, and the page on screen reloads when the
   // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4). A plain
-  // `Date` in the plain transport codec written ahead of the serializer: 20,791 -> 21,157 B (Bun 1.4.4).
-  "nifra-web-client": 20.7,
+  // `Date` in the plain transport codec written ahead of the serializer: 20,791 -> 21,157 B, each getter
+  // there read once: 21,218 B (Bun 1.4.4).
+  "nifra-web-client": 20.8,
   "nifra-i18n": 4.3,
 }
 
