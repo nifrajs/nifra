@@ -47,6 +47,7 @@ import {
   streamedLastModifiedOf,
 } from "./generated/static-file.ts"
 import { assertCloseArgs } from "./generated/ws-close.ts"
+import type { NifraWs, NifraWsData, WsUpgradeOutcome } from "./generated/ws-types.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
 import { writeTextFrame } from "./ws-frame.ts"
@@ -67,56 +68,6 @@ export interface FetchHandler {
     platform?: NodePlatform,
   ): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
 }
-
-// --- WebSocket types: structurally mirrored from @nifrajs/core. The adapter stays dependency-free;
-// the runtime outcome contract below is generated from core as a separate type-only artifact. ---
-
-/** A received frame, normalized: text → `string`, binary → `Uint8Array`. */
-type NifraWsData = string | Uint8Array
-
-/** The portable socket a nifra WS handler sees (mirror of core's `NifraWebSocket`). */
-interface NifraWs {
-  send(data: string | ArrayBufferView | ArrayBuffer): void
-  close(code?: number, reason?: string): void
-  readonly readyState: number
-  subscribe(topic: string): void
-  unsubscribe(topic: string): void
-  data: unknown
-  readonly raw: unknown
-}
-
-/** Mirror of core's `TopicRegistry` surface - the app's pub/sub the adapter wires `ws.subscribe` to. */
-interface WsPubSub {
-  subscribe(topic: string, ws: NifraWs): void
-  unsubscribe(topic: string, ws: NifraWs): void
-  unsubscribeAll(ws: NifraWs): void
-}
-
-/** A nifra WS route's lifecycle (mirror of core's `WebSocketHandler` - the post-upgrade callbacks). */
-interface NifraWsHandler {
-  open?(ws: NifraWs): void | Promise<void>
-  message?(ws: NifraWs, data: NifraWsData): void | Promise<void>
-  close?(ws: NifraWs, code: number, reason: string): void | Promise<void>
-  error?(ws: NifraWs, error: unknown): void | Promise<void>
-}
-
-/** Mirror of core's `WebSocketUpgradeOutcome` - what `resolveWebSocketUpgrade` returns. */
-type WsUpgradeOutcome =
-  | { readonly kind: "pass" }
-  | { readonly kind: "reject"; readonly response: Response }
-  | {
-      readonly kind: "upgrade"
-      readonly handler: NifraWsHandler
-      readonly data: unknown
-      readonly pubsub: WsPubSub
-      readonly maxPayloadBytes?: number
-      /** Builds `ws.send` with the route's outbound contract (`validateSend`). */
-      sender?(
-        handler: NifraWsHandler,
-        send: (payload: string | ArrayBufferView | ArrayBuffer) => void,
-        onError: (error: unknown) => void,
-      ): (payload: string | ArrayBufferView | ArrayBuffer) => void
-    }
 
 /** Structural view of the `ws` package's `WebSocket` (no `@types/ws` dependency - see `loadWsServer`). */
 interface WsSocket {

@@ -59,6 +59,12 @@ export const VENDORED: readonly VendoredCopy[] = [
     why: "Copied so each adapter refuses the closes and messages core refuses, without depending on it.",
   },
   {
+    source: "packages/core/src/server/ws-adapter-view.ts",
+    targets: ["packages/deno/src/generated/ws-types.ts", "packages/node/src/generated/ws-types.ts"],
+    symbols: ["NifraWsData", "NifraWs", "WsPubSub", "NifraWsHandler", "WsUpgradeOutcome"],
+    why: "This file is type-only so each adapter reads core's WebSocket outcome without depending on it.",
+  },
+  {
     source: "packages/core/src/server/request-target.ts",
     targets: ["packages/node/src/generated/request-target.ts"],
     why: "Copied so @nifrajs/node resolves a raw target exactly as core does, without depending on it.",
