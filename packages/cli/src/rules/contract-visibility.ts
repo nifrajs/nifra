@@ -8,12 +8,13 @@
  * A contract imported from a workspace package is read through that package's `exports`.
  * Re-exports on the way to a contract, and `...operations` spreads inside one, are followed.
  */
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import type * as TSApi from "typescript"
 import { BACKEND_APP_FILE } from "../app-files.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { createSpecifierResolver, type SpecifierResolver } from "../internal/project-specifiers.ts"
+import { realpathOrSelf } from "../internal/realpath-or-self.ts"
 import { scriptKindOf } from "../internal/script-kind.ts"
 import { createExportedFileResolver } from "../internal/workspace-packages.ts"
 import type { CheckRule } from "./index.ts"
@@ -233,13 +234,7 @@ export const contractVisibilityRule: CheckRule = {
       return undefined
     }
     // The resolver answers with real paths, so the root is read as one to name files project-relative.
-    const realRoot = (() => {
-      try {
-        return realpathSync(ctx.root)
-      } catch {
-        return ctx.root
-      }
-    })()
+    const realRoot = realpathOrSelf(ctx.root)
     const parsedCache = new Map<string, Parsed | undefined>()
     /** A project file, by its project-relative name, parsed with its contract bindings. */
     const parse = (file: string, text: string | undefined): Parsed | undefined => {

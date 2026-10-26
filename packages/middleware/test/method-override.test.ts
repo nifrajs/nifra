@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
+import { requestLocal } from "@nifrajs/core/server"
 import { methodOverride } from "../src/index.ts"
 
 describe("methodOverride()", () => {
@@ -21,6 +22,23 @@ describe("methodOverride()", () => {
     )
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ method: "PATCH", body: { ok: true } })
+  })
+
+  test("the overridden request keeps the request's locals", async () => {
+    const id = requestLocal<string>()
+    const app = server()
+      .onRequest((req) => {
+        id.set(req, "r-1")
+      })
+      .use(methodOverride())
+      .delete("/items", (c) => ({ id: id.get(c.req) ?? null }))
+    const res = await app.fetch(
+      new Request("http://x/items", {
+        method: "POST",
+        headers: { "x-http-method-override": "DELETE" },
+      }),
+    )
+    expect(await res.json()).toEqual({ id: "r-1" })
   })
 
   test("ignores non-source methods by default", async () => {

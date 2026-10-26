@@ -1133,12 +1133,16 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NIFRA_AGENT_INSTRUCTIONS** _(const)_ - `NIFRA_AGENT_INSTRUCTIONS: string`
   Short, provider-neutral instructions injected into Pi only when the optional agent is used.
 - **NativeApprovalPort** _(interface)_ - `interface NativeApprovalPort`
+- **NativeApprovalRequest** _(interface)_ - `interface NativeApprovalRequest`
+  One tool call an approval port is asked about.
 - **NativeGatewayModelPortOptions** _(interface)_ - `interface NativeGatewayModelPortOptions`
 - **NativeMessage** _(interface)_ - `interface NativeMessage`
 - **NativeModelChunk** _(type)_ - `type NativeModelChunk`
 - **NativeModelPort** _(interface)_ - `interface NativeModelPort`
 - **NativeModelRequest** _(interface)_ - `interface NativeModelRequest`
 - **NativeModelResponse** _(type)_ - `type NativeModelResponse = | { readonly type: "text"; readonly text: string } | { readonly type: "tool"; readonly name: string; readonly input: unknown }`
+- **NativeReviewAnswer** _(type)_ - `type NativeReviewAnswer = | { readonly decision: "allow" } | { readonly decision: "deny"; readonly reason: string } | { readonly decision: "ask" }`
+  A review's decision on one tool call. A deny's reason reaches the model.
 - **NativeTool** _(interface)_ - `interface NativeTool`
 - **NifraAgentTool** _(interface)_ - `interface NifraAgentTool`
 - **NifraBackend** _(class)_ - `class NifraBackend`
@@ -1696,6 +1700,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
+  One request-local slot from {@link requestLocal}.
 - **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
   The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
@@ -1778,6 +1784,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
 - **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
   Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
+- **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
+  Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is kept where…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -1812,6 +1820,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
+- **requestLocal** _(function)_ - `requestLocal: <T>() => RequestLocal<T>`
+  A slot for one per-request value - a verified client IP, a request id, an auth decision - that survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP, target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any other wa…
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`
@@ -1844,6 +1854,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/assurance`
 
+- **AppliedInvariantSetup** _(interface)_ - `interface AppliedInvariantSetup`
+  One L4 run's options once `invariants.setup` has provisioned its target.
 - **AssuranceAttachment** _(type)_ - `type AssuranceAttachment = Omit<AssuranceDeclaration, "scope" | "provenance"> & { readonly scope?: AssuranceScope }`
   Evidence published from OUTSIDE the plugin chain - a deployment shell, a mount site, the call that hands the app to `serve`. `scope` defaults to `global` (retroactive, app-wide) because the shell runs after every route is registered, and `provenance` is always stamped `declared`: nifra did not inst…
 - **AssuranceConfig** _(interface)_ - `interface AssuranceConfig`
@@ -1879,7 +1891,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **InvariantRunOptions** _(interface)_ - `interface InvariantRunOptions`
   Fixture options handed to the L4 contract runner (`runAdversarialContract` in `@nifrajs/testing`).
 - **InvariantSetup** _(type)_ - `type InvariantSetup = () => Promise<InvariantSetupResult | undefined | void>`
-  Provisions a throwaway L4 target. Called once, before the first L4 request - never on import.
+  Provisions a throwaway L4 target. Called once per L4 run, before its first case is generated, so the witnesses it returns are known to every case - never on import.
 - **InvariantSetupResult** _(interface)_ - `interface InvariantSetupResult`
   What `invariants.setup` provisions for one L4 run.
 - **InvariantsConfig** _(type)_ - `type InvariantsConfig = InvariantRunOptions & ( | { readonly executor: InvariantExecutor; readonly setup?: InvariantSetup } | { readonly executor?: InvariantExecutor; readonly setup: InvariantSetup } )`
@@ -1890,6 +1902,8 @@ Every public export of every package and documented subpath - name, kind, signat
   How much a {@link securityBaseline} demands. Each level is a superset of the one before it, so raising the level only ever adds findings.
 - **SecurityBaselineOptions** _(interface)_ - `interface SecurityBaselineOptions`
   Tuning for {@link securityBaseline}. Every knob only ever tightens the policy.
+- **applyInvariantSetup** _(function)_ - `applyInvariantSetup: (invariants: InvariantsConfig, result: InvariantSetupResult | undefined) => AppliedInvariantSetup`
+  Merge what `invariants.setup` returned over the static `invariants`, validating it the way `defineAssuranceConfig` validates the static fields: its executor and prepareRequest replace the static ones, and its witnesses are merged over theirs, a key in both taking the setup's. For a harness that run…
 - **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void`
   Publish enforcement evidence from OUTSIDE the plugin chain - the deployment shell that wraps the app, the mount site, or the call that hands it to `serve`. When the thing doing the enforcing is not a nifra plugin (a gateway, a service mesh, an outer framework), the alternative is switching the affe…
 - **defineAssuranceConfig** _(function)_ - `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
@@ -2190,7 +2204,6 @@ Every public export of every package and documented subpath - name, kind, signat
 - **BoundDataPort** _(interface)_ - `interface BoundDataPort<Contract extends DataContract>`
   A data port bound to one request context; every operation emits capability evidence first.
 - **DATA_CAPABILITIES** _(const)_ - `DATA_CAPABILITIES: Readonly<{ readonly read: "db.read"; readonly write: "db.write"; }>`
-  Public, token-only data access contracts. Durable adapters and RLS policy enforcement stay outside this package; this subpath defines the typed seam they implement.
 - **DataAccess** _(type)_ - `type DataAccess = keyof typeof DATA_CAPABILITIES`
 - **DataCapability** _(type)_ - `type DataCapability = (typeof DATA_CAPABILITIES)[DataAccess]`
 - **DataCapabilityBeacon** _(type)_ - `type DataCapabilityBeacon = (context: object, capability: DataCapability) => void`
@@ -3015,6 +3028,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
+  One request-local slot from {@link requestLocal}.
 - **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
   The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
@@ -3094,6 +3109,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
 - **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
   Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
+- **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
+  Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is kept where…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -3128,6 +3145,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
+- **requestLocal** _(function)_ - `requestLocal: <T>() => RequestLocal<T>`
+  A slot for one per-request value - a verified client IP, a request id, an auth decision - that survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP, target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any other wa…
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`
@@ -3725,7 +3744,6 @@ _No named exports (side-effect entrypoint)._
 - **ImageProps** _(interface)_ - `interface ImageProps`
 - **OgImageOptions** _(interface)_ - `interface OgImageOptions`
 - **OgImageRasterized** _(interface)_ - `interface OgImageRasterized`
-  Dependency-free Open Graph image generation.
 - **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
 - **PngRenderer** _(type)_ - `type PngRenderer = (svg: string) => Uint8Array | Promise<Uint8Array>`
   A dependency-free shape implemented by SVG→PNG codecs such as Resvg, Satori, or a WASM backend.
@@ -3789,7 +3807,6 @@ _No named exports (side-effect entrypoint)._
 
 - **OgImageOptions** _(interface)_ - `interface OgImageOptions`
 - **OgImageRasterized** _(interface)_ - `interface OgImageRasterized`
-  Dependency-free Open Graph image generation.
 - **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
 - **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>`
   Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for t…
@@ -4189,7 +4206,7 @@ _No named exports (side-effect entrypoint)._
 - **isLocalPostgresHost** _(function)_ - `isLocalPostgresHost: (host: string) => boolean`
   True for `localhost`, `*.localhost`, 127.0.0.0/8 and `::1` (also as an IPv4-mapped address).
 - **lintPostgresStatement** _(function)_ - `lintPostgresStatement: (sql: string) => DbRefusal | undefined`
-  Refuse what the tokenizer layer refuses: a non-query, several statements, a denied function.
+  Refuse what the tokenizer layer refuses before connecting: a non-query, several statements, a row lock, text it cannot read safely. Functions are checked against the catalog once connected.
 - **parsePostgresUrl** _(function)_ - `parsePostgresUrl: (url: string) => PostgresTarget | DbRefusal`
   Parse a `postgres://` (or `postgresql://`) URL. Only the host, port, user, password, database and `sslmode` are read - any other parameter (`options=-c ...` included) is ignored, so a URL cannot switch off the read-only session settings.
 - **postgresHostRefusal** _(function)_ - `postgresHostRefusal: (target: PostgresTarget, allowHosts?: readonly string[]) => DbRefusal | undefined`
@@ -4197,9 +4214,9 @@ _No named exports (side-effect entrypoint)._
 - **postgresRoleRefusal** _(function)_ - `postgresRoleRefusal: (report: PostgresRoleReport, options?: { readonly allowExtensions?: readonly string[]; }) => DbRefusal | undefined`
   The role gate and the extension gate, as one decision over a {@link PostgresRoleReport}.
 - **postgresRoleSql** _(function)_ - `postgresRoleSql: (client: PostgresClient, options: PostgresRoleSqlOptions) => Promise<PostgresRoleSql | DbRefusal>`
-  Write the SQL for a login role that can read the allowed schemas and nothing else: `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions. `pg_read_all_data` is never used: it reaches every schema, present and future, and overrides a REVOKE. Not…
+  Write the SQL for a login role that can read the allowed schemas and nothing the declaration hides: `USAGE` on each allowed schema, `SELECT` on its tables plus default privileges, then a `REVOKE` for each excluded table, its partitions and children, and each view or materialized view that reads hid…
 - **queryPostgres** _(function)_ - `queryPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions) => Promise<DbRows | DbRefusal>`
-  Run one read-only query through every layer and return capped rows. A column `redaction.column` masks is refused wherever the plan uses it (selected under any alias, inside an expression, in a filter, or within a whole row); a matching result name is masked as well.
+  Run one read-only query through every layer and return capped rows. A column `redaction.column` masks is one the role may not read (the grant gate), and is refused wherever the plan uses it (selected under any alias, inside an expression, in a filter, or within a whole row); a matching result name …
 - **readPostgresSchema** _(function)_ - `readPostgresSchema: (client: PostgresClient, options: PostgresSchemaOptions) => Promise<DbSchemaReport | DbRefusal>`
   Describe the readable tables and views in the allowed schemas from `pg_catalog`, with queries this module writes (no caller SQL runs), so it works on any role: columns, primary keys, foreign keys, indexes and the planner's row estimate.
 
@@ -4290,8 +4307,10 @@ _No named exports (side-effect entrypoint)._
 - **RateLimitStore** _(interface)_ - `interface RateLimitStore`
   Counter backend. Production deploys MUST use a shared store (Redis, etc.) so the limit holds across instances - that's a user dependency, not ours, hence the interface. {@link MemoryStore} is for dev / single-instance only.
 - **RateLimitTier** _(interface)_ - `interface RateLimitTier`
-  One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it.
+  One bucket of a {@link rateLimitTiers} limiter: the requests at a `prefix` or below it.
 - **RateLimitTiersOptions** _(interface)_ - `interface RateLimitTiersOptions`
+- **RateLimiter** _(interface)_ - `interface RateLimiter`
+  A rate-limit {@link Middleware} that can name the counter a request is charged to.
 - **ReadinessCheck** _(type)_ - `type ReadinessCheck = (signal: AbortSignal) => MaybePromise<boolean>`
   One readiness check: resolve `true` when the dependency can serve. A `false`, a throw and a timeout all fail it. `signal` aborts at the check's timeout, so a ping can cancel its own I/O instead of leaving a connection half-used.
 - **ReadinessCheckOptions** _(interface)_ - `interface ReadinessCheckOptions`
@@ -4388,10 +4407,10 @@ _No named exports (side-effect entrypoint)._
   Opt-in RFC 9457 formatting for Nifra's structured error envelope.
 - **rangeResponse** _(function)_ - `rangeResponse: (request: Request, body: string | ArrayBuffer | ArrayBufferView | Uint8Array, options?: RangeResponseOptions) => Response`
   Create a standards-shaped byte representation response with Range, If-Range, and conditional validator handling. The input is already caller-owned memory; this helper does not read or retain external state. Multiple ranges use `multipart/byteranges` and adjacent ranges are coalesced.
-- **rateLimit** _(function)_ - `rateLimit: (options: RateLimitOptions) => Middleware`
+- **rateLimit** _(function)_ - `rateLimit: (options: RateLimitOptions) => RateLimiter`
   Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it also covers 404s); over the limit → `429` + `Retry-After`. Every response carries `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
-- **rateLimitTiers** _(function)_ - `rateLimitTiers: (options: RateLimitTiersOptions) => Middleware`
-  Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is charged to at most one bucket: the tier with the longest `prefix` that is the request's path or an ancestor of it, else the `floor`, else none when there is no floor. Tiers never stack, so a tier may s…
+- **rateLimitTiers** _(function)_ - `rateLimitTiers: (options: RateLimitTiersOptions) => RateLimiter`
+  Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is charged to at most one bucket: the tier owning the longest prefix that is the request's path or an ancestor of it, across every tier's prefixes, else the `floor`, else none when there is no floor. Tier…
 - **requestId** _(function)_ - `requestId: (options?: RequestIdOptions) => ContextPlugin<{ requestId: string; }>`
   A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed, threaded by `derive`), and echoes it on EVERY response leaving the app - handler-returned raw `Response`s…
 - **responseCache** _(const)_ - `responseCache: (options: CacheOptions) => Middleware`
@@ -5269,6 +5288,8 @@ _No named exports (side-effect entrypoint)._
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
 - **HANDOVER_ID** _(const)_ - `HANDOVER_ID: "__nifra-handover"`
   `id` of the inert `<script type="application/json">` a hydrating document hands its page state over in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
+- **HashedFiles** _(type)_ - `type HashedFiles = ReadonlySet<string> | readonly RegExp[] | ((pathname: string) => boolean)`
+  Which files {@link ServePublicDirOptions.hashedFiles} names: paths, patterns, or a predicate.
 - **HostPolicy** _(interface)_ - `interface HostPolicy`
 - **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions`
 - **HostPolicyRule** _(interface)_ - `interface HostPolicyRule`
@@ -7926,6 +7947,8 @@ _No named exports (side-effect entrypoint)._
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
+  One request-local slot from {@link requestLocal}.
 - **RequestPath** _(type)_ - `type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never`
   The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``, `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``. Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}` is …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
@@ -8008,6 +8031,8 @@ _No named exports (side-effect entrypoint)._
 - **authenticated** _(function)_ - `authenticated: <Principal>(principal: Principal) => AuthenticationSuccess<Principal>`
 - **beforeHandler** _(function)_ - `beforeHandler: <H extends (context: Context) => unknown>(hook: H) => H`
   Mark a `beforeHandle` hook to run just before the handler: a guard registered after it in the same scope still goes ahead of it, so it only sees requests every guard admitted. A hook that answers from stored state (an idempotency replay) needs this, or it would answer ahead of a later guard.
+- **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
+  Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is kept where…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
@@ -8042,6 +8067,8 @@ _No named exports (side-effect entrypoint)._
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
   The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
+- **requestLocal** _(function)_ - `requestLocal: <T>() => RequestLocal<T>`
+  A slot for one per-request value - a verified client IP, a request id, an auth decision - that survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP, target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any other wa…
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **routeTemplateOf** _(function)_ - `routeTemplateOf: (app: { routes(): ReadonlyArray<RouteDescriptor>; }) => (method: string, path: string) => string | undefined`

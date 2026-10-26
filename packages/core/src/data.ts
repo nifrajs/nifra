@@ -1,6 +1,8 @@
 /** Public, token-only data access contracts. Durable adapters and RLS policy enforcement stay outside
  * this package; this subpath defines the typed seam they implement. */
 
+import { hasControlCharacter } from "./internal/control-character.ts"
+
 export const DATA_CAPABILITIES = Object.freeze({
   read: "db.read",
   write: "db.write",
@@ -177,14 +179,6 @@ function assertToken(value: string, label: string): string {
     throw new TypeError(`data: ${label} must be a bounded opaque token`)
   }
   return value
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index)
-    if (code <= 31 || code === 127) return true
-  }
-  return false
 }
 
 /** Create a bounded, opaque RLS/equivalent policy scope for a data adapter. */

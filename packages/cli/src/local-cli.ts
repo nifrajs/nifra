@@ -52,6 +52,18 @@ function ownCore(): string | undefined {
 }
 
 /**
+ * The project's `@nifrajs/core` when this CLI runs another copy - a `bunx` of a new release before the
+ * project installs it, say - else `undefined`. Not installed in the project counts as another copy.
+ */
+export function otherProjectCore(cwd: string): { readonly project?: string } | undefined {
+  const own = ownCore()
+  if (own === undefined) return undefined
+  const project = projectCore(cwd)
+  if (project === own) return undefined
+  return project === undefined ? {} : { project }
+}
+
+/**
  * Run `command` through the project's own CLI when this one is another install. Resolves to the
  * child's exit code, or `undefined` when this process should run the command itself: then, if the
  * project resolves another `@nifrajs/core` than this CLI, it warns with both paths first.

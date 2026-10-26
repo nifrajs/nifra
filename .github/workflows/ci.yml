@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [static, coverage, tests, postgres, cli-isolation, docs, site, packages, consumers, cold-start]
+        group: [static, coverage, tests, postgres, postgres-18, cli-isolation, docs, site, packages, consumers, cold-start]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -82,11 +82,32 @@ jobs:
         env:
           NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
 
-      - name: Live Postgres suites (mcp-db and nifra db)
+      # The runner's server is PostgreSQL 16; the grant gate and the function allowlist read catalogs
+      # that change between majors, so the same suites run against the newest one as well.
+      - name: Start PostgreSQL 18
+        if: matrix.group == 'postgres-18'
+        run: |
+          docker run -d --name nifra-pg18 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:55432:5432 \
+            postgres:18@sha256:1a5b3e745bbd82d6deb146505e504da3c2f248cac15e431951b148fbe4f8613a
+          for _ in $(seq 60); do
+            pg_isready -q -h 127.0.0.1 -p 55432 -U postgres && break
+            sleep 1
+          done
+          test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
+        env:
+          NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:55432/postgres
+
+      - name: Live Postgres suites (mcp-db, the canary oracle and nifra db)
         if: matrix.group == 'postgres'
         run: bun run test:postgres
         env:
           NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
+
+      - name: Live Postgres suites on PostgreSQL 18
+        if: matrix.group == 'postgres-18'
+        run: bun run test:postgres
+        env:
+          NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:55432/postgres
 
       - name: CLI fixture isolation (randomized test order)
         if: matrix.group == 'cli-isolation'

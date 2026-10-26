@@ -179,10 +179,20 @@ export interface RateLimitOptions {
   readonly skip?: (req: Request, platform?: Platform) => boolean
 }
 
-/** One bucket of a {@link rateLimitTiers} limiter: the requests at `prefix` or below it. */
+/** One bucket of a {@link rateLimitTiers} limiter: the requests at a `prefix` or below it. */
 export interface RateLimitTier {
-  /** Static path prefix such as `/api/public`: no params, wildcards, dot segments or trailing slash. */
-  readonly prefix: string
+  /**
+   * Static path prefix such as `/api/public`: no params, wildcards, dot segments or trailing slash.
+   * A list charges every prefix in it to this tier's one bucket, so
+   * `["/api/exports", "/api/reports/download"]` with `max: 30` allows 30 across both, not 30 each.
+   */
+  readonly prefix: string | readonly string[]
+  /**
+   * The bucket's store scope, `tier:<name>:`. Default: the first prefix. Name a tier whose prefix
+   * list may change, so editing the list keeps its live counters. Letters, digits, `/` and
+   * `-._~%!$&'()+,;=@`; unique across tiers.
+   */
+  readonly name?: string
   readonly max: number
   readonly windowMs: number
   /** Bucket key for this tier only. Default: the limiter's `key`, or the derived client IP. Like
@@ -198,6 +208,18 @@ export interface RateLimitTiersOptions extends Omit<RateLimitOptions, "max" | "w
    */
   readonly floor?: { readonly max: number; readonly windowMs: number }
   readonly tiers: readonly RateLimitTier[]
+}
+
+/** A rate-limit {@link Middleware} that can name the counter a request is charged to. */
+export interface RateLimiter extends Middleware {
+  /**
+   * The exact store key `request` would be charged to, so a test or an ops tool can pre-spend,
+   * inspect or reset that bucket through the store. A custom key runs as it would on a request,
+   * async included, and a key that throws or rejects resolves to the client-IP bucket. `undefined`
+   * when the request would not be charged: `skip` leaves it, no tier claims it and there is no
+   * floor, or no key can be derived. Nothing is counted.
+   */
+  keyOf(request: Request, platform?: Platform): Promise<string | undefined>
 }
 
 /**
@@ -281,6 +303,23 @@ interface Bucket {
   readonly ipKey: (req: Request, platform?: Platform) => string | null
 }
 
+/** A failing key is charged to the client IP: falling open would let a forged credential skip the
+ * limit, and a bucket per failure would let it mint fresh ones. */
+function keyFor(
+  bucket: Bucket,
+  req: Request,
+  platform: Platform | undefined,
+): string | null | Promise<string | null> {
+  let key: string | null | Promise<string>
+  try {
+    key = bucket.key(req, platform)
+  } catch {
+    return bucket.ipKey(req, platform)
+  }
+  if (typeof key === "string" || key === null) return key
+  return Promise.resolve(key).then(undefined, () => bucket.ipKey(req, platform))
+}
+
 function assertWindow(max: number, windowMs: number, label: string): void {
   if (!Number.isInteger(max) || max < 1) throw new Error(`${label}: max must be a positive integer`)
   if (!Number.isFinite(windowMs) || windowMs <= 0) {
@@ -323,7 +362,7 @@ function limiter(
   bucketFor: (pathname: string) => Bucket | undefined,
   pathAware: boolean,
   skip: RateLimitOptions["skip"],
-): Middleware {
+): RateLimiter {
   const quota = new WeakMap<Request, QuotaInfo>()
   // State for the Node twins, keyed by the NodeRequestContext identity (the same object is passed
   // to the request and response twins - the core identity contract that replaces `Request` keying).
@@ -356,31 +395,27 @@ function limiter(
   }
 
   const native = skip === undefined && buckets.every((bucket) => bucket.nativeKey !== undefined)
-  const middleware: Middleware = {
+  const middleware: RateLimiter = {
     name,
     async onRequest(req, platform) {
       if (skip?.(req, platform) === true) return undefined
       const bucket = bucketFor(pathAware ? pathnameOf(req.url) : "")
       if (bucket === undefined) return undefined
-      // A key that fails is charged to the client IP: falling open would let a forged credential
-      // skip the limit, and a bucket per failure would let it mint fresh ones.
-      let key: string | null | Promise<string>
-      try {
-        key = bucket.key(req, platform)
-      } catch {
-        key = bucket.ipKey(req, platform)
-      }
-      if (typeof key !== "string" && key !== null) {
-        try {
-          key = await key
-        } catch {
-          key = bucket.ipKey(req, platform)
-        }
-      }
-      const outcome = await charge(bucket, key)
+      const key = keyFor(bucket, req, platform)
+      const outcome = await charge(
+        bucket,
+        typeof key === "string" || key === null ? key : await key,
+      )
       if (outcome instanceof Response) return outcome
       quota.set(req, outcome.info)
       return outcome.reject
+    },
+    async keyOf(req, platform) {
+      if (skip?.(req, platform) === true) return undefined
+      const bucket = bucketFor(pathAware ? pathnameOf(req.url) : "")
+      if (bucket === undefined) return undefined
+      const key = await keyFor(bucket, req, platform)
+      return typeof key === "string" && key.trim() !== "" ? bucket.scope + key : undefined
     },
     onResponse(res, req) {
       const info = quota.get(req)
@@ -450,7 +485,7 @@ const DOT_SEGMENT = /\/(?:\.|%2e)/i
  * also covers 404s); over the limit → `429` + `Retry-After`. Every response carries
  * `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
  */
-export function rateLimit(options: RateLimitOptions): Middleware {
+export function rateLimit(options: RateLimitOptions): RateLimiter {
   assertWindow(options.max, options.windowMs, "rateLimit")
   if (options.skip !== undefined && typeof options.skip !== "function") {
     throw new TypeError("rateLimit: skip must be a function")
@@ -477,6 +512,9 @@ export function rateLimit(options: RateLimitOptions): Middleware {
 }
 
 const STATIC_PREFIX = /^(?:\/[A-Za-z0-9\-._~%!$&'()+,;=@]+)+$/
+// The prefix alphabet plus `/`, so a default name (the first prefix) always passes. No `:`, which
+// separates the name from the key in `tier:<name>:<key>`.
+const TIER_NAME = /^[A-Za-z0-9\-._~%!$&'()+,;=@/]+$/
 
 function assertTierPrefix(prefix: unknown): asserts prefix is string {
   const bad = (why: string): never => {
@@ -494,13 +532,14 @@ function assertTierPrefix(prefix: unknown): asserts prefix is string {
 
 /**
  * Rate limiting in tiers under one app-wide floor, as a single {@link Middleware}. Every request is
- * charged to at most one bucket: the tier with the longest `prefix` that is the request's path or an
- * ancestor of it, else the `floor`, else none when there is no floor. Tiers never stack, so a tier
- * may sit above the floor (`600/min` for `/api/public` under a `120/min` floor). It runs in
- * `onRequest`, before routing, so a 404, a 405 or a body that fails validation is charged too.
- * Prefixes are validated here; each tier counts in its own keys, so tiers can share one store.
+ * charged to at most one bucket: the tier owning the longest prefix that is the request's path or an
+ * ancestor of it, across every tier's prefixes, else the `floor`, else none when there is no floor.
+ * Tiers never stack, so a tier may sit above the floor (`600/min` for `/api/public` under a
+ * `120/min` floor). It runs in `onRequest`, before routing, so a 404, a 405 or a body that fails
+ * validation is charged too. Prefixes and names are validated here; each tier counts in its own
+ * keys, so tiers can share one store.
  */
-export function rateLimitTiers(options: RateLimitTiersOptions): Middleware {
+export function rateLimitTiers(options: RateLimitTiersOptions): RateLimiter {
   const label = "rateLimitTiers"
   if (
     options.floor !== undefined &&
@@ -521,37 +560,56 @@ export function rateLimitTiers(options: RateLimitTiersOptions): Middleware {
       ? undefined
       : { max: options.floor.max, windowMs: options.floor.windowMs, scope: "floor:", ...keys }
   const seen = new Set<string>()
-  const tiers: (Bucket & { readonly prefix: string })[] = []
+  const names = new Set<string>()
+  const tiers: Bucket[] = []
+  const claims: { readonly prefix: string; readonly tier: Bucket }[] = []
   for (const tier of options.tiers) {
-    assertTierPrefix(tier.prefix)
-    if (seen.has(tier.prefix)) {
-      throw new Error(`${label}: duplicate tier prefix ${JSON.stringify(tier.prefix)}`)
+    const listed: readonly unknown[] = typeof tier.prefix === "string" ? [tier.prefix] : tier.prefix
+    if (!Array.isArray(listed) || listed.length === 0) {
+      throw new TypeError(`${label}: tier prefix must be a static path or a non-empty list of them`)
     }
-    seen.add(tier.prefix)
-    assertWindow(tier.max, tier.windowMs, `${label} tier ${tier.prefix}`)
+    const prefixes: string[] = []
+    for (const prefix of listed) {
+      assertTierPrefix(prefix)
+      if (seen.has(prefix)) {
+        throw new Error(`${label}: duplicate tier prefix ${JSON.stringify(prefix)}`)
+      }
+      seen.add(prefix)
+      prefixes.push(prefix)
+    }
+    const name = tier.name ?? prefixes[0]
+    if (typeof name !== "string" || !TIER_NAME.test(name)) {
+      throw new Error(
+        `${label}: tier name ${JSON.stringify(name)} must be letters, digits, "/" or -._~%!$&'()+,;=@`,
+      )
+    }
+    if (names.has(name)) throw new Error(`${label}: duplicate tier name ${JSON.stringify(name)}`)
+    names.add(name)
+    assertWindow(tier.max, tier.windowMs, `${label} tier ${name}`)
     if (tier.key !== undefined && typeof tier.key !== "function") {
-      throw new TypeError(`${label}: tier ${tier.prefix} key must be a function`)
+      throw new TypeError(`${label}: tier ${name} key must be a function`)
     }
-    tiers.push({
-      prefix: tier.prefix,
+    const bucket: Bucket = {
       max: tier.max,
       windowMs: tier.windowMs,
-      scope: `tier:${tier.prefix}:`,
+      scope: `tier:${name}:`,
       key: tier.key ?? keys.key,
       nativeKey: tier.key === undefined ? keys.nativeKey : undefined,
       ipKey: keys.ipKey,
-    })
+    }
+    tiers.push(bucket)
+    for (const prefix of prefixes) claims.push({ prefix, tier: bucket })
   }
   if (floor === undefined && tiers.length === 0) {
     throw new Error(`${label}: needs a floor or at least one tier`)
   }
-  // Longest first, so the first tier whose prefix holds the path is the most specific one.
-  tiers.sort((a, b) => b.prefix.length - a.prefix.length)
+  // Longest first, so the first prefix that holds the path is the most specific one.
+  claims.sort((a, b) => b.prefix.length - a.prefix.length)
   const bucketFor = (pathname: string): Bucket | undefined => {
-    for (const tier of tiers) {
+    for (const { prefix, tier } of claims) {
       if (
-        pathname.startsWith(tier.prefix) &&
-        (pathname.length === tier.prefix.length || pathname.charCodeAt(tier.prefix.length) === 47)
+        pathname.startsWith(prefix) &&
+        (pathname.length === prefix.length || pathname.charCodeAt(prefix.length) === 47)
       ) {
         return tier
       }
@@ -572,6 +630,6 @@ export function rateLimitTiers(options: RateLimitTiersOptions): Middleware {
     scope: "global",
   }
   // With no floor a path no tier claims is never charged, so the evidence must not cover it.
-  if (floor === undefined) evidence.paths = tiers.map((tier) => `${tier.prefix}/**`)
+  if (floor === undefined) evidence.paths = claims.map((claim) => `${claim.prefix}/**`)
   return withRouteAssurance(middleware, evidence)
 }

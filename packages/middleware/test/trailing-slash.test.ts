@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
+import { requestLocal } from "@nifrajs/core/server"
 import { appendTrailingSlash, trimTrailingSlash } from "../src/index.ts"
 
 describe("trailing slash middleware", () => {
@@ -47,6 +48,17 @@ describe("trailing slash middleware", () => {
     const res = await app.fetch(new Request("http://x/docs/"))
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true })
+  })
+
+  test("a rewrite keeps the request's locals", async () => {
+    const id = requestLocal<string>()
+    const app = server()
+      .onRequest((req) => {
+        id.set(req, "r-1")
+      })
+      .use(trimTrailingSlash({ mode: "rewrite" }))
+      .get("/docs", (c) => ({ id: id.get(c.req) ?? null }))
+    expect(await (await app.fetch(new Request("http://x/docs/"))).json()).toEqual({ id: "r-1" })
   })
 
   test("appendTrailingSlash redirects paths and skips file-looking paths by default", async () => {

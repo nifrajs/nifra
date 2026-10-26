@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { collectDoctorResult, doctorReport } from "../src/doctor.ts"
@@ -91,4 +91,68 @@ test("a session cookie renamed outright under a known auth integration is noted,
     },
   )
   expect((await collectDoctorResult(named)).keepAliveIdentity).toBeUndefined()
+})
+
+/** A package outside the app's own package.json, installed into the app as a symlink. */
+const linkPackage = (
+  root: string,
+  name: string,
+  at: string,
+  dependencies: Record<string, string>,
+) => {
+  writeAppFile(root, `${at}/package.json`, JSON.stringify({ name, version: "1.0.0", dependencies }))
+  const link = join(root, "node_modules", ...name.split("/"))
+  mkdirSync(join(link, ".."), { recursive: true })
+  symlinkSync(join(root, at), link, "dir")
+}
+
+test("a workspace package that brings Better Auth in turns the warning into a note", async () => {
+  const root = app(
+    { "@nifrajs/web": "5.0.0", "@workspace/session": "workspace:*" },
+    { "routes/list.tsx": KEPT },
+  )
+  linkPackage(root, "@workspace/session", "packages/session", {
+    "@workspace/auth-core": "workspace:*",
+  })
+  linkPackage(root, "@workspace/auth-core", "packages/auth-core", { "better-auth": "1.0.0" })
+  const result = await collectDoctorResult(root)
+  expect(result.ok).toBe(true)
+  expect(result.keepAliveIdentity).toBeUndefined()
+  expect(result.keepAliveIdentityCovered).toEqual({
+    routes: ["routes/list.tsx"],
+    package: "better-auth",
+    via: ["@workspace/session", "@workspace/auth-core"],
+  })
+  const report = doctorReport(result).join("\n")
+  expect(report).toContain(
+    "routes/list.tsx keep pages alive, and this app reaches better-auth through @workspace/session > @workspace/auth-core",
+  )
+  expect(report).toContain("<prefix>.session_token")
+  expect(report).not.toContain("nothing names this app's sign-in cookie")
+})
+
+test("a wrapper that reaches no auth library keeps the warning, and a rename in the app still warns", async () => {
+  const bare = app(
+    { "@nifrajs/web": "5.0.0", "@workspace/ui": "workspace:*" },
+    { "routes/list.tsx": KEPT },
+  )
+  linkPackage(bare, "@workspace/ui", "packages/ui", { "left-pad": "1.0.0" })
+  const plain = await collectDoctorResult(bare)
+  expect(plain.keepAliveIdentity).toEqual({ routes: ["routes/list.tsx"] })
+  expect(plain.keepAliveIdentityCovered).toBeUndefined()
+
+  const renamed = app(
+    { "@nifrajs/web": "5.0.0", "@workspace/session": "workspace:*" },
+    {
+      "routes/list.tsx": KEPT,
+      "lib/auth.ts": 'betterAuth({ advanced: { cookies: { session_token: { name: "sid" } } } })\n',
+    },
+  )
+  linkPackage(renamed, "@workspace/session", "packages/session", { "better-auth": "1.0.0" })
+  const result = await collectDoctorResult(renamed)
+  expect(result.keepAliveIdentity).toEqual({
+    routes: ["routes/list.tsx"],
+    renamedIn: "lib/auth.ts",
+  })
+  expect(result.keepAliveIdentityCovered).toBeUndefined()
 })

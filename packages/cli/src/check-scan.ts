@@ -14,6 +14,7 @@ import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { gitIgnored } from "./internal/git-ignored.ts"
 import { lineAt } from "./internal/line-at.ts"
 import { toPosix } from "./internal/posix-path.ts"
+import { realpathOrSelf } from "./internal/realpath-or-self.ts"
 import { scriptKindOf } from "./internal/script-kind.ts"
 import type { SourceFacts } from "./internal/source-facts.ts"
 import {
@@ -2731,13 +2732,7 @@ const SQL_SOURCE_FILE = /\.[cm]?tsx?$/
  * flagged - the pre-feature answer.
  */
 export function createProjectSqlImports(cwd: string): SqlImports {
-  const root = (() => {
-    try {
-      return realpathSync(resolve(cwd))
-    } catch {
-      return resolve(cwd)
-    }
-  })()
+  const root = realpathOrSelf(resolve(cwd))
   return createSqlImports((fromModule, specifier) => {
     if (!isRelativeSpecifier(specifier)) return undefined
     try {

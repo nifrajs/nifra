@@ -132,6 +132,7 @@ export {
 export {
   MemoryStore,
   type MemoryStoreOptions,
+  type RateLimiter,
   type RateLimitOptions,
   type RateLimitResult,
   type RateLimitStore,

@@ -30,7 +30,6 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -49,6 +48,7 @@ import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { createKindProbe, hasWebConfig } from "./internal/nifra-project.ts"
 import { toPosix } from "./internal/posix-path.ts"
 import { createSpecifierResolver, isFile } from "./internal/project-specifiers.ts"
+import { realpathOrSelf } from "./internal/realpath-or-self.ts"
 import { importTypeScript } from "./internal/typescript-import.ts"
 import { type OutputSchemaEntry, planOutputSchemas } from "./output-schemas.ts"
 import { missingOutputSchemas } from "./rules/data-guard.ts"
@@ -2361,13 +2361,7 @@ export async function migrateLayout(
   const resolver = createSpecifierResolver({
     moduleExists: (path) => knownPaths.has(path) || isFile(path),
   })
-  const realRoot = (() => {
-    try {
-      return realpathSync(root)
-    } catch {
-      return root
-    }
-  })()
+  const realRoot = realpathOrSelf(root)
   /** An app file as the migration names it, from a path the resolver found (real, or as planned). */
   const appFile = (path: string | undefined): string | undefined => {
     if (path === undefined) return undefined
