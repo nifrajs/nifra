@@ -15,19 +15,10 @@ import {
 import { generateClientEntry } from "../src/internal/codegen.ts"
 import { DATA_HEADER, STATUS_HEADER } from "../src/router.ts"
 import { isBackendHalf, splitRouteHalves } from "./_route-halves.ts"
+import { streamOf } from "./streams.ts"
 
 // A root status page or `_error` renders inside the root layout with its loader data and meta, and
 // alone - same status - when that layout cannot render. `inLayouts = false` renders it alone.
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>

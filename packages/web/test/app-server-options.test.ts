@@ -11,16 +11,7 @@ import { server } from "@nifrajs/core"
 import { NIFRA_BACKEND_MOUNT } from "@nifrajs/core/mount"
 import { defineContextPlugin, type Middleware } from "@nifrajs/core/server"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
+import { streamOf } from "./streams.ts"
 
 const stub: RenderAdapter = {
   renderToStream: () => streamOf("<p>page</p>"),

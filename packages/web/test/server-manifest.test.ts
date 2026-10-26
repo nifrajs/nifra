@@ -2,14 +2,7 @@ import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import { buildManifest, createWebApp, type RenderAdapter, type RouteModule } from "../src/index.ts"
 import { splitRouteHalves } from "./_route-halves.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> =>
-  new ReadableStream({
-    start(c) {
-      c.enqueue(new TextEncoder().encode(s))
-      c.close()
-    },
-  })
+import { streamOf } from "./streams.ts"
 
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>

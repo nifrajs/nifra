@@ -11,20 +11,11 @@ import {
 } from "../src/index.ts"
 import { DATA_HEADER } from "../src/router.ts"
 import { isBackendHalf, splitRouteHalves } from "./_route-halves.ts"
+import { streamOf } from "./streams.ts"
 
 // `ssr = false`: the server renders everything around a page except the page's own component - its
 // `HydrateFallback`, or nothing, fills the slot - and the browser hydrates that before it renders the
 // component.
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 
 const nameOf = (component: unknown): unknown =>
   typeof component === "function" ? `fn:${String((component as () => unknown)())}` : component
