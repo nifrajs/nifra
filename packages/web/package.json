@@ -278,6 +278,11 @@
       "types": "./dist/internal/matches-runtime.d.ts",
       "default": "./dist/internal/matches-runtime.js"
     },
+    "./internal/navigate-runtime": {
+      "bun": "./src/internal/navigate-runtime.ts",
+      "types": "./dist/internal/navigate-runtime.d.ts",
+      "default": "./dist/internal/navigate-runtime.js"
+    },
     "./internal/route-props-runtime": {
       "bun": "./src/internal/route-props-runtime.ts",
       "types": "./dist/internal/route-props-runtime.d.ts",

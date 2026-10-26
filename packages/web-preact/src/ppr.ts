@@ -1,4 +1,9 @@
-import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
+import {
+  type HoleHost,
+  type HoleState,
+  holeHost,
+  initialHtml,
+} from "@nifrajs/web/internal/hole-runtime"
 import { type ComponentChildren, createElement, hydrate, render as renderInto } from "preact"
 import { useEffect, useRef, useState } from "preact/hooks"
 import { Await } from "./await.ts"
@@ -10,15 +15,6 @@ export interface HoleDefinition<Data> {
   readonly render: (data: Data) => ComponentChildren
   readonly fallback?: ComponentChildren
   readonly interactive?: boolean
-}
-
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
- * `fill` that host's refill when the page reloads. */
-interface HoleState {
-  readonly status: "unresolved" | "pending" | "ready" | "error"
-  readonly data?: unknown
-  readonly ppr?: true
-  readonly fill?: unknown
 }
 
 export interface HoleProps<Data> {

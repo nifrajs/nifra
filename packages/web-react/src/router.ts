@@ -21,21 +21,16 @@ import type {
   BlockerState,
   NavigateFunction,
   NavigateOptions,
-  NavigateTargetInput,
   PrefetchMode,
   RenderProps,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
-import {
-  getBrowserNavigate,
-  IDLE_BLOCKER,
-  registerBlocker,
-  resolveNavigate,
-} from "@nifrajs/web/client"
+import { getBrowserNavigate, IDLE_BLOCKER, registerBlocker } from "@nifrajs/web/client"
 // Its own subpath, so an app that never calls `useMatches` bundles none of it.
 import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
+import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
 import {
   type AnchorHTMLAttributes,
   type CSSProperties,
@@ -233,12 +228,7 @@ export function usePending(): boolean {
  * renders; resolves the browser navigate at call time (so it works as soon as `installHistory` has run,
  * and no-ops before then / on the server). */
 export function useNavigate(): NavigateFunction {
-  return useCallback((to: string | number | NavigateTargetInput, options?: NavigateOptions) => {
-    const navigate = getBrowserNavigate()
-    if (navigate === undefined) return
-    const resolved = resolveNavigate(to, options)
-    navigate(resolved.to, resolved.options)
-  }, []) as NavigateFunction
+  return navigateNow
 }
 
 /**
