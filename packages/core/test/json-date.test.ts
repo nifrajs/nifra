@@ -202,7 +202,8 @@ function ownRuleValues(): ReadonlyArray<readonly [string, () => object]> {
   for (const primitive of [1.5, "ab", false, 12n, Symbol("s")])
     for (const [on, proto] of prototypes) {
       // Moved onto a plain prototype, a BigInt wrapper is tagged a plain object, and its only brand
-      // check throws, ~200 ns a record: the writer sends `{}` where the serializer throws.
+      // check throws, ~200 ns a record: the writer sends `{}` where the serializer throws, as the core
+      // README says.
       if (typeof primitive === "bigint" && proto !== undefined) continue
       values.push([
         `boxed ${typeof primitive}${on}`,
