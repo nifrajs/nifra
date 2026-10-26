@@ -29,7 +29,8 @@ const longest = (scopes: readonly number[]): number =>
  *
  * The request's deadline (`requestTimeoutMs`, an inbound deadline) still bounds the work, and when
  * it fires the listener's timeout is back before the 503 is sent. Scopes nest: while several run on
- * one request the longest applies, and `0` outlasts any number.
+ * one request the longest applies, and `0` outlasts any number. `seconds` runs from 0 to 255, the
+ * longest Bun holds an idle connection; work that may idle longer takes `0`, bounded by the deadline.
  *
  * A streamed response is sent after the handler returns, so call this inside the stream's producer
  * to hold it until the last chunk. Off `listen()` - another adapter, `app.fetch` in a test - it runs
@@ -41,7 +42,7 @@ const longest = (scopes: readonly number[]): number =>
  *
  * app.post("/exports", (c) => withIdleTimeout(c, 0, () => buildExport(c.body)))
  * // Every route declared after this one:
- * app.around((c, next) => withIdleTimeout(c, 300, next))
+ * app.around((c, next) => withIdleTimeout(c, 120, next))
  * ```
  */
 export function withIdleTimeout<T>(
@@ -49,8 +50,8 @@ export function withIdleTimeout<T>(
   seconds: number,
   work: () => MaybePromise<T>,
 ): MaybePromise<T> {
-  if (!Number.isSafeInteger(seconds) || seconds < 0) {
-    throw new RangeError("withIdleTimeout: seconds must be a non-negative safe integer")
+  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > 255) {
+    throw new RangeError("withIdleTimeout: seconds must be an integer from 0 to 255")
   }
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only RequestContext defines this key, with this signature; any other context leaves it undefined.
   const control = (c as Context & { [CONTEXT_IDLE_TIMEOUT]?: IdleTimeoutControl })[

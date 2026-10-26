@@ -88,11 +88,11 @@ describe("withIdleTimeout()", () => {
   test("nested scopes hold the longest, and 0 outlasts any number", async () => {
     const { calls, platform } = recordingPlatform()
     const app = server()
-      .around((c, next) => withIdleTimeout(c, 300, next))
+      .around((c, next) => withIdleTimeout(c, 120, next))
       .get("/nested", (c) => withIdleTimeout(c, 0, () => ({ ok: true })))
     const res = await app.fetch(new Request("http://x/nested"), platform)
     expect(res.status).toBe(200)
-    expect(calls).toEqual([300, 0, 300, "listener"])
+    expect(calls).toEqual([120, 0, 120, "listener"])
   })
 
   test("concurrent scopes on one request put the listener's back only when the last ends", async () => {
@@ -141,14 +141,16 @@ describe("withIdleTimeout()", () => {
     expect(await res.json()).toEqual({ ran: true })
   })
 
-  test("refuses a negative, fractional or non-finite number of seconds", () => {
+  test("refuses a negative, fractional, non-finite or over-255 number of seconds", () => {
     const { calls, context } = recordingContext()
     let ran = 0
-    for (const seconds of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (const seconds of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 256]) {
       expect(() => withIdleTimeout(context, seconds, () => ran++)).toThrow(RangeError)
     }
     expect(ran).toBe(0)
     expect(calls).toEqual([])
+    expect(withIdleTimeout(context, 255, () => ran++)).toBe(0)
+    expect(calls).toEqual([255, "listener"])
   })
 
   test("a mounted app's routes reach the listener's control", async () => {
