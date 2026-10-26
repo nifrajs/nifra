@@ -1301,8 +1301,8 @@ export function serveStatic(
     const headers: IncomingHttpHeaders = {}
     for (const [name, value] of request.headers) headers[name] = value
     // A Web request names its host in its URL; a Host header may be absent.
-    return serveMounts(states, 0, url.pathname, () => url.host, method, { headers })?.then((outcome) =>
-      outcome === undefined ? undefined : staticOutcomeResponse(outcome),
+    return serveMounts(states, 0, url.pathname, () => url.host, method, { headers })?.then(
+      (outcome) => (outcome === undefined ? undefined : staticOutcomeResponse(outcome)),
     )
   }
   Object.defineProperty(handler, NATIVE_MOUNTS, { value: states })

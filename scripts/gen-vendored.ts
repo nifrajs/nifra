@@ -59,7 +59,10 @@ export const VENDORED: readonly VendoredCopy[] = [
   },
   {
     source: "packages/core/src/static-file.ts",
-    targets: ["packages/node/src/generated/static-file.ts", "packages/deno/src/generated/static-file.ts"],
+    targets: [
+      "packages/node/src/generated/static-file.ts",
+      "packages/deno/src/generated/static-file.ts",
+    ],
     why: "Copied so each adapter matches, types and answers served files exactly as core does, without depending on it.",
   },
   {
