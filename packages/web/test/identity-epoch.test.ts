@@ -138,6 +138,49 @@ describe("the identity epoch hook", () => {
     }
   })
 
+  test("a cookie the response names as re-issued to the same visitor renews the epoch it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const vouch = (lines: readonly string[], cookie: string, renewed: string) => {
+      const headers = new Headers({ "x-nifra-identity-renewed": renewed })
+      for (const line of lines) headers.append("set-cookie", line)
+      identityEpochHook({}, false)(headers, {
+        url: "https://app.test/api/auth/session",
+        header: (name) => (name === "cookie" ? cookie : null),
+      })
+      return {
+        epoch: headers.getSetCookie().slice(lines.length)[0],
+        header: headers.get("x-nifra-identity-renewed"),
+      }
+    }
+    const token = "authjs.session-token"
+    expect(
+      vouch(
+        [`${token}=new; Max-Age=600; HttpOnly`],
+        `${token}=old; __Host-nifra-epoch=${held}`,
+        token,
+      ),
+    ).toEqual({
+      epoch: `__Host-nifra-epoch=${held}; Path=/; SameSite=Lax; Secure; Max-Age=600`,
+      header: null,
+    })
+    // It covers only the cookies it names, never a deletion or a first sign-in.
+    for (const [lines, cookie] of [
+      [
+        [`${token}=new; Max-Age=600`, "nifra_session=b; Max-Age=600"],
+        `${token}=old; nifra_session=a`,
+      ],
+      [[`${token}=; Max-Age=0`], `${token}=old`],
+      [[`${token}=new; Max-Age=600`], ""],
+    ] as const) {
+      const { epoch, header } = vouch(lines, `${cookie}; __Host-nifra-epoch=${held}`, token)
+      expect({ lines, header, rotated: epoch !== undefined && !epoch.includes(held) }).toEqual({
+        lines,
+        header: null,
+        rotated: true,
+      })
+    }
+  })
+
   test("a renewal whose epoch is gone or not one nifra wrote sets a fresh one", () => {
     for (const cookie of ["nifra_session=abc.sig", "nifra_session=abc.sig; __Host-nifra-epoch=x"]) {
       const epoch = run(["nifra_session=abc.sig; Max-Age=600; HttpOnly; Secure"], { cookie })

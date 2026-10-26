@@ -202,8 +202,9 @@ export default function Auth() {
       <h2 id="sessions">Set up a session manager</h2>
       <p>
         <code>createSessions</code> signs the cookie (HMAC, verified constant-time) and always marks it{" "}
-        <code>HttpOnly</code>. In <b>store mode</b> the cookie is just an opaque id and the data lives in
-        a <code>SessionStore</code>; in <b>cookie mode</b> (no store) the data is signed into the cookie.
+        <code>HttpOnly</code>. In <b>store mode</b> the cookie is an opaque id, with a tag that changes
+        whenever the data does, and the data lives in a <code>SessionStore</code>; in{" "}
+        <b>cookie mode</b> (no store) the data is signed into the cookie.
         <code>MemorySessionStore</code> is prod-guarded. Production store mode needs a strongly
         consistent shared <code>SessionStore</code>, such as a transactional adapter or Durable Object.
         Every instance must observe completed writes and deletes, including revocation markers.

@@ -42,8 +42,9 @@ function requestContext(cookie: string): SessionContext {
 const lastCookie = (setCalls: Array<{ value: string }>): string =>
   setCalls.at(-1)?.value ?? "(no cookie written)"
 
-/** The store-mode session id a cookie carries: the signed value is `<id>.<signature>`. */
-const idOf = (cookie: string): string => cookie.slice(0, cookie.lastIndexOf("."))
+/** The store-mode session id a cookie carries: `<id>*<tag>.<signature>`, or `<id>.<signature>`. */
+const idOf = (cookie: string): string =>
+  cookie.slice(0, cookie.lastIndexOf(".")).replace(/\*[A-Za-z0-9_-]{12}$/, "")
 
 interface Data extends Record<string, unknown> {
   userId: string
@@ -857,6 +858,13 @@ describe("session - store mode", () => {
     // Reachable only with a value the app signed itself. Neither a commit nor a logout through it may
     // touch the marker's key.
     const marker = await signSession(`${id}.revoked`)
+    expect(
+      (
+        await sessions.get(
+          ctx({ nifra_session: await signSession(`${id}.revoked*AAAAAAAAAAAA`) }).context,
+        )
+      ).isEmpty,
+    ).toBe(true)
     const m = ctx({ nifra_session: marker })
     const loaded = await sessions.get(m.context)
     expect(loaded.isEmpty).toBe(true)
@@ -887,6 +895,121 @@ describe("session - store mode", () => {
     const s = await m1.get(ctx().context)
     expect(sessions2Commit(m2, s)).rejects.toThrow(/not created by this manager/)
     expect(() => m2.regenerate(s)).toThrow(/not created by this manager/)
+  })
+
+  describe("the cookie follows the session's data", () => {
+    type Bag = Record<string, unknown>
+    type BagSession = Awaited<ReturnType<SessionManager<Bag>["get"]>>
+    const setup = () => {
+      let t = 1000
+      const sessions = createSessions<Bag>({
+        secret: SECRET,
+        store: new MemorySessionStore(),
+        now: () => t,
+      })
+      // One request: load the cookie, let `act` touch the session, commit, return the cookie written.
+      const visit = async (
+        cookie: string | undefined,
+        act: (s: BagSession) => void = () => {},
+      ): Promise<string> => {
+        t += 1000
+        const c = ctx(cookie === undefined ? {} : { nifra_session: cookie })
+        const session = await sessions.get(c.context)
+        act(session)
+        await sessions.commit(c.context, session)
+        return lastCookie(c.setCalls)
+      }
+      return { visit }
+    }
+
+    test("a renewal with the same data writes the same cookie, rolling expiry and all", async () => {
+      const { visit } = setup()
+      const signedIn = await visit(undefined, (s) => s.set("userId", "ada"))
+      expect(await visit(signedIn)).toBe(signedIn)
+      expect(await visit(await visit(signedIn))).toBe(signedIn)
+      expect(await visit(signedIn, (s) => s.set("userId", "ada"))).toBe(signedIn)
+    })
+
+    test("each commit of one session object compares with what it last wrote", async () => {
+      const sessions = createSessions<Bag>({ secret: SECRET, store: new MemorySessionStore() })
+      const first = ctx()
+      const fresh = await sessions.get(first.context)
+      fresh.set("userId", "ada")
+      await sessions.commit(first.context, fresh)
+      const signedIn = lastCookie(first.setCalls)
+      const c = ctx({ nifra_session: signedIn })
+      const session = await sessions.get(c.context)
+      const commit = async () => {
+        await sessions.commit(c.context, session)
+        return lastCookie(c.setCalls)
+      }
+      session.set("userId", "bob")
+      const bob = await commit()
+      const bobAgain = await commit()
+      session.set("cart", 1)
+      const cart = await commit()
+      const cartAgain = await commit()
+      expect(bob).not.toBe(signedIn)
+      expect(bobAgain).toBe(bob)
+      expect(cart).not.toBe(bob)
+      expect(cartAgain).toBe(cart)
+    })
+
+    test("any change to the data writes a new cookie for the same session", async () => {
+      const { visit } = setup()
+      const changes: Record<string, (s: BagSession) => void> = {
+        "another user": (s) => s.set("userId", "bob"),
+        "a key added": (s) => s.set("cart", 1),
+        "a key removed": (s) => s.unset("prefs"),
+        "everything cleared": (s) => s.clear(),
+        "a value changed in place": (s) => {
+          const prefs = s.get("prefs")
+          if (typeof prefs === "object" && prefs !== null) Reflect.set(prefs, "theme", "dark")
+        },
+      }
+      for (const [change, act] of Object.entries(changes)) {
+        const signedIn = await visit(undefined, (s) => {
+          s.set("userId", "ada")
+          s.set("prefs", { theme: "light" })
+        })
+        const next = await visit(signedIn, act)
+        expect({ change, same: next === signedIn, id: idOf(next) }).toEqual({
+          change,
+          same: false,
+          id: idOf(signedIn),
+        })
+      }
+    })
+
+    test("a cookie written before tags loads, renews unchanged, and takes a tag with new data", async () => {
+      const store = new MemorySessionStore()
+      const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+      await store.set("older-session-id", { data: { userId: "u1" }, expiresAt: 10_000_000 })
+      const older = await signSession("older-session-id")
+      const renew = ctx({ nifra_session: older })
+      const session = await sessions.get(renew.context)
+      expect(session.get("userId")).toBe("u1")
+      await sessions.commit(renew.context, session)
+      expect(lastCookie(renew.setCalls)).toBe(older)
+
+      const change = ctx({ nifra_session: older })
+      const changed = await sessions.get(change.context)
+      changed.set("userId", "u2")
+      await sessions.commit(change.context, changed)
+      const tagged = lastCookie(change.setCalls)
+      expect([tagged === older, idOf(tagged)]).toEqual([false, "older-session-id"])
+      expect((await sessions.get(ctx({ nifra_session: tagged }).context)).get("userId")).toBe("u2")
+
+      await sessions.destroy(ctx({ nifra_session: tagged }).context)
+      expect(await store.get("older-session-id")).toBeUndefined()
+    })
+
+    test("data JSON cannot hold still commits, under a new cookie each time", async () => {
+      const { visit } = setup()
+      const first = await visit(undefined, (s) => s.set("count", 1n))
+      const second = await visit(first)
+      expect([second === first, idOf(second)]).toEqual([false, idOf(first)])
+    })
   })
 })
 

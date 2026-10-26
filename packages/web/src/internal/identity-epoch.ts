@@ -6,7 +6,8 @@
  * the request's, or the cookie is deleted, the response also sets a fresh epoch with the same lifetime,
  * so the epoch expires with an idle session. A rolling session re-sending the same value with a new
  * lifetime re-sends the epoch it holds with that lifetime, so the two keep expiring together. So does
- * an `@nifrajs/auth` cookie-mode session re-signed with the same data and a later expiry.
+ * an `@nifrajs/auth` cookie-mode session re-signed with the same data and a later expiry, and a cookie
+ * an integration that can read its own tokens names as re-issued to the same visitor.
  */
 import { type CookieOptions, parseCookies } from "@nifrajs/core/server"
 import { EPOCH_COOKIE, LOCAL_EPOCH_COOKIE } from "../identity.ts"
@@ -27,11 +28,17 @@ export interface KeepAliveServerOptions {
 interface HeaderView {
   get(name: string): string | null
   append(name: string, value: string): void
+  delete(name: string): void
 }
 interface RequestView {
   readonly url: string
   header(name: string): string | null | undefined
 }
+
+// Set alongside the `Set-Cookie` it covers, it names identity cookies an integration re-issued to the
+// same visitor: `@nifrajs/authjs` sets it for an Auth.js token it decrypted on both sides. Removed
+// here, so it never reaches the browser; only the cookies it names count, never a deletion.
+const RENEWED = "x-nifra-identity-renewed"
 
 // Session cookies by their default names, without a `__Secure-` / `__Host-` prefix.
 const IDENTITY_DEFAULTS = ["nifra_session", "authjs.session-token", "next-auth.session-token"]
@@ -185,6 +192,8 @@ export function identityEpochHook(
     const joined = headers.get("set-cookie")
     if (joined === null || joined === "") return
     const sent = parseCookies(request.header("cookie") ?? null)
+    const vouched = headers.get(RENEWED)?.split(",")
+    if (vouched !== undefined) headers.delete(RENEWED)
     let changed: SetCookie | undefined
     let renewed: SetCookie | undefined
     for (const cookie of parseSetCookies(joined, Date.now())) {
@@ -192,7 +201,14 @@ export function identityEpochHook(
       const now = cookie.deleted ? "" : cookie.value
       const base = baseName(cookie.name)
       const before = sent[cookie.name] ?? ""
-      if (now === before || (isIdentity(base) && sameData(before, now))) {
+      if (
+        now === before ||
+        (isIdentity(base) &&
+          (sameData(before, now) ||
+            (now !== "" &&
+              before !== "" &&
+              vouched?.some((v) => v.trim() === cookie.name) === true)))
+      ) {
         if (
           renewed === undefined &&
           !cookie.deleted &&
