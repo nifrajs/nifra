@@ -55,7 +55,7 @@ export const VENDORED: readonly VendoredCopy[] = [
   {
     source: "packages/core/src/server/websocket.ts",
     targets: ["packages/deno/src/generated/ws-close.ts", "packages/node/src/generated/ws-close.ts"],
-    symbols: ["exceedsPayloadCap", "assertCloseArgs"],
+    symbols: ["UTF8_BUFFER", "exceedsPayloadCap", "utf8ExceedsCap", "assertCloseArgs"],
     why: "Copied so each adapter refuses the closes and messages core refuses, without depending on it.",
   },
   {

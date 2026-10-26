@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { fileURLToPath } from "node:url"
 import {
   type NifraWebSocket,
@@ -9,7 +9,7 @@ import {
   toFetchHandler,
   type WebSocketHandler,
 } from "../src/index.ts"
-import { exceedsPayloadCap } from "../src/server/websocket.ts"
+import { exceedsPayloadCap, utf8ExceedsCap } from "../src/server/websocket.ts"
 // The `websocket()` plugin and the socket-wiring value exports both come from the subpath.
 import { attachWebSocket, TopicRegistry, websocket } from "../src/ws.ts"
 import {
@@ -1131,11 +1131,32 @@ describe("attachWebSocket", () => {
       ...lone,
     ]) {
       const bytes = encoded(text)
-      expect(exceedsPayloadCap(text, bytes)).toBe(false)
-      if (bytes > 0) expect(exceedsPayloadCap(text, bytes - 1)).toBe(true)
+      for (const over of [exceedsPayloadCap, utf8ExceedsCap]) {
+        expect(over(text, bytes)).toBe(false)
+        if (bytes > 0) expect(over(text, bytes - 1)).toBe(true)
+      }
     }
     expect(exceedsPayloadCap(new Uint8Array(5), 5)).toBe(false)
     expect(exceedsPayloadCap(new Uint8Array(5).buffer, 4)).toBe(true)
+  })
+
+  test("exceedsPayloadCap sizes text with the runtime's Buffer, else by unit", async () => {
+    const byteLength = spyOn(Buffer, "byteLength")
+    const buffer = Object.getOwnPropertyDescriptor(globalThis, "Buffer")
+    try {
+      expect(exceedsPayloadCap("é".repeat(62), 123)).toBe(true)
+      expect(byteLength).toHaveBeenCalledTimes(1)
+      Reflect.deleteProperty(globalThis, "Buffer")
+      // A fresh instance reads the global again as it loads, as on a Worker without `Buffer`.
+      const specifier = "../src/server/websocket.ts?without-buffer"
+      const unbuffered: { exceedsPayloadCap: typeof exceedsPayloadCap } = await import(specifier)
+      expect(unbuffered.exceedsPayloadCap("é".repeat(62), 123)).toBe(true)
+      expect(unbuffered.exceedsPayloadCap("é".repeat(61), 122)).toBe(false)
+      expect(byteLength).toHaveBeenCalledTimes(1)
+    } finally {
+      if (buffer !== undefined) Object.defineProperty(globalThis, "Buffer", buffer)
+      byteLength.mockRestore()
+    }
   })
 
   test("close threads code + reason; data is exposed and mutable", () => {
