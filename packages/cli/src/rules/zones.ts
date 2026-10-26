@@ -7,7 +7,7 @@
  * file importing one in no zone, backend code importing frontend code, and shared code importing
  * anything but shared code. NF-C029 owns private environment reads in browser code.
  */
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
 import {
   browserDenial,
@@ -37,6 +37,7 @@ import {
   withApiKindHint,
 } from "../internal/nifra-project.ts"
 import { createSpecifierResolver } from "../internal/project-specifiers.ts"
+import { realpathOrSelf } from "../internal/realpath-or-self.ts"
 import { createSourceFacts } from "../internal/source-facts.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
@@ -147,18 +148,10 @@ export function zonedFiles(ctx: RuleContext): {
   return { files, classifierFor, configErrors }
 }
 
-const real = (path: string): string => {
-  try {
-    return realpathSync(path)
-  } catch {
-    return path
-  }
-}
-
 /** Where a resolved import lands, as the project names it. Both sides are real paths: a checkout
  * reached through a symlink (`/var` -> `/private/var` on macOS) still names files project-relative. */
 function display(root: string, file: string): string {
-  const rel = relative(real(root), real(file)).replaceAll("\\", "/")
+  const rel = relative(realpathOrSelf(root), realpathOrSelf(file)).replaceAll("\\", "/")
   return rel.startsWith("../") || isAbsolute(rel) ? file : rel
 }
 

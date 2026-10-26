@@ -154,7 +154,7 @@ async function runPostgres(
       return isDbRefusal(schema) ? schema : { ...base, schema }
     }
     if (request.op === "role") {
-      const role = await postgresRoleSql(client, db)
+      const role = await postgresRoleSql(client, { ...db, redaction })
       if (isDbRefusal(role)) return role
       return {
         ...base,

@@ -23,7 +23,9 @@ import {
   CHILD_OUTPUT_MAX_BYTES,
   readBoundedLines,
   readBoundedStream,
+  redirectConsoleToStderr,
   serializeBoundedJson,
+  workerReplyWriter,
 } from "./mcp-io.ts"
 
 const ENTRY_CANDIDATES = [BACKEND_APP_FILE, "app.ts", "src/app.ts"]
@@ -168,23 +170,6 @@ interface WorkerMessage {
   readonly input?: { readonly requests?: unknown; readonly entry?: string }
 }
 
-function redirectConsoleToStderr(): void {
-  const write = (level: string, args: unknown[]): void => {
-    Bun.stderr.write(`[${level}] ${args.map((arg) => String(arg)).join(" ")}\n`)
-  }
-  console.debug = (...args: unknown[]) => write("debug", args)
-  console.info = (...args: unknown[]) => write("info", args)
-  console.log = (...args: unknown[]) => write("log", args)
-  console.warn = (...args: unknown[]) => write("warn", args)
-  console.error = (...args: unknown[]) => write("error", args)
-}
-
-function safeResponseId(value: unknown): number | string | null {
-  if (typeof value === "number" && Number.isSafeInteger(value)) return value
-  if (typeof value === "string" && value.length <= 128) return value
-  return null
-}
-
 /**
  * Keep stdout for the protocol. The app's console and any direct `process.stdout.write` go to stderr,
  * or a stray `console.log` in a handler would corrupt the JSON the parent reads. Returns the writer
@@ -206,13 +191,7 @@ function reserveStdout(): (text: string) => void {
 
 async function runWorker(cwd: string, protocol: (text: string) => void): Promise<void> {
   const apps = new Map<string, Promise<{ app: AppLike } | { error: string }>>()
-  const send = (id: unknown, output: unknown): void => {
-    const responseId = safeResponseId(id)
-    const encoded = serializeBoundedJson({ id: responseId, output }, CHILD_OUTPUT_MAX_BYTES - 1)
-    protocol(
-      `${encoded ?? JSON.stringify({ id: responseId, output: { error: "worker output exceeded the size limit" } })}\n`,
-    )
-  }
+  const send = workerReplyWriter(protocol)
   for await (const item of readBoundedLines(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)) {
     if (item.kind === "too-large") {
       send(null, { error: `worker input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` })

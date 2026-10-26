@@ -186,6 +186,12 @@
     "code": "import { renderPage, unsafeInlineScript } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const nonce: string // one per response, from your CSP middleware\n\nconst page = renderPage({\n  adapter,\n  chain: [null],\n  data: null,\n  clientEntry: \"/assets/client.js\",\n  nonce, // reaches the hydration bootstrap, streamed scripts and every island tag\n  head: {\n    script: [{ content: JSON.stringify({ \"@type\": \"Article\" }) }], // inert: JSON only\n    unsafeScript: [unsafeInlineScript(\"window.dataLayer = []\", { nonce })],\n  },\n})"
   },
   {
+    "name": "NONCE_CSP_HEADER",
+    "topic": "Nifra - Framework contract",
+    "slug": "contract",
+    "code": "import { createNonceResolver, createWebApp } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const manifest: import(\"@nifrajs/web\").Manifest\n\n// A fresh nonce on every document, and nifra writes the header from that same value - on pages,\n// status pages, _error, and streamed or deferred documents - whatever rebuilds the Request in front.\nexport const app = createWebApp({\n  adapter,\n  manifest,\n  clientEntry: \"/assets/client.js\",\n  nonce: createNonceResolver(),\n  // `sources`: 'nonce-…' plus a sha256 hash per constant inline script nifra writes.\n  cspHeader: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,\n})"
+  },
+  {
     "name": "PARAM_404",
     "topic": "Nifra - Framework contract",
     "slug": "contract",
@@ -232,6 +238,12 @@
     "topic": "Nifra - Custom server (createWebApp)",
     "slug": "custom-server",
     "code": "import { fileURLToPath } from \"node:url\"\nimport { createCspPolicy, createWebApp, servePublicDir } from \"@nifrajs/web\"\nimport type { Manifest, RenderAdapter } from \"@nifrajs/web\"\n\n// From your build: the framework adapter, the route manifest, and what buildClient() returned.\ndeclare const adapter: RenderAdapter\ndeclare const manifest: Manifest\ndeclare const build: {\n  readonly entry: string\n  readonly assets: readonly string[]\n  readonly routes: Readonly<Record<string, readonly string[]>>\n  readonly css?: readonly string[]\n}\ndeclare const errors: { capture(error: unknown, tags: Record<string, string>): void }\n\n// buildClient({ outDir: \"dist/assets\" }) writes the chunks where their /assets/ URLs point.\nconst bundle = servePublicDir({\n  dir: fileURLToPath(new URL(\"./dist/\", import.meta.url)),\n  hashedFiles: new Set(build.assets),\n})\nconst publicFiles = servePublicDir({ dir: fileURLToPath(new URL(\"./public/\", import.meta.url)) })\n\nconst csp = createCspPolicy({\n  header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,\n})\n\nexport const app = createWebApp({\n  adapter,\n  manifest,\n  clientEntry: build.entry,\n  routePreload: build.routes,\n  styles: build.css ?? [],\n  csp,\n  server: { requestTimeoutMs: 15_000, gracefulSignals: { drainMs: 8_000 } },\n  use: (app) => {\n    app.onRequest(async (request) => (await bundle(request)) ?? (await publicFiles(request)))\n  },\n  onLoaderError: (error, { route }) => errors.capture(error, { route }),\n})\n\napp.listen(3000)"
+  },
+  {
+    "name": "HASHED_FONTS",
+    "topic": "Nifra - Custom server (createWebApp)",
+    "slug": "custom-server",
+    "code": "import { fileURLToPath } from \"node:url\"\nimport { servePublicDir } from \"@nifrajs/web\"\n\ndeclare const build: { readonly assets: readonly string[] }\n\n// The build manifest's chunks plus the fonts loadGoogleFont wrote into public/fonts/.\nconst assets = new Set(build.assets)\nconst HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/\n\nexport const files = servePublicDir({\n  dir: fileURLToPath(new URL(\"./dist/\", import.meta.url)),\n  hashedFiles: (path) => assets.has(path) || HASHED_FONT.test(path),\n})"
   },
   {
     "name": "ACTION",
@@ -498,6 +510,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { cache, MemoryResponseCache, prettyJson } from \"@nifrajs/middleware\"\n\n// Full response cache: pluggable store, Vary-aware keys, byte cap. Bypasses Set-Cookie and respects\n// Cache-Control (no-store/private). MemoryResponseCache is per-instance - refuses prod unless opted in.\nconst app = server()\napp.use(cache({ store: new MemoryResponseCache(), ttlMs: 30_000, vary: [\"accept-language\"] }))\napp.use(prettyJson())   // pretty-print JSON responses (size-capped; optional ?pretty query toggle)"
   },
   {
+    "name": "GROUPED_TIERS",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { MemoryStore, rateLimitTiers } from \"@nifrajs/middleware\"\n\nconst store = new MemoryStore()\nconst limiter = rateLimitTiers({\n  store,\n  floor: { max: 120, windowMs: 60_000 },\n  tiers: [\n    // One 30/min allowance across all three, not 30 each. The name is the bucket's\n    // store scope, so adding or removing a prefix later keeps the live counters.\n    {\n      name: \"exports\",\n      prefix: [\"/api/exports\", \"/api/reports/download\", \"/api/invoices/pdf\"],\n      max: 30,\n      windowMs: 60_000,\n    },\n  ],\n})\nconst app = server().use(limiter)\n\n// The store key a request is charged to, for a test or an ops tool: \"tier:exports:<ip>\".\nconst key = await limiter.keyOf(new Request(\"http://x/api/exports/csv\"), { clientIp: \"203.0.113.9\" })\nif (key !== undefined) await store.hit(key, 60_000) // pre-spend one hit"
+  },
+  {
     "name": "IDENTITY",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",
@@ -544,6 +562,12 @@
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { idempotency, MemoryIdempotencyStore } from \"@nifrajs/middleware\"\n\n// A retried POST with the same Idempotency-Key replays the first response instead of\n// re-running the side effect. Shared store in production (atomic claim); dev-only memory store.\nconst app = server()\napp.use(idempotency({ store: new MemoryIdempotencyStore() }))"
+  },
+  {
+    "name": "REQUEST_LOCALS",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { carryRequestLocals, requestLocal, server } from \"@nifrajs/core/server\"\n\n// One slot per value. A WeakMap<Request, T> would lose it at the first copy of the request.\nconst requestId = requestLocal<string>()\n\nconst billing = server().get(\"/invoices\", (c) => ({ requestId: requestId.get(c.req) }))\n\nexport const app = server()\n  .onRequest((req) => {\n    requestId.set(req, req.headers.get(\"x-request-id\") ?? crypto.randomUUID())\n  })\n  // The child sees a copy of the request with /billing stripped, and reads the same value.\n  .mount({ path: \"/billing\", app: billing, stripPrefix: true })\n\n// A wrapper that rebuilds the request carries the values itself.\nexport const fetch = (req: Request): Response | Promise<Response> => {\n  const url = new URL(req.url)\n  url.host = \"app.internal\"\n  const rebuilt = new Request(url.href, req)\n  carryRequestLocals(req, rebuilt)\n  return app.fetch(rebuilt)\n}"
   },
   {
     "name": "SESSION_TIERS",

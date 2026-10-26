@@ -254,6 +254,22 @@ export const handler = withISR(app, {
   now: () => Date.now(),
 })`
 
+const NONCE_CSP_HEADER = `import { createNonceResolver, createWebApp } from "@nifrajs/web"
+
+declare const adapter: import("@nifrajs/web").RenderAdapter
+declare const manifest: import("@nifrajs/web").Manifest
+
+// A fresh nonce on every document, and nifra writes the header from that same value - on pages,
+// status pages, _error, and streamed or deferred documents - whatever rebuilds the Request in front.
+export const app = createWebApp({
+  adapter,
+  manifest,
+  clientEntry: "/assets/client.js",
+  nonce: createNonceResolver(),
+  // \`sources\`: 'nonce-…' plus a sha256 hash per constant inline script nifra writes.
+  cspHeader: ({ sources }) => \`default-src 'self'; script-src 'self' \${sources}; object-src 'none'\`,
+})`
+
 const SEO_EXAMPLE = `// routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
 // with ABSOLUTE URLs built from \`origin\`. The three helpers (canonical/openGraph/jsonLd) come from
 // @nifrajs/web/seo, which imports nothing at runtime, so the page's browser bundle takes only them;
@@ -595,6 +611,17 @@ export default function Contract() {
         the same list for a policy set at a proxy:
       </p>
       <CodeBlock code={CSP_POLICY} lang="ts" />
+      <p>
+        An app that wants a nonce on every document still gets its header from nifra: pass{" "}
+        <code>cspHeader</code> beside <code>nonce</code>, and each document nifra renders - a page, a
+        status page, <code>_error</code>, a streamed or deferred one - carries the policy built from
+        the nonce on its own scripts. A wrapper that rebuilds the request with{" "}
+        <code>new Request(url, req)</code> (a mount that strips a prefix, a request id, an origin
+        rewrite) no longer has to find which nonce a document used. <code>cspHeader</code> needs{" "}
+        <code>nonce</code>, and is refused beside <code>csp</code> or a resolver made with its own{" "}
+        <code>header</code>. The documents stay <code>private, no-store</code>.
+      </p>
+      <CodeBlock code={NONCE_CSP_HEADER} lang="ts" />
 
       <h2>The client ↔ server boundary</h2>
       <p>

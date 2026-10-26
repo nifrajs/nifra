@@ -23,6 +23,7 @@ import { canonicalJson } from "@nifrajs/core/canonical-json"
 import type { ToolContract } from "@nifrajs/core/tool-contract"
 import { toolInputJsonSchema } from "@nifrajs/core/tool-contract"
 import { isRecord } from "./internal/record.ts"
+import { sha256Hex } from "./internal/sha256-hex.ts"
 
 export const CAPABILITY_DESCRIPTOR_VERSION = 1 as const
 export const REGISTRY_SNAPSHOT_VERSION = 1 as const
@@ -157,17 +158,6 @@ const CONTENT_KEYS: ReadonlySet<string> = new Set([
   "data",
 ])
 
-const encoder = new TextEncoder()
-
-/** SHA-256 hex of a UTF-8 string. Collision-resistant, so a digest cannot be forged from content. */
-async function sha256HexOf(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(text))
-  const view = new Uint8Array(digest)
-  let hex = ""
-  for (let i = 0; i < view.length; i++) hex += (view[i] as number).toString(16).padStart(2, "0")
-  return hex
-}
-
 function parseKind(value: unknown): CapabilityKind {
   if (typeof value !== "string" || !CAPABILITY_KINDS.has(value))
     throw new RegistryError("unsupported_kind")
@@ -300,7 +290,7 @@ export async function composeDescriptor(input: DescriptorInput): Promise<Capabil
   const name = parseName(input.name)
   const version = parseVersion(input.version ?? DEFAULT_DESCRIPTOR_VERSION)
   if (!isRecord(input.inputSchema)) throw new RegistryError("invalid_descriptor")
-  const schemaDigest = await sha256HexOf(canonicalJson(input.inputSchema))
+  const schemaDigest = await sha256Hex(canonicalJson(input.inputSchema))
   const requiredCapabilities = parseRequiredCapabilities(input.requiredCapabilities)
   const approval = parseApproval(input.approval)
   const retry = parseMember<RetryClass>(input.retry, RETRY_CLASSES, "none", "invalid_descriptor")
@@ -409,7 +399,7 @@ export async function composeRegistrySnapshot(
     byIdentity.set(key, descriptor)
   }
   const ordered = [...validated].sort(compareDescriptors)
-  const digest = await sha256HexOf(
+  const digest = await sha256Hex(
     canonicalJson({
       version: REGISTRY_SNAPSHOT_VERSION,
       descriptors: ordered.map(canonicalDescriptor),

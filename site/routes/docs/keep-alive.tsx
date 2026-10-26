@@ -339,6 +339,15 @@ export default function KeepAlive() {
         A document the browser puts in its back/forward cache drops its kept pages first, so a
         cached document never carries them.
       </p>
+      <p>
+        <code>nifra doctor</code> warns about <code>keepAlive</code> routes in an app where nothing
+        names the sign-in cookie: no <code>identityCookies</code>, no <code>identityChanged()</code>,
+        and no <code>@nifrajs/auth</code>, Better Auth or Auth.js reachable. It follows the app&apos;s
+        installed and linked dependencies, so an app that reaches Better Auth through a workspace
+        package of its own gets a note naming the chain instead: the default names and Better
+        Auth&apos;s <code>&lt;prefix&gt;.session_token</code> suffix still cover it, unless that
+        package renames the cookie outright.
+      </p>
 
       <h2>Limits</h2>
       <ul>

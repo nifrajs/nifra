@@ -18,6 +18,7 @@ import { type FailureDirective, FailureInjectedError, runFailureScenario } from 
 import { type FaultProfile, runFaultProfile } from "./fault-profile.ts"
 import { type EffectLedger, type IdempotencyProof, proveIdempotency } from "./idempotency.ts"
 import { isRecord } from "./internal/record.ts"
+import { sha256Hex } from "./internal/sha256-hex.ts"
 
 /** Code-unit order, the same in every locale: a case digest must not depend on the machine scoring it. */
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
@@ -257,7 +258,7 @@ export async function runAgentFailureMatrix(
     const regressionId = `${caseId}/${scheduleToken}`
     cases.push({ id: caseId, kind: entry.kind, scheduleToken, ok: report.ok, regressionId })
   }
-  const digest = await sha256(canonicalJson({ version: 1, seed, cases }))
+  const digest = await sha256Hex(canonicalJson({ version: 1, seed, cases }))
   return Object.freeze({
     version: 1,
     seed,
@@ -357,7 +358,7 @@ export async function runAgentEvalComposition(
     if (!result.ok) regressionIds.push(`certification/${result.code ?? "failed"}`)
   }
   const ok = regressionIds.length === 0 && components.every((entry) => entry.ok)
-  const digest = await sha256(
+  const digest = await sha256Hex(
     canonicalJson({ version: 1, suite: suite.digest, components, regressionIds }),
   )
   return Object.freeze({
@@ -381,11 +382,6 @@ export function assertAgentEval(report: AgentEvalCompositionReport): void {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
-
-async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
-}
 
 function assertToken(value: unknown, what: string): asserts value is string {
   if (typeof value !== "string" || !TOKEN.test(value))
@@ -526,10 +522,10 @@ export function defineAgentEvalSuite(spec: AgentEvalSuiteSpec): AgentEvalSuite {
         cases.push({
           caseId,
           verdicts: Object.freeze(verdicts),
-          digest: await sha256(canonicalJson({ caseId, verdicts })),
+          digest: await sha256Hex(canonicalJson({ caseId, verdicts })),
         })
       }
-      const digest = await sha256(
+      const digest = await sha256Hex(
         canonicalJson({
           suiteId: spec.id,
           suiteVersion: version,
@@ -558,7 +554,7 @@ async function shapeOf(rubric: RubricSpec): Promise<RubricShape> {
     scoreMax: rubric.score.max,
     higherIsBetter,
   }
-  return Object.freeze({ ...projection, digest: await sha256(canonicalJson(projection)) })
+  return Object.freeze({ ...projection, digest: await sha256Hex(canonicalJson(projection)) })
 }
 
 // ── Baseline comparison ───────────────────────────────────────────────────────────────────────
@@ -604,7 +600,7 @@ export async function compareAgentEvalBaseline(
   const regressions = comparisons
     .filter((entry) => failOn.has(entry.code))
     .map((entry) => entry.regressionId)
-  const digest = await sha256(canonicalJson({ suiteId: current.suiteId, comparisons }))
+  const digest = await sha256Hex(canonicalJson({ suiteId: current.suiteId, comparisons }))
   return Object.freeze({
     suiteId: current.suiteId,
     comparisons: Object.freeze(comparisons),

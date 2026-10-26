@@ -14,7 +14,13 @@
  * whole app: every hook, middleware, gate and loader sees the target path, exactly as a navigation.
  * Changes reach open pages over one WebSocket per tab, as opaque tags of the keys they watch.
  */
-import { isSameOriginForm, jsonLogger, type Logger, replacedRequestOf } from "@nifrajs/core/server"
+import {
+  carryRequestLocals,
+  isSameOriginForm,
+  jsonLogger,
+  type Logger,
+  replacedRequestOf,
+} from "@nifrajs/core/server"
 import { websocket } from "@nifrajs/core/ws"
 import {
   LIVE_ATTACH,
@@ -741,6 +747,7 @@ export function live(options: LiveOptions): Live {
         headers,
         signal: req.signal,
       })
+      carryRequestLocals(req, target)
       loads.set(
         target,
         new LoadState(
