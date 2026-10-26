@@ -6806,9 +6806,23 @@
   {
     "name": "HashedFiles",
     "kind": "type",
-    "package": "@nifrajs/web",
-    "signature": "export type HashedFiles = ReadonlySet<string> | readonly RegExp[] | ((pathname: string) => boolean);",
-    "doc": "/** Which files {@link ServePublicDirOptions.hashedFiles} names: paths, patterns, or a predicate. */"
+    "package": "@nifrajs/core",
+    "signature": "export type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean);",
+    "doc": "/** Which files {@link ServeStaticOptions.hashedFiles} names: paths, patterns, or a predicate. */"
+  },
+  {
+    "name": "HashedFiles",
+    "kind": "type",
+    "package": "@nifrajs/deno",
+    "signature": "export type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean);",
+    "doc": "/** Which files {@link ServeStaticOptions.hashedFiles} names: paths, patterns, or a predicate. */"
+  },
+  {
+    "name": "HashedFiles",
+    "kind": "type",
+    "package": "@nifrajs/node",
+    "signature": "export type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean);",
+    "doc": "/** Which files {@link ServeStaticOptions.hashedFiles} names: paths, patterns, or a predicate. */"
   },
   {
     "name": "HealingEvent",
@@ -7155,6 +7169,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare const IDLE_BLOCKER: Blocker;",
     "doc": "/** The idle blocker - a stable reference (no needless adapter re-renders while unblocked). */"
+  },
+  {
+    "name": "IMMUTABLE",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const IMMUTABLE = \"public, max-age=31536000, immutable\";",
+    "doc": "/** `cache-control` for a content-hashed file: its name changes with its bytes. */"
   },
   {
     "name": "ISRApp",
@@ -10611,6 +10632,13 @@
     "doc": "/** One URL pattern a nested `_404` answers when no route matches it. */"
   },
   {
+    "name": "ONE_DAY",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const ONE_DAY = \"public, max-age=86400\";",
+    "doc": "/** `cache-control` for a file that keeps its name across deploys, as a build's `public/` files do. */"
+  },
+  {
     "name": "ObservationAdapter",
     "kind": "interface",
     "package": "@nifrajs/otel",
@@ -11854,13 +11882,6 @@
     "package": "@nifrajs/proxy",
     "signature": "export interface ProxyUpstreamResponse {\n    readonly status: number;\n    /** Empty string is fine - HTTP/2 has no reason phrase, and nothing downstream depends on it. */\n    readonly statusText: string;\n    readonly headers: Headers;\n    readonly body: ReadableStream<Uint8Array> | null;\n    /**\n     * Whether `body` is still exactly the bytes the upstream sent, `Content-Encoding` intact. `fetch`\n     * transparently decodes a compressed response, so its body is identity and the stored\n     * `content-encoding`/`content-length` no longer describe it - both are dropped on relay (the\n     * default when this is omitted). A transport that does NOT decode (undici's `request` does not)\n     * MUST set this `true` so the encoding and length are relayed instead, letting the client decode\n     * the bytes it actually receives. Getting this wrong ships a gzip body labelled identity.\n     */\n    readonly bodyEncoded?: boolean;\n}",
     "doc": "/** What a {@link ProxyTransport} returns. Header hygiene on the way back is the proxy's job. */"
-  },
-  {
-    "name": "PublicDirCache",
-    "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface PublicDirCache {\n    /** `cache-control` for content-hashed assets (default immutable, one year). */\n    readonly hashed?: string;\n    /** `cache-control` for everything else under `public/` (default one day). */\n    readonly assets?: string;\n}",
-    "doc": "/** How long each subtree may be cached. Content-hashed bundle output can be immutable; a\n * user-authored file keeps its name across deploys, so it gets a day and a revalidation. */"
   },
   {
     "name": "PurgeAttempt",
@@ -14803,7 +14824,7 @@
     "name": "ServeOptions",
     "kind": "interface",
     "package": "@nifrajs/deno",
-    "signature": "export interface ServeOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /**\n     * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on\n     * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as\n     * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.\n     */\n    readonly gracefulSignals?: boolean | DenoStopOptions;\n    /**\n     * Serve HTTPS directly, with no proxy in front: `cert` and `key` as PEM text or the files' bytes.\n     * Unset, the server speaks plain HTTP, which is what a proxy or platform that terminates TLS\n     * expects.\n     */\n    readonly tls?: {\n        readonly cert: string | Uint8Array;\n        readonly key: string | Uint8Array;\n    };\n    /**\n     * Sees every request before the app does, so a file it answers wins over any route at the same\n     * path. It returns the file's response, or `undefined` to let the app route the request. No hook\n     * of the app runs for a request it answers. `@nifrajs/web`'s Deno build serves its client bundle\n     * and public files this way.\n     */\n    readonly static?: (request: Request) => Response | Promise<Response | undefined> | undefined;\n}"
+    "signature": "export interface ServeOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /**\n     * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on\n     * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as\n     * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.\n     */\n    readonly gracefulSignals?: boolean | DenoStopOptions;\n    /**\n     * Serve HTTPS directly, with no proxy in front: `cert` and `key` as PEM text or the files' bytes.\n     * Unset, the server speaks plain HTTP, which is what a proxy or platform that terminates TLS\n     * expects.\n     */\n    readonly tls?: {\n        readonly cert: string | Uint8Array;\n        readonly key: string | Uint8Array;\n    };\n    /**\n     * Sees every request before the app does, so a file it answers wins over any route at the same\n     * path. It returns the file's response, or `undefined` to let the app route the request. No hook\n     * of the app runs for a request it answers. {@link serveStatic} builds one for files on disk, and\n     * `@nifrajs/web`'s Deno build serves its client bundle and public files through it.\n     */\n    readonly static?: (request: Request) => Response | Promise<Response | undefined> | undefined;\n}"
   },
   {
     "name": "ServeOptions",
@@ -14812,17 +14833,25 @@
     "signature": "export interface ServeOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /**\n     * Protocol used when the adapter constructs `Request.url`.\n     *\n     * The default is `\"https\"` when {@link ServeOptions.tls} is set and `\"http\"` otherwise. Deployments\n     * behind TLS termination can set `\"https\"` (or a trusted infra-aware function) so app code that reads\n     * `request.url` sees the public scheme. Forwarded headers are not trusted implicitly.\n     */\n    readonly protocol?: RequestProtocolOption;\n    /**\n     * Serve HTTPS directly, with no proxy in front: `{ cert, key }` as PEM text or the files' bytes\n     * (`readFileSync(\"cert.pem\")`), plus any other `node:tls` server option (`passphrase`, `ca`,\n     * `requestCert` for client certificates, `minVersion`, `SNICallback`, ...). Unset, the server speaks\n     * plain HTTP, which is what a proxy or platform that terminates TLS expects.\n     */\n    readonly tls?: TlsOptions;\n    /** Reject requests whose normalized Host authority is not in this allowlist or callback result. */\n    readonly allowedHosts?: readonly string[] | ((host: string) => boolean);\n    /** Use this validated authority when constructing Request.url, ignoring the inbound Host value. */\n    readonly canonicalHost?: string;\n    /**\n     * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on\n     * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as\n     * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.\n     *\n     * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap\n     * are *not* set here - they live inside `app.fetch`, so they already apply through\n     * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /\n     * `headersTimeout` (60s) defaults.\n     */\n    readonly gracefulSignals?: boolean | NodeStopOptions;\n    /**\n     * Sees every request before the app does, so a file it answers wins over any route at the same\n     * path. It returns the file's response, or `undefined` to let the app route the request. No hook\n     * of the app runs for a request it answers. The same option as Bun's `app.listen()` and\n     * `@nifrajs/deno`'s `serve()`.\n     *\n     * {@link serveStatic} is the one to pass for files on disk: this adapter runs its mounts on Node's\n     * own request, so a request they pass on keeps the app's direct lane. Any other function needs a\n     * Web `Request` for every request, which roughly doubles the cost of a small route.\n     */\n    readonly static?: (request: Request) => Response | Promise<Response | undefined> | undefined;\n    /**\n     * Make a hand-rolled `return new Response(body)` ride the direct-write lane, by swapping\n     * `globalThis.Response` for a stand-in that defers a *simple* construction (a string body, no\n     * `statusText`, no headers or a plain header record) the way `c.text` / `c.json` already do.\n     *\n     * Off by default: prefer `c.text` / `c.json`, which get this without a global swap. Reach for the\n     * flag only when handlers construct `Response` by hand on the hot path. It patches a process-global\n     * builtin, so every `new Response(...)` anywhere in the process goes through the stand-in -\n     * transparent (non-simple bodies build a real `Response`, and simple ones stay `instanceof\n     * Response`), but a broad enough change to be opt-in.\n     */\n    readonly fastResponse?: boolean;\n}"
   },
   {
-    "name": "ServePublicDirOptions",
+    "name": "ServeStaticOptions",
     "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface ServePublicDirOptions {\n    /** Absolute path of the directory to serve. */\n    readonly dir: string;\n    /** URL prefix whose files are content-hashed and may be cached immutably (default `\"/assets/\"`).\n     * Ignored when `hashedFiles` is set. */\n    readonly hashedPrefix?: string;\n    /**\n     * The content-hashed files, matched on the encoded URL path. When set, only these are cached\n     * immutably and every other file gets the `assets` policy, so a user-authored file that happens to\n     * sit under the hashed prefix still revalidates. One of:\n     *\n     * - a set of paths, such as a build manifest's `assets`;\n     * - patterns, for files a pre-build step hashed that no manifest lists:\n     *   `[/^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/]`;\n     * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`. It runs as\n     *   written, so a RegExp it tests should be neither global nor sticky.\n     */\n    readonly hashedFiles?: HashedFiles;\n    readonly cache?: PublicDirCache;\n    /** Optional encoded URL-path allowlist. When present, route misses avoid a filesystem probe. */\n    readonly files?: ReadonlySet<string>;\n}"
+    "package": "@nifrajs/core",
+    "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from - an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /**\n     * The content-hashed files, matched on the URL path as sent. When set, `immutable` applies only to\n     * these, and any other file is sent with `cacheControl`, so a file that keeps its name across deploys\n     * still revalidates. One of:\n     *\n     * - paths, such as a build manifest's `assets`;\n     * - patterns, for files a pre-build step hashed that no manifest lists:\n     *   `[/^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/]`;\n     * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`. It runs as\n     *   written, so a RegExp it tests should be neither global nor sticky.\n     */\n    readonly hashedFiles?: HashedFiles;\n    /**\n     * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside\n     * `hashedFiles`). Unset, such a file carries only its validators.\n     */\n    readonly cacheControl?: string;\n    /**\n     * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under\n     * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so\n     * a mount over a directory that also holds the server bundle can expose just the build's listed\n     * files. A later mount over the same paths can still serve the rest.\n     */\n    readonly files?: Iterable<string>;\n    /**\n     * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to\n     * `host`. `false` passes the request on, without touching the filesystem, to the next mount and then\n     * the app - the seam a host policy uses so a host's refused file meets the app's own refusal instead\n     * of being served.\n     */\n    readonly allow?: (host: string, pathname: string) => boolean;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is\n     * served. Default `\"deny\"`: answered as a missing file is, so probing can't distinguish \"hidden\" from\n     * \"absent\". `/.well-known` is public by definition (RFC 8615) and always served. The rule applies to\n     * the requested path and again to the file it resolves to, so a visible name linking to `.env` is\n     * denied too. Set `\"allow\"` if the directory deliberately holds dotfiles.\n     */\n    readonly dotfiles?: \"deny\" | \"allow\";\n    /**\n     * What a path under `prefix` this mount cannot serve does: a missing or hidden file, a link out of\n     * the directory, a malformed or traversing path. Default `false`: answered `404` (`400` malformed,\n     * `403` traversing), so a missing asset is never rendered as a page. `true` passes it to the next\n     * mount, then the app - for a mount at `\"/\"` beside the app's own routes.\n     */\n    readonly fallthrough?: boolean;\n}",
+    "doc": "/**\n * One directory `serveStatic()` serves under a URL prefix: the same options on Bun\n * (`@nifrajs/core/serve-static`), `@nifrajs/node` and `@nifrajs/deno`. Each runtime reads the files\n * with its own fastest file API; which request a mount takes, and how it answers, is decided here.\n */"
+  },
+  {
+    "name": "ServeStaticOptions",
+    "kind": "interface",
+    "package": "@nifrajs/deno",
+    "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from - an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /**\n     * The content-hashed files, matched on the URL path as sent. When set, `immutable` applies only to\n     * these, and any other file is sent with `cacheControl`, so a file that keeps its name across deploys\n     * still revalidates. One of:\n     *\n     * - paths, such as a build manifest's `assets`;\n     * - patterns, for files a pre-build step hashed that no manifest lists:\n     *   `[/^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/]`;\n     * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`. It runs as\n     *   written, so a RegExp it tests should be neither global nor sticky.\n     */\n    readonly hashedFiles?: HashedFiles;\n    /**\n     * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside\n     * `hashedFiles`). Unset, such a file carries only its validators.\n     */\n    readonly cacheControl?: string;\n    /**\n     * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under\n     * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so\n     * a mount over a directory that also holds the server bundle can expose just the build's listed\n     * files. A later mount over the same paths can still serve the rest.\n     */\n    readonly files?: Iterable<string>;\n    /**\n     * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to\n     * `host`. `false` passes the request on, without touching the filesystem, to the next mount and then\n     * the app - the seam a host policy uses so a host's refused file meets the app's own refusal instead\n     * of being served.\n     */\n    readonly allow?: (host: string, pathname: string) => boolean;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is\n     * served. Default `\"deny\"`: answered as a missing file is, so probing can't distinguish \"hidden\" from\n     * \"absent\". `/.well-known` is public by definition (RFC 8615) and always served. The rule applies to\n     * the requested path and again to the file it resolves to, so a visible name linking to `.env` is\n     * denied too. Set `\"allow\"` if the directory deliberately holds dotfiles.\n     */\n    readonly dotfiles?: \"deny\" | \"allow\";\n    /**\n     * What a path under `prefix` this mount cannot serve does: a missing or hidden file, a link out of\n     * the directory, a malformed or traversing path. Default `false`: answered `404` (`400` malformed,\n     * `403` traversing), so a missing asset is never rendered as a page. `true` passes it to the next\n     * mount, then the app - for a mount at `\"/\"` beside the app's own routes.\n     */\n    readonly fallthrough?: boolean;\n}",
+    "doc": "/**\n * One directory `serveStatic()` serves under a URL prefix: the same options on Bun\n * (`@nifrajs/core/serve-static`), `@nifrajs/node` and `@nifrajs/deno`. Each runtime reads the files\n * with its own fastest file API; which request a mount takes, and how it answers, is decided here.\n */"
   },
   {
     "name": "ServeStaticOptions",
     "kind": "interface",
     "package": "@nifrajs/node",
-    "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from - an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /**\n     * URL paths of the content-hashed files, such as a client build manifest's `assets`. When set,\n     * `immutable` applies only to these; any other file is sent with its validators and no\n     * `cache-control`, so a file that keeps its name across deploys still revalidates.\n     */\n    readonly hashedFiles?: Iterable<string>;\n    /**\n     * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside\n     * `hashedFiles`). Unset, such a file carries only its validators.\n     */\n    readonly cacheControl?: string;\n    /**\n     * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under\n     * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so\n     * a mount over a directory that also holds the server bundle can expose just the build's listed\n     * files. A later mount over the same paths can still serve the rest.\n     */\n    readonly files?: Iterable<string>;\n    /**\n     * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to\n     * `host` (its Host header). `false` passes the request on, without touching the filesystem, to the\n     * next mount and then the app - the seam a host policy uses so a host's refused file meets the\n     * app's own refusal instead of being served.\n     */\n    readonly allow?: (host: string, pathname: string) => boolean;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is\n     * served. Default `\"deny\"`: answered `404` - the same response as a missing file, so probing\n     * can't distinguish \"hidden\" from \"absent\". Dotfiles land in build output by accident, not by\n     * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.\n     * `/.well-known` is public by definition (RFC 8615) and always served, as `servePublicDir` does.\n     * The rule applies to the requested path and again to the file it resolves to, so a visible name\n     * linking to `.env` is denied too. Set `\"allow\"` if the directory deliberately holds dotfiles.\n     */\n    readonly dotfiles?: \"deny\" | \"allow\";\n}",
-    "doc": "/**\n * One directory {@link serveStatic} serves (e.g. the client build) under a URL prefix - so a\n * self-hosted Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On\n * Cloudflare/Vercel the platform serves assets; this is for `node server.js`.)\n */"
+    "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from - an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /**\n     * The content-hashed files, matched on the URL path as sent. When set, `immutable` applies only to\n     * these, and any other file is sent with `cacheControl`, so a file that keeps its name across deploys\n     * still revalidates. One of:\n     *\n     * - paths, such as a build manifest's `assets`;\n     * - patterns, for files a pre-build step hashed that no manifest lists:\n     *   `[/^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/]`;\n     * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`. It runs as\n     *   written, so a RegExp it tests should be neither global nor sticky.\n     */\n    readonly hashedFiles?: HashedFiles;\n    /**\n     * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside\n     * `hashedFiles`). Unset, such a file carries only its validators.\n     */\n    readonly cacheControl?: string;\n    /**\n     * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under\n     * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so\n     * a mount over a directory that also holds the server bundle can expose just the build's listed\n     * files. A later mount over the same paths can still serve the rest.\n     */\n    readonly files?: Iterable<string>;\n    /**\n     * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to\n     * `host`. `false` passes the request on, without touching the filesystem, to the next mount and then\n     * the app - the seam a host policy uses so a host's refused file meets the app's own refusal instead\n     * of being served.\n     */\n    readonly allow?: (host: string, pathname: string) => boolean;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is\n     * served. Default `\"deny\"`: answered as a missing file is, so probing can't distinguish \"hidden\" from\n     * \"absent\". `/.well-known` is public by definition (RFC 8615) and always served. The rule applies to\n     * the requested path and again to the file it resolves to, so a visible name linking to `.env` is\n     * denied too. Set `\"allow\"` if the directory deliberately holds dotfiles.\n     */\n    readonly dotfiles?: \"deny\" | \"allow\";\n    /**\n     * What a path under `prefix` this mount cannot serve does: a missing or hidden file, a link out of\n     * the directory, a malformed or traversing path. Default `false`: answered `404` (`400` malformed,\n     * `403` traversing), so a missing asset is never rendered as a page. `true` passes it to the next\n     * mount, then the app - for a mount at `\"/\"` beside the app's own routes.\n     */\n    readonly fallthrough?: boolean;\n}",
+    "doc": "/**\n * One directory `serveStatic()` serves under a URL prefix: the same options on Bun\n * (`@nifrajs/core/serve-static`), `@nifrajs/node` and `@nifrajs/deno`. Each runtime reads the files\n * with its own fastest file API; which request a mount takes, and how it answers, is decided here.\n */"
   },
   {
     "name": "ServeStdioOptions",
@@ -15786,6 +15815,27 @@
     "doc": "/** Build-safe inputs available to a static boundary. It intentionally has no request/session/params API. */"
   },
   {
+    "name": "StaticFileAccess",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface StaticFileAccess {\n    /** The real path the file was opened at: what tags and types it. */\n    readonly path: string;\n    readonly version: FileVersion;\n    /** Read the whole file, up to {@link CONTENT_SNAPSHOT_MAX} bytes, through the open descriptor. */\n    readonly readWhole: () => Promise<Uint8Array>;\n    /** Stat the open descriptor again. */\n    readonly restat: () => Promise<FileVersion>;\n    readonly tags: ContentTags;\n    /** `@nifrajs/core/range`'s parser, passed in so this module imports nothing. */\n    readonly parseRange: (value: string, size: number) => {\n        readonly kind: \"none\" | \"unsatisfiable\";\n    } | {\n        readonly kind: \"satisfiable\";\n        readonly ranges: readonly {\n            readonly start: number;\n            readonly end: number;\n        }[];\n    };\n}",
+    "doc": "/** How a reader reaches the opened, pinned file for {@link planStatic}. */"
+  },
+  {
+    "name": "StaticMatch",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type StaticMatch = \"pass\" | {\n    readonly status: 400 | 403 | 404;\n} | {\n    readonly rel: string;\n    readonly immutable: boolean;\n};",
+    "doc": "/**\n * What a mount does with a request path: `\"pass\"` to the next mount and then the app, a status to\n * answer with, or the decoded path relative to the mount's directory (no leading slash, no `.` or `..`\n * segment, no backslash or NUL) to read.\n */"
+  },
+  {
+    "name": "StaticMount",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface StaticMount {\n    readonly root: string;\n    /** `\"/\"`, or the prefix with one leading and no trailing slash. */\n    readonly prefix: string;\n    readonly isImmutable: (path: string) => boolean;\n    readonly cacheControl: string | undefined;\n    readonly files: ReadonlySet<string> | undefined;\n    readonly allow: ((host: string, pathname: string) => boolean) | undefined;\n    /** Lowercased names. */\n    readonly headers: Readonly<Record<string, string>> | undefined;\n    readonly denyDotfiles: boolean;\n    readonly fallthrough: boolean;\n}",
+    "doc": "/** A {@link ServeStaticOptions} checked once, with its directory resolved by the runtime's reader. */"
+  },
+  {
     "name": "StaticPath",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -15798,6 +15848,20 @@
     "package": "@nifrajs/web",
     "signature": "export interface StaticPaths {\n    readonly paths: readonly StaticPath[];\n    /**\n     * How a path NOT in `paths` is handled. `\"ssr\"` (default) → rendered on-demand by the worker\n     * (the natural hybrid behavior - an unlisted path simply isn't a static file); `\"404\"` → only the\n     * listed paths exist. Recorded by `prerenderRoutes` for the deploy layer.\n     */\n    readonly fallback?: \"ssr\" | \"404\";\n}",
     "doc": "/** What a route's `getStaticPaths` returns: the param sets to prerender + the unlisted-path policy. */"
+  },
+  {
+    "name": "StaticPlan",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type StaticPlan = {\n    readonly status: 200 | 206 | 304 | 416;\n    readonly headers: Record<string, string>;\n    readonly body: false;\n} | {\n    readonly status: 200 | 206;\n    readonly headers: Record<string, string>;\n    readonly body: true;\n    readonly start: number;\n    readonly length: number;\n};",
+    "doc": "/**\n * What a reader sends for a file a mount took: a header-only answer, or `length` bytes from `start`.\n * When tagging it called `readWhole`, the body comes from those same bytes.\n */"
+  },
+  {
+    "name": "StaticRequest",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface StaticRequest {\n    readonly method: \"GET\" | \"HEAD\";\n    readonly header: (name: string) => string | null;\n}",
+    "doc": "/** A request's part of a static answer: its method and its headers by lowercase name. */"
   },
   {
     "name": "StaticRoutes",
@@ -18759,7 +18823,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function copyPublicDir(from: string, to: string): Promise<string[]>;",
-    "doc": "/**\n * Copy `from` into `to`, returning the URL paths copied (sorted). Hidden entries other than\n * `.well-known` are skipped, as development never serves them: every target ships this list, and a\n * CDN-hosted one serves whatever was copied.\n *\n * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and\n * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package\n * entry - a dynamic `import(\"bun\")` there fails the browser build outright.\n */"
+    "doc": "/**\n * Copy `from` into `to`, returning the URL paths copied (sorted). Hidden entries other than\n * `.well-known` are skipped, as development never serves them: every target ships this list, and a\n * CDN-hosted one serves whatever was copied.\n *\n * Lives here, not in `public-dir.ts`, because it is BUILD-time: it reaches for `Bun.Glob` and\n * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package\n * entry - a dynamic `import(\"bun\")` there fails the browser build outright.\n */"
   },
   {
     "name": "copyRef",
@@ -21543,6 +21607,13 @@
     "doc": "/** Match one compiled pattern and return decoded captures. The caller decides cross-pattern order. */"
   },
   {
+    "name": "matchStatic",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function matchStatic(mount: StaticMount, path: string, host: () => string): StaticMatch;",
+    "doc": "/**\n * Match `path` (the URL path as sent, without the query) against `mount`, without touching the\n * filesystem. `host` names the request's host, read only when the mount has an `allow`.\n */"
+  },
+  {
     "name": "matches",
     "kind": "function",
     "package": "@nifrajs/cron",
@@ -22627,6 +22698,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function planSingleCopy(options?: SingleCopyOptions): SingleCopyPlan;",
     "doc": "/**\n * Work out which foreign copies exist and which of them may be redirected.\n *\n * Pure discovery: it reads `package.json` files and symlink targets, never application source, and\n * never mutates anything. Both the plugin and `nifra check`'s verification are built on it, so the\n * enforcement and the report cannot drift apart.\n */"
+  },
+  {
+    "name": "planStatic",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function planStatic(mount: StaticMount, immutable: boolean, request: StaticRequest, file: StaticFileAccess): Promise<StaticPlan>;",
+    "doc": "/**\n * The answer for an opened file, the one sequence every runtime's reader runs: the mount's headers\n * (a caller's own `cache-control`, `last-modified` or `etag` kept), a strong tag from the snapshot\n * served for a file up to {@link CONTENT_SNAPSHOT_MAX} bytes, a `304` for a current copy, then one\n * byte range or the whole file. A larger file streams with no tag, and its date is weak: an\n * `If-Range` gets the whole file rather than a range spliced from two versions.\n */"
   },
   {
     "name": "port",
@@ -24176,18 +24254,25 @@
     "doc": "/**\n * Serve `db` as a mountable MCP server (`mcp.fetch` at `POST /mcp`). See module docs for the\n * security model. Throws {@link McpDbConfigError} on any unsafe configuration - always at\n * construction (boot), never at request time.\n */"
   },
   {
-    "name": "servePublicDir",
+    "name": "serveStatic",
     "kind": "function",
-    "package": "@nifrajs/web",
-    "signature": "export declare function servePublicDir(options: ServePublicDirOptions): (request: Request) => Promise<Response | undefined>;",
-    "doc": "/**\n * Build a static-file handler for `dir`.\n *\n * Returns `undefined` on any miss so the caller **falls through to routing** - a static probe must\n * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a\n * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the\n * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.\n *\n * Files up to 256 KiB carry a strong `ETag` from the exact snapshot served, matching the Node and\n * Deno readers. Those snapshots carry `Last-Modified` only while mtime reflects their own last change.\n * Larger files stream without an `ETag`: an open inode can change after a separate hash pass. They\n * are dated once settled, but an `If-Range` request gets the whole file rather than spliced versions.\n */"
+    "package": "@nifrajs/core",
+    "signature": "export declare function serveStatic(mounts: ServeStaticOptions | readonly ServeStaticOptions[]): (request: Request) => Promise<Response | undefined> | undefined;",
+    "doc": "/**\n * The `static` handler for files on disk, for Bun's `listen()`: each mount serves a directory under a\n * URL prefix, and the first mount whose prefix (and `files`, when set) takes a GET or HEAD path\n * answers it. A request no mount takes returns `undefined` synchronously and reaches the app. The\n * same mounts work with `@nifrajs/node`'s and `@nifrajs/deno`'s `serveStatic`.\n *\n * Files up to 256 KiB carry a strong `ETag` from the exact bytes served. Larger files stream with no\n * tag and a weak date, so an `If-Range` gets the whole file rather than a range spliced from two\n * versions.\n *\n * @example\n * ```ts\n * import { serveStatic } from \"@nifrajs/core/serve-static\"\n *\n * app.listen(3000, { static: serveStatic({ dir: new URL(\"./assets/\", import.meta.url) }) })\n * ```\n */"
+  },
+  {
+    "name": "serveStatic",
+    "kind": "function",
+    "package": "@nifrajs/deno",
+    "signature": "export declare function serveStatic(mounts: ServeStaticOptions | readonly ServeStaticOptions[]): (request: Request) => Promise<Response | undefined> | undefined;",
+    "doc": "/**\n * The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the\n * first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. A request no\n * mount takes returns `undefined` synchronously and reaches the app. The same mounts work with Bun's\n * `@nifrajs/core/serve-static` and `@nifrajs/node`.\n *\n * Files up to 256 KiB carry a strong `ETag` from the exact bytes served. Larger files stream with no\n * tag and a weak date, so an `If-Range` gets the whole file rather than a range spliced from two\n * versions.\n *\n * @example\n * ```ts\n * await serve(app, { port: 3000, static: serveStatic({ dir: new URL(\"./assets/\", import.meta.url) }) })\n * ```\n */"
   },
   {
     "name": "serveStatic",
     "kind": "function",
     "package": "@nifrajs/node",
     "signature": "export declare function serveStatic(mounts: ServeStaticOptions | readonly ServeStaticOptions[]): (request: Request) => Promise<Response | undefined> | undefined;",
-    "doc": "/**\n * The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the\n * first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to\n * {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the\n * app on its direct lane. Called with a Web `Request`, it answers the same way.\n *\n * @example\n * ```ts\n * await serve(app, { port: 3000, static: serveStatic({ dir: new URL(\"./assets/\", import.meta.url) }) })\n * ```\n */"
+    "doc": "/**\n * The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the\n * first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to\n * {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the\n * app on its direct lane. Called with a Web `Request`, it answers the same way. Bun's\n * `@nifrajs/core/serve-static` and `@nifrajs/deno` take the same mounts.\n *\n * @example\n * ```ts\n * await serve(app, { port: 3000, static: serveStatic({ dir: new URL(\"./assets/\", import.meta.url) }) })\n * ```\n */"
   },
   {
     "name": "serveStdio",
@@ -24657,11 +24742,32 @@
     "doc": "/**\n * Start all dynamic boundary loads at once without making the page wait for the slowest sibling.\n * The initial states contain `status: \"pending\"`; callers that support deferred values can attach\n * each `pending.promise` to its own slot. `complete` still provides settled, isolated states to\n * non-streaming callers, preserving the simple reference API.\n */"
   },
   {
+    "name": "staticCacheControl",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function staticCacheControl(mount: StaticMount, immutable: boolean): string | undefined;",
+    "doc": "/** The `cache-control` a file a mount serves carries, or `undefined` for its validators alone. */"
+  },
+  {
     "name": "staticComponentPipeline",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function staticComponentPipeline(source: string, file: string): unknown;",
     "doc": "/** The `componentPipeline` a config module exports as a plain literal, read without running the\n * module, or `undefined` when it exports none or one that is not a literal. */"
+  },
+  {
+    "name": "staticMountOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function staticMountOf(options: ServeStaticOptions, root: string): StaticMount;",
+    "doc": "/** Check `options` once, with `root` the absolute path its runtime resolved `options.dir` to. */"
+  },
+  {
+    "name": "staticMountsOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function staticMountsOf(mounts: ServeStaticOptions | readonly ServeStaticOptions[], rootOf: (dir: string | URL) => string): readonly StaticMount[];",
+    "doc": "/** One mount or several, as `serveStatic()` takes them, each checked by {@link staticMountOf}. */"
   },
   {
     "name": "status",

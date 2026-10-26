@@ -17,6 +17,7 @@ Run a nifra app on Node's http server - a Request<->stream adapter with a gracef
 - **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
 - **ServeOptions** _(interface)_ - `interface ServeOptions`
 - **ServeStaticOptions** _(interface)_ - `interface ServeStaticOptions`
+- **HashedFiles** _(type)_ - `type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)`
 - **RequestProtocol** _(type)_ - `type RequestProtocol = "http" | "https"`
 - **RequestProtocolOption** _(type)_ - `type RequestProtocolOption = | RequestProtocol | ((request: IncomingMessage) => RequestProtocol)`
 

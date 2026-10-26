@@ -7206,14 +7206,15 @@ store (signed with one `storeSecret` in every process - see
 
 The servers `nifra build --target node` and `--target deno` emit run
 on these adapters, so the app installs the one for its target, from the same release as
-`@nifrajs/web`. The Deno adapter's `static` sees every request first:
-it answers with a file's response, or `undefined` to let the app route it. The
-generated Deno server serves its client bundle and `public/` files that way.
+`@nifrajs/web`. Each server's `static` sees every request first: it
+answers with a file's response, or `undefined` to let the app route it. The
+generated servers serve their client bundle and `public/` files that way.
 
-Self-hosting (no CDN in front)? Hand `@nifrajs/node`'s `serve` a
-`serveStatic` mount and it serves the client bundle from disk - traversal-guarded,
-content-typed, with an immutable cache - before the app runs, leaving the SSR fast path
-untouched:
+Self-hosting (no CDN in front)? Hand `serve` a `serveStatic` mount, from
+`@nifrajs/node` or `@nifrajs/deno` (on Bun,
+`@nifrajs/core/serve-static` for `listen()`), and it serves the client
+bundle from disk - traversal-guarded, content-typed, with an immutable cache - before the app
+runs, leaving the SSR fast path untouched:
 `
           serve(app, { port, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) })
         `
@@ -11007,8 +11008,8 @@ Everything on this page in one file. The sections below explain each part. This 
 typechecks against the current packages.
 
 ```ts
-import { fileURLToPath } from "node:url"
-import { createCspPolicy, createWebApp, servePublicDir } from "@nifrajs/web"
+import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
+import { createCspPolicy, createWebApp } from "@nifrajs/web"
 import type { Manifest, RenderAdapter } from "@nifrajs/web"
 
 // From your build: the framework adapter, the route manifest, and what buildClient() returned.
@@ -11023,11 +11024,16 @@ declare const build: {
 declare const errors: { capture(error: unknown, tags: Record<string, string>): void }
 
 // buildClient({ outDir: "dist/assets" }) writes the chunks where their /assets/ URLs point.
-const bundle = servePublicDir({
-  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
-  hashedFiles: new Set(build.assets),
-})
-const publicFiles = servePublicDir({ dir: fileURLToPath(new URL("./public/", import.meta.url)) })
+const files = serveStatic([
+  { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets, cacheControl: ONE_DAY },
+  {
+    dir: new URL("./public/", import.meta.url),
+    prefix: "/",
+    immutable: false,
+    cacheControl: ONE_DAY,
+    fallthrough: true,
+  },
+])
 
 const csp = createCspPolicy({
   header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,
@@ -11041,67 +11047,66 @@ export const app = createWebApp({
   styles: build.css ?? [],
   csp,
   server: { requestTimeoutMs: 15_000, gracefulSignals: { drainMs: 8_000 } },
-  use: (app) => {
-    app.onRequest(async (request) => (await bundle(request)) ?? (await publicFiles(request)))
-  },
   onLoaderError: (error, { route }) => errors.capture(error, { route }),
 })
 
-app.listen(3000)
+app.listen(3000, { static: files })
 ```
 
 ### Static and hashed files
 
-`servePublicDir` from `@nifrajs/web` serves a directory on Bun, Node and
-Deno. It answers `GET` and `HEAD` only, refuses paths that leave the
-directory or name a hidden file, sets the content type and `nosniff`, handles range
-requests, and returns `undefined` on a miss so the request falls through to your
-routes.
+`serveStatic` serves directories under URL prefixes, with the same options on every
+runtime: import it from `@nifrajs/core/serve-static` on Bun, and from
+`@nifrajs/node` or `@nifrajs/deno` there. Pass it as
+`static`, which runs before every route. It answers `GET` and
+`HEAD` only, refuses paths that leave the directory or name a hidden file, sets the
+content type and `nosniff`, and handles range requests. A path no mount's prefix
+covers reaches your routes.
 
 -
-**Hashed build output.** Pass `buildClient()`'s `assets` as
-`hashedFiles`: those files get `immutable` for a year, and anything
-else in the directory gets one day. Write the build to `outDir: "dist/assets"` so
-a chunk's `/assets/...` URL is also its path under `dist/`.
+**Hashed build output.** A mount's `prefix` defaults to `/assets`.
+Pass `buildClient()`'s `assets` as `hashedFiles`: those
+files get `immutable` for a year, and any other file gets
+`cacheControl`. A missing file under the prefix is a `404`, never a
+rendered page.
 
 -
-**Your own files.** A second handler on `public/` serves them at the root,
-with the one-day policy.
+**Your own files.** A second mount on `public/` serves them at
+`/`, with `fallthrough: true` so a path it has no file for reaches
+your routes.
 
 -
 **Files hashed before the build.** The fonts `loadGoogleFont` writes into
-`public/fonts/` are in no manifest, so the `public/` handler names
-them with an array of patterns, matched on the encoded URL path, as below. A handler that
-serves both the build and such files takes a `(path) => boolean` predicate
-instead, with `assets` as `new Set(build.assets)`:
-`(path) => assets.has(path) || HASHED_FONT.test(path)`. A global or
-sticky pattern in the array is used without that flag, so `lastIndex` never
-skips a match; a predicate runs as written, so keep the patterns it tests free of
-`g` and `y`.
-
--
-**Where it runs.** Register the handlers with `app.onRequest` inside
-`use`, so a static hit never reaches page rendering.
+`public/fonts/` are in no manifest, so the `public/` mount names them
+with an array of patterns, matched on the encoded URL path, as below. A mount that serves
+both the build and such files takes a `(path) => boolean` predicate instead,
+with `assets` as `new Set(build.assets)`:
+`(path) => assets.has(path) || HASHED_FONT.test(path)`. A global or sticky
+pattern in the array is used without that flag, so `lastIndex` never skips a
+match; a predicate runs as written, so keep the patterns it tests free of `g`
+and `y`.
 
 ```ts
-import { fileURLToPath } from "node:url"
-import { servePublicDir } from "@nifrajs/web"
+import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
 
 // The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.
 const HASHED_FONT = /^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/
 
-export const publicFiles = servePublicDir({
-  dir: fileURLToPath(new URL("./public/", import.meta.url)),
+export const publicFiles = serveStatic({
+  dir: new URL("./public/", import.meta.url),
+  prefix: "/",
   hashedFiles: [HASHED_FONT],
+  cacheControl: ONE_DAY,
+  fallthrough: true,
 })
 ```
 
-On Node, `serve()` from `@nifrajs/node` can serve the bundle itself before
-the app runs, which keeps the direct request path for everything else:
+On Node and Deno, `serve()` takes the same mounts. On Node they run before the app
+builds a Web request, which keeps the direct request path for everything else:
 
 ```ts
 // doc-check: skip - fragment: app and build are the createWebApp app and buildClient() output above.
-import { serve, serveStatic } from "@nifrajs/node"
+import { serve, serveStatic } from "@nifrajs/node" // or "@nifrajs/deno"
 
 await serve(app, {
   port: 3000,
@@ -17514,8 +17519,23 @@ await serve(app, {
 
 `static` sees every request before the app does, so a file it answers wins over any route at the
 same path. It returns a response, or `undefined` (or a promise of one) to let the app route the
-request. No hook of the app runs for a request it answers, and a throw answers a plain `500`. The
-server `nifra build --target deno` emits serves its client bundle and public files this way.
+request. No hook of the app runs for a request it answers, and a throw answers a plain `500`.
+
+`serveStatic` builds one for files on disk, read with Deno's own file API:
+
+```ts
+import { serve, serveStatic } from "@nifrajs/deno"
+
+await serve(app, { port: 3000, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) })
+```
+
+It takes one mount or a list, with the same options as Bun's `@nifrajs/core/serve-static` and
+`@nifrajs/node`'s: `dir`, `prefix` (default `/assets`), `immutable`, `hashedFiles` (paths, RegExps or
+a predicate), `cacheControl`, `files`, `allow`, `headers`, `dotfiles` and `fallthrough`. A path
+under a mount's prefix that it cannot serve answers 404 (400 malformed, 403 traversing) unless the
+mount sets `fallthrough: true`, which hands it to the next mount and then the app. Run Deno with
+`--allow-read` for the served directories. The server `nifra build --target deno` emits serves its
+client bundle and public files this way.
 
 ## Client disconnect and `c.req.signal`
 
@@ -18754,7 +18774,15 @@ authority. If neither option is set, treat the host in `request.url` as client-c
 `@nifrajs/deno`'s `serve()`: a function from the Web `Request` to the file's `Response`, or
 `undefined` to let the app route it. `static: serveStatic({ dir })` serves a directory for GET and
 HEAD requests, and this adapter runs it on Node's own request, so every other request keeps the
-app's direct lane. Any other function needs a Web `Request` for every request.
+app's direct lane. Any other function needs a Web `Request` for every request, which roughly
+doubles the cost of a small route.
+
+`serveStatic` takes one mount or a list, with the same options as Bun's
+`@nifrajs/core/serve-static` and `@nifrajs/deno`'s: `dir`, `prefix` (default `/assets`),
+`immutable`, `hashedFiles` (paths, RegExps or a predicate), `cacheControl`, `files`, `allow`,
+`headers`, `dotfiles` and `fallthrough`. A path under a mount's prefix that it cannot serve answers
+404 (400 malformed, 403 traversing) unless the mount sets `fallthrough: true`, which hands it to the
+next mount and then the app.
 
 A served directory is a
 public asset directory and must contain nothing private: no secrets, source maps, build
@@ -18770,7 +18798,7 @@ an application or object-storage path with its own validation policy.
 
 Every file carries `Accept-Ranges: bytes`. A file up to 256 KiB is read whole and carries a strong
 `ETag` from exactly the bytes served: 128 bits of their SHA-256, the same for the same bytes on every
-instance and on `servePublicDir`. A replacement that keeps a file's size and timestamps still changes
+instance and on every runtime's `serveStatic`. A replacement that keeps a file's size and timestamps still changes
 its tag. The tag is remembered per file version (device, inode, size, mtime and ctime): a file over
 4 KiB reuses it without hashing when a second stat after the read shows the same version, and a
 `HEAD` or a `304` for that tag is answered from the stat without reading the file at all. A
@@ -18785,7 +18813,7 @@ file is dated only once that change is more than 2 s old, so a write during the 
 later second than the date it was sent with. Explicit
 validator headers still apply. `If-None-Match` takes precedence over `If-Modified-Since`; a matching
 condition gets a bodyless 304. `Range` on GET is parsed by a copy of `@nifrajs/core/range`, the parser
-`servePublicDir` uses, and gated by `If-Range`: it must name the file's strong tag, or its exact date
+every runtime's `serveStatic` uses, and gated by `If-Range`: it must name the file's strong tag, or its exact date
 when the file has no strong tag. One range (overlapping or adjacent ones merge into one) gets 206, a
 range-set that selects nothing gets 416, and several disjoint ranges get the whole file.
 
@@ -20387,7 +20415,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/deno
 
-`DenoServer`, `DenoStopOptions`, `FetchHandler`, `ServeOptions`, `serve`
+`DenoServer`, `DenoStopOptions`, `FetchHandler`, `HashedFiles`, `ServeOptions`, `ServeStaticOptions`, `serve`, `serveStatic`
 
 ## @nifrajs/devtools
 
@@ -20443,7 +20471,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/node
 
-`FetchHandler`, `NodeServer`, `NodeStopOptions`, `RequestProtocol`, `RequestProtocolOption`, `ServeOptions`, `ServeStaticOptions`, `serve`, `serveStatic`
+`FetchHandler`, `HashedFiles`, `NodeServer`, `NodeStopOptions`, `RequestProtocol`, `RequestProtocolOption`, `ServeOptions`, `ServeStaticOptions`, `serve`, `serveStatic`
 
 ## @nifrajs/otel
 
@@ -20487,7 +20515,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HashedFiles`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

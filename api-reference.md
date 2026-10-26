@@ -2915,6 +2915,19 @@ Every public export of every package and documented subpath - name, kind, signat
 - **sitemap** _(function)_ - `sitemap: (entries: readonly SitemapEntry[], options?: SitemapOptions) => string`
   Build a `<urlset>` sitemap XML document from `entries`. Throws on out-of-spec input (dev-time data).
 
+### `@nifrajs/core/serve-static`
+
+- **HashedFiles** _(type)_ - `type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)`
+  Which files {@link ServeStaticOptions.hashedFiles} names: paths, patterns, or a predicate.
+- **IMMUTABLE** _(const)_ - `IMMUTABLE: "public, max-age=31536000, immutable"`
+  `cache-control` for a content-hashed file: its name changes with its bytes.
+- **ONE_DAY** _(const)_ - `ONE_DAY: "public, max-age=86400"`
+  `cache-control` for a file that keeps its name across deploys, as a build's `public/` files do.
+- **ServeStaticOptions** _(interface)_ - `interface ServeStaticOptions`
+  One directory `serveStatic()` serves under a URL prefix: the same options on Bun (`@nifrajs/core/serve-static`), `@nifrajs/node` and `@nifrajs/deno`. Each runtime reads the files with its own fastest file API; which request a mount takes, and how it answers, is decided here.
+- **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
+  The `static` handler for files on disk, for Bun's `listen()`: each mount serves a directory under a URL prefix, and the first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. A request no mount takes returns `undefined` synchronously and reaches the app. The same moun…
+
 ### `@nifrajs/core/server`
 
 - **AdmissionController** _(interface)_ - `interface AdmissionController`
@@ -3256,8 +3269,26 @@ _No named exports (side-effect entrypoint)._
   Entity tags from file bytes, consistent across instances and runtimes. Files beyond the content hash limit instead use a per-instance identity tag. Callers must serve the same immutable bytes they hash; static HTTP readers use bounded snapshots for that guarantee. A tag is remembered per real path …
 - **FileVersion** _(interface)_ - `interface FileVersion`
   The stat fields that tell one version of a file from another on one host: node:fs `Stats` as it is, or Deno's `FileInfo` with its dates as epoch milliseconds and a field it lacks as `NaN`.
+- **HashedFiles** _(type)_ - `type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)`
+  Which files {@link ServeStaticOptions.hashedFiles} names: paths, patterns, or a predicate.
+- **IMMUTABLE** _(const)_ - `IMMUTABLE: "public, max-age=31536000, immutable"`
+  `cache-control` for a content-hashed file: its name changes with its bytes.
+- **ONE_DAY** _(const)_ - `ONE_DAY: "public, max-age=86400"`
+  `cache-control` for a file that keeps its name across deploys, as a build's `public/` files do.
 - **ReadAt** _(type)_ - `type ReadAt = (bytes: Uint8Array, position: number) => Promise<number>`
   Reads into `bytes` from byte `position` of a file, resolving to the count read (0 at its end).
+- **ServeStaticOptions** _(interface)_ - `interface ServeStaticOptions`
+  One directory `serveStatic()` serves under a URL prefix: the same options on Bun (`@nifrajs/core/serve-static`), `@nifrajs/node` and `@nifrajs/deno`. Each runtime reads the files with its own fastest file API; which request a mount takes, and how it answers, is decided here.
+- **StaticFileAccess** _(interface)_ - `interface StaticFileAccess`
+  How a reader reaches the opened, pinned file for {@link planStatic}.
+- **StaticMatch** _(type)_ - `type StaticMatch = | "pass" | { readonly status: 400 | 403 | 404 } | { readonly rel: string; readonly immutable: boolean }`
+  What a mount does with a request path: `"pass"` to the next mount and then the app, a status to answer with, or the decoded path relative to the mount's directory (no leading slash, no `.` or `..` segment, no backslash or NUL) to read.
+- **StaticMount** _(interface)_ - `interface StaticMount`
+  A {@link ServeStaticOptions} checked once, with its directory resolved by the runtime's reader.
+- **StaticPlan** _(type)_ - `type StaticPlan`
+  What a reader sends for a file a mount took: a header-only answer, or `length` bytes from `start`. When tagging it called `readWhole`, the body comes from those same bytes.
+- **StaticRequest** _(interface)_ - `interface StaticRequest`
+  A request's part of a static answer: its method and its headers by lowercase name.
 - **contentTags** _(function)_ - `contentTags: (createHash: (algorithm: "sha256") => ContentHash, options?: ContentTagOptions) => ContentTags`
   Tags from `createHash` - node:crypto's, which every runtime nifra serves files on provides.
 - **contentTypeOf** _(function)_ - `contentTypeOf: (path: string) => string`
@@ -3270,6 +3301,16 @@ _No named exports (side-effect entrypoint)._
   Whether the client's copy is current, so the answer is a bodyless 304. `If-None-Match` (the header, or `null`) decides whenever it is sent (RFC 9110 section 13.2.2), by weak comparison with `etag`, and `*` matches any file. Otherwise an `If-Modified-Since` at or after `lastModified` (epoch millisec…
 - **lastModifiedOf** _(function)_ - `lastModifiedOf: (version: FileVersion) => number | undefined`
   The time a file can be dated by in Last-Modified, or `undefined`: its mtime, only while that is the time of its own last change. A copy or build that keeps or normalizes timestamps - `cp -p`, `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s - gives a same-size replac…
+- **matchStatic** _(function)_ - `matchStatic: (mount: StaticMount, path: string, host: () => string) => StaticMatch`
+  Match `path` (the URL path as sent, without the query) against `mount`, without touching the filesystem. `host` names the request's host, read only when the mount has an `allow`.
+- **planStatic** _(function)_ - `planStatic: (mount: StaticMount, immutable: boolean, request: StaticRequest, file: StaticFileAccess) => Promise<StaticPlan>`
+  The answer for an opened file, the one sequence every runtime's reader runs: the mount's headers (a caller's own `cache-control`, `last-modified` or `etag` kept), a strong tag from the snapshot served for a file up to {@link CONTENT_SNAPSHOT_MAX} bytes, a `304` for a current copy, then one byte ran…
+- **staticCacheControl** _(function)_ - `staticCacheControl: (mount: StaticMount, immutable: boolean) => string | undefined`
+  The `cache-control` a file a mount serves carries, or `undefined` for its validators alone.
+- **staticMountOf** _(function)_ - `staticMountOf: (options: ServeStaticOptions, root: string) => StaticMount`
+  Check `options` once, with `root` the absolute path its runtime resolved `options.dir` to.
+- **staticMountsOf** _(function)_ - `staticMountsOf: (mounts: ServeStaticOptions | readonly ServeStaticOptions[], rootOf: (dir: string | URL) => string) => readonly StaticMount[]`
+  One mount or several, as `serveStatic()` takes them, each checked by {@link staticMountOf}.
 - **streamedLastModifiedOf** _(function)_ - `streamedLastModifiedOf: (version: FileVersion, now?: number) => number | undefined`
   {@link lastModifiedOf} for a body streamed after its stat, where a write can still reach the bytes sent. Dated only once its change is older than the racy window, so such a write falls in a later HTTP-date second and the next `If-Modified-Since` fetches it. A weak validator: never pass it to {@link…
 
@@ -3438,9 +3479,15 @@ _No named exports (side-effect entrypoint)._
   How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes.
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
   Anything exposing a Web `fetch` handler - a nifra `app`, for instance.
+- **HashedFiles** _(type)_ - `type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)`
+  Which files {@link ServeStaticOptions.hashedFiles} names: paths, patterns, or a predicate.
 - **ServeOptions** _(interface)_ - `interface ServeOptions`
+- **ServeStaticOptions** _(interface)_ - `interface ServeStaticOptions`
+  One directory `serveStatic()` serves under a URL prefix: the same options on Bun (`@nifrajs/core/serve-static`), `@nifrajs/node` and `@nifrajs/deno`. Each runtime reads the files with its own fastest file API; which request a mount takes, and how it answers, is decided here.
 - **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<DenoServer>`
   Serve a Web-`fetch` app on Deno. Returns once bound, so `port` is the real one (matters for `port: 0`).
+- **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
+  The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. A request no mount takes returns `undefined` synchronously and reaches the app. The same mounts work with Bun's `@n…
 
 ## @nifrajs/devtools
 
@@ -4460,6 +4507,8 @@ _No named exports (side-effect entrypoint)._
 
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
   Anything exposing a Web `fetch` handler - a nifra `app`, for instance.
+- **HashedFiles** _(type)_ - `type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)`
+  Which files {@link ServeStaticOptions.hashedFiles} names: paths, patterns, or a predicate.
 - **NodeServer** _(interface)_ - `interface NodeServer`
 - **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
   How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes.
@@ -4467,7 +4516,7 @@ _No named exports (side-effect entrypoint)._
 - **RequestProtocolOption** _(type)_ - `type RequestProtocolOption = | RequestProtocol | ((request: IncomingMessage) => RequestProtocol)`
 - **ServeOptions** _(interface)_ - `interface ServeOptions`
 - **ServeStaticOptions** _(interface)_ - `interface ServeStaticOptions`
-  One directory {@link serveStatic} serves (e.g. the client build) under a URL prefix - so a self-hosted Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the platform serves assets; this is for `node server.js`.)
+  One directory `serveStatic()` serves under a URL prefix: the same options on Bun (`@nifrajs/core/serve-static`), `@nifrajs/node` and `@nifrajs/deno`. Each runtime reads the files with its own fastest file API; which request a mount takes, and how it answers, is decided here.
 - **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<NodeServer>`
 - **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
   The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the app on i…
@@ -5295,8 +5344,6 @@ _No named exports (side-effect entrypoint)._
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
 - **HANDOVER_ID** _(const)_ - `HANDOVER_ID: "__nifra-handover"`
   `id` of the inert `<script type="application/json">` a hydrating document hands its page state over in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
-- **HashedFiles** _(type)_ - `type HashedFiles = ReadonlySet<string> | readonly RegExp[] | ((pathname: string) => boolean)`
-  Which files {@link ServePublicDirOptions.hashedFiles} names: paths, patterns, or a predicate.
 - **HostPolicy** _(interface)_ - `interface HostPolicy`
 - **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions`
 - **HostPolicyRule** _(interface)_ - `interface HostPolicyRule`
@@ -5433,8 +5480,6 @@ _No named exports (side-effect entrypoint)._
   Pages a self-hosted build prerendered, which `createWebApp` answers from their file instead of rendering them. The file is served from inside the app, after `use` middleware, so a gate in front of the pages still runs.
 - **PreviewEndpointOptions** _(interface)_ - `interface PreviewEndpointOptions`
   Config for {@link previewEndpoint}.
-- **PublicDirCache** _(interface)_ - `interface PublicDirCache`
-  How long each subtree may be cached. Content-hashed bundle output can be immutable; a user-authored file keeps its name across deploys, so it gets a day and a revalidation.
 - **QueryClient** _(interface)_ - `interface QueryClient`
   The keyed query cache. One per app (a binding registers it like the router).
 - **QueryClientOptions** _(interface)_ - `interface QueryClientOptions`
@@ -5506,7 +5551,6 @@ _No named exports (side-effect entrypoint)._
 - **ScriptDescriptor** _(interface)_ - `interface ScriptDescriptor`
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
-- **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
 - **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "shared"; readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
   Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
 - **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
@@ -5663,8 +5707,6 @@ _No named exports (side-effect entrypoint)._
   Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators. The result is JSON text: read it…
 - **serializeSearch** _(function)_ - `serializeSearch: (value: Record<string, unknown>, codec?: SearchCodec) => string`
   Serialize a structured search object back to a query string (leading `?`, or `""` when empty).
-- **servePublicDir** _(function)_ - `servePublicDir: (options: ServePublicDirOptions) => (request: Request) => Promise<Response | undefined>`
-  Build a static-file handler for `dir`.
 - **setBlockerController** _(function)_ - `setBlockerController: (controller: BlockerController | undefined) => void`
   Register (or clear, with `undefined`) the blocker controller - called by `installHistory`. Not for app use.
 - **setBrowserNavigate** _(function)_ - `setBrowserNavigate: (navigate: BrowserNavigate | undefined, router?: ClientRouter, close?: (name: string) => void) => void`
