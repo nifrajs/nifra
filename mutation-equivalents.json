@@ -426,6 +426,20 @@
       "code": "if (denied === undefined) return undefined",
       "from": "denied === undefined",
       "reason": "No exposure is named undefined, so the loop ends in the same undefined."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "readExposure",
+      "code": "if (typeof schema !== \"string\" || typeof name !== \"string\") return []",
+      "from": "||",
+      "reason": "A read's schema and relation names are never null, so this return is never reached."
+    },
+    {
+      "op": "return undefined",
+      "fn": "readExecuteGrants",
+      "code": "if (definers.length === 0) return new Map()",
+      "from": "return new Map()",
+      "reason": "With no definers nothing looks a grant up: the refusal path always has one, and the role SQL has none to look up."
     }
   ],
   "packages/mcp-db/src/internal/pg-lexer.ts": [
@@ -487,6 +501,13 @@
       "code": "if (listed.length > 0) {",
       "from": ">",
       "reason": "With nothing listed the query returns no rows, and both loops below have nothing to check."
+    },
+    {
+      "op": "condition->false",
+      "fn": "functionRefusal",
+      "code": "if (calls.length === 0) return undefined",
+      "from": "calls.length === 0",
+      "reason": "With no calls the lookup returns no rows, so the loop ends in the same undefined."
     }
   ],
   "packages/web/src/internal/share-data.ts": [

@@ -1110,7 +1110,11 @@ describe("query layers over a scripted client", () => {
     const columns = ["id", "email", "password_hash", "api_key"]
     const counted = async (
       output: readonly string[],
-      masks: readonly string[] = ["password_hash"],
+      {
+        masks = ["password_hash"],
+        listed = columns,
+        statement = "SELECT count(*) FROM users",
+      }: { masks?: readonly string[]; listed?: readonly string[]; statement?: string } = {},
     ) => {
       const { client } = fakeClient([
         [/current_user::text AS role/, { rows: [ROLE_ROW] }],
@@ -1143,11 +1147,11 @@ describe("query layers over a scripted client", () => {
         ],
         [
           /AS column/,
-          { rows: columns.map((column) => ({ schema: "public", name: "users", column })) },
+          { rows: listed.map((column) => ({ schema: "public", name: "users", column })) },
         ],
         [/^FETCH/, { values: [] }],
       ])
-      return queryPostgres(client, "SELECT count(*) FROM users", {
+      return queryPostgres(client, statement, {
         ...QUERY,
         redaction: { column: (name: string) => masks.includes(name) },
       })
@@ -1157,11 +1161,24 @@ describe("query layers over a scripted client", () => {
       code: "NIFRA_DB_COLUMN_REFUSED",
       message: "the query reads users.password_hash, masked as a credential",
     })
-    expect(await counted(["password_hash", "api_key"], ["password_hash", "api_key"])).toMatchObject(
-      {
-        message: "the query reads users.password_hash, users.api_key, masked as credentials",
-      },
-    )
+    const both = ["password_hash", "api_key"]
+    expect(await counted(both, { masks: both })).toMatchObject({
+      message: "the query reads users.password_hash, users.api_key, masked as credentials",
+    })
+    // A relation the catalog lists no columns of is judged by the row the scan returns.
+    expect(await counted(["password_hash"], { listed: [] })).toMatchObject({
+      message: "the query reads users.password_hash, masked as a credential",
+    })
+    // An alias list hides which columns the plan reads, so every masked column of the relation counts.
+    const aliased = { statement: "SELECT count(*) FROM users AS t(a, b, c, d)" }
+    expect(await counted(columns, aliased)).toMatchObject({
+      message:
+        "the query renames the columns of users with the alias list t(...), so the plan cannot show which columns it reads, and it reads a relation holding users.password_hash, masked as a credential; alias columns in the select list instead",
+    })
+    expect(await counted(columns, { ...aliased, masks: both })).toMatchObject({
+      message:
+        "the query renames the columns of users with the alias list t(...), so the plan cannot show which columns it reads, and it reads a relation holding users.password_hash, users.api_key, masked as credentials; alias columns in the select list instead",
+    })
   })
 
   test("the function allowlist reads pg_proc for the statement's calls before planning, and the plan's after", async () => {
