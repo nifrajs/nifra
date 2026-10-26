@@ -254,6 +254,8 @@ export function compileRouteExecutionPlan(options: {
           maxBodyBytes,
           server.protoPoisoning,
         )
+    // `c.json` writes by the route's contract, if it has one, so the reply and its check share one walk.
+    ctx.jsonContract = entry.responseContract
     let ledger: RequestLedger | undefined
     // The runtime is always present when a route resolved a ledger (enforced at registration).
     const ledgerRuntime = server.effectLedgerRuntime

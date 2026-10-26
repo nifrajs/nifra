@@ -494,30 +494,38 @@ describe("a Date in the payload", () => {
     expect(reports).toEqual([])
   })
 
-  test("each mode writes a Date once, beyond what a c.json reply already wrote", async () => {
-    let date = AT
-    const sentRow = () => ({ id: "a", createdAt: stamp(date) })
+  test("each mode calls every toJSON hook once, a Date's included, in a c.json reply too", async () => {
+    let dates = 0
+    let hooks = 0
+    const sentRow = () => {
+      const date = new Date(AT)
+      // `Date.prototype.toJSON` writes through `toISOString`.
+      date.toISOString = () => {
+        dates++
+        return ISO
+      }
+      const id = {
+        toJSON: () => {
+          hooks++
+          return "a"
+        },
+      }
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the hook writes the declared string, which no static type can say.
+      return { id: id as never, createdAt: stamp(date) }
+    }
     for (const mode of ["warn", "enforce"] as const) {
       const app = server({ logger: silentLogger })
         .use(responseContract(mode))
         .get("/row", { response: ROW }, sentRow)
         .get("/status", { response: ROW }, () => status(201, sentRow()))
         .get("/reply", { response: ROW }, (c) => c.json(sentRow()))
-      for (const [path, expected] of [
-        ["/row", 1],
-        ["/status", 1],
-        ["/reply", 2],
-      ] as const) {
-        let writes = 0
-        date = new Date(AT)
-        // `Date.prototype.toJSON` writes through `toISOString`.
-        date.toISOString = () => {
-          writes++
-          return ISO
-        }
+        .get("/missing", { errors: { 404: ROW } }, (c) => c.json(sentRow(), 404))
+      for (const path of ["/row", "/status", "/reply", "/missing"]) {
+        dates = 0
+        hooks = 0
         const res = await app.fetch(new Request(`http://t${path}`))
         expect(await res.json()).toEqual(SENT_ROW)
-        expect({ mode, path, writes }).toEqual({ mode, path, writes: expected })
+        expect({ mode, path, dates, hooks }).toEqual({ mode, path, dates: 1, hooks: 1 })
       }
     }
   })

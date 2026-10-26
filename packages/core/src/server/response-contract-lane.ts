@@ -384,47 +384,33 @@ const DATE_TO_JSON = Date.prototype.toJSON
 // Deeper than this, the copying walk takes over with its own cycle check.
 const MAX_HOOK_SCAN_DEPTH = 64
 
-/** What {@link hooksIn} finds: only `Date`s' own hooks, or any other. */
-const DATE_HOOK = 1
-const OTHER_HOOK = 2
-
 const isDate = (value: object, hook: unknown): boolean =>
   hook === DATE_TO_JSON && value instanceof Date
 
 /**
- * The `toJSON` hooks `value` holds: {@link OTHER_HOOK} for any but a `Date`'s own, else
- * {@link DATE_HOOK} for a `Date` when `dates` writes them, else 0. Allocates nothing: most payloads
- * have none, and this is the price every contracted response pays.
+ * Whether `value` holds a `toJSON` hook, a `Date`'s only when `dates` writes them. Stops at the first
+ * and allocates nothing: most payloads have none, and this is the price every contracted response
+ * pays.
  */
-function hooksIn(value: object, depth: number, dates: boolean): number {
-  if (depth > MAX_HOOK_SCAN_DEPTH) return OTHER_HOOK
+function hasHook(value: object, depth: number, dates: boolean): boolean {
+  if (depth > MAX_HOOK_SCAN_DEPTH) return true
   const hook: unknown = Reflect.get(value, "toJSON")
-  if (typeof hook === "function") return isDate(value, hook) ? (dates ? DATE_HOOK : 0) : OTHER_HOOK
-  let found = 0
+  if (typeof hook === "function") return dates || !isDate(value, hook)
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
       const item: unknown = value[i]
-      if (typeof item !== "object" || item === null) continue
-      const inner = hooksIn(item, depth + 1, dates)
-      if (inner === OTHER_HOOK) return inner
-      if (inner !== 0) found = inner
+      if (typeof item === "object" && item !== null && hasHook(item, depth + 1, dates)) return true
     }
-    return found
+    return false
   }
   // Inherited enumerable keys are scanned too; that only ever sends a value to the copying walk.
   for (const key in value) {
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `key` was enumerated from `value`; `Reflect.get` here halves the speed of this for-in.
     const field: unknown = (value as Record<string, unknown>)[key]
-    if (typeof field !== "object" || field === null) continue
-    const inner = hooksIn(field, depth + 1, dates)
-    if (inner === OTHER_HOOK) return inner
-    if (inner !== 0) found = inner
+    if (typeof field === "object" && field !== null && hasHook(field, depth + 1, dates)) return true
   }
-  return found
+  return false
 }
-
-const hooksOf = (value: unknown, dates: boolean): number =>
-  typeof value === "object" && value !== null ? hooksIn(value, 0, dates) : 0
 
 /**
  * What `JSON.stringify` writes for `value`: every `toJSON` hook applied as the serializer applies it,
@@ -432,7 +418,9 @@ const hooksOf = (value: unknown, dates: boolean): number =>
  * containers above a hook. A `Date` keeps its object unless `dates`.
  */
 const wireValueOf = (value: unknown, dates: boolean): unknown =>
-  hooksOf(value, dates) === 0 ? value : wireValue(value, "", [], dates)
+  typeof value === "object" && value !== null && hasHook(value, 0, dates)
+    ? wireValue(value, "", [], dates)
+    : value
 
 const wireValue = (value: unknown, key: string | number, path: object[], dates: boolean): unknown =>
   wireChildren(writtenAt(value, key, dates), path, dates)
@@ -459,33 +447,36 @@ function fieldsOf(value: unknown): unknown {
   return fields
 }
 
+/** `value` with each of its fields written; a container is copied once, when a first field changes. */
 function wireChildren(value: unknown, path: object[], dates: boolean): unknown {
   // A cycle is left as it is for `JSON.stringify` to refuse.
   if (typeof value !== "object" || value === null || path.includes(value)) return value
   path.push(value)
+  // A primitive is written as it is, so only an object field is walked.
   if (Array.isArray(value)) {
     let items: unknown[] | undefined
     for (let i = 0; i < value.length; i++) {
       const item: unknown = value[i]
+      if (typeof item !== "object" || item === null) continue
       const written = wireValue(item, i, path, dates)
-      if (written !== item) items ??= value.slice(0, i)
-      if (items !== undefined) items[i] = written
+      if (written === item) continue
+      items ??= value.slice()
+      items[i] = written
     }
     path.pop()
     return items ?? value
   }
-  const keys = Object.keys(value)
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every key read below comes from `Object.keys(value)`; `Reflect.get` costs a call per field.
+  const record = value as Record<string, unknown>
   let out: Record<string, unknown> | undefined
-  let index = 0
-  for (const name of keys) {
-    const field: unknown = Reflect.get(value, name)
+  for (const name of Object.keys(record)) {
+    const field = record[name]
+    if (typeof field !== "object" || field === null) continue
     const written = wireValue(field, name, path, dates)
-    if (written !== field && out === undefined) {
-      out = {}
-      for (const earlier of keys.slice(0, index)) define(out, earlier, Reflect.get(value, earlier))
-    }
-    if (out !== undefined) define(out, name, written)
-    index++
+    if (written === field) continue
+    // A spread copies the own enumerable fields JSON writes, faster than one assignment each.
+    out ??= { ...record }
+    define(out, name, written)
   }
   path.pop()
   return out ?? value
@@ -675,10 +666,11 @@ function validateContract(
   const project = policy.strip && node !== undefined ? projectorOf(node) : undefined
   // Naming what was stripped compares against everything the payload writes, so it walks it whole.
   const hooks =
-    project === undefined || policy.report !== undefined || mode === "warn"
-      ? hooksOf(payload, dates)
-      : 0
-  const before = hooks === 0 ? payload : wireValue(payload, "", [], dates)
+    (project === undefined || policy.report !== undefined || mode === "warn") &&
+    typeof payload === "object" &&
+    payload !== null &&
+    hasHook(payload, 0, dates)
+  const before = hooks ? wireValue(payload, "", [], dates) : payload
   // The projection applies the hook of each value it descends into and reads only declared fields,
   // so a quiet strip never enumerates the payload's own keys. What it copies whole is walked after.
   const sent =
@@ -689,15 +681,11 @@ function validateContract(
   const wire = validate[VALIDATE_WIRE]
   const settled: StandardResult<unknown> | Promise<StandardResult<unknown>> =
     typeof wire === "function" ? wire(sent) : schema["~standard"].validate(sent)
-  // When hooks wrote the payload, `warn` sends what they wrote here rather than calling them again,
-  // so a hook that answers differently on a second call cannot send what was not judged. A payload
-  // only `Date`s wrote is sent as written too, so the serializer does not write each one again; a
-  // `c.json` reply (the only `Response` here) is already bytes and goes out as it came.
-  const shown =
-    mode === "warn" &&
-    (hooks === OTHER_HOOK || (hooks === DATE_HOOK && !(served instanceof Response)))
-      ? replace(before)
-      : served
+  // When hooks wrote the payload, `warn` sends what they wrote here rather than calling them again:
+  // a hook that answers differently on a second call cannot send what was not judged, and the
+  // serializer does not write a `Date` twice. A contracted route's `c.json` reply has none left, as
+  // `write` applied them when the reply was built.
+  const shown = mode === "warn" && hooks ? replace(before) : served
   return settled instanceof Promise
     ? settled.then((r) => interpret(r, before, shown, mode, replace, policy.report))
     : interpret(settled, before, shown, mode, replace, policy.report)
@@ -753,6 +741,11 @@ export interface ResponseContractRuntime {
       readonly jsonBody?: unknown
     },
   ): ResponseContractOutcome | Promise<ResponseContractOutcome>
+  /**
+   * What a `c.json(body)` reply with this status writes, each `toJSON` hook applied as `check` judges
+   * it, so the reply's bytes and its check share one call of each.
+   */
+  write(definition: ResponseContractDefinition, body: unknown, status: number | undefined): unknown
 }
 
 interface ResponseContractInstallable {
@@ -823,6 +816,10 @@ export function responseContract(
   }
   const runtime: ResponseContractRuntime = {
     mode,
+    write: (definition, body, status) => {
+      const schema = schemaFor(definition, status ?? 200)
+      return schema === undefined ? body : wireValueOf(body, jsonSchemaOf(schema) !== undefined)
+    },
     check: (definition, result, context) => {
       const jsonReply =
         result instanceof Response && result === context?.jsonReply

@@ -302,9 +302,12 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A fingerprint keeps the written text of a JSON number a double would round, behind a sampled scan
   // 3-7x cheaper than a regex over the body: idempotency 42,982 -> 43,223 B (Bun 1.4.4); only the
   // idempotency cap is crossed, by three 0.1 KiB steps.
-  "nifra-idempotency": 42.3,
+  // A route's context carries its response contract, so a contracted `c.json` reply is written once
+  // for its bytes and its check: bare 38,502 -> 38,543 B, idempotency 43,293 -> 43,328, mcp 38,773 ->
+  // 38,816, valibot 39,475 -> 39,512 (Bun 1.4.4). The two caps crossed take the next 0.1 KiB step.
+  "nifra-idempotency": 42.4,
   "nifra-effect-ledger": 39.7,
-  "nifra-mcp": 37.9,
+  "nifra-mcp": 38.0,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 38.5,
   "nifra-valibot": 38.6,
