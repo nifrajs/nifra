@@ -22,6 +22,8 @@
  * state should attach a `.catch(() => {})`, the same as `useFetcher`'s `submit`.
  */
 
+import type { ClientServerFn, ServerFnReference } from "./fn.ts"
+
 /** What a component renders from. */
 export interface ServerFnState<Output> {
   /** A call is in flight. */
@@ -53,6 +55,17 @@ const IDLE: ServerFnState<never> = { pending: false, data: undefined, error: und
 /** The idle state, shared so a server render and the first client render agree by reference. */
 export function idleServerFnState<Output>(): ServerFnState<Output> {
   return IDLE as ServerFnState<Output>
+}
+
+/**
+ * `fn` as a binding calls it. A binding calls a server function only in the browser, where the build
+ * has swapped each `serverFn` declaration for its one-argument stub.
+ */
+export function clientServerFn<Input, Output>(
+  fn: ServerFnReference<Input, Output>,
+): ClientServerFn<Input, Output> {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: in the browser every reference is the build's one-argument stub, never the declaration
+  return fn as ClientServerFn<Input, Output>
 }
 
 const asError = (cause: unknown): Error =>

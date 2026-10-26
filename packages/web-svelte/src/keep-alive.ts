@@ -7,12 +7,14 @@
  * (from `@nifrajs/web-svelte/router`, re-exported here) let a page pause its timers meanwhile.
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
+import { assuranceHook } from "@nifrajs/web/internal/hydration-assurance"
 import { keptMount, propsByState } from "@nifrajs/web/internal/keep-alive-mount"
 import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import type { KeepAliveRouter, KeepAliveTable, SlotNode } from "@nifrajs/web/keep-alive"
 import { hydrate as svelteHydrate } from "svelte"
 import { setMountedRouter } from "./fetcher.ts"
 import KeepAlive from "./KeepAlive.svelte"
+import { warningsTo } from "./warnings.ts"
 
 export * from "./client.ts"
 export { onPageHide, onPageShow, usePageVisibility } from "./router.ts"
@@ -48,23 +50,8 @@ export function mountRouter(options: KeepAliveMountOptions): void {
     ...keptMount(options),
     propsOf: propsByState((state) => routeProps(state, searchSchemas, matchChains)),
   }
-  const warning = assuranceWarning()
-  const originalWarn = console.warn
-  if (warning !== undefined) console.warn = (...args) => warning(args.map(String).join(" "))
-  try {
+  warningsTo(assuranceHook("onWarning"), () =>
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
-    svelteHydrate(KeepAlive, { target: container as Element, props: { router, mount } })
-  } finally {
-    if (warning !== undefined) console.warn = originalWarn
-  }
-}
-
-function assuranceWarning(): ((message: string) => void) | undefined {
-  const value = Reflect.get(globalThis, Symbol.for("nifra.hydration.assurance"))
-  if (typeof value !== "object" || value === null) return undefined
-  const callback: unknown = Reflect.get(value, "onWarning")
-  if (typeof callback !== "function") return undefined
-  return (message) => {
-    Reflect.apply(callback, undefined, [message])
-  }
+    svelteHydrate(KeepAlive, { target: container as Element, props: { router, mount } }),
+  )
 }

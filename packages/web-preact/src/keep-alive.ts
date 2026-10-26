@@ -32,6 +32,7 @@ import { memo, useSyncExternalStore } from "preact/compat"
 import { useContext, useLayoutEffect, useMemo, useRef } from "preact/hooks"
 import { withRouteContext } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { type LayoutProps, memoLayout, memoPage } from "./memo-chain.ts"
 import {
   type PageCallbacks,
   pageCallbacksContext,
@@ -47,28 +48,6 @@ export interface KeepAliveMountOptions extends MountRouterOptions {
   readonly router: KeepAliveRouter
   readonly keepAlive: KeepAliveTable
 }
-
-type LayoutProps = {
-  readonly data: unknown
-  readonly boundaries?: RenderProps["boundaries"] | undefined
-  readonly children?: ComponentChildren
-}
-// One `memo` per component, so its type stays the same across renders.
-const memoized = <P extends object>(): ((
-  component: FunctionComponent<P>,
-) => FunctionComponent<P>) => {
-  const held = new WeakMap<FunctionComponent<P>, FunctionComponent<P>>()
-  return (component) => {
-    let memoComponent = held.get(component)
-    if (memoComponent === undefined) {
-      memoComponent = memo(component)
-      held.set(component, memoComponent)
-    }
-    return memoComponent
-  }
-}
-const memoPage = memoized<RenderProps>()
-const memoLayout = memoized<LayoutProps>()
 
 // What a slot renders with. One value per mount: a slot reads nothing that changes per render from
 // context, or a context change would re-render every hidden page past its memo.

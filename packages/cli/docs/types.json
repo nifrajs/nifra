@@ -18327,6 +18327,13 @@
     "signature": "export declare function clientIsland<Props>(contract: ClientIsland<Props>, key: ComponentKey, props: NoInfer<Props>, slots?: Readonly<Record<string, string>>): IslandInstance;"
   },
   {
+    "name": "clientServerFn",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function clientServerFn<Input, Output>(fn: ServerFnReference<Input, Output>): ClientServerFn<Input, Output>;",
+    "doc": "/**\n * `fn` as a binding calls it. A binding calls a server function only in the browser, where the build\n * has swapped each `serverFn` declaration for its one-argument stub.\n */"
+  },
+  {
     "name": "closeBoundary",
     "kind": "function",
     "package": "@nifrajs/web",

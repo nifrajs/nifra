@@ -6136,6 +6136,8 @@ _No named exports (side-effect entrypoint)._
   What a component renders from.
 - **ServerFnStore** _(interface)_ - `interface ServerFnStore<Input, Output>`
   A subscribable call site. One per component instance, created by the framework binding.
+- **clientServerFn** _(function)_ - `clientServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ClientServerFn<Input, Output>`
+  `fn` as a binding calls it. A binding calls a server function only in the browser, where the build has swapped each `serverFn` declaration for its one-argument stub.
 - **createServerFnStore** _(function)_ - `createServerFnStore: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnStore<Input, Output>`
   Wrap a server function (or any async function) in a subscribable pending/error state.
 - **idleServerFnState** _(function)_ - `idleServerFnState: <Output>() => ServerFnState<Output>`

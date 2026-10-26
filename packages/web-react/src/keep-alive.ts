@@ -9,6 +9,7 @@
  * another page's params.
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
+import { assuranceHook } from "@nifrajs/web/internal/hydration-assurance"
 import {
   additionsFor,
   type KeptMount,
@@ -36,6 +37,7 @@ import {
 import { hydrateRoot } from "react-dom/client"
 import { withRouterContext } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { type LayoutProps, memoLayout, memoPage } from "./memo-chain.ts"
 import { pageVisibilityContext } from "./page-visibility.ts"
 import { routeProps } from "./route-props.ts"
 import { inSlot } from "./slot.ts"
@@ -49,26 +51,6 @@ export interface KeepAliveMountOptions extends MountRouterOptions {
 }
 
 export { usePageVisibility } from "./page-visibility.ts"
-
-type LayoutProps = {
-  readonly data: unknown
-  readonly boundaries?: RenderProps["boundaries"] | undefined
-  readonly children?: ReactNode
-}
-// One `memo` per component, so its type stays the same across renders.
-const memoized = <P extends object>(): ((component: ComponentType<P>) => ComponentType<P>) => {
-  const held = new WeakMap<ComponentType<P>, ComponentType<P>>()
-  return (component) => {
-    let memoComponent = held.get(component)
-    if (memoComponent === undefined) {
-      memoComponent = memo(component)
-      held.set(component, memoComponent)
-    }
-    return memoComponent
-  }
-}
-const memoPage = memoized<RenderProps>()
-const memoLayout = memoized<LayoutProps>()
 
 // What a slot renders with. One value per mount: a slot reads nothing that changes per render from
 // context, or a context change would re-render every hidden page past its memo.
@@ -194,21 +176,11 @@ export function mountRouter(options: KeepAliveMountOptions): void {
       ),
     )
   }
-  const onRecoverableError = assuranceError()
+  const onRecoverableError = assuranceHook("onRecoverableError")
   hydrateRoot(
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
     container as Element,
     createElement(Router),
     ...(onRecoverableError === undefined ? [] : [{ onRecoverableError }]),
   )
-}
-
-function assuranceError(): ((error: unknown, info?: unknown) => void) | undefined {
-  const value = Reflect.get(globalThis, Symbol.for("nifra.hydration.assurance"))
-  if (typeof value !== "object" || value === null) return undefined
-  const callback: unknown = Reflect.get(value, "onRecoverableError")
-  if (typeof callback !== "function") return undefined
-  return (error, info) => {
-    Reflect.apply(callback, undefined, [error, info])
-  }
 }

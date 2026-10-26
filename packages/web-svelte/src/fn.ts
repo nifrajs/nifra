@@ -8,8 +8,13 @@
  * "is it pending" has one answer rather than five that drift. This file contributes only a `readable` fed by the store.
  */
 
-import type { ClientServerFn, ServerFnReference } from "@nifrajs/web/fn"
-import { createServerFnStore, idleServerFnState, type ServerFnState } from "@nifrajs/web/fn-state"
+import type { ServerFnReference } from "@nifrajs/web/fn"
+import {
+  clientServerFn,
+  createServerFnStore,
+  idleServerFnState,
+  type ServerFnState,
+} from "@nifrajs/web/fn-state"
 import { type Readable, readable } from "svelte/store"
 
 /** A server function's readable state plus the call itself. */
@@ -31,7 +36,7 @@ export interface ServerFnHandle<Input, Output> {
 export function useServerFn<Input, Output>(
   fn: ServerFnReference<Input, Output>,
 ): ServerFnHandle<Input, Output> {
-  const store = createServerFnStore(fn as ClientServerFn<Input, Output>)
+  const store = createServerFnStore(clientServerFn(fn))
   const state = readable<ServerFnState<Output>>(idleServerFnState<Output>(), (set) => {
     // Prime before subscribing, exactly as `useFetcher` does in this package. `readable` runs this
     // start function only on the FIRST subscription, so without the snapshot a store attached after a

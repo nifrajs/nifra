@@ -1,4 +1,4 @@
-import type { BoundaryStates, MountRouterOptions, RenderProps } from "@nifrajs/web"
+import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
 import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 /**
  * @nifrajs/web-preact/client - Preact client runtime. `hydrate` hydrates a single SSR'd route;
@@ -15,10 +15,11 @@ import {
   hydrate as preactHydrate,
   type VNode,
 } from "preact"
-import { memo, useSyncExternalStore } from "preact/compat"
+import { useSyncExternalStore } from "preact/compat"
 import { useContext } from "preact/hooks"
 import { compose, withRouteContext } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { type LayoutProps, memoLayout, memoPage } from "./memo-chain.ts"
 
 // The `_error` boundary chain element - defined in its own (DOM-free) module, re-exported here so
 // nifra's client codegen resolves it from `@nifrajs/web-preact/client` alongside `mountRouter`.
@@ -48,27 +49,6 @@ const ChainContext = createContext<{
   readonly chain: readonly unknown[]
   readonly props: RenderProps
 }>({ chain: [], props: { data: null } })
-type LayoutProps = {
-  readonly data: unknown
-  readonly boundaries?: BoundaryStates | undefined
-  readonly children?: ComponentChildren
-}
-// One `memo` per component, so its type stays the same across renders.
-const memoized = <P extends object>(): ((
-  component: FunctionComponent<P>,
-) => FunctionComponent<P>) => {
-  const held = new WeakMap<FunctionComponent<P>, FunctionComponent<P>>()
-  return (component) => {
-    let memoComponent = held.get(component)
-    if (memoComponent === undefined) {
-      memoComponent = memo(component)
-      held.set(component, memoComponent)
-    }
-    return memoComponent
-  }
-}
-const memoPage = memoized<RenderProps>()
-const memoLayout = memoized<LayoutProps>()
 // One element per depth, created once: a layout's `children` stays the same element across renders,
 // so its memo compares equal, while the level inside still re-renders through the context.
 const levels: VNode<{ readonly depth: number }>[] = []

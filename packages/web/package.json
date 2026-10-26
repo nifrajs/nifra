@@ -238,6 +238,11 @@
       "types": "./dist/internal/client-call.d.ts",
       "default": "./dist/internal/client-call.js"
     },
+    "./internal/hydration-assurance": {
+      "bun": "./src/internal/hydration-assurance.ts",
+      "types": "./dist/internal/hydration-assurance.d.ts",
+      "default": "./dist/internal/hydration-assurance.js"
+    },
     "./internal/keep-alive-mount": {
       "bun": "./src/internal/keep-alive-mount.ts",
       "types": "./dist/internal/keep-alive-mount.d.ts",
