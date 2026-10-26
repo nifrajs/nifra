@@ -8,7 +8,9 @@ The preview is local-first and fail-closed:
 - Project extensions are explicit, path-bounded, syntax-checked, capability-checked, and
   transactionally reloaded.
 - Session evidence is bounded, redacted for secret-shaped keys, and written as append-only JSONL.
-- Tool approvals are host-owned and auditable. A workflow or subagent cannot raise its own limits.
+- Tool approvals are host-owned and auditable. A native approval port's review answers are host-owned
+  too, but a review's allow or deny emits no approval events, so a host that needs an audit trail
+  records its own reviews. A workflow or subagent cannot raise its own limits.
 - Subagents can be restricted to project roots or a caller-provided isolated-worktree lease. The executor receives the cwd that was checked, with its symlinks resolved. A lease is released only after its executor settles, even when the run itself timed out.
 - A run that returns while its executor ignores the abort reports it through `onAbandoned` (`onSubagentAbandoned` on the orchestration host), which can stop it some other way. `maxAbandoned` (`limits.maxAbandonedSubagents` for orchestration) refuses new children while that many still run.
 - The isolated extension worker contains crashes but is not a hostile-code sandbox. Use OS-level

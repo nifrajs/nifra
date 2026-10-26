@@ -10011,7 +10011,14 @@
     "name": "NativeApprovalPort",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface NativeApprovalPort {\n    request(input: {\n        readonly sessionId: string;\n        /** Stable, bounded identifier for this approval boundary. */\n        readonly approvalId: string;\n        readonly turnId: string;\n        readonly callId: string;\n        readonly action: string;\n        readonly capability: string;\n        readonly tool: NativeTool;\n        readonly input: unknown;\n        readonly signal: AbortSignal;\n    }): boolean | PromiseLike<boolean>;\n}"
+    "signature": "export interface NativeApprovalPort {\n    request(input: NativeApprovalRequest): boolean | PromiseLike<boolean>;\n    /**\n     * Decides before anyone is asked. Anything but a valid answer counts as \"ask\", and so does a\n     * review still unsettled after `reviewTimeoutMs`; \"ask\" raises the approval as if there were no\n     * review. An allow or a deny emits no approval events.\n     */\n    review?(input: NativeApprovalRequest): NativeReviewAnswer | PromiseLike<NativeReviewAnswer>;\n}"
+  },
+  {
+    "name": "NativeApprovalRequest",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface NativeApprovalRequest {\n    readonly sessionId: string;\n    /** Stable, bounded identifier for this approval boundary. */\n    readonly approvalId: string;\n    readonly turnId: string;\n    readonly callId: string;\n    readonly action: string;\n    readonly capability: string;\n    readonly tool: NativeTool;\n    readonly input: unknown;\n    readonly signal: AbortSignal;\n}",
+    "doc": "/** One tool call an approval port is asked about. */"
   },
   {
     "name": "NativeGatewayModelPortOptions",
@@ -10090,6 +10097,13 @@
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type NativeRender = (component: unknown, props: Record<string, unknown>, renderId: string) => string | Promise<string>;"
+  },
+  {
+    "name": "NativeReviewAnswer",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type NativeReviewAnswer = {\n    readonly decision: \"allow\";\n} | {\n    readonly decision: \"deny\";\n    readonly reason: string;\n} | {\n    readonly decision: \"ask\";\n};",
+    "doc": "/** A review's decision on one tool call. A deny's reason reaches the model. */"
   },
   {
     "name": "NativeServerView",
@@ -10255,14 +10269,14 @@
     "name": "NifraBackend",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class NifraBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly sessions;\n    private readonly pendingApprovals;\n    constructor(options: NifraBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean, reason?: string): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private run;\n    private consumeModel;\n    private finish;\n    private requestApproval;\n    private settleApproval;\n    private cancelTurn;\n    private clearTurnSignal;\n    private clearTurn;\n    private isCurrentTurn;\n    private assertCurrentTurn;\n    private emit;\n    private update;\n    private requireSession;\n    private now;\n    private remember;\n    private trimHistory;\n}",
+    "signature": "export declare class NifraBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly sessions;\n    private readonly pendingApprovals;\n    constructor(options: NifraBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean, reason?: string): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private run;\n    private consumeModel;\n    private finish;\n    private requestApproval;\n    /**\n     * Settles on an allow, a deny, or the turn's abort, and on undefined for everything that goes on\n     * to an approval: an ask, a malformed answer, a throw or rejection, and a late answer.\n     */\n    private review;\n    private askApproval;\n    private settleApproval;\n    private cancelTurn;\n    private clearTurnSignal;\n    private clearTurn;\n    private isCurrentTurn;\n    private assertCurrentTurn;\n    private emit;\n    private update;\n    private requireSession;\n    private now;\n    private remember;\n    private trimHistory;\n}",
     "doc": "/**\n * Small provider port for a future Nifra-native backend.\n *\n * It deliberately knows only messages, tools, and the protocol. Provider SDKs, credentials, UI,\n * and framework packages stay outside this module. A model may return one response or stream\n * deltas followed by a final response.\n */"
   },
   {
     "name": "NifraBackendOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface NifraBackendOptions {\n    readonly model: NativeModelPort;\n    readonly tools?: readonly NativeTool[];\n    readonly approval?: NativeApprovalPort;\n    /**\n     * Maximum time a protocol-visible native approval may remain unresolved (default 5 minutes, at\n     * most 24 h). `\"never\"` removes the timer: the approval waits for an answer, a cancel, the end of\n     * its turn, or session close.\n     */\n    readonly approvalTimeoutMs?: ApprovalTimeout;\n    readonly maxSteps?: number;\n    /** Longest message `send` accepts (default 64 KiB). */\n    readonly maxMessageChars?: number;\n    /**\n     * Longest reply the model may give in one turn (default 1 MiB); past it the reply is cut with\n     * a marker. A reply longer than one event's text travels as consecutive `assistant.message`\n     * events, and the model's history keeps it whole.\n     */\n    readonly maxReplyChars?: number;\n    /**\n     * Character budget for the conversation a session sends to the model (default 1 MiB). Past it,\n     * whole earlier turns are dropped, oldest first; the current turn is always sent in full.\n     */\n    readonly maxHistoryChars?: number;\n    readonly now?: () => number;\n}"
+    "signature": "export interface NifraBackendOptions {\n    readonly model: NativeModelPort;\n    readonly tools?: readonly NativeTool[];\n    readonly approval?: NativeApprovalPort;\n    /**\n     * Maximum time a protocol-visible native approval may remain unresolved (default 5 minutes, at\n     * most 24 h). `\"never\"` removes the timer: the approval waits for an answer, a cancel, the end of\n     * its turn, or session close.\n     */\n    readonly approvalTimeoutMs?: ApprovalTimeout;\n    /**\n     * Longest the approval port's `review` may take before the call goes on to an approval (default\n     * 30 s, at most 10 minutes).\n     */\n    readonly reviewTimeoutMs?: number;\n    readonly maxSteps?: number;\n    /** Longest message `send` accepts (default 64 KiB). */\n    readonly maxMessageChars?: number;\n    /**\n     * Longest reply the model may give in one turn (default 1 MiB); past it the reply is cut with\n     * a marker. A reply longer than one event's text travels as consecutive `assistant.message`\n     * events, and the model's history keeps it whole.\n     */\n    readonly maxReplyChars?: number;\n    /**\n     * Character budget for the conversation a session sends to the model (default 1 MiB). Past it,\n     * whole earlier turns are dropped, oldest first; the current turn is always sent in full.\n     */\n    readonly maxHistoryChars?: number;\n    readonly now?: () => number;\n}"
   },
   {
     "name": "NifraContextLike",

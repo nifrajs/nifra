@@ -1133,12 +1133,16 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NIFRA_AGENT_INSTRUCTIONS** _(const)_ - `NIFRA_AGENT_INSTRUCTIONS: string`
   Short, provider-neutral instructions injected into Pi only when the optional agent is used.
 - **NativeApprovalPort** _(interface)_ - `interface NativeApprovalPort`
+- **NativeApprovalRequest** _(interface)_ - `interface NativeApprovalRequest`
+  One tool call an approval port is asked about.
 - **NativeGatewayModelPortOptions** _(interface)_ - `interface NativeGatewayModelPortOptions`
 - **NativeMessage** _(interface)_ - `interface NativeMessage`
 - **NativeModelChunk** _(type)_ - `type NativeModelChunk`
 - **NativeModelPort** _(interface)_ - `interface NativeModelPort`
 - **NativeModelRequest** _(interface)_ - `interface NativeModelRequest`
 - **NativeModelResponse** _(type)_ - `type NativeModelResponse = | { readonly type: "text"; readonly text: string } | { readonly type: "tool"; readonly name: string; readonly input: unknown }`
+- **NativeReviewAnswer** _(type)_ - `type NativeReviewAnswer = | { readonly decision: "allow" } | { readonly decision: "deny"; readonly reason: string } | { readonly decision: "ask" }`
+  A review's decision on one tool call. A deny's reason reaches the model.
 - **NativeTool** _(interface)_ - `interface NativeTool`
 - **NifraAgentTool** _(interface)_ - `interface NifraAgentTool`
 - **NifraBackend** _(class)_ - `class NifraBackend`
