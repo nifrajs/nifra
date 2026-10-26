@@ -358,6 +358,48 @@ test("a held handle's read after a new epoch shows the fetch it starts, which th
   })
 })
 
+test("a new epoch while a change's reloads run loads them once more, and one after that is theirs", async () => {
+  await withEpoch(async (rotate) => {
+    const c = createQueryClient({ now: () => 0 })
+    const g = gated()
+    const pages = gated()
+    const one = c.query(["me"], g.fn)
+    const feed = c.infiniteQuery(["feed"], pages.fn, firstPage)
+    const offs = [one.subscribe(() => {}), feed.subscribe(() => {})]
+    void one.fetch()
+    void feed.fetch()
+    g.resolve(0, "first")
+    pages.resolve(0, "first")
+    await flush()
+    await rotate("two")
+    one.snapshot()
+    await flush()
+    expect([g.calls(), pages.calls()]).toEqual([2, 2])
+    // Another tab's sign-in lands while the reloads run.
+    await rotate("three")
+    g.resolve(1, "second")
+    pages.resolve(1, "second")
+    await flush()
+    expect([g.calls(), pages.calls(), one.snapshot().status, feed.snapshot().status]).toEqual([
+      3,
+      3,
+      "pending",
+      "pending",
+    ])
+    await rotate("four")
+    g.resolve(2, "third")
+    pages.resolve(2, "third")
+    await flush()
+    expect([one.snapshot().data, feed.snapshot().data?.pages, g.calls(), pages.calls()]).toEqual([
+      "third",
+      ["third"],
+      3,
+      3,
+    ])
+    for (const off of offs) off()
+  })
+})
+
 test("a handle kept past its last subscriber reads nothing of the previous visitor", async () => {
   const c = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
   let who = "first"

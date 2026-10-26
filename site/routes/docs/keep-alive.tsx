@@ -312,6 +312,20 @@ export default function KeepAlive() {
         keeps what it shows.
       </p>
       <p>
+        A response that renews the same visitor's session keeps the epoch: a session cookie re-sent
+        with a new lifetime, or an <code>@nifrajs/auth</code> session committed again with the same
+        data. Any change to an <code>@nifrajs/auth</code> session's data rotates it, in either mode,
+        so a sign-in or sign-out shows even when the session id stays the same. With{" "}
+        <a href="/docs/auth">
+          <code>identity</code>
+        </a>{" "}
+        set on <code>createSessions</code>, only a change to the keys it names rotates it, and a write
+        to a cart or a preference keeps it. An Auth.js session
+        read writes a new token every time; mounted through <code>@nifrajs/authjs</code>, it keeps
+        the epoch when both tokens decrypt and every claim but the times Auth.js renews matches.
+        Auth.js mounted any other way rotates it on each read.
+      </p>
+      <p>
         The session cookies of <code>@nifrajs/auth</code> and Auth.js count under their default
         names, and Better Auth's under any <code>cookiePrefix</code>. Name any other, such as one
         renamed through Better Auth's <code>advanced.cookies</code>, in{" "}
