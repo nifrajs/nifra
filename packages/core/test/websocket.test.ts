@@ -21,6 +21,7 @@ import {
   FORBIDDEN_CLOSES,
   REPORT_CAP,
   SERVER_CLOSE_REPORTS,
+  sizingMistakes,
 } from "./ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "./ws-send-contract.ts"
 
@@ -1117,25 +1118,8 @@ describe("attachWebSocket", () => {
   })
 
   test("exceedsPayloadCap counts UTF-8 bytes at every boundary", () => {
-    const encoded = (text: string) => new TextEncoder().encode(text).byteLength
-    const lone = ["\ud800", "\udc00", "a\ud800b", "\udc00\ud800", "😀\ud800", "\ud800".repeat(61)]
-    for (const text of [
-      "",
-      "abc",
-      "é",
-      "€",
-      "😀",
-      "aé€😀",
-      "€".repeat(5),
-      "😀".repeat(3),
-      ...lone,
-    ]) {
-      const bytes = encoded(text)
-      for (const over of [exceedsPayloadCap, utf8ExceedsCap]) {
-        expect(over(text, bytes)).toBe(false)
-        if (bytes > 0) expect(over(text, bytes - 1)).toBe(true)
-      }
-    }
+    expect(sizingMistakes(exceedsPayloadCap)).toEqual([])
+    expect(sizingMistakes(utf8ExceedsCap)).toEqual([])
     expect(exceedsPayloadCap(new Uint8Array(5), 5)).toBe(false)
     expect(exceedsPayloadCap(new Uint8Array(5).buffer, 4)).toBe(true)
   })
