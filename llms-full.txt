@@ -12211,7 +12211,9 @@ A response that renews the same visitor's session keeps the epoch: a session coo
 with a new lifetime, or an `@nifrajs/auth` session committed again with the same
 data. Any change to an `@nifrajs/auth` session's data rotates it, in either mode,
 so a sign-in or sign-out shows even when the session id stays the same. An Auth.js session
-read writes a new token every time, so each one rotates it.
+read writes a new token every time; mounted through `@nifrajs/authjs`, it keeps
+the epoch when both tokens decrypt and every claim but the times Auth.js renews matches.
+Auth.js mounted any other way rotates it on each read.
 
 The session cookies of `@nifrajs/auth` and Auth.js count under their default
 names, and Better Auth's under any `cookiePrefix`. Name any other, such as one

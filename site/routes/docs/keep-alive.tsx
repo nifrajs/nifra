@@ -312,7 +312,9 @@ export default function KeepAlive() {
         with a new lifetime, or an <code>@nifrajs/auth</code> session committed again with the same
         data. Any change to an <code>@nifrajs/auth</code> session's data rotates it, in either mode,
         so a sign-in or sign-out shows even when the session id stays the same. An Auth.js session
-        read writes a new token every time, so each one rotates it.
+        read writes a new token every time; mounted through <code>@nifrajs/authjs</code>, it keeps
+        the epoch when both tokens decrypt and every claim but the times Auth.js renews matches.
+        Auth.js mounted any other way rotates it on each read.
       </p>
       <p>
         The session cookies of <code>@nifrajs/auth</code> and Auth.js count under their default

@@ -26,7 +26,7 @@
 import type { AuthConfig, setEnvDefaults } from "@auth/core"
 import type { Session } from "@auth/core/types"
 import type { AnyServer, Platform, ResponseResult } from "@nifrajs/core/server"
-import { defineIdentityPlugin, isSameOriginPath, status } from "@nifrajs/core/server"
+import { defineIdentityPlugin, isSameOriginPath, parseCookies, status } from "@nifrajs/core/server"
 
 export type { Session } from "@auth/core/types"
 
@@ -162,6 +162,66 @@ function activeConfig(
   return active
 }
 
+// `@nifrajs/web` keeps pages alive under an identity epoch it rotates when a session cookie changes,
+// and an Auth.js session read encrypts a new token every time. The mount holds the secret, so it names
+// a token re-issued to the same visitor in the header that hook reads and removes. Only a request that
+// carries an epoch pays for the two decryptions.
+const EPOCH_COOKIES = ["__Host-nifra-epoch", "nifra-epoch"]
+const RENEWED = "x-nifra-identity-renewed"
+const SESSION_TOKEN = "authjs.session-token"
+// Auth.js writes these anew on every read; a change to any other claim is a change of visitor.
+const REFRESHED_CLAIMS = new Set(["iat", "exp", "jti"])
+
+const claimsOf = (payload: Record<string, unknown>): string =>
+  JSON.stringify(
+    Object.keys(payload)
+      .filter((claim) => !REFRESHED_CLAIMS.has(claim))
+      .sort()
+      .map((claim) => [claim, payload[claim]]),
+  )
+
+async function vouchForRenewal(
+  req: Request,
+  response: Response,
+  config: AuthConfig,
+): Promise<Response> {
+  const sent = parseCookies(req.headers.get("cookie"))
+  const secret = config.secret
+  if (secret === undefined || EPOCH_COOKIES.every((name) => sent[name] === undefined)) {
+    return response
+  }
+  const named = config.cookies?.sessionToken?.name
+  for (const line of response.headers.getSetCookie()) {
+    const end = line.indexOf(";")
+    const pair = end === -1 ? line : line.slice(0, end)
+    const name = pair.slice(0, pair.indexOf("=")).trim()
+    if (
+      named === undefined
+        ? name !== SESSION_TOKEN && name !== `__Secure-${SESSION_TOKEN}`
+        : name !== named
+    ) {
+      continue
+    }
+    const token = parseCookies(pair)[name]
+    const held = sent[name]
+    if (token === undefined || token === "" || held === undefined || token === held) return response
+    try {
+      const decode = config.jwt?.decode ?? (await import("@auth/core/jwt")).decode
+      const [before, after] = await Promise.all([
+        decode({ token: held, secret, salt: name }),
+        decode({ token, secret, salt: name }),
+      ])
+      if (before === null || after === null || claimsOf(before) !== claimsOf(after)) return response
+    } catch {
+      return response
+    }
+    const vouched = new Response(response.body, response)
+    vouched.headers.append(RENEWED, name)
+    return vouched
+  }
+  return response
+}
+
 /** Remove proxy routing metadata so Auth.js cannot derive a URL from attacker-controlled headers. */
 function sanitizePublicRequest(req: Request, url: string, host: string): Request {
   const rewritten = new Request(url, req)
@@ -246,7 +306,11 @@ export function authjs(config: AuthJSConfig, options: AuthJSOptions = {}) {
           }
           const { Auth, setEnvDefaults } = await import("@auth/core")
           const active = activeConfig(config, base, secret, origin, env, setEnvDefaults)
-          return Auth(publicRequest(c.req, origin, options.trustProxy === true), active)
+          const response = await Auth(
+            publicRequest(c.req, origin, options.trustProxy === true),
+            active,
+          )
+          return vouchForRenewal(c.req, response, active)
         },
       )
     }

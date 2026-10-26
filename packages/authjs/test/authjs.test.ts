@@ -353,3 +353,63 @@ describe("origin, proxy, and guard configuration", () => {
     ).rejects.toThrow(/guard redirectTo must be a same-origin path/)
   })
 })
+
+describe("a session read under @nifrajs/web keep-alive", () => {
+  const RENEWED = "x-nifra-identity-renewed"
+  const EPOCH = "__Host-nifra-epoch=0123456789abcdef0123456789abcdef"
+  const switching = server().use(
+    authjs({
+      ...config,
+      providers: [
+        Credentials({
+          credentials: { username: {} },
+          authorize: (creds) => ({ id: String(creds.username), name: String(creds.username) }),
+        }),
+      ],
+    }),
+  )
+  const cookiesOf = (response: Response): string =>
+    response.headers
+      .getSetCookie()
+      .map((line) => line.split(";")[0])
+      .join("; ")
+  const signIn = async (username: string, cookie = ""): Promise<Response> => {
+    const csrf = await switching.fetch(req("/api/auth/csrf", { headers: { cookie } }))
+    const body: unknown = await csrf.json()
+    const csrfToken =
+      typeof body === "object" && body !== null && "csrfToken" in body ? String(body.csrfToken) : ""
+    return switching.fetch(
+      req("/api/auth/callback/credentials", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie: [cookie, cookiesOf(csrf)].filter(Boolean).join("; "),
+        },
+        body: new URLSearchParams({ csrfToken, username }),
+      }),
+    )
+  }
+  const read = (cookie: string) =>
+    switching.fetch(req("/api/auth/session", { headers: { cookie } }))
+
+  test("names the token it re-issued to the same visitor, and still answers the session", async () => {
+    const ada = cookiesOf(await signIn("ada"))
+    const response = await read(`${ada}; ${EPOCH}`)
+    expect(response.headers.get(RENEWED)).toBe("authjs.session-token")
+    expect(cookiesOf(response)).toContain("authjs.session-token=")
+    expect(cookiesOf(response)).not.toBe(ada)
+    expect(await response.json()).toMatchObject({ user: { name: "ada" } })
+  })
+
+  test("names nothing without an epoch, for another visitor, or for a token it cannot read", async () => {
+    const ada = cookiesOf(await signIn("ada"))
+    expect((await read(ada)).headers.get(RENEWED)).toBeNull()
+    const bob = await signIn("bob", `${ada}; ${EPOCH}`)
+    expect(cookiesOf(bob)).toContain("authjs.session-token=")
+    expect(bob.headers.get(RENEWED)).toBeNull()
+    const forged = ada.replace(/authjs\.session-token=([^;]+)/, (_, token: string) => {
+      return `authjs.session-token=${token.slice(0, -4)}AAAA`
+    })
+    expect((await read(`${forged}; ${EPOCH}`)).headers.get(RENEWED)).toBeNull()
+  })
+})
