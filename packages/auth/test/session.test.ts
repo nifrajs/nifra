@@ -930,6 +930,31 @@ describe("session - store mode", () => {
       expect(await visit(signedIn, (s) => s.set("userId", "ada"))).toBe(signedIn)
     })
 
+    test("each commit of one session object compares with what it last wrote", async () => {
+      const sessions = createSessions<Bag>({ secret: SECRET, store: new MemorySessionStore() })
+      const first = ctx()
+      const fresh = await sessions.get(first.context)
+      fresh.set("userId", "ada")
+      await sessions.commit(first.context, fresh)
+      const signedIn = lastCookie(first.setCalls)
+      const c = ctx({ nifra_session: signedIn })
+      const session = await sessions.get(c.context)
+      const commit = async () => {
+        await sessions.commit(c.context, session)
+        return lastCookie(c.setCalls)
+      }
+      session.set("userId", "bob")
+      const bob = await commit()
+      const bobAgain = await commit()
+      session.set("cart", 1)
+      const cart = await commit()
+      const cartAgain = await commit()
+      expect(bob).not.toBe(signedIn)
+      expect(bobAgain).toBe(bob)
+      expect(cart).not.toBe(bob)
+      expect(cartAgain).toBe(cart)
+    })
+
     test("any change to the data writes a new cookie for the same session", async () => {
       const { visit } = setup()
       const changes: Record<string, (s: BagSession) => void> = {

@@ -1,4 +1,43 @@
 {
+  "packages/auth/src/session.ts": [
+    {
+      "op": "condition->false",
+      "fn": "make",
+      "code": "stored: store === undefined ? undefined : snapshot(init.data),",
+      "from": "store === undefined",
+      "reason": "Cookie mode never reads the snapshot; the check only skips a JSON.stringify on each load."
+    },
+    {
+      "op": "condition->false",
+      "fn": "loadFromRaw",
+      "code": "family === id ? undefined : store.get(revokedKey(family)),",
+      "from": "family === id",
+      "reason": "When the family is the id, its marker is the id's own marker, which the same Promise.all already reads."
+    },
+    {
+      "op": "condition->false",
+      "fn": "destroy",
+      "code": "const unsigned = raw === undefined ? null : await unsign(raw)",
+      "from": "raw === undefined",
+      "reason": "unsign then checks the text \"undefined\", which carries no valid signature, so it returns null as the branch does."
+    },
+    {
+      "op": "condition->false",
+      "fn": "destroy",
+      "code": "const id = unsigned === null ? null : (DATA_TAG.exec(unsigned)?.[1] ?? unsigned)",
+      "from": "unsigned === null",
+      "reason": "DATA_TAG.exec coerces null to the string \"null\", which carries no tag, so the id stays null."
+    }
+  ],
+  "packages/authjs/src/index.ts": [
+    {
+      "op": "condition->false",
+      "fn": "claimsOf",
+      "code": "payload === null",
+      "from": "payload === null",
+      "reason": "Object.keys(null) throws, and the catch around the comparison returns the response without the header."
+    }
+  ],
   "packages/coding-agent/src/subagents.ts": [
     {
       "op": "condition->false",
@@ -326,6 +365,15 @@
       "code": "if (!hosts.includes(host)) hosts.push(host)",
       "from": "!hosts.includes(host)",
       "reason": "A host listed twice is scanned twice and yields the same routes."
+    }
+  ],
+  "packages/web/src/internal/identity-epoch.ts": [
+    {
+      "op": "condition->true",
+      "fn": "identityEpochHook",
+      "code": "if (vouched !== undefined) headers.delete(RENEWED)",
+      "from": "vouched !== undefined",
+      "reason": "Deleting a header the response does not carry changes nothing."
     }
   ],
   "packages/web/src/internal/share-data.ts": [

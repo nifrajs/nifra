@@ -231,8 +231,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       tag: init.tag,
       // Taken now: a store may hand back the object it holds, and a value read from it can be changed
       // in place before the commit.
-      stored:
-        store === undefined ? undefined : init.data === undefined ? "{}" : snapshot(init.data),
+      stored: store === undefined ? undefined : snapshot(init.data),
     }
     const session: Session<Data> = {
       get: <K extends keyof Data>(key: K) => state.data.get(key) as Data[K] | undefined,
@@ -483,8 +482,6 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       state.expiresAt = undefined
       state.regenerate = false
       state.data.clear()
-      state.tag = undefined
-      state.stored = store === undefined ? undefined : "{}"
     }
     c.set.deleteCookie(cookieName, {
       path: cookieOpts.path ?? "/",

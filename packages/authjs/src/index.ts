@@ -172,13 +172,15 @@ const SESSION_TOKEN = "authjs.session-token"
 // Auth.js writes these anew on every read; a change to any other claim is a change of visitor.
 const REFRESHED_CLAIMS = new Set(["iat", "exp", "jti"])
 
-const claimsOf = (payload: Record<string, unknown>): string =>
-  JSON.stringify(
-    Object.keys(payload)
-      .filter((claim) => !REFRESHED_CLAIMS.has(claim))
-      .sort()
-      .map((claim) => [claim, payload[claim]]),
-  )
+const claimsOf = (payload: Record<string, unknown> | null): string | undefined =>
+  payload === null
+    ? undefined
+    : JSON.stringify(
+        Object.keys(payload)
+          .filter((claim) => !REFRESHED_CLAIMS.has(claim))
+          .sort()
+          .map((claim) => [claim, payload[claim]]),
+      )
 
 async function vouchForRenewal(
   req: Request,
@@ -192,9 +194,7 @@ async function vouchForRenewal(
   }
   const named = config.cookies?.sessionToken?.name
   for (const line of response.headers.getSetCookie()) {
-    const end = line.indexOf(";")
-    const pair = end === -1 ? line : line.slice(0, end)
-    const name = pair.slice(0, pair.indexOf("=")).trim()
+    const name = line.slice(0, line.indexOf("=")).trim()
     if (
       named === undefined
         ? name !== SESSION_TOKEN && name !== `__Secure-${SESSION_TOKEN}`
@@ -202,16 +202,15 @@ async function vouchForRenewal(
     ) {
       continue
     }
-    const token = parseCookies(pair)[name]
-    const held = sent[name]
-    if (token === undefined || token === "" || held === undefined || token === held) return response
+    // A first sign-in or a sign-out decodes to null on one side, which matches nothing.
     try {
       const decode = config.jwt?.decode ?? (await import("@auth/core/jwt")).decode
       const [before, after] = await Promise.all([
-        decode({ token: held, secret, salt: name }),
-        decode({ token, secret, salt: name }),
+        decode({ token: sent[name] ?? "", secret, salt: name }),
+        decode({ token: parseCookies(line)[name] ?? "", secret, salt: name }),
       ])
-      if (before === null || after === null || claimsOf(before) !== claimsOf(after)) return response
+      const held = claimsOf(before)
+      if (held === undefined || held !== claimsOf(after)) return response
     } catch {
       return response
     }
