@@ -156,10 +156,12 @@ export const app = server()
   // The child sees a copy of the request with /billing stripped, and reads the same value.
   .mount({ path: "/billing", app: billing, stripPrefix: true })
 
-// A wrapper that rebuilds the request carries the values itself.
+// A wrapper that rebuilds the request carries the values itself. It keeps the host, which the
+// same-origin check on a form POST compares with the browser's Origin.
 export const fetch = (req: Request): Response | Promise<Response> => {
   const url = new URL(req.url)
-  url.host = "app.internal"
+  if (!url.pathname.startsWith("/v1/")) return app.fetch(req)
+  url.pathname = url.pathname.slice("/v1".length)
   const rebuilt = new Request(url.href, req)
   carryRequestLocals(req, rebuilt)
   return app.fetch(rebuilt)
