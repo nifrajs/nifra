@@ -58,6 +58,7 @@ import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./in
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { gitIgnoredSync } from "./internal/git-ignored.ts"
+import type { TypeScriptApi } from "./internal/typescript-import.ts"
 import { otherProjectCore } from "./local-cli.ts"
 import {
   BUN_LOCK,
@@ -74,7 +75,6 @@ import {
 } from "./recipes/index.ts"
 import { markerTarget } from "./rules/comment-markers.ts"
 import { getSourceRewrite } from "./source-rewrites.ts"
-import type { TypeScriptApi } from "./internal/typescript-import.ts"
 
 export interface UpgradeOptions {
   /** Target version, e.g. "1.8.0". Required unless `list` is set. */

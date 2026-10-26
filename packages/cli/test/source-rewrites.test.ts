@@ -2,8 +2,8 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import ts from "typescript"
-import { chainRecipes, computeUpgrade, runUpgrade } from "../src/upgrade.ts"
 import { getSourceRewrite } from "../src/source-rewrites.ts"
+import { chainRecipes, computeUpgrade, runUpgrade } from "../src/upgrade.ts"
 import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 const FIXTURES = createFixtureRoot("tmp-nifra-source-rewrites")
@@ -57,6 +57,13 @@ export const b = serveStatic({
 })
 `)
     expect(result.count).toBe(2)
+    expect(
+      rewrite(`import { servePublicDir } from "@nifrajs/web"
+export const c = servePublicDir({ dir, hashedPrefix })
+`).text,
+    ).toBe(`import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
+export const c = serveStatic({ dir, prefix: "/", fallthrough: true, hashedFiles: (path) => path.startsWith(hashedPrefix), cacheControl: ONE_DAY })
+`)
   })
 
   test("a file that serves on Node or Deno gets that adapter's serveStatic", () => {

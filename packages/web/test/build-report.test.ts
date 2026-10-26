@@ -248,9 +248,13 @@ async function entryOptions(src: string, dir: string): Promise<Record<string, un
 }
 
 /** An entry's mounts with each `dir` as its URL's text, so two lists compare by where they read. */
-function mountsOf(options: Record<string, unknown>): ServeStaticOptions[] {
+function staticOf(options: Record<string, unknown>): ServeStaticOptions[] {
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: entryOptions returns the list the entry passes serveStatic.
-  return (options.static as ServeStaticOptions[]).map((mount) => ({
+  return options.static as ServeStaticOptions[]
+}
+
+function mountsOf(options: Record<string, unknown>): ServeStaticOptions[] {
+  return staticOf(options).map((mount) => ({
     ...mount,
     dir: String(mount.dir),
   }))
@@ -316,16 +320,16 @@ describe("generateServerEntry", () => {
             adapterImport: "../framework.ts",
             publicFiles: ["/robots.txt", "/logo.SVG", "/.well-known/acme-challenge/token"],
           })
-          return (await entryOptions(src, dir)).static as ServeStaticOptions[]
+          return staticOf(await entryOptions(src, dir))
         }),
       )
       expect(mountsOf({ static: node })).toEqual(mountsOf({ static: bun }))
       expect(mountsOf({ static: deno })).toEqual(mountsOf({ static: bun }))
-      const files = serveStatic(bun as ServeStaticOptions[])
+      const files = serveStatic(bun)
       const get = async (path: string, init?: RequestInit) => {
         const response = await files(new Request(`http://app.test${path}`, init))
-        expect(response).toBeDefined()
-        return response as Response
+        if (response === undefined) throw new Error(`no mount took ${path}`)
+        return response
       }
       const robots = await get("/robots.txt")
       expect(robots.headers.get("content-type")).toBe("text/plain; charset=utf-8")
@@ -395,7 +399,7 @@ describe("generateServerEntry", () => {
       generateServerEntry({ target: "node", adapterImport: "../framework.ts" }),
       root,
     )
-    expect((unlisted.static as Record<string, unknown>[])[0]).not.toHaveProperty("hashedFiles")
+    expect(staticOf(unlisted)[0]).not.toHaveProperty("hashedFiles")
   })
 
   test("deno → the app itself on @nifrajs/deno, the build's files in front of it", async () => {

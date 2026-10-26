@@ -178,9 +178,13 @@ function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteR
       publicDirLeft = true
       manual.push({ line: lineOf(call), reason: `${why}: call ${PUBLIC_DIR_FORM}` })
     }
-    if (staticName === undefined) return refuse("`serveStatic` already names something else here")
+    if (staticName === undefined) {
+      refuse("`serveStatic` already names something else here")
+      return
+    }
     if (options === undefined || rest.length > 0 || !ts.isObjectLiteralExpression(options)) {
-      return refuse("servePublicDir with options built elsewhere")
+      refuse("servePublicDir with options built elsewhere")
+      return
     }
     const values = new Map<string, TS.Expression | undefined>()
     for (const property of options.properties) {
@@ -189,11 +193,15 @@ function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteR
           ? propertyName(ts, property.name)
           : undefined
       if (name === undefined || !PUBLIC_DIR_KEYS.has(name)) {
-        return refuse(`servePublicDir option \`${source(property)}\` has no direct counterpart`)
+        refuse(`servePublicDir option \`${source(property)}\` has no direct counterpart`)
+        return
       }
       values.set(name, ts.isPropertyAssignment(property) ? property.initializer : undefined)
     }
-    if (!values.has("dir")) return refuse("servePublicDir without a `dir`")
+    if (!values.has("dir")) {
+      refuse("servePublicDir without a `dir`")
+      return
+    }
     const field = (name: string, as = name): string => {
       const value = values.get(name)
       return value === undefined
@@ -206,7 +214,8 @@ function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteR
     if (values.has("cache")) {
       const cache = values.get("cache")
       if (cache === undefined || !ts.isObjectLiteralExpression(cache)) {
-        return refuse("servePublicDir `cache` built elsewhere")
+        refuse("servePublicDir `cache` built elsewhere")
+        return
       }
       for (const property of cache.properties) {
         const name = ts.isPropertyAssignment(property) ? propertyName(ts, property.name) : undefined
@@ -220,9 +229,10 @@ function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteR
         ) {
           // serveStatic's own cache-control for a content-hashed file.
         } else {
-          return refuse(
+          refuse(
             `servePublicDir \`cache.${name ?? "?"}\` has no counterpart: a content-hashed file is always sent \`${YEAR}\``,
           )
+          return
         }
       }
     }
@@ -230,9 +240,16 @@ function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteR
       if (coreDay) dayUsed = true
       cacheControl = coreDay ? "ONE_DAY" : DAY
     }
+    const prefixValue = values.get("hashedPrefix")
+    // A shorthand `hashedPrefix` is a binding of that name.
+    const hashedPrefix = !values.has("hashedPrefix")
+      ? '"/assets/"'
+      : prefixValue === undefined
+        ? "hashedPrefix"
+        : source(prefixValue)
     const hashed = values.has("hashedFiles")
       ? field("hashedFiles")
-      : `hashedFiles: (path) => path.startsWith(${values.has("hashedPrefix") ? source(values.get("hashedPrefix") as TS.Expression) : '"/assets/"'})`
+      : `hashedFiles: (path) => path.startsWith(${hashedPrefix})`
     const fields = [
       field("dir"),
       'prefix: "/"',

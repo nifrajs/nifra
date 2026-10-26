@@ -14,10 +14,10 @@ import {
 import { connect, createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
+import { ONE_DAY, type ServeStaticOptions, serveStatic } from "@nifrajs/core/serve-static"
 // copyPublicDir lives in build.ts: it is build-time (Bun.Glob + node:fs) and public-dir.ts is
 // reachable from the client bundle graph, where a Bun builtin import fails the browser build.
 import { copyPublicDir } from "../src/build.ts"
-import { ONE_DAY, type ServeStaticOptions, serveStatic } from "@nifrajs/core/serve-static"
 import { resolvePublicPath } from "../src/public-dir.ts"
 
 // The mount `nifra dev` and a self-hosted build serve `public/` with: every path, anything it cannot

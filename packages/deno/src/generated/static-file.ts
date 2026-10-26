@@ -500,11 +500,13 @@ export function staticMountOf(options: ServeStaticOptions, root: string): Static
   const prefix = from === to ? "/" : `/${raw.slice(from, to)}`
   const immutable = options.immutable !== false
   const hashed = options.hashedFiles === undefined ? undefined : hashedTest(options.hashedFiles)
-  let headers: Record<string, string> | undefined
-  if (options.headers !== undefined) {
-    headers = Object.create(null) as Record<string, string>
-    for (const [name, value] of Object.entries(options.headers)) headers[name.toLowerCase()] = value
-  }
+  // fromEntries defines each name as its own property, so a `__proto__` header stays a header.
+  const headers =
+    options.headers === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(options.headers).map(([name, value]) => [name.toLowerCase(), value]),
+        )
   return {
     root,
     prefix,
