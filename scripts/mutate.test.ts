@@ -86,6 +86,30 @@ describe("generateMutants", () => {
     expect(literal?.to).toBe("'~r'")
   })
 
+  test("a SQL comparison swap never lands inside a longer Postgres operator", () => {
+    // Every Postgres operator built from <, > or =: a swap inside one makes SQL that does not parse.
+    const LONGER = [
+      ...["<=", ">=", "!=", "<<", ">>", "<<=", ">>=", "->", "->>", "#>", "#>>", "@>", "<@"],
+      ...["&<", "&>", "<<|", "|>>", "&<|", "|&>", "<^", ">^", "~=", "<->", "<#>", "<=>"],
+      ...["<+>", "<~>", "<%>", "~>=~", "~<=~", "~>~", "~<~"],
+    ]
+    const COMPARISON = /^sql (?:=-><>|<>->=|>->>=|<-><=)$/
+    const swaps = (op: string): string[] =>
+      generateMutants(
+        "o.ts",
+        `export const q = (db: Db) => db\`SELECT a FROM t WHERE a ${op} b\`\n`,
+      )
+        .filter((m) => COMPARISON.test(m.op))
+        .map((m) => m.op)
+    expect(LONGER.map((op) => [op, swaps(op)])).toEqual(LONGER.map((op) => [op, []]))
+    expect(["=", "<>", ">", "<"].map((op) => [op, swaps(op)])).toEqual([
+      ["=", ["sql =-><>"]],
+      ["<>", ["sql <>->="]],
+      [">", ["sql >->>="]],
+      ["<", ["sql <-><="]],
+    ])
+  })
+
   test("flips booleans, swaps prefix decrements and forces loop and ternary conditions", () => {
     const source = "let n = 3\nwhile (n > 0) --n\nconst s = n === 0 ? true : false\n"
     expect(ops(generateMutants("g.ts", source))).toEqual([
@@ -315,10 +339,22 @@ describe("baseline and targets", () => {
       ]),
     ).toEqual([
       "f.ts:1 binary >->>= `>` survives",
-      "f.ts:2 binary >->>= `>` is killed now: drop it from the baseline",
+      "f.ts:2 binary >->>= `>` is caught (timeout) now: drop it from the baseline",
       "f.ts:3 binary >->>= `>` did not run",
       "f.ts: baseline binary >->>= `>` in f matches no mutant",
       "f.ts: equivalent binary >->>= `>` in f matches no mutant",
+    ])
+    expect(
+      gateFailures([
+        report({
+          mutants: [mutant(0, "killed"), mutant(1, "timeout"), mutant(2, "error")],
+          baselined: [0, 1, 2],
+        }),
+      ]),
+    ).toEqual([
+      "f.ts:1 binary >->>= `>` is killed now: drop it from the baseline",
+      "f.ts:2 binary >->>= `>` is caught (timeout) now: drop it from the baseline",
+      "f.ts:3 binary >->>= `>` is caught (error) now: drop it from the baseline",
     ])
     expect(
       gateFailures([report({ baselineFailures: ["x"], mutants: [mutant(0, "not-run")] })]),

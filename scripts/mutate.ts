@@ -101,6 +101,12 @@ const BINARY: Readonly<Record<string, readonly string[]>> = {
 
 const collapse = (text: string): string => text.replace(/\s+/g, " ").trim()
 
+// Postgres reads any run of these characters as one operator, so a comparison is swapped only where it
+// stands alone: inside `@>`, `<@` or `~=` a swap makes SQL that does not parse.
+const OPERATOR_CHARS = "-+*/<>=~!@#%^&|`?"
+const alone = (op: string, alsoBefore = ""): RegExp =>
+  new RegExp(`(?<![${OPERATOR_CHARS}${alsoBefore}])${op}(?![${OPERATOR_CHARS}])`, "g")
+
 /**
  * Swaps in the SQL a tagged template sends, which the TypeScript operators above never reach: a
  * query's privilege checks and filters are its predicates, not the code around it.
@@ -109,13 +115,13 @@ const SQL_RULES: ReadonlyArray<readonly [string, RegExp, (match: string) => stri
   ["sql AND->OR", /\bAND\b/g, () => "OR"],
   ["sql OR->AND", /\bOR\b/g, () => "AND"],
   ["sql drop NOT", /\bNOT\s+/g, () => ""],
-  ["sql =-><>", /(?<![<>!:=])=(?![>=])/g, () => "<>"],
-  ["sql <>->=", /<>/g, () => "="],
+  ["sql =-><>", alone("=", ":"), () => "<>"],
+  ["sql <>->=", alone("<>"), () => "="],
   ["sql IS DISTINCT->IS NOT DISTINCT", /\bIS DISTINCT FROM\b/g, () => "IS NOT DISTINCT FROM"],
   ["sql IN->NOT IN", /(?<!\bNOT\s)\bIN\s*\(/g, (match) => `NOT ${match}`],
   ["sql EXISTS->NOT EXISTS", /(?<!\bNOT\s)\bEXISTS\s*\(/g, (match) => `NOT ${match}`],
-  ["sql >->>=", /(?<![-=<>])>(?![=>])/g, () => ">="],
-  ["sql <-><=", /(?<!<)<(?![-=<>])/g, () => "<="],
+  ["sql >->>=", alone(">"), () => ">="],
+  ["sql <-><=", alone("<"), () => "<="],
   ["sql flip boolean", /\b(?:true|false)\b/g, (match) => (match === "true" ? "false" : "true")],
   // A leading "~" changes the first character too, which is all a Postgres "char" keeps of a literal.
   ["sql literal", /'[^'\n]*'/g, (match) => `'~${match.slice(1)}`],
@@ -876,9 +882,10 @@ export function gateFailures(reports: readonly FileReport[]): string[] {
     for (const m of r.mutants) {
       const at = `${r.file}:${m.line} ${m.op} \`${m.from}\``
       if (m.status === "survived" && !known.has(m.id)) failures.push(`${at} survives`)
-      else if (DETECTED.has(m.status) && known.has(m.id))
-        failures.push(`${at} is killed now: drop it from the baseline`)
-      else if (m.status === "not-run" && !broken) failures.push(`${at} did not run`)
+      else if (DETECTED.has(m.status) && known.has(m.id)) {
+        const caught = m.status === "killed" ? "killed" : `caught (${m.status})`
+        failures.push(`${at} is ${caught} now: drop it from the baseline`)
+      } else if (m.status === "not-run" && !broken) failures.push(`${at} did not run`)
     }
     for (const e of r.unusedBaseline ?? [])
       failures.push(`${r.file}: baseline ${e.op} \`${e.from}\` in ${e.fn} matches no mutant`)
