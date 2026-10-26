@@ -309,11 +309,10 @@ export default function KeepAlive() {
       </p>
       <p>
         A response that renews the same visitor's session keeps the epoch: a session cookie re-sent
-        with a new lifetime, or an <code>@nifrajs/auth</code> cookie-mode session re-signed with the
-        same data. An Auth.js session read writes a new token every time, so each one rotates it. In{" "}
-        <code>@nifrajs/auth</code>'s store mode the cookie carries only the session id, so sign in
-        with <code>regenerate()</code> and sign out with <code>destroy()</code>: a sign-in that
-        keeps the id changes nothing the server can see in the response.
+        with a new lifetime, or an <code>@nifrajs/auth</code> session committed again with the same
+        data. Any change to an <code>@nifrajs/auth</code> session's data rotates it, in either mode,
+        so a sign-in or sign-out shows even when the session id stays the same. An Auth.js session
+        read writes a new token every time, so each one rotates it.
       </p>
       <p>
         The session cookies of <code>@nifrajs/auth</code> and Auth.js count under their default

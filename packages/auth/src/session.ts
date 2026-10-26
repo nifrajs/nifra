@@ -123,6 +123,21 @@ const encodeBase64Url = (bytes: Uint8Array): string => {
 /** A 256-bit random session id (base64url). High-entropy + unguessable - the cookie also signs it. */
 const randomId = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8Array(32)))
 
+// A store-mode cookie carries `<id>*<tag>`, and the tag changes with the session's data, so a response
+// that changes who is signed in under a kept id still changes the cookie. `*` is outside the id
+// alphabet; a cookie without a tag was written before tags existed.
+const DATA_TAG = /^([^*]+)\*([A-Za-z0-9_-]{12})$/
+const randomTag = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8Array(9)))
+
+// A value JSON cannot hold compares as changed, so its session takes a new tag.
+const snapshot = (data: unknown): string | undefined => {
+  try {
+    return JSON.stringify(data)
+  } catch {
+    return undefined
+  }
+}
+
 // A revoked id keeps a marker under its own key. A request that loaded the session before logout and
 // commits after it rewrites the record, and a blind `set` cannot be made conditional on every store,
 // but it cannot overwrite a key it never writes. `.` is outside the base64url id alphabet.
@@ -193,6 +208,9 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     readonly data: Map<keyof Data, Data[keyof Data]>
     expiresAt: number | undefined
     regenerate: boolean
+    // Store mode: the cookie's tag, and the data it was given for.
+    tag: string | undefined
+    stored: string | undefined
   }
   // Per-manager so the WeakMap is typed to this `Data` (no `any`); a session can only be committed by
   // the manager that created it.
@@ -202,6 +220,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     id?: string
     data?: Record<string, unknown>
     expiresAt?: number
+    tag?: string | undefined
   }): Session<Data> => {
     const state: State = {
       id: init.id,
@@ -209,6 +228,11 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       data: new Map(Object.entries(init.data ?? {}) as [keyof Data, Data[keyof Data]][]),
       expiresAt: init.expiresAt,
       regenerate: false,
+      tag: init.tag,
+      // Taken now: a store may hand back the object it holds, and a value read from it can be changed
+      // in place before the commit.
+      stored:
+        store === undefined ? undefined : init.data === undefined ? "{}" : snapshot(init.data),
     }
     const session: Session<Data> = {
       get: <K extends keyof Data>(key: K) => state.data.get(key) as Data[K] | undefined,
@@ -261,25 +285,27 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     if (unsigned === null) return make({}) // tampered / wrong secret → fail closed (anonymous)
 
     if (store !== undefined) {
+      const tagged = DATA_TAG.exec(unsigned)
+      const id = tagged?.[1] ?? unsigned
       // Only reachable with a value the app signed itself (legacy mode): never read a marker as a session.
-      if (isSessionMarker(unsigned)) return make({})
-      const family = sessionFamily(unsigned)
+      if (isSessionMarker(id)) return make({})
+      const family = sessionFamily(id)
       const [record, revoked, rotated, familyRevoked] = await Promise.all([
-        store.get(unsigned),
-        store.get(revokedKey(unsigned)),
-        store.get(`${unsigned}${ROTATED_SUFFIX}`),
-        family === unsigned ? undefined : store.get(revokedKey(family)),
+        store.get(id),
+        store.get(revokedKey(id)),
+        store.get(`${id}${ROTATED_SUFFIX}`),
+        family === id ? undefined : store.get(revokedKey(family)),
       ])
       if (record === undefined) return make({})
       if (revoked !== undefined || rotated !== undefined || familyRevoked !== undefined) {
-        await store.delete(unsigned) // a commit that raced the logout wrote it back
+        await store.delete(id) // a commit that raced the logout wrote it back
         return make({})
       }
       if (record.expiresAt <= now()) {
-        await store.delete(unsigned) // expired - evict + treat as no session
+        await store.delete(id) // expired - evict + treat as no session
         return make({})
       }
-      return make({ id: unsigned, data: record.data, expiresAt: record.expiresAt })
+      return make({ id, data: record.data, expiresAt: record.expiresAt, tag: tagged?.[2] })
     }
 
     const payload = parsePayload(unsigned)
@@ -395,7 +421,9 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         await store.delete(state.id)
         return
       }
-      const signed = await sign(state.id)
+      const stored = snapshot(data)
+      const tag = stored !== undefined && stored === state.stored ? state.tag : randomTag()
+      const signed = await sign(tag === undefined ? state.id : `${state.id}*${tag}`)
       if (
         previousId !== undefined &&
         ((await store.get(state.id)) === undefined ||
@@ -405,6 +433,8 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         return
       }
       state.expiresAt = expiresAt
+      state.tag = tag
+      state.stored = stored
       writeCookie(c, signed, expiresAt)
       return
     }
@@ -438,7 +468,8 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         // Revoke the record addressed by the signed request cookie even when the caller did not
         // first load a Session object. The signature check prevents deleting attacker-chosen IDs.
         const raw = sessionCookie(c)
-        const id = raw === undefined ? null : await unsign(raw)
+        const unsigned = raw === undefined ? null : await unsign(raw)
+        const id = unsigned === null ? null : (DATA_TAG.exec(unsigned)?.[1] ?? unsigned)
         if (id !== null && !isSessionMarker(id)) {
           if (await speaksForFamily(store, id)) await revoke(id)
           else await store.delete(id)
@@ -452,6 +483,8 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       state.expiresAt = undefined
       state.regenerate = false
       state.data.clear()
+      state.tag = undefined
+      state.stored = store === undefined ? undefined : "{}"
     }
     c.set.deleteCookie(cookieName, {
       path: cookieOpts.path ?? "/",

@@ -236,18 +236,7 @@ const OPERATIONS: Readonly<
 }
 
 // A pairing still open runs as `test.failing`, so the fix that closes it fails here until it leaves.
-const KEEPS_ID =
-  "store mode keeps the session id, so its cookie does not change; its docs ask for regenerate() at a sign-in and destroy() at a sign-out"
 const OPEN: Readonly<Record<string, string>> = {
-  ...Object.fromEntries(
-    ["rolling", "absolute"].flatMap((expiry) =>
-      [
-        "a visitor signs in over an anonymous session, keeping it",
-        "the visitor switches to another account, keeping the session",
-        "the visitor signs out by emptying the session",
-      ].map((operation) => [`@nifrajs/auth store mode, ${expiry}: ${operation}`, KEEPS_ID]),
-    ),
-  ),
   "@nifrajs/authjs JWT session: the same visitor's session renews":
     "Auth.js encrypts a new token on every session read, and the hook cannot compare two without the secret",
 }
