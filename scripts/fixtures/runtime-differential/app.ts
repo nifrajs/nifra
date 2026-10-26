@@ -17,7 +17,12 @@ import { createDifferentialPages } from "./pages.ts"
 /** Planted in every server-side failure. A body or header that carries it leaked an internal message. */
 export const INTERNAL_SENTINEL = "nifra-differential-internal-7f3a"
 
-export type StaticHandler = (request: Request) => Promise<Response | undefined>
+export type StaticHandler = (request: Request) => Promise<Response | undefined> | undefined
+
+/** The one mount every lane passes its runtime's `serveStatic`: the whole directory, misses to the app. */
+export function staticMount(dir: string) {
+  return { dir, prefix: "/", fallthrough: true } as const
+}
 
 export interface DifferentialAppOptions {
   readonly staticFiles?: StaticHandler

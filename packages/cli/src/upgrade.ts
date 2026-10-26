@@ -26,8 +26,10 @@
  * Dry-run by default (prints the plan, writes nothing); `--write` applies. Fail-closed on an unknown
  * target version or a missing package.json, and deterministic (same repo + target → same edits).
  *
- * Deliberately NOT a codemod engine: transforms are string/specifier-level only. Structural (AST)
- * transforms are a future addition - a recipe that needs one is the signal to add the engine, not before.
+ * Transforms are string/specifier-level, except a recipe's `sourceRewrites`: syntax-tree edits made
+ * with the project's own TypeScript (`source-rewrites.ts`), each rewriting only a shape it recognizes
+ * whole and listing every other site to edit by hand. Without TypeScript such an upgrade refuses to
+ * run rather than leave the rewrite undone: after its pins land, no later upgrade would run it.
  */
 
 import {
@@ -56,6 +58,7 @@ import { type AncestorPinSite, ancestorPins, declaresCli, PIN_SITES } from "./in
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { gitIgnoredSync } from "./internal/git-ignored.ts"
+import type { TypeScriptApi } from "./internal/typescript-import.ts"
 import { otherProjectCore } from "./local-cli.ts"
 import {
   BUN_LOCK,
@@ -71,6 +74,7 @@ import {
   type UpgradeRecipe,
 } from "./recipes/index.ts"
 import { markerTarget } from "./rules/comment-markers.ts"
+import { getSourceRewrite } from "./source-rewrites.ts"
 
 export interface UpgradeOptions {
   /** Target version, e.g. "1.8.0". Required unless `list` is set. */
@@ -90,6 +94,8 @@ export interface UpgradeOptions {
   readonly exact?: boolean
   /** The running CLI's version: the newest target it applies. Default: its newest recipe. */
   readonly cliVersion?: string
+  /** The compiler a recipe's source rewrites parse with. Default: the project's, else the CLI's own. */
+  readonly loadTypeScript?: () => Promise<TypeScriptApi | undefined>
   /**
    * With `--write`, capture `nifra routes --hooks` before and after the edits and print the diff, so a
    * change in which hooks run where is visible. Loads the backend. Default true; `--no-hooks` skips it.
@@ -155,6 +161,20 @@ export interface RetiredMarkerSite {
   readonly instead: string
 }
 
+/** A source file a recipe's syntax-tree rewrite changed. */
+export interface SourceRewriteChange {
+  readonly file: string
+  readonly rewrite: string
+  readonly count: number
+}
+
+/** A site a rewrite found and left alone, with what to write instead. */
+export interface ManualRewriteSite {
+  readonly file: string
+  readonly line: number
+  readonly reason: string
+}
+
 export interface UpgradePlan {
   readonly version: string
   readonly pins: readonly PinChange[]
@@ -166,6 +186,10 @@ export interface UpgradePlan {
   readonly downgrades: readonly PinChange[]
   /** Comments a release in the chain stopped honoring. Listed only, never rewritten. */
   readonly retiredMarkers: readonly RetiredMarkerSite[]
+  readonly sourceRewrites: readonly SourceRewriteChange[]
+  readonly manualRewrites: readonly ManualRewriteSite[]
+  /** Files a rewrite must read that no TypeScript was given to parse. The upgrade refuses while any is listed. */
+  readonly rewritesNeedTypeScript: readonly string[]
   /** Installed group packages linked from outside the workspace root, at another version. Never edited. */
   readonly linkedOutside: readonly LinkedGroupInstall[]
   /** Repositories a `link:`/`file:` dependency points outside the root, each loading its own nifra at
@@ -1307,6 +1331,7 @@ export function chainRecipes(target: string, installed: string | null): ChainedR
     importMoves: recipes.flatMap((recipe) => recipe.importMoves),
     dependencyAdds: recipes.flatMap((recipe) => recipe.dependencyAdds ?? []),
     retiredMarkers: recipes.flatMap((recipe) => recipe.retiredMarkers ?? []),
+    sourceRewrites: [...new Set(recipes.flatMap((recipe) => recipe.sourceRewrites ?? []))],
     notes: recipes.flatMap((recipe) =>
       (recipe.notes ?? []).map((note) => `${recipe.version}: ${note}`),
     ),
@@ -1321,6 +1346,7 @@ export function computeUpgrade(
   allowDowngrade = false,
   exact = false,
   above: readonly AncestorPinSite[] = [],
+  compiler?: TypeScriptApi,
 ): UpgradePlan {
   const pins: PinChange[] = []
   const agentPins: AgentPinChange[] = []
@@ -1368,6 +1394,33 @@ export function computeUpgrade(
       movedSources.set(rel, result.text)
       for (const change of result.changes) importMoves.push({ file: rel, ...change })
       if (write) writeFileSync(abs, result.text)
+    }
+  }
+
+  // Each rewrite reads a source as the import moves (and the rewrites before it) leave it.
+  const sourceRewrites: SourceRewriteChange[] = []
+  const manualRewrites: ManualRewriteSite[] = []
+  const rewritesNeedTypeScript: string[] = []
+  const rewrites = (recipe.sourceRewrites ?? []).flatMap((id) => getSourceRewrite(id) ?? [])
+  if (rewrites.length > 0) {
+    for (const rel of scan(cwd, SOURCE_GLOB)) {
+      const original = movedSources.get(rel) ?? readFileSync(join(cwd, rel), "utf8")
+      let text = original
+      for (const rewrite of rewrites) {
+        if (!rewrite.mentions(text)) continue
+        if (compiler === undefined) {
+          if (!rewritesNeedTypeScript.includes(rel)) rewritesNeedTypeScript.push(rel)
+          continue
+        }
+        const result = rewrite.rewrite(compiler, rel, text)
+        text = result.text
+        if (result.count > 0)
+          sourceRewrites.push({ file: rel, rewrite: rewrite.id, count: result.count })
+        for (const site of result.manual) manualRewrites.push({ file: rel, ...site })
+      }
+      if (text === original) continue
+      movedSources.set(rel, text)
+      if (write) writeFileSync(join(cwd, rel), text)
     }
   }
 
@@ -1423,6 +1476,9 @@ export function computeUpgrade(
     dependencyAdds,
     downgrades,
     retiredMarkers,
+    sourceRewrites,
+    manualRewrites,
+    rewritesNeedTypeScript,
     linkedOutside,
     linkedSkew: linkedSkew(cwd, recipe.version),
     strayPins: strayPins(cwd, recipe.version, planned),
@@ -1460,6 +1516,9 @@ function renderPlan(
     plan.importMoves.length === 0 &&
     plan.dependencyAdds.length === 0 &&
     plan.retiredMarkers.length === 0 &&
+    plan.sourceRewrites.length === 0 &&
+    plan.manualRewrites.length === 0 &&
+    plan.rewritesNeedTypeScript.length === 0 &&
     plan.linkedOutside.length === 0 &&
     plan.linkedSkew.length === 0 &&
     plan.strayPins.length === 0 &&
@@ -1495,6 +1554,22 @@ function renderPlan(
     const total = plan.importMoves.reduce((n, m) => n + m.count, 0)
     lines.push(`${verb} ${total} import move(s) across ${plan.importMoves.length} file(s):`)
     for (const m of plan.importMoves) lines.push(`  ${m.file}  ${m.from} → ${m.to}  (${m.count})`)
+    lines.push("")
+  }
+  if (plan.sourceRewrites.length > 0) {
+    const total = plan.sourceRewrites.reduce((n, r) => n + r.count, 0)
+    lines.push(`${verb} ${total} source rewrite(s) across ${plan.sourceRewrites.length} file(s):`)
+    for (const r of plan.sourceRewrites) {
+      lines.push(
+        `  ${r.file}  ${getSourceRewrite(r.rewrite)?.description ?? r.rewrite}  (${r.count})`,
+      )
+    }
+    lines.push("")
+  }
+  if (plan.manualRewrites.length > 0) {
+    lines.push(`${plan.manualRewrites.length} site(s) to edit by hand:`)
+    for (const site of plan.manualRewrites)
+      lines.push(`  ${site.file}:${site.line}  ${site.reason}`)
     lines.push("")
   }
   if (plan.dependencyAdds.length > 0) {
@@ -1882,87 +1957,121 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
 
   // Fail-closed on rollback: a dry pass writes nothing, so we can refuse before any package.json is touched.
   const above = (await ancestorPins(cwd)).owned
-  const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact, above)
-  if (preview.downgrades.length > 0) {
-    if (options.json) {
-      console.log(
-        JSON.stringify(
-          { ...preview, from, steps: recipe.steps, write: false, refused: "downgrade" },
-          null,
-          2,
-        ),
-      )
-    } else {
-      console.error(renderDowngradeRefusal(recipe.version, preview.downgrades))
-    }
-    return false
-  }
-  // Refused before anything is written: the linked repository fails at the first merge(), not here.
-  if (preview.linkedSkew.length > 0 && options.allowLinkedSkew !== true) {
-    if (options.json) {
-      console.log(
-        JSON.stringify(
-          { ...preview, from, steps: recipe.steps, write: false, refused: "linked-skew" },
-          null,
-          2,
-        ),
-      )
-    } else {
-      if (!write) console.log(renderPlan(preview, false, from, recipe.steps))
-      console.error(renderLinkedSkew(recipe.version, preview.linkedSkew, cwd, false))
-    }
-    return false
+  const loaded =
+    (recipe.sourceRewrites?.length ?? 0) > 0
+      ? await (await import("./internal/typescript-import.ts")).loadProjectTypeScript(
+          cwd,
+          options.loadTypeScript,
+        )
+      : undefined
+  try {
+    return await upgradeWith(loaded?.compiler)
+  } finally {
+    await loaded?.session?.close()
   }
 
-  const captureHooks = write && options.hooks !== false
-  // A server() the project's copy builds is not one this CLI's copy can reflect, which is the normal
-  // state of an upgrade run from the new release before it is installed.
-  const otherCore = captureHooks && otherProjectCore(cwd) !== undefined
-  const before = captureHooks && !otherCore ? await hookReportBefore(cwd) : undefined
-  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above) : preview
-  const pending = write ? pendingInstall(cwd, plan) : undefined
-  const hooks: UpgradeHookScope | undefined = otherCore
-    ? { skipped: "other-core" }
-    : before === undefined
-      ? undefined
-      : await hookScopeAcross(cwd, before, pending === undefined)
-
-  // Verify only makes sense once edits are on disk and installed. Default on after --write; opt out
-  // with --no-verify. An uninstalled upgrade passes, so `upgrade --write && bun install` chains.
-  const verify = write && options.verify !== false && pending === undefined
-  const uncovered = await uncoveredContracts(cwd)
-  if (options.json) {
-    // The check result rides inside the one JSON document; its human report would break the stream.
-    const report: Record<string, unknown> = { ...plan, from, steps: recipe.steps, write }
-    if (uncovered.length > 0) report.contractsUncovered = uncovered
-    if (hooks !== undefined) report.hooks = hooks
-    if (pending !== undefined) report.install = pending
-    let ok = true
-    if (verify) {
-      const { collectProjectVerification } = await import("./verification.ts")
-      const verification = await collectProjectVerification(cwd, { lintsOnly: false })
-      const check = await verification.check()
-      report.check = check
-      ok = check.ok
-    }
-    console.log(JSON.stringify(report, null, 2))
-    return ok
-  }
-  console.log(renderPlan(plan, write, from, recipe.steps))
-  if (uncovered.length > 0) console.log(uncoveredContractsNote(uncovered))
-  if (plan.linkedSkew.length > 0)
-    console.warn(`\n${renderLinkedSkew(recipe.version, plan.linkedSkew, cwd, true)}`)
-  if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
-  if (pending !== undefined && options.verify !== false)
-    console.log(`\n${renderPendingInstall(pending, recipe.version)}`)
-
-  if (verify) {
-    const { runCheck } = await import("./check.ts")
-    const ok = await runCheck(cwd, { json: false })
-    if (!ok) {
-      console.error("\n[nifra] upgrade applied but `nifra check` failed - review above.")
+  async function upgradeWith(compiler: TypeScriptApi | undefined): Promise<boolean> {
+    const preview = computeUpgrade(cwd, recipe, false, allowDowngrade, exact, above, compiler)
+    // Refused before anything is written: once the pins land, no later upgrade runs this rewrite.
+    if (preview.rewritesNeedTypeScript.length > 0) {
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            { ...preview, from, steps: recipe.steps, write: false, refused: "needs-typescript" },
+            null,
+            2,
+          ),
+        )
+      } else {
+        console.error(
+          `nifra upgrade → ${recipe.version} rewrites ${preview.rewritesNeedTypeScript.length} source file(s) on their syntax tree, which needs TypeScript, and neither this project nor the CLI resolves one:\n${preview.rewritesNeedTypeScript.map((file) => `  ${file}`).join("\n")}\nRun \`bun add -d typescript\`, then this upgrade again.`,
+        )
+      }
       return false
     }
+    if (preview.downgrades.length > 0) {
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            { ...preview, from, steps: recipe.steps, write: false, refused: "downgrade" },
+            null,
+            2,
+          ),
+        )
+      } else {
+        console.error(renderDowngradeRefusal(recipe.version, preview.downgrades))
+      }
+      return false
+    }
+    // Refused before anything is written: the linked repository fails at the first merge(), not here.
+    if (preview.linkedSkew.length > 0 && options.allowLinkedSkew !== true) {
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            { ...preview, from, steps: recipe.steps, write: false, refused: "linked-skew" },
+            null,
+            2,
+          ),
+        )
+      } else {
+        if (!write) console.log(renderPlan(preview, false, from, recipe.steps))
+        console.error(renderLinkedSkew(recipe.version, preview.linkedSkew, cwd, false))
+      }
+      return false
+    }
+
+    const captureHooks = write && options.hooks !== false
+    // A server() the project's copy builds is not one this CLI's copy can reflect, which is the normal
+    // state of an upgrade run from the new release before it is installed.
+    const otherCore = captureHooks && otherProjectCore(cwd) !== undefined
+    const before = captureHooks && !otherCore ? await hookReportBefore(cwd) : undefined
+    const plan = write
+      ? computeUpgrade(cwd, recipe, true, allowDowngrade, exact, above, compiler)
+      : preview
+    const pending = write ? pendingInstall(cwd, plan) : undefined
+    const hooks: UpgradeHookScope | undefined = otherCore
+      ? { skipped: "other-core" }
+      : before === undefined
+        ? undefined
+        : await hookScopeAcross(cwd, before, pending === undefined)
+
+    // Verify only makes sense once edits are on disk and installed. Default on after --write; opt out
+    // with --no-verify. An uninstalled upgrade passes, so `upgrade --write && bun install` chains.
+    const verify = write && options.verify !== false && pending === undefined
+    const uncovered = await uncoveredContracts(cwd)
+    if (options.json) {
+      // The check result rides inside the one JSON document; its human report would break the stream.
+      const report: Record<string, unknown> = { ...plan, from, steps: recipe.steps, write }
+      if (uncovered.length > 0) report.contractsUncovered = uncovered
+      if (hooks !== undefined) report.hooks = hooks
+      if (pending !== undefined) report.install = pending
+      let ok = true
+      if (verify) {
+        const { collectProjectVerification } = await import("./verification.ts")
+        const verification = await collectProjectVerification(cwd, { lintsOnly: false })
+        const check = await verification.check()
+        report.check = check
+        ok = check.ok
+      }
+      console.log(JSON.stringify(report, null, 2))
+      return ok
+    }
+    console.log(renderPlan(plan, write, from, recipe.steps))
+    if (uncovered.length > 0) console.log(uncoveredContractsNote(uncovered))
+    if (plan.linkedSkew.length > 0)
+      console.warn(`\n${renderLinkedSkew(recipe.version, plan.linkedSkew, cwd, true)}`)
+    if (hooks !== undefined) console.log(`\n${renderHookScope(hooks)}`)
+    if (pending !== undefined && options.verify !== false)
+      console.log(`\n${renderPendingInstall(pending, recipe.version)}`)
+
+    if (verify) {
+      const { runCheck } = await import("./check.ts")
+      const ok = await runCheck(cwd, { json: false })
+      if (!ok) {
+        console.error("\n[nifra] upgrade applied but `nifra check` failed - review above.")
+        return false
+      }
+    }
+    return true
   }
-  return true
 }

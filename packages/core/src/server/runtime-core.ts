@@ -26,6 +26,9 @@ export const CONTEXT_SET = Symbol("nifra.context.set")
 export const CONTEXT_SEARCH = Symbol("nifra.context.search")
 /** The request a context answers, read without the transport cap `req` applies for user code. */
 export const CONTEXT_REQUEST = Symbol("nifra.context.request")
+/** Sets the idle timeout of the connection a context's request arrived on (`undefined` puts back
+ * the listener's own); `false` when the serving adapter has none to set. */
+export const CONTEXT_IDLE_TIMEOUT = Symbol()
 
 /**
  * A transport codec (or other pre-parsing hook) that already decoded the body stashes the value

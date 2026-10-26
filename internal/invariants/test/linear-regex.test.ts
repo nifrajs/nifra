@@ -146,9 +146,17 @@ const BUILT: Readonly<Record<string, Entry>> = {
     count: 2,
     reason: "bundler filters for escaped package roots",
   },
+  "packages/core/src/static-file.ts": {
+    count: 1,
+    reason: "the app's own `hashedFiles` pattern, copied without the global and sticky flags",
+  },
   "packages/core/src/wire.ts": {
     count: 1,
     reason: "the RegExp node of a decoded wire value; nothing here runs it",
+  },
+  "packages/deno/src/generated/static-file.ts": {
+    count: 1,
+    reason: "the app's own `hashedFiles` pattern, copied without the global and sticky flags",
   },
   "packages/i18n/src/check.ts": {
     count: 4,
@@ -158,6 +166,10 @@ const BUILT: Readonly<Record<string, Entry>> = {
   "packages/mock/src/index.ts": {
     count: 1,
     reason: "a JSON Schema `pattern` of the app's own schema",
+  },
+  "packages/node/src/generated/static-file.ts": {
+    count: 1,
+    reason: "the app's own `hashedFiles` pattern, copied without the global and sticky flags",
   },
   "packages/pi/src/index.ts": {
     count: 1,
@@ -198,10 +210,6 @@ const BUILT: Readonly<Record<string, Entry>> = {
     reason: "constant extension and suffix alternatives, and a constant marker",
   },
   "packages/web/src/prerender.ts": { count: 1, reason: "constant names, escaped" },
-  "packages/web/src/public-dir.ts": {
-    count: 1,
-    reason: "the app's own `hashedFiles` pattern, copied without the global and sticky flags",
-  },
   "packages/web/src/zones.ts": { count: 2, reason: "constant suffix alternatives" },
 }
 

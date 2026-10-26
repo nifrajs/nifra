@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import * as core from "../../core/src/open-resolved.ts"
 import * as image from "../../image/src/open-resolved.ts"
 import * as node from "../../node/src/open-resolved.ts"
 import * as web from "../src/open-resolved.ts"
@@ -44,7 +45,12 @@ async function onPlatform<T>(platform: NodeJS.Platform, fn: () => Promise<T>): P
   }
 }
 
-for (const [pkg, { openResolved, opensAt, sameFileAt }] of Object.entries({ web, node, image })) {
+for (const [pkg, { openResolved, opensAt, sameFileAt }] of Object.entries({
+  core,
+  web,
+  node,
+  image,
+})) {
   describe(pkg, () => {
     test("descriptor-name lookup falls back to file identity when procfs is unavailable", async () => {
       await withTree(async (root) => {

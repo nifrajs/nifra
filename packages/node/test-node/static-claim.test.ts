@@ -17,7 +17,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { after, before, test } from "node:test"
 import { server } from "@nifrajs/core"
-import { serve } from "@nifrajs/node"
+import { serve, serveStatic } from "@nifrajs/node"
 
 const CONTENT = Buffer.alloc(64 * 1024, 7)
 
@@ -34,7 +34,7 @@ before(async () => {
   const handle = await serve(app, {
     port: 0,
     hostname: "127.0.0.1",
-    static: { dir, prefix: "/assets" },
+    static: serveStatic({ dir, prefix: "/assets" }),
   })
   port = handle.port
   stop = () => handle.stop()

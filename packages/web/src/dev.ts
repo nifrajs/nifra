@@ -55,6 +55,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, relative, resolve } from "node:path"
+import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
 import { type BuildClientOptions, buildClient } from "./build.ts"
 import { type DevEntryMatch, resolveDevEntry } from "./bun-dev-entry.ts"
 import { explainBindFailure } from "./dev-port.ts"
@@ -77,7 +78,6 @@ import {
   upgradeOnBun,
 } from "./internal/dev-websocket.ts"
 import { DEV_HMR_ENV, DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
-import { servePublicDir } from "./public-dir.ts"
 
 export type { DevAppHooks } from "./dev-session.ts"
 export { LAST_ERROR_PATH } from "./diagnostic.ts"
@@ -365,7 +365,14 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   const servePublic =
     publicDir === undefined
       ? async (): Promise<undefined> => undefined
-      : servePublicDir({ dir: resolve(publicDir) })
+      : serveStatic({
+          dir: resolve(publicDir),
+          prefix: "/",
+          // A miss is the app's: a route, or its 404 page.
+          fallthrough: true,
+          hashedFiles: (path) => path.startsWith("/assets/"),
+          cacheControl: ONE_DAY,
+        })
 
   writeDevFiles({ routesDir, clientModule, entryPath, htmlPath, live: options.live })
   // Importing the generated HTML is what hands it to Bun's bundler. A runtime-computed path is fine:

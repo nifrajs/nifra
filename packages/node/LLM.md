@@ -11,11 +11,13 @@ Run a nifra app on Node's http server - a Request<->stream adapter with a gracef
 ## Key exports
 
 - **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<NodeServer>`
+- **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
 - **NodeServer** _(interface)_ - `interface NodeServer`
 - **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
 - **ServeOptions** _(interface)_ - `interface ServeOptions`
 - **ServeStaticOptions** _(interface)_ - `interface ServeStaticOptions`
+- **HashedFiles** _(type)_ - `type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)`
 - **RequestProtocol** _(type)_ - `type RequestProtocol = "http" | "https"`
 - **RequestProtocolOption** _(type)_ - `type RequestProtocolOption = | RequestProtocol | ((request: IncomingMessage) => RequestProtocol)`
 

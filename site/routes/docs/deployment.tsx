@@ -179,6 +179,21 @@ export default function Deployment() {
         the client, so drop the line before serving it publicly any other way.
       </p>
       <p>
+        A SIGTERM or SIGINT kills the Bun, Node and Deno servers at once unless{" "}
+        <code>nifra.config.ts</code> exports a <code>selfHost</code> that sets{" "}
+        <code>gracefulSignals</code>, such as{" "}
+        <code>{"export const selfHost = { gracefulSignals: { drainMs: 8_000 }, idleTimeoutSec: 60 }"}</code>.
+        With <code>gracefulSignals</code> the server drains instead (<code>docker stop</code>,
+        Ctrl-C): in-flight requests get <code>drainMs</code> to finish, and <code>delayMs</code> keeps
+        it serving first while a load balancer sees it go. <code>idleTimeoutSec</code> is how long Bun
+        keeps a connection that moves no bytes, a request whose handler is still working included:
+        a whole number from <code>0</code> (never) to <code>255</code>, 10 by default. Node and Deno
+        do not close a connection while its request is being handled, so they ignore it, and an edge
+        build ignores{" "}
+        <code>selfHost</code>. <code>nifra start</code> runs the built server, so it applies there
+        too.
+      </p>
+      <p>
         Nifra never runs the deploy or enters your cloud credentials - it scaffolds the config + a{" "}
         <code>deploy</code> script that shells out to the vendor CLI you've already authed.
       </p>
@@ -267,10 +282,22 @@ export default function Deployment() {
         </li>
       </ul>
       <p>
-        Self-hosting (no CDN in front)? Hand <code>@nifrajs/node</code>'s <code>serve</code> a{" "}
-        <code>static</code> mount and it serves the client bundle from disk - traversal-guarded,
-        content-typed, with an immutable cache - before the app runs, leaving the SSR fast path
-        untouched: <code>serve(app, {'{ port, static: { dir: new URL("./assets/", import.meta.url) } }'})</code>.
+        The servers that <code>nifra build --target node</code> and <code>--target deno</code> emit
+        run on these adapters, so the app installs the one for its target, from the same release as{" "}
+        <code>@nifrajs/web</code>. Each server's <code>static</code> sees every request first: it
+        answers with a file's response, or <code>undefined</code> to let the app route it. The
+        generated servers serve their client bundle and <code>public/</code> files that way.
+      </p>
+      <p>
+        Self-hosting (no CDN in front)? Hand <code>serve</code> a <code>serveStatic</code> mount, from{" "}
+        <code>@nifrajs/node</code> or <code>@nifrajs/deno</code> (on Bun,{" "}
+        <code>@nifrajs/core/serve-static</code> for <code>listen()</code>), and it serves the client
+        bundle from disk - traversal-guarded, content-typed, with an immutable cache - before the app
+        runs, leaving the SSR fast path untouched:{" "}
+        <code>
+          serve(app, {'{ port, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) }'})
+        </code>
+        .
         On Cloudflare/Vercel the platform serves assets, so you don't need it there.
       </p>
       <p>

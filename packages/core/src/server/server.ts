@@ -124,7 +124,9 @@ import type {
 import { type QueryValue, queryObjectOf, searchOf } from "./query.ts"
 import {
   type PeerPlatform,
+  PLATFORM_IDLE_TIMEOUT,
   PLATFORM_PEER,
+  PLATFORM_REQUEST,
   RequestContext,
   readBodyFramed,
 } from "./request-context.ts"
@@ -348,10 +350,11 @@ interface WsEntry {
   readonly chain: RouteEntry
 }
 
-/** Structural view of the socket-peer lookup on the Bun `Server`, so any Bun `Server` (WS or not)
- * satisfies it. */
+/** Structural view of the socket-peer lookup and per-request idle timeout on the Bun `Server`, so
+ * any Bun `Server` (WS or not) satisfies it. */
 interface BunPeerServer {
   requestIP(request: Request): { readonly address: string } | null
+  timeout(request: Request, seconds: number): void
 }
 
 /** Structural view of the Bun `Server` the `fetch` 2nd arg exposes (`upgrade` + the socket peer). */
@@ -406,23 +409,38 @@ interface FetchMount<Env = unknown> {
   wsPassed?: WeakMap<Request, Request>
 }
 
-/** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown). */
-function bunPeerPlatform(server: BunPeerServer, req: Request): Platform {
+type IdleTimeoutSetter = NonNullable<PeerPlatform[typeof PLATFORM_IDLE_TIMEOUT]>
+
+/**
+ * The socket peer Bun observed (`undefined` if unknown) and its connection's idle timeout, as a
+ * `Platform` for one request. A class, not an object literal: JSC builds a literal holding a getter
+ * or a symbol key on a slow path, measured at about 5x the instructions of this instance.
+ */
+class BunPeerPlatform implements PeerPlatform {
+  readonly #server: BunPeerServer
+  #resolved = false
+  #address: string | undefined
+  // Own fields, so the copy a `clientIp` trust declaration makes (`{ ...platform }`) keeps them.
+  declare readonly [PLATFORM_IDLE_TIMEOUT]: IdleTimeoutSetter
+  declare readonly [PLATFORM_REQUEST]: Request
+
+  constructor(server: BunPeerServer, req: Request, setIdleTimeout: IdleTimeoutSetter) {
+    this.#server = server
+    this[PLATFORM_IDLE_TIMEOUT] = setIdleTimeout
+    this[PLATFORM_REQUEST] = req
+  }
+
   // Bun's requestIP() costs ~0.5 us per call, about 7% of a bare GET's server time. Keep the
   // documented raw-peer c.clientIp behavior, but resolve it lazily: most routes never read c.clientIp,
   // so they should not pay for the socket lookup on every request. A getter also
   // preserves middleware that inspects the platform argument directly and trust-mode routes, which
   // resolve the value in deriveClientIp before the handler runs.
-  let resolved = false
-  let address: string | undefined
-  return {
-    get clientIp(): string | undefined {
-      if (!resolved) {
-        resolved = true
-        address = server.requestIP(req)?.address
-      }
-      return address
-    },
+  get clientIp(): string | undefined {
+    if (!this.#resolved) {
+      this.#resolved = true
+      this.#address = this.#server.requestIP(this[PLATFORM_REQUEST])?.address
+    }
+    return this.#address
   }
 }
 
@@ -612,6 +630,8 @@ const BODY_ERROR = (error: unknown): Promise<never> => Promise.reject(error)
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
 const STOP_HOOK_TIMEOUT_MS = 5_000
+/** Bun's own `idleTimeout` when `listen()` is given none. */
+const BUN_IDLE_TIMEOUT_SEC = 10
 
 /** Same-origin check for a WebSocket handshake (CSWSH default). {@link isSameOriginRequest} is the one
  * owner, shared with the server-function mount in `@nifrajs/web` - the two used to answer differently
@@ -4124,10 +4144,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private bunFetchWithWebSocket(
     req: Request,
     server: BunUpgradeServer,
+    setIdleTimeout: IdleTimeoutSetter,
   ): MaybePromise<Response | undefined> {
     const handle = (o: WebSocketUpgradeOutcome): MaybePromise<Response | undefined> => {
       if (o.kind === "pass")
-        return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
+        return this.fetch(
+          req,
+          new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>,
+        )
       if (o.kind === "reject") return o.response
       // A copy: the Bun socket keeps per-connection state on it, and a hand-built outcome may be shared.
       return server.upgrade(req, { data: { ...o } })
@@ -4136,7 +4160,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     const outcome = this.resolveWebSocketUpgrade(
       req,
-      bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>,
+      new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>,
     )
     return outcome instanceof Promise ? outcome.then(handle) : handle(outcome)
   }
@@ -7117,11 +7141,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * nothing - so any endpoint slower than 10s (a render, an export, a long upstream call) has its
    * connection cut mid-flight regardless of `requestTimeoutMs`. Apps with such endpoints must raise
    * this above their slowest expected response, which is why it is a first-class option and not a
-   * reason to drop down to `Bun.serve`. `0` disables the timeout entirely; max 255.
+   * reason to drop down to `Bun.serve`, or hold those requests' connections alone with
+   * `withIdleTimeout()` from `@nifrajs/core/idle-timeout`. `0` disables the timeout entirely; max 255.
    *
    * `tls` serves HTTPS directly: `app.listen(443, { tls: { cert, key } })` with PEM text or bytes.
    * Requests then arrive with `https:` URLs. Behind a proxy or a platform that terminates TLS, leave
    * it unset.
+   *
+   * `static` sees every request before the app does, the ones Bun's route table serves included, so
+   * a file it answers wins over any route at the same path. It returns the file's response, or
+   * `undefined` to let the app route the request. No hook of the app runs for a request it answers.
+   * `@nifrajs/web`'s Bun build serves its client bundle and public files this way.
    */
   listen(
     port: number,
@@ -7130,6 +7160,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       readonly hostname?: string
       readonly idleTimeoutSec?: number
       readonly tls?: ListenTlsOptions
+      readonly static?: (request: Request) => MaybePromise<Response | undefined>
     },
   ): RunningServer {
     if (typeof Bun === "undefined") {
@@ -7193,6 +7224,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return jsonError(500, "internal_error")
       },
     }
+    const idleTimeoutSec = options?.idleTimeoutSec ?? BUN_IDLE_TIMEOUT_SEC
+    const setIdleTimeout: IdleTimeoutSetter = (request, seconds) =>
+      // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: `running` is the Bun `Server` this call started (`RunningServer` publishes a subset of it), and every source a Bun listener routes is a `Request`.
+      (running as unknown as BunPeerServer).timeout(request as Request, seconds ?? idleTimeoutSec)
     const fallback: BunNativeHandler = (req, server) => {
       // Bun has already framed and bounded this request body in its HTTP parser. Mark the
       // source before the portable fallback runs so body schemas use Bun's native `json()`
@@ -7200,27 +7235,54 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // Requests. Native route handlers mark themselves in compileBunNativeHandler; this
       // covers every request the native lane does not serve.
       markTrustedBodyFraming(req)
-      return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
+      return this.fetch(
+        req,
+        new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>,
+      )
     }
     // Bun names the socket peer of a request when its server is asked. A request served from the
     // native table carries this one platform, which asks only when a handler reads `c.clientIp`.
     const peer: PeerPlatform = {
       [PLATFORM_PEER]: (request) =>
         (running as unknown as BunPeerServer).requestIP(request as Request)?.address,
+      [PLATFORM_IDLE_TIMEOUT]: setIdleTimeout,
     }
     const nativeRoutes =
       wsHandlers === undefined ? this.buildBunNativeRoutes(fallback, peer) : undefined
+    const first = options?.static
+    const before = <S, A>(
+      inner: (req: Request, server: S) => MaybePromise<A>,
+    ): ((req: Request, server: S) => MaybePromise<A | Response>) =>
+      first === undefined
+        ? inner
+        : (req, server) => {
+            const answer = first(req)
+            if (answer === undefined) return inner(req, server)
+            return answer instanceof Promise
+              ? answer.then((response) => response ?? inner(req, server))
+              : answer
+          }
+    // Bun runs a table handler without `fetch`, so each one gets the same front as the fallback.
+    if (first !== undefined && nativeRoutes !== undefined) {
+      for (const path in nativeRoutes) {
+        const methods = nativeRoutes[path]!
+        for (const method of BUN_TABLE_METHODS) {
+          const handler = methods[method]
+          if (handler !== undefined) methods[method] = before(handler)
+        }
+      }
+    }
     const sockets = new Set<{ close(code?: number): void }>()
     this.bunSockets = sockets
     const running = (wsHandlers === undefined
       ? Bun.serve({
           ...listening,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-          fetch: fallback,
+          fetch: before(fallback),
         })
       : Bun.serve<BunWsData>({
           ...listening,
-          fetch: (req, server) => this.bunFetchWithWebSocket(req, server),
+          fetch: before((req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout)),
           // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
           // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.
