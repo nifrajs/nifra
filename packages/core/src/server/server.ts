@@ -131,6 +131,7 @@ import {
   readBodyFramed,
 } from "./request-context.ts"
 import { recordRequestReplacement } from "./request-lineage.ts"
+import { carryToCopy } from "./request-local.ts"
 import { needsResolving, resolveDotSegments } from "./request-target.ts"
 import {
   applyStaticResponseHeaders,
@@ -699,6 +700,7 @@ function withResolvedTarget(req: Request, url: string): Request | undefined {
   }
   // The same body, so the same framing: a runtime still delimited it.
   if (hasTrustedBodyFraming(req)) markTrustedBodyFraming(rebuilt)
+  carryToCopy(req, rebuilt)
   return rebuilt
 }
 
@@ -809,7 +811,8 @@ function compareMounts<Env>(a: FetchMount<Env>, b: FetchMount<Env>): number {
   return b.priority - a.priority || b.path.length - a.path.length || a.order - b.order
 }
 
-/** Rebase a mounted request's path without losing the authentication mark used by child caches. */
+/** Rebase a mounted request's path without losing the authentication mark used by child caches, or
+ * its request locals. */
 function stripMountPrefix(request: Request, prefix: string): Request {
   if (prefix === "/") return request
   const url = new URL(request.url)
@@ -817,6 +820,7 @@ function stripMountPrefix(request: Request, prefix: string): Request {
   url.pathname = rest === "" ? "/" : rest
   const childRequest = new Request(url.href, request)
   if (isAuthenticatedRequest(request)) markAuthenticatedRequest(childRequest)
+  carryToCopy(request, childRequest)
   return childRequest
 }
 

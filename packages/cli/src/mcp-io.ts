@@ -380,3 +380,35 @@ export async function readBoundedStream(
     reader.releaseLock()
   }
 }
+
+/** Send console output to stderr so it never corrupts the newline-delimited JSON on stdout: a loader that
+ * logs would otherwise inject noise into a response line. */
+export function redirectConsoleToStderr(): void {
+  const write = (level: string, args: unknown[]): void => {
+    Bun.stderr.write(`[${level}] ${args.map((arg) => String(arg)).join(" ")}\n`)
+  }
+  console.debug = (...args: unknown[]) => write("debug", args)
+  console.info = (...args: unknown[]) => write("info", args)
+  console.log = (...args: unknown[]) => write("log", args)
+  console.warn = (...args: unknown[]) => write("warn", args)
+  console.error = (...args: unknown[]) => write("error", args)
+}
+
+function safeResponseId(value: unknown): number | string | null {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value
+  if (typeof value === "string" && value.length <= 128) return value
+  return null
+}
+
+/** A warm worker's reply: one `{ id, output }` line, with an output over the cap answered as an error. */
+export function workerReplyWriter(
+  write: (line: string) => void,
+): (id: unknown, output: unknown) => void {
+  return (id, output) => {
+    const responseId = safeResponseId(id)
+    const encoded = serializeBoundedJson({ id: responseId, output }, CHILD_OUTPUT_MAX_BYTES - 1)
+    write(
+      `${encoded ?? JSON.stringify({ id: responseId, output: { error: "worker output exceeded the size limit" } })}\n`,
+    )
+  }
+}

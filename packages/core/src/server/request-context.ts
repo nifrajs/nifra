@@ -17,6 +17,10 @@ import { jsonText } from "./json-text.ts"
 import type { ProtoPoisoning } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
 import { residentText, responseJsonContentType } from "./respond.ts"
+import type {
+  ResponseContractDefinition,
+  ResponseContractRuntime,
+} from "./response-contract-lane.ts"
 import {
   CONTEXT_IDLE_TIMEOUT,
   CONTEXT_REQUEST,
@@ -201,6 +205,13 @@ export class RequestContext implements RawContext {
   private declare cookiesValue: Readonly<Record<string, string>> | undefined
   declare jsonReply: Response | undefined
   declare jsonBody: unknown
+  /** The route's response contract, if it has one, for {@link json} to write by. */
+  declare jsonContract:
+    | {
+        readonly runtime: ResponseContractRuntime
+        readonly definition: ResponseContractDefinition
+      }
+    | undefined
   private declare readonly source: RequestSource
   private declare readonly maxBodyBytes: number
   private declare readonly protoPoisoning: ProtoPoisoning
@@ -355,6 +366,13 @@ export class RequestContext implements RawContext {
    */
   json(body: unknown, init?: ResponseInit | number): Response {
     const i = statusInit(init)
+    // A contracted route's value is written here once, as its contract judges it: the bytes and the
+    // check share one call of each `toJSON` hook, a `Date`'s included.
+    const contract = this.jsonContract
+    const value =
+      contract?.runtime.write === undefined
+        ? body
+        : contract.runtime.write(contract.definition, body, i?.status)
     let reply: Response | undefined
     if (DEFERS_RESPONSE) {
       const defer = deferredResponderFor()
@@ -363,17 +381,17 @@ export class RequestContext implements RawContext {
       // (`undefined`, a function, a symbol) - exactly the case where `Response.json` throws, so it
       // gets the throw rather than an invented body. The content-type is the runtime's own, read
       // off `Response.json` once, so a deferred response carries the same one byte for byte.
-      const text = defer === undefined ? undefined : (jsonText(body) as string | undefined)
+      const text = defer === undefined ? undefined : (jsonText(value) as string | undefined)
       const headers =
         text === undefined ? undefined : ownHeaderRecord(i?.headers, responseJsonContentType())
       if (defer !== undefined && text !== undefined && headers !== undefined) {
         reply = defer(text, i?.status ?? 200, headers)
       }
     }
-    reply ??= markResidentBody(jsonResponse(body, i))
+    reply ??= markResidentBody(jsonResponse(value, i))
     // Remembered so a response contract holds the value to the route's schema: this is the
     // framework's JSON helper, not a raw-Response escape hatch.
-    this.jsonBody = body
+    this.jsonBody = value
     this.jsonReply = reply
     return reply
   }

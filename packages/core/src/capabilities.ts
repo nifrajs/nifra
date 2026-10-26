@@ -22,6 +22,7 @@ import {
   validCapabilityId,
 } from "./internal/capability-runtime.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { hasControlCharacter } from "./internal/control-character.ts"
 import { effectScopeForContext } from "./internal/effect-execution.ts"
 import { NIFRA_ASSURANCE_IDS } from "./internal/route-assurance.ts"
 import {
@@ -262,14 +263,6 @@ function normalizedIds(values: readonly string[], label: string): readonly strin
 
 function validSpecifier(value: string): boolean {
   return value.trim() === value && value !== "" && !hasControlCharacter(value)
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index)
-    if (code <= 31 || code === 127) return true
-  }
-  return false
 }
 
 /** Validate and freeze a capability/provenance policy. */

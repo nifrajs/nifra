@@ -49,6 +49,17 @@ export const app = createWebApp({
 
 app.listen(3000)`
 
+const HASHED_FONTS = `import { fileURLToPath } from "node:url"
+import { servePublicDir } from "@nifrajs/web"
+
+// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.
+const HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/
+
+export const publicFiles = servePublicDir({
+  dir: fileURLToPath(new URL("./public/", import.meta.url)),
+  hashedFiles: [HASHED_FONT],
+})`
+
 const MIDDLEWARE = `// doc-check: skip - fragment: the use option of the createWebApp call above; @nifrajs/middleware is not installed in the docs sandbox.
 import { requestId, securityHeaders } from "@nifrajs/middleware"
 
@@ -150,10 +161,22 @@ export default function CustomServer() {
           with the one-day policy.
         </li>
         <li>
+          <b>Files hashed before the build.</b> The fonts <code>loadGoogleFont</code> writes into{" "}
+          <code>public/fonts/</code> are in no manifest, so the <code>public/</code> handler names
+          them with an array of patterns, matched on the encoded URL path, as below. A handler that
+          serves both the build and such files takes a <code>(path) =&gt; boolean</code> predicate
+          instead, with <code>assets</code> as <code>new Set(build.assets)</code>:{" "}
+          <code>(path) =&gt; assets.has(path) || HASHED_FONT.test(path)</code>. A global or
+          sticky pattern in the array is used without that flag, so <code>lastIndex</code> never
+          skips a match; a predicate runs as written, so keep the patterns it tests free of{" "}
+          <code>g</code> and <code>y</code>.
+        </li>
+        <li>
           <b>Where it runs.</b> Register the handlers with <code>app.onRequest</code> inside{" "}
           <code>use</code>, so a static hit never reaches page rendering.
         </li>
       </ul>
+      <CodeBlock code={HASHED_FONTS} />
       <p>
         On Node, <code>serve()</code> from <code>@nifrajs/node</code> can serve the bundle itself before
         the app runs, which keeps the direct request path for everything else:

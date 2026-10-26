@@ -10,12 +10,15 @@
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
 import {
-  createSlotParking,
-  type KeepAliveRouter,
-  type KeepAliveTable,
-  type SlotNode,
-  slotTree,
-} from "@nifrajs/web/keep-alive"
+  additionsFor,
+  type KeptMount,
+  keptMount,
+  propsByState,
+  SLOT_ROOT,
+  type SlotAdditions,
+  slotChildren,
+} from "@nifrajs/web/internal/keep-alive-mount"
+import type { KeepAliveRouter, KeepAliveTable, SlotNode } from "@nifrajs/web/keep-alive"
 import {
   type ComponentType,
   createContext,
@@ -67,58 +70,21 @@ const memoized = <P extends object>(): ((component: ComponentType<P>) => Compone
 const memoPage = memoized<RenderProps>()
 const memoLayout = memoized<LayoutProps>()
 
-const ROOT = "\0root"
-
 // What a slot renders with. One value per mount: a slot reads nothing that changes per render from
 // context, or a context change would re-render every hidden page past its memo.
-interface Mount {
-  readonly chainOf: (state: RouterState) => readonly unknown[]
+interface Mount extends KeptMount {
   readonly propsOf: (state: RouterState) => RenderProps
-  readonly entryRef: (key: string) => (element: HTMLSlotElement | null) => void
-  readonly pageRef: (key: string) => (element: HTMLSlotElement | null) => void
 }
 const MountContext = createContext<Mount | undefined>(undefined)
 // Parent key → the slots under it, for the current render.
 const NodesContext = createContext<ReadonlyMap<string, readonly SlotNode[]>>(new Map())
 
-const childrenOf = (tree: readonly SlotNode[]): Map<string, readonly SlotNode[]> => {
-  const nodes = new Map<string, readonly SlotNode[]>([[ROOT, tree]])
-  const visit = (list: readonly SlotNode[]): void => {
-    for (const node of list) {
-      if (node.children === undefined) continue
-      nodes.set(node.key, node.children)
-      visit(node.children)
-    }
-  }
-  visit(tree)
-  return nodes
-}
-
-// What a layout adds to its `children` with `cloneElement`, for the slot it shows: a hidden slot
-// keeps what it last had, so its memo holds.
-type Added = Readonly<Record<string, unknown>> | undefined
-const sameAdded = (a: Added, b: Added): boolean => {
-  if (a === b) return true
-  if (a === undefined || b === undefined) return false
-  const keys = Object.keys(a)
-  return keys.length === Object.keys(b).length && keys.every((key) => Object.is(a[key], b[key]))
-}
-const addedTo = (held: Map<string, Added>, nodes: readonly SlotNode[], shown: Added) => {
-  for (const key of held.keys()) if (!nodes.some((node) => node.key === key)) held.delete(key)
-  return (node: SlotNode): Added => {
-    const last = held.get(node.key)
-    if (held.has(node.key) && (node.hidden || sameAdded(last, shown))) return last
-    held.set(node.key, shown)
-    return shown
-  }
-}
-
 // The slots under one parent, read from the view: a layout's `children` is one element per parent,
 // created once, so the layout's memo compares equal while the slots under it still update.
 function Slots({ parent, ...rest }: { readonly parent: string }): ReactNode {
   const nodes = useContext(NodesContext).get(parent) ?? []
-  const added = addedTo(
-    useRef(new Map<string, Added>()).current,
+  const added = additionsFor(
+    useRef(new Map<string, SlotAdditions>()).current,
     nodes,
     Object.keys(rest).length === 0 ? undefined : rest,
   )
@@ -144,7 +110,7 @@ const pageChain = (
   chain: readonly unknown[],
   depth: number,
   props: RenderProps,
-  added?: Added,
+  added?: SlotAdditions,
 ): ReactNode => {
   if (depth >= chain.length - 1)
     return createElement(
@@ -167,7 +133,7 @@ const Slot = memo(function Slot({
   added,
 }: {
   readonly node: SlotNode
-  readonly added: Added
+  readonly added: SlotAdditions
 }): ReactNode {
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every slot renders under the mount's provider
   const view = useContext(MountContext) as Mount
@@ -190,8 +156,8 @@ const Slot = memo(function Slot({
       { value: !node.hidden },
       withRouterContext(props, content),
     ),
-    view.entryRef(node.key),
-    view.pageRef(node.key),
+    view.entry(node.key),
+    view.page(node.key),
   )
 })
 
@@ -200,47 +166,31 @@ const Slot = memo(function Slot({
  * against the state the server rendered and then follows the store.
  */
 export function mountRouter(options: KeepAliveMountOptions): void {
-  const { router, routes, searchSchemas, container, keepAlive: table } = options
+  const { router, searchSchemas, container } = options
   const matchChains = options.matchChains ?? {}
   setMountedRouter(router)
   const hydrated = router.snapshot()
-  const parking = createSlotParking()
-  let committed: readonly SlotNode[] | undefined
-  router.beforePublish((next) => parking.before(slotTree(next, matchChains, table, committed)))
-
-  const props = new WeakMap<RouterState, RenderProps>()
-  const propsOf = (state: RouterState): RenderProps => {
-    let held = props.get(state)
-    if (held === undefined) {
-      held = routeProps(state, searchSchemas, matchChains)
-      props.set(state, held)
-    }
-    return held
-  }
   const mount: Mount = {
-    chainOf: (state) => routes[state.routeId] ?? [],
-    propsOf,
-    entryRef: parking.entry,
-    pageRef: parking.page,
+    ...keptMount(options),
+    propsOf: propsByState((state) => routeProps(state, searchSchemas, matchChains)),
   }
 
   const Router: FunctionComponent = () => {
     const state = useSyncExternalStore(router.subscribe, router.snapshot, () => hydrated)
     const previous = useRef<readonly SlotNode[] | undefined>(undefined)
-    const tree = useMemo(() => slotTree(state, matchChains, table, previous.current), [state])
+    const tree = useMemo(() => mount.tree(state, previous.current), [state])
     previous.current = tree
-    const nodes = useMemo(() => childrenOf(tree), [tree])
+    const nodes = useMemo(() => slotChildren(tree), [tree])
     // After every slot below has committed: park what this render hid, restore what it showed again.
     useLayoutEffect(() => {
-      committed = tree
-      parking.after(tree)
+      mount.after(tree)
     }, [tree])
     return withRouterContext(
-      propsOf(state),
+      mount.propsOf(state),
       createElement(
         MountContext.Provider,
         { value: mount },
-        createElement(NodesContext.Provider, { value: nodes }, slotsOf(ROOT)),
+        createElement(NodesContext.Provider, { value: nodes }, slotsOf(SLOT_ROOT)),
       ),
     )
   }

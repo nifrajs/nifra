@@ -17,6 +17,8 @@
  * then closes the socket with `1009` and keeps the message from the handler, but it cannot bound the
  * memory Deno spent receiving it. Where that matters, cap message size in a proxy in front.
  */
+import { assertCloseArgs, exceedsPayloadCap } from "./generated/ws-close.ts"
+
 // WebSocket types: structurally mirrored from `@nifrajs/core` so this adapter keeps zero dependency on
 // nifra (and `deno check` never has to resolve `@nifrajs/core`'s types). The WS dispatch is inlined below,
 // mirroring core's `attachWebSocket`; kept in lockstep by the live `deno run` WS round-trip.
@@ -365,46 +367,6 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   // `addr` is populated synchronously on the returned server (verified via spike).
   const addr = httpServer.addr as Deno.NetAddr
   return Promise.resolve({ port: addr.port, stop })
-}
-
-/** Whether a message is over `cap` UTF-8 bytes, without encoding a text one: each UTF-16 unit takes
- * 1-3 bytes (a surrogate pair 4 for its 2), so only a length between those bounds is counted. The
- * Deno copy of core's `exceedsPayloadCap`. */
-function exceedsPayloadCap(message: NifraWsData, cap: number): boolean {
-  if (typeof message !== "string") return message.byteLength > cap
-  const units = message.length
-  if (units > cap) return true
-  if (units * 3 <= cap) return false
-  let bytes = 0
-  for (let i = 0; i < units; i++) {
-    const unit = message.charCodeAt(i)
-    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3
-    if (bytes > cap) return true
-  }
-  return false
-}
-
-/** Deno copy of core's `assertCloseArgs`: a close RFC 6455 forbids throws a `RangeError` before
- * `WebSocket.close` sees it, so the socket stays open. Deno sent such a code on the wire. */
-function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
-  if (code === undefined) {
-    if (reason !== undefined && reason !== "")
-      throw new RangeError("ws.close(): a reason needs a code")
-    return
-  }
-  if (
-    !Number.isInteger(code) ||
-    !(
-      (code >= 1000 && code <= 1003) ||
-      (code >= 1007 && code <= 1014) ||
-      (code >= 3000 && code <= 4999)
-    )
-  )
-    throw new RangeError(
-      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
-    )
-  if (reason !== undefined && exceedsPayloadCap(reason, 123))
-    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
 }
 
 function internalError(): Response {

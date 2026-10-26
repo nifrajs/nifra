@@ -1,4 +1,5 @@
 import { publicErrorDetails } from "./errors.ts"
+import { safeEnv } from "./internal/safe-env.ts"
 import { runBoundedProcess } from "./process.ts"
 
 export interface ProjectDiffOptions {
@@ -34,7 +35,7 @@ export async function readProjectDiff(options: ProjectDiffOptions): Promise<Proj
       ["git", "--no-pager", "diff", "HEAD", "--no-ext-diff", "--unified=3", "--"],
       {
         cwd: options.cwd,
-        env: safeEnv(),
+        env: safeEnv({ GIT_PAGER: "cat" }),
         timeoutMs,
         maxStdoutBytes: maxOutputBytes,
         maxStderrBytes: Math.min(maxOutputBytes, 64 * 1024),
@@ -56,51 +57,4 @@ export async function readProjectDiff(options: ProjectDiffOptions): Promise<Proj
       ...(details.stack === undefined ? {} : { stack: details.stack }),
     }
   }
-}
-
-function safeEnv(): Record<string, string> {
-  const result: Record<string, string> = {}
-  const names = [
-    "PATH",
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "TERM",
-    "GIT_PAGER",
-    ...(process.platform === "win32"
-      ? [
-          "SystemRoot",
-          "WINDIR",
-          "TEMP",
-          "TMP",
-          "USERPROFILE",
-          "LOCALAPPDATA",
-          "APPDATA",
-          "COMSPEC",
-          "PATHEXT",
-          "BUN_INSTALL",
-          "HOMEDRIVE",
-          "HOMEPATH",
-          "USERNAME",
-          "USERDOMAIN",
-          "ProgramData",
-          "ProgramFiles",
-          "ProgramFiles(x86)",
-        ]
-      : []),
-  ]
-  for (const name of names) {
-    const value = name === "GIT_PAGER" ? "cat" : readEnv(name)
-    if (value !== undefined) result[name] = value
-  }
-  return result
-}
-
-function readEnv(name: string): string | undefined {
-  const exact = process.env[name]
-  if (exact !== undefined || process.platform !== "win32") return exact
-  const key = Object.keys(process.env).find(
-    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
-  )
-  return key === undefined ? undefined : process.env[key]
 }

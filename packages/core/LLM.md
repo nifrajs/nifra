@@ -24,12 +24,12 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **admitDeadline** _(function)_ - `admitDeadline: (headers: Headers, options?: DeadlineAdmissionOptions) => DeadlineAdmission` · from `@nifrajs/core/budget`
 - **all** _(function)_ - `all: { <Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(path: Path, schema: S, handler: H): MethodRo…` · from `@nifrajs/core/methods`
 - **answerNotFound** _(function)_ - `answerNotFound: <T, Env>(handler: NotFoundHandler<Env>, input: NotFoundInput<Env>, wrap: (response: Response | ResponseResult) => T, failed…` · from `@nifrajs/core/edge-kit`
+- **applyInvariantSetup** _(function)_ - `applyInvariantSetup: (invariants: InvariantsConfig, result: InvariantSetupResult | undefined) => AppliedInvariantSetup` · from `@nifrajs/core/assurance`
 - **assertBudgetRemaining** _(function)_ - `assertBudgetRemaining: (budget: RequestBudget, requiredMs?: number) => void` · from `@nifrajs/core/budget`
 - **assertByteLimit** _(function)_ - `assertByteLimit: (value: number, name?: string) => void` · from `@nifrajs/core/edge-kit`
 - **assertTransportTextBounded** _(function)_ - `assertTransportTextBounded: (text: string, options: TransportDecodeOptions) => void` · from `@nifrajs/core/transport-codec`
-- **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void` · from `@nifrajs/core/assurance`
 
-_…and 787 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 792 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

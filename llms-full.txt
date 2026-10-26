@@ -2068,7 +2068,7 @@ const anyPending = useFetchers().some((f) => f.snapshot().pending)
 ```
 
 A fetcher holds nothing for the next visitor: `identityChanged()` returns every
-fetcher to idle. In an app with a [keepAlive](/docs/keep-alive#sign-in) route, so
+fetcher to idle, and a load still in flight loads once more for the new visitor. In an app with a [keepAlive](/docs/keep-alive#sign-in) route, so
 does the identity epoch cookie a sign-in or sign-out response rotates, on the next
 `useFetcher` read.
 
@@ -3183,7 +3183,8 @@ the server publishes one of them.
 
 A cached query never answers for the next visitor. `identityChanged()` from
 `@nifrajs/web/client` clears every query client in the page: mounted queries go
-back to pending and refetch, the rest are dropped. In an app with a
+back to pending and refetch, the rest drop their data. A fetch still loading loads once more
+for the new visitor before it settles. In an app with a
 [keepAlive](/docs/keep-alive#sign-in) route, the identity epoch cookie a sign-in
 or sign-out response rotates does the same on the client's next read.
 
@@ -3583,6 +3584,51 @@ registered sees it, in order, with a context that has no route params; the first
 sent. When none answers, the error is logged and the client gets the default
 `500`. A thrown `Response` or `status()` value is sent as
 if returned.
+
+#### State that follows the request
+
+A value tied to one request - a verified client IP, a request id, an auth decision - is often
+kept in a `WeakMap<Request, T>`, which loses it at the first copy of the
+request. nifra copies requests itself: a `mount()` that strips its prefix, a
+WebSocket pass reused for HTTP, a target it resolves, and the transport and idempotency
+lanes, as do `methodOverride()`, a rewriting `trimTrailingSlash()` or
+`appendTrailingSlash()`, and a live load. `requestLocal<T>()` from
+`@nifrajs/core/server` is a slot with `get`, `set`,
+`has` and `delete` whose value every one of those copies shares: a
+value set before a mount is read in the child, and one the child sets is read through the
+parent's request. Where your own code rebuilds a request - a wrapper in front of the app,
+an `onRequest` hook returning a new one - call
+`carryRequestLocals(from, to)` right after `new Request(url, req)`; a
+copy made without it starts empty. Values are held weakly and never cross requests. Make
+slots at startup, as below: copies are linked only once a first slot exists, so a request
+copied before then starts empty.
+
+```ts
+import { carryRequestLocals, requestLocal, server } from "@nifrajs/core/server"
+
+// One slot per value. A WeakMap<Request, T> would lose it at the first copy of the request.
+const requestId = requestLocal<string>()
+
+const billing = server().get("/invoices", (c) => ({ requestId: requestId.get(c.req) }))
+
+export const app = server()
+  .onRequest((req) => {
+    requestId.set(req, req.headers.get("x-request-id") ?? crypto.randomUUID())
+  })
+  // The child sees a copy of the request with /billing stripped, and reads the same value.
+  .mount({ path: "/billing", app: billing, stripPrefix: true })
+
+// A wrapper that rebuilds the request carries the values itself. It keeps the host, which the
+// same-origin check on a form POST compares with the browser's Origin.
+export const fetch = (req: Request): Response | Promise<Response> => {
+  const url = new URL(req.url)
+  if (!url.pathname.startsWith("/v1/")) return app.fetch(req)
+  url.pathname = url.pathname.slice("/v1".length)
+  const rebuilt = new Request(url.href, req)
+  carryRequestLocals(req, rebuilt)
+  return app.fetch(rebuilt)
+}
+```
 
 #### Which hooks run where
 
@@ -4013,6 +4059,44 @@ const app = server().use(
     ],
   }),
 )
+```
+
+A tier's `prefix` can be a list: every prefix in it charges the tier's one bucket,
+so traffic of one kind spread over several paths shares one allowance. Selection is still the
+longest prefix across every tier, so a longer prefix that belongs to another tier charges only
+that tier. A prefix listed in two tiers is refused when the limiter is built. A tier counts
+under `tier:<name>:`, and `name` defaults to the first prefix; name
+a tier whose list may change, so editing the list neither resets nor splits its counters. Two
+tiers with one name are refused too. Both limiters have `keyOf(request, platform?)`,
+which resolves to the exact store key a request would be charged to, running an async key and
+its client-IP fallback as a request would, or `undefined` when the request would not
+be charged. It counts nothing, so a test can pre-spend or reset a bucket without copying the key
+format.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
+
+const store = new MemoryStore()
+const limiter = rateLimitTiers({
+  store,
+  floor: { max: 120, windowMs: 60_000 },
+  tiers: [
+    // One 30/min allowance across all three, not 30 each. The name is the bucket's
+    // store scope, so adding or removing a prefix later keeps the live counters.
+    {
+      name: "exports",
+      prefix: ["/api/exports", "/api/reports/download", "/api/invoices/pdf"],
+      max: 30,
+      windowMs: 60_000,
+    },
+  ],
+})
+const app = server().use(limiter)
+
+// The store key a request is charged to, for a test or an ops tool: "tier:exports:<ip>".
+const key = await limiter.keyOf(new Request("http://x/api/exports/csv"), { clientIp: "203.0.113.9" })
+if (key !== undefined) await store.hit(key, 60_000) // pre-spend one hit
 ```
 
 ### A shared store in production
@@ -7632,7 +7716,11 @@ pins are installed it would judge the release you are leaving, and the command p
 install to run first instead. With `--write` it also saves the hook report from
 before the edits and, once the target is installed, prints how hook scope changed across the
 upgrade (`--no-hooks` skips that); before then,
-`nifra routes --hooks --since` compares after the install.
+`nifra routes --hooks --since .nifra/hooks-before-upgrade.json` compares after the
+install. Run from a CLI whose
+`@nifrajs/core` is not the project's - `bunx @nifrajs/cli@<new>
+        upgrade` before the new release is installed - it takes no hook report, since that
+copy cannot reflect the project's app, and says so in one line.
 `nifra doctor` and
 `nifra check` (NF-D002) point here when a workspace carries more than one version;
 see [mixed nifra versions](/docs/troubleshooting#mixed-versions). A
@@ -7945,9 +8033,9 @@ URL
 none
 
 tables a query may not read (`name`, or `schema.name` on Postgres),
-also through views, CTEs, partitions and child tables. On Postgres the check reads the
-query plan, so a function that reads the table inside its own body is not seen; the
-`REVOKE` that `nifra db role` prints is what closes that
+also through views, CTEs, partitions and child tables. On Postgres the role itself must be
+unable to read it, or any view over it, so a function body or a materialized view cannot
+reach it either; the `REVOKE` that `nifra db role` prints does that
 
 `query`
 
@@ -7975,10 +8063,13 @@ columns a query may not read on top of the credential-name rule, and columns it 
 none
 SQLite: paths outside the project the file may resolve to
 
-`allowHosts`, `allowExtensions`, `schemas`
+`allowHosts`, `allowExtensions`, `allowFunctions`,
+`schemas`
 
-none, none, public
-Postgres: remote hosts, extensions to accept, schemas a query may read
+none, none, none, public
+
+Postgres: remote hosts, extensions to accept, functions to trust past the allowlist
+(`name` or `schema.name`), schemas a query may read
 
 Each call runs in a fresh process that loads the declaration, answers and exits:
 
@@ -7994,11 +8085,14 @@ statement, lock and idle timeouts, always rolled back, inside a session that sta
 
 -
 **Layers that each refuse on their own.** One statement, read-only, checked by a
-tokenizer that also refuses functions that reach outside a query (server files,
-`dblink`, `set_config`, advisory locks, `pg_notify`,
-`nextval`). On Postgres the statement runs as one extended-protocol
-`DECLARE CURSOR`, which the server accepts only for SELECT and VALUES. Every table
-the plan reads (SQLite: every table its compiled statement opens) must be exposed.
+tokenizer. On Postgres every function the statement or its plan calls is looked up in
+`pg_proc` and must be immutable or stable, parallel safe when it ships with
+Postgres or an extension, and not SECURITY DEFINER, so `pg_sleep`,
+`set_config`, advisory locks, `dblink` and functions that run SQL from
+a string are refused unless `allowFunctions` names them. The statement runs as one
+extended-protocol `DECLARE CURSOR`, which the server accepts only for SELECT and
+VALUES. Every table the plan reads (SQLite: every table its compiled statement opens) must be
+exposed.
 
 -
 **No superuser.** A Postgres superuser, a member of
@@ -8013,9 +8107,11 @@ untrusted language is refused too, unless `allowExtensions` names it.
 credential (`password`, `token`, `secret`,
 `api_key`, ...) or one in `redactColumns` is refused wherever the
 query plan uses it: selected under another name, inside an expression, in a filter, through
-a view, or renamed by a table's column alias list. Functions that run SQL from a string,
-which the plan cannot see, are refused outright. Every other value goes through the same
-redactor as the dev feed: keys, tokens, JWTs and the project's environment values.
+a view, or renamed by a table's column alias list. On Postgres the role must also be unable
+to read the column at all, so the database refuses it where no plan shows it: run
+`nifra db role`, which grants a table's other columns only. Every other value
+goes through the same redactor as the dev feed: keys, tokens, JWTs and the project's
+environment values.
 
 -
 **Data, not instructions.** Rows, and names from the schema, are marked
@@ -8076,6 +8172,23 @@ that role. The schema tool keeps working meanwhile.
 The role can use dblink, postgres_fdw, file_fdw or an untrusted language, any of which reaches
 outside this database. Use a role without it, or accept it in `allowExtensions`.
 
+#### NIFRA_DB_ROLE_GRANTS
+
+The Postgres role may itself read what the declaration hides: a masked column, an excluded
+table or one inheriting from it, or a view or materialized view over any of them (or reaching
+outside `schemas`). A materialized view stores its rows and a function reads with
+no plan to check, so only the role's privileges can refuse those. Run `nifra db role`,
+apply its SQL, and connect as that role; run it again after adding a table or view, since
+default privileges grant every column of a new one. The role may not execute a SECURITY
+DEFINER function either (or an aggregate over one): it reads with its owner's rights through
+an operator, a cast, a view or another function, where no allowlist sees its name. Name it in
+`devDatabase.allowFunctions` to trust it. Otherwise the refusal names each grantee
+the role holds the privilege through, and every one must be revoked: PUBLIC, the role itself,
+and any role whose privileges it has, since a REVOKE from PUBLIC leaves a direct or inherited
+grant in place. `nifra db role` writes the REVOKE from the role itself as a statement
+and the others as comments, since they reach other roles; it lists the same for a table or
+column grant that would still expose hidden data.
+
 #### NIFRA_DB_QUERY_OFF
 
 `devDatabase.query` is `false`. Only the schema tool answers.
@@ -8087,8 +8200,11 @@ tokenizer, the cursor, or the read-only transaction. Send one SELECT.
 
 #### NIFRA_DB_FUNCTION_REFUSED
 
-The statement calls a function that reaches outside a read-only query: server files, other
-sessions, settings, locks, sequences, notifications, or another database. Remove it.
+The statement, or a view it reads, calls a function the allowlist refuses: one that is volatile
+(it can act outside the query: locks, settings, sequences, files, other sessions, another
+database), not parallel safe (it can run SQL of its own), or SECURITY DEFINER (it reads with
+its owner's privileges). Every function a name can resolve to is checked. Remove it, or name
+it in `allowFunctions` if you trust what it reads.
 
 #### NIFRA_DB_TABLE_EXCLUDED
 
@@ -8283,7 +8399,10 @@ timeout, and closed sessions all fail closed, and `approvalTimeoutMs` bounds how
 a pending decision can remain open: 5 minutes by default, at most 24 hours, or
 `"never"` to wait until it is answered, cancelled, its turn ends, or the session
 closes. The host's broker takes the same values as `approvals.timeoutMs` on
-`CodingAgentHost` and `CodingAgentRpcServer`.
+`CodingAgentHost` and `CodingAgentRpcServer`. An approval port's
+optional `review` may allow or deny a call before anyone is asked, with no approval
+events; any other answer, or a review still unsettled after `reviewTimeoutMs`,
+raises the approval as usual.
 
 ### Expose the same agent to other clients
 
@@ -10484,6 +10603,33 @@ export const handler = withISR(app, {
 })
 ```
 
+An app that wants a nonce on every document still gets its header from nifra: pass
+`cspHeader` beside `nonce`, and each document nifra renders - a page, a
+status page, `_error`, a streamed or deferred one - carries the policy built from
+the nonce on its own scripts. A wrapper that rebuilds the request with
+`new Request(url, req)` (a mount that strips a prefix, a request id, an origin
+rewrite) no longer has to find which nonce a document used. `cspHeader` needs
+`nonce`, and is refused beside `csp` or a resolver made with its own
+`header`. The documents stay `private, no-store`.
+
+```ts
+import { createNonceResolver, createWebApp } from "@nifrajs/web"
+
+declare const adapter: import("@nifrajs/web").RenderAdapter
+declare const manifest: import("@nifrajs/web").Manifest
+
+// A fresh nonce on every document, and nifra writes the header from that same value - on pages,
+// status pages, _error, and streamed or deferred documents - whatever rebuilds the Request in front.
+export const app = createWebApp({
+  adapter,
+  manifest,
+  clientEntry: "/assets/client.js",
+  nonce: createNonceResolver(),
+  // `sources`: 'nonce-…' plus a sha256 hash per constant inline script nifra writes.
+  cspHeader: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,
+})
+```
+
 ### The client ↔ server boundary
 
 Loaders, actions, and head resolution run on the server. The client receives the loader's
@@ -10919,8 +11065,32 @@ a chunk's `/assets/...` URL is also its path under `dist/`.
 with the one-day policy.
 
 -
+**Files hashed before the build.** The fonts `loadGoogleFont` writes into
+`public/fonts/` are in no manifest, so the `public/` handler names
+them with an array of patterns, matched on the encoded URL path, as below. A handler that
+serves both the build and such files takes a `(path) => boolean` predicate
+instead, with `assets` as `new Set(build.assets)`:
+`(path) => assets.has(path) || HASHED_FONT.test(path)`. A global or
+sticky pattern in the array is used without that flag, so `lastIndex` never
+skips a match; a predicate runs as written, so keep the patterns it tests free of
+`g` and `y`.
+
+-
 **Where it runs.** Register the handlers with `app.onRequest` inside
 `use`, so a static hit never reaches page rendering.
+
+```ts
+import { fileURLToPath } from "node:url"
+import { servePublicDir } from "@nifrajs/web"
+
+// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.
+const HASHED_FONT = /^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/
+
+export const publicFiles = servePublicDir({
+  dir: fileURLToPath(new URL("./public/", import.meta.url)),
+  hashedFiles: [HASHED_FONT],
+})
+```
 
 On Node, `serve()` from `@nifrajs/node` can serve the bundle itself before
 the app runs, which keeps the direct request path for everything else:
@@ -12222,7 +12392,11 @@ with the session cookie's lifetime. A tab that reads a new epoch drops every pag
 tells the other tabs of the origin to do the same. A sign-out by a native form post, or a
 session that expires while the visitor is away, is covered the same way: back compares the
 epoch before it shows a kept page. The page on screen reloads in place at the next render or
-navigation that reads the new epoch, and shows as it was, pending, until the reload lands.
+navigation that reads the new epoch, and shows as it was, pending, until the reload lands. If
+that reload fails, or a navigation or submit away from the page does, the browser loads the
+URL as a document in its place, replacing the history entry. Without
+`installHistory`, the router names that URL in `documentLoad` and
+keeps what it shows.
 
 The session cookies of `@nifrajs/auth` and Auth.js count under their default
 names, and Better Auth's under any `cookiePrefix`. Name any other, such as one
@@ -12257,8 +12431,9 @@ export const api = server().post("/switch-account", (c) => {
 
 When identity lives in client storage, as a bearer token, call `identityChanged()`
 at sign-in and sign-out. It also clears every query client, returns every fetcher to idle,
-and reloads the page on screen in place. A navigation still loading starts again, and a
-submit still posting finishes first:
+and reloads the page on screen in place. A navigation, fetcher load or query fetch still
+loading loads once more for the new visitor before it settles, and a submit still posting
+finishes first:
 
 ```ts
 import { identityChanged } from "@nifrajs/web/client"
@@ -12272,6 +12447,14 @@ export function signOut(): void {
 
 A document the browser puts in its back/forward cache drops its kept pages first, so a
 cached document never carries them.
+
+`nifra doctor` warns about `keepAlive` routes in an app where nothing
+names the sign-in cookie: no `identityCookies`, no `identityChanged()`,
+and no `@nifrajs/auth`, Better Auth or Auth.js reachable. It follows the app's
+installed and linked dependencies, so an app that reaches Better Auth through a workspace
+package of its own gets a note naming the chain instead: the default names and Better
+Auth's `<prefix>.session_token` suffix still cover it, unless that
+package renames the cookie outright.
 
 ### Limits
 
@@ -15387,9 +15570,18 @@ rewriting requests inside the executor: `witnesses`, `prepareRequest`,
 `isRejected`, `include` and `maxMutationsPerInput` on
 `invariants` reach every L4 run, from `nifra levels` and the
 `nifra_levels` MCP tool alike. `setup` provisions a throwaway target only
-when L4 runs: it is called once, before the first L4 request, and its `teardown`
-always runs after the run, a failing one included. The example keeps its target in memory; a
-database or container belongs in your own `setup`.
+when L4 runs: it is called once, before the run generates its first case, and its
+`teardown` always runs after the run, a failing one included. What a success
+witness must name often exists only once the target is up - a real slug, a row id, a
+signed-in session - so `setup` may return `witnesses` and
+`prepareRequest` too. Its witnesses are merged over the static ones, a
+`"METHOD /path"` in both taking the setup's, and validated the same way; its
+`prepareRequest` replaces the static one. `nifra levels` lists the
+witnesses that came from `setup` under L4, and the `nifra_levels` result
+carries them as `setupWitnesses`. A harness that runs L4 itself merges a setup
+result with `applyInvariantSetup` from `@nifrajs/core/assurance`. The
+example keeps its target in memory; a database or container belongs in your own
+`setup`.
 
 ```ts
 // nifra.assurance.ts
@@ -15401,18 +15593,21 @@ export default defineAssuranceConfig({
   source: createBackend({ rows: new Map() }),
   policy: { rules: [/* ... */] },
   invariants: {
-    // Called once, before the first L4 request - never when this file is imported, so
+    // Called once per L4 run, before its first case - never when this file is imported, so
     // `nifra check` and `nifra assure` provision nothing.
     setup: async () => {
-      const rows = new Map([["row_1", { id: "row_1", owner: "fixture" }]])
+      const id = crypto.randomUUID()
+      const rows = new Map([[id, { id, owner: "fixture" }]])
       const target = createBackend({ rows })
       return {
         executor: (request) => target.fetch(request),
+        // Names the row this run created, so no executor rewrites a placeholder id.
+        witnesses: { "PATCH /rows/:id": { params: { id }, body: { title: "ok" } } },
         teardown: () => rows.clear(), // runs after a failing run too
       }
     },
-    // Known-good inputs for schemas L4 cannot synthesize (an opaque validator, a real id).
-    witnesses: { "PATCH /rows/:id": { params: { id: "row_1" }, body: { title: "ok" } } },
+    // Known-good inputs for schemas L4 cannot synthesize, when they are known up front.
+    witnesses: { "POST /rows": { body: { title: "ok" } } },
     // Attach what the app needs on every case: a session, a signed token.
     prepareRequest: (request) => {
       const headers = new Headers(request.headers)
@@ -16898,6 +17093,13 @@ closes; `maxPending` (default 32) still bounds how many can wait. `NifraBackend`
 denies, so the shorter of the two applies. A never-expiring approval reports `expiresAt` as
 `APPROVAL_NEVER_EXPIRES_AT`, which survives JSON and stays later than any `Date.now()`.
 
+A `NativeApprovalPort` may also `review` a call before anyone is asked: `{ decision: "allow" }`
+runs it, `{ decision: "deny", reason }` refuses it with `REVIEW_DENIED` and a reason the model
+reads, and `{ decision: "ask" }` raises the approval as usual. Any other answer, a throw, or a
+review still unsettled after `reviewTimeoutMs` (default 30 s, at most 10 minutes) asks; an abort
+during a review stops the turn. Review answers are host-owned like approvals, but an allow or a
+deny emits no approval events, so a host that needs an audit trail records its own reviews.
+
 `nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
 `--extensions`. An extension module's top-level code runs as soon as it is
 imported, before its declared `capabilities` are checked, so pass the flag only
@@ -17181,7 +17383,8 @@ contract-first registry.
 `responseContract("enforce")` before the routes it should cover to validate JSON/status payloads and
 prevent extra fields from reaching the wire. That covers a `status(...)` or `c.json(...)` reply a
 handler returns or throws, a hook returns, or `onError` answers with. `warn` preserves the original
-payload during migration.
+payload during migration. The contract judges what JSON writes: a `toJSON` hook's output, and a
+`Date` as its ISO string, so a timestamp column declares `t.date()` and may hold the `Date`.
 Raw `Response`, streams, redirects, and `mountFetch` remain explicit transport escape hatches and
 must be governed by assurance/static review.
 
@@ -18263,10 +18466,8 @@ Each layer refuses on its own, in this order:
 
 1. **Host.** Only loopback, `*.localhost` and unix sockets connect unless `allowHosts` names the host.
    URL parameters other than host, port, user, password, database and `sslmode` are ignored.
-2. **Tokenizer.** One SELECT, WITH, VALUES or TABLE statement; row-locking clauses, unicode-escaped
-   identifiers, functions that reach outside a query (server files, `dblink`, `set_config`, advisory
-   locks, `pg_notify`, `nextval`, backend signals) and functions that run SQL from a string the plan
-   check cannot see (`query_to_xml`, `ts_stat`, `ts_rewrite`, `crosstab`, `connectby`) are refused.
+2. **Tokenizer.** One SELECT, WITH, VALUES or TABLE statement; row-locking clauses and
+   unicode-escaped identifiers are refused.
 3. **Read-only transaction.** `BEGIN READ ONLY` with `statement_timeout`, `lock_timeout` and
    `idle_in_transaction_session_timeout` set to `timeoutMs`, always rolled back. Sessions also start
    with `default_transaction_read_only = on`.
@@ -18274,21 +18475,50 @@ Each layer refuses on its own, in this order:
    role that may execute server-file functions is refused (`NIFRA_DB_SUPERUSER`). A role that can use
    dblink, postgres_fdw, file_fdw or an untrusted language is refused (`NIFRA_DB_EXTENSION`) unless
    `allowExtensions` names it.
-5. **Cursor.** The statement runs as one extended-protocol `DECLARE ... NO SCROLL CURSOR`, which the
+5. **Grant gate.** The role itself must be unable to read what the declaration hides: a column
+   `redaction.column` matches, an `exclude`d table or one inheriting from it, and a view or
+   materialized view that reads any of those or reaches outside `schemas`. A role that can is refused
+   (`NIFRA_DB_ROLE_GRANTS`), so the database's privileges refuse such a read even where no plan shows
+   it: inside a function's body, or from the rows a materialized view stores. Nor may the role execute
+   a SECURITY DEFINER function, or an aggregate over one, unless `allowFunctions` names it: such a
+   function reads with its owner's rights wherever a query reaches it, through an operator, a cast, a
+   view folded at plan time or another function's body, and only
+   the EXECUTE privilege is checked on every one of those paths. Either refusal names each grantee the
+   role holds the privilege through.
+6. **Function allowlist.** Every function the statement names, and every one its plan calls (inside
+   views too), is looked up in `pg_proc`, each overload the name can resolve to. A built-in or
+   extension function must be immutable or stable and parallel safe (a few value-only ones such as
+   `random()`, `clock_timestamp()` and `pg_total_relation_size()` pass as well); one the database
+   defines must be immutable or stable; none may be SECURITY DEFINER. Anything else is refused
+   (`NIFRA_DB_FUNCTION_REFUSED`) unless `allowFunctions` names it, so a function added in a later
+   Postgres release is refused until it is known to be safe. The names are checked before the server
+   plans the statement, since planning already runs immutable functions on constants.
+7. **Cursor.** The statement runs as one extended-protocol `DECLARE ... NO SCROLL CURSOR`, which the
    server accepts only for SELECT and VALUES and refuses for a data-modifying WITH, then one `FETCH`
    of `maxRows + 1` rows.
-6. **Plan scope.** Every relation in the `EXPLAIN (VERBOSE)` plan, every table it inherits from, and
+8. **Plan scope.** Every relation in the `EXPLAIN (VERBOSE)` plan, every table it inherits from, and
    every `pg_catalog` function scanned in FROM must sit in `schemas` (default `public`) and outside
    `exclude`. With `redaction`, a column `redaction.column` matches that any plan expression uses
    (output, filter, join, sort or index condition), or a whole row holding one, is refused
    (`NIFRA_DB_COLUMN_REFUSED`). A plan names a scan's columns by the table's column alias list
    (`FROM users AS t(a, b)`), so while any relation the query reads holds a matching column, a query
-   that gives a table one is refused as well.
+   that gives a table one is refused as well. This is the second line behind the grant gate.
 
 `explainPostgres` returns the plan (with `analyze`, executed inside the same transaction),
 `readPostgresSchema` reads tables, columns, keys and indexes from `pg_catalog`, and `postgresRoleSql`
-writes the SQL for a read-only role (`GRANT SELECT` on each allowed schema, with a `REVOKE` for each
-excluded table and its partitions) without running it.
+writes the SQL for the role the grant gate accepts, without running it: `GRANT USAGE` on each allowed
+schema and `GRANT SELECT` on all tables in each allowed schema; a `REVOKE` for each excluded table,
+its partitions and children, and each view or materialized view that reads hidden data; and, for a
+table with a masked column (pass the same `redaction`), a `REVOKE` followed by a column-level `GRANT`
+of its other columns. Run it again after adding a table or view: default privileges grant every
+column of a new one. A privilege reaches a role through PUBLIC, a grant to the role itself, or a role
+whose privileges it has, and a `REVOKE` from one leaves the others. So a grant that would still
+expose hidden data, to PUBLIC or (for a role that exists) to a role it inherits from, is listed in
+comments with its `REVOKE`, and so is each SECURITY DEFINER function the role may execute, grantee by
+grantee (pass the same `allowFunctions` to skip the ones you trust). Only a grant to the role itself
+is revoked by a statement; the rest are comments because they reach other roles. The grant gate's
+refusal names the same grantees. A query that names a column the role may not read is
+refused with `NIFRA_DB_COLUMN_REFUSED`, naming the columns it may.
 
 The live tests run against a throwaway server: set `NIFRA_TEST_POSTGRES_URL` to its superuser URL.
 
@@ -18949,7 +19179,11 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
   `array`/`optional`/`union`/`record`, with options (`min`/`max`, `pattern`, `format`,
   …) that become JSON Schema constraints. Validators are compiled (fast).
 - **Validating string formats** - `email`/`uuid`/`date-time`/`date`/`time`/`uri`/`ipv4`
-  validate *and* annotate; register more with `registerFormat`.
+  validate *and* annotate; register more with `registerFormat`. `date-time`, `date` and `time`
+  follow RFC 3339, calendar included, so `2026-02-30` fails.
+- **Dates** - `t.date()` is a `Date` in your code and an RFC 3339 `date-time` string on the wire. A
+  request `body`, `query` or `params` carries the string and the handler receives a `Date`; a
+  response may hold the `Date` (a timestamp column), and the typed client reads a `string`.
 - **Bytes in a response** - `t.bytes()` declares a field the handler fills with a `Uint8Array` (or a
   `Buffer`). The route writes it as a base64 string, the typed client reads a `string`, and the
   document says `{ type: "string", contentEncoding: "base64" }`. Response-only for now: a request or
@@ -18988,6 +19222,8 @@ await Bun.write(
 The server imports `body` from `./generated/users.ts` and uses it as its route schema. The generated
 source-schema import is type-only and disappears from the deployed bundle. Regenerate when the source
 schema changes. Custom string formats must be registered in the serving process, as with ordinary schemas.
+The generated module typechecks under `strict`, `noUnusedLocals` and `noUnusedParameters`, and Node runs
+it with its built-in type stripping.
 
 Compilation refuses coercing schemas (`t.query`, `t.form` and the other request-slot schemas), a
 schema whose `validate` does more than check its `jsonSchema`, custom registry kinds such as dates/deferred values,
@@ -20125,7 +20361,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/coding-agent
 
-`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `APPROVAL_NEVER_EXPIRES_AT`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalMatchRejection`, `ApprovalMatchResult`, `ApprovalRequest`, `ApprovalTimeout`, `BoundedSubagentRunner`, `BoundedText`, `CapabilityDescriptor`, `CiDeploymentAdapter`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `DEPLOYMENT_REFERENCE_PROFILES`, `ExtensionCommand`, `ExtensionContext`, `ExtensionDescriptorOptions`, `ExtensionDescriptorSource`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `HandoffCoordinator`, `HandoffCoordinatorOptions`, `HandoffDecision`, `HandoffError`, `HandoffRejection`, `HandoffView`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `LocalProcessDeploymentAdapter`, `MigrateLegacySessionOptions`, `NIFRA_AGENT_INSTRUCTIONS`, `NativeApprovalPort`, `NativeGatewayModelPortOptions`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeTool`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `OpenHandoffInput`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `ReplayDeploymentAdapter`, `ReviewExecutionErrorCode`, `ReviewExecutionResult`, `ReviewOptions`, `SESSION_EVIDENCE_VERSION`, `SelfHealingController`, `SessionEvidenceRecord`, `SessionLogEntry`, `SessionMigrationError`, `SessionMigrationReport`, `SessionStore`, `SubagentAbandonment`, `SubagentAbandonmentLedger`, `SubagentChildLedger`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `createCapabilityManifest`, `createCiDeploymentAdapter`, `createLocalProcessDeploymentAdapter`, `createNativeGatewayModelPort`, `createNifraTools`, `createPresetSpec`, `createReplayDeploymentAdapter`, `createVerificationRepairTask`, `deniedCapabilities`, `discoverExtensions`, `extensionDescriptor`, `extensionDescriptors`, `getAgentPreset`, `isSafeReviewDiff`, `isVerificationAvailable`, `migrateLegacySession`, `parseCapabilityManifest`, `parseSessionEvidenceRecord`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `runNifraContext`, `runNifraReview`, `runNifraVerification`, `stableSessionEventCode`, `validateExtensionModule`
+`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `APPROVAL_NEVER_EXPIRES_AT`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalMatchRejection`, `ApprovalMatchResult`, `ApprovalRequest`, `ApprovalTimeout`, `BoundedSubagentRunner`, `BoundedText`, `CapabilityDescriptor`, `CiDeploymentAdapter`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `DEPLOYMENT_REFERENCE_PROFILES`, `ExtensionCommand`, `ExtensionContext`, `ExtensionDescriptorOptions`, `ExtensionDescriptorSource`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `HandoffCoordinator`, `HandoffCoordinatorOptions`, `HandoffDecision`, `HandoffError`, `HandoffRejection`, `HandoffView`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `LocalProcessDeploymentAdapter`, `MigrateLegacySessionOptions`, `NIFRA_AGENT_INSTRUCTIONS`, `NativeApprovalPort`, `NativeApprovalRequest`, `NativeGatewayModelPortOptions`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeReviewAnswer`, `NativeTool`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `OpenHandoffInput`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `ReplayDeploymentAdapter`, `ReviewExecutionErrorCode`, `ReviewExecutionResult`, `ReviewOptions`, `SESSION_EVIDENCE_VERSION`, `SelfHealingController`, `SessionEvidenceRecord`, `SessionLogEntry`, `SessionMigrationError`, `SessionMigrationReport`, `SessionStore`, `SubagentAbandonment`, `SubagentAbandonmentLedger`, `SubagentChildLedger`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `createCapabilityManifest`, `createCiDeploymentAdapter`, `createLocalProcessDeploymentAdapter`, `createNativeGatewayModelPort`, `createNifraTools`, `createPresetSpec`, `createReplayDeploymentAdapter`, `createVerificationRepairTask`, `deniedCapabilities`, `discoverExtensions`, `extensionDescriptor`, `extensionDescriptors`, `getAgentPreset`, `isSafeReviewDiff`, `isVerificationAvailable`, `migrateLegacySession`, `parseCapabilityManifest`, `parseSessionEvidenceRecord`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `runNifraContext`, `runNifraReview`, `runNifraVerification`, `stableSessionEventCode`, `validateExtensionModule`
 
 ## @nifrajs/content
 
@@ -20133,7 +20369,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `routePatternOverlap`, `routeTemplateOf`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `varyOn`, `writableResponse`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestLocal`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `carryRequestLocals`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `requestLocal`, `routePatternOverlap`, `routeTemplateOf`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `varyOn`, `writableResponse`
 
 ## @nifrajs/cron
 
@@ -20189,7 +20425,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
-`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `AuthPlugin`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `BearerOptions`, `BodyLimitOptions`, `ByteRange`, `ByteRangeResult`, `CacheControlOptions`, `CacheOptions`, `CachedResponse`, `Composable`, `CompressionOptions`, `ConditionalResponseOptions`, `ContentPreference`, `CorsOptions`, `CsrfOptions`, `DurableCommandOptions`, `ETagOptions`, `HealthcheckOptions`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `IpRestrictionOptions`, `JwkKey`, `JwksOptions`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `LanguageMatch`, `LanguageOptions`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `MultipartResponseOptions`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `PoweredByOptions`, `PrettyJsonOptions`, `ProblemDetailsOptions`, `RangeResponseOptions`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `RateLimitTier`, `RateLimitTiersOptions`, `ReadinessCheck`, `ReadinessCheckOptions`, `ReadinessCheckResult`, `ReadinessCheckStatus`, `ReadinessReport`, `RequestIdOptions`, `RequestLogFields`, `ResponseCacheStore`, `RouteLike`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `VerifiedJwt`, `VerifyJwtOptions`, `VerifyJwtResult`, `apiKey`, `appendTrailingSlash`, `basicAuth`, `bearer`, `bodyLimit`, `buildOpenApiDocument`, `cache`, `cacheControl`, `combine`, `compression`, `conditionalResponse`, `cors`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `durableCommand`, `etag`, `healthcheck`, `idempotency`, `ipRestriction`, `jwk`, `jwks`, `jwt`, `language`, `logger`, `methodOverride`, `multipartResponse`, `namedCombine`, `negotiateContentType`, `openapi`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `prettyJson`, `problemDetails`, `rangeResponse`, `rateLimit`, `rateLimitTiers`, `requestId`, `responseCache`, `securityHeaders`, `timing`, `trimTrailingSlash`, `tryVerifyJwt`, `verifyCsrfToken`, `verifyJwt`
+`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `AuthPlugin`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `BearerOptions`, `BodyLimitOptions`, `ByteRange`, `ByteRangeResult`, `CacheControlOptions`, `CacheOptions`, `CachedResponse`, `Composable`, `CompressionOptions`, `ConditionalResponseOptions`, `ContentPreference`, `CorsOptions`, `CsrfOptions`, `DurableCommandOptions`, `ETagOptions`, `HealthcheckOptions`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `IpRestrictionOptions`, `JwkKey`, `JwksOptions`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `LanguageMatch`, `LanguageOptions`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `MultipartResponseOptions`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `PoweredByOptions`, `PrettyJsonOptions`, `ProblemDetailsOptions`, `RangeResponseOptions`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `RateLimitTier`, `RateLimitTiersOptions`, `RateLimiter`, `ReadinessCheck`, `ReadinessCheckOptions`, `ReadinessCheckResult`, `ReadinessCheckStatus`, `ReadinessReport`, `RequestIdOptions`, `RequestLogFields`, `ResponseCacheStore`, `RouteLike`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `VerifiedJwt`, `VerifyJwtOptions`, `VerifyJwtResult`, `apiKey`, `appendTrailingSlash`, `basicAuth`, `bearer`, `bodyLimit`, `buildOpenApiDocument`, `cache`, `cacheControl`, `combine`, `compression`, `conditionalResponse`, `cors`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `durableCommand`, `etag`, `healthcheck`, `idempotency`, `ipRestriction`, `jwk`, `jwks`, `jwt`, `language`, `logger`, `methodOverride`, `multipartResponse`, `namedCombine`, `negotiateContentType`, `openapi`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `prettyJson`, `problemDetails`, `rangeResponse`, `rateLimit`, `rateLimitTiers`, `requestId`, `responseCache`, `securityHeaders`, `timing`, `trimTrailingSlash`, `tryVerifyJwt`, `verifyCsrfToken`, `verifyJwt`
 
 ## @nifrajs/mock
 
@@ -20241,7 +20477,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateRouteSearchTypesOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HashedFiles`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSearch`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `ServePublicDirOptions`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateRouteSearchTypes`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

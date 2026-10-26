@@ -1152,7 +1152,7 @@ describe("createClientRouter", () => {
     }
     const IDLE = { pending: false, data: undefined }
 
-    test("identityChanged() returns every fetcher to idle and tells it, and drops a load in flight", async () => {
+    test("identityChanged() returns every fetcher to idle and tells it, and a load in flight loads again", async () => {
       const state = { whoami: "alice", version: 0 }
       let release = (): void => {}
       const held = new Promise<void>((resolve) => {
@@ -1175,11 +1175,15 @@ describe("createClientRouter", () => {
         told++
       })
       const loading = r.fetcher("late").load("/users/8")
+      state.whoami = "bob"
       identityChanged()
       expect([r.fetcher("cart").snapshot(), told]).toEqual([IDLE, 1])
       release()
       await loading
-      expect(r.fetcher("late").snapshot()).toEqual(IDLE)
+      expect(r.fetcher("late").snapshot()).toEqual({
+        pending: false,
+        data: { id: "8", whoami: "bob", version: 0 },
+      })
     })
 
     test("a new identity epoch returns fetchers to idle on the next read, and tells them after it", async () => {
@@ -1420,6 +1424,129 @@ describe("createClientRouter", () => {
         r.snapshot()
         await settled()
         expect([r.snapshot().data, fetches]).toEqual([as("dave", "8"), 4])
+      })
+    })
+
+    // The first load waits on `first`; `later` answers every load after it.
+    const caught = (later: (seen: ReturnType<typeof as>) => Promise<ReturnType<typeof as>>) => {
+      const state = { whoami: "alice", version: 0 }
+      const first = gate()
+      const asked: string[] = []
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => {
+          const seen = { id: m.params.id ?? "", ...state }
+          asked.push(seen.whoami)
+          if (asked.length !== 1) return later(seen)
+          await first.opened
+          return seen
+        },
+      })
+      const change = async () => {
+        while (asked.length < 1) await Promise.resolve()
+        state.whoami = "bob"
+        identityChanged()
+        first.open()
+      }
+      return { r, asked, change }
+    }
+
+    test("a navigation the visitor change caught settles for its caller once the new visitor's page is on screen", async () => {
+      const { r, asked, change } = caught(async (seen) => seen)
+      let landed: unknown
+      const going = r.navigate("/users/7").then(() => {
+        landed = r.snapshot().data
+      })
+      await change()
+      await going
+      expect([landed, asked]).toEqual([as("bob"), ["alice", "bob"]])
+    })
+
+    test("a navigation whose load again for the new visitor fails rejects to its caller", async () => {
+      const { r, change } = caught(async () => {
+        throw new Error("offline")
+      })
+      const going = r.navigate("/users/7")
+      await change()
+      let failed: unknown
+      try {
+        await going
+      } catch (error) {
+        failed = error
+      }
+      // The page left on screen, loaded for the previous visitor, reloads on its own.
+      await settled()
+      expect([failed instanceof Error && failed.message, r.snapshot().pending]).toEqual([
+        "offline",
+        false,
+      ])
+    })
+
+    test("invalidate() the visitor change caught resolves once the new visitor's data is on screen", async () => {
+      const state = { whoami: "alice", version: 0 }
+      const held = gate()
+      const again = gate()
+      const asked: string[] = []
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async (_p, m) => {
+          const seen = { id: m.params.id ?? "", ...state }
+          const call = asked.push(seen.whoami)
+          if (call === 2) await held.opened
+          if (call === 3) await again.opened
+          return seen
+        },
+      })
+      await r.navigate("/users/7")
+      let resolved = false
+      const refreshing = r.invalidate().then(() => {
+        resolved = true
+      })
+      while (asked.length < 2) await Promise.resolve()
+      state.whoami = "bob"
+      identityChanged()
+      held.open()
+      await settled()
+      const early = resolved
+      again.open()
+      await refreshing
+      expect([early, r.snapshot().data, asked]).toEqual([
+        false,
+        as("bob"),
+        ["alice", "alice", "bob"],
+      ])
+    })
+
+    test("a server that rotates the epoch on every response costs a load one more, never a loop", async () => {
+      await withEpoch(async (rotate) => {
+        const state = { whoami: "alice", version: 0 }
+        let rotations = 0
+        let fetches = 0
+        const r = createClientRouter({
+          patterns,
+          initial,
+          fetchData: async (_p, m) => {
+            fetches++
+            await rotate(`r${++rotations}`)
+            return { id: m.params.id, ...state }
+          },
+        })
+        const render = async () => {
+          for (let i = 0; i < 5; i++) {
+            r.snapshot()
+            await settled()
+          }
+        }
+        await r.navigate("/users/7")
+        await render()
+        expect(fetches).toBe(2)
+
+        // A reload for a visitor change takes the change its own response makes as its own.
+        identityChanged()
+        await render()
+        expect([fetches, r.snapshot().pending]).toEqual([3, false])
       })
     })
   })

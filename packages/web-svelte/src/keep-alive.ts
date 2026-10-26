@@ -7,14 +7,9 @@
  * (from `@nifrajs/web-svelte/router`, re-exported here) let a page pause its timers meanwhile.
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
-import { searchOfChain } from "@nifrajs/web/client"
-import {
-  createSlotParking,
-  type KeepAliveRouter,
-  type KeepAliveTable,
-  type SlotNode,
-  slotTree,
-} from "@nifrajs/web/keep-alive"
+import { keptMount, propsByState } from "@nifrajs/web/internal/keep-alive-mount"
+import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
+import type { KeepAliveRouter, KeepAliveTable, SlotNode } from "@nifrajs/web/keep-alive"
 import { hydrate as svelteHydrate } from "svelte"
 import { setMountedRouter } from "./fetcher.ts"
 import KeepAlive from "./KeepAlive.svelte"
@@ -46,30 +41,12 @@ export interface KeepAliveMount {
  * the slot wrappers the server rendered), so hydration reconciles the document as it is.
  */
 export function mountRouter(options: KeepAliveMountOptions): void {
-  const { router, routes, searchSchemas, container, keepAlive: table } = options
+  const { router, searchSchemas, container } = options
   const matchChains = options.matchChains ?? {}
   setMountedRouter(router)
-  const parking = createSlotParking()
-  let committed: readonly SlotNode[] | undefined
-  router.beforePublish((next) => parking.before(slotTree(next, matchChains, table, committed)))
-  const props = new WeakMap<RouterState, RenderProps>()
   const mount: KeepAliveMount = {
-    tree: (state, previous) => slotTree(state, matchChains, table, previous),
-    propsOf: (state) => {
-      let held = props.get(state)
-      if (held === undefined) {
-        held = propsFor(state, searchSchemas, matchChains)
-        props.set(state, held)
-      }
-      return held
-    },
-    chainOf: (state) => routes[state.routeId] ?? [],
-    entry: parking.entry,
-    page: parking.page,
-    after: (tree) => {
-      committed = tree
-      parking.after(tree)
-    },
+    ...keptMount(options),
+    propsOf: propsByState((state) => routeProps(state, searchSchemas, matchChains)),
   }
   const warning = assuranceWarning()
   const originalWarn = console.warn
@@ -80,31 +57,6 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   } finally {
     if (warning !== undefined) console.warn = originalWarn
   }
-}
-
-// What Router.svelte derives for the page on screen, for any state.
-const propsFor = (
-  state: RouterState,
-  searchSchemas: MountRouterOptions["searchSchemas"],
-  matchChains: NonNullable<MountRouterOptions["matchChains"]>,
-): RenderProps => {
-  const path = state.intercepted?.pagePath ?? state.path
-  const q = path.indexOf("?")
-  const matchChain = matchChains[state.routeId]
-  const props: { -readonly [K in keyof RenderProps]: RenderProps[K] } = {
-    data: state.data,
-    actionData: state.actionData,
-    pending: state.pending,
-    params: state.params,
-    path,
-    search: searchOfChain(searchSchemas?.[state.routeId] ?? [], q === -1 ? "" : path.slice(q)),
-  }
-  if (state.layoutData !== undefined) props.layoutData = state.layoutData
-  if (state.serverComponents !== undefined) props.serverComponents = state.serverComponents
-  if (state.submission) props.submission = state.submission
-  if (state.boundaries !== undefined) props.boundaries = state.boundaries
-  if (matchChain !== undefined) props.matchChain = matchChain
-  return props
 }
 
 function assuranceWarning(): ((message: string) => void) | undefined {

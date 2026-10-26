@@ -227,11 +227,22 @@ export interface DoctorResult {
   /**
    * Route files that export `keepAlive` in an app where nothing names its sign-in cookie: no
    * `identityCookies`, `rotateIdentityEpoch()` or `identityChanged()`, and either no `@nifrajs/auth`,
-   * Better Auth or Auth.js dependency or a source file (`renamedIn`) that gives the session cookie a
-   * name of its own. A sign-out there may leave the previous visitor's kept pages. Advisory (never
-   * folded into `ok`).
+   * Better Auth or Auth.js dependency or a source file (`renamedIn`: the app's, or one in a wrapper
+   * package the app owns) that gives the session cookie a name of its own. A sign-out there may
+   * leave the previous visitor's kept pages. Advisory (never folded into `ok`).
    */
   readonly keepAliveIdentity?: { readonly routes: readonly string[]; readonly renamedIn?: string }
+  /**
+   * Route files that export `keepAlive` in an app that reaches a known auth library only through a
+   * package of its own, such as a workspace wrapper (`via`, from the app's dependency down). The
+   * runtime still recognizes that library's session cookie by its default name or, for Better Auth,
+   * by the `<prefix>.session_token` suffix, so this is information, not a warning.
+   */
+  readonly keepAliveIdentityCovered?: {
+    readonly routes: readonly string[]
+    readonly package: string
+    readonly via: readonly string[]
+  }
   /** Static production-readiness evidence for the selected deploy target. */
   readonly readiness?: DoctorReadiness
   /** The explicit source boundary used by the dependency scan. */
@@ -877,6 +888,95 @@ const IDENTITY_SIGNAL = /\b(?:identityCookies\s*:|rotateIdentityEpoch\s*\(|ident
 const RENAMED_SESSION =
   /\b(?:session_token|sessionToken)\s*:\s*\{[^}]*\bname\s*:|\bcookieName\s*:\s*["'`]/
 
+// Below the app itself, only what a package loads at runtime is followed.
+const AUTH_RUNTIME_FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"] as const
+// Bounds the walk over a large install; a wrapper sits a step or two from the app.
+const MAX_AUTH_WALK = 2000
+
+/**
+ * The known auth package nearest the app among the packages it depends on, followed through the
+ * installed and linked graph (real paths, so a workspace package and its own install count once),
+ * with the dependency chain that reaches it. The app's own dependencies are checked by the caller.
+ * A package declared but not installed - an unmet peer or optional dependency - is not reached.
+ * `renamedIn` is the first file of a source package on that chain outside the app's tree (a workspace
+ * sibling, a `file:` or `link:` package) that renames the session cookie: the app's own scan never
+ * reads it.
+ */
+async function reachableAuthPackage(
+  cwd: string,
+  pkg: Record<string, unknown>,
+): Promise<
+  | {
+      readonly package: string
+      readonly via: readonly string[]
+      readonly renamedIn: string | undefined
+    }
+  | undefined
+> {
+  let root: string
+  try {
+    root = await realpath(cwd)
+  } catch {
+    root = resolve(cwd)
+  }
+  const visited = new Set<string>([root])
+  const queue: {
+    readonly dir: string
+    readonly via: readonly string[]
+    readonly dirs: readonly string[]
+    readonly pkg: Record<string, unknown>
+  }[] = [{ dir: root, via: [], dirs: [], pkg }]
+  for (let next = 0; next < queue.length && visited.size < MAX_AUTH_WALK; next++) {
+    const current = queue[next]
+    if (current === undefined) break
+    const names = new Set<string>()
+    for (const field of next === 0 ? DEPENDENCY_FIELDS : AUTH_RUNTIME_FIELDS) {
+      for (const name of Object.keys(depRecord(current.pkg, field) ?? {})) names.add(name)
+    }
+    for (const name of [...names].sort(codeUnitOrder)) {
+      const path = resolvePackageFrom(current.dir, name)
+      if (path === undefined) continue
+      if (next > 0 && KNOWN_AUTH_PACKAGES.includes(name)) {
+        const renamedIn = await renamedInSources(root, current.dirs)
+        return { package: name, via: current.via, renamedIn }
+      }
+      if (visited.has(path)) continue
+      visited.add(path)
+      const meta = await readJson(join(path, "package.json"))
+      if (meta !== undefined) {
+        queue.push({
+          dir: path,
+          via: [...current.via, name],
+          dirs: [...current.dirs, path],
+          pkg: meta,
+        })
+      }
+    }
+  }
+  return undefined
+}
+
+async function renamedInSources(
+  root: string,
+  dirs: readonly string[],
+): Promise<string | undefined> {
+  for (const dir of dirs) {
+    if (dir.startsWith(root + sep) || dir.split(sep).includes("node_modules")) continue
+    let found: string | undefined
+    await walkSource(
+      dir,
+      (rel, content) => {
+        if (found === undefined && RENAMED_SESSION.test(content)) {
+          found = displayPath(root, join(dir, rel))
+        }
+      },
+      { scripts: true, library: true },
+    )
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
 function keepAliveRoutes(cwd: string): readonly string[] {
   const routesDir = join(cwd, "routes")
   if (!existsSync(routesDir)) return []
@@ -956,15 +1056,24 @@ export async function collectDoctorResult(
   const lockDir = bunLockDir(cwd)
   const linkLocks = lockDir === undefined ? [] : staleLinkLocks(lockDir)
   const handBuilt = handBuiltManifests(cwd, manifestLists)
-  const knownAuth = KNOWN_AUTH_PACKAGES.some((name) => dependencySpec(pkg, name) !== undefined)
-  const unnamedIdentity =
-    identitySignal || (knownAuth && renamedIn === undefined) ? [] : keepAliveRoutes(cwd)
+  const directAuth = KNOWN_AUTH_PACKAGES.some((name) => dependencySpec(pkg, name) !== undefined)
+  const keptRoutes =
+    identitySignal || (directAuth && renamedIn === undefined) ? [] : keepAliveRoutes(cwd)
+  // A wrapper package the app owns may be what brings the auth library in.
+  const reachedAuth =
+    keptRoutes.length === 0 || directAuth ? undefined : await reachableAuthPackage(cwd, pkg)
+  renamedIn ??= reachedAuth?.renamedIn
+  const knownAuth = directAuth || reachedAuth !== undefined
   const keepAliveIdentity =
-    unnamedIdentity.length === 0
+    keptRoutes.length === 0 || (reachedAuth !== undefined && renamedIn === undefined)
       ? undefined
       : knownAuth && renamedIn !== undefined
-        ? { routes: unnamedIdentity, renamedIn }
-        : { routes: unnamedIdentity }
+        ? { routes: keptRoutes, renamedIn }
+        : { routes: keptRoutes }
+  const keepAliveIdentityCovered =
+    reachedAuth !== undefined && renamedIn === undefined
+      ? { routes: keptRoutes, package: reachedAuth.package, via: reachedAuth.via }
+      : undefined
   // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
@@ -985,6 +1094,7 @@ export async function collectDoctorResult(
     ...(versionDrift !== undefined ? { versionDrift } : {}),
     ...(handBuilt.length > 0 ? { handBuiltManifests: handBuilt } : {}),
     ...(keepAliveIdentity !== undefined ? { keepAliveIdentity } : {}),
+    ...(keepAliveIdentityCovered !== undefined ? { keepAliveIdentityCovered } : {}),
     ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
     ...(lockDir !== undefined && linkLocks.length > 0
       ? {
@@ -1199,6 +1309,12 @@ export function doctorReport(result: DoctorResult, cliVersion?: string): string[
         ? `⚠ ${routes.join(", ")} keep pages alive, and nothing names this app's sign-in cookie (no @nifrajs/auth, Better Auth or Auth.js, no identityCookies): a sign-out may leave the previous visitor's pages one back away`
         : `⚠ ${routes.join(", ")} keep pages alive, and ${renamedIn} renames the session cookie, which nifra knows only by its default name (no identityCookies): a sign-out may leave the previous visitor's pages one back away`,
       "      fix: name the session cookie in keepAlive.identityCookies - exported from backend/framework.ts, or passed to createWebApp in a server you write - or call identityChanged() from @nifrajs/web/client for token auth - /docs/keep-alive#sign-in\n",
+    )
+  }
+  if (result.keepAliveIdentityCovered !== undefined) {
+    const { routes, package: library, via } = result.keepAliveIdentityCovered
+    lines.push(
+      `ℹ ${routes.join(", ")} keep pages alive, and this app reaches ${library} through ${via.join(" > ")}: nifra knows its session cookie by the default name${library === "better-auth" ? " or the <prefix>.session_token suffix" : ""}, so a sign-out drops the kept pages unless that package renames the cookie outright (then name it in keepAlive.identityCookies)\n`,
     )
   }
   // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old

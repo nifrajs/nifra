@@ -233,6 +233,16 @@
       "types": "./dist/fn-state.d.ts",
       "default": "./dist/fn-state.js"
     },
+    "./internal/client-call": {
+      "bun": "./src/internal/client-call.ts",
+      "types": "./dist/internal/client-call.d.ts",
+      "default": "./dist/internal/client-call.js"
+    },
+    "./internal/keep-alive-mount": {
+      "bun": "./src/internal/keep-alive-mount.ts",
+      "types": "./dist/internal/keep-alive-mount.d.ts",
+      "default": "./dist/internal/keep-alive-mount.js"
+    },
     "./internal/dev-reserved": {
       "bun": "./src/internal/dev-reserved.ts",
       "types": "./dist/internal/dev-reserved.d.ts",
@@ -267,6 +277,11 @@
       "bun": "./src/internal/matches-runtime.ts",
       "types": "./dist/internal/matches-runtime.d.ts",
       "default": "./dist/internal/matches-runtime.js"
+    },
+    "./internal/route-props-runtime": {
+      "bun": "./src/internal/route-props-runtime.ts",
+      "types": "./dist/internal/route-props-runtime.d.ts",
+      "default": "./dist/internal/route-props-runtime.js"
     },
     "./server-components": {
       "bun": "./src/server-components.ts",

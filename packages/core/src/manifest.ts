@@ -16,6 +16,8 @@ import {
 } from "./diff.ts"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "./evidence.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { hasControlCharacter } from "./internal/control-character.ts"
+import { sha256Hex } from "./internal/hex.ts"
 
 export interface NifraManifestAssurance {
   readonly rule?: string
@@ -70,14 +72,6 @@ export interface BuildNifraManifestInput {
 }
 
 const encoder = new TextEncoder()
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index)
-    if (code <= 31 || code === 127) return true
-  }
-  return false
-}
 
 function manifestBody(manifest: Pick<NifraManifest, "manifestVersion" | "routes">): {
   readonly manifestVersion: 1
@@ -141,11 +135,6 @@ export function parseNifraManifestSignature(
     throw new Error(`nifra manifest: ${source} is not a valid Ed25519 manifest signature`)
   }
   return Object.freeze(candidate as NifraManifestSignature)
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)))
-  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
 const routeKey = (method: string, path: string): string => `${method.toUpperCase()}\n${path}`

@@ -470,8 +470,9 @@ export function installHistory(
   }
 
   // A redirect out of the app replaces the entry it answered, as the browser's own redirect would; any
-  // other failure loads the page as a document.
+  // other failure loads the page as a document, unless the router already names one.
   const leave = (error: unknown, path: string): void => {
+    if (router.snapshot().documentLoad !== undefined) return
     const to = redirectOf(error)
     if (to === undefined) fallback(path)
     else location.replace(to)
@@ -667,8 +668,15 @@ export function installHistory(
   // a fragment's element for a cross-page `#hash`, the saved position for back/forward, else the top.
   // A settle with no navigation (a submit's revalidation) scrolls nothing. Either way the rendered
   // page is then scanned for links to warm.
+  let replaced: string | undefined
   const settled = (): void => {
-    const { pending, pendingPath, intercepted } = router.snapshot()
+    const { pending, pendingPath, intercepted, documentLoad } = router.snapshot()
+    if (documentLoad !== undefined) {
+      // Once: a later settle would restart the load under way.
+      if (documentLoad !== replaced) location.replace(documentLoad)
+      replaced = documentLoad
+      return
+    }
     if (pending) {
       if (pendingPath !== undefined && pendingPath !== expected) follow(pendingPath)
       return
@@ -892,6 +900,7 @@ export function installForms(router: ClientRouter): () => void {
       Element.prototype.getAttribute.call(form, "data-nifra-revalidate") !== "false"
     const body = new FormData(form, submitter)
     router.submit(url.pathname + url.search, body, { revalidate }).catch((error) => {
+      if (router.snapshot().documentLoad !== undefined) return
       const to = redirectOf(error)
       // The server answered: load the page that shows the result rather than run the action again.
       if (to !== undefined) location.assign(to)

@@ -6,7 +6,7 @@
  * `@nifrajs/node`'s `static` reader (the Node entry) answer the same deployed files. Copies that drift
  * serve a `.pdf` as a download on one runtime and inline on the other, a `.well-known` file on one and
  * a 404 on the other, or a resumed download spliced from two versions of a file on one, so all three
- * read this module. The Node adapter runs a generated copy (scripts/gen-node-outcome.ts), so this
+ * read this module. The Node adapter runs a generated copy (scripts/gen-vendored.ts), so this
  * module imports nothing.
  */
 

@@ -1179,6 +1179,9 @@ const levelsSpec: CommandSpec<LevelsInput, LevelsCommandOutput> = {
     ...out.levels.flatMap((s) => [
       `${s.ok ? "✓" : "✖"} L${s.level} ${s.name}`,
       ...s.reasons.map((r) => `    - ${r}`),
+      ...(s.setupWitnesses === undefined
+        ? []
+        : [`    witnesses from setup: ${s.setupWitnesses.join(", ")}`]),
     ]),
     out.achieved < 0
       ? "[nifra] verification level: none (L0 failing)"

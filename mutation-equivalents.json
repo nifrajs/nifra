@@ -328,6 +328,188 @@
       "reason": "A host listed twice is scanned twice and yields the same routes."
     }
   ],
+  "packages/mcp-db/src/internal/pg-grants.ts": [
+    {
+      "op": "sql >->>=",
+      "fn": "readExposure",
+      "code": "LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = d.refobjid AND a.attnum > 0",
+      "from": ">",
+      "reason": "No attribute has number 0: user columns count up from 1 and system columns down from -1."
+    },
+    {
+      "op": "sql >->>=",
+      "fn": "readExposure",
+      "code": "FROM pg_catalog.pg_attribute a WHERE a.attrelid = r.oid AND a.attnum > 0 AND NOT a.attisdropped",
+      "from": ">",
+      "reason": "No attribute has number 0: user columns count up from 1 and system columns down from -1."
+    },
+    {
+      "op": "sql >->>=",
+      "fn": "readSelectGrants",
+      "code": "FROM rel JOIN pg_catalog.pg_attribute a ON a.attrelid = rel.oid AND a.attnum > 0",
+      "from": ">",
+      "reason": "No attribute has number 0: user columns count up from 1 and system columns down from -1."
+    },
+    {
+      "op": "condition->true",
+      "fn": "asStrings",
+      "code": "Array.isArray(value) ? value.filter((item): item is string => typeof item === \"string\") : []",
+      "from": "Array.isArray(value)",
+      "reason": "Every caller passes an array: what jsonValues returns, or a pair Postgres built with json_build_array."
+    },
+    {
+      "op": "condition->false",
+      "fn": "readExposure",
+      "code": "return schema === undefined || name === undefined ? [] : [{ schema, name }]",
+      "from": "schema === undefined || name === undefined",
+      "reason": "Postgres builds each ancestor with json_build_array over two non-null names, so both are always there."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "readExposure",
+      "code": "return schema === undefined || name === undefined ? [] : [{ schema, name }]",
+      "from": "||",
+      "reason": "Postgres builds each ancestor with json_build_array over two non-null names, so both are always there."
+    },
+    {
+      "op": "condition->false",
+      "fn": "readExposure",
+      "code": "if (!Array.isArray(triple)) return []",
+      "from": "!Array.isArray(triple)",
+      "reason": "Postgres builds each read with json_build_array, so it is always an array."
+    },
+    {
+      "op": "return undefined",
+      "fn": "readExposure",
+      "code": "if (!Array.isArray(triple)) return []",
+      "from": "return []",
+      "reason": "Postgres builds each read with json_build_array, so it is always an array."
+    },
+    {
+      "op": "return undefined",
+      "fn": "readExposure",
+      "code": "if (typeof schema !== \"string\" || typeof name !== \"string\") return []",
+      "from": "return []",
+      "reason": "A read's schema and relation names are never null, so this return is never reached."
+    },
+    {
+      "op": "condition->true",
+      "fn": "readExposure",
+      "code": "return [{ relation: { schema, name }, column: typeof column === \"string\" ? column : null }]",
+      "from": "typeof column === \"string\"",
+      "reason": "The column is an attribute name or NULL, which both arms return as it is."
+    },
+    {
+      "op": "condition->true",
+      "fn": "grantee",
+      "code": "const grantee = (value: unknown): string | null => (typeof value === \"string\" ? value : null)",
+      "from": "typeof value === \"string\"",
+      "reason": "The holder is a role name or NULL, which both arms return as it is."
+    },
+    {
+      "op": "return undefined",
+      "fn": "readSelectGrants",
+      "code": "if (targets.length === 0) return new Map()",
+      "from": "return new Map()",
+      "reason": "With no targets nothing looks a grant up: the refusal path always has one, and the role SQL has none to look up."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "readExecuteGrants",
+      "code": "list.push({ grantee: grantee(row.holder), column: null, member: false })",
+      "from": "false",
+      "reason": "Only the role SQL's SELECT grants are read for member; EXECUTE grants never are."
+    },
+    {
+      "op": "condition->false",
+      "fn": "partialGrantRefusal",
+      "code": "if (denied === undefined) return undefined",
+      "from": "denied === undefined",
+      "reason": "No exposure is named undefined, so the loop ends in the same undefined."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "readExposure",
+      "code": "if (typeof schema !== \"string\" || typeof name !== \"string\") return []",
+      "from": "||",
+      "reason": "A read's schema and relation names are never null, so this return is never reached."
+    },
+    {
+      "op": "return undefined",
+      "fn": "readExecuteGrants",
+      "code": "if (definers.length === 0) return new Map()",
+      "from": "return new Map()",
+      "reason": "With no definers nothing looks a grant up: the refusal path always has one, and the role SQL has none to look up."
+    }
+  ],
+  "packages/mcp-db/src/internal/pg-lexer.ts": [
+    {
+      "op": "condition->false",
+      "fn": "identifier",
+      "code": "if (encoder.encode(value).byteLength <= NAME_BYTES) return value",
+      "from": "encoder.encode(value).byteLength <= NAME_BYTES",
+      "reason": "Cutting a name of at most 63 bytes to 63 bytes leaves it as it is."
+    },
+    {
+      "op": "binary <=-><",
+      "fn": "identifier",
+      "code": "if (encoder.encode(value).byteLength <= NAME_BYTES) return value",
+      "from": "<=",
+      "reason": "Cutting a name of at most 63 bytes to 63 bytes leaves it as it is."
+    }
+  ],
+  "packages/mcp-db/src/internal/pg-scope.ts": [
+    {
+      "op": "sql literal",
+      "fn": "functionRefusal",
+      "code": "(pg_catalog.to_jsonb(p) ->> 'prokind') = 'a' OR (pg_catalog.to_jsonb(p) ->> 'proisagg') = 'true' AS aggregate,",
+      "from": "'proisagg'",
+      "reason": "Only PostgreSQL 10 has proisagg: from 11 on, ->> 'proisagg' is NULL whatever it is compared with, and prokind decides."
+    },
+    {
+      "op": "sql =-><>",
+      "fn": "functionRefusal",
+      "code": "(pg_catalog.to_jsonb(p) ->> 'prokind') = 'a' OR (pg_catalog.to_jsonb(p) ->> 'proisagg') = 'true' AS aggregate,",
+      "from": "=",
+      "nth": 1,
+      "reason": "Only PostgreSQL 10 has proisagg: from 11 on, ->> 'proisagg' is NULL whatever it is compared with, and prokind decides."
+    },
+    {
+      "op": "sql literal",
+      "fn": "functionRefusal",
+      "code": "(pg_catalog.to_jsonb(p) ->> 'prokind') = 'a' OR (pg_catalog.to_jsonb(p) ->> 'proisagg') = 'true' AS aggregate,",
+      "from": "'true'",
+      "reason": "Only PostgreSQL 10 has proisagg: from 11 on, ->> 'proisagg' is NULL whatever it is compared with, and prokind decides."
+    },
+    {
+      "op": "sql >->>=",
+      "fn": "checkScope",
+      "code": "WHERE a.attnum > 0 AND NOT a.attisdropped`,",
+      "from": ">",
+      "reason": "No attribute has number 0: user columns count up from 1 and system columns down from -1."
+    },
+    {
+      "op": "condition->true",
+      "fn": "checkScope",
+      "code": "if (listed.length > 0) {",
+      "from": "listed.length > 0",
+      "reason": "With nothing listed the query returns no rows, and both loops below have nothing to check."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "checkScope",
+      "code": "if (listed.length > 0) {",
+      "from": ">",
+      "reason": "With nothing listed the query returns no rows, and both loops below have nothing to check."
+    },
+    {
+      "op": "condition->false",
+      "fn": "functionRefusal",
+      "code": "if (calls.length === 0) return undefined",
+      "from": "calls.length === 0",
+      "reason": "With no calls the lookup returns no rows, so the loop ends in the same undefined."
+    }
+  ],
   "packages/web/src/internal/share-data.ts": [
     {
       "op": "condition->false",

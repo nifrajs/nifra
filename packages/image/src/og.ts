@@ -21,6 +21,8 @@
  * ```
  */
 
+import { sha256Hex } from "./internal/hex.ts"
+
 export interface OgImageRasterized {
   readonly bytes: Uint8Array
   readonly contentType: string
@@ -175,13 +177,6 @@ export function renderOgImage(options: OgImageOptions): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(title)}"><rect width="${width}" height="${height}" fill="${background}"/><rect x="84" y="${height - 70}" width="180" height="8" rx="4" fill="${accent}"/>${eyebrowMarkup}${textLines(titleLines, 84, titleY, 52, foreground)}${descriptionMarkup}</svg>`
 }
 
-async function sha256(value: Uint8Array): Promise<string> {
-  const input = new Uint8Array(value.byteLength)
-  input.set(value)
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input))
-  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")
-}
-
 function weakTag(value: string): string {
   const trimmed = value.trim()
   return trimmed.startsWith("W/") ? trimmed.slice(2).trim() : trimmed
@@ -249,7 +244,7 @@ export async function ogImageResponse(
   const { rasterizer } = options
   let svgHash: string | undefined
   if (rasterizer !== undefined) {
-    svgHash = await sha256(new TextEncoder().encode(svg))
+    svgHash = await sha256Hex(new TextEncoder().encode(svg))
     const known = rasterizedTags.get(rasterizer)?.get(svgHash)
     if (known !== undefined && ifNoneMatch(request, known.etag)) {
       return new Response(null, { status: 304, headers: responseHeaders(known) })
@@ -273,7 +268,11 @@ export async function ogImageResponse(
   // Hash the bytes actually sent. A rasterizer may produce different pixels for the same SVG
   // (for example after a backend/font update), so hashing only the source would make a conditional
   // request incorrectly return 304 for a changed representation.
-  const tag = { etag: `"${await sha256(bytes)}"`, contentType: mediaType, length: bytes.byteLength }
+  const tag = {
+    etag: `"${await sha256Hex(bytes)}"`,
+    contentType: mediaType,
+    length: bytes.byteLength,
+  }
   if (rasterizer !== undefined && svgHash !== undefined) rememberTag(rasterizer, svgHash, tag)
   const headers = responseHeaders(tag)
   if (ifNoneMatch(request, tag.etag)) return new Response(null, { status: 304, headers })

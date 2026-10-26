@@ -118,6 +118,55 @@ const app = server().use(
   }),
 )`
 
+const GROUPED_TIERS = `import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimitTiers } from "@nifrajs/middleware"
+
+const store = new MemoryStore()
+const limiter = rateLimitTiers({
+  store,
+  floor: { max: 120, windowMs: 60_000 },
+  tiers: [
+    // One 30/min allowance across all three, not 30 each. The name is the bucket's
+    // store scope, so adding or removing a prefix later keeps the live counters.
+    {
+      name: "exports",
+      prefix: ["/api/exports", "/api/reports/download", "/api/invoices/pdf"],
+      max: 30,
+      windowMs: 60_000,
+    },
+  ],
+})
+const app = server().use(limiter)
+
+// The store key a request is charged to, for a test or an ops tool: "tier:exports:<ip>".
+const key = await limiter.keyOf(new Request("http://x/api/exports/csv"), { clientIp: "203.0.113.9" })
+if (key !== undefined) await store.hit(key, 60_000) // pre-spend one hit`
+
+const REQUEST_LOCALS = `import { carryRequestLocals, requestLocal, server } from "@nifrajs/core/server"
+
+// One slot per value. A WeakMap<Request, T> would lose it at the first copy of the request.
+const requestId = requestLocal<string>()
+
+const billing = server().get("/invoices", (c) => ({ requestId: requestId.get(c.req) }))
+
+export const app = server()
+  .onRequest((req) => {
+    requestId.set(req, req.headers.get("x-request-id") ?? crypto.randomUUID())
+  })
+  // The child sees a copy of the request with /billing stripped, and reads the same value.
+  .mount({ path: "/billing", app: billing, stripPrefix: true })
+
+// A wrapper that rebuilds the request carries the values itself. It keeps the host, which the
+// same-origin check on a form POST compares with the browser's Origin.
+export const fetch = (req: Request): Response | Promise<Response> => {
+  const url = new URL(req.url)
+  if (!url.pathname.startsWith("/v1/")) return app.fetch(req)
+  url.pathname = url.pathname.slice("/v1".length)
+  const rebuilt = new Request(url.href, req)
+  carryRequestLocals(req, rebuilt)
+  return app.fetch(rebuilt)
+}`
+
 const PORTABLE_HOOK = `import { responseObserver } from "@nifrajs/core/response-observer"
 import { server } from "@nifrajs/core/server"
 import type { Middleware } from "@nifrajs/core/server"
@@ -393,6 +442,26 @@ export default function Plugins() {
         <code>500</code>. A thrown <code>Response</code> or <code>status()</code> value is sent as
         if returned.
       </p>
+
+      <h3 id="request-locals">State that follows the request</h3>
+      <p>
+        A value tied to one request - a verified client IP, a request id, an auth decision - is often
+        kept in a <code>WeakMap&lt;Request, T&gt;</code>, which loses it at the first copy of the
+        request. nifra copies requests itself: a <code>mount()</code> that strips its prefix, a
+        WebSocket pass reused for HTTP, a target it resolves, and the transport and idempotency
+        lanes, as do <code>methodOverride()</code>, a rewriting <code>trimTrailingSlash()</code> or{" "}
+        <code>appendTrailingSlash()</code>, and a live load. <code>requestLocal&lt;T&gt;()</code> from{" "}
+        <code>@nifrajs/core/server</code> is a slot with <code>get</code>, <code>set</code>,{" "}
+        <code>has</code> and <code>delete</code> whose value every one of those copies shares: a
+        value set before a mount is read in the child, and one the child sets is read through the
+        parent&apos;s request. Where your own code rebuilds a request - a wrapper in front of the app,
+        an <code>onRequest</code> hook returning a new one - call{" "}
+        <code>carryRequestLocals(from, to)</code> right after <code>new Request(url, req)</code>; a
+        copy made without it starts empty. Values are held weakly and never cross requests. Make
+        slots at startup, as below: copies are linked only once a first slot exists, so a request
+        copied before then starts empty.
+      </p>
+      <CodeBlock code={REQUEST_LOCALS} />
 
       <h3>Which hooks run where</h3>
       <p>
@@ -683,6 +752,20 @@ export default function Plugins() {
         under its tiers.
       </p>
       <CodeBlock code={SESSION_TIERS} />
+      <p>
+        A tier's <code>prefix</code> can be a list: every prefix in it charges the tier's one bucket,
+        so traffic of one kind spread over several paths shares one allowance. Selection is still the
+        longest prefix across every tier, so a longer prefix that belongs to another tier charges only
+        that tier. A prefix listed in two tiers is refused when the limiter is built. A tier counts
+        under <code>tier:&lt;name&gt;:</code>, and <code>name</code> defaults to the first prefix; name
+        a tier whose list may change, so editing the list neither resets nor splits its counters. Two
+        tiers with one name are refused too. Both limiters have <code>keyOf(request, platform?)</code>,
+        which resolves to the exact store key a request would be charged to, running an async key and
+        its client-IP fallback as a request would, or <code>undefined</code> when the request would not
+        be charged. It counts nothing, so a test can pre-spend or reset a bucket without copying the key
+        format.
+      </p>
+      <CodeBlock code={GROUPED_TIERS} />
 
       <h2>A shared store in production</h2>
       <p>
