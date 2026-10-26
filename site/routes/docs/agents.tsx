@@ -803,7 +803,10 @@ export default function Agents() {
         a pending decision can remain open: 5 minutes by default, at most 24 hours, or{" "}
         <code>"never"</code> to wait until it is answered, cancelled, its turn ends, or the session
         closes. The host's broker takes the same values as <code>approvals.timeoutMs</code> on{" "}
-        <code>CodingAgentHost</code> and <code>CodingAgentRpcServer</code>.
+        <code>CodingAgentHost</code> and <code>CodingAgentRpcServer</code>. An approval port's
+        optional <code>review</code> may allow or deny a call before anyone is asked, with no approval
+        events; any other answer, or a review still unsettled after <code>reviewTimeoutMs</code>,
+        raises the approval as usual.
       </p>
 
       <h2>Expose the same agent to other clients</h2>

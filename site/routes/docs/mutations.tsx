@@ -68,7 +68,7 @@ export default function Mutations() {
       <CodeBlock code={FETCHERS} />
       <p>
         A fetcher holds nothing for the next visitor: <code>identityChanged()</code> returns every
-        fetcher to idle. In an app with a <a href="/docs/keep-alive#sign-in">keepAlive</a> route, so
+        fetcher to idle, and a load still in flight loads once more for the new visitor. In an app with a <a href="/docs/keep-alive#sign-in">keepAlive</a> route, so
         does the identity epoch cookie a sign-in or sign-out response rotates, on the next{" "}
         <code>useFetcher</code> read.
       </p>

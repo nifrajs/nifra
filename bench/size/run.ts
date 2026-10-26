@@ -355,8 +355,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // and fetchers a page kept check the epoch on every read, and the page on screen reloads when the
   // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4). A plain
   // `Date` in the plain transport codec written ahead of the serializer: 20,791 -> 21,157 B, each getter
-  // there read once: 21,218 B (Bun 1.4.4).
-  "nifra-web-client": 20.8,
+  // there read once: 21,218 B (Bun 1.4.4). A query fetch or fetcher load a visitor change catches loading
+  // again inside the call, a rotating epoch costing bounded loads, and `documentLoad` when a load over the
+  // previous visitor's page fails: 21,218 -> 21,579 B (Bun 1.4.4).
+  "nifra-web-client": 21.1,
   "nifra-i18n": 4.3,
 }
 

@@ -92,10 +92,10 @@ Each layer refuses on its own, in this order:
    `redaction.column` matches, an `exclude`d table or one inheriting from it, and a view or
    materialized view that reads any of those or reaches outside `schemas`. A role that can is refused
    (`NIFRA_DB_ROLE_GRANTS`), so the database's privileges refuse such a read even where no plan shows
-   it: inside a function's body, or from the rows a materialized view stores. The role may not execute
-   a SECURITY DEFINER function either (one outside `pg_catalog`, or an aggregate over one) unless
-   `allowFunctions` names it: such a function reads with its owner's rights wherever a query reaches
-   it, through an operator, a cast, a view folded at plan time or another function's body, and only
+   it: inside a function's body, or from the rows a materialized view stores. Nor may the role execute
+   a SECURITY DEFINER function, or an aggregate over one, unless `allowFunctions` names it: such a
+   function reads with its owner's rights wherever a query reaches it, through an operator, a cast, a
+   view folded at plan time or another function's body, and only
    the EXECUTE privilege is checked on every one of those paths. Either refusal names each grantee the
    role holds the privilege through.
 6. **Function allowlist.** Every function the statement names, and every one its plan calls (inside

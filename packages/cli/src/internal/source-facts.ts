@@ -723,7 +723,8 @@ export function createSourceFacts(
         else if (local !== undefined) handlers.push(...local)
         else if (!ts.isObjectLiteralExpression(argument) || declaresResponse(ts, argument)) return
       }
-      if (handlers.length > 0 && handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
+      // Every registration takes a handler: `headers.get("etag")` and `map.get("/")` are reads.
+      if (handlers.length === 0 || handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
         return
       routes.push({
         position: node.expression.name.getStart(source),

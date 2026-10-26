@@ -2068,7 +2068,7 @@ const anyPending = useFetchers().some((f) => f.snapshot().pending)
 ```
 
 A fetcher holds nothing for the next visitor: `identityChanged()` returns every
-fetcher to idle. In an app with a [keepAlive](/docs/keep-alive#sign-in) route, so
+fetcher to idle, and a load still in flight loads once more for the new visitor. In an app with a [keepAlive](/docs/keep-alive#sign-in) route, so
 does the identity epoch cookie a sign-in or sign-out response rotates, on the next
 `useFetcher` read.
 
@@ -3183,7 +3183,8 @@ the server publishes one of them.
 
 A cached query never answers for the next visitor. `identityChanged()` from
 `@nifrajs/web/client` clears every query client in the page: mounted queries go
-back to pending and refetch, the rest are dropped. In an app with a
+back to pending and refetch, the rest drop their data. A fetch still loading loads once more
+for the new visitor before it settles. In an app with a
 [keepAlive](/docs/keep-alive#sign-in) route, the identity epoch cookie a sign-in
 or sign-out response rotates does the same on the client's next read.
 
@@ -3617,10 +3618,12 @@ export const app = server()
   // The child sees a copy of the request with /billing stripped, and reads the same value.
   .mount({ path: "/billing", app: billing, stripPrefix: true })
 
-// A wrapper that rebuilds the request carries the values itself.
+// A wrapper that rebuilds the request carries the values itself. It keeps the host, which the
+// same-origin check on a form POST compares with the browser's Origin.
 export const fetch = (req: Request): Response | Promise<Response> => {
   const url = new URL(req.url)
-  url.host = "app.internal"
+  if (!url.pathname.startsWith("/v1/")) return app.fetch(req)
+  url.pathname = url.pathname.slice("/v1".length)
   const rebuilt = new Request(url.href, req)
   carryRequestLocals(req, rebuilt)
   return app.fetch(rebuilt)
@@ -7695,7 +7698,8 @@ pins are installed it would judge the release you are leaving, and the command p
 install to run first instead. With `--write` it also saves the hook report from
 before the edits and, once the target is installed, prints how hook scope changed across the
 upgrade (`--no-hooks` skips that); before then,
-`nifra routes --hooks --since` compares after the install. Run from a CLI whose
+`nifra routes --hooks --since .nifra/hooks-before-upgrade.json` compares after the
+install. Run from a CLI whose
 `@nifrajs/core` is not the project's - `bunx @nifrajs/cli@<new>
         upgrade` before the new release is installed - it takes no hook report, since that
 copy cannot reflect the project's app, and says so in one line.
@@ -8377,7 +8381,10 @@ timeout, and closed sessions all fail closed, and `approvalTimeoutMs` bounds how
 a pending decision can remain open: 5 minutes by default, at most 24 hours, or
 `"never"` to wait until it is answered, cancelled, its turn ends, or the session
 closes. The host's broker takes the same values as `approvals.timeoutMs` on
-`CodingAgentHost` and `CodingAgentRpcServer`.
+`CodingAgentHost` and `CodingAgentRpcServer`. An approval port's
+optional `review` may allow or deny a call before anyone is asked, with no approval
+events; any other answer, or a review still unsettled after `reviewTimeoutMs`,
+raises the approval as usual.
 
 ### Expose the same agent to other clients
 
@@ -11041,10 +11048,14 @@ with the one-day policy.
 
 -
 **Files hashed before the build.** The fonts `loadGoogleFont` writes into
-`public/fonts/` are in no manifest. `hashedFiles` also
-takes an array of patterns or a `(path) => boolean` predicate, matched on the
-encoded URL path; a predicate combines the manifest with a pattern, as below. A global or
-sticky pattern is used without its flag, so `lastIndex` never skips a match.
+`public/fonts/` are in no manifest, so the `public/` handler names
+them with an array of patterns, matched on the encoded URL path, as below. A handler that
+serves both the build and such files takes a `(path) => boolean` predicate
+instead, with `assets` as `new Set(build.assets)`:
+`(path) => assets.has(path) || HASHED_FONT.test(path)`. A global or
+sticky pattern in the array is used without that flag, so `lastIndex` never
+skips a match; a predicate runs as written, so keep the patterns it tests free of
+`g` and `y`.
 
 -
 **Where it runs.** Register the handlers with `app.onRequest` inside
@@ -11054,15 +11065,12 @@ sticky pattern is used without its flag, so `lastIndex` never skips a match.
 import { fileURLToPath } from "node:url"
 import { servePublicDir } from "@nifrajs/web"
 
-declare const build: { readonly assets: readonly string[] }
-
-// The build manifest's chunks plus the fonts loadGoogleFont wrote into public/fonts/.
-const assets = new Set(build.assets)
+// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.
 const HASHED_FONT = /^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/
 
-export const files = servePublicDir({
-  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
-  hashedFiles: (path) => assets.has(path) || HASHED_FONT.test(path),
+export const publicFiles = servePublicDir({
+  dir: fileURLToPath(new URL("./public/", import.meta.url)),
+  hashedFiles: [HASHED_FONT],
 })
 ```
 
@@ -12366,7 +12374,11 @@ with the session cookie's lifetime. A tab that reads a new epoch drops every pag
 tells the other tabs of the origin to do the same. A sign-out by a native form post, or a
 session that expires while the visitor is away, is covered the same way: back compares the
 epoch before it shows a kept page. The page on screen reloads in place at the next render or
-navigation that reads the new epoch, and shows as it was, pending, until the reload lands.
+navigation that reads the new epoch, and shows as it was, pending, until the reload lands. If
+that reload fails, or a navigation or submit away from the page does, the browser loads the
+URL as a document in its place, replacing the history entry. Without
+`installHistory`, the router names that URL in `documentLoad` and
+keeps what it shows.
 
 The session cookies of `@nifrajs/auth` and Auth.js count under their default
 names, and Better Auth's under any `cookiePrefix`. Name any other, such as one
@@ -12401,8 +12413,9 @@ export const api = server().post("/switch-account", (c) => {
 
 When identity lives in client storage, as a bearer token, call `identityChanged()`
 at sign-in and sign-out. It also clears every query client, returns every fetcher to idle,
-and reloads the page on screen in place. A navigation still loading loads once more for the
-new visitor before it settles, and a submit still posting finishes first:
+and reloads the page on screen in place. A navigation, fetcher load or query fetch still
+loading loads once more for the new visitor before it settles, and a submit still posting
+finishes first:
 
 ```ts
 import { identityChanged } from "@nifrajs/web/client"
@@ -17062,6 +17075,13 @@ closes; `maxPending` (default 32) still bounds how many can wait. `NifraBackend`
 denies, so the shorter of the two applies. A never-expiring approval reports `expiresAt` as
 `APPROVAL_NEVER_EXPIRES_AT`, which survives JSON and stays later than any `Date.now()`.
 
+A `NativeApprovalPort` may also `review` a call before anyone is asked: `{ decision: "allow" }`
+runs it, `{ decision: "deny", reason }` refuses it with `REVIEW_DENIED` and a reason the model
+reads, and `{ decision: "ask" }` raises the approval as usual. Any other answer, a throw, or a
+review still unsettled after `reviewTimeoutMs` (default 30 s, at most 10 minutes) asks; an abort
+during a review stops the turn. Review answers are host-owned like approvals, but an allow or a
+deny emits no approval events, so a host that needs an audit trail records its own reviews.
+
 `nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
 `--extensions`. An extension module's top-level code runs as soon as it is
 imported, before its declared `capabilities` are checked, so pass the flag only
@@ -18426,10 +18446,10 @@ Each layer refuses on its own, in this order:
    `redaction.column` matches, an `exclude`d table or one inheriting from it, and a view or
    materialized view that reads any of those or reaches outside `schemas`. A role that can is refused
    (`NIFRA_DB_ROLE_GRANTS`), so the database's privileges refuse such a read even where no plan shows
-   it: inside a function's body, or from the rows a materialized view stores. The role may not execute
-   a SECURITY DEFINER function either (one outside `pg_catalog`, or an aggregate over one) unless
-   `allowFunctions` names it: such a function reads with its owner's rights wherever a query reaches
-   it, through an operator, a cast, a view folded at plan time or another function's body, and only
+   it: inside a function's body, or from the rows a materialized view stores. Nor may the role execute
+   a SECURITY DEFINER function, or an aggregate over one, unless `allowFunctions` names it: such a
+   function reads with its owner's rights wherever a query reaches it, through an operator, a cast, a
+   view folded at plan time or another function's body, and only
    the EXECUTE privilege is checked on every one of those paths. Either refusal names each grantee the
    role holds the privilege through.
 6. **Function allowlist.** Every function the statement names, and every one its plan calls (inside
@@ -19169,6 +19189,8 @@ await Bun.write(
 The server imports `body` from `./generated/users.ts` and uses it as its route schema. The generated
 source-schema import is type-only and disappears from the deployed bundle. Regenerate when the source
 schema changes. Custom string formats must be registered in the serving process, as with ordinary schemas.
+The generated module typechecks under `strict`, `noUnusedLocals` and `noUnusedParameters`, and Node runs
+it with its built-in type stripping.
 
 Compilation refuses coercing schemas (`t.query`, `t.form` and the other request-slot schemas), a
 schema whose `validate` does more than check its `jsonSchema`, custom registry kinds such as dates/deferred values,
@@ -20306,7 +20328,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/coding-agent
 
-`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `APPROVAL_NEVER_EXPIRES_AT`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalMatchRejection`, `ApprovalMatchResult`, `ApprovalRequest`, `ApprovalTimeout`, `BoundedSubagentRunner`, `BoundedText`, `CapabilityDescriptor`, `CiDeploymentAdapter`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `DEPLOYMENT_REFERENCE_PROFILES`, `ExtensionCommand`, `ExtensionContext`, `ExtensionDescriptorOptions`, `ExtensionDescriptorSource`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `HandoffCoordinator`, `HandoffCoordinatorOptions`, `HandoffDecision`, `HandoffError`, `HandoffRejection`, `HandoffView`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `LocalProcessDeploymentAdapter`, `MigrateLegacySessionOptions`, `NIFRA_AGENT_INSTRUCTIONS`, `NativeApprovalPort`, `NativeGatewayModelPortOptions`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeTool`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `OpenHandoffInput`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `ReplayDeploymentAdapter`, `ReviewExecutionErrorCode`, `ReviewExecutionResult`, `ReviewOptions`, `SESSION_EVIDENCE_VERSION`, `SelfHealingController`, `SessionEvidenceRecord`, `SessionLogEntry`, `SessionMigrationError`, `SessionMigrationReport`, `SessionStore`, `SubagentAbandonment`, `SubagentAbandonmentLedger`, `SubagentChildLedger`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `createCapabilityManifest`, `createCiDeploymentAdapter`, `createLocalProcessDeploymentAdapter`, `createNativeGatewayModelPort`, `createNifraTools`, `createPresetSpec`, `createReplayDeploymentAdapter`, `createVerificationRepairTask`, `deniedCapabilities`, `discoverExtensions`, `extensionDescriptor`, `extensionDescriptors`, `getAgentPreset`, `isSafeReviewDiff`, `isVerificationAvailable`, `migrateLegacySession`, `parseCapabilityManifest`, `parseSessionEvidenceRecord`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `runNifraContext`, `runNifraReview`, `runNifraVerification`, `stableSessionEventCode`, `validateExtensionModule`
+`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `APPROVAL_NEVER_EXPIRES_AT`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalMatchRejection`, `ApprovalMatchResult`, `ApprovalRequest`, `ApprovalTimeout`, `BoundedSubagentRunner`, `BoundedText`, `CapabilityDescriptor`, `CiDeploymentAdapter`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `DEPLOYMENT_REFERENCE_PROFILES`, `ExtensionCommand`, `ExtensionContext`, `ExtensionDescriptorOptions`, `ExtensionDescriptorSource`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `HandoffCoordinator`, `HandoffCoordinatorOptions`, `HandoffDecision`, `HandoffError`, `HandoffRejection`, `HandoffView`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `LocalProcessDeploymentAdapter`, `MigrateLegacySessionOptions`, `NIFRA_AGENT_INSTRUCTIONS`, `NativeApprovalPort`, `NativeApprovalRequest`, `NativeGatewayModelPortOptions`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeReviewAnswer`, `NativeTool`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `OpenHandoffInput`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `ReplayDeploymentAdapter`, `ReviewExecutionErrorCode`, `ReviewExecutionResult`, `ReviewOptions`, `SESSION_EVIDENCE_VERSION`, `SelfHealingController`, `SessionEvidenceRecord`, `SessionLogEntry`, `SessionMigrationError`, `SessionMigrationReport`, `SessionStore`, `SubagentAbandonment`, `SubagentAbandonmentLedger`, `SubagentChildLedger`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `createCapabilityManifest`, `createCiDeploymentAdapter`, `createLocalProcessDeploymentAdapter`, `createNativeGatewayModelPort`, `createNifraTools`, `createPresetSpec`, `createReplayDeploymentAdapter`, `createVerificationRepairTask`, `deniedCapabilities`, `discoverExtensions`, `extensionDescriptor`, `extensionDescriptors`, `getAgentPreset`, `isSafeReviewDiff`, `isVerificationAvailable`, `migrateLegacySession`, `parseCapabilityManifest`, `parseSessionEvidenceRecord`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `runNifraContext`, `runNifraReview`, `runNifraVerification`, `stableSessionEventCode`, `validateExtensionModule`
 
 ## @nifrajs/content
 

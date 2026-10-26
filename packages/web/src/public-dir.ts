@@ -53,7 +53,8 @@ export interface ServePublicDirOptions {
    * - a set of paths, such as a build manifest's `assets`;
    * - patterns, for files a pre-build step hashed that no manifest lists:
    *   `[/^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/]`;
-   * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`.
+   * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`. It runs as
+   *   written, so a RegExp it tests should be neither global nor sticky.
    */
   readonly hashedFiles?: HashedFiles
   readonly cache?: PublicDirCache
