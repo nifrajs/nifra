@@ -7098,14 +7098,16 @@ bundle served by `wrangler pages dev` or a self-hosted workerd takes the header 
 the client, so drop the line before serving it publicly any other way.
 
 A SIGTERM or SIGINT kills the Bun, Node and Deno servers at once unless
-`nifra.config.ts` exports `selfHost`, such as
+`nifra.config.ts` exports a `selfHost` that sets
+`gracefulSignals`, such as
 `export const selfHost = { gracefulSignals: { drainMs: 8_000 }, idleTimeoutSec: 60 }`.
 With `gracefulSignals` the server drains instead (`docker stop`,
 Ctrl-C): in-flight requests get `drainMs` to finish, and `delayMs` keeps
 it serving first while a load balancer sees it go. `idleTimeoutSec` is how long Bun
 keeps a connection that moves no bytes, a request whose handler is still working included:
-10 seconds by default, `0` for never. Node and Deno do not close a connection
-while its request is being handled, so they ignore it, and an edge build ignores
+a whole number from `0` (never) to `255`, 10 by default. Node and Deno
+do not close a connection while its request is being handled, so they ignore it, and an edge
+build ignores
 `selfHost`. `nifra start` runs the built server, so it applies there
 too.
 
@@ -7204,8 +7206,8 @@ store (signed with one `storeSecret` in every process - see
 -
 `@nifrajs/deno` - serves `app.fetch` on `Deno.serve`.
 
-The servers `nifra build --target node` and `--target deno` emit run
-on these adapters, so the app installs the one for its target, from the same release as
+The servers that `nifra build --target node` and `--target deno` emit
+run on these adapters, so the app installs the one for its target, from the same release as
 `@nifrajs/web`. Each server's `static` sees every request first: it
 answers with a file's response, or `undefined` to let the app route it. The
 generated servers serve their client bundle and `public/` files that way.
@@ -17538,8 +17540,8 @@ It takes one mount or a list, with the same options as Bun's `@nifrajs/core/serv
 a predicate), `cacheControl`, `files`, `allow`, `headers`, `dotfiles` and `fallthrough`. A path
 under a mount's prefix that it cannot serve answers 404 (400 malformed, 403 traversing) unless the
 mount sets `fallthrough: true`, which hands it to the next mount and then the app. Run Deno with
-`--allow-read` for the served directories. The server `nifra build --target deno` emits serves its
-client bundle and public files this way.
+`--allow-read` for the served directories. The server that `nifra build --target deno` emits serves
+its client bundle and public files this way.
 
 ## Client disconnect and `c.req.signal`
 

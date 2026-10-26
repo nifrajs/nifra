@@ -180,14 +180,16 @@ export default function Deployment() {
       </p>
       <p>
         A SIGTERM or SIGINT kills the Bun, Node and Deno servers at once unless{" "}
-        <code>nifra.config.ts</code> exports <code>selfHost</code>, such as{" "}
+        <code>nifra.config.ts</code> exports a <code>selfHost</code> that sets{" "}
+        <code>gracefulSignals</code>, such as{" "}
         <code>{"export const selfHost = { gracefulSignals: { drainMs: 8_000 }, idleTimeoutSec: 60 }"}</code>.
         With <code>gracefulSignals</code> the server drains instead (<code>docker stop</code>,
         Ctrl-C): in-flight requests get <code>drainMs</code> to finish, and <code>delayMs</code> keeps
         it serving first while a load balancer sees it go. <code>idleTimeoutSec</code> is how long Bun
         keeps a connection that moves no bytes, a request whose handler is still working included:
-        10 seconds by default, <code>0</code> for never. Node and Deno do not close a connection
-        while its request is being handled, so they ignore it, and an edge build ignores{" "}
+        a whole number from <code>0</code> (never) to <code>255</code>, 10 by default. Node and Deno
+        do not close a connection while its request is being handled, so they ignore it, and an edge
+        build ignores{" "}
         <code>selfHost</code>. <code>nifra start</code> runs the built server, so it applies there
         too.
       </p>
@@ -280,8 +282,8 @@ export default function Deployment() {
         </li>
       </ul>
       <p>
-        The servers <code>nifra build --target node</code> and <code>--target deno</code> emit run
-        on these adapters, so the app installs the one for its target, from the same release as{" "}
+        The servers that <code>nifra build --target node</code> and <code>--target deno</code> emit
+        run on these adapters, so the app installs the one for its target, from the same release as{" "}
         <code>@nifrajs/web</code>. Each server's <code>static</code> sees every request first: it
         answers with a file's response, or <code>undefined</code> to let the app route it. The
         generated servers serve their client bundle and <code>public/</code> files that way.

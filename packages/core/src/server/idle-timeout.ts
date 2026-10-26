@@ -27,10 +27,11 @@ const longest = (scopes: readonly number[]): number =>
  * out because Bun keeps the last value on the socket for the requests that follow on it, so a value
  * left in place would hold an idle connection open.
  *
- * The request's deadline (`requestTimeoutMs`, an inbound deadline) still bounds the work, and when
- * it fires the listener's timeout is back before the 503 is sent. Scopes nest: while several run on
- * one request the longest applies, and `0` outlasts any number. `seconds` runs from 0 to 255, the
- * longest Bun holds an idle connection; work that may idle longer takes `0`, bounded by the deadline.
+ * The request's deadline (`requestTimeoutMs`, an inbound deadline) still bounds the response: when it
+ * fires, the 503 is sent with the listener's timeout back and `c.signal` aborts, but `work`
+ * keeps running unless it stops on that signal. Scopes nest: while several run on one request the
+ * longest applies, and `0` outlasts any number. `seconds` runs from 0 to 255, the longest Bun holds
+ * an idle connection; work that may idle longer takes `0`.
  *
  * A streamed response is sent after the handler returns, so call this inside the stream's producer
  * to hold it until the last chunk. Off `listen()` - another adapter, `app.fetch` in a test - it runs

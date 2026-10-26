@@ -55,8 +55,8 @@ It takes one mount or a list, with the same options as Bun's `@nifrajs/core/serv
 a predicate), `cacheControl`, `files`, `allow`, `headers`, `dotfiles` and `fallthrough`. A path
 under a mount's prefix that it cannot serve answers 404 (400 malformed, 403 traversing) unless the
 mount sets `fallthrough: true`, which hands it to the next mount and then the app. Run Deno with
-`--allow-read` for the served directories. The server `nifra build --target deno` emits serves its
-client bundle and public files this way.
+`--allow-read` for the served directories. The server that `nifra build --target deno` emits serves
+its client bundle and public files this way.
 
 ## Client disconnect and `c.req.signal`
 
