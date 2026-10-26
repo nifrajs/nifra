@@ -233,31 +233,70 @@ describe("session - store mode", () => {
     expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
   })
 
+  // A rotated id is `<family>~<random>`: the login id has no "~", and a marker key ends in its suffix.
+  const isNextId = (id: string): boolean =>
+    id.includes("~") && !id.endsWith(".revoked") && !id.endsWith(".rotated")
+  const points = [
+    { at: "during its write", memory: "rotate", generic: "set" },
+    { at: "after its write, before its cookie", memory: "get", generic: "get" },
+  ] as const
   for (const atomic of [true, false]) {
-    test(`logout fences an in-flight regeneration (${atomic ? "memory" : "generic"} store)`, async () => {
-      const inner = new MemorySessionStore()
-      const store: SessionStore = atomic
-        ? inner
-        : {
-            get: (id) => inner.get(id),
-            set: (id, record) => inner.set(id, record),
-            delete: (id) => inner.delete(id),
-          }
-      const sessions = createSessions<Data>({ secret: SECRET, store })
-      const login = ctx()
-      const session = await sessions.get(login.context)
-      session.set("userId", "u1")
-      await sessions.commit(login.context, session)
-      const cookie = lastCookie(login.setCalls)
-      const inFlight = ctx({ nifra_session: cookie })
-      const stale = await sessions.get(inFlight.context)
-      sessions.regenerate(stale)
-      const rotation = sessions.commit(inFlight.context, stale)
-      await sessions.destroy(ctx({ nifra_session: cookie }).context)
-      await rotation
-      expect(inFlight.setCalls).toEqual([])
-      expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
-    })
+    for (const point of points) {
+      test(`logout landing ${point.at} fences an in-flight regeneration (${atomic ? "memory" : "generic"} store)`, async () => {
+        const inner = new MemorySessionStore()
+        const base: SessionStore = atomic
+          ? inner
+          : {
+              get: (id) => inner.get(id),
+              set: (id, record) => inner.set(id, record),
+              delete: (id) => inner.delete(id),
+            }
+        // Holds the first call to that method on the rotated id until the logout has finished.
+        const method = atomic ? point.memory : point.generic
+        let arrive = (): void => {}
+        let release = (): void => {}
+        const arrived = new Promise<void>((resolve) => {
+          arrive = resolve
+        })
+        const released = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        let armed = false
+        const store = new Proxy(base, {
+          get(target, key, receiver) {
+            const value = Reflect.get(target, key, receiver)
+            if (typeof value !== "function") return value
+            return async (...args: unknown[]) => {
+              const id = String(args[key === "rotate" ? 1 : 0])
+              if (armed && key === method && isNextId(id)) {
+                armed = false
+                arrive()
+                await released
+              }
+              return value.apply(target, args)
+            }
+          },
+        })
+        const sessions = createSessions<Data>({ secret: SECRET, store })
+        const login = ctx()
+        const session = await sessions.get(login.context)
+        session.set("userId", "u1")
+        await sessions.commit(login.context, session)
+        const cookie = lastCookie(login.setCalls)
+        const inFlight = ctx({ nifra_session: cookie })
+        const stale = await sessions.get(inFlight.context)
+        sessions.regenerate(stale)
+        armed = true
+        const rotation = sessions.commit(inFlight.context, stale)
+        // A rotation that never makes that call finishes first, and its cookie fails the check below.
+        await Promise.race([arrived, rotation])
+        await sessions.destroy(ctx({ nifra_session: cookie }).context)
+        release()
+        await rotation
+        expect(inFlight.setCalls).toEqual([])
+        expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+      })
+    }
   }
 
   for (const atomic of [true, false]) {
