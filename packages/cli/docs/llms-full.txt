@@ -7211,9 +7211,13 @@ it answers with a file's response, or `undefined` to let the app route it. The
 generated Deno server serves its client bundle and `public/` files that way.
 
 Self-hosting (no CDN in front)? Hand `@nifrajs/node`'s `serve` a
-`static` mount and it serves the client bundle from disk - traversal-guarded,
+`serveStatic` mount and it serves the client bundle from disk - traversal-guarded,
 content-typed, with an immutable cache - before the app runs, leaving the SSR fast path
-untouched: `serve(app, { port, static: { dir: new URL("./assets/", import.meta.url) } })`.
+untouched:
+`
+          serve(app, { port, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) })
+        `
+.
 On Cloudflare/Vercel the platform serves assets, so you don't need it there.
 
 Every file under the mount is cached as immutable by default. If the directory also holds
@@ -11097,11 +11101,11 @@ the app runs, which keeps the direct request path for everything else:
 
 ```ts
 // doc-check: skip - fragment: app and build are the createWebApp app and buildClient() output above.
-import { serve } from "@nifrajs/node"
+import { serve, serveStatic } from "@nifrajs/node"
 
 await serve(app, {
   port: 3000,
-  static: { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets },
+  static: serveStatic({ dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets }),
   signals: { drainMs: 8_000 },
 })
 ```
@@ -18746,7 +18750,13 @@ authority. If neither option is set, treat the host in `request.url` as client-c
 
 ## Static files
 
-The optional `static` root is served before `app.fetch` for GET and HEAD requests. It is a
+`static` sees every request before `app.fetch`, as it does on Bun's `app.listen()` and
+`@nifrajs/deno`'s `serve()`: a function from the Web `Request` to the file's `Response`, or
+`undefined` to let the app route it. `static: serveStatic({ dir })` serves a directory for GET and
+HEAD requests, and this adapter runs it on Node's own request, so every other request keeps the
+app's direct lane. Any other function needs a Web `Request` for every request.
+
+A served directory is a
 public asset directory and must contain nothing private: no secrets, source maps, build
 metadata, or user uploads. The directory and its ancestor path must be read-only and owned by
 the service (or otherwise protected from untrusted local writers). Nifra resolves and confines
@@ -20433,7 +20443,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/node
 
-`FetchHandler`, `NodeServer`, `NodeStopOptions`, `RequestProtocol`, `RequestProtocolOption`, `ServeOptions`, `ServeStaticOptions`, `serve`
+`FetchHandler`, `NodeServer`, `NodeStopOptions`, `RequestProtocol`, `RequestProtocolOption`, `ServeOptions`, `ServeStaticOptions`, `serve`, `serveStatic`
 
 ## @nifrajs/otel
 

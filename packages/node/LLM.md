@@ -11,6 +11,7 @@ Run a nifra app on Node's http server - a Request<->stream adapter with a gracef
 ## Key exports
 
 - **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<NodeServer>`
+- **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
 - **NodeServer** _(interface)_ - `interface NodeServer`
 - **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`

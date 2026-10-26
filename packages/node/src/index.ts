@@ -739,9 +739,9 @@ function applySetToNodeHeaders(
 }
 
 /**
- * Serve static files from a directory (e.g. the client build) under a URL prefix - so a self-hosted
- * Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the
- * platform serves assets; this is for `node server.js`.)
+ * One directory {@link serveStatic} serves (e.g. the client build) under a URL prefix - so a
+ * self-hosted Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On
+ * Cloudflare/Vercel the platform serves assets; this is for `node server.js`.)
  */
 export interface ServeStaticOptions {
   /** Directory to read files from - an absolute path or a `file://` URL (`new URL("./assets/", import.meta.url)`). */
@@ -823,13 +823,16 @@ export interface ServeOptions {
    */
   readonly signals?: boolean | NodeStopOptions
   /**
-   * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching
-   * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on
-   * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries. An array
-   * serves several directories; the first mount whose prefix (and `files`, when set) takes a path
-   * answers it.
+   * Sees every request before the app does, so a file it answers wins over any route at the same
+   * path. It returns the file's response, or `undefined` to let the app route the request. No hook
+   * of the app runs for a request it answers. The same option as Bun's `app.listen()` and
+   * `@nifrajs/deno`'s `serve()`.
+   *
+   * {@link serveStatic} is the one to pass for files on disk: this adapter runs its mounts on Node's
+   * own request, so a request they pass on keeps the app's direct lane. Any other function needs a
+   * Web `Request` for every request, which roughly doubles the cost of a small route.
    */
-  readonly static?: ServeStaticOptions | readonly ServeStaticOptions[]
+  readonly static?: (request: Request) => Response | Promise<Response | undefined> | undefined
   /**
    * Make a hand-rolled `return new Response(body)` ride the direct-write lane, by swapping
    * `globalThis.Response` for a stand-in that defers a *simple* construction (a string body, no
@@ -955,7 +958,7 @@ function normalizeHostCached(value: string): string | undefined {
  * a cost a request that reads no other header would otherwise pay just for Host. `null` when Host
  * repeats: `joinDuplicateHeaders` would hand the app both authorities while this routes on one, and
  * RFC 9112 section 3.2 answers such a request 400, as Deno does. */
-function rawHost(req: IncomingMessage): string | null | undefined {
+function rawHost(req: Pick<IncomingMessage, "rawHeaders">): string | null | undefined {
   const raw = req.rawHeaders
   let host: string | undefined
   for (let i = 0; i < raw.length; i += 2) {
@@ -1103,7 +1106,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
  */
 function staticMatch(
   state: StaticState,
-  req: IncomingMessage,
+  req: Pick<IncomingMessage, "url" | "rawHeaders">,
 ): "pass" | { readonly reject: Response } | { readonly file: string; readonly immutable: boolean } {
   const rawUrl = req.url ?? "/"
   const query = rawUrl.indexOf("?")
@@ -1189,13 +1192,15 @@ async function readPinned(handle: FileHandle, start: number, length: number): Pr
   return filled === length ? bytes : bytes.subarray(0, filled)
 }
 
+type StaticOutcome = Exclude<NodeServeOutcome, { readonly kind: "json" }>
+
 async function readStatic(
   file: string,
   immutable: boolean,
   state: StaticState,
   method: string,
   requestHeaders: IncomingHttpHeaders,
-): Promise<NodeServeOutcome> {
+): Promise<StaticOutcome> {
   let handle: Awaited<ReturnType<typeof openResolved>> | undefined
   try {
     // Defense-in-depth: the lexical `..` guard in staticMatch can't catch a symlink INSIDE root that
@@ -1400,6 +1405,73 @@ function closeAfterResponses(socket: ResponseSocket): void {
   response.on("close", next)
 }
 
+const NATIVE_MOUNTS = Symbol("nifra.node.static-mounts")
+
+function nativeMountsOf(handler: object): readonly StaticState[] | undefined {
+  const mounts: unknown = Reflect.get(handler, NATIVE_MOUNTS)
+  return Array.isArray(mounts) ? mounts : undefined
+}
+
+/** The parts of Node's request {@link staticMatch} and {@link readStatic} read, from a Web request. */
+function staticViewOf(request: Request): {
+  readonly url: string
+  readonly headers: IncomingHttpHeaders
+  readonly rawHeaders: string[]
+} {
+  const url = new URL(request.url)
+  const headers: IncomingHttpHeaders = {}
+  for (const [name, value] of request.headers) headers[name] = value
+  // A Web request names its host in its URL; a Host header may be absent.
+  return { url: url.pathname + url.search, headers, rawHeaders: ["host", url.host] }
+}
+
+function staticOutcomeResponse(outcome: StaticOutcome): Response {
+  if (outcome.kind === "response") return outcome.response
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(outcome.headers ?? {})) {
+    if (typeof value === "string") headers.set(name, value)
+    else for (const item of value) headers.append(name, item)
+  }
+  const body = outcome.body === "" ? null : outcome.body
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: readStatic's bytes come from Buffer.allocUnsafe or a snapshot read, never a SharedArrayBuffer.
+  return new Response(body as string | Uint8Array<ArrayBuffer> | null, {
+    status: outcome.status,
+    headers,
+  })
+}
+
+/**
+ * The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the
+ * first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to
+ * {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the
+ * app on its direct lane. Called with a Web `Request`, it answers the same way.
+ *
+ * @example
+ * ```ts
+ * await serve(app, { port: 3000, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) })
+ * ```
+ */
+export function serveStatic(
+  mounts: ServeStaticOptions | readonly ServeStaticOptions[],
+): (request: Request) => Promise<Response | undefined> | undefined {
+  const states = ("dir" in mounts ? [mounts] : mounts).map(staticStateOf)
+  const handler = (request: Request): Promise<Response | undefined> | undefined => {
+    if (request.method !== "GET" && request.method !== "HEAD") return undefined
+    const view = staticViewOf(request)
+    for (const state of states) {
+      const matched = staticMatch(state, view)
+      if (matched === "pass") continue
+      if ("reject" in matched) return Promise.resolve(matched.reject)
+      return readStatic(matched.file, matched.immutable, state, request.method, view.headers).then(
+        staticOutcomeResponse,
+      )
+    }
+    return undefined
+  }
+  Object.defineProperty(handler, NATIVE_MOUNTS, { value: states })
+  return handler
+}
+
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
   activateAsyncContextFrame()
   enableNodeDirect(app)
@@ -1422,18 +1494,29 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     options.protocol ?? (options.tls === undefined ? undefined : "https"),
   )
   const hostPolicy = hostPolicyOf(options)
-  const staticOption = options.static
-  const staticState =
-    staticOption === undefined
-      ? undefined
-      : ("dir" in staticOption ? [staticOption] : staticOption).map(staticStateOf)
+  const staticOption: unknown = options.static
+  if (staticOption !== undefined && typeof staticOption !== "function") {
+    throw new TypeError(
+      "[nifra/node] `static` takes a function; pass a directory as `static: serveStatic({ dir })`",
+    )
+  }
+  const staticState = staticOption === undefined ? undefined : nativeMountsOf(staticOption)
+  const staticHandler = staticState === undefined ? options.static : undefined
   const settled = (): void => {
     inFlight -= 1
   }
   const onRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse): void => {
     inFlight += 1
     try {
-      const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
+      const handled = handle(
+        app,
+        nodeReq,
+        nodeRes,
+        protocol,
+        staticState,
+        hostPolicy,
+        staticHandler,
+      )
       if (handled instanceof Promise) {
         // The rejection arm is required: Node terminates the process on an unhandled rejection by
         // default. Every writer already ends and reports its own failures (`failAndReport`), so
@@ -1660,6 +1743,7 @@ function handle(
   getProtocol: RequestProtocolResolver,
   staticState: readonly StaticState[] | undefined,
   hostPolicy: HostPolicy,
+  staticHandler?: (request: Request) => Response | Promise<Response | undefined> | undefined,
 ): void | Promise<void> {
   resolveTarget(nodeReq)
   const host = requestHost(nodeReq, hostPolicy)
@@ -1687,6 +1771,28 @@ function handle(
       platform = { clientIp: peerAddress }
       socket[PLATFORM] = platform
     }
+  }
+
+  // A `static` function other than serveStatic's mounts takes a Web request, so the app gets the same
+  // one rather than its direct lane.
+  if (staticHandler !== undefined) {
+    const request = toWebRequest(nodeReq, protocol, host, nodeRes)
+    let answer: Response | Promise<Response | undefined> | undefined
+    try {
+      answer = staticHandler(request)
+    } catch {
+      writeInternalError(nodeRes)
+      return
+    }
+    if (answer === undefined) return runWebRequest(app, request, nodeReq, nodeRes, platform)
+    if (!(answer instanceof Promise)) return writeResponseSafely(answer, nodeRes, nodeReq.method)
+    return answer.then(
+      (response) =>
+        response === undefined
+          ? runWebRequest(app, request, nodeReq, nodeRes, platform)
+          : writeResponseSafely(response, nodeRes, nodeReq.method),
+      () => writeInternalError(nodeRes),
+    )
   }
 
   // Static files first (GET/HEAD). The match is synchronous, so a non-asset request never leaves the
@@ -1762,7 +1868,22 @@ function handle(
     return runNodeSource(app, nodeSource, nodeReq, nodeRes, protocol, host, platform)
   }
 
-  const request = toWebRequest(nodeReq, protocol, host, nodeRes)
+  return runWebRequest(
+    app,
+    toWebRequest(nodeReq, protocol, host, nodeRes),
+    nodeReq,
+    nodeRes,
+    platform,
+  )
+}
+
+function runWebRequest(
+  app: FetchHandler,
+  request: Request,
+  nodeReq: IncomingMessage,
+  nodeRes: ServerResponse,
+  platform: NodePlatform | undefined,
+): void | Promise<void> {
   const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
   if (typeof resolveNode === "function") {
     try {

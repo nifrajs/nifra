@@ -72,11 +72,11 @@ createWebApp({
 })`
 
 const NODE_SERVE = `// doc-check: skip - fragment: app and build are the createWebApp app and buildClient() output above.
-import { serve } from "@nifrajs/node"
+import { serve, serveStatic } from "@nifrajs/node"
 
 await serve(app, {
   port: 3000,
-  static: { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets },
+  static: serveStatic({ dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets }),
   signals: { drainMs: 8_000 },
 })`
 

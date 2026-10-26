@@ -288,9 +288,13 @@ export default function Deployment() {
       </p>
       <p>
         Self-hosting (no CDN in front)? Hand <code>@nifrajs/node</code>'s <code>serve</code> a{" "}
-        <code>static</code> mount and it serves the client bundle from disk - traversal-guarded,
+        <code>serveStatic</code> mount and it serves the client bundle from disk - traversal-guarded,
         content-typed, with an immutable cache - before the app runs, leaving the SSR fast path
-        untouched: <code>serve(app, {'{ port, static: { dir: new URL("./assets/", import.meta.url) } }'})</code>.
+        untouched:{" "}
+        <code>
+          serve(app, {'{ port, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) }'})
+        </code>
+        .
         On Cloudflare/Vercel the platform serves assets, so you don't need it there.
       </p>
       <p>

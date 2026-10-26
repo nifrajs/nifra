@@ -340,8 +340,15 @@ async function nodeServeOptions(src: string, dir: string): Promise<Record<string
     "fileURLToPath",
     "ROOT_URL",
     "capture",
+    "serveStatic",
     new Bun.Transpiler({ loader: "ts" }).transformSync(section),
-  )(fileURLToPath, pathToFileURL(dir), (options: unknown) => options)) as Record<string, unknown>
+  )(
+    fileURLToPath,
+    pathToFileURL(dir),
+    (options: unknown) => options,
+    // The mounts themselves, so a test reads what the entry passes serveStatic.
+    (mounts: unknown) => mounts,
+  )) as Record<string, unknown>
 }
 
 describe("generateServerEntry", () => {
@@ -482,7 +489,7 @@ describe("generateServerEntry", () => {
       publicFiles: ["/robots.txt", "/.well-known/acme-challenge/token"],
       hashedFiles: ["/assets/page-1a2b3c.js"],
     })
-    expect(src).toContain('import { serve } from "@nifrajs/node"')
+    expect(src).toContain('import { serve, serveStatic } from "@nifrajs/node"')
     expect(src).toContain('import { createWebApp } from "@nifrajs/web"')
     // A `{ fetch }` wrapper around app.fetch would hide the node-direct lane from the adapter.
     expect(src).toContain("await serve(app, {")

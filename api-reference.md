@@ -4467,8 +4467,10 @@ _No named exports (side-effect entrypoint)._
 - **RequestProtocolOption** _(type)_ - `type RequestProtocolOption = | RequestProtocol | ((request: IncomingMessage) => RequestProtocol)`
 - **ServeOptions** _(interface)_ - `interface ServeOptions`
 - **ServeStaticOptions** _(interface)_ - `interface ServeStaticOptions`
-  Serve static files from a directory (e.g. the client build) under a URL prefix - so a self-hosted Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the platform serves assets; this is for `node server.js`.)
+  One directory {@link serveStatic} serves (e.g. the client build) under a URL prefix - so a self-hosted Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the platform serves assets; this is for `node server.js`.)
 - **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<NodeServer>`
+- **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
+  The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the app on i…
 
 ## @nifrajs/otel
 

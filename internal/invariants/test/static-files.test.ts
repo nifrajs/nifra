@@ -24,7 +24,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { server } from "@nifrajs/core"
-import { type NodeServer, serve } from "@nifrajs/node"
+import { type NodeServer, serve, serveStatic } from "@nifrajs/node"
 import { servePublicDir } from "@nifrajs/web"
 import { generateServerEntry } from "../../../packages/web/src/build.ts"
 
@@ -226,8 +226,8 @@ beforeAll(async () => {
     entry("node"),
     "",
     "",
-    ["capture"],
-    [(captured: unknown) => captured],
+    ["capture", "serveStatic"],
+    [(captured: unknown) => captured, serveStatic],
   )) as Parameters<typeof serve>[1]
   node = await serve(
     server().get("/*", (c) => c.text(APP)),

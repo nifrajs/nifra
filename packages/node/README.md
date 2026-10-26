@@ -49,7 +49,13 @@ authority. If neither option is set, treat the host in `request.url` as client-c
 
 ## Static files
 
-The optional `static` root is served before `app.fetch` for GET and HEAD requests. It is a
+`static` sees every request before `app.fetch`, as it does on Bun's `app.listen()` and
+`@nifrajs/deno`'s `serve()`: a function from the Web `Request` to the file's `Response`, or
+`undefined` to let the app route it. `static: serveStatic({ dir })` serves a directory for GET and
+HEAD requests, and this adapter runs it on Node's own request, so every other request keeps the
+app's direct lane. Any other function needs a Web `Request` for every request.
+
+A served directory is a
 public asset directory and must contain nothing private: no secrets, source maps, build
 metadata, or user uploads. The directory and its ancestor path must be read-only and owned by
 the service (or otherwise protected from untrusted local writers). Nifra resolves and confines

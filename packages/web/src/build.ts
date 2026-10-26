@@ -1552,7 +1552,7 @@ export function generateServerEntry(options: {
   // Cloudflare needs the fetch-handler shape; Bun serves through app.listen(), the rest call app.fetch.
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "bun") lines.push('import { pathnameOf } from "@nifrajs/core/server"')
-  if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
+  if (target === "node") lines.push('import { serve, serveStatic } from "@nifrajs/node"')
   if (target === "deno") lines.push('import { serve } from "@nifrajs/deno"')
   if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
   if (target === "deno") {
@@ -1656,7 +1656,7 @@ export function generateServerEntry(options: {
       "await serve(app, {",
       "  port: Number(process.env.PORT ?? 3000),",
       ...(gracefulSignals !== undefined ? [`  signals: ${gracefulSignals},`] : []),
-      "  static: [",
+      "  static: serveStatic([",
       "    {",
       '      dir: fileURLToPath(new URL("./assets/", import.meta.url)),',
       '      prefix: "/assets",',
@@ -1672,7 +1672,7 @@ export function generateServerEntry(options: {
       `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
       ...(hostPolicy ? [NODE_STATIC_ALLOW] : []),
       "    },",
-      "  ],",
+      "  ]),",
       "})",
     )
     return `${lines.join("\n")}\n`
