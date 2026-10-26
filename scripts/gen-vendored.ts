@@ -47,10 +47,16 @@ export const VENDORED: readonly VendoredCopy[] = [
     why: "Copied so @nifrajs/node keeps the body and framing headers core keeps, without depending on it.",
   },
   {
+    source: "packages/core/src/server/runtime-core.ts",
+    targets: ["packages/node/src/generated/render-headers.ts"],
+    symbols: ["plainRenderHeaders"],
+    why: "Copied so @nifrajs/node layers a plain render's headers as core does, without depending on it.",
+  },
+  {
     source: "packages/core/src/server/websocket.ts",
-    targets: ["packages/deno/src/generated/ws-close.ts"],
+    targets: ["packages/deno/src/generated/ws-close.ts", "packages/node/src/generated/ws-close.ts"],
     symbols: ["exceedsPayloadCap", "assertCloseArgs"],
-    why: "Copied so @nifrajs/deno refuses the closes and messages core refuses, without depending on it.",
+    why: "Copied so each adapter refuses the closes and messages core refuses, without depending on it.",
   },
   {
     source: "packages/core/src/server/request-target.ts",
