@@ -238,6 +238,11 @@
       "types": "./dist/internal/client-call.d.ts",
       "default": "./dist/internal/client-call.js"
     },
+    "./internal/keep-alive-mount": {
+      "bun": "./src/internal/keep-alive-mount.ts",
+      "types": "./dist/internal/keep-alive-mount.d.ts",
+      "default": "./dist/internal/keep-alive-mount.js"
+    },
     "./internal/dev-reserved": {
       "bun": "./src/internal/dev-reserved.ts",
       "types": "./dist/internal/dev-reserved.d.ts",

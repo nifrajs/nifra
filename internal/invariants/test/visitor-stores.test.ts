@@ -1215,16 +1215,12 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
   "packages/web-preact/src/client.ts": { "held@memoized": MEMO },
   "packages/web-preact/src/keep-alive.ts": {
     "held@memoized": MEMO,
-    "nodes@childrenOf": "the slot tree of one render, read through context",
-    "props@mountRouter": RENDER_PROPS,
     slotsElements: "one element per slot parent, keyed by its id",
   },
   "packages/web-preact/src/slot.ts": { slotted: MEMO },
   "packages/web-react/src/client.ts": { "held@memoized": MEMO },
   "packages/web-react/src/keep-alive.ts": {
     "held@memoized": MEMO,
-    "nodes@childrenOf": "the slot tree of one render, read through context",
-    "props@mountRouter": RENDER_PROPS,
     slotsElements: "one element per slot parent, keyed by its id",
   },
   "packages/web-react/src/server-components/client.ts": {
@@ -1232,7 +1228,6 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "<expr>@prepareTree": ONE_CALL,
   },
   "packages/web-react/src/slot.ts": { slotted: MEMO },
-  "packages/web-svelte/src/keep-alive.ts": { "props@mountRouter": RENDER_PROPS },
   "packages/web-vanilla/src/html.ts": {
     callSites: "parsed templates, weakly keyed by the template's strings",
   },
@@ -1242,9 +1237,7 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "names@declaredBy": "a component's declared prop names",
   },
   "packages/web-vue/src/keep-alive.ts": {
-    "children@mountRouter": "the slot tree of the router's latest state",
     "kept@mountRouter": KEPT_VIEW,
-    "props@mountRouter": RENDER_PROPS,
     "slots@mountRouter": "one component per slot key, named for <KeepAlive include>",
   },
   "packages/web/src/client.ts": {
@@ -1276,6 +1269,10 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     readers: ISLAND_GRAPH,
     "subs@computed": ISLAND_GRAPH,
     "subs@signal": ISLAND_GRAPH,
+  },
+  "packages/web/src/internal/keep-alive-mount.ts": {
+    "nodes@slotChildren": "the slot tree of one render, by parent",
+    "props@propsByState": RENDER_PROPS,
   },
   "packages/web/src/internal/live-queries.ts": {
     queries: "mounted queries and the live tick each registered at",

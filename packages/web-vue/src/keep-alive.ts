@@ -9,7 +9,8 @@
  * moves a hidden page out of the document but loses its inner scroll, so the mount notes the scroll
  * and focus before Vue hides a page and puts them back when it is shown again.
  */
-import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
+import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { propsByState, SLOT_ROOT, slotChildren } from "@nifrajs/web/internal/keep-alive-mount"
 import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 import {
   type KeepAliveRouter,
@@ -101,7 +102,6 @@ const pageChain = (chain: readonly unknown[], depth: number, props: RenderProps)
 }
 
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
-const ROOT = "\0root"
 
 const dispatch = (elements: readonly Element[], type: string): void => {
   for (const element of elements) element.dispatchEvent(new CustomEvent(type, { bubbles: true }))
@@ -116,33 +116,14 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   const matchChains = options.matchChains ?? {}
   setMountedRouter(router)
 
-  const props = new WeakMap<RouterState, RenderProps>()
-  const propsOf = (state: RouterState): RenderProps => {
-    let held = props.get(state)
-    if (held === undefined) {
-      held = routeProps(state, searchSchemas, matchChains)
-      props.set(state, held)
-    }
-    return held
-  }
+  const propsOf = propsByState((state) => routeProps(state, searchSchemas, matchChains))
   const kept = new Map<string, Kept>()
   let rendered: readonly SlotNode[] | undefined
   const state = shallowRef(router.snapshot())
   const tree = computed(() => slotTree(state.value, matchChains, table, rendered))
   // Parent key → the slots under it, in the router's latest state. A level a hidden branch holds is
   // not rendered again, so it reads which of its slots are still kept from here.
-  const live = computed(() => {
-    const children = new Map<string, readonly SlotNode[]>([[ROOT, tree.value]])
-    const visit = (list: readonly SlotNode[]): void => {
-      for (const node of list) {
-        if (node.children === undefined) continue
-        children.set(node.key, node.children)
-        visit(node.children)
-      }
-    }
-    visit(tree.value)
-    return children
-  })
+  const live = computed(() => slotChildren(tree.value))
 
   // Before Vue renders the next state, while the page it hides is still laid out.
   router.beforePublish((next) => {
@@ -287,7 +268,7 @@ export function mountRouter(options: KeepAliveMountOptions): void {
         return h(
           RouteContextProvider,
           { value: propsOf(state.value) },
-          { default: () => h(Level, { nodes, parent: ROOT }) },
+          { default: () => h(Level, { nodes, parent: SLOT_ROOT }) },
         )
       }
     },
