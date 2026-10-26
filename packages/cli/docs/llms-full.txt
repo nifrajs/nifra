@@ -18955,6 +18955,8 @@ await Bun.write(
 The server imports `body` from `./generated/users.ts` and uses it as its route schema. The generated
 source-schema import is type-only and disappears from the deployed bundle. Regenerate when the source
 schema changes. Custom string formats must be registered in the serving process, as with ordinary schemas.
+The generated module typechecks under `strict`, `noUnusedLocals` and `noUnusedParameters`, and Node runs
+it with its built-in type stripping.
 
 Compilation refuses coercing schemas (`t.query`, `t.form` and the other request-slot schemas), a
 schema whose `validate` does more than check its `jsonSchema`, custom registry kinds such as dates/deferred values,

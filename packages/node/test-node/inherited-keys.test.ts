@@ -118,17 +118,16 @@ test("the eval-free lane reads {} as the key absent", () => {
 })
 
 test("the precompiled lane reads {} as the key absent", async () => {
-  // The scalar shape: Node strips types from the generated module, and TypeBox's TypeScript for an
-  // array check annotates a for-of binding, which type stripping refuses.
-  const shape = SHAPES[1]!
-  for (const [i, key] of FIELDS.entries()) {
-    const file = join(dir, `schema-${i}.ts`)
-    writeFileSync(
-      file,
-      compileSchema(shape.schema(key), { source: "./source.ts", exportName: "schema" }),
-    )
-    const schema: StandardSchemaV1 = (await import(file)).schema
-    assert.deepEqual(answers(schema, key, shape), expected(key, shape))
+  for (const [s, shape] of SHAPES.entries()) {
+    for (const [i, key] of FIELDS.entries()) {
+      const file = join(dir, `schema-${s}-${i}.ts`)
+      writeFileSync(
+        file,
+        compileSchema(shape.schema(key), { source: "./source.ts", exportName: "schema" }),
+      )
+      const schema: StandardSchemaV1 = (await import(file)).schema
+      assert.deepEqual(answers(schema, key, shape), expected(key, shape))
+    }
   }
 })
 
