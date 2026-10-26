@@ -1144,12 +1144,11 @@ describe("session - identity names the data that says who the visitor is", () =>
   }
   const setup = (store: boolean, identity?: readonly string[]) => {
     let t = 1000
-    const sessions = createSessions<Bag>({
-      secret: SECRET,
-      now: () => t,
-      ...(store ? { store: new MemorySessionStore() } : {}),
-      ...(identity === undefined ? {} : { identity }),
-    })
+    const base = { secret: SECRET, now: () => t }
+    const named = identity === undefined ? base : { ...base, identity }
+    const sessions = createSessions<Bag>(
+      store ? { ...named, store: new MemorySessionStore() } : named,
+    )
     const visit = async (
       cookie: string | undefined,
       act: (s: BagSession) => void = () => {},

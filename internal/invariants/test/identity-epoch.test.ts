@@ -83,12 +83,8 @@ interface Steps {
 const nifraSessions = (store: boolean, rolling: boolean, identityKeys: boolean) => (): Steps => {
   // Each request a second after the last, so a rolling expiry moves every time.
   let clock = Date.now()
-  const options = {
-    secret: SECRET,
-    rolling,
-    now: () => clock,
-    ...(identityKeys ? { identity: ["userId" as const] } : {}),
-  }
+  const base = { secret: SECRET, rolling, now: () => clock }
+  const options = identityKeys ? { ...base, identity: ["userId" as const] } : base
   const sessions = createSessions<{ userId: string; cart: number }>(
     store ? { ...options, store: new MemorySessionStore() } : options,
   )
