@@ -1,0 +1,62 @@
+{
+  "auth-session": {
+    "files": ["packages/auth/src/session.ts"],
+    "tests": ["packages/auth/test"]
+  },
+  "authjs": {
+    "files": ["packages/authjs/src/index.ts"],
+    "tests": ["packages/authjs/test/authjs.test.ts", "packages/authjs/test/client.test.ts"]
+  },
+  "mcp-db-postgres": {
+    "files": [
+      "packages/mcp-db/src/internal/pg-exec.ts",
+      "packages/mcp-db/src/internal/pg-lexer.ts",
+      "packages/mcp-db/src/internal/shared.ts",
+      "packages/mcp-db/src/postgres.ts"
+    ],
+    "tests": ["packages/mcp-db/test"],
+    "env": ["NIFRA_TEST_POSTGRES_URL"]
+  },
+  "web-keep-alive": {
+    "files": ["packages/web/src/keep-alive.ts"],
+    "tests": [
+      "packages/web/test/keep-alive.test.ts",
+      "packages/web/test/keep-alive-codegen.test.ts",
+      "packages/web/test/identity-epoch.test.ts",
+      "internal/invariants/test/visitor-stores.test.ts",
+      "internal/invariants/test/stored-responses.test.ts"
+    ]
+  },
+  "web-router": {
+    "files": ["packages/web/src/router.ts"],
+    "tests": [
+      "packages/web/test/router.test.ts",
+      "packages/web/test/router-intercept.test.ts",
+      "packages/web/test/router-origin.test.ts",
+      "packages/web/test/router-share.test.ts",
+      "packages/web/test/navigation.test.ts",
+      "packages/web/test/navigation-redirect.test.ts",
+      "internal/invariants/test/visitor-stores.test.ts"
+    ]
+  },
+  "web-visitor": {
+    "files": [
+      "packages/web/src/identity.ts",
+      "packages/web/src/internal/identity-epoch.ts",
+      "packages/web/src/internal/live-queries.ts",
+      "packages/web/src/internal/query-seam.ts",
+      "packages/web/src/query.ts"
+    ],
+    "tests": [
+      "packages/web/test/identity-epoch.test.ts",
+      "packages/web/test/identity-policy.test.ts",
+      "packages/web/test/keep-alive.test.ts",
+      "packages/web/test/query.test.ts",
+      "packages/web/test/query-live.test.ts",
+      "packages/web/test/without-query.test.ts",
+      "packages/web/test/store-signature.test.ts",
+      "internal/invariants/test/visitor-stores.test.ts",
+      "internal/invariants/test/stored-responses.test.ts"
+    ]
+  }
+}
