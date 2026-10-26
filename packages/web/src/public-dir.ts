@@ -54,6 +54,9 @@ export interface ServePublicDirOptions {
    * - patterns, for files a pre-build step hashed that no manifest lists:
    *   `[/^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/]`;
    * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`.
+   *
+   * A pattern in the array is used without a global or sticky flag. A predicate runs as written, so a
+   * RegExp it tests should carry neither: its `lastIndex` would skip every other match.
    */
   readonly hashedFiles?: HashedFiles
   readonly cache?: PublicDirCache
