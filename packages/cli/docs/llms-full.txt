@@ -11044,10 +11044,13 @@ with the one-day policy.
 
 -
 **Files hashed before the build.** The fonts `loadGoogleFont` writes into
-`public/fonts/` are in no manifest. `hashedFiles` also
-takes an array of patterns or a `(path) => boolean` predicate, matched on the
-encoded URL path; a predicate combines the manifest with a pattern, as below. A global or
-sticky pattern is used without its flag, so `lastIndex` never skips a match.
+`public/fonts/` are in no manifest, so the `public/` handler names
+them with an array of patterns, matched on the encoded URL path, as below. A handler that
+serves both the build and such files takes a `(path) => boolean` predicate
+instead: `(path) => assets.has(path) || HASHED_FONT.test(path)`. A global or
+sticky pattern in the array is used without that flag, so `lastIndex` never
+skips a match; a predicate runs as written, so keep the patterns it tests free of
+`g` and `y`.
 
 -
 **Where it runs.** Register the handlers with `app.onRequest` inside
@@ -11057,15 +11060,12 @@ sticky pattern is used without its flag, so `lastIndex` never skips a match.
 import { fileURLToPath } from "node:url"
 import { servePublicDir } from "@nifrajs/web"
 
-declare const build: { readonly assets: readonly string[] }
-
-// The build manifest's chunks plus the fonts loadGoogleFont wrote into public/fonts/.
-const assets = new Set(build.assets)
+// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.
 const HASHED_FONT = /^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/
 
-export const files = servePublicDir({
-  dir: fileURLToPath(new URL("./dist/", import.meta.url)),
-  hashedFiles: (path) => assets.has(path) || HASHED_FONT.test(path),
+export const publicFiles = servePublicDir({
+  dir: fileURLToPath(new URL("./public/", import.meta.url)),
+  hashedFiles: [HASHED_FONT],
 })
 ```
 

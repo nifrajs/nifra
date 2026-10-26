@@ -243,7 +243,7 @@
     "name": "HASHED_FONTS",
     "topic": "Nifra - Custom server (createWebApp)",
     "slug": "custom-server",
-    "code": "import { fileURLToPath } from \"node:url\"\nimport { servePublicDir } from \"@nifrajs/web\"\n\ndeclare const build: { readonly assets: readonly string[] }\n\n// The build manifest's chunks plus the fonts loadGoogleFont wrote into public/fonts/.\nconst assets = new Set(build.assets)\nconst HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/\n\nexport const files = servePublicDir({\n  dir: fileURLToPath(new URL(\"./dist/\", import.meta.url)),\n  hashedFiles: (path) => assets.has(path) || HASHED_FONT.test(path),\n})"
+    "code": "import { fileURLToPath } from \"node:url\"\nimport { servePublicDir } from \"@nifrajs/web\"\n\n// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.\nconst HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/\n\nexport const publicFiles = servePublicDir({\n  dir: fileURLToPath(new URL(\"./public/\", import.meta.url)),\n  hashedFiles: [HASHED_FONT],\n})"
   },
   {
     "name": "ACTION",
