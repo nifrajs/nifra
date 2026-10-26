@@ -343,8 +343,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // `identityChanged()` and on a new identity epoch cookie, read once per synchronous run because a
   // `document.cookie` read costs about 2.4 us in Chromium: 20,228 -> 20,519 B (Bun 1.4.4). Handles
   // and fetchers a page kept check the epoch on every read, and the page on screen reloads when the
-  // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4).
-  "nifra-web-client": 20.4,
+  // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4). A query
+  // fetch or fetcher load a visitor change catches loading again inside the call, a rotating epoch
+  // costing bounded loads, and `documentLoad` when a load over the previous visitor's page fails:
+  // 20,791 -> 21,162 B (Bun 1.4.4).
+  "nifra-web-client": 20.7,
   "nifra-i18n": 4.3,
 }
 
