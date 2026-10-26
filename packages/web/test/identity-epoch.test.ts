@@ -101,6 +101,40 @@ describe("the identity epoch hook", () => {
     ).toBe(`nifra-epoch=${held}; Path=/; SameSite=Lax; Expires=${expires}`)
   })
 
+  test("a cookie-mode session re-signed with the same data renews the epoch it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const signed = (data: string, expiresAt: number) =>
+      encodeURIComponent(`{"data":${data},"expiresAt":${expiresAt}}`) + `.sig${expiresAt}`
+    const renew = (data: string) =>
+      run([`nifra_session=${signed(data, 2000)}; Max-Age=600; HttpOnly; Secure`], {
+        cookie: `nifra_session=${signed('{"userId":"ada"}', 1000)}; __Host-nifra-epoch=${held}`,
+      })
+    expect(renew('{"userId":"ada"}')).toBe(
+      `__Host-nifra-epoch=${held}; Path=/; SameSite=Lax; Secure; Max-Age=600`,
+    )
+    for (const data of ['{"userId":"bob"}', "{}", '{"userId":"ada","cart":1}']) {
+      expect({ data, epoch: renew(data) }).toEqual({ data, epoch: expect.stringMatching(EPOCH) })
+      expect(renew(data)).not.toContain(held)
+    }
+  })
+
+  test("a changed value that is not a cookie-mode session rotates, whatever it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    for (const [before, after] of [
+      ['{"data":{},"expiresAt":1}', '{"data":{},"expiresAt":2}'],
+      ['{"data":{}}.a', '{"data":{}}.b'],
+      ['{"data":1,"expiresAt":1}.a', '{"data":1,"expiresAt":2}.b'],
+      ["{not json.a", "{not json.b"],
+      ["tok.a", "tok.b"],
+    ] as const) {
+      const epoch = run([`nifra_session=${encodeURIComponent(after)}; Max-Age=600; HttpOnly`], {
+        cookie: `nifra_session=${encodeURIComponent(before)}; __Host-nifra-epoch=${held}`,
+      })
+      expect({ before, epoch }).toEqual({ before, epoch: expect.stringMatching(EPOCH) })
+      expect(epoch).not.toContain(held)
+    }
+  })
+
   test("a renewal whose epoch is gone or not one nifra wrote sets a fresh one", () => {
     for (const cookie of ["nifra_session=abc.sig", "nifra_session=abc.sig; __Host-nifra-epoch=x"]) {
       const epoch = run(["nifra_session=abc.sig; Max-Age=600; HttpOnly; Secure"], { cookie })

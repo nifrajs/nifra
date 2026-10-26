@@ -12206,6 +12206,13 @@ session that expires while the visitor is away, is covered the same way: back co
 epoch before it shows a kept page. The page on screen reloads in place at the next render or
 navigation that reads the new epoch, and shows as it was, pending, until the reload lands.
 
+A response that renews the same visitor's session keeps the epoch: a session cookie re-sent
+with a new lifetime, or an `@nifrajs/auth` cookie-mode session re-signed with the
+same data. An Auth.js session read writes a new token every time, so each one rotates it. In
+`@nifrajs/auth`'s store mode the cookie carries only the session id, so sign in
+with `regenerate()` and sign out with `destroy()`: a sign-in that
+keeps the id changes nothing the server can see in the response.
+
 The session cookies of `@nifrajs/auth` and Auth.js count under their default
 names, and Better Auth's under any `cookiePrefix`. Name any other, such as one
 renamed through Better Auth's `advanced.cookies`, in

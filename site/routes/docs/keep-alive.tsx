@@ -308,6 +308,14 @@ export default function KeepAlive() {
         navigation that reads the new epoch, and shows as it was, pending, until the reload lands.
       </p>
       <p>
+        A response that renews the same visitor's session keeps the epoch: a session cookie re-sent
+        with a new lifetime, or an <code>@nifrajs/auth</code> cookie-mode session re-signed with the
+        same data. An Auth.js session read writes a new token every time, so each one rotates it. In{" "}
+        <code>@nifrajs/auth</code>'s store mode the cookie carries only the session id, so sign in
+        with <code>regenerate()</code> and sign out with <code>destroy()</code>: a sign-in that
+        keeps the id changes nothing the server can see in the response.
+      </p>
+      <p>
         The session cookies of <code>@nifrajs/auth</code> and Auth.js count under their default
         names, and Better Auth's under any <code>cookiePrefix</code>. Name any other, such as one
         renamed through Better Auth's <code>advanced.cookies</code>, in{" "}

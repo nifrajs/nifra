@@ -5,7 +5,8 @@
  * A header-only hook reads each response's `Set-Cookie`: when an identity cookie's value differs from
  * the request's, or the cookie is deleted, the response also sets a fresh epoch with the same lifetime,
  * so the epoch expires with an idle session. A rolling session re-sending the same value with a new
- * lifetime re-sends the epoch it holds with that lifetime, so the two keep expiring together.
+ * lifetime re-sends the epoch it holds with that lifetime, so the two keep expiring together. So does
+ * an `@nifrajs/auth` cookie-mode session re-signed with the same data and a later expiry.
  */
 import { type CookieOptions, parseCookies } from "@nifrajs/core/server"
 import { EPOCH_COOKIE, LOCAL_EPOCH_COOKIE } from "../identity.ts"
@@ -108,6 +109,31 @@ const parseSetCookies = (joined: string, now: number): SetCookie[] => {
   return cookies
 }
 
+// An `@nifrajs/auth` cookie-mode value is `{"data":...,"expiresAt":...}.<signature>`, and the server
+// knows nothing of its visitor beyond `data`: two values with the same data are the same visitor. The
+// request's value is unverified, so a forged one can only keep that browser's own pages.
+const sessionData = (value: string): string | undefined => {
+  const at = value.lastIndexOf(".")
+  if (value[0] !== "{" || at === -1) return undefined
+  let payload: unknown
+  try {
+    payload = JSON.parse(value.slice(0, at))
+  } catch {
+    return undefined
+  }
+  if (typeof payload !== "object" || payload === null) return undefined
+  if (!("data" in payload) || !("expiresAt" in payload)) return undefined
+  const { data, expiresAt } = payload
+  return typeof expiresAt === "number" && typeof data === "object" && data !== null
+    ? JSON.stringify(data)
+    : undefined
+}
+
+const sameData = (sent: string, set: string): boolean => {
+  const data = sessionData(set)
+  return data !== undefined && data === sessionData(sent)
+}
+
 const randomEpoch = (): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(16))
   let hex = ""
@@ -165,7 +191,8 @@ export function identityEpochHook(
       if (cookie.name === EPOCH_COOKIE || cookie.name === LOCAL_EPOCH_COOKIE) return
       const now = cookie.deleted ? "" : cookie.value
       const base = baseName(cookie.name)
-      if (now === (sent[cookie.name] ?? "")) {
+      const before = sent[cookie.name] ?? ""
+      if (now === before || (isIdentity(base) && sameData(before, now))) {
         if (
           renewed === undefined &&
           !cookie.deleted &&
