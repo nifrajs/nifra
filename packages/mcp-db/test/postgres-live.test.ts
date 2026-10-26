@@ -177,6 +177,10 @@ describe.skipIf(SKIP)(SUITE, () => {
         CREATE TABLE users (id serial PRIMARY KEY, email text, password_hash text, note text);
         CREATE TABLE secrets (id serial PRIMARY KEY, value text);
         CREATE TABLE child_secret (extra int) INHERITS (secrets);
+        -- Inheritance two levels down from an excluded table, and a chain beside it that hides nothing.
+        CREATE TABLE grand_secret (deeper int) INHERITS (child_secret);
+        CREATE TABLE base_open (x int);
+        CREATE TABLE kid_open (y int) INHERITS (base_open);
         CREATE VIEW secret_view AS SELECT * FROM secrets;
         CREATE VIEW order_summary AS SELECT status, count(*) AS n FROM orders GROUP BY status;
         CREATE TABLE audit (id int, at date NOT NULL) PARTITION BY RANGE (at);
@@ -636,7 +640,7 @@ describe.skipIf(SKIP)(SUITE, () => {
     ]) {
       expect(message).toContain(hidden)
     }
-    expect(message).toContain(", and 4 more;")
+    expect(message).toContain(", and 5 more;")
     expect(code(await explainPostgres(reader, "SELECT 1", MASKED))).toBe("NIFRA_DB_ROLE_GRANTS")
     // Without masking or exclusions the same role passes: nothing is hidden from it.
     expect(
@@ -879,15 +883,18 @@ describe.skipIf(SKIP)(SUITE, () => {
     if (isDbRefusal(schema)) throw new Error(schema.message)
     const names = schema.tables.map((table) => table.name)
     expect(names).toEqual([
+      "base_open",
       "folded_view",
       "hash_copy",
       "hash_lookup",
+      "kid_open",
       "order_summary",
       "orders",
       "users",
     ])
-    // secrets and audit by name; child_secret inherits secrets; secret_view and secret_copy read it.
-    expect(schema.excludedCount).toBe(5)
+    // secrets and audit by name; child_secret and grand_secret inherit secrets; secret_view and
+    // secret_copy read it.
+    expect(schema.excludedCount).toBe(6)
     const orders = schema.tables.find((table) => table.name === "orders")
     expect(orders?.columns[0]).toMatchObject({ name: "id", type: "bigint", primaryKey: true })
     expect(orders?.indexes.map((index) => index.name).sort()).toEqual([
@@ -912,8 +919,10 @@ describe.skipIf(SKIP)(SUITE, () => {
     })
     if (isDbRefusal(granted)) throw new Error(granted.message)
     expect(granted.tables.map((table) => table.name)).toEqual([
+      "base_open",
       "folded_view",
       "hash_lookup",
+      "kid_open",
       "order_summary",
       "orders",
       "users",
@@ -939,6 +948,7 @@ describe.skipIf(SKIP)(SUITE, () => {
       `REVOKE SELECT ON TABLE "public"."audit" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."audit_2026" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."child_secret" FROM "${ROLE.generated}";`,
+      `REVOKE SELECT ON TABLE "public"."grand_secret" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."secret_copy" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."secret_view" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."secrets" FROM "${ROLE.generated}";`,
@@ -973,6 +983,7 @@ describe.skipIf(SKIP)(SUITE, () => {
       "SELECT * FROM secrets",
       "SELECT * FROM audit_2026",
       "SELECT * FROM child_secret",
+      "SELECT * FROM grand_secret",
       "SELECT * FROM secret_view",
       "SELECT * FROM secret_copy",
     ]) {
