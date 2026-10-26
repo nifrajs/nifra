@@ -494,6 +494,34 @@ describe("a Date in the payload", () => {
     expect(reports).toEqual([])
   })
 
+  test("each mode writes a Date once, beyond what a c.json reply already wrote", async () => {
+    let date = AT
+    const sentRow = () => ({ id: "a", createdAt: stamp(date) })
+    for (const mode of ["warn", "enforce"] as const) {
+      const app = server({ logger: silentLogger })
+        .use(responseContract(mode))
+        .get("/row", { response: ROW }, sentRow)
+        .get("/status", { response: ROW }, () => status(201, sentRow()))
+        .get("/reply", { response: ROW }, (c) => c.json(sentRow()))
+      for (const [path, expected] of [
+        ["/row", 1],
+        ["/status", 1],
+        ["/reply", 2],
+      ] as const) {
+        let writes = 0
+        date = new Date(AT)
+        // `Date.prototype.toJSON` writes through `toISOString`.
+        date.toISOString = () => {
+          writes++
+          return ISO
+        }
+        const res = await app.fetch(new Request(`http://t${path}`))
+        expect(await res.json()).toEqual(SENT_ROW)
+        expect({ mode, path, writes }).toEqual({ mode, path, writes: expected })
+      }
+    }
+  })
+
   test("strip drops an undeclared field beside a Date, and names it", async () => {
     const reports: ResponseContractReport[] = []
     const app = server({ logger: silentLogger })

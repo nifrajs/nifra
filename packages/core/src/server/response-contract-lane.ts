@@ -690,9 +690,14 @@ function validateContract(
   const settled: StandardResult<unknown> | Promise<StandardResult<unknown>> =
     typeof wire === "function" ? wire(sent) : schema["~standard"].validate(sent)
   // When hooks wrote the payload, `warn` sends what they wrote here rather than calling them again,
-  // so a hook that answers differently on a second call cannot send what was not judged. A `Date`'s
-  // own hook always answers the same, so a payload only they wrote is sent as it came.
-  const shown = mode === "warn" && hooks === OTHER_HOOK ? replace(before) : served
+  // so a hook that answers differently on a second call cannot send what was not judged. A payload
+  // only `Date`s wrote is sent as written too, so the serializer does not write each one again; a
+  // `c.json` reply (the only `Response` here) is already bytes and goes out as it came.
+  const shown =
+    mode === "warn" &&
+    (hooks === OTHER_HOOK || (hooks === DATE_HOOK && !(served instanceof Response)))
+      ? replace(before)
+      : served
   return settled instanceof Promise
     ? settled.then((r) => interpret(r, before, shown, mode, replace, policy.report))
     : interpret(settled, before, shown, mode, replace, policy.report)

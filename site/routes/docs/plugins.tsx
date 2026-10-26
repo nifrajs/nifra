@@ -455,7 +455,9 @@ export default function Plugins() {
         parent&apos;s request. Where your own code rebuilds a request - a wrapper in front of the app,
         an <code>onRequest</code> hook returning a new one - call{" "}
         <code>carryRequestLocals(from, to)</code> right after <code>new Request(url, req)</code>; a
-        copy made without it starts empty. Values are held weakly and never cross requests.
+        copy made without it starts empty. Values are held weakly and never cross requests. Make
+        slots at startup, as below: copies are linked only once a first slot exists, so a request
+        copied before then starts empty.
       </p>
       <CodeBlock code={REQUEST_LOCALS} />
 

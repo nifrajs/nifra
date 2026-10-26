@@ -43,9 +43,10 @@ function anchorOf(links: Links, request: Request): Request {
   return anchor
 }
 
-/** `to` was just built from `from`, with nothing set on it: it joins `from`'s scope. */
+/** `to` was just built from `from`, with nothing set on it: it joins `from`'s scope. Until a first
+ * slot makes the table there is no scope to join, and a copy records nothing. */
 export function carryToCopy(from: Request, to: Request): void {
-  linksOf().set(to, from)
+  shared[LINKS]?.set(to, from)
 }
 
 /**
@@ -55,7 +56,8 @@ export function carryToCopy(from: Request, to: Request): void {
  * kept where `from` has none.
  */
 export function carryRequestLocals(from: Request, to: Request): void {
-  const links = linksOf()
+  const links = shared[LINKS]
+  if (links === undefined) return
   const target = anchorOf(links, from)
   const joining = anchorOf(links, to)
   if (target === joining) return
@@ -81,7 +83,9 @@ function valuesOf(request: Request, create: boolean): Values | undefined {
  * A slot for one per-request value - a verified client IP, a request id, an auth decision - that
  * survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP,
  * target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any
- * other way starts empty. Values are held weakly and never cross requests.
+ * other way starts empty. Values are held weakly and never cross requests. Make slots at startup, as
+ * below: copies are linked only once a first slot exists, so a request copied before then starts
+ * empty.
  *
  * ```ts
  * const clientIp = requestLocal<string>()
@@ -91,6 +95,7 @@ function valuesOf(request: Request, create: boolean): Values | undefined {
  * ```
  */
 export function requestLocal<T>(): RequestLocal<T> {
+  linksOf()
   const key = {}
   return {
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only `set` below writes `key`, and only a T.

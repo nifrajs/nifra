@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { carryToCopy } from "../src/server/request-local.ts"
 import {
   carryRequestLocals,
   requestLocal,
@@ -137,6 +138,27 @@ describe("requestLocal", () => {
     const req = new Request("http://x/")
     first.set(req, 1)
     expect([first.get(req), second.get(req), second.has(req)]).toEqual([1, undefined, false])
+  })
+
+  test("a copy records nothing until a first slot makes the table", () => {
+    const LINKS = Symbol.for("nifra.requestLocals")
+    const saved = Object.getOwnPropertyDescriptor(globalThis, LINKS)
+    Reflect.deleteProperty(globalThis, LINKS)
+    try {
+      const from = new Request("http://x/")
+      carryToCopy(from, new Request("http://x/a", from))
+      carryRequestLocals(from, new Request("http://x/b", from))
+      expect(Reflect.get(globalThis, LINKS)).toBeUndefined()
+      const id = requestLocal<string>()
+      expect(Reflect.get(globalThis, LINKS)).toBeInstanceOf(WeakMap)
+      const copy = new Request("http://x/c", from)
+      carryToCopy(from, copy)
+      id.set(copy, "v")
+      expect(id.get(from)).toBe("v")
+    } finally {
+      if (saved === undefined) Reflect.deleteProperty(globalThis, LINKS)
+      else Object.defineProperty(globalThis, LINKS, saved)
+    }
   })
 
   test("concurrent requests through a mount never read each other's values", async () => {

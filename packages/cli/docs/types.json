@@ -23379,14 +23379,14 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function requestLocal<T>(): RequestLocal<T>;",
-    "doc": "/**\n * A slot for one per-request value - a verified client IP, a request id, an auth decision - that\n * survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP,\n * target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any\n * other way starts empty. Values are held weakly and never cross requests.\n *\n * ```ts\n * const clientIp = requestLocal<string>()\n * app.onRequest((req, platform) => { clientIp.set(req, platform?.clientIp ?? \"\") })\n * // ... in a mounted child app, after the prefix strip:\n * clientIp.get(c.req)\n * ```\n */"
+    "doc": "/**\n * A slot for one per-request value - a verified client IP, a request id, an auth decision - that\n * survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP,\n * target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any\n * other way starts empty. Values are held weakly and never cross requests. Make slots at startup, as\n * below: copies are linked only once a first slot exists, so a request copied before then starts\n * empty.\n *\n * ```ts\n * const clientIp = requestLocal<string>()\n * app.onRequest((req, platform) => { clientIp.set(req, platform?.clientIp ?? \"\") })\n * // ... in a mounted child app, after the prefix strip:\n * clientIp.get(c.req)\n * ```\n */"
   },
   {
     "name": "requestLocal",
     "kind": "function",
     "package": "nifra",
     "signature": "export declare function requestLocal<T>(): RequestLocal<T>;",
-    "doc": "/**\n * A slot for one per-request value - a verified client IP, a request id, an auth decision - that\n * survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP,\n * target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any\n * other way starts empty. Values are held weakly and never cross requests.\n *\n * ```ts\n * const clientIp = requestLocal<string>()\n * app.onRequest((req, platform) => { clientIp.set(req, platform?.clientIp ?? \"\") })\n * // ... in a mounted child app, after the prefix strip:\n * clientIp.get(c.req)\n * ```\n */"
+    "doc": "/**\n * A slot for one per-request value - a verified client IP, a request id, an auth decision - that\n * survives the request copies nifra makes (a mount's prefix strip, a WebSocket pass reused for HTTP,\n * target resolution) and the ones a wrapper makes with {@link carryRequestLocals}. A copy made any\n * other way starts empty. Values are held weakly and never cross requests. Make slots at startup, as\n * below: copies are linked only once a first slot exists, so a request copied before then starts\n * empty.\n *\n * ```ts\n * const clientIp = requestLocal<string>()\n * app.onRequest((req, platform) => { clientIp.set(req, platform?.clientIp ?? \"\") })\n * // ... in a mounted child app, after the prefix strip:\n * clientIp.get(c.req)\n * ```\n */"
   },
   {
     "name": "requireAuthUser",

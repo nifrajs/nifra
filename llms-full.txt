@@ -3598,7 +3598,9 @@ value set before a mount is read in the child, and one the child sets is read th
 parent's request. Where your own code rebuilds a request - a wrapper in front of the app,
 an `onRequest` hook returning a new one - call
 `carryRequestLocals(from, to)` right after `new Request(url, req)`; a
-copy made without it starts empty. Values are held weakly and never cross requests.
+copy made without it starts empty. Values are held weakly and never cross requests. Make
+slots at startup, as below: copies are linked only once a first slot exists, so a request
+copied before then starts empty.
 
 ```ts
 import { carryRequestLocals, requestLocal, server } from "@nifrajs/core/server"
