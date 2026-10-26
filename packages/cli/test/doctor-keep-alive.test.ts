@@ -188,7 +188,10 @@ test("an auth library a wrapper declares counts only once it is installed", asyn
   }
 })
 
-test("a wrapper outside the app's tree that renames the session cookie keeps the warning", async () => {
+test.each([
+  "ts",
+  "js",
+])("a wrapper outside the app's tree that renames the session cookie in .%s keeps the warning", async (ext) => {
   const workspace = mkdtempSync(join(tmpdir(), "nifra-keep-alive-doctor-"))
   roots.push(workspace)
   const root = join(workspace, "apps/web")
@@ -209,16 +212,16 @@ test("a wrapper outside the app's tree that renames the session cookie keeps the
 
   writeAppFile(
     workspace,
-    "packages/session/src/auth.ts",
+    `packages/session/src/auth.${ext}`,
     'betterAuth({ advanced: { cookies: { session_token: { name: "sid" } } } })\n',
   )
   const result = await collectDoctorResult(root)
   expect(result.keepAliveIdentity).toEqual({
     routes: ["routes/list.tsx"],
-    renamedIn: "../../packages/session/src/auth.ts",
+    renamedIn: `../../packages/session/src/auth.${ext}`,
   })
   expect(result.keepAliveIdentityCovered).toBeUndefined()
   expect(doctorReport(result).join("\n")).toContain(
-    "../../packages/session/src/auth.ts renames the session cookie",
+    `../../packages/session/src/auth.${ext} renames the session cookie`,
   )
 })

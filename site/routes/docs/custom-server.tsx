@@ -165,7 +165,8 @@ export default function CustomServer() {
           <code>public/fonts/</code> are in no manifest, so the <code>public/</code> handler names
           them with an array of patterns, matched on the encoded URL path, as below. A handler that
           serves both the build and such files takes a <code>(path) =&gt; boolean</code> predicate
-          instead: <code>(path) =&gt; assets.has(path) || HASHED_FONT.test(path)</code>. A global or
+          instead, with <code>assets</code> as <code>new Set(build.assets)</code>:{" "}
+          <code>(path) =&gt; assets.has(path) || HASHED_FONT.test(path)</code>. A global or
           sticky pattern in the array is used without that flag, so <code>lastIndex</code> never
           skips a match; a predicate runs as written, so keep the patterns it tests free of{" "}
           <code>g</code> and <code>y</code>.

@@ -3489,6 +3489,8 @@ export async function walkSource(
      * files in a zone. A `.svelte`/`.vue` file is visited as {@link componentScripts}.
      */
     readonly scripts?: boolean
+    /** With `scripts`, every `.js` file too: in a library package, plain `.js` is its code, not tooling. */
+    readonly library?: boolean
   } = {},
 ): Promise<void> {
   const skip = opts.includeTests === true ? IGNORED_DIR : IGNORED
@@ -3503,7 +3505,13 @@ export async function walkSource(
     // A backslash is a filename character on POSIX; only Windows separators need normalizing.
     const rel = sep === "\\" ? normalizeProjectPath(rawRel) : rawRel
     // A `.js` file outside a zone is tooling (a bundler config, a script, a vendored asset), not app code.
-    if (PLAIN_SCRIPT_FILE.test(rel) && !ZONE_DIRECTORY.test(rel) && !ZONE_SUFFIX.test(rel)) continue
+    if (
+      opts.library !== true &&
+      PLAIN_SCRIPT_FILE.test(rel) &&
+      !ZONE_DIRECTORY.test(rel) &&
+      !ZONE_SUFFIX.test(rel)
+    )
+      continue
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)

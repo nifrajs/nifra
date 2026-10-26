@@ -963,11 +963,15 @@ async function renamedInSources(
   for (const dir of dirs) {
     if (dir.startsWith(root + sep) || dir.split(sep).includes("node_modules")) continue
     let found: string | undefined
-    await walkSource(dir, (rel, content) => {
-      if (found === undefined && RENAMED_SESSION.test(content)) {
-        found = displayPath(root, join(dir, rel))
-      }
-    })
+    await walkSource(
+      dir,
+      (rel, content) => {
+        if (found === undefined && RENAMED_SESSION.test(content)) {
+          found = displayPath(root, join(dir, rel))
+        }
+      },
+      { scripts: true, library: true },
+    )
     if (found !== undefined) return found
   }
   return undefined

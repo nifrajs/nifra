@@ -11047,7 +11047,8 @@ with the one-day policy.
 `public/fonts/` are in no manifest, so the `public/` handler names
 them with an array of patterns, matched on the encoded URL path, as below. A handler that
 serves both the build and such files takes a `(path) => boolean` predicate
-instead: `(path) => assets.has(path) || HASHED_FONT.test(path)`. A global or
+instead, with `assets` as `new Set(build.assets)`:
+`(path) => assets.has(path) || HASHED_FONT.test(path)`. A global or
 sticky pattern in the array is used without that flag, so `lastIndex` never
 skips a match; a predicate runs as written, so keep the patterns it tests free of
 `g` and `y`.
