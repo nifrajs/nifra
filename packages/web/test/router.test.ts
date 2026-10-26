@@ -1152,7 +1152,7 @@ describe("createClientRouter", () => {
     }
     const IDLE = { pending: false, data: undefined }
 
-    test("identityChanged() returns every fetcher to idle and tells it, and drops a load in flight", async () => {
+    test("identityChanged() returns every fetcher to idle and tells it, and a load in flight loads again", async () => {
       const state = { whoami: "alice", version: 0 }
       let release = (): void => {}
       const held = new Promise<void>((resolve) => {
@@ -1175,11 +1175,15 @@ describe("createClientRouter", () => {
         told++
       })
       const loading = r.fetcher("late").load("/users/8")
+      state.whoami = "bob"
       identityChanged()
       expect([r.fetcher("cart").snapshot(), told]).toEqual([IDLE, 1])
       release()
       await loading
-      expect(r.fetcher("late").snapshot()).toEqual(IDLE)
+      expect(r.fetcher("late").snapshot()).toEqual({
+        pending: false,
+        data: { id: "8", whoami: "bob", version: 0 },
+      })
     })
 
     test("a new identity epoch returns fetchers to idle on the next read, and tells them after it", async () => {
