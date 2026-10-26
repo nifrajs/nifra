@@ -8159,7 +8159,7 @@
     "name": "KeepAliveMount",
     "kind": "interface",
     "package": "@nifrajs/web-svelte",
-    "signature": "export interface KeepAliveMount extends KeptMount {\n    readonly propsOf: (state: RouterState) => RenderProps;\n}",
+    "signature": "export interface KeepAliveMount {\n    readonly tree: (state: RouterState, previous: readonly SlotNode[] | undefined) => readonly SlotNode[];\n    readonly propsOf: (state: RouterState) => RenderProps;\n    readonly chainOf: (state: RouterState) => readonly unknown[];\n    readonly entry: (key: string) => (element: Element | null) => void;\n    readonly page: (key: string) => (element: Element | null) => void;\n    readonly after: (tree: readonly SlotNode[]) => void;\n}",
     "doc": "/** What `KeepAlive.svelte` and `Slot.svelte` render with: one per mount, on the server or the client. */"
   },
   {

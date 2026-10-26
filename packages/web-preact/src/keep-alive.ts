@@ -188,7 +188,9 @@ export function mountRouter(options: KeepAliveMountOptions): void {
     previous.current = tree
     const nodes = useMemo(() => slotChildren(tree), [tree])
     // After every slot below has committed: park what this render hid, restore what it showed again.
-    useLayoutEffect(() => mount.after(tree), [tree])
+    useLayoutEffect(() => {
+      mount.after(tree)
+    }, [tree])
     return withRouteContext(
       mount.propsOf(state),
       h(

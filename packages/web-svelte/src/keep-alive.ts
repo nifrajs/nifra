@@ -7,9 +7,9 @@
  * (from `@nifrajs/web-svelte/router`, re-exported here) let a page pause its timers meanwhile.
  */
 import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
-import { type KeptMount, keptMount, propsByState } from "@nifrajs/web/internal/keep-alive-mount"
+import { keptMount, propsByState } from "@nifrajs/web/internal/keep-alive-mount"
 import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
-import type { KeepAliveRouter, KeepAliveTable } from "@nifrajs/web/keep-alive"
+import type { KeepAliveRouter, KeepAliveTable, SlotNode } from "@nifrajs/web/keep-alive"
 import { hydrate as svelteHydrate } from "svelte"
 import { setMountedRouter } from "./fetcher.ts"
 import KeepAlive from "./KeepAlive.svelte"
@@ -24,8 +24,16 @@ export interface KeepAliveMountOptions extends MountRouterOptions {
 }
 
 /** What `KeepAlive.svelte` and `Slot.svelte` render with: one per mount, on the server or the client. */
-export interface KeepAliveMount extends KeptMount {
+export interface KeepAliveMount {
+  readonly tree: (
+    state: RouterState,
+    previous: readonly SlotNode[] | undefined,
+  ) => readonly SlotNode[]
   readonly propsOf: (state: RouterState) => RenderProps
+  readonly chainOf: (state: RouterState) => readonly unknown[]
+  readonly entry: (key: string) => (element: Element | null) => void
+  readonly page: (key: string) => (element: Element | null) => void
+  readonly after: (tree: readonly SlotNode[]) => void
 }
 
 /**
