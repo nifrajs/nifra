@@ -545,7 +545,8 @@ nifra migrate --from tailwind --to stylex --dir src`}
         install to run first instead. With <code>--write</code> it also saves the hook report from
         before the edits and, once the target is installed, prints how hook scope changed across the
         upgrade (<code>--no-hooks</code> skips that); before then,{" "}
-        <code>nifra routes --hooks --since</code> compares after the install. Run from a CLI whose{" "}
+        <code>nifra routes --hooks --since .nifra/hooks-before-upgrade.json</code> compares after the
+        install. Run from a CLI whose{" "}
         <code>@nifrajs/core</code> is not the project&apos;s - <code>bunx @nifrajs/cli@&lt;new&gt;
         upgrade</code> before the new release is installed - it takes no hook report, since that
         copy cannot reflect the project&apos;s app, and says so in one line.{" "}

@@ -3615,10 +3615,12 @@ export const app = server()
   // The child sees a copy of the request with /billing stripped, and reads the same value.
   .mount({ path: "/billing", app: billing, stripPrefix: true })
 
-// A wrapper that rebuilds the request carries the values itself.
+// A wrapper that rebuilds the request carries the values itself. It keeps the host, which the
+// same-origin check on a form POST compares with the browser's Origin.
 export const fetch = (req: Request): Response | Promise<Response> => {
   const url = new URL(req.url)
-  url.host = "app.internal"
+  if (!url.pathname.startsWith("/v1/")) return app.fetch(req)
+  url.pathname = url.pathname.slice("/v1".length)
   const rebuilt = new Request(url.href, req)
   carryRequestLocals(req, rebuilt)
   return app.fetch(rebuilt)
@@ -7693,7 +7695,8 @@ pins are installed it would judge the release you are leaving, and the command p
 install to run first instead. With `--write` it also saves the hook report from
 before the edits and, once the target is installed, prints how hook scope changed across the
 upgrade (`--no-hooks` skips that); before then,
-`nifra routes --hooks --since` compares after the install. Run from a CLI whose
+`nifra routes --hooks --since .nifra/hooks-before-upgrade.json` compares after the
+install. Run from a CLI whose
 `@nifrajs/core` is not the project's - `bunx @nifrajs/cli@<new>
         upgrade` before the new release is installed - it takes no hook report, since that
 copy cannot reflect the project's app, and says so in one line.
