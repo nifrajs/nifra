@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  lazyClientAdapter,
   mountOutlet,
   type OutletFramework,
   type OutletProps,
@@ -7,6 +8,7 @@ import {
 } from "../src/internal/component-outlet.ts"
 import {
   type ComponentClientAdapter,
+  type ComponentClientRoot,
   ComponentController,
   type ComponentState,
 } from "../src/server-components/client.ts"
@@ -168,5 +170,64 @@ describe("mountOutlet", () => {
     mounted?.teardown()
     expect(made).toBe(1)
     expect(errors).toEqual(["component_failed"])
+  })
+})
+
+describe("lazyClientAdapter", () => {
+  const record = state.records[0]!
+  const current = () => true
+  const root: ComponentClientRoot = { update: () => {}, dispose: () => {} }
+
+  test("loads the adapter on its first call, once, and forwards every call with its arguments", async () => {
+    let loads = 0
+    const seen: unknown[] = []
+    const lazy = lazyClientAdapter("vue", async () => {
+      loads++
+      return {
+        name: "vue",
+        prepare: (...args) => {
+          seen.push(["prepare", ...args])
+          return "prepared"
+        },
+        hydrate: (...args) => {
+          seen.push(["hydrate", ...args])
+          return root
+        },
+        create: (...args) => {
+          seen.push(["create", ...args])
+          return root
+        },
+        update: (...args) => {
+          seen.push(["update", ...args])
+        },
+      }
+    })
+    expect(lazy.name).toBe("vue")
+    expect(loads).toBe(0)
+    expect(await lazy.prepare(record, current, host)).toBe("prepared")
+    expect(await lazy.hydrate(host, record, "prepared", current)).toBe(root)
+    expect(await lazy.create?.(host, record, "prepared", current)).toBe(root)
+    await lazy.update(root, record, "prepared", current)
+    expect(loads).toBe(1)
+    expect(seen).toEqual([
+      ["prepare", record, current, host],
+      ["hydrate", host, record, "prepared", current],
+      ["create", host, record, "prepared", current],
+      ["update", root, record, "prepared", current],
+    ])
+  })
+
+  test("refuses create when the adapter has none, and tries a load that threw again", async () => {
+    let loads = 0
+    const lazy = lazyClientAdapter("vue", () => {
+      loads++
+      if (loads === 1) throw new Error("component_contract")
+      return Promise.resolve(rejecting())
+    })
+    await expect(lazy.prepare(record, current)).rejects.toThrow("component_contract")
+    await expect(lazy.create?.(host, record, undefined, current)).rejects.toThrow(
+      "component_contract",
+    )
+    expect(loads).toBe(2)
   })
 })

@@ -1,4 +1,5 @@
 import {
+  lazyClientAdapter,
   type MountedOutlet,
   mountOutlet,
   type OutletFramework,
@@ -15,27 +16,15 @@ import {
 import { createElement, useLayoutEffect, useRef } from "react"
 
 declare const __NIFRA_COMPONENT_BROWSER__: boolean
-function lazyClient(): ComponentClientAdapter {
-  let pending: Promise<ComponentClientAdapter> | undefined
-  const client = () => {
-    if (typeof __NIFRA_COMPONENT_BROWSER__ === "boolean" && !__NIFRA_COMPONENT_BROWSER__)
-      throw new Error("component_contract")
-    pending ??= import("./client.ts").then((module) => module.reactComponentClient())
-    return pending
-  }
-  return {
-    name: "react",
-    prepare: async (...args) => (await client()).prepare(...args),
-    hydrate: async (...args) => (await client()).hydrate(...args),
-    create: async (...args) => {
-      const create = (await client()).create
-      if (create === undefined) throw new Error("component_contract")
-      return create(...args)
-    },
-    update: async (...args) => (await client()).update(...args),
-  }
+const REACT_OUTLET: OutletFramework = {
+  clientAdapter: () =>
+    lazyClientAdapter("react", () => {
+      if (typeof __NIFRA_COMPONENT_BROWSER__ === "boolean" && !__NIFRA_COMPONENT_BROWSER__)
+        throw new Error("component_contract")
+      return import("./client.ts").then((module) => module.reactComponentClient())
+    }),
+  hidingCleansUp: true,
 }
-const REACT_OUTLET: OutletFramework = { clientAdapter: lazyClient, hidingCleansUp: true }
 
 export interface ServerComponentProps<Input, Props, View> {
   readonly state: ComponentState

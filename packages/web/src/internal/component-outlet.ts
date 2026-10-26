@@ -37,6 +37,29 @@ export interface MountedOutlet {
   readonly teardown: () => void
 }
 
+/**
+ * An adapter that loads the real one on its first call, so a page whose outlets never mount does not
+ * download its framework's component client. A load that throws is tried again on the next call.
+ */
+export function lazyClientAdapter(
+  name: ComponentClientAdapter["name"],
+  load: () => Promise<ComponentClientAdapter>,
+): ComponentClientAdapter {
+  let pending: Promise<ComponentClientAdapter> | undefined
+  const client = () => (pending ??= load())
+  return {
+    name,
+    prepare: async (...args) => (await client()).prepare(...args),
+    hydrate: async (...args) => (await client()).hydrate(...args),
+    create: async (...args) => {
+      const create = (await client()).create
+      if (create === undefined) throw new Error("component_contract")
+      return create(...args)
+    },
+    update: async (...args) => (await client()).update(...args),
+  }
+}
+
 /** The host's HTML, set once: the record's server-rendered range. */
 export function outletHtml(record: ComponentRecord): { readonly __html: string } {
   return {
