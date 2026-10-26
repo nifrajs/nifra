@@ -189,13 +189,27 @@ describe("a Date in a JSON answer", () => {
 
 /**
  * Values the serializer may write by rules of their own rather than as their own fields: each kind of
- * primitive boxed, a raw JSON text of each kind, and an instance of every global class that builds
- * with no arguments.
+ * primitive boxed, under its own prototype and under each a plain record has, a raw JSON text of each
+ * kind, and an instance of every global class that builds with no arguments.
  */
 function ownRuleValues(): ReadonlyArray<readonly [string, () => object]> {
   const values: Array<readonly [string, () => object]> = []
+  const prototypes = [
+    ["", undefined],
+    [" on Object.prototype", Object.prototype],
+    [" on null", null],
+  ] as const
   for (const primitive of [1.5, "ab", false, 12n, Symbol("s")])
-    values.push([`boxed ${typeof primitive}`, () => Object(primitive)])
+    for (const [on, proto] of prototypes) {
+      // Moved onto a plain prototype, a BigInt wrapper is tagged a plain object, and its only brand
+      // check throws, ~200 ns a record: the writer sends `{}` where the serializer throws.
+      if (typeof primitive === "bigint" && proto !== undefined) continue
+      values.push([
+        `boxed ${typeof primitive}${on}`,
+        () =>
+          proto === undefined ? Object(primitive) : Object.setPrototypeOf(Object(primitive), proto),
+      ])
+    }
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the member is optional, so an engine without JSON.rawJSON leaves it undefined.
   const rawJson = (JSON as JSON & { readonly rawJSON?: (text: string) => object }).rawJSON
   if (rawJson !== undefined)

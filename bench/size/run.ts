@@ -294,11 +294,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The Date writer on top of the request-locals, response-contract and t.date() work: bare 39,025 B,
   // idempotency 43,785, effect-ledger 41,026, sse 39,892, mcp 39,297, valibot 40,018, typebox-t
   // 67,811, typebox-form 72,778 (Bun 1.4.4); each cap takes the next 0.1 KiB step.
-  // That writer copying only plain records and lists, and sharing its Date, `__proto__` and plain-record
-  // helpers with the contract lane and canonical JSON: bare 39,025 -> 39,093 B, idempotency 43,785 ->
-  // 43,844, effect-ledger 41,026 -> 41,129, sse 39,892 -> 39,967, mcp 39,297 -> 39,372, valibot 40,018
-  // -> 40,095, typebox-t 67,811 -> 67,893, typebox-form 72,778 -> 72,834 (Bun 1.4.4); each cap crossed
-  // takes the next 0.1 KiB step.
+  // That writer copying only what the engine tags a plain object, and lists, and sharing its Date,
+  // `__proto__` and plain-record helpers with the contract lane and canonical JSON: bare 39,025 -> 39,096
+  // B, idempotency 43,785 -> 43,853, effect-ledger 41,026 -> 41,133, sse 39,892 -> 39,970, mcp 39,297 ->
+  // 39,373, valibot 40,018 -> 40,098, typebox-t 67,811 -> 67,895, typebox-form 72,778 -> 72,836 (Bun
+  // 1.4.4); each cap crossed takes the next 0.1 KiB step.
   "nifra-bare": 38.2,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -363,7 +363,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // there read once: 21,218 B (Bun 1.4.4). A query fetch or fetcher load a visitor change catches loading
   // again inside the call, a rotating epoch costing bounded loads, and `documentLoad` when a load over the
   // previous visitor's page fails: 21,218 -> 21,579 B (Bun 1.4.4). That codec's Date copy taking only
-  // plain records and lists: 21,579 -> 21,664 B (Bun 1.4.4).
+  // what the engine tags a plain object, and lists: 21,579 -> 21,668 B (Bun 1.4.4).
   "nifra-web-client": 21.2,
   "nifra-i18n": 4.3,
 }

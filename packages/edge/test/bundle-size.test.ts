@@ -15,9 +15,9 @@ import { fileURLToPath } from "node:url"
  * once a route that sets a header, cookie or status with no response hook skips the resident-body
  * record; 10,414 B (from 10,028) once a plain `Date` in a JSON answer is written ahead of the
  * serializer, as on core (V8's serializer also slows at a `Date`: Deno -22% instructions on 50 Date
- * rows); 10,569 B (from 10,489) once that writer copies only plain records and lists. The ceiling
- * has headroom for honest growth; a jump past it means something big got pulled in - investigate,
- * don't just bump the number.
+ * rows); 10,566 B (from 10,489) once that writer copies only what the engine tags a plain object,
+ * and lists. The ceiling has headroom for honest growth; a jump past it means something big got
+ * pulled in - investigate, don't just bump the number.
  */
 const CEILING_GZIP_BYTES = 10_600
 

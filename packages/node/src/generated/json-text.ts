@@ -74,13 +74,16 @@ export const isRawJson = (JSON as JSON & { readonly isRawJSON?: (value: unknown)
 export const isPlainPrototype = (proto: unknown): boolean =>
   proto === null || proto === Object.prototype || Object.getPrototypeOf(proto) === null
 
+const objectTag: (this: unknown) => string = Object.prototype.toString
+
 /**
- * Whether a non-list `value` with prototype `proto` is a plain record, which JSON writes as its own
- * fields and so as a copy of them. Anything else may be written by rules of its own: a boxed primitive
- * as its primitive, a `JSON.rawJSON` value as its text.
+ * Whether JSON writes `value`, an object with prototype `proto` that is not a list, as its own fields,
+ * and so as a copy of them: the engine tags it a plain object, as it does a class instance, and it is
+ * not raw JSON. A boxed primitive is tagged by the value it holds, whatever its prototype, and JSON
+ * writes that value instead.
  */
 const isPlainRecord = (value: object, proto: unknown): boolean =>
-  isPlainPrototype(proto) && (proto !== null || isRawJson?.(value) !== true)
+  objectTag.call(value) === "[object Object]" && (proto !== null || isRawJson?.(value) !== true)
 
 /**
  * Whether a plain `Date` sits on `value`'s first path: a plain record's fields, a plain list's first
