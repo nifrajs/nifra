@@ -9,7 +9,7 @@ import {
   commentBlockHasMarker,
   MISSING_EXPECTATION_REASON,
 } from "./comment-markers.ts"
-import type { CheckRule, SourceIndex } from "./index.ts"
+import type { CheckRule, RuleContext, SourceIndex } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
 /**
@@ -156,6 +156,41 @@ function isPresenceComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): b
     if (ts.isPrefixUnaryExpression(side) && ts.isNumericLiteral(side.operand)) return true
   }
   return false
+}
+
+/** A source file a scan reads: its path, tree and lines. */
+interface ScannedFile {
+  readonly file: string
+  readonly tree: TSApi.SourceFile
+  readonly lines: readonly string[]
+}
+
+/**
+ * Runs `onNode` on every node of every parsed source file, children included, or reports that the scan
+ * could not run because TypeScript is missing.
+ */
+async function scanNodes(
+  ctx: RuleContext,
+  code: string,
+  title: string,
+  onNode: (ts: typeof TSApi, node: TSApi.Node, source: ScannedFile, findings: Diagnostic[]) => void,
+): Promise<readonly Diagnostic[]> {
+  const loaded = await loadRuleTypeScript(ctx)
+  if (loaded.diagnostics !== undefined) return loaded.diagnostics
+  const ts = loaded.compiler
+  if (ts === undefined) return didNotRun(code, title)
+  const findings: Diagnostic[] = []
+  for (const file of ctx.project.source.files) {
+    const parsed = parsedFile(ts, ctx.project.source, file)
+    if (parsed === undefined) continue
+    const source = { file, ...parsed }
+    const visit = (node: TSApi.Node): void => {
+      onNode(ts, node, source, findings)
+      ts.forEachChild(node, visit)
+    }
+    visit(parsed.tree)
+  }
+  return findings
 }
 
 function parse(ts: typeof TSApi, file: string, source: string): TSApi.SourceFile {
@@ -543,17 +578,12 @@ export const secretComparisonRule: CheckRule = {
 export const piiLogRule: CheckRule = {
   code: "NF-S003",
   title: "Sensitive value in log call",
-  async scan(ctx) {
-    const loaded = await loadRuleTypeScript(ctx)
-    if (loaded.diagnostics !== undefined) return loaded.diagnostics
-    const ts = loaded.compiler
-    if (ts === undefined) return didNotRun("NF-S003", "Sensitive-value-in-log scan")
-    const findings: Diagnostic[] = []
-    for (const file of ctx.project.source.files) {
-      const parsed = parsedFile(ts, ctx.project.source, file)
-      if (parsed === undefined) continue
-      const { tree, lines } = parsed
-      const visit = (node: TSApi.Node): void => {
+  scan: (ctx) =>
+    scanNodes(
+      ctx,
+      "NF-S003",
+      "Sensitive-value-in-log scan",
+      (ts, node, { file, tree, lines }, findings) => {
         if (ts.isCallExpression(node)) {
           const expression = node.expression
           const callee = ts.isPropertyAccessExpression(expression)
@@ -587,12 +617,8 @@ export const piiLogRule: CheckRule = {
             }
           }
         }
-        ts.forEachChild(node, visit)
-      }
-      visit(tree)
-    }
-    return findings
-  },
+      },
+    ),
 }
 
 /**
@@ -794,17 +820,12 @@ function usesParam(ts: typeof TSApi, body: TSApi.Node, param: string): boolean {
 export const corsOriginPredicateRule: CheckRule = {
   code: "NF-S004",
   title: "CORS origin predicate ignores the origin",
-  async scan(ctx) {
-    const loaded = await loadRuleTypeScript(ctx)
-    if (loaded.diagnostics !== undefined) return loaded.diagnostics
-    const ts = loaded.compiler
-    if (ts === undefined) return didNotRun("NF-S004", "CORS origin predicate scan")
-    const findings: Diagnostic[] = []
-    for (const file of ctx.project.source.files) {
-      const parsed = parsedFile(ts, ctx.project.source, file)
-      if (parsed === undefined) continue
-      const { tree, lines } = parsed
-      const visit = (node: TSApi.Node): void => {
+  scan: (ctx) =>
+    scanNodes(
+      ctx,
+      "NF-S004",
+      "CORS origin predicate scan",
+      (ts, node, { file, tree, lines }, findings) => {
         if (ts.isCallExpression(node) && nameOf(ts, node.expression) === "cors") {
           const arg = node.arguments[0]
           if (arg !== undefined && ts.isObjectLiteralExpression(arg)) {
@@ -854,28 +875,19 @@ export const corsOriginPredicateRule: CheckRule = {
             }
           }
         }
-        ts.forEachChild(node, visit)
-      }
-      visit(tree)
-    }
-    return findings
-  },
+      },
+    ),
 }
 
 export const externalRedirectRule: CheckRule = {
   code: "NF-S005",
   title: "External redirect opt-out",
-  async scan(ctx) {
-    const loaded = await loadRuleTypeScript(ctx)
-    if (loaded.diagnostics !== undefined) return loaded.diagnostics
-    const ts = loaded.compiler
-    if (ts === undefined) return didNotRun("NF-S005", "External redirect opt-out scan")
-    const findings: Diagnostic[] = []
-    for (const file of ctx.project.source.files) {
-      const parsed = parsedFile(ts, ctx.project.source, file)
-      if (parsed === undefined) continue
-      const { tree, lines } = parsed
-      const visit = (node: TSApi.Node): void => {
+  scan: (ctx) =>
+    scanNodes(
+      ctx,
+      "NF-S005",
+      "External redirect opt-out scan",
+      (ts, node, { file, tree, lines }, findings) => {
         if (ts.isCallExpression(node) && nameOf(ts, node.expression) === "redirect") {
           for (const arg of node.arguments) {
             if (!ts.isObjectLiteralExpression(arg)) continue
@@ -909,12 +921,8 @@ export const externalRedirectRule: CheckRule = {
             }
           }
         }
-        ts.forEachChild(node, visit)
-      }
-      visit(tree)
-    }
-    return findings
-  },
+      },
+    ),
 }
 
 const ESCAPE_HATCHES: Readonly<Record<string, string>> = {
@@ -929,17 +937,12 @@ const ESCAPE_HATCHES: Readonly<Record<string, string>> = {
 export const assuranceEscapeHatchRule: CheckRule = {
   code: "NF-S006",
   title: "Security escape hatch enabled",
-  async scan(ctx) {
-    const loaded = await loadRuleTypeScript(ctx)
-    if (loaded.diagnostics !== undefined) return loaded.diagnostics
-    const ts = loaded.compiler
-    if (ts === undefined) return didNotRun("NF-S006", "Security escape hatch scan")
-    const findings: Diagnostic[] = []
-    for (const file of ctx.project.source.files) {
-      const parsed = parsedFile(ts, ctx.project.source, file)
-      if (parsed === undefined) continue
-      const { tree, lines } = parsed
-      const visit = (node: TSApi.Node): void => {
+  scan: (ctx) =>
+    scanNodes(
+      ctx,
+      "NF-S006",
+      "Security escape hatch scan",
+      (ts, node, { file, tree, lines }, findings) => {
         if (ts.isPropertyAssignment(node) && node.initializer.kind === ts.SyntaxKind.TrueKeyword) {
           const name = nameOf(ts, node.name)
           const consequence = name !== undefined ? ESCAPE_HATCHES[name] : undefined
@@ -961,12 +964,8 @@ export const assuranceEscapeHatchRule: CheckRule = {
             )
           }
         }
-        ts.forEachChild(node, visit)
-      }
-      visit(tree)
-    }
-    return findings
-  },
+      },
+    ),
 }
 
 const COOKIE_PREFIX = /^__(?:Host|Secure)-/
@@ -974,59 +973,45 @@ const COOKIE_PREFIX = /^__(?:Host|Secure)-/
 export const unprefixedSecureCookieRule: CheckRule = {
   code: "NF-S007",
   title: "Secure cookie without a __Host-/__Secure- prefix",
-  async scan(ctx) {
-    const loaded = await loadRuleTypeScript(ctx)
-    if (loaded.diagnostics !== undefined) return loaded.diagnostics
-    const ts = loaded.compiler
-    if (ts === undefined) return didNotRun("NF-S007", "Secure cookie prefix scan")
-    const findings: Diagnostic[] = []
-    for (const file of ctx.project.source.files) {
-      const parsed = parsedFile(ts, ctx.project.source, file)
-      if (parsed === undefined) continue
-      const { tree } = parsed
-      const visit = (node: TSApi.Node): void => {
-        if (ts.isCallExpression(node)) {
-          const callee = nameOf(ts, node.expression)
-          if (callee === "cookie" || callee === "serializeCookie") {
-            const nameArg = node.arguments[0]
-            const hasPrefix =
-              nameArg !== undefined &&
-              ts.isStringLiteralLike(nameArg) &&
-              COOKIE_PREFIX.test(nameArg.text)
-            const secure = node.arguments.some(
-              (arg) =>
-                ts.isObjectLiteralExpression(arg) &&
-                arg.properties.some(
-                  (prop) =>
-                    ts.isPropertyAssignment(prop) &&
-                    nameOf(ts, prop.name) === "secure" &&
-                    prop.initializer.kind === ts.SyntaxKind.TrueKeyword,
-                ),
+  scan: (ctx) =>
+    scanNodes(ctx, "NF-S007", "Secure cookie prefix scan", (ts, node, { file, tree }, findings) => {
+      if (ts.isCallExpression(node)) {
+        const callee = nameOf(ts, node.expression)
+        if (callee === "cookie" || callee === "serializeCookie") {
+          const nameArg = node.arguments[0]
+          const hasPrefix =
+            nameArg !== undefined &&
+            ts.isStringLiteralLike(nameArg) &&
+            COOKIE_PREFIX.test(nameArg.text)
+          const secure = node.arguments.some(
+            (arg) =>
+              ts.isObjectLiteralExpression(arg) &&
+              arg.properties.some(
+                (prop) =>
+                  ts.isPropertyAssignment(prop) &&
+                  nameOf(ts, prop.name) === "secure" &&
+                  prop.initializer.kind === ts.SyntaxKind.TrueKeyword,
+              ),
+          )
+          // Only literal names are judged - a dynamic name can't be checked for a prefix.
+          if (secure && !hasPrefix && nameArg !== undefined && ts.isStringLiteralLike(nameArg)) {
+            const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+            findings.push(
+              diagnostic({
+                code: "NF-S007",
+                severity: "info",
+                file,
+                line,
+                message:
+                  "Secure cookie without a __Host-/__Secure- prefix - a prefix stops subdomains and insecure contexts from shadowing it",
+                evidence: [nameArg.text],
+                verify: "nifra check --lints-only",
+              }),
             )
-            // Only literal names are judged - a dynamic name can't be checked for a prefix.
-            if (secure && !hasPrefix && nameArg !== undefined && ts.isStringLiteralLike(nameArg)) {
-              const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-              findings.push(
-                diagnostic({
-                  code: "NF-S007",
-                  severity: "info",
-                  file,
-                  line,
-                  message:
-                    "Secure cookie without a __Host-/__Secure- prefix - a prefix stops subdomains and insecure contexts from shadowing it",
-                  evidence: [nameArg.text],
-                  verify: "nifra check --lints-only",
-                }),
-              )
-            }
           }
         }
-        ts.forEachChild(node, visit)
       }
-      visit(tree)
-    }
-    return findings
-  },
+    }),
 }
 
 /** Reads the backend the contract-lock check loaded; this rule runs no project code of its own. */
@@ -1089,17 +1074,12 @@ function callsJsonParse(ts: typeof TSApi, node: TSApi.Node): boolean {
 export const unvalidatedWsFrameRule: CheckRule = {
   code: "NF-S009",
   title: "WebSocket frames parsed without a messageSchema",
-  async scan(ctx) {
-    const loaded = await loadRuleTypeScript(ctx)
-    if (loaded.diagnostics !== undefined) return loaded.diagnostics
-    const ts = loaded.compiler
-    if (ts === undefined) return didNotRun("NF-S009", "WebSocket messageSchema scan")
-    const findings: Diagnostic[] = []
-    for (const file of ctx.project.source.files) {
-      const parsed = parsedFile(ts, ctx.project.source, file)
-      if (parsed === undefined) continue
-      const { tree, lines } = parsed
-      const visit = (node: TSApi.Node): void => {
+  scan: (ctx) =>
+    scanNodes(
+      ctx,
+      "NF-S009",
+      "WebSocket messageSchema scan",
+      (ts, node, { file, tree, lines }, findings) => {
         if (
           ts.isCallExpression(node) &&
           ts.isPropertyAccessExpression(node.expression) &&
@@ -1136,12 +1116,8 @@ export const unvalidatedWsFrameRule: CheckRule = {
             }
           }
         }
-        ts.forEachChild(node, visit)
-      }
-      visit(tree)
-    }
-    return findings
-  },
+      },
+    ),
 }
 
 export const securityRules = Object.freeze([
