@@ -122,6 +122,9 @@ describe("the identity epoch hook", () => {
     const held = "0123456789abcdef0123456789abcdef"
     for (const [before, after] of [
       ['{"data":{},"expiresAt":1}', '{"data":{},"expiresAt":2}'],
+      // Unsigned, yet JSON once the last character is cut, or once leading space is trimmed.
+      ['{"data":{},"expiresAt":1}}', '{"data":{},"expiresAt":2}}'],
+      [' {"data":{},"expiresAt":1}.a', ' {"data":{},"expiresAt":2}.b'],
       ['{"data":{}}.a', '{"data":{}}.b'],
       ['{"data":1,"expiresAt":1}.a', '{"data":1,"expiresAt":2}.b'],
       ["{not json.a", "{not json.b"],

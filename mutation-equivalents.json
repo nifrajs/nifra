@@ -374,6 +374,34 @@
       "code": "if (vouched !== undefined) headers.delete(RENEWED)",
       "from": "vouched !== undefined",
       "reason": "Deleting a header the response does not carry changes nothing."
+    },
+    {
+      "op": "condition->false",
+      "fn": "sessionData",
+      "code": "if (typeof payload !== \"object\" || payload === null) return undefined",
+      "from": "typeof payload !== \"object\" || payload === null",
+      "reason": "The parsed text starts with {, so the payload is a non-null object here; the check only narrows its type."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "sessionData",
+      "code": "if (typeof payload !== \"object\" || payload === null) return undefined",
+      "from": "||",
+      "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
+    },
+    {
+      "op": "condition->false",
+      "fn": "sessionData",
+      "code": "if (!(\"data\" in payload) || !(\"expiresAt\" in payload)) return undefined",
+      "from": "!(\"data\" in payload) || !(\"expiresAt\" in payload)",
+      "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "sessionData",
+      "code": "if (!(\"data\" in payload) || !(\"expiresAt\" in payload)) return undefined",
+      "from": "||",
+      "reason": "A missing data or expiresAt destructures as undefined, which the typeof checks below refuse; the check only narrows the type."
     }
   ],
   "packages/web/src/internal/share-data.ts": [
