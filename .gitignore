@@ -37,6 +37,7 @@ packages/web/test/.tmp-*
 /bench-ci/
 bench/.tmp-performance-*/
 packages/schema/test/.tmp-precompiled-*/
+packages/node/test-node/.tmp-precompiled-*/
 /PLAN.md
 /*-PLAN.md
 /*-PARITY.md

@@ -9,6 +9,7 @@ import { type TypeCheck, TypeCompiler } from "@sinclair/typebox/compiler"
 import { Value } from "@sinclair/typebox/value"
 import { markAnswerStep } from "./answer-step.ts"
 import { ensureDefaultFormats } from "./formats.ts"
+import { namesInheritedMember, ownView } from "./inherited.ts"
 import { COERCES, TEXT_SLOT } from "./marks.ts"
 
 /**
@@ -313,6 +314,8 @@ export function fromTypeBox<T extends TSchema>(
   // without 'unsafe-eval', or Trusted Types, the compile attempt is a violation the browser logs and
   // reports, once per schema, before the fallback below catches it.
   let evalFree = hasCompileHazard(schema) || "document" in globalThis
+  // A key named after an `Object.prototype` member is checked on an own view - see ./inherited.ts.
+  const ownOnly = namesInheritedMember(schema)
   const result: NifraSchema<T> = {
     "~standard": {
       version: 1,
@@ -325,11 +328,14 @@ export function fromTypeBox<T extends TSchema>(
         // Coerce first when asked (query schemas): `Value.Convert` turns "20"→20 per the schema, so the
         // compiled/eval-free Check below sees the target type. A non-convertible value (e.g. "abc" for an
         // integer) is left as-is and fails Check → a proper 400.
+        const own = ownOnly ? ownView(value) : value
         const input = coerce
           ? coercionPlan !== null
-            ? convertFlat(coercionPlan, value)
-            : Value.Convert(schema, value)
-          : value
+            ? convertFlat(coercionPlan, own)
+            : Value.Convert(schema, own)
+          : own
+        // Unconverted, the caller's value is the answer, not the view checked in its place.
+        const output = coerce ? input : value
         if (compiled === undefined && !evalFree) {
           try {
             compiled = TypeCompiler.Compile(schema)
@@ -339,10 +345,10 @@ export function fromTypeBox<T extends TSchema>(
           }
         }
         if (compiled !== undefined) {
-          if (compiled.Check(input)) return { value: input as Static<T> }
+          if (compiled.Check(input)) return { value: output as Static<T> }
           return { issues: firstIssues(compiled.Errors(input)) }
         }
-        if (Value.Check(schema, input)) return { value: input as Static<T> }
+        if (Value.Check(schema, input)) return { value: output as Static<T> }
         return { issues: firstIssues(Value.Errors(schema, input)) }
       },
       // Phantom: `types` carries no runtime value; this cast supplies the

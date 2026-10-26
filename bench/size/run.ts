@@ -302,9 +302,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 38.5,
   "nifra-valibot": 38.6,
-  "nifra-typebox-t": 64.0,
+  // A key named after an Object.prototype member is checked on an own view of the value:
+  // typebox-t 65,436 -> 65,736 B, typebox-form 70,416 -> 70,694 B (Bun 1.4.4).
+  "nifra-typebox-t": 64.2,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 68.8,
+  "nifra-typebox-form": 69.1,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
