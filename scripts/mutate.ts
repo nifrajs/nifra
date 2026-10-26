@@ -15,6 +15,13 @@
  * `bun run test` runs and that imports the source file, directly or transitively. A test that reaches
  * the file another way, through a spawned process or a built `dist/`, is not selected.
  *
+ * `--target <name>` mutates the whole files a `mutation-targets.json` entry lists against its own tests
+ * instead (invariant suites included), and refuses to start while a variable its tests skip without is
+ * unset. `--shard i/n` runs every n-th mutant from the i-th. `--gate` exits 1 on a survivor
+ * `mutation-baseline.json` does not list, on a listed one a test now kills, on an entry that matches no
+ * mutant, and on tests that fail with no mutant in place, so the baseline of known survivors only
+ * shrinks. `--baseline-from <dir...>` writes that baseline from the `survivors.json` of earlier runs.
+ *
  * A mutant judged equivalent (no observable change) goes in `mutation-equivalents.json`, keyed by file,
  * operator, enclosing function and source text rather than by line number, so it is triaged once and
  * stays triaged when the code above it moves. The score leaves equivalents out. A test run that times
@@ -58,6 +65,11 @@ export interface EquivalentEntry {
 
 export type Equivalents = Readonly<Record<string, readonly EquivalentEntry[]>>
 
+/** A known survivor in `mutation-baseline.json`, keyed like an equivalent: a gap `--gate` tolerates until a test kills it. */
+export type BaselineEntry = Omit<EquivalentEntry, "reason">
+
+export type Baseline = Readonly<Record<string, readonly BaselineEntry[]>>
+
 export type Status = "killed" | "timeout" | "error" | "survived" | "equivalent" | "not-run"
 
 export interface MutantResult extends Mutant {
@@ -88,6 +100,35 @@ const BINARY: Readonly<Record<string, readonly string[]>> = {
 }
 
 const collapse = (text: string): string => text.replace(/\s+/g, " ").trim()
+
+// Postgres reads any run of these characters as one operator, so a comparison is swapped only where it
+// stands alone: inside `@>`, `<@` or `~=` a swap makes SQL that does not parse.
+const OPERATOR_CHARS = "-+*/<>=~!@#%^&|`?"
+const alone = (op: string, alsoBefore = ""): RegExp =>
+  new RegExp(`(?<![${OPERATOR_CHARS}${alsoBefore}])${op}(?![${OPERATOR_CHARS}])`, "g")
+
+/**
+ * Swaps in the SQL a tagged template sends, which the TypeScript operators above never reach: a
+ * query's privilege checks and filters are its predicates, not the code around it.
+ */
+const SQL_RULES: ReadonlyArray<readonly [string, RegExp, (match: string) => string]> = [
+  ["sql AND->OR", /\bAND\b/g, () => "OR"],
+  ["sql OR->AND", /\bOR\b/g, () => "AND"],
+  ["sql drop NOT", /\bNOT\s+/g, () => ""],
+  ["sql =-><>", alone("=", ":"), () => "<>"],
+  ["sql <>->=", alone("<>"), () => "="],
+  ["sql IS DISTINCT->IS NOT DISTINCT", /\bIS DISTINCT FROM\b/g, () => "IS NOT DISTINCT FROM"],
+  ["sql IN->NOT IN", /(?<!\bNOT\s)\bIN\s*\(/g, (match) => `NOT ${match}`],
+  ["sql EXISTS->NOT EXISTS", /(?<!\bNOT\s)\bEXISTS\s*\(/g, (match) => `NOT ${match}`],
+  ["sql >->>=", alone(">"), () => ">="],
+  ["sql <-><=", alone("<"), () => "<="],
+  ["sql flip boolean", /\b(?:true|false)\b/g, (match) => (match === "true" ? "false" : "true")],
+  // A leading "~" changes the first character too, which is all a Postgres "char" keeps of a literal.
+  ["sql literal", /'[^'\n]*'/g, (match) => `'~${match.slice(1)}`],
+]
+const SQL_TEXT = /\bSELECT\b/
+// Quoted text and comments are left whole; only the literal rule edits a quoted string.
+const SQL_OPAQUE = /'[^'\n]*'|"[^"\n]*"|--[^\n]*/g
 
 function inType(node: ts.Node): boolean {
   for (let p: ts.Node | undefined = node.parent; p; p = p.parent) if (ts.isTypeNode(p)) return true
@@ -124,8 +165,9 @@ function scopeName(node: ts.Node, sf: ts.SourceFile): string | undefined {
 
 /**
  * Every mutant of one file, in source order: comparison, logical and arithmetic operator swaps, `!`
- * removal, `++`/`--` swaps, boolean flips, conditions forced true and false, statement deletion, and
- * `return X` replaced by `return undefined`.
+ * removal, `++`/`--` swaps, boolean flips, conditions forced true and false, statement deletion,
+ * `return X` replaced by `return undefined`, and {@link SQL_RULES} inside a tagged template whose
+ * text holds a `SELECT`.
  */
 export function generateMutants(file: string, text: string): Mutant[] {
   const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
@@ -134,9 +176,7 @@ export function generateMutants(file: string, text: string): Mutant[] {
   const seen = new Map<string, number>()
   const mutants: Mutant[] = []
   let fn = "<module>"
-  const add = (op: string, node: ts.Node, to: string) => {
-    const start = node.getStart(sf)
-    const end = node.getEnd()
+  const span = (op: string, start: number, end: number, to: string) => {
     const original = text.slice(start, end)
     if (original === to) return
     const line = sf.getLineAndCharacterOfPosition(start).line + 1
@@ -148,6 +188,33 @@ export function generateMutants(file: string, text: string): Mutant[] {
     const endLine = sf.getLineAndCharacterOfPosition(end).line + 1
     mutants.push({ id: mutants.length, op, line, endLine, start, end, to, fn, code, from, nth })
   }
+  const add = (op: string, node: ts.Node, to: string) =>
+    span(op, node.getStart(sf), node.getEnd(), to)
+  const sql = (template: ts.TemplateLiteral) => {
+    const pieces = ts.isNoSubstitutionTemplateLiteral(template)
+      ? [template]
+      : [template.head, ...template.templateSpans.map((s) => s.literal)]
+    if (!SQL_TEXT.test(pieces.map((piece) => piece.getText(sf)).join(" "))) return
+    for (const piece of pieces) {
+      const offset = piece.getStart(sf)
+      const body = piece.getText(sf)
+      const opaque = [...body.matchAll(SQL_OPAQUE)].map((m) => {
+        const at = m.index ?? 0
+        return { at, end: at + m[0].length, comment: m[0].startsWith("--") }
+      })
+      const found: Array<readonly [number, string, string, string]> = []
+      for (const [op, pattern, to] of SQL_RULES) {
+        for (const m of body.matchAll(pattern)) {
+          const at = m.index ?? 0
+          const inside = opaque.find((o) => at >= o.at && at < o.end)
+          if (op === "sql literal" ? inside?.comment !== false : inside !== undefined) continue
+          found.push([at, op, m[0], to(m[0])])
+        }
+      }
+      found.sort((a, b) => a[0] - b[0])
+      for (const [at, op, match, to] of found) span(op, offset + at, offset + at + match.length, to)
+    }
+  }
   const visit = (node: ts.Node): void => {
     if (
       ts.isImportDeclaration(node) ||
@@ -156,6 +223,7 @@ export function generateMutants(file: string, text: string): Mutant[] {
       ts.isTypeAliasDeclaration(node)
     )
       return
+    if (ts.isTaggedTemplateExpression(node)) sql(node.template)
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.getText(sf)
       for (const to of BINARY[op] ?? []) add(`binary ${op}->${to}`, node.operatorToken, to)
@@ -240,22 +308,31 @@ const keyOf = (
   entry: Pick<Mutant, "op" | "fn" | "code" | "from"> & { readonly nth?: number },
 ): string => JSON.stringify([entry.op, entry.fn, entry.code, entry.from, entry.nth ?? 0])
 
-/** The reason each equivalent mutant was recorded with, by mutant id; `unused` lists entries no mutant matched. */
-export function matchEquivalents(
+/** The entry each mutant matches, by mutant id; `unused` lists entries no mutant matched. */
+export function matchEntries<T extends BaselineEntry>(
   mutants: readonly Mutant[],
-  entries: readonly EquivalentEntry[],
-): { readonly reasons: Map<number, string>; readonly unused: EquivalentEntry[] } {
+  entries: readonly T[],
+): { readonly matched: Map<number, T>; readonly unused: T[] } {
   const byKey = new Map(entries.map((entry) => [keyOf(entry), entry]))
-  const reasons = new Map<number, string>()
+  const matched = new Map<number, T>()
   const used = new Set<string>()
   for (const m of mutants) {
     const key = keyOf(m)
     const entry = byKey.get(key)
     if (entry === undefined) continue
-    reasons.set(m.id, entry.reason)
+    matched.set(m.id, entry)
     used.add(key)
   }
-  return { reasons, unused: entries.filter((entry) => !used.has(keyOf(entry))) }
+  return { matched, unused: entries.filter((entry) => !used.has(keyOf(entry))) }
+}
+
+/** The reason each equivalent mutant was recorded with, by mutant id; `unused` lists entries no mutant matched. */
+export function matchEquivalents(
+  mutants: readonly Mutant[],
+  entries: readonly EquivalentEntry[],
+): { readonly reasons: Map<number, string>; readonly unused: EquivalentEntry[] } {
+  const { matched, unused } = matchEntries(mutants, entries)
+  return { reasons: new Map([...matched].map(([id, entry]) => [id, entry.reason])), unused }
 }
 
 /** The `mutation-equivalents.json` entry a survivor would be recorded with, reason left to the triager. */
@@ -264,37 +341,112 @@ export function equivalentEntry(m: Mutant): EquivalentEntry {
   return nth === 0 ? { op, fn, code, from, reason: "" } : { op, fn, code, from, nth, reason: "" }
 }
 
-function entryOf(entry: unknown, where: string): EquivalentEntry {
-  const field = (name: string): unknown =>
-    typeof entry === "object" && entry !== null ? Reflect.get(entry, name) : undefined
-  const text = (name: string): string => {
-    const value = field(name)
-    if (typeof value !== "string") throw new Error(`${where} lacks ${name}`)
-    return value
-  }
-  const parsed = { op: text("op"), fn: text("fn"), code: text("code"), from: text("from") }
-  const reason = text("reason")
-  if (reason.trim() === "") throw new Error(`${where} gives no reason`)
-  const nth = field("nth")
-  if (nth === undefined) return { ...parsed, reason }
-  if (typeof nth !== "number" || !Number.isSafeInteger(nth) || nth < 1)
-    throw new Error(`${where} has an nth that is not a positive integer`)
-  return { ...parsed, nth, reason }
+const fieldOf = (entry: unknown, name: string): unknown =>
+  typeof entry === "object" && entry !== null ? Reflect.get(entry, name) : undefined
+
+function textOf(entry: unknown, name: string, where: string): string {
+  const value = fieldOf(entry, name)
+  if (typeof value !== "string") throw new Error(`${where} lacks ${name}`)
+  return value
 }
 
-export function loadEquivalents(path: string): Equivalents {
+function keyedEntryOf(entry: unknown, where: string): BaselineEntry {
+  const text = (name: string) => textOf(entry, name, where)
+  const parsed = { op: text("op"), fn: text("fn"), code: text("code"), from: text("from") }
+  const nth = fieldOf(entry, "nth")
+  if (nth === undefined) return parsed
+  if (typeof nth !== "number" || !Number.isSafeInteger(nth) || nth < 1)
+    throw new Error(`${where} has an nth that is not a positive integer`)
+  return { ...parsed, nth }
+}
+
+function entryOf(entry: unknown, where: string): EquivalentEntry {
+  const parsed = keyedEntryOf(entry, where)
+  const reason = textOf(entry, "reason", where)
+  if (reason.trim() === "") throw new Error(`${where} gives no reason`)
+  return { ...parsed, reason }
+}
+
+function loadKeyed<T>(
+  path: string,
+  parse: (entry: unknown, where: string) => T,
+): Record<string, T[]> {
   if (!existsSync(path)) return {}
   const parsed: unknown = JSON.parse(readFileSync(path, "utf8"))
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
     throw new Error(`${path}: expected an object keyed by file`)
-  const equivalents: Record<string, EquivalentEntry[]> = {}
+  const keyed: Record<string, T[]> = {}
   for (const [file, entries] of Object.entries(parsed)) {
     if (!Array.isArray(entries)) throw new Error(`${path}: ${file} must list entries`)
-    equivalents[file] = entries.map((entry: unknown) =>
-      entryOf(entry, `${path}: an entry for ${file}`),
-    )
+    keyed[file] = entries.map((entry: unknown) => parse(entry, `${path}: an entry for ${file}`))
   }
-  return equivalents
+  return keyed
+}
+
+export function loadEquivalents(path: string): Equivalents {
+  return loadKeyed(path, entryOf)
+}
+
+export function loadBaseline(path: string): Baseline {
+  return loadKeyed(path, keyedEntryOf)
+}
+
+/** One baseline from the `survivors.json` of every shard's run, files and entries in a stable order. */
+export function mergeSurvivors(
+  lists: readonly Readonly<
+    Record<string, readonly (BaselineEntry & { readonly reason?: string })[]>
+  >[],
+): Baseline {
+  const merged = new Map<string, Map<string, BaselineEntry>>()
+  for (const list of lists)
+    for (const [file, entries] of Object.entries(list)) {
+      const byKey = merged.get(file) ?? new Map<string, BaselineEntry>()
+      merged.set(file, byKey)
+      for (const entry of entries) {
+        const { op, fn, code, from, nth } = entry
+        byKey.set(
+          keyOf(entry),
+          nth === undefined ? { op, fn, code, from } : { op, fn, code, from, nth },
+        )
+      }
+    }
+  return Object.fromEntries(
+    [...merged]
+      .sort(([a], [b]) => codeUnitOrder(a, b))
+      .map(([file, byKey]) => [
+        file,
+        [...byKey].sort(([a], [b]) => codeUnitOrder(a, b)).map(([, entry]) => entry),
+      ]),
+  )
+}
+
+/** A nightly target in `mutation-targets.json`: whole files, the tests that guard them, and the variables those tests need. */
+export interface MutationTarget {
+  readonly files: readonly string[]
+  readonly tests: readonly string[]
+  /** Variables a test skips without, such as a live server's URL: the run refuses to start unset. */
+  readonly env: readonly string[]
+}
+
+export function loadTargets(path: string): Readonly<Record<string, MutationTarget>> {
+  const parsed: unknown = JSON.parse(readFileSync(path, "utf8"))
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new Error(`${path}: expected an object keyed by target`)
+  const strings = (value: unknown, where: string): string[] => {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
+      throw new Error(`${where} must list strings`)
+    return value
+  }
+  const targets: Record<string, MutationTarget> = {}
+  for (const [name, target] of Object.entries(parsed)) {
+    const where = `${path}: ${name}`
+    const files = strings(fieldOf(target, "files"), `${where} files`)
+    const tests = strings(fieldOf(target, "tests"), `${where} tests`)
+    if (files.length === 0 || tests.length === 0) throw new Error(`${where} needs files and tests`)
+    const env = fieldOf(target, "env")
+    targets[name] = { files, tests, env: env === undefined ? [] : strings(env, `${where} env`) }
+  }
+  return targets
 }
 
 const ENTITIES: Readonly<Record<string, string>> = {
@@ -488,8 +640,14 @@ const MUTABLE_SOURCE = /^packages\/[^/]+\/src\/.+\.(ts|tsx|mts)$/
 interface Options {
   readonly files: readonly string[]
   readonly changed: string | undefined
+  readonly target: string | undefined
+  readonly targets: string
+  readonly shard: { readonly index: number; readonly count: number } | undefined
   readonly out: string
   readonly equivalents: string
+  readonly baseline: string
+  readonly baselineFrom: readonly string[]
+  readonly gate: boolean
   readonly timeout: number | undefined
   readonly maxMinutes: number | undefined
   readonly bail: boolean
@@ -499,16 +657,22 @@ interface Options {
 function usage(message: string): never {
   console.error(`mutate: ${message}`)
   console.error(
-    "usage: bun scripts/mutate.ts (--files <path...> | --changed [base]) [--out dir] [--bail] [--dry-run]",
+    "usage: bun scripts/mutate.ts (--files <path...> | --changed [base] | --target <name> [--shard i/n] [--gate] | --baseline-from <dir...>) [--out dir] [--bail] [--dry-run]",
   )
   process.exit(2)
 }
 
 export function parseArgs(argv: readonly string[]): Options {
   const files: string[] = []
+  const baselineFrom: string[] = []
   let changed: string | undefined
+  let target: string | undefined
+  let targets = "mutation-targets.json"
+  let shard: Options["shard"]
   let out = ".mutation"
   let equivalents = "mutation-equivalents.json"
+  let baseline = "mutation-baseline.json"
+  let gate = false
   let timeout: number | undefined
   let maxMinutes: number | undefined
   let bail = false
@@ -532,7 +696,24 @@ export function parseArgs(argv: readonly string[]): Options {
         next = argv[++i + 1]
       )
         files.push(next)
-    } else if (arg === "--changed") {
+    } else if (arg === "--baseline-from") {
+      for (
+        let next = argv[i + 1];
+        next !== undefined && !next.startsWith("--");
+        next = argv[++i + 1]
+      )
+        baselineFrom.push(next)
+    } else if (arg === "--target") target = value(i++, arg)
+    else if (arg === "--targets") targets = value(i++, arg)
+    else if (arg === "--shard") {
+      const parsed = /^(\d+)\/(\d+)$/.exec(value(i++, arg))
+      const index = Number(parsed?.[1])
+      const count = Number(parsed?.[2])
+      if (parsed === null || count < 1 || index >= count) usage("--shard takes i/n with 0 <= i < n")
+      shard = { index, count }
+    } else if (arg === "--baseline") baseline = value(i++, arg)
+    else if (arg === "--gate") gate = true
+    else if (arg === "--changed") {
       const next = argv[i + 1]
       changed = next !== undefined && !next.startsWith("--") ? argv[++i] : "origin/main"
     } else if (arg === "--out") out = value(i++, arg)
@@ -543,9 +724,32 @@ export function parseArgs(argv: readonly string[]): Options {
     else if (arg === "--dry-run") dryRun = true
     else usage(`unknown argument ${arg}`)
   }
-  if (files.length === 0 && changed === undefined) usage("pass --files or --changed")
-  if (files.length > 0 && changed !== undefined) usage("pass --files or --changed, not both")
-  return { files, changed, out, equivalents, timeout, maxMinutes, bail, dryRun }
+  const modes = [
+    files.length > 0,
+    changed !== undefined,
+    target !== undefined,
+    baselineFrom.length > 0,
+  ]
+  if (modes.filter(Boolean).length !== 1)
+    usage("pass one of --files, --changed, --target and --baseline-from")
+  if (shard !== undefined && target === undefined) usage("--shard needs --target")
+  if (gate && target === undefined) usage("--gate needs --target")
+  return {
+    files,
+    changed,
+    target,
+    targets,
+    shard,
+    out,
+    equivalents,
+    baseline,
+    baselineFrom,
+    gate,
+    timeout,
+    maxMinutes,
+    bail,
+    dryRun,
+  }
 }
 
 function git(root: string, args: readonly string[]): string {
@@ -654,12 +858,42 @@ export interface FileReport {
   readonly baselineFailures: readonly string[] | undefined
   readonly mutants: readonly MutantResult[]
   readonly unusedEquivalents: readonly EquivalentEntry[]
+  /** Ids of the mutants `mutation-baseline.json` lists as known survivors. */
+  readonly baselined?: readonly number[]
+  readonly unusedBaseline?: readonly BaselineEntry[]
 }
 
 /** Stands in for the baseline failures when the run without a mutant wrote no report. */
 const NO_REPORT = "(no report)"
 
 const DETECTED: ReadonlySet<Status> = new Set(["killed", "timeout", "error"])
+
+/**
+ * Why `--gate` fails a run: a survivor the baseline does not list, a listed one a test kills now (the
+ * baseline only shrinks), an entry that matches no mutant, a mutant left unrun, or tests that fail with
+ * no mutant in place.
+ */
+export function gateFailures(reports: readonly FileReport[]): string[] {
+  const failures: string[] = []
+  for (const r of reports) {
+    const known = new Set(r.baselined ?? [])
+    const broken = (r.baselineFailures ?? []).length > 0
+    if (broken) failures.push(`${r.file}: the tests fail with no mutant in place`)
+    for (const m of r.mutants) {
+      const at = `${r.file}:${m.line} ${m.op} \`${m.from}\``
+      if (m.status === "survived" && !known.has(m.id)) failures.push(`${at} survives`)
+      else if (DETECTED.has(m.status) && known.has(m.id)) {
+        const caught = m.status === "killed" ? "killed" : `caught (${m.status})`
+        failures.push(`${at} is ${caught} now: drop it from the baseline`)
+      } else if (m.status === "not-run" && !broken) failures.push(`${at} did not run`)
+    }
+    for (const e of r.unusedBaseline ?? [])
+      failures.push(`${r.file}: baseline ${e.op} \`${e.from}\` in ${e.fn} matches no mutant`)
+    for (const e of r.unusedEquivalents)
+      failures.push(`${r.file}: equivalent ${e.op} \`${e.from}\` in ${e.fn} matches no mutant`)
+  }
+  return failures
+}
 
 export function scoreOf(mutants: readonly MutantResult[]): number | undefined {
   const graded = mutants.filter((m) => m.status !== "equivalent" && m.status !== "not-run")
@@ -751,13 +985,33 @@ const elapsed = (ms: number): string => {
 async function main(argv: readonly string[]): Promise<number> {
   const options = parseArgs(argv)
   const root = realpathSync(git(process.cwd(), ["rev-parse", "--show-toplevel"]).trim())
+  if (options.baselineFrom.length > 0) {
+    const lists = options.baselineFrom.map((dir) => loadBaseline(resolve(dir, "survivors.json")))
+    const merged = mergeSurvivors(lists)
+    writeFileSync(resolve(root, options.baseline), `${JSON.stringify(merged, null, 2)}\n`)
+    const count = Object.values(merged).reduce((n, entries) => n + entries.length, 0)
+    console.log(`${options.baseline}: ${count} known survivors from ${lists.length} runs`)
+    return 0
+  }
   const statusBefore = git(root, ["status", "--porcelain"])
   const out = resolve(root, options.out)
   mkdirSync(out, { recursive: true })
 
   let targets: Array<{ readonly file: string; readonly lines: ReadonlySet<number> | undefined }>
   let heading: string
-  if (options.changed !== undefined) {
+  let fixedTests: string[] | undefined
+  if (options.target !== undefined) {
+    const target = loadTargets(resolve(root, options.targets))[options.target]
+    if (target === undefined) usage(`${options.targets} has no target ${options.target}`)
+    const unset = target.env.filter((name) => (process.env[name] ?? "") === "")
+    if (unset.length > 0) usage(`target ${options.target} needs ${unset.join(", ")} set`)
+    for (const file of [...target.files, ...target.tests])
+      if (!existsSync(join(root, file))) usage(`target ${options.target} names a missing ${file}`)
+    targets = target.files.map((file) => ({ file, lines: undefined }))
+    fixedTests = [...target.tests]
+    const shard = options.shard
+    heading = `Target \`${options.target}\`${shard === undefined ? "" : `, shard ${shard.index + 1} of ${shard.count}`}: whole files.`
+  } else if (options.changed !== undefined) {
     const base = git(root, ["merge-base", options.changed, "HEAD"]).trim()
     const diff = git(root, [
       "diff",
@@ -788,14 +1042,17 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const equivalents = loadEquivalents(resolve(root, options.equivalents))
+  const knownSurvivors = loadBaseline(resolve(root, options.baseline))
   const tests = discoverTests(root)
-  const graph = targets.length === 0 ? new Map() : buildImportGraph(root, tests)
+  const graph =
+    targets.length === 0 || fixedTests !== undefined ? new Map() : buildImportGraph(root, tests)
   const testSet = new Set(tests)
   const deadline =
     options.maxMinutes === undefined ? Infinity : Date.now() + options.maxMinutes * 60_000
   const junit = join(out, `junit-${process.pid}.xml`)
   const reports: FileReport[] = []
   const started = Date.now()
+  let exitCode = 0
 
   let restore: (() => void) | undefined
   const onSignal = (signal: NodeJS.Signals) => {
@@ -807,13 +1064,23 @@ async function main(argv: readonly string[]): Promise<number> {
   process.on("SIGINT", onSignal)
   process.on("SIGTERM", onSignal)
 
+  // Shards split the mutants of every file by their order across the run; stale entries are reported by
+  // the first shard alone, since every shard matches them against the whole file.
+  let ordinal = 0
+  const owner = options.shard === undefined || options.shard.index === 0
   for (const target of targets) {
     const path = join(root, target.file)
     const original = readFileSync(path, "utf8")
     const all = generateMutants(target.file, original)
-    const mutants = target.lines === undefined ? all : onLines(all, target.lines)
+    const mutants = (target.lines === undefined ? all : onLines(all, target.lines)).filter(
+      () => options.shard === undefined || ordinal++ % options.shard.count === options.shard.index,
+    )
     const { reasons, unused } = matchEquivalents(all, equivalents[target.file] ?? [])
-    const selected = selectTests(graph, testSet, path)
+    const known = matchEntries(all, knownSurvivors[target.file] ?? [])
+    const selected =
+      fixedTests === undefined
+        ? selectTests(graph, testSet, path)
+        : fixedTests.map((file) => ({ file: join(root, file), depth: 0 }))
     const relTests = selected.map((t) => ({
       file: relative(root, t.file).split(sep).join("/"),
       depth: t.depth,
@@ -834,7 +1101,9 @@ async function main(argv: readonly string[]): Promise<number> {
       baselineMs,
       baselineFailures,
       mutants: results,
-      unusedEquivalents: target.lines === undefined ? unused : [],
+      unusedEquivalents: target.lines === undefined && owner ? unused : [],
+      baselined: mutants.filter((m) => known.matched.has(m.id)).map((m) => m.id),
+      unusedBaseline: owner ? known.unused : [],
     })
     const pending = mutants.filter((m) => {
       const reason = reasons.get(m.id)
@@ -904,10 +1173,30 @@ async function main(argv: readonly string[]): Promise<number> {
       `${JSON.stringify({ heading, files: reports }, null, 1)}\n`,
     )
     writeFileSync(join(out, "survivors.json"), `${JSON.stringify(survivors, null, 2)}\n`)
-    writeFileSync(join(out, "summary.md"), summary)
+    const failures = options.gate ? gateFailures(reports) : []
+    const verdict = !options.gate
+      ? ""
+      : failures.length === 0
+        ? "### Gate\n\nEvery survivor is in `mutation-baseline.json`, and every entry there still survives.\n"
+        : [
+            `### Gate: ${failures.length} failures`,
+            "",
+            ...failures.slice(0, SURVIVOR_ROWS).map((failure) => `- ${failure}`),
+            ...(failures.length > SURVIVOR_ROWS
+              ? ["", `${failures.length - SURVIVOR_ROWS} more in \`gate.json\`.`]
+              : []),
+            "",
+            "Kill a new survivor with a test, or record it in `mutation-equivalents.json` with a reason if no test could notice it.",
+            "",
+          ].join("\n")
+    if (options.gate)
+      writeFileSync(join(out, "gate.json"), `${JSON.stringify(failures, null, 2)}\n`)
+    writeFileSync(join(out, "summary.md"), `${summary}${verdict}`)
     const step = process.env.GITHUB_STEP_SUMMARY
-    if (step !== undefined && step !== "") writeFileSync(step, summary, { flag: "a" })
-    console.log(`\n${summary}`)
+    if (step !== undefined && step !== "")
+      writeFileSync(step, `${summary}${verdict}`, { flag: "a" })
+    console.log(`\n${summary}${verdict}`)
+    if (failures.length > 0) exitCode = 1
   }
 
   const statusAfter = git(root, ["status", "--porcelain"])
@@ -915,7 +1204,7 @@ async function main(argv: readonly string[]): Promise<number> {
     console.error(`mutate: the git status changed during the run:\n${statusAfter}`)
     return 3
   }
-  return 0
+  return exitCode
 }
 
 if (import.meta.main) process.exit(await main(process.argv.slice(2)))
