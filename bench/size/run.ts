@@ -294,6 +294,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The Date writer on top of the request-locals, response-contract and t.date() work: bare 39,025 B,
   // idempotency 43,785, effect-ledger 41,026, sse 39,892, mcp 39,297, valibot 40,018, typebox-t
   // 67,811, typebox-form 72,778 (Bun 1.4.4); each cap takes the next 0.1 KiB step.
+  // That writer copying only plain records and lists, and sharing its Date, `__proto__` and plain-record
+  // helpers with the contract lane and canonical JSON: bare 39,025 -> 39,093 B, idempotency 43,785 ->
+  // 43,844, effect-ledger 41,026 -> 41,129, sse 39,892 -> 39,967, mcp 39,297 -> 39,372, valibot 40,018
+  // -> 40,095, typebox-t 67,811 -> 67,893, typebox-form 72,778 -> 72,834 (Bun 1.4.4); each cap crossed
+  // takes the next 0.1 KiB step.
   "nifra-bare": 38.2,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -318,15 +323,15 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A request's t.date() strings handed on as Dates by a schema-directed decoder, and date-time and
   // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
-  "nifra-idempotency": 42.8,
-  "nifra-effect-ledger": 40.1,
-  "nifra-mcp": 38.4,
+  "nifra-idempotency": 42.9,
+  "nifra-effect-ledger": 40.2,
+  "nifra-mcp": 38.5,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 39.0,
-  "nifra-valibot": 39.1,
-  "nifra-typebox-t": 66.3,
+  "nifra-sse": 39.1,
+  "nifra-valibot": 39.2,
+  "nifra-typebox-t": 66.4,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 71.1,
+  "nifra-typebox-form": 71.2,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
@@ -357,8 +362,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // `Date` in the plain transport codec written ahead of the serializer: 20,791 -> 21,157 B, each getter
   // there read once: 21,218 B (Bun 1.4.4). A query fetch or fetcher load a visitor change catches loading
   // again inside the call, a rotating epoch costing bounded loads, and `documentLoad` when a load over the
-  // previous visitor's page fails: 21,218 -> 21,579 B (Bun 1.4.4).
-  "nifra-web-client": 21.1,
+  // previous visitor's page fails: 21,218 -> 21,579 B (Bun 1.4.4). That codec's Date copy taking only
+  // plain records and lists: 21,579 -> 21,664 B (Bun 1.4.4).
+  "nifra-web-client": 21.2,
   "nifra-i18n": 4.3,
 }
 

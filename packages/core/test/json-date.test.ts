@@ -27,6 +27,11 @@ class Wrapped {
   }
 }
 
+/** A class with no hook, which JSON writes as its own fields. */
+class Stamped {
+  constructor(readonly at: Date) {}
+}
+
 /** Every place a `Date` can sit: on the probe's path, past it, and where the writer leaves it. */
 const placements: ReadonlyArray<readonly [string, (date: Date) => unknown]> = [
   ["top", (date) => date],
@@ -46,6 +51,8 @@ const placements: ReadonlyArray<readonly [string, (date: Date) => unknown]> = [
     ],
   ],
   ["nested", (date) => ({ page: { items: [{ at: date }], at: date } })],
+  ["null-prototype row", (date) => [Object.assign(Object.create(null), { id: 1, at: date })]],
+  ["class instance row", (date) => [new Stamped(date)]],
   ["past the probe", (date) => ({ a: { b: { c: { d: { e: { at: date } } } } } })],
   ["beside a bigint", (date) => ({ id: 1n, at: date })],
   ["under a hook", (date) => ({ at: date, wrapped: { toJSON: () => ({ at: date }) } })],
@@ -176,6 +183,78 @@ describe("a Date in a JSON answer", () => {
         status: code,
         text,
       })
+    }
+  })
+})
+
+/**
+ * Values the serializer may write by rules of their own rather than as their own fields: each kind of
+ * primitive boxed, a raw JSON text of each kind, and an instance of every global class that builds
+ * with no arguments.
+ */
+function ownRuleValues(): ReadonlyArray<readonly [string, () => object]> {
+  const values: Array<readonly [string, () => object]> = []
+  for (const primitive of [1.5, "ab", false, 12n, Symbol("s")])
+    values.push([`boxed ${typeof primitive}`, () => Object(primitive)])
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the member is optional, so an engine without JSON.rawJSON leaves it undefined.
+  const rawJson = (JSON as JSON & { readonly rawJSON?: (text: string) => object }).rawJSON
+  if (rawJson !== undefined)
+    for (const text of ["1.10", "12345678901234567890", '"ab"', "true", "null"])
+      values.push([`raw ${text}`, () => rawJson(text)])
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    const make: unknown = Reflect.get(globalThis, name)
+    if (typeof make !== "function" || !/^[A-Z]/.test(name)) continue
+    try {
+      if (typeof Reflect.construct(make, []) !== "object") continue
+    } catch {
+      continue
+    }
+    values.push([name, () => Reflect.construct(make, [])])
+  }
+  return values
+}
+
+/** Every place such a value can sit beside a plain `Date` on the probe's path, or holding one. */
+const ownRulePlacements: ReadonlyArray<readonly [string, (value: object, date: Date) => unknown]> =
+  [
+    ["beside", (value, date) => [{ at: date, value }]],
+    ["nested beside", (value, date) => ({ at: date, page: { value } })],
+    ["listed beside", (value, date) => ({ at: date, list: [value] })],
+    ["in a later row", (value, date) => [{ at: date }, { at: date, value }]],
+    ["holding it", (value, date) => [{ at: date, value: Object.assign(value, { at: date }) }]],
+    ["holding it at the top", (value, date) => Object.assign(value, { at: date })],
+  ]
+
+/** The text `write` gives, or the class of what it throws. */
+async function outcome(write: () => string | Promise<string>): Promise<string> {
+  try {
+    return await write()
+  } catch (error) {
+    return `throws ${error instanceof Error ? error.name : typeof error}`
+  }
+}
+
+describe("a value JSON writes by its own rules beside a Date", () => {
+  test("is written as JSON.stringify writes it, wherever it sits", async () => {
+    const values = ownRuleValues()
+    expect(values.length).toBeGreaterThan(30)
+    for (const [kind, make] of values) {
+      for (const [where, place] of ownRulePlacements) {
+        let value: unknown
+        try {
+          value = place(make(), AT)
+        } catch {
+          // A frozen value, such as a raw JSON text, cannot hold a field.
+          continue
+        }
+        const want = await outcome(() => expected(value))
+        expect({
+          kind,
+          where,
+          text: await outcome(() => jsonText(value)),
+          response: await outcome(() => jsonResponse(value).text()),
+        }).toEqual({ kind, where, text: want, response: want })
+      }
     }
   })
 })

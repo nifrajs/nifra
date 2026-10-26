@@ -6,16 +6,27 @@
  * id answered a 500. Every plain JSON writer goes through this instead: a `bigint` is written as its
  * decimal string, the encoding OpenAPI generators and protobuf's JSON mapping use for 64-bit integers.
  * Only a first attempt that threw is retried, so a value without one costs nothing more. The Node
- * adapter runs a generated copy (scripts/gen-vendored.ts), so this module imports nothing.
+ * adapter runs a generated copy (scripts/gen-vendored.ts), so this module imports nothing, and the
+ * helpers core's other JSON walks share live here.
  */
 
 const bigintAsText = (_key: string, value: unknown): unknown =>
   typeof value === "bigint" ? value.toString() : value
 
-const DATE_TO_JSON = Date.prototype.toJSON
+export const DATE_TO_JSON = Date.prototype.toJSON
+// What `Date.prototype.toJSON` reads a `Date`'s time value through.
 const DATE_TO_PRIMITIVE = Date.prototype[Symbol.toPrimitive]
 const DATE_VALUE_OF = Date.prototype.valueOf
 const DATE_TO_ISO_STRING = Date.prototype.toISOString
+
+/**
+ * Whether `date` reaches the `@@toPrimitive` and `valueOf` that `Date.prototype.toJSON` reads its time
+ * value through as they ship, on itself, its class or `Date.prototype`. Then its steps, taken by the
+ * caller, give what the call would: `null` for a time value that is not finite, else what its
+ * `toISOString` answers, called through it as `toJSON` calls it.
+ */
+export const readsShippedTime = (date: Date): boolean =>
+  date[Symbol.toPrimitive] === DATE_TO_PRIMITIVE && date.valueOf === DATE_VALUE_OF
 
 /**
  * Whether `value` is a `Date` that reaches `toJSON` and each method `toJSON` calls as they ship, so its
@@ -24,9 +35,15 @@ const DATE_TO_ISO_STRING = Date.prototype.toISOString
 const isPlainDate = (value: object): value is Date =>
   value instanceof Date &&
   value.toJSON === DATE_TO_JSON &&
-  value[Symbol.toPrimitive] === DATE_TO_PRIMITIVE &&
-  value.valueOf === DATE_VALUE_OF &&
+  readsShippedTime(value) &&
   value.toISOString === DATE_TO_ISO_STRING
+
+/** Sets `key` on `out` as an own field, `__proto__` included, which an assignment takes as the prototype. */
+export function define(out: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === "__proto__")
+    Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
+  else out[key] = value
+}
 
 // How far down the first row's path, and how many fields of each object, the probe looks.
 const PROBE_DEPTH = 4
@@ -45,17 +62,40 @@ const fieldOf = (value: object, key: PropertyKey): unknown =>
       (value as Record<PropertyKey, unknown>)[key]
     : ACCESSOR
 
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the member is optional, so an engine without JSON.rawJSON leaves it undefined.
+export const isRawJson = (JSON as JSON & { readonly isRawJSON?: (value: unknown) => boolean })
+  .isRawJSON
+
 /**
- * Whether a plain `Date` sits on `value`'s first path: an object's fields, a list's first item, a few
- * levels down, with no accessor on the way.
+ * Whether `proto` is a plain record's prototype: `Object.prototype`, `null`, or any prototype whose own
+ * prototype is null, which admits another realm's plain object. A boxed primitive's or a class's is
+ * not. A `JSON.rawJSON` value's is `null` too, so a caller tells one apart first.
+ */
+export const isPlainPrototype = (proto: unknown): boolean =>
+  proto === null || proto === Object.prototype || Object.getPrototypeOf(proto) === null
+
+/**
+ * Whether a non-list `value` with prototype `proto` is a plain record, which JSON writes as its own
+ * fields and so as a copy of them. Anything else may be written by rules of its own: a boxed primitive
+ * as its primitive, a `JSON.rawJSON` value as its text.
+ */
+const isPlainRecord = (value: object, proto: unknown): boolean =>
+  isPlainPrototype(proto) && (proto !== null || isRawJson?.(value) !== true)
+
+/**
+ * Whether a plain `Date` sits on `value`'s first path: a plain record's fields, a plain list's first
+ * item, a few levels down, with no accessor on the way.
  */
 function datesAhead(value: object, depth: number): boolean {
   if (value instanceof Date) return isPlainDate(value)
   if (depth === 0) return false
+  const proto: unknown = Object.getPrototypeOf(value)
   if (Array.isArray(value)) {
+    if (proto !== Array.prototype) return false
     const first = fieldOf(value, 0)
     return typeof first === "object" && first !== null && datesAhead(first, depth - 1)
   }
+  if (!isPlainRecord(value, proto)) return false
   const keys = Object.keys(value)
   if (keys.length > PROBE_FIELDS) return false
   for (const key of keys) {
@@ -67,20 +107,21 @@ function datesAhead(value: object, depth: number): boolean {
 }
 
 /**
- * `value` with each plain `Date` in it written as its JSON, every container under it copied first: a
- * copy reads each getter once, and the serializer reads only copies. What has a hook of its own, a byte
- * view, a list of another class and a cycle are left as they are, for the serializer.
+ * `value` with each plain `Date` in it written as its JSON, every plain list and record above one
+ * copied first: a copy reads each getter once, and the serializer reads only copies. Anything else,
+ * what has a hook of its own and a cycle are left as they are, for the serializer.
  */
 function datesWritten(value: object, path: object[]): unknown {
   if (isPlainDate(value)) return Number.isFinite(value.valueOf()) ? value.toISOString() : null
+  const proto: unknown = Object.getPrototypeOf(value)
+  const list = Array.isArray(value)
   if (
+    (list ? proto !== Array.prototype : !isPlainRecord(value, proto)) ||
     typeof Reflect.get(value, "toJSON") === "function" ||
-    ArrayBuffer.isView(value) ||
     path.includes(value)
   )
     return value
-  if (Array.isArray(value)) {
-    if (Object.getPrototypeOf(value) !== Array.prototype) return value
+  if (list) {
     path.push(value)
     const items: unknown[] = value.slice()
     for (let i = 0; i < items.length; i++) {
@@ -97,15 +138,7 @@ function datesWritten(value: object, path: object[]): unknown {
     const field = fields[name]
     if (typeof field !== "object" || field === null) continue
     const written = datesWritten(field, path)
-    if (written === field) continue
-    if (name === "__proto__")
-      Object.defineProperty(fields, name, {
-        value: written,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      })
-    else fields[name] = written
+    if (written !== field) define(fields, name, written)
   }
   path.pop()
   return fields
