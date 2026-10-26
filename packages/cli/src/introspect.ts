@@ -50,6 +50,16 @@ function schemaLines(schema: ReflectedRoute["schema"]): string[] {
   return out
 }
 
+/** A route's `call` line, with what the call returns, or why there is no typed call. */
+function callLine(route: ReflectedRoute): string {
+  const call = `    - call: \`${clientCall(route.method, route.path, route.schema)}\``
+  if (route.method === "WS")
+    return `${call} → a WebSocket handle (\`send\`, \`messages()\`, \`close\`)`
+  return typedClientKey(route.method) !== undefined
+    ? `${call} → \`{ ok, status, data, error }\``
+    : `${call} (no typed-client call for this method; \`url\` is the path above)`
+}
+
 /** Markdown section listing the backend's API routes with their request + response field shapes. */
 export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
   if (routes.length === 0) {
@@ -57,14 +67,8 @@ export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
   }
   const lines = [...routes]
     .sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method))
-    .flatMap((r) => [
-      `- \`${r.method} ${r.path}\``,
-      ...schemaLines(r.schema),
-      typedClientKey(r.method) !== undefined
-        ? `    - call: \`${clientCall(r.method, r.path, r.schema)}\` → \`{ ok, status, data, error }\``
-        : `    - call: \`${clientCall(r.method, r.path, r.schema)}\` (no typed-client call for this method; \`url\` is the path above)`,
-    ])
-  return `## API routes (backend/app.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract - the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
+    .flatMap((r) => [`- \`${r.method} ${r.path}\``, ...schemaLines(r.schema), callLine(r)])
+  return `## API routes (backend/app.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract - the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every HTTP call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
 }
 
 /** Compact API-routes INDEX for the no-arg `nifra_context` call - `METHOD path` per route, WITHOUT the

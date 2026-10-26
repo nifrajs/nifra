@@ -140,14 +140,16 @@ export function clientChain(path: string): string {
  * write: a static segment is a property (`.users`), a path param/wildcard is a call that appends the
  * value (`({ id })`), the root path is `.index`, and the method is the terminal call. POST, PUT, PATCH
  * and QUERY (`.$query`) take the body first, then the call options; DELETE takes its body inside the
- * options; the rest take only the options. A method the typed client has no call for goes out through
- * `fetch`, against the route's own path.
+ * options; the rest take only the options. A WebSocket route (the pseudo-method `WS`) is a `.ws()`
+ * that returns its handle at once, so it is not awaited. A method the typed client has no call for goes
+ * out through `fetch`, against the route's own path.
  */
 export function clientCall(
   method: string,
   path: string,
   schema: { readonly body?: unknown; readonly query?: unknown } | undefined,
 ): string {
+  if (method === "WS") return `${clientChain(path)}.ws()`
   const key = typedClientKey(method)
   if (key === undefined) return `await fetch(url, { method: ${JSON.stringify(method)} })`
   let args: string

@@ -215,6 +215,12 @@ describe("clientCall - verbs and reserved keys agree with @nifrajs/client", () =
     expect(clientCall("QUERY", "/search", undefined)).toBe("await api.search.$query()")
   })
 
+  test("a WebSocket route is a `.ws()` handle, not awaited", () => {
+    expect(clientCall("WS", "/chat", undefined)).toBe("api.chat.ws()")
+    expect(clientCall("WS", "/rooms/:id", undefined)).toBe("api.rooms({ id }).ws()")
+    expect(clientCall("WS", "/", undefined)).toBe("api.index.ws()")
+  })
+
   test("DELETE keeps a declared body in the options alongside query", () => {
     expect(clientCall("DELETE", "/items", { body: {} })).toBe("await api.items.delete({ body })")
     expect(clientCall("DELETE", "/items", { body: {}, query: {} })).toBe(

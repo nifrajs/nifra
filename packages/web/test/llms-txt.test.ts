@@ -149,15 +149,17 @@ describe("generateLlmsTxt", () => {
     expect(out).toContain("await api.empty.delete()")
   })
 
-  test("a QUERY route is a `$query` call and a method with no typed call is a fetch", async () => {
+  test("a QUERY route is a `$query` call, a WS route a `.ws()` handle, and a method with no typed call a fetch", async () => {
     const out = await generateLlmsTxt(true, [], {
       routes: () => [
         { method: "QUERY", path: "/search", schema: { body: schema({ type: "object" }) } },
         { method: "PURGE", path: "/cache" },
+        { method: "WS", path: "/chat" },
       ],
     })
     expect(out).toContain("await api.search.$query(body)")
     expect(out).toContain('await fetch(url, { method: "PURGE" })')
+    expect(out).toContain("Client Call: `api.chat.ws()`")
   })
 
   test("reports when no API routes are registered", async () => {

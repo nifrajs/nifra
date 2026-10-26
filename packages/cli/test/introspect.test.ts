@@ -134,6 +134,17 @@ describe("routesToJson - structured list_routes / get_route_schema", () => {
     )
   })
 
+  test("a WebSocket route is a `.ws()` handle, with no Result", () => {
+    const brief = apiRoutesSection([{ method: "WS", path: "/chat" }])
+    expect(brief).toContain(
+      "- call: `api.chat.ws()` → a WebSocket handle (`send`, `messages()`, `close`)",
+    )
+    expect(brief).not.toContain("`await api.chat.ws()`")
+    expect(routesToJson(appWith([{ method: "WS", path: "/chat" }]))).toEqual([
+      { method: "WS", path: "/chat", call: "api.chat.ws()" },
+    ])
+  })
+
   test("omits absent shapes (no body/query/response keys when unschematized)", () => {
     const [route] = routesToJson(appWith([{ method: "GET", path: "/health" }]))
     expect(route).toEqual({ method: "GET", path: "/health", call: "await api.health.get()" })
