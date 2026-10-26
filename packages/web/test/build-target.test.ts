@@ -485,19 +485,21 @@ test("the generated entries put a host policy ahead of their static files", () =
   const optionImports = { hostPolicy: "../backend/policy.ts" }
   const entry = (target: "bun" | "node" | "deno" | "cloudflare") =>
     generateServerEntry({ target, adapterImport: "../framework.ts", optionImports })
-  for (const target of ["bun", "deno", "cloudflare"] as const) {
+  for (const target of ["bun", "node", "deno", "cloudflare"] as const) {
     const code = entry(target)
     expect(code).toContain("import { buildAssets, clientEntry,")
     expect(code).toContain("  hostPolicy,\n  buildAssets,\n")
-    expect(code).toContain("&& hostPolicy.allows(req")
   }
   expect(entry("cloudflare")).toContain(
     'hostPolicy.allows(request.headers.get("host") ?? "", pathname, buildAssets)',
   )
-  const node = entry("node")
-  expect(
-    node.match(/allow: \(host: string, pathname: string\) => hostPolicy\.allows/g)?.length,
-  ).toBe(2)
+  // Each self-hosted entry hands the policy to both of its mounts.
+  for (const target of ["bun", "node", "deno"] as const) {
+    expect(
+      entry(target).match(/allow: \(host: string, pathname: string\) => hostPolicy\.allows/g)
+        ?.length,
+    ).toBe(2)
+  }
   // Without a policy, nothing changes.
   const plain = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
   expect(plain).not.toContain("hostPolicy")
