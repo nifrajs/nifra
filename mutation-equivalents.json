@@ -328,6 +328,60 @@
       "reason": "A host listed twice is scanned twice and yields the same routes."
     }
   ],
+  "packages/mcp-db/src/internal/pg-grants.ts": [
+    {
+      "op": "sql >->>=",
+      "fn": "readExposure",
+      "code": "LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = d.refobjid AND a.attnum > 0",
+      "from": ">",
+      "reason": "No attribute has number 0: user columns count up from 1 and system columns down from -1."
+    },
+    {
+      "op": "sql >->>=",
+      "fn": "readExposure",
+      "code": "FROM pg_catalog.pg_attribute a WHERE a.attrelid = r.oid AND a.attnum > 0 AND NOT a.attisdropped",
+      "from": ">",
+      "reason": "No attribute has number 0: user columns count up from 1 and system columns down from -1."
+    },
+    {
+      "op": "sql >->>=",
+      "fn": "readSelectGrants",
+      "code": "FROM rel JOIN pg_catalog.pg_attribute a ON a.attrelid = rel.oid AND a.attnum > 0",
+      "from": ">",
+      "reason": "No attribute has number 0: user columns count up from 1 and system columns down from -1."
+    }
+  ],
+  "packages/mcp-db/src/internal/pg-scope.ts": [
+    {
+      "op": "sql literal",
+      "fn": "functionRefusal",
+      "code": "(pg_catalog.to_jsonb(p) ->> 'prokind') = 'a' OR (pg_catalog.to_jsonb(p) ->> 'proisagg') = 'true' AS aggregate,",
+      "from": "'proisagg'",
+      "reason": "Only PostgreSQL 10 has proisagg: from 11 on, ->> 'proisagg' is NULL whatever it is compared with, and prokind decides."
+    },
+    {
+      "op": "sql =-><>",
+      "fn": "functionRefusal",
+      "code": "(pg_catalog.to_jsonb(p) ->> 'prokind') = 'a' OR (pg_catalog.to_jsonb(p) ->> 'proisagg') = 'true' AS aggregate,",
+      "from": "=",
+      "nth": 1,
+      "reason": "Only PostgreSQL 10 has proisagg: from 11 on, ->> 'proisagg' is NULL whatever it is compared with, and prokind decides."
+    },
+    {
+      "op": "sql literal",
+      "fn": "functionRefusal",
+      "code": "(pg_catalog.to_jsonb(p) ->> 'prokind') = 'a' OR (pg_catalog.to_jsonb(p) ->> 'proisagg') = 'true' AS aggregate,",
+      "from": "'true'",
+      "reason": "Only PostgreSQL 10 has proisagg: from 11 on, ->> 'proisagg' is NULL whatever it is compared with, and prokind decides."
+    },
+    {
+      "op": "sql >->>=",
+      "fn": "checkScope",
+      "code": "WHERE a.attnum > 0 AND NOT a.attisdropped`,",
+      "from": ">",
+      "reason": "No attribute has number 0: user columns count up from 1 and system columns down from -1."
+    }
+  ],
   "packages/web/src/internal/share-data.ts": [
     {
       "op": "condition->false",

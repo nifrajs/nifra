@@ -60,7 +60,7 @@ const ROLE = {
   group: `nifra_live_group_${run}`,
 }
 const TIMEOUT_MS = 5_000
-const SCOPE = { schemas: ["public"], exclude: ["secrets", "audit"] }
+const SCOPE = { schemas: ["public"], exclude: ["secrets", "audit", "remote_secrets"] }
 const OPTIONS: PostgresQueryOptions = {
   ...SCOPE,
   timeoutMs: TIMEOUT_MS,
@@ -186,7 +186,14 @@ describe.skipIf(SKIP)(SUITE, () => {
         CREATE TABLE audit (id int, at date NOT NULL) PARTITION BY RANGE (at);
         CREATE TABLE audit_2026 PARTITION OF audit FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
         CREATE INDEX orders_status ON orders (status);
+        CREATE FOREIGN DATA WRAPPER nowhere;
+        CREATE SERVER nowhere FOREIGN DATA WRAPPER nowhere;
+        CREATE FOREIGN TABLE remote_secrets (value text) SERVER nowhere;
         CREATE PROCEDURE p() LANGUAGE sql AS $$ SELECT 1 $$;
+        -- PUBLIC may execute both, and neither runs with an owner's rights where a query reaches it: no
+        -- expression can call a procedure, and the aggregate's step function is no definer.
+        CREATE PROCEDURE definer_proc() LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+        CREATE AGGREGATE plain_sum(int) (SFUNC = int4pl, STYPE = int);
         CREATE FUNCTION owner_hash(int) RETURNS text LANGUAGE sql STABLE SECURITY DEFINER
           AS $$ SELECT password_hash FROM users WHERE id = $1 $$;
         CREATE FUNCTION bump() RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT 1 $$;
@@ -214,6 +221,9 @@ describe.skipIf(SKIP)(SUITE, () => {
           boxed_text(boxed), secret_step(text, int), secret_agg(int) FROM PUBLIC;
         CREATE SCHEMA private;
         CREATE TABLE private.notes (id int);
+        -- Namesakes of public functions, off the search path and out of scope.
+        CREATE FUNCTION private.shout(text) RETURNS text LANGUAGE sql VOLATILE AS $$ SELECT $1 $$;
+        CREATE FUNCTION private.folded_secret(int) RETURNS text LANGUAGE sql STABLE AS $$ SELECT 'decoy' $$;
         INSERT INTO orders (status, total, blob) VALUES ('paid', 9007199254740993, '\\x0102'), ('open', 5, NULL);
         INSERT INTO users (email, password_hash, note)
           VALUES ('a@example.com', 'hash-value', 'token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXZhbHVl');
@@ -447,8 +457,10 @@ describe.skipIf(SKIP)(SUITE, () => {
     const reader = engineClient(ROLE.reader)
     const readerCall = await serverOnly(reader, call)
     expect(readerCall).toMatchObject({ ran: false, state: "2F003" })
-    expect(code(await queryPostgres(engineClient(ROLE.granted), call, OPTIONS))).toBe(
-      "NIFRA_DB_FUNCTION_REFUSED",
+    // Judged as an extension's function, which must be parallel safe as well as non-volatile.
+    const refused = await queryPostgres(engineClient(ROLE.granted), call, OPTIONS)
+    expect(isDbRefusal(refused) ? refused.message : "").toBe(
+      "the query calls public.dblink_exec(): it is volatile, so it can act outside the query (locks, settings, sequences, notifications, files, other sessions or another database)",
     )
   })
 
@@ -640,7 +652,7 @@ describe.skipIf(SKIP)(SUITE, () => {
     ]) {
       expect(message).toContain(hidden)
     }
-    expect(message).toContain(", and 5 more;")
+    expect(message).toContain(", and 6 more;")
     expect(code(await explainPostgres(reader, "SELECT 1", MASKED))).toBe("NIFRA_DB_ROLE_GRANTS")
     // Without masking or exclusions the same role passes: nothing is hidden from it.
     expect(
@@ -677,6 +689,7 @@ describe.skipIf(SKIP)(SUITE, () => {
       // A view's call shows only in its plan.
       "SELECT * FROM hash_lookup",
       'SELECT "bump"()',
+      "SELECT plain_sum(x) FROM generate_series(1, 2) AS g(x)",
       // Postgres cuts an identifier to 63 bytes before resolving it.
       `SELECT ${LONG_NAME}_and_more()`,
     ]) {
@@ -843,6 +856,58 @@ describe.skipIf(SKIP)(SUITE, () => {
     }
   })
 
+  test("an excluded table's partitions and children: the plan check behind the grants refuses them", async () => {
+    // pg_read_all_data reads every table, so only the plan check stands between it and the rows.
+    const reader = engineClient(ROLE.reader)
+    const planOnly = (sql: string) =>
+      inReadOnlyTransaction(reader, TIMEOUT_MS, (connection) =>
+        fetchThroughCursor(connection, sql, {
+          maxRows: 5,
+          scope: checkScope(SCOPE, { statement: sql }),
+        }),
+      )
+    for (const sql of [
+      "SELECT * FROM audit_2026",
+      "SELECT * FROM child_secret",
+      "SELECT * FROM grand_secret",
+    ]) {
+      expect({ sql, code: code(await planOnly(sql)) }).toEqual({
+        sql,
+        code: "NIFRA_DB_TABLE_EXCLUDED",
+      })
+    }
+    // An inheritance chain beside them hides nothing.
+    expect(await planOnly("SELECT * FROM kid_open")).toMatchObject({ rows: [] })
+  })
+
+  test("a SECURITY DEFINER function with its default privileges is PUBLIC's grant, in pg_catalog too", async () => {
+    const granted = engineClient(ROLE.granted)
+    // A superuser, or an extension's script, can put a function in pg_catalog.
+    const name = `nifra_live_definer_${run}`
+    await asOwner(
+      `CREATE FUNCTION pg_catalog.${name}() RETURNS int LANGUAGE sql STABLE SECURITY DEFINER AS $$ SELECT 1 $$`,
+    )
+    try {
+      const outcome = await queryPostgres(granted, "SELECT 1", MASKED)
+      expect(code(outcome)).toBe("NIFRA_DB_ROLE_GRANTS")
+      expect(isDbRefusal(outcome) ? outcome.message : "").toContain(
+        `pg_catalog.${name}() (granted to PUBLIC)`,
+      )
+      const sql = await postgresRoleSql(engineClient(), {
+        ...SCOPE,
+        timeoutMs: TIMEOUT_MS,
+        role: ROLE.granted,
+        redaction: { column: masked },
+      })
+      if (isDbRefusal(sql)) throw new Error(sql.message)
+      expect(sql.statements).toContain(
+        `-- REVOKE EXECUTE ON FUNCTION "pg_catalog"."${name}"() FROM PUBLIC;`,
+      )
+    } finally {
+      await asOwner(`DROP FUNCTION pg_catalog.${name}()`)
+    }
+  })
+
   test("a role with no grants is refused by the server's privileges", async () => {
     const weak = engineClient(ROLE.weak)
     expect(code(await queryPostgres(weak, "SELECT * FROM orders", OPTIONS))).toBe(
@@ -892,9 +957,9 @@ describe.skipIf(SKIP)(SUITE, () => {
       "orders",
       "users",
     ])
-    // secrets and audit by name; child_secret and grand_secret inherit secrets; secret_view and
-    // secret_copy read it.
-    expect(schema.excludedCount).toBe(6)
+    // secrets, audit and remote_secrets by name; child_secret and grand_secret inherit secrets;
+    // secret_view and secret_copy read it.
+    expect(schema.excludedCount).toBe(7)
     const orders = schema.tables.find((table) => table.name === "orders")
     expect(orders?.columns[0]).toMatchObject({ name: "id", type: "bigint", primaryKey: true })
     expect(orders?.indexes.map((index) => index.name).sort()).toEqual([
@@ -949,6 +1014,7 @@ describe.skipIf(SKIP)(SUITE, () => {
       `REVOKE SELECT ON TABLE "public"."audit_2026" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."child_secret" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."grand_secret" FROM "${ROLE.generated}";`,
+      `REVOKE SELECT ON TABLE "public"."remote_secrets" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."secret_copy" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."secret_view" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."secrets" FROM "${ROLE.generated}";`,
