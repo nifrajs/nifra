@@ -1,4 +1,5 @@
-import type { BoundaryStates, MountRouterOptions, RenderProps } from "@nifrajs/web"
+import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { assuranceHook } from "@nifrajs/web/internal/hydration-assurance"
 /**
  * @nifrajs/web-react/client - React client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
@@ -11,7 +12,6 @@ import {
   createContext,
   createElement,
   type FunctionComponent,
-  memo,
   type ReactElement,
   type ReactNode,
   useContext,
@@ -20,6 +20,7 @@ import {
 import { hydrateRoot } from "react-dom/client"
 import { compose, withRouterContext } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { type LayoutProps, memoLayout, memoPage } from "./memo-chain.ts"
 import { routeProps } from "./route-props.ts"
 
 // The `_error` boundary chain element - defined in its own (react-dom-free) module, re-exported here so
@@ -31,24 +32,13 @@ export interface HydrationAssuranceOptions {
   readonly onRecoverableError?: (error: unknown, info?: unknown) => void
 }
 
-function assuranceError(): HydrationAssuranceOptions["onRecoverableError"] {
-  const value = (globalThis as unknown as Record<PropertyKey, unknown>)[
-    Symbol.for("nifra.hydration.assurance")
-  ]
-  if (typeof value !== "object" || value === null) return undefined
-  const callback = (value as { onRecoverableError?: unknown }).onRecoverableError
-  return typeof callback === "function"
-    ? (callback as HydrationAssuranceOptions["onRecoverableError"])
-    : undefined
-}
-
 export function hydrate(
   chain: readonly unknown[],
   props: RenderProps,
   container: unknown,
   options?: HydrationAssuranceOptions,
 ): void {
-  const onRecoverableError = options?.onRecoverableError ?? assuranceError()
+  const onRecoverableError = options?.onRecoverableError ?? assuranceHook("onRecoverableError")
   if (onRecoverableError === undefined) hydrateRoot(container as Element, compose(chain, props))
   else hydrateRoot(container as Element, compose(chain, props), { onRecoverableError })
 }
@@ -64,25 +54,6 @@ const ChainContext = createContext<{
   readonly chain: readonly unknown[]
   readonly props: RenderProps
 }>({ chain: [], props: { data: null } })
-type LayoutProps = {
-  readonly data: unknown
-  readonly boundaries?: BoundaryStates | undefined
-  readonly children?: ReactNode
-}
-// One `memo` per component, so its type stays the same across renders.
-const memoized = <P extends object>(): ((component: ComponentType<P>) => ComponentType<P>) => {
-  const held = new WeakMap<ComponentType<P>, ComponentType<P>>()
-  return (component) => {
-    let memoComponent = held.get(component)
-    if (memoComponent === undefined) {
-      memoComponent = memo(component)
-      held.set(component, memoComponent)
-    }
-    return memoComponent
-  }
-}
-const memoPage = memoized<RenderProps>()
-const memoLayout = memoized<LayoutProps>()
 // One element per depth, created once: a layout's `children` stays the same element across renders,
 // so its memo compares equal, while the level inside still re-renders through the context.
 const levels: ReactElement[] = []
@@ -142,7 +113,7 @@ export function mountRouter(options: MountRouterOptions): void {
       ),
     )
   }
-  const onRecoverableError = assuranceError()
+  const onRecoverableError = assuranceHook("onRecoverableError")
   hydrateRoot(
     container as Element,
     createElement(Router),

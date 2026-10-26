@@ -8,8 +8,9 @@
  * "is it pending" has one answer rather than five that drift. This file contributes only a `shallowRef` fed by the store.
  */
 
-import type { ClientServerFn, ServerFnReference } from "@nifrajs/web/fn"
+import type { ServerFnReference } from "@nifrajs/web/fn"
 import { createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
+import { clientServerFn } from "@nifrajs/web/internal/client-server-fn"
 import { onScopeDispose, type ShallowRef, shallowRef } from "vue"
 
 /** A server function's state ref plus the call itself. */
@@ -31,7 +32,7 @@ export interface ServerFnHandle<Input, Output> {
 export function useServerFn<Input, Output>(
   fn: ServerFnReference<Input, Output>,
 ): ServerFnHandle<Input, Output> {
-  const store = createServerFnStore(fn as ClientServerFn<Input, Output>)
+  const store = createServerFnStore(clientServerFn(fn))
   // Seeded from the store, not from the idle constant. They are the same value here - the store is
   // created one line up and cannot have moved - so this is correctness that does not depend on that
   // staying true. Svelte had exactly this line reading the constant, and when its subscription turned

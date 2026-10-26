@@ -1212,17 +1212,15 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "byId@createTransportCodecRegistry": "codecs the app registers",
     "byMedia@createTransportCodecRegistry": "codecs the app registers",
   },
-  "packages/web-preact/src/client.ts": { "held@memoized": MEMO },
   "packages/web-preact/src/keep-alive.ts": {
-    "held@memoized": MEMO,
     slotsElements: "one element per slot parent, keyed by its id",
   },
+  "packages/web-preact/src/memo-chain.ts": { "held@memoized": MEMO },
   "packages/web-preact/src/slot.ts": { slotted: MEMO },
-  "packages/web-react/src/client.ts": { "held@memoized": MEMO },
   "packages/web-react/src/keep-alive.ts": {
-    "held@memoized": MEMO,
     slotsElements: "one element per slot parent, keyed by its id",
   },
+  "packages/web-react/src/memo-chain.ts": { "held@memoized": MEMO },
   "packages/web-react/src/server-components/client.ts": {
     "#listeners@FlightRoot": LISTENERS,
     "<expr>@prepareTree": ONE_CALL,
