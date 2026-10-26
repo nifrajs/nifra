@@ -313,16 +313,19 @@ describe("generateServerEntry", () => {
     mkdirSync(join(dir, "assets/.cache"))
     writeFileSync(join(dir, "assets/.cache/x.js"), "cached")
     try {
-      const [bun, node, deno] = await Promise.all(
-        (["bun", "node", "deno"] as const).map(async (target) => {
-          const src = generateServerEntry({
-            target,
-            adapterImport: "../framework.ts",
-            publicFiles: ["/robots.txt", "/logo.SVG", "/.well-known/acme-challenge/token"],
-          })
-          return staticOf(await entryOptions(src, dir))
-        }),
-      )
+      const mountsFor = async (target: "bun" | "node" | "deno") => {
+        const src = generateServerEntry({
+          target,
+          adapterImport: "../framework.ts",
+          publicFiles: ["/robots.txt", "/logo.SVG", "/.well-known/acme-challenge/token"],
+        })
+        return staticOf(await entryOptions(src, dir))
+      }
+      const [bun, node, deno] = await Promise.all([
+        mountsFor("bun"),
+        mountsFor("node"),
+        mountsFor("deno"),
+      ])
       expect(mountsOf({ static: node })).toEqual(mountsOf({ static: bun }))
       expect(mountsOf({ static: deno })).toEqual(mountsOf({ static: bun }))
       const files = serveStatic(bun)
