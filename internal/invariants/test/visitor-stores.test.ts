@@ -273,8 +273,13 @@ function scan(): ReadonlyMap<string, readonly string[]> {
 
 // What a later visitor would see, as one visitor leaves the page for another.
 interface Visit {
-  /** The visitor the app's loaders and fetches answer for. */
-  who: "first" | "second"
+  /** The visitor the app's loaders and fetches answer for; `between` is one a page passes through on
+   * its way to the second. */
+  who: "first" | "between" | "second"
+  /** The visitor the next change brings, the second unless set. */
+  next?: Visit["who"]
+  /** Visitor changes so far. */
+  changes?: number
   /** The server the sweep's loads go to; a scenario's are answered as asked. */
   server?: Server
 }
@@ -282,9 +287,17 @@ interface Visit {
 type Change = (visit: Visit) => Promise<void>
 
 /** The visitor changes, and the server answers every load asked from here on as the sweep set it. */
-function becomeSecond(visit: Visit): void {
-  visit.who = "second"
+function becomeNext(visit: Visit): void {
+  visit.who = visit.next ?? "second"
+  visit.changes = (visit.changes ?? 0) + 1
   if (visit.server !== undefined) visit.server.mode = visit.server.next
+}
+
+/** Sets the epoch cookie, as a response or another tab does. */
+function setEpoch(value: string): void {
+  const document: unknown = Reflect.get(globalThis, "document")
+  if (typeof document === "object" && document !== null)
+    Reflect.set(document, "cookie", `nifra-epoch=${value}`)
 }
 
 const pages = [
@@ -408,7 +421,7 @@ const CHANGES: readonly (readonly [
     "identityChanged()",
     (run) =>
       run(async (visit) => {
-        becomeSecond(visit)
+        becomeNext(visit)
         identityChanged()
       }),
   ],
@@ -422,7 +435,7 @@ const CHANGES: readonly (readonly [
         // A response sets the cookie in a task of its own.
         return await run(async (visit) => {
           await Promise.resolve()
-          becomeSecond(visit)
+          becomeNext(visit)
           document.cookie = "nifra-epoch=second"
         })
       } finally {
@@ -464,10 +477,12 @@ for (const scenario of SCENARIOS)
 // visitor change, each call, and what the page holds once it settles, must come out the same whether
 // the earlier loads answered for the first visitor or already for the second, and a call the change
 // caught mid-load as that call made once the change landed. The change lands before the call or while
-// its first load is in flight, and the server then answers, fails every load, or rotates the epoch on
-// every response. A call's promise settles only once the page shows what the call ends with, and
-// reports a load it waited on that failed, so a caller that awaits it sees the outcome; and a server
-// that rotates the epoch on every response costs as many loads however long it keeps rotating.
+// its first load is in flight, or brings a visitor in between whom another tab's sign-in replaces, by
+// its cookie alone, while the first load after the change is in flight; the server then answers, fails
+// every load, or rotates the epoch on every response. A call's promise settles only once the page
+// shows what the call ends with, and reports a load it waited on that failed, so a caller that awaits
+// it sees the outcome; a call that posts and resolves shows the answer the server gave its POST; and
+// a server that rotates the epoch on every response costs as many loads however long it rotates.
 
 /** What the server does with a load asked once the visitor has changed. */
 const SERVERS = ["answers", "fails every load", "rotates the epoch on every response"] as const
@@ -530,9 +545,9 @@ async function served(visit: Visit): Promise<{ who: Visit["who"] }> {
     asked.mode === "rotates the epoch on every response" &&
     server.rotations < server.maxRotations
   ) {
-    const document: unknown = Reflect.get(globalThis, "document")
-    if (typeof document === "object" && document !== null)
-      Reflect.set(document, "cookie", `nifra-epoch=r${++server.rotations}`)
+    setEpoch(`r${++server.rotations}`)
+    // To a page, a new epoch is a new visitor.
+    visit.changes = (visit.changes ?? 0) + 1
   }
   return { who: asked.who }
 }
@@ -565,6 +580,9 @@ interface Page {
   /** Each call that posts an action, with why it answers as its POST did when the change lands while
    * that POST is in flight, rather than as the call made after the change: no POST runs twice. */
   readonly posts?: Readonly<Record<string, string>>
+  /** The server's answer to the last POST, unless the visitor changed after it was given: a call that
+   * posts and resolves ends with it as its holder's `actionData`. */
+  readonly answered?: () => unknown
   /** What the page shows once everything has settled, by part. It is read twice, a render and the
    * one after what that render started has landed: a new epoch cookie is seen at a read. */
   readonly settled: () => Readonly<Record<string, unknown>>
@@ -680,8 +698,13 @@ const SURFACES: readonly Surface[] = [
     files: ["packages/web/src/router.ts"],
     open: async (visit) => {
       const fetching = Object.getOwnPropertyDescriptor(globalThis, "fetch")
+      let posted: { readonly answer: unknown; readonly changes: number | undefined } | undefined
       Object.defineProperty(globalThis, "fetch", {
-        value: async () => Response.json(await served(visit)),
+        value: async (_url: unknown, init?: RequestInit) => {
+          const answer = await served(visit)
+          if (init?.method === "POST") posted = { answer, changes: visit.changes }
+          return Response.json(answer)
+        },
         configurable: true,
         writable: true,
       })
@@ -734,6 +757,7 @@ const SURFACES: readonly Surface[] = [
           "router.submit": ACTION_ONCE,
           "fetcher.submit": ACTION_ONCE,
         },
+        answered: () => (posted?.changes === visit.changes ? posted?.answer : undefined),
         settled: () => {
           // A page going as a document shows nothing more.
           const { actionData, ...page } = router.snapshot()
@@ -793,7 +817,8 @@ async function quiet(server: Server): Promise<void> {
   }
 }
 
-const TIMINGS = ["before the call", "while its first load is in flight"] as const
+const THROUGH = "before the call, and from another tab while the first load after it is in flight"
+const TIMINGS = ["before the call", "while its first load is in flight", THROUGH] as const
 
 type Parts = readonly (readonly [string, string])[]
 
@@ -812,6 +837,10 @@ interface Answer {
   readonly loads: number
   /** It resolved although a load failed while it was pending. */
   readonly swallowed: boolean
+  /** For a call that posts, the server's answer to its POST and the `actionData` its holder shows. */
+  readonly posted: readonly [string, string] | undefined
+  /** It was still pending when another tab's change landed. */
+  readonly caught: boolean
 }
 
 const partsOf = (page: Page): Parts =>
@@ -899,10 +928,13 @@ for (const surface of SURFACES) {
                   const ends = endsOf(page, held, fn)
                   const read = () =>
                     typeof ends === "string" ? "" : (JSON.stringify(ends()) ?? "undefined")
-                  if (at === "before the call") await changed()
-                  else server.held = asked
+                  if (at === THROUGH) visit.next = "between"
+                  if (at !== "before the call") server.held = asked
+                  if (at !== "while its first load is in flight") await changed()
                   let atSettle: string | undefined
+                  let rotatedAtSettle = 0
                   let promised = false
+                  let threw = false
                   let swallowed = false
                   let done = false
                   let pending: Promise<unknown>
@@ -920,35 +952,59 @@ for (const surface of SURFACES) {
                         ? result.then(
                             (value: unknown) => {
                               atSettle = read()
+                              rotatedAtSettle = server.rotations
                               swallowed = server.failed > failedBefore
                               return shape(value)
                             },
                             (error: unknown) => {
                               atSettle = read()
+                              rotatedAtSettle = server.rotations
+                              threw = true
                               return { threw: String(error) }
                             },
                           )
                         : Promise.resolve(shape(result))
                   } catch (error) {
+                    threw = true
                     pending = Promise.resolve({ threw: String(error) })
                   }
                   void pending.then(() => {
                     done = true
                   })
                   let applies = true
+                  let caught = false
                   if (at !== "before the call") {
                     // The change lands once the call's first load waits, or not at all for a call
                     // that settles or keeps from loading for its turns.
                     for (let turn = 0; turn < 4 && !server.waiting && !done; turn++) await flushed()
                     applies = server.waiting
                     server.held = undefined
-                    await changed()
+                    if (at === THROUGH) {
+                      caught = !done
+                      visit.who = "second"
+                      visit.changes = (visit.changes ?? 0) + 1
+                      setEpoch("another-tab")
+                    } else await changed()
                     asked.open()
                   }
                   const returned = await pending
                   await quiet(server)
                   page.settled()
                   await quiet(server)
+                  const answered =
+                    threw || page.posts?.[`${held.kind}.${fn}`] === undefined
+                      ? undefined
+                      : page.answered?.()
+                  const actionData = (): unknown => {
+                    const shown: unknown = Reflect.apply(
+                      Reflect.get(held.value, "snapshot"),
+                      held.value,
+                      [],
+                    )
+                    return typeof shown === "object" && shown !== null
+                      ? Reflect.get(shown, "actionData")
+                      : undefined
+                  }
                   return {
                     at,
                     applies,
@@ -957,13 +1013,21 @@ for (const surface of SURFACES) {
                         ? ends
                         : undefined,
                     returned: JSON.stringify(returned) ?? "undefined",
+                    // A rotation after it settled is a visitor change it does not answer for.
                     ends:
-                      atSettle === undefined || typeof ends === "string"
+                      atSettle === undefined ||
+                      typeof ends === "string" ||
+                      server.rotations !== rotatedAtSettle
                         ? undefined
                         : [atSettle, read()],
                     settled: partsOf(page),
                     loads: server.loads,
                     swallowed,
+                    posted:
+                      answered === undefined
+                        ? undefined
+                        : [JSON.stringify(answered), JSON.stringify(actionData()) ?? "undefined"],
+                    caught,
                   }
                 } finally {
                   server.closed = true
@@ -1041,8 +1105,33 @@ for (const surface of SURFACES) {
                     second.settled[index]?.[1] ?? "",
                     `${part} after ${named}`,
                   )
-                // A call the change caught mid-load ends as the same call made once it landed.
-                if (second.at !== "before the call") {
+                if (second.at === THROUGH) {
+                  // Once another tab's change lands, nothing loaded for the visitor in between shows,
+                  // and a call it caught mid-load does not return it. To a page, a server that rotates
+                  // the epoch on every response signs in a visitor each time, and its loads stay bounded
+                  // only by taking a change as their own: there only the load count is judged.
+                  for (const [whose, run] of [
+                    ["first", first],
+                    ["second", second],
+                  ] as const) {
+                    if (run.at !== THROUGH || mode === "rotates the epoch on every response")
+                      continue
+                    const shown = [
+                      ...(run.caught && listed.posts?.[call] === undefined
+                        ? [[named, run.returned] as const]
+                        : []),
+                      ...run.settled
+                        .filter(([part]) => SWEEP_OPEN[`${surface.name}: ${part}`] === undefined)
+                        .map(([part, value]) => [`${part} after ${named}`, value] as const),
+                    ]
+                    for (const [what, value] of shown)
+                      if (value.includes('"between"'))
+                        problems.push(
+                          `${what}, server ${mode}, earlier loads for the ${whose} visitor, shows what was loaded for the visitor in between once another tab's change landed: ${value}`,
+                        )
+                  }
+                } else if (second.at !== "before the call") {
+                  // A call the change caught mid-load ends as the same call made once it landed.
                   const after = await answer(
                     held.name,
                     fn,
@@ -1085,6 +1174,16 @@ for (const surface of SURFACES) {
                       `${named} resolves though a load failed while it was pending, earlier loads for the ${whose} visitor`,
                     )
                   } else if (run.swallowed) quietedBy(surface.name).add(call)
+                for (const [whose, run] of [
+                  ["first", first],
+                  ["second", second],
+                ] as const) {
+                  const [answered, shown] = run.posted ?? ["", ""]
+                  if (answered !== shown)
+                    problems.push(
+                      `${named} shows ${shown} for a POST the server answered with ${answered}, server ${mode}, earlier loads for the ${whose} visitor`,
+                    )
+                }
                 if (mode !== "rotates the epoch on every response") continue
                 for (const [whose, run] of [
                   ["first", first],
