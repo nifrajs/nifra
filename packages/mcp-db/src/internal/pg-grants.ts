@@ -341,12 +341,12 @@ export interface Definer {
 }
 
 /**
- * Every function outside `pg_catalog` that `grantee` may execute and that runs with its owner's
- * rights. Such a function reads past every grant wherever it is reached: by name, through an operator
- * or a cast, folded into a view at plan time, or from another function's body. The server checks the
- * caller's EXECUTE on each of those paths, except an aggregate's support functions, which it checks
- * against the aggregate's owner, so an aggregate over one is listed in its place. A procedure is left
- * out: no expression can call one.
+ * Every function that `grantee` may execute and that runs with its owner's rights, `pg_catalog`
+ * included, where a stock server has none. Such a function reads past every grant wherever it is
+ * reached: by name, through an operator or a cast, folded into a view at plan time, or from another
+ * function's body. The server checks the caller's EXECUTE on each of those paths, except an
+ * aggregate's support functions, which it checks against the aggregate's owner, so an aggregate over
+ * one is listed in its place. A procedure is left out: no expression can call one.
  */
 export async function readDefiners(
   connection: PgConnection,
@@ -366,8 +366,7 @@ export async function readDefiners(
       pg_catalog.pg_get_function_identity_arguments(p.oid) AS args
     FROM reach JOIN pg_catalog.pg_proc p ON p.oid = reach.oid
     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname <> 'pg_catalog'
-      AND pg_catalog.has_function_privilege(${grantee}::text::name, p.oid, 'EXECUTE')
+    WHERE pg_catalog.has_function_privilege(${grantee}::text::name, p.oid, 'EXECUTE')
     ORDER BY n.nspname::text COLLATE "C", p.proname::text COLLATE "C",
       pg_catalog.pg_get_function_identity_arguments(p.oid) COLLATE "C"`,
   )
