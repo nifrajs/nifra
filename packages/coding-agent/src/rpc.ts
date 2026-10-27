@@ -553,26 +553,11 @@ export class CodingAgentRpcServer {
           cors,
         )
       }
-      case "ui.reload": {
-        this.requireSnapshot()
-        if (this.options.ui === undefined)
-          return json(
-            { error: { code: "ui_unavailable", message: "UI extension host is not configured" } },
-            409,
-            cors,
-          )
-        const params = record(request.params)
-        if (!Array.isArray(params.manifests))
-          return json(
-            { error: { code: "invalid_ui", message: "manifests must be an array" } },
-            422,
-            cors,
-          )
-        return json(this.options.ui.reload(params.manifests as UiExtensionManifest[]), 200, cors)
-      }
+      case "ui.reload":
       case "ui.preview": {
         this.requireSnapshot()
-        if (this.options.ui === undefined)
+        const ui = this.options.ui
+        if (ui === undefined)
           return json(
             { error: { code: "ui_unavailable", message: "UI extension host is not configured" } },
             409,
@@ -585,7 +570,12 @@ export class CodingAgentRpcServer {
             422,
             cors,
           )
-        return json(this.options.ui.preview(params.manifests as UiExtensionManifest[]), 200, cors)
+        const manifests = params.manifests as UiExtensionManifest[]
+        return json(
+          request.method === "ui.reload" ? ui.reload(manifests) : ui.preview(manifests),
+          200,
+          cors,
+        )
       }
       case "workflow.list": {
         this.requireSnapshot()

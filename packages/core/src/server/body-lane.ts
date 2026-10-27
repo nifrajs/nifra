@@ -31,6 +31,11 @@ type FramedJsonSource = RequestSource & {
 // Every lane calls `onResult` outside its parse guard: a throw from the continuation is the app's,
 // and must never come back to the client as `invalid_json`.
 const INVALID_JSON = (): ResponseResult => plainError(400, "invalid_json")
+// A parameter, not a closure over the caller's `settle`: capturing it there costs every call a scope object.
+const fromBuffer =
+  <T>(settle: (bytes: Uint8Array) => T) =>
+  (buffer: ArrayBuffer): T =>
+    settle(new Uint8Array(buffer))
 
 // `Deno.serve`'s own `Request.json()` keeps a leading UTF-8 byte order mark that its `text()` and every
 // other runtime's `json()` drop, so it refuses a body they parse. Deno decodes the bytes itself below.
@@ -115,45 +120,24 @@ export function readBoundedJsonSource<T>(
         )
       }
 
-      const bytesReader = raw.bytes
-      if (bytesReader !== undefined) {
-        return bytesReader.call(raw).then(
-          (bytes) => {
-            if (bytes.byteLength > length || bytes.byteLength > maxBytes) {
-              return onResult === undefined
-                ? plainError(413, "payload_too_large")
-                : onResult(plainError(413, "payload_too_large"))
-            }
-            let parsed: unknown
-            try {
-              parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
-            } catch {
-              parsed = INVALID_JSON()
-            }
-            return onResult === undefined ? parsed : onResult(parsed)
-          },
-          () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
-        )
+      const settle = (bytes: Uint8Array) => {
+        if (bytes.byteLength > length || bytes.byteLength > maxBytes) {
+          return onResult === undefined
+            ? plainError(413, "payload_too_large")
+            : onResult(plainError(413, "payload_too_large"))
+        }
+        let parsed: unknown
+        try {
+          parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
+        } catch {
+          parsed = INVALID_JSON()
+        }
+        return onResult === undefined ? parsed : onResult(parsed)
       }
-
-      return raw.arrayBuffer().then(
-        (buffer) => {
-          const bytes = new Uint8Array(buffer)
-          if (bytes.byteLength > length || bytes.byteLength > maxBytes) {
-            return onResult === undefined
-              ? plainError(413, "payload_too_large")
-              : onResult(plainError(413, "payload_too_large"))
-          }
-          let parsed: unknown
-          try {
-            parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
-          } catch {
-            parsed = INVALID_JSON()
-          }
-          return onResult === undefined ? parsed : onResult(parsed)
-        },
-        () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
-      )
+      const refuse = () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON()))
+      const bytesReader = raw.bytes
+      if (bytesReader !== undefined) return bytesReader.call(raw).then(settle, refuse)
+      return raw.arrayBuffer().then(fromBuffer(settle), refuse)
     }
   }
 

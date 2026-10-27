@@ -1,10 +1,10 @@
 /**
  * Anti-slop ratchet: no file may gain a finding from the Biome plugins in `scripts/anti-slop/`.
  *
- * The plugins port four rules from dmmulroy/anti-slop (MIT). They report at `info`, so `biome check`
- * stays green over the sites that predate them while editors still show every one. This gate is what
- * enforces them: each file's per-rule count may not rise above the committed baseline, so the existing
- * sites are frozen and new code meets the rules.
+ * Four plugins port rules from dmmulroy/anti-slop (MIT); `noHelperCopy` is nifra's own. They report at
+ * `info`, so `biome check` stays green over the sites that predate them while editors still show every
+ * one. This gate is what enforces them: each file's per-rule count may not rise above the committed
+ * baseline, so the existing sites are frozen and new code meets the rules.
  *
  * A justified new site takes a suppression whose reason states the invariant:
  *

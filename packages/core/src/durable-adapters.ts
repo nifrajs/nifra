@@ -472,6 +472,16 @@ function recordFromRow<T>(row: Record<string, unknown> | undefined): T | undefin
   return clone(parseWire(text) as T)
 }
 
+function leaseFromRow(row: Record<string, unknown>): ReconciliationLease {
+  return Object.freeze({
+    name: String(row.name),
+    owner: String(row.owner),
+    token: String(row.token),
+    expiresAt: Number(row.expires_at),
+    ...(row.cursor === null || row.cursor === undefined ? {} : { cursor: String(row.cursor) }),
+  })
+}
+
 function serializeRecord(record: unknown): string {
   return stringifyWire(record)
 }
@@ -583,13 +593,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     )
     const row = result.rows[0]
     if (row === undefined) return undefined
-    return Object.freeze({
-      name: String(row.name),
-      owner: String(row.owner),
-      token: String(row.token),
-      expiresAt: Number(row.expires_at),
-      ...(row.cursor === null || row.cursor === undefined ? {} : { cursor: String(row.cursor) }),
-    })
+    return leaseFromRow(row)
   }
   async renewLease(input: Parameters<DurableRecordBackend["renewLease"]>[0]): Promise<boolean> {
     // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
@@ -764,13 +768,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
       )
       .get(input.name, input.owner, token, expiresAt, input.now)
     if (row === undefined || row === null) return undefined
-    return Object.freeze({
-      name: String(row.name),
-      owner: String(row.owner),
-      token: String(row.token),
-      expiresAt: Number(row.expires_at),
-      ...(row.cursor === null || row.cursor === undefined ? {} : { cursor: String(row.cursor) }),
-    })
+    return leaseFromRow(row)
   }
   async renewLease(input: Parameters<DurableRecordBackend["renewLease"]>[0]): Promise<boolean> {
     return (
@@ -963,42 +961,42 @@ export class DurableObjectRecordBackend implements DurableRecordBackend {
     })
   }
   async renewLease(input: Parameters<DurableRecordBackend["renewLease"]>[0]): Promise<boolean> {
-    return await this.storage.transaction(async (txn) => {
-      const key = this.leaseKey(input.name)
-      const current = await txn.get<DurableObjectLeaseValue>(key)
-      if (
-        current?.owner !== input.owner ||
-        !safeEqual(current.token, input.token) ||
-        current.expiresAt <= input.now
-      )
-        return false
-      await txn.put(key, { ...current, expiresAt: input.now + input.leaseMs })
-      return true
-    })
+    return await this.updateHeldLease(input, (current) =>
+      current.expiresAt <= input.now
+        ? undefined
+        : { ...current, expiresAt: input.now + input.leaseMs },
+    )
   }
   async checkpointLease(
     input: Parameters<DurableRecordBackend["checkpointLease"]>[0],
   ): Promise<boolean> {
-    return await this.storage.transaction(async (txn) => {
-      const key = this.leaseKey(input.name)
-      const current = await txn.get<DurableObjectLeaseValue>(key)
-      if (current?.owner !== input.owner || !safeEqual(current.token, input.token)) return false
+    return await this.updateHeldLease(input, (current) => {
       const next = { ...current }
       if (input.cursor === undefined) delete next.cursor
       else next.cursor = input.cursor
-      await txn.put(key, next)
-      return true
+      return next
     })
   }
   async releaseLease(input: Parameters<DurableRecordBackend["releaseLease"]>[0]): Promise<boolean> {
-    return await this.storage.transaction(async (txn) => {
-      const key = this.leaseKey(input.name)
-      const current = await txn.get<DurableObjectLeaseValue>(key)
-      if (current?.owner !== input.owner || !safeEqual(current.token, input.token)) return false
+    return await this.updateHeldLease(input, (current) => {
       const next = { ...current, expiresAt: 0 }
       delete next.owner
       delete next.token
-      await txn.put(key, next)
+      return next
+    })
+  }
+  /** Write `next(current)` over the lease while `input`'s owner and token still hold it. */
+  private updateHeldLease(
+    input: { readonly name: string; readonly owner: string; readonly token: string },
+    next: (current: DurableObjectLeaseValue) => DurableObjectLeaseValue | undefined,
+  ): Promise<boolean> {
+    return this.storage.transaction(async (txn) => {
+      const key = this.leaseKey(input.name)
+      const current = await txn.get<DurableObjectLeaseValue>(key)
+      if (current?.owner !== input.owner || !safeEqual(current.token, input.token)) return false
+      const value = next(current)
+      if (value === undefined) return false
+      await txn.put(key, value)
       return true
     })
   }

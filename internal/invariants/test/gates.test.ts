@@ -20,6 +20,7 @@ const BENCHMARK = "a measured threshold; its red path is the benchmark exceeding
 
 const GATES: Readonly<Record<string, Gate>> = {
   "check:anti-slop": { redPath: "scripts/check-anti-slop.test.ts" },
+  "check:clones": { redPath: "scripts/check-clones.test.ts" },
   "check:publish": { redPath: "packages/create-nifra/test/version-sync.test.ts" },
   "check:packed": { redPath: "scripts/check-packed.test.ts" },
   "verify:published": { redPath: "scripts/verify-published.test.ts" },

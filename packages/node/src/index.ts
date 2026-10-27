@@ -47,6 +47,7 @@ import {
   staticMountsOf,
 } from "./generated/static-file.ts"
 import { assertCloseArgs } from "./generated/ws-close.ts"
+import type { NifraWs, NifraWsData, WsUpgradeOutcome } from "./generated/ws-types.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
 import { writeTextFrame } from "./ws-frame.ts"
@@ -67,56 +68,6 @@ export interface FetchHandler {
     platform?: NodePlatform,
   ): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
 }
-
-// --- WebSocket types: structurally mirrored from @nifrajs/core. The adapter stays dependency-free;
-// the runtime outcome contract below is generated from core as a separate type-only artifact. ---
-
-/** A received frame, normalized: text → `string`, binary → `Uint8Array`. */
-type NifraWsData = string | Uint8Array
-
-/** The portable socket a nifra WS handler sees (mirror of core's `NifraWebSocket`). */
-interface NifraWs {
-  send(data: string | ArrayBufferView | ArrayBuffer): void
-  close(code?: number, reason?: string): void
-  readonly readyState: number
-  subscribe(topic: string): void
-  unsubscribe(topic: string): void
-  data: unknown
-  readonly raw: unknown
-}
-
-/** Mirror of core's `TopicRegistry` surface - the app's pub/sub the adapter wires `ws.subscribe` to. */
-interface WsPubSub {
-  subscribe(topic: string, ws: NifraWs): void
-  unsubscribe(topic: string, ws: NifraWs): void
-  unsubscribeAll(ws: NifraWs): void
-}
-
-/** A nifra WS route's lifecycle (mirror of core's `WebSocketHandler` - the post-upgrade callbacks). */
-interface NifraWsHandler {
-  open?(ws: NifraWs): void | Promise<void>
-  message?(ws: NifraWs, data: NifraWsData): void | Promise<void>
-  close?(ws: NifraWs, code: number, reason: string): void | Promise<void>
-  error?(ws: NifraWs, error: unknown): void | Promise<void>
-}
-
-/** Mirror of core's `WebSocketUpgradeOutcome` - what `resolveWebSocketUpgrade` returns. */
-type WsUpgradeOutcome =
-  | { readonly kind: "pass" }
-  | { readonly kind: "reject"; readonly response: Response }
-  | {
-      readonly kind: "upgrade"
-      readonly handler: NifraWsHandler
-      readonly data: unknown
-      readonly pubsub: WsPubSub
-      readonly maxPayloadBytes?: number
-      /** Builds `ws.send` with the route's outbound contract (`validateSend`). */
-      sender?(
-        handler: NifraWsHandler,
-        send: (payload: string | ArrayBufferView | ArrayBuffer) => void,
-        onError: (error: unknown) => void,
-      ): (payload: string | ArrayBufferView | ArrayBuffer) => void
-    }
 
 /** Structural view of the `ws` package's `WebSocket` (no `@types/ws` dependency - see `loadWsServer`). */
 interface WsSocket {
@@ -480,32 +431,7 @@ const DeferringResponse = /* @__PURE__ */ (() => {
     "toResponse",
     "toNodeBody",
   ])
-  const keys: Array<string | symbol> = [
-    ...Object.getOwnPropertyNames(NativeResponse.prototype),
-    ...Object.getOwnPropertySymbols(NativeResponse.prototype),
-  ]
-  for (const key of keys) {
-    if (own.has(key)) continue
-    const descriptor = Object.getOwnPropertyDescriptor(NativeResponse.prototype, key)
-    if (descriptor === undefined) continue
-    if (typeof descriptor.value === "function") {
-      Object.defineProperty(DeferringResponse.prototype, key, {
-        configurable: true,
-        writable: true,
-        value: function (this: InstanceType<typeof DeferringResponse>, ...args: unknown[]) {
-          const real = this._real as unknown as Record<string | symbol, unknown>
-          return (real[key] as (...a: unknown[]) => unknown).apply(real, args)
-        },
-      })
-    } else if (descriptor.get !== undefined) {
-      Object.defineProperty(DeferringResponse.prototype, key, {
-        configurable: true,
-        get(this: InstanceType<typeof DeferringResponse>) {
-          return (this._real as unknown as Record<string | symbol, unknown>)[key]
-        },
-      })
-    }
-  }
+  forwardToReal(DeferringResponse.prototype, NativeResponse.prototype, own)
   Object.defineProperty(DeferringResponse.prototype, RESPONSE_RESULT, { value: true })
   Object.setPrototypeOf(DeferringResponse.prototype, NativeResponse.prototype)
   // Inherit the native statics (`Response.json` / `redirect` / `error`) so they still resolve after
@@ -1511,36 +1437,13 @@ function runNodeSource(
     }
   }
 
-  const request = toWebRequest(nodeReq, protocol, host, nodeRes)
-  const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
-  if (typeof resolveNode === "function") {
-    try {
-      const outcome = resolveNode.call(app, request, platform)
-      return outcome instanceof Promise
-        ? outcome.then(
-            (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
-            (error: unknown) => failAndReport(nodeRes, error),
-          )
-        : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
-    } catch (error) {
-      failAndReport(nodeRes, error)
-      return
-    }
-  }
-
-  try {
-    const response = app.fetch(request, platform)
-    return response instanceof Promise
-      ? response.then(
-          (settled) => writeResponseSafely(settled, nodeRes, nodeReq.method),
-          (error: unknown) => failAndReport(nodeRes, error),
-        )
-      : writeResponseSafely(response, nodeRes, nodeReq.method)
-  } catch (error) {
-    // A request hook that throws escapes `fetch`; never leak a stack to the wire.
-    failAndReport(nodeRes, error)
-    return
-  }
+  return runWebRequest(
+    app,
+    toWebRequest(nodeReq, protocol, host, nodeRes),
+    nodeReq,
+    nodeRes,
+    platform,
+  )
 }
 
 /**
@@ -1730,6 +1633,7 @@ function toApp(
   )
 }
 
+/** Answer through a Web `Request`: the app's `resolveNode` lane when it has one, else `fetch`. */
 function runWebRequest(
   app: FetchHandler,
   request: Request,
@@ -2191,28 +2095,17 @@ function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
   )
 }
 
-/**
- * Lazy view over a Node `IncomingMessage`. Methods live on the prototype (not re-allocated per
- * request), and every materialization is deferred: the `Headers` object, the Web `ReadableStream`
- * body, and the undici `Request` are each built only when first read. Body-capable methods use this
- * source; GET/HEAD use the smaller {@link LeanNodeGetSource}.
- */
-class LazyNodeRequestSource implements NodeRequestSource {
+/** What both Node request sources read straight off `IncomingMessage`: URL, URL parts, headers. */
+abstract class NodeSourceBase {
   readonly method: string
 
-  private headersValue: Headers | undefined
-  private bodyValue: ReadableStream<Uint8Array> | null | undefined
-  private requestValue: Request | undefined
-  private consumedBody: Buffer | undefined
-  private bodyRead: BodyReadState | undefined
-  private readBodyPromise: Promise<Buffer> | undefined
-  private mappedRead: Promise<unknown> | undefined
-  private rawReaders: NodeRawBodyReaders | undefined
+  protected headersValue: Headers | undefined
+  protected requestValue: Request | undefined
   private urlValue: string | undefined
-  private readonly nodeReq: IncomingMessage
+  protected readonly nodeReq: IncomingMessage
   private readonly protocol: RequestProtocol
   private readonly host: string
-  private readonly nodeRes: ServerResponse
+  protected readonly nodeRes: ServerResponse
 
   constructor(
     nodeReq: IncomingMessage,
@@ -2248,6 +2141,21 @@ class LazyNodeRequestSource implements NodeRequestSource {
   header(name: string): string | null {
     return nodeRequestHeader(this.nodeReq, name)
   }
+}
+
+/**
+ * Lazy view over a Node `IncomingMessage`. Methods live on the prototype (not re-allocated per
+ * request), and every materialization is deferred: the `Headers` object, the Web `ReadableStream`
+ * body, and the undici `Request` are each built only when first read. Body-capable methods use this
+ * source; GET/HEAD use the smaller {@link LeanNodeGetSource}.
+ */
+class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource {
+  private bodyValue: ReadableStream<Uint8Array> | null | undefined
+  private consumedBody: Buffer | undefined
+  private bodyRead: BodyReadState | undefined
+  private readBodyPromise: Promise<Buffer> | undefined
+  private mappedRead: Promise<unknown> | undefined
+  private rawReaders: NodeRawBodyReaders | undefined
 
   get body(): ReadableStream<Uint8Array> | null {
     if (this.method === "GET" || this.method === "HEAD") return null
@@ -2458,50 +2366,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
  * GET/HEAD requests dominate API reads and never carry a body. This source keeps that path lean while
  * preserving the full Web `Request` escape hatch if user code reads `c.req`/`c.request`.
  */
-class LeanNodeGetSource implements NodeRequestSource {
-  readonly method: string
-
-  private headersValue: Headers | undefined
-  private requestValue: Request | undefined
-  private urlValue: string | undefined
-  private readonly nodeReq: IncomingMessage
-  private readonly protocol: RequestProtocol
-  private readonly host: string
-  private readonly nodeRes: ServerResponse
-
-  constructor(
-    nodeReq: IncomingMessage,
-    method: string,
-    protocol: RequestProtocol,
-    host: string,
-    nodeRes: ServerResponse,
-  ) {
-    this.nodeReq = nodeReq
-    this.method = method
-    this.protocol = protocol
-    this.host = host
-    this.nodeRes = nodeRes
-  }
-
-  /** The absolute URL, built only when something reads it - routing uses `urlParts` instead. */
-  get url(): string {
-    this.urlValue ??= `${this.protocol}://${this.host}${this.nodeReq.url ?? "/"}`
-    return this.urlValue
-  }
-
-  get urlParts(): { pathname: string; search: string } {
-    return originUrlParts(this.nodeReq.url ?? "/")
-  }
-
-  get headers(): Headers {
-    this.headersValue ??= headersFromNode(this.nodeReq.headers)
-    return this.headersValue
-  }
-
-  header(name: string): string | null {
-    return nodeRequestHeader(this.nodeReq, name)
-  }
-
+class LeanNodeGetSource extends NodeSourceBase implements NodeRequestSource {
   get body(): null {
     return null
   }
@@ -2676,35 +2541,39 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
   // (e.g. Symbol.toStringTag) are reachable through the chained prototype without a brand check,
   // so only accessors and methods need explicit forwarding.
   const own = new Set<string | symbol>(["constructor", "method", "url", "headers"])
-  const keys: Array<string | symbol> = [
-    ...Object.getOwnPropertyNames(NativeRequest.prototype),
-    ...Object.getOwnPropertySymbols(NativeRequest.prototype),
-  ]
-  for (const key of keys) {
+  forwardToReal(LazyWebRequest.prototype, NativeRequest.prototype, own)
+  Object.setPrototypeOf(LazyWebRequest.prototype, NativeRequest.prototype)
+  return LazyWebRequest
+})()
+
+/** Forward each method and accessor of `native` that `own` does not name to the instance's `_real`. */
+function forwardToReal(prototype: object, native: object, own: ReadonlySet<string | symbol>): void {
+  for (const key of [
+    ...Object.getOwnPropertyNames(native),
+    ...Object.getOwnPropertySymbols(native),
+  ]) {
     if (own.has(key)) continue
-    const descriptor = Object.getOwnPropertyDescriptor(NativeRequest.prototype, key)
+    const descriptor = Object.getOwnPropertyDescriptor(native, key)
     if (descriptor === undefined) continue
     if (typeof descriptor.value === "function") {
-      Object.defineProperty(LazyWebRequest.prototype, key, {
+      Object.defineProperty(prototype, key, {
         configurable: true,
         writable: true,
-        value: function (this: InstanceType<typeof LazyWebRequest>, ...args: unknown[]) {
-          const real = this._real as unknown as Record<string | symbol, unknown>
+        value: function (this: { readonly _real: unknown }, ...args: unknown[]) {
+          const real = this._real as Record<string | symbol, unknown>
           return (real[key] as (...a: unknown[]) => unknown).apply(real, args)
         },
       })
     } else if (descriptor.get !== undefined) {
-      Object.defineProperty(LazyWebRequest.prototype, key, {
+      Object.defineProperty(prototype, key, {
         configurable: true,
-        get(this: InstanceType<typeof LazyWebRequest>) {
-          return (this._real as unknown as Record<string | symbol, unknown>)[key]
+        get(this: { readonly _real: unknown }) {
+          return (this._real as Record<string | symbol, unknown>)[key]
         },
       })
     }
   }
-  Object.setPrototypeOf(LazyWebRequest.prototype, NativeRequest.prototype)
-  return LazyWebRequest
-})()
+}
 
 /** A writable end whose backpressure can be awaited: a response, or an upgrade socket answered as one. */
 interface DrainTarget {
