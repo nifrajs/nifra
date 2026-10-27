@@ -5432,7 +5432,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (isResponseResult(settled) || settled instanceof Response) {
               return this.respondFused(settled, ctx)
             }
-            Object.assign(ctx, settled as object)
+            try {
+              Object.assign(ctx, settled as object)
+            } catch (err) {
+              return logError(err, ctx)
+            }
             return runBefore(ctx)
           },
           (err) => logError(err, ctx),
@@ -5441,7 +5445,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (isResponseResult(derived) || derived instanceof Response) {
         return this.respondFused(derived, ctx)
       }
-      Object.assign(ctx, derived as object)
+      try {
+        Object.assign(ctx, derived as object)
+      } catch (err) {
+        return logError(err, ctx)
+      }
       return runBefore(ctx)
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
@@ -5587,7 +5595,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               if (isResponseResult(settled) || settled instanceof Response) {
                 return this.respondFused(settled, ctx)
               }
-              Object.assign(ctx, settled as object)
+              try {
+                Object.assign(ctx, settled as object)
+              } catch (err) {
+                return logError(err, ctx)
+              }
               return runBefore()
             },
             (err) => logError(err, ctx),
@@ -5596,7 +5608,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (isResponseResult(derived) || derived instanceof Response) {
           return this.respondFused(derived, ctx)
         }
-        Object.assign(ctx, derived as object)
+        try {
+          Object.assign(ctx, derived as object)
+        } catch (err) {
+          return logError(err, ctx)
+        }
         return runBefore()
       }
       const onParsed = (parsed: unknown): MaybePromise<Response> => {
@@ -5783,7 +5799,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (isResponseResult(settled) || settled instanceof Response) {
               return finalizeEarly(settled, ctx, finalize, wrapResponse)
             }
-            Object.assign(ctx, settled as object)
+            try {
+              Object.assign(ctx, settled as object)
+            } catch (err) {
+              return logError(err, ctx, finalize, wrapResponse)
+            }
             return runBefore(ctx, finalize, wrapResponse)
           },
           (err) => logError(err, ctx, finalize, wrapResponse),
@@ -5792,7 +5812,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (isResponseResult(derived) || derived instanceof Response) {
         return finalizeEarly(derived, ctx, finalize, wrapResponse)
       }
-      Object.assign(ctx, derived as object)
+      try {
+        Object.assign(ctx, derived as object)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
       return runBefore(ctx, finalize, wrapResponse)
     }
 
@@ -5989,7 +6013,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (isResponseResult(settled) || settled instanceof Response) {
               return finalizeEarly(settled, ctx, finalize, wrapResponse)
             }
-            Object.assign(ctx, settled as object)
+            try {
+              Object.assign(ctx, settled as object)
+            } catch (err) {
+              return logError(err, ctx, finalize, wrapResponse)
+            }
             return runBefore(ctx, finalize, wrapResponse)
           },
           (err) => logError(err, ctx, finalize, wrapResponse),
@@ -5998,7 +6026,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (isResponseResult(derived) || derived instanceof Response) {
         return finalizeEarly(derived, ctx, finalize, wrapResponse)
       }
-      Object.assign(ctx, derived as object)
+      try {
+        Object.assign(ctx, derived as object)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
       return runBefore(ctx, finalize, wrapResponse)
     }
 
