@@ -14,7 +14,6 @@ export const DATE_TO_JSON = Date.prototype.toJSON
 // What `Date.prototype.toJSON` reads a `Date`'s time value through.
 const DATE_TO_PRIMITIVE = Date.prototype[Symbol.toPrimitive]
 const DATE_VALUE_OF = Date.prototype.valueOf
-const DATE_TO_ISO_STRING = Date.prototype.toISOString
 
 /**
  * Whether `date` reaches the `@@toPrimitive` and `valueOf` that `Date.prototype.toJSON` reads its time
@@ -25,39 +24,12 @@ const DATE_TO_ISO_STRING = Date.prototype.toISOString
 export const readsShippedTime = (date: Date): boolean =>
   date[Symbol.toPrimitive] === DATE_TO_PRIMITIVE && date.valueOf === DATE_VALUE_OF
 
-/**
- * Whether `value` is a `Date` that reaches `toJSON` and each method `toJSON` calls as they ship, so its
- * JSON can be written here, by `toJSON`'s own steps, with no code but the engine's.
- */
-const isPlainDate = (value: object): value is Date =>
-  value instanceof Date &&
-  value.toJSON === DATE_TO_JSON &&
-  readsShippedTime(value) &&
-  value.toISOString === DATE_TO_ISO_STRING
-
 /** Sets `key` on `out` as an own field, `__proto__` included, which an assignment takes as the prototype. */
 export function define(out: Record<string, unknown>, key: string, value: unknown): void {
   if (key === "__proto__")
     Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
   else out[key] = value
 }
-
-// How far down the first row's path, and how many fields of each object, the probe looks.
-const PROBE_DEPTH = 4
-const PROBE_FIELDS = 64
-
-// The value of `key` on `value`, or `ACCESSOR` for an accessor, whose getter only the serializer may
-// run. `__lookupGetter__` answers without building a descriptor, which costs more than the read.
-const ACCESSOR: unique symbol = Symbol()
-const lookupGetter: (this: object, key: PropertyKey) => unknown = Reflect.get(
-  Object.prototype,
-  "__lookupGetter__",
-)
-const fieldOf = (value: object, key: PropertyKey): unknown =>
-  lookupGetter.call(value, key) === undefined
-    ? // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a property of any object may be read by key; no getter backs this one
-      (value as Record<PropertyKey, unknown>)[key]
-    : ACCESSOR
 
 // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the member is optional, so an engine without JSON.rawJSON leaves it undefined.
 export const isRawJson = (JSON as JSON & { readonly isRawJSON?: (value: unknown) => boolean })
@@ -71,99 +43,15 @@ export const isRawJson = (JSON as JSON & { readonly isRawJSON?: (value: unknown)
 export const isPlainPrototype = (proto: unknown): boolean =>
   proto === null || proto === Object.prototype || Object.getPrototypeOf(proto) === null
 
-const objectTag: (this: unknown) => string = Object.prototype.toString
-
-/**
- * Whether JSON writes `value`, an object with prototype `proto` that is not a list, as its own fields,
- * and so as a copy of them: the engine tags it a plain object, as it does a class instance, and it is
- * not raw JSON. A boxed primitive is tagged by the value it holds, whatever its prototype, and JSON
- * writes that value instead.
- */
-const isPlainRecord = (value: object, proto: unknown): boolean =>
-  objectTag.call(value) === "[object Object]" && (proto !== null || isRawJson?.(value) !== true)
-
-/**
- * Whether a plain `Date` sits on `value`'s first path: a plain record's fields, a plain list's first
- * item, a few levels down, with no accessor on the way.
- */
-function datesAhead(value: object, depth: number): boolean {
-  if (value instanceof Date) return isPlainDate(value)
-  if (depth === 0) return false
-  const proto: unknown = Object.getPrototypeOf(value)
-  if (Array.isArray(value)) {
-    if (proto !== Array.prototype) return false
-    const first = fieldOf(value, 0)
-    return typeof first === "object" && first !== null && datesAhead(first, depth - 1)
-  }
-  if (!isPlainRecord(value, proto)) return false
-  const keys = Object.keys(value)
-  if (keys.length > PROBE_FIELDS) return false
-  for (const key of keys) {
-    const field = fieldOf(value, key)
-    if (field === ACCESSOR) return false
-    if (typeof field === "object" && field !== null && datesAhead(field, depth - 1)) return true
-  }
-  return false
-}
-
-/**
- * `value` with each plain `Date` in it written as its JSON, every plain list and record above one
- * copied first: a copy reads each getter once, and the serializer reads only copies. Anything else,
- * what has a hook of its own and a cycle are left as they are, for the serializer.
- */
-function datesWritten(value: object, path: object[]): unknown {
-  if (isPlainDate(value)) return Number.isFinite(value.valueOf()) ? value.toISOString() : null
-  const proto: unknown = Object.getPrototypeOf(value)
-  const list = Array.isArray(value)
-  if (
-    (list ? proto !== Array.prototype : !isPlainRecord(value, proto)) ||
-    typeof Reflect.get(value, "toJSON") === "function" ||
-    path.includes(value)
-  )
-    return value
-  if (list) {
-    path.push(value)
-    const items: unknown[] = value.slice()
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      if (typeof item === "object" && item !== null) items[i] = datesWritten(item, path)
-    }
-    path.pop()
-    return items
-  }
-  path.push(value)
-  // A spread copies the own enumerable fields JSON writes, faster than one assignment each.
-  const fields: Record<string, unknown> = { ...value }
-  for (const name of Object.keys(fields)) {
-    const field = fields[name]
-    if (typeof field !== "object" || field === null) continue
-    const written = datesWritten(field, path)
-    if (written !== field) define(fields, name, written)
-  }
-  path.pop()
-  return fields
-}
-
-/**
- * `value` as `JSON.stringify` takes it, with each plain `Date` already written when its first row
- * holds one: the engine's serializer leaves its fast path at a `Date`, several times slower. A value
- * holding an accessor goes as it came, so each getter runs once, in the serializer.
- */
-export function withDatesWritten(value: unknown): unknown {
-  if (typeof value !== "object" || value === null || !datesAhead(value, PROBE_DEPTH)) return value
-  return datesWritten(value, [])
-}
-
 /**
  * `JSON.stringify`, with each `bigint` written as its decimal string. Typed as the lib types
  * `JSON.stringify`: a value with no JSON form (`undefined`, a function) still gives `undefined`.
  */
 export function jsonText(value: unknown): string {
-  const written = withDatesWritten(value)
   try {
-    return JSON.stringify(written)
+    return JSON.stringify(value)
   } catch (error) {
-    return retried(written, error)
+    return retried(value, error)
   }
 }
 
