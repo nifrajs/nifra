@@ -208,6 +208,20 @@ const sortByRoute = <T extends { readonly method: string; readonly path: string 
     [...values].sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method)),
   )
 
+const sortByFinding = <
+  T extends { readonly method: string; readonly path: string; readonly code: string },
+>(
+  values: readonly T[],
+): readonly T[] =>
+  Object.freeze(
+    [...values].sort(
+      (a, b) =>
+        codeUnitOrder(a.path, b.path) ||
+        codeUnitOrder(a.method, b.method) ||
+        codeUnitOrder(a.code, b.code),
+    ),
+  )
+
 function evidenceRouteOf(
   route: ReflectedRoute,
   locations: readonly ProjectEvidenceSourceLocation[] | undefined,
@@ -247,14 +261,7 @@ function assuranceOf(report: AssuranceReport | undefined): ProjectEvidenceAssura
         }),
       ),
     ),
-    findings: Object.freeze(
-      [...report.findings].sort(
-        (a, b) =>
-          codeUnitOrder(a.path, b.path) ||
-          codeUnitOrder(a.method, b.method) ||
-          codeUnitOrder(a.code, b.code),
-      ),
-    ),
+    findings: sortByFinding(report.findings),
   })
 }
 
@@ -277,14 +284,7 @@ function capabilitiesOf(
         }),
       ),
     ),
-    findings: Object.freeze(
-      [...report.findings].sort(
-        (a, b) =>
-          codeUnitOrder(a.path, b.path) ||
-          codeUnitOrder(a.method, b.method) ||
-          codeUnitOrder(a.code, b.code),
-      ),
-    ),
+    findings: sortByFinding(report.findings),
   })
 }
 
@@ -430,16 +430,7 @@ export function composeProjectEvidence(
       : Object.freeze({
           ok: assuranceReports.every((report) => report.ok),
           routes: sortByRoute(assuranceReports.flatMap((report) => report.routes)),
-          findings: Object.freeze(
-            assuranceReports
-              .flatMap((report) => report.findings)
-              .sort(
-                (a, b) =>
-                  codeUnitOrder(a.path, b.path) ||
-                  codeUnitOrder(a.method, b.method) ||
-                  codeUnitOrder(a.code, b.code),
-              ),
-          ),
+          findings: sortByFinding(assuranceReports.flatMap((report) => report.findings)),
         })
   const capabilities =
     capabilityReports.length === 0
@@ -447,16 +438,7 @@ export function composeProjectEvidence(
       : Object.freeze({
           ok: capabilityReports.every((report) => report.ok),
           routes: sortByRoute(capabilityReports.flatMap((report) => report.routes)),
-          findings: Object.freeze(
-            capabilityReports
-              .flatMap((report) => report.findings)
-              .sort(
-                (a, b) =>
-                  codeUnitOrder(a.path, b.path) ||
-                  codeUnitOrder(a.method, b.method) ||
-                  codeUnitOrder(a.code, b.code),
-              ),
-          ),
+          findings: sortByFinding(capabilityReports.flatMap((report) => report.findings)),
         })
   if (assurance !== undefined) validateComposedReportRoutes(assurance, routeKeys, "assurance")
   if (capabilities !== undefined)
