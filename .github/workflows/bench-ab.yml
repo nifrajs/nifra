@@ -1,0 +1,91 @@
+name: Bench A/B (temporary)
+
+# TEMPORARY: delete this file and bench/ab-tmp/ before PR 221 merges.
+# The head of the PR against its base, built in one job and sampled in interleaved rounds on one
+# runner, so a ratio holds even though absolute CPU on a shared VM does not. `base2` is the base tree
+# run a second time: its ratio against `base` is the noise floor a head ratio has to clear.
+# Re-run it from the Actions tab, or push to the branch; ROUNDS below sets the sample count.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-ab-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  ROUNDS: "10"
+
+jobs:
+  ab:
+    if: github.event.pull_request.head.ref == 'perf/route-date-probe'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.12.0
+
+      - name: Install oha 1.16.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/oha" \
+            https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/oha"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Runner identity
+        run: |
+          { git -C head rev-parse HEAD; git -C base rev-parse HEAD; nproc; lscpu | head -20; bun --version; node --version; } | tee identity.txt
+
+      - name: Install and build both trees
+        run: |
+          for tree in base head; do
+            (cd "$tree" && bun install --frozen-lockfile && bun run build)
+          done
+
+      - name: Node bundles
+        run: |
+          bun head/bench/ab-tmp/prep.ts "$PWD/base"
+          bun head/bench/ab-tmp/prep.ts "$PWD/head"
+
+      - name: Measure
+        env:
+          TREES: base=./base,head=./head
+          AB_OUT: ab-result.md
+        run: bun head/bench/ab-tmp/ab.ts
+
+      - name: Report
+        if: ${{ !cancelled() }}
+        run: |
+          { echo "## head vs base (CPU per request, lower is better)"; cat ab-result.md identity.txt; } >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ !cancelled() }}
+        with:
+          name: bench-ab
+          path: |
+            ab-result.md
+            identity.txt
+          if-no-files-found: warn
+          retention-days: 14
