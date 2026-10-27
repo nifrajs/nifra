@@ -37,7 +37,7 @@ for shape in bare realworld generic; do
         --cpu-prof-dir="$out" --cpu-prof-name="$runtime-$shape-$round.cpuprofile" \
         bench/temporary-get-profile/bun-server.ts "$shape" "$port" >"$prefix.server.log" 2>&1 &
     elif [[ "$runtime" == deno ]]; then
-      NODE_ENV=production taskset -c "$SERVER_CPUS" deno run --no-check --allow-net --allow-env --allow-read --allow-write \
+      NODE_ENV=production taskset -c "$SERVER_CPUS" deno run --no-check --allow-net --allow-env --allow-read --allow-write --allow-sys=inspector \
         bench/temporary-get-profile/deno-server.ts "$shape" "$port" "$prefix.cpuprofile" >"$prefix.server.log" 2>&1 &
     else
       echo "Unknown runtime: $runtime" >&2; exit 1
