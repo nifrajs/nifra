@@ -55,7 +55,7 @@ test("a CRLF checkout of the committed copies and sources is current", () => {
   for (const copy of VENDORED)
     for (const file of [copy.source, ...copy.targets]) {
       const path = join(root, file)
-      writeFileSync(path, readFileSync(path, "utf8").replaceAll("\n", "\r\n"))
+      writeFileSync(path, readText(path).replaceAll("\n", "\r\n"))
     }
   expect({ stale: staleCopies(root), orphans: orphanCopies(root) }).toEqual({
     stale: [],
