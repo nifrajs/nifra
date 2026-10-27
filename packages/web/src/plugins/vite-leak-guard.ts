@@ -248,54 +248,27 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
   const appRoot = resolve(options.appRoot ?? process.cwd())
   const root = resolve(options.root ?? appRoot)
   const outDir = resolve(root, options.outDir ?? "dist")
-  const specifiers = entrySpecifiers(appRoot, options)
-  const plugin: LeakGuardPlugin = {
-    name: "nifra:leak-guard",
-    buildStart: () => specifiers.reset(),
-    resolveId: {
-      order: "pre",
-      handler(source, importer, resolveOptions) {
-        return specifiers.resolveId(this, source, importer, resolveOptions)
-      },
-    },
-    generateBundle(_options, bundle) {
-      const classifier = classifierFor(appRoot, options)
-      // Resolved import edges per module, straight from Rollup's graph. Dynamic imports count too: a
-      // `node:`/server-only module reached only via `import()` still ships to the browser.
-      const importsOf = (id: string): readonly string[] => {
-        const info = this.getModuleInfo(id)
-        if (info === null) return []
-        return [...(info.importedIds ?? []), ...(info.dynamicallyImportedIds ?? [])]
-      }
-      const graph = specifiers.annotate(
-        completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf),
-      )
-      const sources = { classifier, sourceOf: rollupModuleSource }
-      const privateEnv = privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_")
-      const outputs = Object.values(bundle as Readonly<Record<string, RollupOutputLike>>)
-      for (const output of outputs) {
-        if (output.type !== "asset" && output.fileName !== undefined)
-          options.verified?.add(output.fileName)
-      }
-      const leak =
-        formatClientGraphVerdict(verifyClientGraph(graph, { ...sources, privateEnv })) ??
-        formatNodeBuiltinLeak(detectNodeBuiltinsInClient(graph)) ??
-        formatServerOnlyLeak(detectServerOnlyInClient(graph)) ??
-        formatUnaccountedOutput(
-          accountEmittedFiles(emittedFiles(outputs, graph, root, options.verified), graph, {
-            ...sources,
-            outDir,
-          }),
-        ) ??
-        secretLeak(outputs, graph, classifier, appRoot, options)
-      if (leak === undefined) return
-      // Record before throwing: the throw is what fails the build for a standalone user of this plugin,
-      // and the record is what lets a caller that owns the build re-raise the real message (see `leak`).
-      plugin.leak = leak
-      this.error(new Error(leak))
-    },
-  }
-  return plugin
+  return graphGuard("nifra:leak-guard", appRoot, options, (graph, bundle, classifier) => {
+    const sources = { classifier, sourceOf: rollupModuleSource }
+    const privateEnv = privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_")
+    const outputs = Object.values(bundle as Readonly<Record<string, RollupOutputLike>>)
+    for (const output of outputs) {
+      if (output.type !== "asset" && output.fileName !== undefined)
+        options.verified?.add(output.fileName)
+    }
+    return (
+      formatClientGraphVerdict(verifyClientGraph(graph, { ...sources, privateEnv })) ??
+      formatNodeBuiltinLeak(detectNodeBuiltinsInClient(graph)) ??
+      formatServerOnlyLeak(detectServerOnlyInClient(graph)) ??
+      formatUnaccountedOutput(
+        accountEmittedFiles(emittedFiles(outputs, graph, root, options.verified), graph, {
+          ...sources,
+          outDir,
+        }),
+      ) ??
+      secretLeak(outputs, graph, classifier, appRoot, options)
+    )
+  })
 }
 
 /** The secret scan over a finished bundle and the `public/` files that ship beside it. */
@@ -354,9 +327,37 @@ export type ServerZoneGuardOptions = Pick<
  */
 export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakGuardPlugin {
   const appRoot = resolve(options.appRoot ?? process.cwd())
+  return graphGuard("nifra:server-zone-guard", appRoot, options, (graph, _bundle, classifier) =>
+    formatServerGraphVerdict(
+      verifyServerGraph(graph, {
+        classifier,
+        sourceOf: rollupModuleSource,
+        privateEnv: privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_"),
+        ...(options.componentModules === undefined
+          ? {}
+          : { componentModules: options.componentModules }),
+      }),
+    ),
+  )
+}
+
+/**
+ * A plugin that hands `verdict` the bundle's complete module graph and fails the build on the refusal
+ * it returns.
+ */
+function graphGuard(
+  name: string,
+  appRoot: string,
+  options: ServerZoneGuardOptions,
+  verdict: (
+    graph: ClientModuleGraph,
+    bundle: RollupBundleLike,
+    classifier: ZoneClassifier,
+  ) => string | undefined,
+): LeakGuardPlugin {
   const specifiers = entrySpecifiers(appRoot, options)
   const plugin: LeakGuardPlugin = {
-    name: "nifra:server-zone-guard",
+    name,
     buildStart: () => specifiers.reset(),
     resolveId: {
       order: "pre",
@@ -366,6 +367,8 @@ export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakG
     },
     generateBundle(_options, bundle) {
       const classifier = classifierFor(appRoot, options)
+      // Resolved import edges per module, straight from Rollup's graph. Dynamic imports count too: a
+      // `node:`/server-only module reached only via `import()` still ships to the browser.
       const importsOf = (id: string): readonly string[] => {
         const info = this.getModuleInfo(id)
         if (info === null) return []
@@ -374,17 +377,10 @@ export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakG
       const graph = specifiers.annotate(
         completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf),
       )
-      const leak = formatServerGraphVerdict(
-        verifyServerGraph(graph, {
-          classifier,
-          sourceOf: rollupModuleSource,
-          privateEnv: privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_"),
-          ...(options.componentModules === undefined
-            ? {}
-            : { componentModules: options.componentModules }),
-        }),
-      )
+      const leak = verdict(graph, bundle, classifier)
       if (leak === undefined) return
+      // Record before throwing: the throw is what fails the build for a standalone user of this plugin,
+      // and the record is what lets a caller that owns the build re-raise the real message (see `leak`).
       plugin.leak = leak
       this.error(new Error(leak))
     },

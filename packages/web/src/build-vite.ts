@@ -18,7 +18,7 @@
  * bundler-neutral module graph was built to close.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve as resolvePath } from "node:path"
 import { singleCopyPackageNames } from "@nifrajs/core/single-copy"
 import {
@@ -38,14 +38,11 @@ import {
   normalizeCssLoading,
 } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
-import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { generateServerManifest } from "./index.ts"
+import { clientEntryFiles, writeClientEntry, writeClientManifest } from "./internal/build-steps.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
-import {
-  assertDevelopmentProductionParity,
-  assertIdentityParity,
-  collectDevelopmentParityInput,
-} from "./internal/parity.ts"
+import { assertIdentityParity } from "./internal/parity.ts"
 import { emittedScanFiles, formatSecretFindings, scanForSecrets } from "./internal/secret-scan.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { unsupportedBuiltin } from "./internal/target-compat.ts"
@@ -174,33 +171,15 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     (options.copySplit ?? options.minify !== false)
       ? await loadCopySplit(root, { skip: [outDir] })
       : undefined
-  // The generated bootstrap, written beside the project so its imports resolve the app's deps (same
-  // reasoning as buildClient). A unique dir avoids clobbering a user file / colliding with parallel builds.
-  const entryDir = mkdtempSync(resolvePath(dirname(routesDir), ".nifra-vite-client-"))
-  const entryFile = `${entryDir}/_nifra-entry.ts`
-  writeFileSync(
-    entryFile,
-    `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, {
-      clientModule,
-      resolve,
-      copyChunks: copySplit !== undefined,
-      live: options.live,
-    })}`,
+  const { dir: entryDir, file: entryFile } = writeClientEntry(
+    routesDir,
+    ".nifra-vite-client-",
+    routeManifest,
+    { clientModule, resolve, copyChunks: copySplit !== undefined, live: options.live },
   )
 
-  // Every unique route/layout/_404 file - each an additional entry so Vite emits a named chunk per file
-  // the bootstrap's lazy import dedupes to, giving the per-route chunk + CSS mapping below.
-  const routeFiles = [
-    ...new Set([
-      ...routeManifest.routes.map((r) => r.file),
-      ...Object.values(routeManifest.layouts).map((l) => l.file),
-      ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
-      // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
-      ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
-      // A `_loading` page is an entry for its stylesheet too: the bootstrap imports it lazily.
-      ...Object.values(routeManifest.loadings ?? {}).map((page) => page.file),
-    ]),
-  ].sort()
+  // Each an additional entry, giving the per-route chunk + CSS mapping below.
+  const routeFiles = clientEntryFiles(routeManifest)
 
   // Vite manifest keys are the input path RELATIVE TO ROOT - precompute them so the lookup below is exact
   // (survives same-basename collisions like `index.tsx` + `blog/index.tsx`).
@@ -470,20 +449,11 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
-  const manifest: BuildManifest = {
-    entry: url(bootstrap.file),
-    assets: [...assets],
-    routes,
-    cssCodeSplit,
-    cssLoading,
-    ...(publicFiles.length > 0 ? { publicFiles } : {}),
-    ...(css.length > 0 ? { css } : {}),
-    ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
-    ...(Object.keys(copyChunks).length > 0 ? { copyChunks } : {}),
-  }
-  assertDevelopmentProductionParity(collectDevelopmentParityInput(routesDir, publicDir), manifest)
-  writeFileSync(`${outDir}/manifest.json`, JSON.stringify(manifest, null, 2))
-  return manifest
+  return writeClientManifest(
+    { entry: url(bootstrap.file), assets: [...assets], routes, cssCodeSplit, cssLoading },
+    { publicFiles, css, routeStyles, copyChunks },
+    { routesDir, publicDir, outDir },
+  )
 }
 
 /** Options for {@link buildServerVite} - the same surface as `buildServer` minus Bun-plugin specifics. */
@@ -727,23 +697,11 @@ export const viteBundler: Bundler = {
       ...(input.root ? { root: input.root } : {}),
       live: input.live,
     }),
-  buildServer: (input) =>
+  buildServer: ({ plugins, root, ...fields }) =>
     buildServerVite({
-      routesDir: input.routesDir,
-      serverEntry: input.serverEntry,
-      outDir: input.outDir,
-      clientEntry: input.clientEntry,
-      target: input.target,
-      ...(input.styles !== undefined ? { styles: input.styles } : {}),
-      ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
-      ...(input.copyChunks !== undefined ? { copyChunks: input.copyChunks } : {}),
-      ...(input.buildAssets !== undefined ? { buildAssets: input.buildAssets } : {}),
-      ...(input.plugins ? { vitePlugins: input.plugins } : {}),
-      ...(input.define ? { define: input.define } : {}),
-      ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
-      ...(input.root ? { root: input.root } : {}),
-      ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
-      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
+      ...fields,
+      ...(plugins ? { vitePlugins: plugins } : {}),
+      ...(root ? { root } : {}),
     }),
 }
 
