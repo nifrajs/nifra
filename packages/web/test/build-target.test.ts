@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { buildTarget, checkHostReach, generateServerEntry } from "../src/build.ts"
+import {
+  buildTarget,
+  buildTargetWith,
+  bunBundler,
+  checkHostReach,
+  generateServerEntry,
+} from "../src/build.ts"
+import type { Bundler } from "../src/build-plan.ts"
 import { discoverRoutes } from "../src/fs.ts"
 import type { RenderAdapter } from "../src/index.ts"
 import { createWebApp } from "../src/index.ts"
@@ -220,6 +227,31 @@ test("cloudflare refuses a public _routes.json, which the build writes itself", 
   })
   await expect(promise).rejects.toThrow(/\/_routes\.json would be overwritten by the cloudflare/)
 }, 60_000)
+
+// A deploy ships the server entry alone, so a split server build would fail at its first lazy import.
+test("a server build that emits code chunks is refused on every server target", async () => {
+  const splitting = { lazy: true }
+  const bundler: Bundler = {
+    ...bunBundler,
+    buildServer: (input) => bunBundler.buildServer({ ...input, ...splitting }),
+  }
+  for (const target of ["bun", "node", "deno", "cloudflare", "vercel"] as const) {
+    const promise = buildTargetWith(
+      target,
+      {
+        routesDir,
+        outDir: join(projectRoot, `dist-split-${target}`),
+        workDir: join(projectRoot, `.work-split-${target}`),
+        clientModule: join(projectRoot, "frontend/client-stub.ts"),
+        adapterImport: join(projectRoot, "backend/framework.ts"),
+      },
+      bundler,
+    )
+    await expect(promise).rejects.toThrow(
+      new RegExp(`\\(chunk-[\\w-]+\\.js.*\\), but the ${target} deploy ships the entry alone`),
+    )
+  }
+}, 300_000)
 
 // The built Bun server's URL, read from its startup line rather than polled.
 async function listening(stdout: ReadableStream<Uint8Array>): Promise<string> {
