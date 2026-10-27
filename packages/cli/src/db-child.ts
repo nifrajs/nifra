@@ -34,7 +34,7 @@ import {
 import { createDevFeed } from "@nifrajs/web/dev-feed"
 import { isSensitiveFieldName } from "@nifrajs/web/zones"
 import { type DevDatabase, loadDevDatabase } from "./db-config.ts"
-import { CHILD_INPUT_MAX_BYTES, readBoundedStream } from "./mcp-io.ts"
+import { CHILD_INPUT_MAX_BYTES, protocolStdout, readBoundedStream } from "./mcp-io.ts"
 
 /** The one operation a subprocess runs. */
 export interface DbChildRequest {
@@ -267,14 +267,7 @@ export async function serveDbChild(
 }
 
 if (import.meta.main) {
-  // Bound before the config loads, so nothing it patches can reach the protocol channel.
-  const stdout = process.stdout.write.bind(process.stdout)
-  const toStderr = (...args: unknown[]): void => {
-    process.stderr.write(`${args.map((arg) => String(arg)).join(" ")}\n`)
-  }
-  console.log = toStderr
-  console.info = toStderr
-  console.debug = toStderr
+  const stdout = protocolStdout()
   const served = await serveDbChild(
     process.argv[2] ?? process.cwd(),
     Bun.stdin.stream(),

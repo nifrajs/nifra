@@ -1,0 +1,19 @@
+{
+  "agent": 158,
+  "agent-protocol": 124,
+  "agent-review": 450,
+  "cli": 2972,
+  "coding-agent": 874,
+  "content": 226,
+  "core": 6092,
+  "create-nifra": 198,
+  "mcp": 174,
+  "middleware": 420,
+  "node": 130,
+  "pi": 154,
+  "proxy": 164,
+  "testing": 134,
+  "web": 1764,
+  "web-react": 124,
+  "web-svelte": 156
+}

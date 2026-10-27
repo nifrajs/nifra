@@ -319,6 +319,19 @@ export async function runAgentEvalComposition(
   const suite = await options.suite.run()
   const components: AgentEvalComponentEvidence[] = []
   const regressionIds: string[] = []
+  const recordLab = async (
+    id: "contract-lab" | "certification",
+    lab: NonNullable<AgentEvalCompositionOptions["certification"]>,
+  ): Promise<void> => {
+    const result = await lab()
+    components.push({
+      id,
+      ok: result.ok,
+      ...(result.digest === undefined ? {} : { digest: result.digest }),
+      ...(result.code === undefined ? {} : { code: result.code }),
+    })
+    if (!result.ok) regressionIds.push(`${id}/${result.code ?? "failed"}`)
+  }
   if (options.trajectory !== undefined) {
     const result = await options.trajectory()
     components.push({ id: "trajectory", ok: result.ok, digest: result.digest })
@@ -332,31 +345,13 @@ export async function runAgentEvalComposition(
     components.push({ id: "fault-profile", ok: result.ok })
     if (!result.ok) regressionIds.push(`fault-profile/${result.name}`)
   }
-  if (options.contractLab !== undefined) {
-    const result = await options.contractLab()
-    components.push({
-      id: "contract-lab",
-      ok: result.ok,
-      ...(result.digest === undefined ? {} : { digest: result.digest }),
-      ...(result.code === undefined ? {} : { code: result.code }),
-    })
-    if (!result.ok) regressionIds.push(`contract-lab/${result.code ?? "failed"}`)
-  }
+  if (options.contractLab !== undefined) await recordLab("contract-lab", options.contractLab)
   if (options.idempotency !== undefined) {
     const result: IdempotencyProof = await proveIdempotency(options.idempotency)
     components.push({ id: "idempotency", ok: result.ok })
     if (!result.ok) regressionIds.push("idempotency/divergent")
   }
-  if (options.certification !== undefined) {
-    const result = await options.certification()
-    components.push({
-      id: "certification",
-      ok: result.ok,
-      ...(result.digest === undefined ? {} : { digest: result.digest }),
-      ...(result.code === undefined ? {} : { code: result.code }),
-    })
-    if (!result.ok) regressionIds.push(`certification/${result.code ?? "failed"}`)
-  }
+  if (options.certification !== undefined) await recordLab("certification", options.certification)
   const ok = regressionIds.length === 0 && components.every((entry) => entry.ok)
   const digest = await sha256Hex(
     canonicalJson({ version: 1, suite: suite.digest, components, regressionIds }),

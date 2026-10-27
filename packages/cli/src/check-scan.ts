@@ -252,59 +252,51 @@ function parseQuotedLiteral(raw: string): string | undefined {
   }
 }
 
-function findMatchingParen(src: string, openIndex: number): number | undefined {
-  let depth = 0
+/**
+ * Calls `visit` with each index from `from` whose character sits outside a string literal, until it
+ * returns true. Returns that index, `src.length` when the scan ran out, or -1 when it ran out inside a
+ * literal left open.
+ */
+function scanOutsideStrings(src: string, from: number, visit: (index: number) => boolean): number {
   let quote: '"' | "'" | "`" | undefined
-  for (let i = openIndex; i < src.length; i++) {
+  for (let i = from; i < src.length; i++) {
     const c = src[i]
     if (quote !== undefined) {
-      if (c === "\\") {
-        i++
-        continue
-      }
-      if (c === quote) quote = undefined
+      if (c === "\\") i++
+      else if (c === quote) quote = undefined
       continue
     }
-    if (c === '"' || c === "'" || c === "`") {
-      quote = c
-      continue
-    }
-    if (c === "(") depth++
-    else if (c === ")") {
-      depth--
-      if (depth === 0) return i
-    }
+    if (c === '"' || c === "'" || c === "`") quote = c
+    else if (visit(i)) return i
   }
-  return undefined
+  return quote === undefined ? src.length : -1
+}
+
+function findMatchingParen(src: string, openIndex: number): number | undefined {
+  let depth = 0
+  const end = scanOutsideStrings(src, openIndex, (i) => {
+    if (src[i] === "(") depth++
+    else if (src[i] === ")") return --depth === 0
+    return false
+  })
+  return end >= 0 && end < src.length ? end : undefined
 }
 
 function splitTopLevelArgs(src: string): string[] | undefined {
   const args: string[] = []
   let start = 0
   let depth = 0
-  let quote: '"' | "'" | "`" | undefined
-  for (let i = 0; i < src.length; i++) {
+  const end = scanOutsideStrings(src, 0, (i) => {
     const c = src[i]
-    if (quote !== undefined) {
-      if (c === "\\") {
-        i++
-        continue
-      }
-      if (c === quote) quote = undefined
-      continue
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      quote = c
-      continue
-    }
     if (c === "(" || c === "{" || c === "[") depth++
     else if (c === ")" || c === "}" || c === "]") depth--
     else if (c === "," && depth === 0) {
       args.push(src.slice(start, i).trim())
       start = i + 1
     }
-  }
-  if (quote !== undefined || depth !== 0) return undefined
+    return false
+  })
+  if (end < 0 || depth !== 0) return undefined
   const tail = src.slice(start).trim()
   if (tail !== "") args.push(tail)
   return args
@@ -642,26 +634,14 @@ function matchesExternalMount(content: string, start: number, mounts: readonly s
 
 function findTopLevelPropertyColon(src: string): number | undefined {
   let depth = 0
-  let quote: '"' | "'" | "`" | undefined
-  for (let i = 0; i < src.length; i++) {
+  const end = scanOutsideStrings(src, 0, (i) => {
     const c = src[i]
-    if (quote !== undefined) {
-      if (c === "\\") {
-        i++
-        continue
-      }
-      if (c === quote) quote = undefined
-      continue
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      quote = c
-      continue
-    }
     if (c === "(" || c === "{" || c === "[") depth++
     else if (c === ")" || c === "}" || c === "]") depth--
-    else if (c === ":" && depth === 0) return i
-  }
-  return undefined
+    else return c === ":" && depth === 0
+    return false
+  })
+  return end >= 0 && end < src.length ? end : undefined
 }
 
 function parseStaticPropertyName(raw: string): string | undefined {

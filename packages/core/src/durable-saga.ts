@@ -323,18 +323,39 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     return record
   }
 
-  const compensate = async <I, C extends Record<string, unknown>>(
-    definition: SagaDefinition<I, C>,
+  /** Run `owned` under a fresh owner id, then give the saga up however it ended. */
+  const withFreshOwner = async (
     sagaId: string,
-    runOptions: { readonly signal?: AbortSignal } = {},
+    owned: (owner: string) => Promise<SagaRecord>,
   ): Promise<SagaRecord> => {
     const owner = crypto.randomUUID()
     try {
-      return await compensateOwned(definition, sagaId, runOptions, owner)
+      return await owned(owner)
     } finally {
       await release(sagaId, owner)
     }
   }
+
+  /** The stored saga, once `definition` and `sagaId` are well formed and `signal` has not fired. */
+  const loadFor = async <I, C extends Record<string, unknown>>(
+    definition: SagaDefinition<I, C>,
+    sagaId: string,
+    signal: AbortSignal,
+  ): Promise<SagaRecord> => {
+    assertSagaDefinition(definition)
+    assertToken(sagaId, "saga id", 128)
+    throwIfAborted(signal)
+    const record = await load(sagaId)
+    if (record.definition !== definition.name) throw new TypeError("saga definition mismatch")
+    return record
+  }
+
+  const compensate = <I, C extends Record<string, unknown>>(
+    definition: SagaDefinition<I, C>,
+    sagaId: string,
+    runOptions: { readonly signal?: AbortSignal } = {},
+  ): Promise<SagaRecord> =>
+    withFreshOwner(sagaId, (owner) => compensateOwned(definition, sagaId, runOptions, owner))
 
   const compensateOwned = async <I, C extends Record<string, unknown>>(
     definition: SagaDefinition<I, C>,
@@ -342,12 +363,8 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     runOptions: { readonly signal?: AbortSignal },
     owner: string,
   ): Promise<SagaRecord> => {
-    assertSagaDefinition(definition)
-    assertToken(sagaId, "saga id", 128)
     const signal = signalOrNever(runOptions.signal)
-    throwIfAborted(signal)
-    let record = await load(sagaId)
-    if (record.definition !== definition.name) throw new TypeError("saga definition mismatch")
+    let record = await loadFor(definition, sagaId, signal)
     if (record.state === "completed" || record.state === "compensated") return record
     record = await claim(record, owner)
     if (
@@ -461,18 +478,12 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     return await save(record, { ...record, state: "compensated", updatedAt: now() })
   }
 
-  const resume = async <I, C extends Record<string, unknown>>(
+  const resume = <I, C extends Record<string, unknown>>(
     definition: SagaDefinition<I, C>,
     sagaId: string,
     runOptions: { readonly signal?: AbortSignal } = {},
-  ): Promise<SagaRecord> => {
-    const owner = crypto.randomUUID()
-    try {
-      return await resumeOwned(definition, sagaId, runOptions, owner)
-    } finally {
-      await release(sagaId, owner)
-    }
-  }
+  ): Promise<SagaRecord> =>
+    withFreshOwner(sagaId, (owner) => resumeOwned(definition, sagaId, runOptions, owner))
 
   const resumeOwned = async <I, C extends Record<string, unknown>>(
     definition: SagaDefinition<I, C>,
@@ -480,12 +491,8 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     runOptions: { readonly signal?: AbortSignal },
     owner: string,
   ): Promise<SagaRecord> => {
-    assertSagaDefinition(definition)
-    assertToken(sagaId, "saga id", 128)
     const signal = signalOrNever(runOptions.signal)
-    throwIfAborted(signal)
-    let record = await load(sagaId)
-    if (record.definition !== definition.name) throw new TypeError("saga definition mismatch")
+    let record = await loadFor(definition, sagaId, signal)
     if (record.state !== "running") return record
     record = await claim(record, owner)
     const context: SagaRunContext<C> = {

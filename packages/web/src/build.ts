@@ -10,7 +10,7 @@ export { publicEnvDefines } from "./internal/public-env.ts"
  * are Bun-specific and never on the request path (own subpath, like `@nifrajs/web/fs`); the *output*
  * runs on any runtime.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { cp, lstat, mkdir, realpath } from "node:fs/promises"
 import {
   dirname,
@@ -54,18 +54,15 @@ import {
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
-import { generateClientEntry, generateServerManifest, type LiveClientEntry } from "./index.ts"
+import { generateServerManifest, type LiveClientEntry } from "./index.ts"
+import { clientEntryFiles, writeClientEntry, writeClientManifest } from "./internal/build-steps.ts"
 import { missingClientEntry } from "./internal/codegen.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
 import { adapterRefusal } from "./internal/node-adapter.ts"
-import {
-  assertDevelopmentProductionParity,
-  assertIdentityParity,
-  collectDevelopmentParityInput,
-} from "./internal/parity.ts"
+import { assertIdentityParity } from "./internal/parity.ts"
 import {
   type ServerPrerenderedPage,
   servablePrerenderedPages,
@@ -470,38 +467,22 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
   const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
   const privateEnv = privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_")
-  // Keep the generated source beside the project, not inside `outDir`: module resolution starts at the
-  // importing file, so an absolute `--out /tmp/deploy` must still resolve the app's dependencies.
-  // A unique directory also avoids clobbering a user file or colliding with parallel builds.
-  const entryDir = mkdtempSync(resolvePath(dirname(routesDir), ".nifra-client-"))
-  const entryFile = `${entryDir}/_nifra-entry.ts`
-  // A client bundle has no Node `process`; provide a minimal one so a stray bare `process` reference in
-  // an app module doesn't crash hydration (`process.env.*` reads are handled at compile time by `define`).
-  writeFileSync(
-    entryFile,
-    `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, {
+  const { dir: entryDir, file: entryFile } = writeClientEntry(
+    routesDir,
+    ".nifra-client-",
+    routeManifest,
+    {
       clientModule,
       resolve,
       copyChunks: copySplit !== undefined,
       live: options.live,
-    })}`,
+    },
   )
 
-  // Every unique route/layout/`_404` file (sorted, stable), as ADDITIONAL entrypoints - Bun emits a
-  // named chunk per file that the bootstrap's lazy `import()` dedupes to (verified), so the manifest
-  // can map each route to its chunk URLs for matched-route preload. `resolve(file)` is the same
-  // specifier the bootstrap imports, so the entrypoint + lazy import are the same module (dedup).
-  const routeFiles = [
-    ...new Set([
-      ...routeManifest.routes.map((r) => r.file),
-      ...Object.values(routeManifest.layouts).map((l) => l.file),
-      ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
-      // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
-      ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
-      // A `_loading` page is an entry for its stylesheet too: the bootstrap imports it lazily.
-      ...Object.values(routeManifest.loadings ?? {}).map((page) => page.file),
-    ]),
-  ].sort()
+  // As ADDITIONAL entrypoints the manifest can map each route to its chunk URLs for matched-route
+  // preload. `resolve(file)` is the same specifier the bootstrap imports, so the entrypoint + lazy
+  // import are the same module (dedup).
+  const routeFiles = clientEntryFiles(routeManifest)
 
   // `metafile: true` asks Bun for the input/output graph - specifically `outputs[js].entryPoint`
   // (the source file) + `outputs[js].cssBundle` (that entry's emitted stylesheet). It's the robust
@@ -805,18 +786,15 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
   const copyChunks = copy?.urls ?? {}
-  const manifest: BuildManifest = {
-    entry: entryUrl,
-    assets: [...outputs.map((o) => toUrl(o.path)), ...Object.values(copyChunks)],
-    routes,
-    ...(publicFiles.length > 0 ? { publicFiles } : {}),
-    ...(css.length > 0 ? { css } : {}),
-    ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
-    ...(Object.keys(copyChunks).length > 0 ? { copyChunks } : {}),
-  }
-  assertDevelopmentProductionParity(collectDevelopmentParityInput(routesDir, publicDir), manifest)
-  writeFileSync(`${outDir}/manifest.json`, JSON.stringify(manifest, null, 2))
-  return manifest
+  return writeClientManifest(
+    {
+      entry: entryUrl,
+      assets: [...outputs.map((o) => toUrl(o.path)), ...Object.values(copyChunks)],
+      routes,
+    },
+    { publicFiles, css, routeStyles, copyChunks },
+    { routesDir, publicDir, outDir },
+  )
 }
 
 export interface BuildServerOptions {
@@ -1846,24 +1824,11 @@ export const bunBundler: Bundler = {
       live: input.live,
     })
   },
-  buildServer: (input) =>
+  buildServer: ({ plugins, root, ...fields }) =>
     buildServer({
-      routesDir: input.routesDir,
-      serverEntry: input.serverEntry,
-      outDir: input.outDir,
-      clientEntry: input.clientEntry,
-      target: input.target,
-      ...(input.styles !== undefined ? { styles: input.styles } : {}),
-      ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
-      ...(input.copyChunks !== undefined ? { copyChunks: input.copyChunks } : {}),
-      ...(input.buildAssets !== undefined ? { buildAssets: input.buildAssets } : {}),
-      ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
-      ...(input.define ? { define: input.define } : {}),
-      ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
-      ...(input.root !== undefined ? { root: input.root } : {}),
-      ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
-      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
-      ...(input.providedBuiltins !== undefined ? { providedBuiltins: input.providedBuiltins } : {}),
+      ...fields,
+      ...(plugins ? { plugins: plugins as BunPlugin[] } : {}),
+      ...(root !== undefined ? { root } : {}),
     }),
 }
 
