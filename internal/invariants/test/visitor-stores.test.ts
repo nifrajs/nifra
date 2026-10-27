@@ -888,6 +888,7 @@ const differed = seenAs("differed")
 const sweeps = new Map<string, number>()
 
 for (const surface of SURFACES) {
+  // A router sweep takes ~4 s locally; past bun's 5 s default on CI its body runs on into later tests.
   for (const [change, through] of CHANGES)
     for (const timing of TIMINGS)
       test(`every call on what a page holds of ${surface.name}, after ${change} ${timing}, settles with what it ends with and answers the same whoever the earlier loads answered for, in a bounded number of loads`, async () => {
@@ -1216,7 +1217,7 @@ for (const surface of SURFACES) {
         for (const call of Object.keys(listed.posts ?? {}))
           if (!swept.has(call)) problems.push(`${call}: posts for no such function`)
         expect(problems).toEqual([])
-      })
+      }, 30_000)
   test(`every call quiet about a failure on what a page holds of ${surface.name}, and every answer of it still open, still is somewhere in the sweep`, async () => {
     // A filtered run sees only some of the sweep.
     if (sweeps.get(surface.name) !== CHANGES.length * TIMINGS.length) return
