@@ -560,12 +560,25 @@ function parseFindingIds(
   depth: number,
   path: string,
 ): readonly string[] {
+  return parseStrings(value, guard, depth, path, (item, at) => {
+    guard.chargeString(item, REVIEW_MAX_ID_BYTES, "invalid-id", at)
+    if (!ID.test(item)) fail("invalid-id", at)
+    return item
+  })
+}
+
+/** A sorted, duplicate-free array of strings, each one checked and read by `read`. */
+function parseStrings(
+  value: unknown,
+  guard: ParseGuard,
+  depth: number,
+  path: string,
+  read: (item: string, at: string) => string,
+): readonly string[] {
   const values = arrayAt(value, guard, depth, path)
   const result = values.map((item, index) => {
     if (typeof item !== "string") fail("invalid-type", `${path}[${index}]`)
-    guard.chargeString(item, REVIEW_MAX_ID_BYTES, "invalid-id", `${path}[${index}]`)
-    if (!ID.test(item)) fail("invalid-id", `${path}[${index}]`)
-    return item
+    return read(item, `${path}[${index}]`)
   })
   assertSortedUnique(result, (item) => item, path, "duplicate-id")
   return result
@@ -632,14 +645,10 @@ function parsePaths(
   depth: number,
   path: string,
 ): readonly string[] {
-  const values = arrayAt(value, guard, depth, path)
-  const result = values.map((item, index) => {
-    if (typeof item !== "string") fail("invalid-type", `${path}[${index}]`)
-    guard.chargeString(item, REVIEW_MAX_PATH_BYTES, "invalid-path", `${path}[${index}]`)
-    return safePath(item, `${path}[${index}]`)
+  return parseStrings(value, guard, depth, path, (item, at) => {
+    guard.chargeString(item, REVIEW_MAX_PATH_BYTES, "invalid-path", at)
+    return safePath(item, at)
   })
-  assertSortedUnique(result, (item) => item, path, "duplicate-id")
-  return result
 }
 
 function parseScope(value: unknown, guard: ParseGuard, depth: number, path: string): ReviewScope {
@@ -787,7 +796,7 @@ function assertReportRelationships(
   return { blocking, status: blocking > 0 ? "fail" : "pass", ok: blocking === 0 }
 }
 
-function deriveReportOutcome(
+export function deriveReportOutcome(
   strict: boolean,
   scope: ReviewScope,
   checks: readonly ReviewCheckResult[],
