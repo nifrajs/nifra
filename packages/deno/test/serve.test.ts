@@ -825,7 +825,7 @@ Deno.test("an untouched runtime-framed JSON request uses the BOM-safe text reade
     headers: { "content-type": "application/json", "content-length": String(body.length) },
     body,
   })
-  ;(request as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] = true
+  Object.defineProperty(request, Symbol.for("nifra.body.trustedFraming"), { value: true })
   const originalText = request.text.bind(request)
   let reads = 0
   request.text = () => {
