@@ -114,7 +114,7 @@ function cpuNs(pid: number): number {
   return total
 }
 
-let port = Number(process.env.PORT0 ?? "47000")
+let port = Number(process.env.PORT0 ?? "21000")
 const answers = async (p: number): Promise<boolean> => {
   try {
     await fetch(`http://127.0.0.1:${p}/`, { signal: AbortSignal.timeout(300) })
