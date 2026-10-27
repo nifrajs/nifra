@@ -2,10 +2,9 @@
  * Clone ratchet: no package's own sources may gain duplicated code.
  *
  * Every tracked `packages/<name>/src` file is cut into tokens, and every run of at least
- * {@link WINDOW} identical tokens that appears twice inside one package joins a clone family. A
- * package's count is the duplicated tokens of its families: the shortest member's length times the
- * copies beyond the first. No count may rise above the committed baseline, so the duplication that
- * exists is frozen and new code reuses instead of copying.
+ * {@link WINDOW} identical tokens that appears twice inside one package is a clone. A package's count
+ * is its tokens that lie inside a clone, every copy included. No count may rise above the committed
+ * baseline, so the duplication that exists is frozen and new code reuses instead of copying.
  *
  * ## What it does NOT cover
  *
@@ -15,7 +14,7 @@
  *
  * ## Usage
  *
- *   bun run check:clones                             # verify no package gained duplicated tokens
+ *   bun run check:clones                             # verify no package gained cloned tokens
  *   bun run check:clones --update                    # lower the baseline to the current counts
  *   bun run check:clones --update --accept-increase  # ...and raise the entries that grew
  *
@@ -36,6 +35,8 @@ const DEFAULT_BASELINE = join(ROOT, "clones-baseline.json")
 export const WINDOW = 60
 // A window seen more often than this is boilerplate shared by many files, not one copied block.
 const BUCKET_CAP = 24
+// Clones listed per package that grew; the longest come first.
+const REPORTED = 20
 
 export interface SourceText {
   readonly path: string
@@ -78,17 +79,18 @@ export function tokenize(file: SourceText, ids: Map<string, number>): Token[] {
   return tokens
 }
 
-export interface CloneMember {
+export interface CloneSite {
   readonly path: string
   readonly firstLine: number
   readonly lastLine: number
 }
 
-export interface CloneFamily {
+/** One run of at least WINDOW tokens that two places in a package share. */
+export interface Clone {
   readonly pkg: string
-  /** The shortest member's tokens times the copies beyond the first. */
-  readonly weight: number
-  readonly members: readonly CloneMember[]
+  readonly tokens: number
+  readonly a: CloneSite
+  readonly b: CloneSite
 }
 
 const packageOf = (path: string): string => path.split("/")[1] ?? path
@@ -100,14 +102,14 @@ interface Diagonal {
   readonly starts: number[]
 }
 
-interface Region {
-  readonly file: number
-  start: number
-  end: number
-}
+/** Tokens inside a clone, every copy included, per package. */
+export type Counts = Record<string, number>
 
-/** The clone families inside each package: runs of at least WINDOW tokens repeated within it. */
-export function findFamilies(files: readonly SourceText[]): CloneFamily[] {
+/** The clones inside each package, and each package's tokens that lie inside one. */
+export function findClones(files: readonly SourceText[]): {
+  readonly clones: Clone[]
+  readonly counts: Counts
+} {
   const ids = new Map<string, number>()
   const streams = files.map((file) => tokenize(file, ids))
 
@@ -145,41 +147,28 @@ export function findFamilies(files: readonly SourceText[]): CloneFamily[] {
     })
   }
 
-  const regions: Region[] = []
-  const parent: number[] = []
-  const root = (index: number): number => {
-    let at = index
-    for (let up = parent[at]; up !== undefined && up !== at; up = parent[at]) at = up
-    return at
-  }
-  const regionsOf = new Map<number, number[]>()
-  const region = (file: number, start: number, end: number): number => {
-    const known = regionsOf.get(file) ?? []
-    for (const index of known) {
-      const r = regions[index]
-      if (r === undefined) continue
-      const overlap = Math.min(r.end, end) - Math.max(r.start, start)
-      if (overlap > 0.6 * Math.min(r.end - r.start, end - start)) {
-        r.start = Math.min(r.start, start)
-        r.end = Math.max(r.end, end)
-        return index
-      }
+  const covered = streams.map((tokens) => new Uint8Array(tokens.length))
+  const site = (file: number, start: number, end: number): CloneSite => {
+    covered[file]?.fill(1, start, end + 1)
+    const tokens = streams[file] ?? []
+    return {
+      path: files[file]?.path ?? "",
+      firstLine: tokens[start]?.line ?? 0,
+      lastLine: tokens[end]?.line ?? 0,
     }
-    regions.push({ file, start, end })
-    parent.push(regions.length - 1)
-    known.push(regions.length - 1)
-    regionsOf.set(file, known)
-    return regions.length - 1
   }
-  const ordered = [...diagonals.entries()].sort(([a], [b]) => codeUnitOrder(a, b))
-  for (const [, { fileA, fileB, offset, starts }] of ordered) {
-    starts.sort((a, b) => a - b)
+  const clones: Clone[] = []
+  for (const { fileA, fileB, offset, starts } of diagonals.values()) {
+    starts.sort((x, y) => x - y)
     let first = starts[0] ?? 0
     let last = first
     const flush = (): void => {
-      const a = region(fileA, first, last + WINDOW - 1)
-      const b = region(fileB, first - offset, last - offset + WINDOW - 1)
-      parent[root(a)] = root(b)
+      clones.push({
+        pkg: packageOf(files[fileA]?.path ?? ""),
+        tokens: last - first + WINDOW,
+        a: site(fileA, first, last + WINDOW - 1),
+        b: site(fileB, first - offset, last - offset + WINDOW - 1),
+      })
     }
     for (const at of starts.slice(1)) {
       if (at === last + 1) {
@@ -193,45 +182,23 @@ export function findFamilies(files: readonly SourceText[]): CloneFamily[] {
     flush()
   }
 
-  const groups = new Map<number, number[]>()
-  regions.forEach((_, index) => {
-    const top = root(index)
-    const group = groups.get(top)
-    if (group === undefined) groups.set(top, [index])
-    else group.push(index)
-  })
-  return [...groups.values()].map((group) => {
-    const members = group.flatMap((index) => {
-      const r = regions[index]
-      if (r === undefined) return []
-      const tokens = streams[r.file] ?? []
-      return [
-        {
-          path: files[r.file]?.path ?? "",
-          firstLine: tokens[r.start]?.line ?? 0,
-          lastLine: tokens[Math.min(r.end, tokens.length - 1)]?.line ?? 0,
-          length: r.end - r.start + 1,
-        },
-      ]
-    })
-    const shortest = Math.min(...members.map((member) => member.length))
-    return {
-      pkg: packageOf(members[0]?.path ?? ""),
-      weight: shortest * (members.length - 1),
-      members: members
-        .map(({ path, firstLine, lastLine }) => ({ path, firstLine, lastLine }))
-        .sort((a, b) => codeUnitOrder(a.path, b.path) || a.firstLine - b.firstLine),
-    }
-  })
-}
-
-/** Duplicated tokens per package. */
-export type Counts = Record<string, number>
-
-export function countFamilies(families: readonly CloneFamily[]): Counts {
   const counts: Counts = {}
-  for (const family of families) counts[family.pkg] = (counts[family.pkg] ?? 0) + family.weight
-  return Object.fromEntries(Object.entries(counts).sort(([a], [b]) => codeUnitOrder(a, b)))
+  covered.forEach((marks, file) => {
+    const inside = marks.reduce((sum, mark) => sum + mark, 0)
+    if (inside === 0) return
+    const pkg = packageOf(files[file]?.path ?? "")
+    counts[pkg] = (counts[pkg] ?? 0) + inside
+  })
+  const order = (x: Clone, y: Clone): number =>
+    y.tokens - x.tokens ||
+    codeUnitOrder(x.a.path, y.a.path) ||
+    x.a.firstLine - y.a.firstLine ||
+    codeUnitOrder(x.b.path, y.b.path) ||
+    x.b.firstLine - y.b.firstLine
+  return {
+    clones: clones.sort(order),
+    counts: Object.fromEntries(Object.entries(counts).sort(([x], [y]) => codeUnitOrder(x, y))),
+  }
 }
 
 export interface Change {
@@ -278,7 +245,7 @@ async function packageSources(cwd: string): Promise<SourceText[]> {
 
 /** What a run decided: the process exit code, and the lines to print. */
 export interface RatchetOutcome {
-  /** 0 ok, 1 a package gained duplicated tokens, 2 the gate could not run at all. */
+  /** 0 ok, 1 a package gained cloned tokens, 2 the gate could not run at all. */
   readonly code: 0 | 1 | 2
   readonly report: readonly string[]
 }
@@ -302,16 +269,16 @@ export async function run(
     }
   }
 
-  let families: CloneFamily[]
+  let found: ReturnType<typeof findClones>
   try {
-    families = findFamilies(await packageSources(paths.cwd ?? ROOT))
+    found = findClones(await packageSources(paths.cwd ?? ROOT))
   } catch (error) {
     return {
       code: 2,
       report: [`[clones] could not run: ${error instanceof Error ? error.message : error}`],
     }
   }
-  const current = countFamilies(families)
+  const current = found.counts
   const total = Object.values(current).reduce((sum, count) => sum + count, 0)
   const write = (counts: Counts): Promise<void> =>
     writeFile(baselinePath, `${JSON.stringify(counts, null, 2)}\n`)
@@ -325,20 +292,22 @@ export async function run(
       }
     }
     await write(current)
-    return { code: 0, report: [`[clones] baseline created: ${total} duplicated tokens`] }
+    return { code: 0, report: [`[clones] baseline created: ${total} cloned tokens`] }
   }
 
   const baseline: Counts = JSON.parse(baselineText)
   const { increased, decreased } = compareCounts(baseline, current)
   if (increased.length > 0 && !acceptIncrease) {
-    const report = [`[clones] duplicated tokens increased in ${increased.length} package(s):`, ""]
+    const report = [`[clones] cloned tokens increased in ${increased.length} package(s):`, ""]
     for (const change of increased) {
       report.push(`  ${change.pkg}: ${change.was} -> ${change.now}`)
-      const own = families.filter((f) => f.pkg === change.pkg).sort((a, b) => b.weight - a.weight)
-      for (const family of own) {
-        const sites = family.members.map((m) => `${m.path}:${m.firstLine}-${m.lastLine}`)
-        report.push(`    ${family.weight} tokens: ${sites.join("  ")}`)
+      const own = found.clones.filter((clone) => clone.pkg === change.pkg)
+      for (const { tokens, a, b } of own.slice(0, REPORTED)) {
+        report.push(
+          `    ${tokens} tokens: ${a.path}:${a.firstLine}-${a.lastLine} = ${b.path}:${b.firstLine}-${b.lastLine}`,
+        )
       }
+      if (own.length > REPORTED) report.push(`    ...and ${own.length - REPORTED} more`)
     }
     report.push(
       "",
@@ -356,7 +325,7 @@ export async function run(
     const raised = acceptIncrease
       ? increased.map((c) => `  raised ${c.pkg}: ${c.was} -> ${c.now}`)
       : []
-    return { code: 0, report: [`[clones] baseline updated: ${total} duplicated tokens`, ...raised] }
+    return { code: 0, report: [`[clones] baseline updated: ${total} cloned tokens`, ...raised] }
   }
   const below =
     decreased.length > 0
@@ -364,7 +333,7 @@ export async function run(
       : ""
   return {
     code: 0,
-    report: [`[clones] ok - ${total} duplicated tokens, no package above baseline${below}`],
+    report: [`[clones] ok - ${total} cloned tokens, no package above baseline${below}`],
   }
 }
 
