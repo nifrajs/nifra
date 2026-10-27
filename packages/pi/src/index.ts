@@ -697,7 +697,7 @@ export class PiBackend implements AgentBackend {
         }
         return
       case "tool_execution_update": {
-        const text = resultText(record.partialResult)
+        const text = contentText(record.partialResult)
         if (typeof record.toolCallId === "string" && text.length > 0)
           for (const piece of splitAgentText(text))
             this.emit(session, {
@@ -710,7 +710,7 @@ export class PiBackend implements AgentBackend {
       }
       case "tool_execution_end": {
         const result = isRecord(record.result) ? record.result : undefined
-        const text = resultText(result)
+        const text = contentText(result)
         if (typeof record.toolCallId === "string" && typeof record.toolName === "string")
           this.emit(session, {
             type: "tool.completed",
@@ -1029,18 +1029,11 @@ interface ToolStartedPayload {
 }
 
 function assistantText(value: unknown): string {
-  if (!isRecord(value) || value.role !== "assistant") return ""
-  const content = value.content
-  if (typeof content === "string") return content
-  if (!Array.isArray(content)) return ""
-  return content
-    .filter(isRecord)
-    .filter((item) => item.type === "text" && typeof item.text === "string")
-    .map((item) => item.text as string)
-    .join("")
+  return isRecord(value) && value.role === "assistant" ? contentText(value) : ""
 }
 
-function resultText(value: unknown): string {
+/** The text of a message's `content`: the string itself, or its text parts joined. */
+function contentText(value: unknown): string {
   if (!isRecord(value)) return ""
   const content = value.content
   if (typeof content === "string") return content
