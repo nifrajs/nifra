@@ -13,8 +13,11 @@ const versions = {
   beforeDifferential: "15a16047fc",
   afterDifferential: "57828c68bf",
   beforeDedup: "9fd7d80b76",
+  beforeDateWriter: "9738275d7c",
+  afterDateWriter: "f90a4e4965",
   beforeSignal: "12fdac48c4",
   signalFix: "61117cd433",
+  dateProbe: "4d5b2807c1f0010a50b260ae70c02fe70cfc1485",
 } as const
 type Version = keyof typeof versions
 const pairs: ReadonlyArray<readonly [string, Version, Version]> = [
@@ -22,7 +25,10 @@ const pairs: ReadonlyArray<readonly [string, Version, Version]> = [
   ["5.5 to signal fix", "release55", "signalFix"],
   ["runtime differential", "beforeDifferential", "afterDifferential"],
   ["dedup and intervening fixes", "beforeDedup", "beforeSignal"],
+  ["JSON Date writer", "beforeDateWriter", "afterDateWriter"],
+  ["Date probe PR", "signalFix", "dateProbe"],
   ["Node signal fix", "beforeSignal", "signalFix"],
+  ["A/A control (end)", "signalFix", "signalFix"],
 ]
 const split = readCoreSplit()
 if (split === undefined || split === null) throw Error("Linux CPU pinning is required")

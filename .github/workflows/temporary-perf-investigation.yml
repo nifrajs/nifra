@@ -43,6 +43,8 @@ jobs:
           echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
           chmod +x "$HOME/.local/bin/oha"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Fetch the Date probe PR revision
+        run: git fetch --no-tags origin 4d5b2807c1f0010a50b260ae70c02fe70cfc1485
       - name: Compare historical and current snapshots
         env:
           BENCH_RUNTIME: ${{ matrix.runtime }}
