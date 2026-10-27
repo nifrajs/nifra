@@ -5,6 +5,7 @@
   "plugins": [
     "./scripts/anti-slop/noChainedTypeAssertions.grit",
     "./scripts/anti-slop/noConditionalEmptyObjectSpread.grit",
+    "./scripts/anti-slop/noHelperCopy.grit",
     "./scripts/anti-slop/noWidenThenAssert.grit",
     "./scripts/anti-slop/requireSafetyCommentForTypeAssertion.grit"
   ],

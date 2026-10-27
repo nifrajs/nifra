@@ -1,0 +1,19 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// Helpers each package keeps in one owning module: `internal/record.ts`, `internal/escape-regexp.ts`,
+// core's `canonical-json.ts`, the package's SHA-256 hex module, and middleware's chunk concat.
+pattern owned_helper() {
+  or { `isRecord`, `escapeRegExp`, `canonicalJson`, `sha256Hex`, `concatBytes`, `concatChunks` }
+}
+
+or {
+  JsFunctionDeclaration(id=$name),
+  JsVariableDeclarator(id=$name, initializer=JsInitializerClause(expression=or {
+    JsArrowFunctionExpression(),
+    JsFunctionExpression()
+  }))
+} where {
+  $name <: owned_helper(),
+  register_diagnostic(span=$name, message="This defines another copy of a helper its package already owns. Import the owning module instead; a module with different semantics takes a name that says so.", severity="info")
+}
