@@ -4,7 +4,7 @@ import { join } from "node:path"
 const root = process.cwd()
 const variants = join(root, "bench/temporary-get-profile/deno-peer-variants")
 const resultPath = join(root, "bench/temporary-get-results/deno-peer-ablation.json")
-for (const name of ["normal", "lazy"])
+for (const name of ["normal", "lazy", "class"])
   await cp(join(root, "packages/deno/src"), join(variants, name), { recursive: true })
 const target = join(variants, "lazy/index.ts")
 const source = await readFile(target, "utf8")
@@ -14,14 +14,29 @@ const original = `const clientIp = info.remoteAddr?.hostname
 const replacement = `const response = app.fetch(request, { get clientIp() { return info.remoteAddr?.hostname } })`
 if (source.split(original).length !== 2) throw new Error("adapter peer location changed")
 await writeFile(target, source.replace(original, replacement))
+const classSource = `class LazyPeerPlatform {
+    readonly #info: { readonly remoteAddr?: { readonly hostname?: string } }
+    constructor(info: { readonly remoteAddr?: { readonly hostname?: string } }) { this.#info = info }
+    get clientIp(): string | undefined { return this.#info.remoteAddr?.hostname }
+  }
+
+  function runFetch(`
+if (source.split("  function runFetch(").length !== 2)
+  throw new Error("adapter runFetch location changed")
+await writeFile(
+  join(variants, "class/index.ts"),
+  source
+    .replace("function runFetch(", classSource)
+    .replace(original, "const response = app.fetch(request, new LazyPeerPlatform(info))"),
+)
 
 const serverCpus = process.env.SERVER_CPUS
 const loadCpus = process.env.LOAD_CPUS
 if (!serverCpus || !loadCpus) throw new Error("physical core split is required")
 const rounds = 8
 const requests = 30000
-const ports = [19781, 19782, 19783]
-const modes = ["normal", "normal", "lazy"]
+const ports = [19781, 19782, 19783, 19784]
+const modes = ["normal", "normal", "lazy", "class"]
 const result: unknown[] = []
 const median = (xs: number[]) => {
   const x = [...xs].sort((a, b) => a - b)
@@ -104,16 +119,17 @@ for (const shape of ["bare", "realworld"]) {
       if (JSON.parse(await ready(port, "/__peer")).peer !== "127.0.0.1")
         throw new Error("peer mismatch")
     for (const port of ports) await sample(port, path)
-    const values: number[][] = [[], [], []]
+    const values: number[][] = [[], [], [], []]
     for (let round = 0; round < rounds; round++) {
-      const order = round % 2 === 0 ? [0, 1, 2] : [2, 1, 0]
+      const order = round % 2 === 0 ? [0, 1, 2, 3] : [3, 2, 1, 0]
       for (const arm of order) values[arm]!.push(await sample(ports[arm]!, path))
     }
     const aa = values[1]!.map((x, i) => x / values[0]![i]!)
     const lazy = values[2]!.map((x, i) => x / values[0]![i]!)
-    result.push({ shape, requests, rounds, values, aa, lazy })
+    const classLazy = values[3]!.map((x, i) => x / values[0]![i]!)
+    result.push({ shape, requests, rounds, values, aa, lazy, classLazy })
     console.log(
-      `${shape} A/A ${median(aa).toFixed(3)} (${Math.min(...aa).toFixed(3)}..${Math.max(...aa).toFixed(3)}) lazy ${median(lazy).toFixed(3)} (${Math.min(...lazy).toFixed(3)}..${Math.max(...lazy).toFixed(3)})`,
+      `${shape} A/A ${median(aa).toFixed(3)} (${Math.min(...aa).toFixed(3)}..${Math.max(...aa).toFixed(3)}) lazy ${median(lazy).toFixed(3)} (${Math.min(...lazy).toFixed(3)}..${Math.max(...lazy).toFixed(3)}) class ${median(classLazy).toFixed(3)} (${Math.min(...classLazy).toFixed(3)}..${Math.max(...classLazy).toFixed(3)})`,
     )
     await writeFile(resultPath, JSON.stringify(result, null, 2))
   } finally {

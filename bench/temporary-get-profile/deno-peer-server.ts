@@ -2,7 +2,10 @@ import { makeNifraApp as bare } from "../http/_nifra-app.ts"
 import { makeNifraApp as realworld } from "../http-realworld/_nifra-app.ts"
 
 const [variant, shape, portText] = Deno.args
-if (!["normal", "lazy"].includes(variant ?? "") || !["bare", "realworld"].includes(shape ?? ""))
+if (
+  !["normal", "lazy", "class"].includes(variant ?? "") ||
+  !["bare", "realworld"].includes(shape ?? "")
+)
   throw new Error("expected peer variant, shape and port")
 const { serve } = await import(`./deno-peer-variants/${variant}/index.ts`)
 const app = shape === "bare" ? bare() : realworld()
