@@ -370,7 +370,7 @@
     "packages/storage/src/r2.ts": 1,
     "packages/storage/test/storage.test.ts": 5,
     "packages/testing/src/adversarial.ts": 3,
-    "packages/testing/src/agent-eval.ts": 4,
+    "packages/testing/src/agent-eval.ts": 3,
     "packages/testing/src/certification.ts": 3,
     "packages/testing/src/contract-lab.ts": 1,
     "packages/testing/src/failure-lab.ts": 2,
