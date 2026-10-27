@@ -555,3 +555,89 @@ describe("body-tier node twin", () => {
     ).toThrow(TypeError)
   })
 })
+
+describe("fused lifecycle lanes - a derive result that throws while merging", () => {
+  type Lane = "fetch" | "resolveNode"
+
+  const orderBody = '{"qty":1}'
+  const requests: Record<string, () => Request> = {
+    "GET hooks-only": () => req("/hooks"),
+    "GET query": () => req("/query?qty=1"),
+    "POST body, declared length": () =>
+      req("/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(orderBody.length) },
+        body: orderBody,
+      }),
+    "POST body, streamed": () =>
+      req("/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(orderBody))
+            controller.close()
+          },
+        }),
+      }),
+  }
+
+  async function answer(app: ReturnType<typeof server>, lane: Lane, request: Request) {
+    try {
+      if (lane === "fetch") {
+        const response = await app.fetch(request)
+        return `${response.status} ${await response.text()}`
+      }
+      const outcome = await app.resolveNode(request)
+      if (outcome.kind === "json") return `${outcome.status} ${outcome.body ?? ""}`
+      if (outcome.kind === "body") {
+        const text =
+          typeof outcome.body === "string" ? outcome.body : new TextDecoder().decode(outcome.body)
+        return `${outcome.status} ${text}`
+      }
+      return `${outcome.response.status} ${await outcome.response.text()}`
+    } catch (err) {
+      return `rejected: ${String(err)}`
+    }
+  }
+
+  // The generic program answers this throw as the app's fault. On a body route the derive runs
+  // inside the body read's continuation, where the client's valid JSON must not be blamed for it.
+  test("answers 500 internal_error, logged once, on every lane", async () => {
+    const results: Record<string, () => object> = {
+      "throwing getter": () => ({
+        get user(): string {
+          throw new Error("derive getter")
+        },
+      }),
+      "read-only context key": () => ({ env: { region: "eu" } }),
+    }
+    const failures: string[] = []
+    for (const [resultName, result] of Object.entries(results)) {
+      for (const timing of ["sync", "async"] as const) {
+        for (const withAfter of [false, true]) {
+          let logged = 0
+          const derived = server({ logger: { ...silentLogger, error: () => void logged++ } })
+            .use(nodeDirect())
+            .derive(timing === "sync" ? result : async () => result())
+            .beforeHandle(() => undefined)
+          const app = (withAfter ? derived.afterHandle((value) => value) : derived)
+            .get("/hooks", () => ({ ok: true }))
+            .get("/query", { query: t.object({ qty: t.string() }) }, () => ({ ok: true }))
+            .post("/orders", { body: t.object({ qty: t.number() }) }, () => ({ ok: true }))
+          for (const [requestName, request] of Object.entries(requests)) {
+            for (const lane of ["fetch", "resolveNode"] as const) {
+              logged = 0
+              const got = await answer(app, lane, request())
+              if (got !== '500 {"ok":false,"error":"internal_error"}' || logged !== 1) {
+                const shape = `${resultName}, ${timing}, ${withAfter ? "after" : "no after"}`
+                failures.push(`${shape}, ${requestName}, ${lane}: ${got} (logged ${logged})`)
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(failures).toEqual([])
+  })
+})

@@ -28,6 +28,8 @@ type FramedJsonSource = RequestSource & {
   }>
 }
 
+// Every lane calls `onResult` outside its parse guard: a throw from the continuation is the app's,
+// and must never come back to the client as `invalid_json`.
 const INVALID_JSON = (): ResponseResult => plainError(400, "invalid_json")
 
 // `Deno.serve`'s own `Request.json()` keeps a leading UTF-8 byte order mark that its `text()` and every
@@ -79,14 +81,13 @@ export function readBoundedJsonSource<T>(
     if (hasTrustedBodyFraming(req) && !nativeJsonKeepsBom) {
       return raw.json().then(
         (parsed) => {
+          let guarded: unknown
           try {
-            const guarded = guardParsedValue(parsed, protoPoisoning)
-            return onResult === undefined ? guarded : onResult(guarded)
+            guarded = guardParsedValue(parsed, protoPoisoning)
           } catch {
-            return onResult === undefined
-              ? plainError(400, "invalid_json")
-              : onResult(plainError(400, "invalid_json"))
+            guarded = INVALID_JSON()
           }
+          return onResult === undefined ? guarded : onResult(guarded)
         },
         () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
       )
@@ -102,14 +103,13 @@ export function readBoundedJsonSource<T>(
                 ? plainError(413, "payload_too_large")
                 : onResult(plainError(413, "payload_too_large"))
             }
+            let guarded: unknown
             try {
-              const guarded = guardParsedValue(value, protoPoisoning)
-              return onResult === undefined ? guarded : onResult(guarded)
+              guarded = guardParsedValue(value, protoPoisoning)
             } catch {
-              return onResult === undefined
-                ? plainError(400, "invalid_json")
-                : onResult(plainError(400, "invalid_json"))
+              guarded = INVALID_JSON()
             }
+            return onResult === undefined ? guarded : onResult(guarded)
           },
           () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
         )
@@ -124,14 +124,13 @@ export function readBoundedJsonSource<T>(
                 ? plainError(413, "payload_too_large")
                 : onResult(plainError(413, "payload_too_large"))
             }
+            let parsed: unknown
             try {
-              const parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
-              return onResult === undefined ? parsed : onResult(parsed)
+              parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
             } catch {
-              return onResult === undefined
-                ? plainError(400, "invalid_json")
-                : onResult(plainError(400, "invalid_json"))
+              parsed = INVALID_JSON()
             }
+            return onResult === undefined ? parsed : onResult(parsed)
           },
           () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
         )
@@ -145,14 +144,13 @@ export function readBoundedJsonSource<T>(
               ? plainError(413, "payload_too_large")
               : onResult(plainError(413, "payload_too_large"))
           }
+          let parsed: unknown
           try {
-            const parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
-            return onResult === undefined ? parsed : onResult(parsed)
+            parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
           } catch {
-            return onResult === undefined
-              ? plainError(400, "invalid_json")
-              : onResult(plainError(400, "invalid_json"))
+            parsed = INVALID_JSON()
           }
+          return onResult === undefined ? parsed : onResult(parsed)
         },
         () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
       )
