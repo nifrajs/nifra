@@ -39,25 +39,37 @@ function declaresNifra(manifest: string): boolean {
  * another project, such as another framework's app kept beside this one.
  */
 export function createNifraProjectProbe(root: string): (dir: string) => boolean {
+  return cachedWalkUp(root, (at, dir) => {
+    if (dir === "" || existsSync(join(at, CONFIG_FILE)) || existsSync(join(at, FRAMEWORK_FILE)))
+      return true
+    if (!existsSync(join(at, "package.json"))) return undefined
+    let manifest: string
+    try {
+      manifest = readFileSync(join(at, "package.json"), "utf8")
+    } catch {
+      manifest = ""
+    }
+    return declaresNifra(manifest)
+  })
+}
+
+/**
+ * A probe that answers a project-relative directory with `decide`'s answer for it, or, where that is
+ * `undefined`, its parent's; nothing decided up to the root means no. Each directory is decided once.
+ */
+function cachedWalkUp(
+  root: string,
+  decide: (at: string, dir: string) => boolean | undefined,
+): (dir: string) => boolean {
   const cache = new Map<string, boolean>()
   const probe = (dir: string): boolean => {
     const cached = cache.get(dir)
     if (cached !== undefined) return cached
-    const at = join(root, dir)
-    let nifra: boolean
-    if (dir === "" || existsSync(join(at, CONFIG_FILE)) || existsSync(join(at, FRAMEWORK_FILE)))
-      nifra = true
-    else if (existsSync(join(at, "package.json"))) {
-      let manifest: string
-      try {
-        manifest = readFileSync(join(at, "package.json"), "utf8")
-      } catch {
-        manifest = ""
-      }
-      nifra = declaresNifra(manifest)
-    } else nifra = probe(dir.slice(0, Math.max(dir.lastIndexOf("/"), 0)))
-    cache.set(dir, nifra)
-    return nifra
+    const answer =
+      decide(join(root, dir), dir) ??
+      (dir !== "" && probe(dir.slice(0, Math.max(dir.lastIndexOf("/"), 0))))
+    cache.set(dir, answer)
+    return answer
   }
   return probe
 }
@@ -144,26 +156,18 @@ const WEB_PACKAGE = /^@nifrajs\/web(?:-[a-z0-9-]+)?$/
  * says yes. Nothing up to the root means no.
  */
 export function createWebAppProbe(root: string): (dir: string) => boolean {
-  const cache = new Map<string, boolean>()
-  const probe = (dir: string): boolean => {
-    const cached = cache.get(dir)
-    if (cached !== undefined) return cached
-    const at = join(root, dir)
-    let web: boolean
-    if (existsSync(join(at, CONFIG_FILE)) || existsSync(join(at, FRAMEWORK_FILE))) web = true
-    else if (existsSync(join(at, "package.json"))) {
-      const manifest = recordOf(readJson(join(at, "package.json")))
-      web =
-        recordOf(manifest?.nifra)?.kind !== "api" &&
-        DEPENDENCY_FIELDS.some((field) => {
-          const deps = recordOf(manifest?.[field])
-          return deps !== undefined && Object.keys(deps).some((name) => WEB_PACKAGE.test(name))
-        })
-    } else web = dir !== "" && probe(dir.slice(0, Math.max(dir.lastIndexOf("/"), 0)))
-    cache.set(dir, web)
-    return web
-  }
-  return probe
+  return cachedWalkUp(root, (at) => {
+    if (existsSync(join(at, CONFIG_FILE)) || existsSync(join(at, FRAMEWORK_FILE))) return true
+    if (!existsSync(join(at, "package.json"))) return undefined
+    const manifest = recordOf(readJson(join(at, "package.json")))
+    return (
+      recordOf(manifest?.nifra)?.kind !== "api" &&
+      DEPENDENCY_FIELDS.some((field) => {
+        const deps = recordOf(manifest?.[field])
+        return deps !== undefined && Object.keys(deps).some((name) => WEB_PACKAGE.test(name))
+      })
+    )
+  })
 }
 
 /** A zone or server-only finding outside any web app, with the API-only setting named. */

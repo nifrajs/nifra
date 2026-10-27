@@ -166,14 +166,14 @@ interface ScannedFile {
 }
 
 /**
- * Runs `onNode` on every node of every parsed source file, children included, or reports that the scan
- * could not run because TypeScript is missing.
+ * Runs `onFile` on every parsed source file, or reports that the scan could not run because TypeScript
+ * is missing.
  */
-async function scanNodes(
+async function scanFiles(
   ctx: RuleContext,
   code: string,
   title: string,
-  onNode: (ts: typeof TSApi, node: TSApi.Node, source: ScannedFile, findings: Diagnostic[]) => void,
+  onFile: (ts: typeof TSApi, source: ScannedFile, findings: Diagnostic[]) => void,
 ): Promise<readonly Diagnostic[]> {
   const loaded = await loadRuleTypeScript(ctx)
   if (loaded.diagnostics !== undefined) return loaded.diagnostics
@@ -182,15 +182,25 @@ async function scanNodes(
   const findings: Diagnostic[] = []
   for (const file of ctx.project.source.files) {
     const parsed = parsedFile(ts, ctx.project.source, file)
-    if (parsed === undefined) continue
-    const source = { file, ...parsed }
+    if (parsed !== undefined) onFile(ts, { file, ...parsed }, findings)
+  }
+  return findings
+}
+
+/** {@link scanFiles} over every node of each file, children included. */
+function scanNodes(
+  ctx: RuleContext,
+  code: string,
+  title: string,
+  onNode: (ts: typeof TSApi, node: TSApi.Node, source: ScannedFile, findings: Diagnostic[]) => void,
+): Promise<readonly Diagnostic[]> {
+  return scanFiles(ctx, code, title, (ts, source, findings) => {
     const visit = (node: TSApi.Node): void => {
       onNode(ts, node, source, findings)
       ts.forEachChild(node, visit)
     }
-    visit(parsed.tree)
-  }
-  return findings
+    visit(source.tree)
+  })
 }
 
 function parse(ts: typeof TSApi, file: string, source: string): TSApi.SourceFile {
@@ -284,6 +294,21 @@ function bindsName(ts: typeof TSApi, binding: TSApi.BindingName, name: string): 
   )
 }
 
+/** Whether `node` is a loop or a catch clause that declares `name` for its body. */
+function loopOrCatchBinds(ts: typeof TSApi, node: TSApi.Node, name: string): boolean {
+  if (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node))
+    return (
+      node.initializer !== undefined &&
+      ts.isVariableDeclarationList(node.initializer) &&
+      node.initializer.declarations.some((d) => bindsName(ts, d.name, name))
+    )
+  return (
+    ts.isCatchClause(node) &&
+    node.variableDeclaration !== undefined &&
+    bindsName(ts, node.variableDeclaration.name, name)
+  )
+}
+
 /**
  * Whether `id` names a plain parameter of an enclosing function, not a value the file builds: the
  * nearest declaration of the name, walking out, must be that parameter. A loop or catch variable, a
@@ -300,19 +325,7 @@ function isParameterRef(ts: typeof TSApi, id: TSApi.Identifier): boolean {
     }
     if ((ts.isBlock(node) || ts.isSourceFile(node)) && declaresIn(ts, node.statements, id.text))
       return false
-    if (
-      (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
-      node.initializer !== undefined &&
-      ts.isVariableDeclarationList(node.initializer) &&
-      node.initializer.declarations.some((d) => bindsName(ts, d.name, id.text))
-    )
-      return false
-    if (
-      ts.isCatchClause(node) &&
-      node.variableDeclaration !== undefined &&
-      bindsName(ts, node.variableDeclaration.name, id.text)
-    )
-      return false
+    if (loopOrCatchBinds(ts, node, id.text)) return false
   }
   return false
 }
@@ -365,19 +378,7 @@ function constInitializer(ts: typeof TSApi, id: TSApi.Identifier): TSApi.Express
   for (let node: TSApi.Node | undefined = id.parent; node !== undefined; node = node.parent) {
     if (ts.isFunctionLike(node) && node.parameters.some((p) => bindsName(ts, p.name, id.text)))
       return undefined
-    if (
-      (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
-      node.initializer !== undefined &&
-      ts.isVariableDeclarationList(node.initializer) &&
-      node.initializer.declarations.some((d) => bindsName(ts, d.name, id.text))
-    )
-      return undefined
-    if (
-      ts.isCatchClause(node) &&
-      node.variableDeclaration !== undefined &&
-      bindsName(ts, node.variableDeclaration.name, id.text)
-    )
-      return undefined
+    if (loopOrCatchBinds(ts, node, id.text)) return undefined
     if (!ts.isBlock(node) && !ts.isSourceFile(node)) continue
     for (const statement of node.statements) {
       if (!ts.isVariableStatement(statement)) continue
@@ -526,52 +527,48 @@ export function rewriteSecretComparisons(
 export const secretComparisonRule: CheckRule = {
   code: "NF-S002",
   title: "Non-constant-time secret comparison",
-  async scan(ctx) {
-    const loaded = await loadRuleTypeScript(ctx)
-    if (loaded.diagnostics !== undefined) return loaded.diagnostics
-    const ts = loaded.compiler
-    if (ts === undefined) return didNotRun("NF-S002", "Non-constant-time secret comparison scan")
-    const findings: Diagnostic[] = []
+  scan(ctx) {
     const webDirs = createWebAppProbe(ctx.root)
-    for (const file of ctx.project.source.files) {
-      const parsed = parsedFile(ts, ctx.project.source, file)
-      if (parsed === undefined) continue
-      const { tree, lines } = parsed
-      const browser = provenBrowserFile(ctx.root, file, webDirs)
-      for (const { left, right, line } of secretComparisons(ts, tree, browser)) {
-        const reviewed = expectedReason(lines, line, "NF-S002") !== undefined
-        findings.push(
-          diagnostic({
-            code: "NF-S002",
-            severity: reviewed ? "info" : browser ? "warn" : "error",
-            file,
-            line,
-            message: reviewed
-              ? "secret comparison is expected here"
-              : unexpectedMessage(
-                  "secret-like values must use a length check and timing-safe comparison",
-                  lines,
-                  line,
-                  "NF-S002",
-                ),
-            evidence: [
-              left ?? right ?? "secret comparison",
-              ...expectationEvidence(lines, line, "NF-S002"),
-            ],
-            ...(reviewed
-              ? {}
-              : {
-                  fix: {
-                    recipe: "security.timing-safe-equal",
-                    command: "nifra fix --code NF-S002",
-                  },
-                }),
-            verify: "nifra check --lints-only",
-          }),
-        )
-      }
-    }
-    return findings
+    return scanFiles(
+      ctx,
+      "NF-S002",
+      "Non-constant-time secret comparison scan",
+      (ts, { file, tree, lines }, findings) => {
+        const browser = provenBrowserFile(ctx.root, file, webDirs)
+        for (const { left, right, line } of secretComparisons(ts, tree, browser)) {
+          const reviewed = expectedReason(lines, line, "NF-S002") !== undefined
+          findings.push(
+            diagnostic({
+              code: "NF-S002",
+              severity: reviewed ? "info" : browser ? "warn" : "error",
+              file,
+              line,
+              message: reviewed
+                ? "secret comparison is expected here"
+                : unexpectedMessage(
+                    "secret-like values must use a length check and timing-safe comparison",
+                    lines,
+                    line,
+                    "NF-S002",
+                  ),
+              evidence: [
+                left ?? right ?? "secret comparison",
+                ...expectationEvidence(lines, line, "NF-S002"),
+              ],
+              ...(reviewed
+                ? {}
+                : {
+                    fix: {
+                      recipe: "security.timing-safe-equal",
+                      command: "nifra fix --code NF-S002",
+                    },
+                  }),
+              verify: "nifra check --lints-only",
+            }),
+          )
+        }
+      },
+    )
   },
 }
 
@@ -746,59 +743,55 @@ function isDenial(ts: typeof TSApi, expression: TSApi.Expression, authenticator:
 export const failOpenGateRule: CheckRule = {
   code: "NF-S001",
   title: "Fail-open gate",
-  async scan(ctx) {
-    const loaded = await loadRuleTypeScript(ctx)
-    if (loaded.diagnostics !== undefined) return loaded.diagnostics
-    const ts = loaded.compiler
-    if (ts === undefined) return didNotRun("NF-S001", "Fail-open gate scan")
-    const findings: Diagnostic[] = []
+  scan(ctx) {
     const webDirs = createWebAppProbe(ctx.root)
-    for (const file of ctx.project.source.files) {
-      const parsed = parsedFile(ts, ctx.project.source, file)
-      if (parsed === undefined) continue
-      const { tree, lines } = parsed
-      let browser: boolean | undefined
-      const visit = (node: TSApi.Node): void => {
-        if (ts.isCatchClause(node)) {
-          let parent: TSApi.Node | undefined = node.parent
-          while (parent !== undefined && !ts.isFunctionLike(parent)) parent = parent.parent
-          const name = parent === undefined ? undefined : functionName(ts, parent)
-          if (name !== undefined && GATE_NAMES.some((gate) => gate.test(name))) {
-            if (!failsClosed(ts, node.block, name)) {
-              const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-              const reviewed = expectedReason(lines, line, "NF-S001") !== undefined
-              browser ??= provenBrowserFile(ctx.root, file, webDirs)
-              findings.push(
-                diagnostic({
-                  code: "NF-S001",
-                  severity: reviewed ? "info" : browser ? "warn" : "error",
-                  file,
-                  line,
-                  message: reviewed
-                    ? "gate catch block is expected here"
-                    : unexpectedMessage(
-                        "gate catch blocks must rethrow or return an explicit denial",
-                        lines,
-                        line,
-                        "NF-S001",
-                      ),
-                  evidence: [
-                    name,
-                    "catch block has no denial or rethrow",
-                    ...(browser ? ["browser code: the server's own gate decides"] : []),
-                    ...expectationEvidence(lines, line, "NF-S001"),
-                  ],
-                  verify: "nifra check --lints-only",
-                }),
-              )
+    return scanFiles(
+      ctx,
+      "NF-S001",
+      "Fail-open gate scan",
+      (ts, { file, tree, lines }, findings) => {
+        let browser: boolean | undefined
+        const visit = (node: TSApi.Node): void => {
+          if (ts.isCatchClause(node)) {
+            let parent: TSApi.Node | undefined = node.parent
+            while (parent !== undefined && !ts.isFunctionLike(parent)) parent = parent.parent
+            const name = parent === undefined ? undefined : functionName(ts, parent)
+            if (name !== undefined && GATE_NAMES.some((gate) => gate.test(name))) {
+              if (!failsClosed(ts, node.block, name)) {
+                const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+                const reviewed = expectedReason(lines, line, "NF-S001") !== undefined
+                browser ??= provenBrowserFile(ctx.root, file, webDirs)
+                findings.push(
+                  diagnostic({
+                    code: "NF-S001",
+                    severity: reviewed ? "info" : browser ? "warn" : "error",
+                    file,
+                    line,
+                    message: reviewed
+                      ? "gate catch block is expected here"
+                      : unexpectedMessage(
+                          "gate catch blocks must rethrow or return an explicit denial",
+                          lines,
+                          line,
+                          "NF-S001",
+                        ),
+                    evidence: [
+                      name,
+                      "catch block has no denial or rethrow",
+                      ...(browser ? ["browser code: the server's own gate decides"] : []),
+                      ...expectationEvidence(lines, line, "NF-S001"),
+                    ],
+                    verify: "nifra check --lints-only",
+                  }),
+                )
+              }
             }
           }
+          ts.forEachChild(node, visit)
         }
-        ts.forEachChild(node, visit)
-      }
-      visit(tree)
-    }
-    return findings
+        visit(tree)
+      },
+    )
   },
 }
 

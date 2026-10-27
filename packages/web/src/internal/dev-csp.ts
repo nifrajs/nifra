@@ -21,9 +21,14 @@ const allowsInline = (sources: readonly string[]): boolean =>
   sources.includes("'unsafe-inline'") &&
   !sources.some((source) => /^'(?:nonce|sha256|sha384|sha512)-/.test(source))
 
-/** One header value (comma-separated policies), with `'nonce-<nonce>'` added where it is needed. */
-function admitNonce(value: string, nonce: string): string {
-  const token = `'nonce-${nonce}'`
+/**
+ * One header value (comma-separated policies) with each policy rewritten by `edit`, which may change
+ * the directive `governing` finds, as its name and sources: the first of `names` the policy declares.
+ */
+function editPolicies(
+  value: string,
+  edit: (governing: (names: readonly string[]) => string[] | undefined) => void,
+): string {
   return value
     .split(",")
     .map((policy) => {
@@ -32,18 +37,28 @@ function admitNonce(value: string, nonce: string): string {
         .map((directive) => directive.trim())
         .filter((directive) => directive !== "")
         .map((directive) => directive.split(/\s+/))
-      for (const names of GOVERNING) {
-        const governing = names
+      edit((names) =>
+        names
           .map((name) => directives.find(([directive]) => directive?.toLowerCase() === name))
-          .find((directive) => directive !== undefined)
-        if (governing === undefined) continue
-        const sources = governing.slice(1)
-        if (sources.includes(token) || sources.includes("'none'") || allowsInline(sources)) continue
-        governing.push(token)
-      }
+          .find((directive) => directive !== undefined),
+      )
       return directives.map((directive) => directive.join(" ")).join("; ")
     })
     .join(", ")
+}
+
+/** One header value (comma-separated policies), with `'nonce-<nonce>'` added where it is needed. */
+function admitNonce(value: string, nonce: string): string {
+  const token = `'nonce-${nonce}'`
+  return editPolicies(value, (governing) => {
+    for (const names of GOVERNING) {
+      const directive = governing(names)
+      if (directive === undefined) continue
+      const sources = directive.slice(1)
+      if (sources.includes(token) || sources.includes("'none'") || allowsInline(sources)) continue
+      directive.push(token)
+    }
+  })
 }
 
 const RAW_TEXT_START = /<(script|style)\b([^>]*)>/gi
@@ -132,42 +147,29 @@ export function admitInlineScript(
   for (const name of POLICY_HEADERS) {
     const value = headers.get(name)
     if (value === null) continue
-    const next = value
-      .split(",")
-      .map((policy) => {
-        const directives = policy
-          .split(";")
-          .map((directive) => directive.trim())
-          .filter((directive) => directive !== "")
-          .map((directive) => directive.split(/\s+/))
-        const governing = (names: readonly string[]): string[] | undefined =>
-          names
-            .map((n) => directives.find(([directive]) => directive?.toLowerCase() === n))
-            .find((directive) => directive !== undefined)
-        const script = governing(SCRIPT_DIRECTIVES)
-        if (script !== undefined) {
-          const sources = script.slice(1)
-          if (sources.includes("'none'")) allowed = false
-          else {
-            if (hash !== undefined && !sources.includes(hash) && !allowsInline(sources))
-              script.push(hash)
-            if (
-              module !== undefined &&
-              !sources.includes("'strict-dynamic'") &&
-              !reaches(sources, module)
-            )
-              script.push(module.href)
-          }
+    const next = editPolicies(value, (governing) => {
+      const script = governing(SCRIPT_DIRECTIVES)
+      if (script !== undefined) {
+        const sources = script.slice(1)
+        if (sources.includes("'none'")) allowed = false
+        else {
+          if (hash !== undefined && !sources.includes(hash) && !allowsInline(sources))
+            script.push(hash)
+          if (
+            module !== undefined &&
+            !sources.includes("'strict-dynamic'") &&
+            !reaches(sources, module)
+          )
+            script.push(module.href)
         }
-        const connectDirective = governing(CONNECT_DIRECTIVES)
-        if (connectDirective !== undefined && !reaches(connectDirective.slice(1), connect)) {
-          const none = connectDirective.indexOf("'none'")
-          if (none === -1) connectDirective.push(connect.href)
-          else connectDirective.splice(none, 1, connect.href)
-        }
-        return directives.map((directive) => directive.join(" ")).join("; ")
-      })
-      .join(", ")
+      }
+      const connectDirective = governing(CONNECT_DIRECTIVES)
+      if (connectDirective !== undefined && !reaches(connectDirective.slice(1), connect)) {
+        const none = connectDirective.indexOf("'none'")
+        if (none === -1) connectDirective.push(connect.href)
+        else connectDirective.splice(none, 1, connect.href)
+      }
+    })
     updates.push([name, next])
   }
   if (!allowed) return false

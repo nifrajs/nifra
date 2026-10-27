@@ -55,11 +55,18 @@ import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateServerManifest, type LiveClientEntry } from "./index.ts"
-import { clientEntryFiles, writeClientEntry, writeClientManifest } from "./internal/build-steps.ts"
+import {
+  clientEntryFiles,
+  pageStyles,
+  writeClientEntry,
+  writeClientManifest,
+  writeServerManifest,
+} from "./internal/build-steps.ts"
 import { missingClientEntry } from "./internal/codegen.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
+import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
 import { adapterRefusal } from "./internal/node-adapter.ts"
 import { assertIdentityParity } from "./internal/parity.ts"
@@ -752,33 +759,13 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     if (leadingCss !== undefined) urls.unshift(leadingCss)
     return [...new Set(urls)]
   }
-  const routeStyles: Record<string, readonly string[]> = {}
   // A compiler plugin may attach a global stylesheet to the generated bootstrap rather than to a
   // route entry (StyleX's atomic CSS is one example). In that shape there is no useful per-route map:
   // emitting `routeId: []` would suppress the aggregate `styles` fallback in `createWebApp` and render
   // SSR pages unstyled. Keep routeStyles absent until at least one authored route entry owns CSS.
   const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== bootstrapEntry)
-  if (css.length > 0 && routeCssEntries.length > 0) {
-    // A `_loading` page can show on a navigation from ANY page, and a document links only its own
-    // route's stylesheets - so every page that can start a navigation carries the loading pages' too.
-    const loadingFiles = Object.values(routeManifest.loadings ?? {}).map((page) => page.file)
-    for (const route of routeManifest.routes) {
-      routeStyles[route.id] = stylesFor([
-        ...route.layoutIds.map((id) => routeManifest.layouts[id]?.file ?? ""),
-        route.file,
-        ...loadingFiles,
-      ])
-    }
-    if (routeManifest.notFound) {
-      routeStyles._404 = stylesFor([routeManifest.notFound.file, ...loadingFiles])
-    }
-    for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
-      routeStyles[id] = stylesFor([
-        ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),
-        page.file,
-      ])
-    }
-  }
+  const routeStyles =
+    css.length > 0 && routeCssEntries.length > 0 ? pageStyles(routeManifest, stylesFor) : {}
 
   // Copy `public/` into the output next to the hashed assets. A missing directory is normal (most
   // apps have none) and must not fail the build.
@@ -903,21 +890,28 @@ const reactDomEdgePlugin = (from: string): BunPlugin => ({
  * react-dom's build.
  */
 const REACT_DEDUPE_SPECS = dedupePolicyFor("react").bunSpecs ?? []
-export const reactDedupePlugin = (from: string): BunPlugin => ({
-  name: "nifra-react-dedupe",
-  setup(build) {
-    for (const spec of REACT_DEDUPE_SPECS) {
-      let resolved: string
-      try {
-        resolved = Bun.resolveSync(spec, from)
-      } catch {
-        continue // React (or this subpath) isn't resolvable here - nothing to dedupe
+export const reactDedupePlugin = (from: string): BunPlugin =>
+  pinnedSpecsPlugin("nifra-react-dedupe", REACT_DEDUPE_SPECS, from)
+
+/** Pins each of `specs` to the one copy `from` resolves; a spec that does not resolve is left alone. */
+function pinnedSpecsPlugin(name: string, specs: readonly string[], from: string): BunPlugin {
+  return {
+    name,
+    setup(build) {
+      for (const spec of specs) {
+        let resolved: string
+        try {
+          resolved = Bun.resolveSync(spec, from)
+        } catch {
+          continue
+        }
+        build.onResolve({ filter: new RegExp(`^${escapeRegExp(spec)}$`) }, () => ({
+          path: resolved,
+        }))
       }
-      const escaped = spec.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")
-      build.onResolve({ filter: new RegExp(`^${escaped}$`) }, () => ({ path: resolved }))
-    }
-  },
-})
+    },
+  }
+}
 
 /**
  * Dedupe Preact to a single copy - the Preact analogue of `reactDedupePlugin`, closing the same class of
@@ -931,21 +925,8 @@ export const reactDedupePlugin = (from: string): BunPlugin => ({
  * unlike react-dom there is no edge-vs-server build to preserve, so pinning the subpaths is safe.
  */
 const PREACT_DEDUPE_SPECS = dedupePolicyFor("preact").bunSpecs ?? []
-export const preactDedupePlugin = (from: string): BunPlugin => ({
-  name: "nifra-preact-dedupe",
-  setup(build) {
-    for (const spec of PREACT_DEDUPE_SPECS) {
-      let resolved: string
-      try {
-        resolved = Bun.resolveSync(spec, from)
-      } catch {
-        continue // Preact (or this subpath) isn't resolvable here - nothing to dedupe
-      }
-      const escaped = spec.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")
-      build.onResolve({ filter: new RegExp(`^${escaped}$`) }, () => ({ path: resolved }))
-    }
-  },
-})
+export const preactDedupePlugin = (from: string): BunPlugin =>
+  pinnedSpecsPlugin("nifra-preact-dedupe", PREACT_DEDUPE_SPECS, from)
 
 const SVELTE_DEDUPE_PATTERN = dedupePolicyFor("svelte").bunPattern ?? /^svelte($|\/internal\/)/
 /**
@@ -1200,10 +1181,6 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   const buildAssets =
     options.buildAssets ?? (client === undefined ? undefined : buildAssetPaths(client))
   const entryDir = dirname(serverEntry)
-  const manifestFile = options.manifestFile ?? "server-manifest.ts"
-  // Default: import routes relative from the generated manifest (next to serverEntry) to routesDir.
-  const rel = relative(entryDir, routesDir).replaceAll("\\", "/")
-  const resolve = options.resolve ?? ((file: string) => `./${rel}/${file}`)
   mkdirSync(outDir, { recursive: true })
 
   const lazy = options.lazy ?? false
@@ -1214,20 +1191,15 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   // apply - defaults become `[target]` (e.g. react-dom → server.node.js under `node`).
   const edge = target === "browser"
   const conditions = options.conditions ?? (edge ? ["workerd", "edge-light", "browser"] : [target])
-  const manifest = discoverRoutes(routesDir)
-  writeFileSync(
-    `${entryDir}/${manifestFile}`,
-    generateServerManifest(manifest, {
-      resolve,
-      clientEntry,
-      styles,
-      routeStyles,
-      ...(cssLoading !== undefined ? { cssLoading } : {}),
-      ...(copyChunks !== undefined ? { copyChunks } : {}),
-      ...(buildAssets !== undefined ? { buildAssets } : {}),
-      lazy,
-    }),
-  )
+  const manifestFile = writeServerManifest(options, {
+    clientEntry,
+    styles,
+    routeStyles,
+    cssLoading,
+    copyChunks,
+    buildAssets,
+    lazy,
+  })
 
   const provided = new Set(options.providedBuiltins)
   const result = await Bun.build({
@@ -1285,11 +1257,9 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   const classifier = createZoneClassifier({
     appRoot,
     routesDir,
-    generatedFiles: [
-      serverEntry,
-      join(entryDir, manifestFile),
-      ...(options.generatedFiles ?? []),
-    ].map((file) => resolvePath(file)),
+    generatedFiles: [serverEntry, manifestFile, ...(options.generatedFiles ?? [])].map((file) =>
+      resolvePath(file),
+    ),
   })
   const sourceOf = bunModuleSource(process.cwd())
   const labelOf = (id: string): string => {

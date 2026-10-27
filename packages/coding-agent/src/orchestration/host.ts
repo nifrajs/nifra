@@ -28,7 +28,7 @@ import { noopArtifactPort } from "./artifact-port.ts"
 import type { StepCatalog } from "./catalog.ts"
 import { compileRunPlanLayers, digestRunPlan, type OrchestrationLimits } from "./compile.ts"
 import { type EvidenceCounters, type EvidenceStore, MemoryEvidenceStore } from "./evidence-store.ts"
-import { indexPlan, isGateRejection } from "./plan-index.ts"
+import { indexPlan, isGateRejection, nodeRecords } from "./plan-index.ts"
 import { admitCapability, ChildVectorTracker, type HostPolicy } from "./policy.ts"
 
 export type RunState = "submitted" | "running" | "paused" | "succeeded" | "failed" | "cancelled"
@@ -230,8 +230,7 @@ export class OrchestrationHost {
       throw new OrchestrationStateError(`run '${runId}' already exists`, "E_DUPLICATE_RUN")
 
     const artifactPort = options.artifactPort ?? noopArtifactPort()
-    const effectKeys = new Map<string, NodeEffectKey>()
-    const artifacts = new Map<string, ArtifactRef[]>()
+    const { effectKeys, artifacts, hooks } = nodeRecords()
     const layers = compileRunPlanLayers(plan, {
       catalog: this.catalog,
       planDigest,
@@ -240,12 +239,7 @@ export class OrchestrationHost {
       subagentAbandonment: this.subagentAbandonment,
       onSubagentAbandoned: (nodeId, abandonment) =>
         this.onSubagentAbandoned?.(runId, nodeId, abandonment),
-      onNodeEffect: (nodeId, key) => effectKeys.set(nodeId, key),
-      collectArtifact: (nodeId, ref) => {
-        const list = artifacts.get(nodeId)
-        if (list === undefined) artifacts.set(nodeId, [ref])
-        else list.push(ref)
-      },
+      ...hooks,
     })
 
     const { kindById, idempotentById, nodeIds } = indexPlan(plan, this.catalog)

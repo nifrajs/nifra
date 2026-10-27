@@ -1,14 +1,14 @@
 {
   "agent": 158,
   "agent-protocol": 124,
-  "cli": 1220,
-  "coding-agent": 874,
+  "cli": 376,
+  "coding-agent": 746,
   "content": 226,
-  "core": 3693,
+  "core": 3569,
   "middleware": 420,
   "node": 130,
   "proxy": 164,
   "testing": 134,
-  "web": 1054,
+  "web": 546,
   "web-react": 124
 }
