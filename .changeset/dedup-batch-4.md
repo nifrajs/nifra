@@ -7,6 +7,7 @@
 "@nifrajs/coding-agent": patch
 "@nifrajs/agent": patch
 "@nifrajs/testing": patch
+"@nifrajs/schema": patch
 ---
 
 `@nifrajs/node` and `@nifrajs/deno` read core's WebSocket upgrade outcome through one generated type view, which core checks its own types against, instead of two hand-written mirrors.
@@ -22,3 +23,5 @@ Core's evidence, diff and saga code share their schema-part mapping and saga own
 The coding agent's dispatch store checks a lease once for every write, its host and tracer share one plan index and gate check, and its two UI extension calls share one handler.
 
 `@nifrajs/agent` checks a tool step's deadline through one helper before and after approval, and its fake and replay gateways validate their scripted responses once. `@nifrajs/testing`'s agent-eval composition records its contract-lab and certification components through one helper.
+
+`@nifrajs/schema` reads one record guard from a single module.

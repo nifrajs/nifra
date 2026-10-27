@@ -4692,7 +4692,6 @@ _No named exports (side-effect entrypoint)._
   A `t` schema. It is a Standard Schema (so any nifra route validates it with no special-casing) whose raw TypeBox definition stays reachable as `jsonSchema` - and because a TypeBox schema *is* a JSON Schema, that field is exactly what lets `toOpenAPI` emit a real request/response schema for the rout…
 - **OpenAPIDocument** _(interface)_ - `interface OpenAPIDocument`
 - **OpenAPIImportError** _(class)_ - `class OpenAPIImportError`
-  OpenAPI 3.x inventory import - the structural half of an export/import roundtrip.
 - **OpenAPIInfo** _(interface)_ - `interface OpenAPIInfo`
   OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
 - **OpenAPIVersion** _(type)_ - `type OpenAPIVersion = "3.1.0" | "3.2.0"`
