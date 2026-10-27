@@ -359,6 +359,22 @@ function toolCallResult(result: string | McpToolResult, tool: McpTool): Record<s
   }
 }
 
+/** What the server advertises at the handshake: tools, resources and prompts when it has any, and its UI. */
+function serverCapabilities(
+  resources: readonly McpResource[],
+  prompts: readonly McpPrompt[],
+  features: McpServerFeatures,
+): Record<string, unknown> {
+  return {
+    tools: {},
+    ...(resources.length > 0 ? { resources: {} } : {}),
+    ...(prompts.length > 0 ? { prompts: {} } : {}),
+    ...(features.ui !== undefined
+      ? { extensions: { [UI_EXTENSION_KEY]: { mimeTypes: features.ui.mimeTypes ?? [UI_MIME] } } }
+      : {}),
+  }
+}
+
 /**
  * Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a
  * notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
@@ -404,18 +420,7 @@ export async function handleRpc(
           : PROTOCOL_VERSION
       return rpcResult(rid, {
         protocolVersion,
-        capabilities: {
-          tools: {},
-          ...(resources.length > 0 ? { resources: {} } : {}),
-          ...(prompts.length > 0 ? { prompts: {} } : {}),
-          ...(features.ui !== undefined
-            ? {
-                extensions: {
-                  [UI_EXTENSION_KEY]: { mimeTypes: features.ui.mimeTypes ?? [UI_MIME] },
-                },
-              }
-            : {}),
-        },
+        capabilities: serverCapabilities(resources, prompts, features),
         serverInfo,
         ...(features.instructions !== undefined ? { instructions: features.instructions } : {}),
       })
@@ -428,18 +433,7 @@ export async function handleRpc(
         withEnvelope(
           {
             supportedVersions: [MODERN_PROTOCOL_VERSION],
-            capabilities: {
-              tools: {},
-              ...(resources.length > 0 ? { resources: {} } : {}),
-              ...(prompts.length > 0 ? { prompts: {} } : {}),
-              ...(features.ui !== undefined
-                ? {
-                    extensions: {
-                      [UI_EXTENSION_KEY]: { mimeTypes: features.ui.mimeTypes ?? [UI_MIME] },
-                    },
-                  }
-                : {}),
-            },
+            capabilities: serverCapabilities(resources, prompts, features),
             ...(features.instructions !== undefined ? { instructions: features.instructions } : {}),
           },
           serverInfo,
