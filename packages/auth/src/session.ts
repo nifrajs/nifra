@@ -55,7 +55,7 @@ export interface Session<Data extends Record<string, unknown> = Record<string, u
  * HttpOnly; `maxAge`/`expires` are derived from the session's lifetime. */
 export type SessionCookieOptions = Pick<CookieOptions, "secure" | "sameSite" | "path" | "domain">
 
-export interface SessionOptions {
+export interface SessionOptions<Data extends Record<string, unknown> = Record<string, unknown>> {
   /** Signing secret (≥ 32 bytes), or a rotation list: the **first** secret signs new cookies and
    * any listed secret verifies, so rotating without invalidating live sessions is: prepend the new
    * secret, drop the old one after `maxAge` has elapsed. A bare secret swap (no list) invalidates
@@ -83,6 +83,15 @@ export interface SessionOptions {
    * upgrade, then remove it; each such session is re-signed in the current form on its next commit.
    */
   readonly acceptLegacyCookies?: boolean
+  /**
+   * The data keys that say who the visitor is: a user id, and any key that changes what a page may
+   * show, such as an organization or a role. The session cookie carries a tag that changes only when
+   * one of them does, so `@nifrajs/web` keep-alive keeps the pages it holds across a commit that
+   * writes other data, a cart say. Unset, every key counts and any change to the data changes the
+   * tag. Leaving out a key that decides what a page shows lets the next visitor of a browser see the
+   * pages kept for the previous one.
+   */
+  readonly identity?: readonly (keyof Data & string)[]
 }
 
 export interface SessionManager<Data extends Record<string, unknown> = Record<string, unknown>> {
@@ -123,6 +132,23 @@ const encodeBase64Url = (bytes: Uint8Array): string => {
 /** A 256-bit random session id (base64url). High-entropy + unguessable - the cookie also signs it. */
 const randomId = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8Array(32)))
 
+// A store-mode cookie carries `<id>*<tag>`, and the tag changes with what says who the visitor is, so
+// a response that changes who is signed in under a kept id still changes the cookie. `*` is outside the
+// id alphabet; a cookie without a tag was written before tags existed. A cookie-mode payload carries
+// the same tag once `identity` is set.
+const DATA_TAG = /^([^*]+)\*([A-Za-z0-9_-]{12})$/
+const TAG = /^[A-Za-z0-9_-]{12}$/
+const randomTag = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8Array(9)))
+
+// A value JSON cannot hold compares as changed, so its session takes a new tag.
+const snapshot = (data: unknown): string | undefined => {
+  try {
+    return JSON.stringify(data)
+  } catch {
+    return undefined
+  }
+}
+
 // A revoked id keeps a marker under its own key. A request that loaded the session before logout and
 // commits after it rewrites the record, and a blind `set` cannot be made conditional on every store,
 // but it cannot overwrite a key it never writes. `.` is outside the base64url id alphabet.
@@ -136,6 +162,7 @@ const ROTATION_GRACE_MS = 60_000
 interface Payload {
   data: Record<string, unknown>
   expiresAt: number
+  tag?: string | undefined
 }
 
 /** Validate a cookie-mode payload at the trust boundary - malformed JSON / shape → `null` (no session). */
@@ -150,11 +177,15 @@ const parsePayload = (json: string): Payload | null => {
   const obj = value as Record<string, unknown>
   if (typeof obj.expiresAt !== "number" || !Number.isFinite(obj.expiresAt)) return null
   if (typeof obj.data !== "object" || obj.data === null) return null
-  return { data: obj.data as Record<string, unknown>, expiresAt: obj.expiresAt }
+  return {
+    data: obj.data as Record<string, unknown>,
+    expiresAt: obj.expiresAt,
+    tag: typeof obj.tag === "string" && TAG.test(obj.tag) ? obj.tag : undefined,
+  }
 }
 
 export function createSessions<Data extends Record<string, unknown> = Record<string, unknown>>(
-  options: SessionOptions,
+  options: SessionOptions<Data>,
 ): SessionManager<Data> {
   const { secret, store } = options
   // A cached marker miss can authenticate or recreate a session after logout, even with fixed expiry.
@@ -187,12 +218,29 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   // Annotated (not just `?? {}`) so `cookieOpts.path`/`.domain` stay typed - `?? {}` alone widens the
   // type to include the empty-object literal, which the package's build tsconfig rejects on access.
   const cookieOpts: SessionCookieOptions = options.cookie ?? {}
+  const identity = options.identity
+  if (identity?.length === 0) {
+    throw new Error(
+      "[nifra/auth] session identity must name at least one data key; with none, a sign-in would not change the session cookie's tag",
+    )
+  }
+  // What says who the visitor is: the keys `identity` names, or all of the data.
+  const identityOf = (data: Readonly<Record<string, unknown>> | undefined): unknown => {
+    if (identity === undefined || data === undefined) return data
+    const picked: Record<string, unknown> = {}
+    for (const key of identity) if (Object.hasOwn(data, key)) picked[key] = data[key]
+    return picked
+  }
 
   interface State {
     id: string | undefined
     readonly data: Map<keyof Data, Data[keyof Data]>
     expiresAt: number | undefined
     regenerate: boolean
+    // The cookie's tag, and what said who the visitor is when it was given: store mode always, cookie
+    // mode once `identity` is set.
+    tag: string | undefined
+    visitor: string | undefined
   }
   // Per-manager so the WeakMap is typed to this `Data` (no `any`); a session can only be committed by
   // the manager that created it.
@@ -202,6 +250,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     id?: string
     data?: Record<string, unknown>
     expiresAt?: number
+    tag?: string | undefined
   }): Session<Data> => {
     const state: State = {
       id: init.id,
@@ -209,6 +258,11 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       data: new Map(Object.entries(init.data ?? {}) as [keyof Data, Data[keyof Data]][]),
       expiresAt: init.expiresAt,
       regenerate: false,
+      tag: init.tag,
+      // Taken now: a store may hand back the object it holds, and a value read from it can be changed
+      // in place before the commit.
+      visitor:
+        store === undefined && identity === undefined ? undefined : snapshot(identityOf(init.data)),
     }
     const session: Session<Data> = {
       get: <K extends keyof Data>(key: K) => state.data.get(key) as Data[K] | undefined,
@@ -261,25 +315,27 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     if (unsigned === null) return make({}) // tampered / wrong secret → fail closed (anonymous)
 
     if (store !== undefined) {
+      const tagged = DATA_TAG.exec(unsigned)
+      const id = tagged?.[1] ?? unsigned
       // Only reachable with a value the app signed itself (legacy mode): never read a marker as a session.
-      if (isSessionMarker(unsigned)) return make({})
-      const family = sessionFamily(unsigned)
+      if (isSessionMarker(id)) return make({})
+      const family = sessionFamily(id)
       const [record, revoked, rotated, familyRevoked] = await Promise.all([
-        store.get(unsigned),
-        store.get(revokedKey(unsigned)),
-        store.get(`${unsigned}${ROTATED_SUFFIX}`),
-        family === unsigned ? undefined : store.get(revokedKey(family)),
+        store.get(id),
+        store.get(revokedKey(id)),
+        store.get(`${id}${ROTATED_SUFFIX}`),
+        family === id ? undefined : store.get(revokedKey(family)),
       ])
       if (record === undefined) return make({})
       if (revoked !== undefined || rotated !== undefined || familyRevoked !== undefined) {
-        await store.delete(unsigned) // a commit that raced the logout wrote it back
+        await store.delete(id) // a commit that raced the logout wrote it back
         return make({})
       }
       if (record.expiresAt <= now()) {
-        await store.delete(unsigned) // expired - evict + treat as no session
+        await store.delete(id) // expired - evict + treat as no session
         return make({})
       }
-      return make({ id: unsigned, data: record.data, expiresAt: record.expiresAt })
+      return make({ id, data: record.data, expiresAt: record.expiresAt, tag: tagged?.[2] })
     }
 
     const payload = parsePayload(unsigned)
@@ -287,7 +343,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     // At most a fresh session's life: a legacy cookie, or any other value signed with this secret,
     // must not name its own expiry, which a non-rolling commit would keep.
     const expiresAt = Math.min(payload.expiresAt, now() + maxAge * 1000)
-    return make({ data: payload.data, expiresAt })
+    return make({ data: payload.data, expiresAt, tag: payload.tag })
   }
 
   const sessionCookie = (c: SessionContext): string | undefined =>
@@ -395,7 +451,9 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         await store.delete(state.id)
         return
       }
-      const signed = await sign(state.id)
+      const visitor = snapshot(identityOf(data))
+      const tag = tagFor(state, visitor)
+      const signed = await sign(tag === undefined ? state.id : `${state.id}*${tag}`)
       if (
         previousId !== undefined &&
         ((await store.get(state.id)) === undefined ||
@@ -405,14 +463,32 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         return
       }
       state.expiresAt = expiresAt
+      state.tag = tag
+      state.visitor = visitor
       writeCookie(c, signed, expiresAt)
       return
     }
-    // Cookie mode: the (signed) payload IS the cookie. serializeCookie enforces the 4 KB cap.
-    const signed = await sign(JSON.stringify({ data, expiresAt } satisfies Payload))
+    // Cookie mode: the (signed) payload IS the cookie. serializeCookie enforces the 4 KB cap. With
+    // `identity` set it carries a tag, which the keep-alive hook compares in place of the data;
+    // JSON.stringify leaves an undefined tag out.
+    let visitor: string | undefined
+    let tag: string | undefined
+    if (identity !== undefined) {
+      visitor = snapshot(identityOf(data))
+      tag = (state.regenerate ? undefined : tagFor(state, visitor)) ?? randomTag()
+    }
+    const signed = await sign(JSON.stringify({ data, expiresAt, tag } satisfies Payload))
     state.expiresAt = expiresAt
+    state.regenerate = false
+    state.tag = tag
+    state.visitor = visitor
     writeCookie(c, signed, expiresAt)
   }
+
+  // The tag a commit writes: the one the session holds while what says who the visitor is stays the
+  // same, so a cookie written before tags existed keeps its form until then.
+  const tagFor = (state: State, visitor: string | undefined): string | undefined =>
+    visitor !== undefined && visitor === state.visitor ? state.tag : randomTag()
 
   // Whether logging out with this id may end its whole family: the live generation always may, a
   // rotated-away one only within the grace window, and an id with neither record nor marker never.
@@ -438,7 +514,8 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         // Revoke the record addressed by the signed request cookie even when the caller did not
         // first load a Session object. The signature check prevents deleting attacker-chosen IDs.
         const raw = sessionCookie(c)
-        const id = raw === undefined ? null : await unsign(raw)
+        const unsigned = raw === undefined ? null : await unsign(raw)
+        const id = unsigned === null ? null : (DATA_TAG.exec(unsigned)?.[1] ?? unsigned)
         if (id !== null && !isSessionMarker(id)) {
           if (await speaksForFamily(store, id)) await revoke(id)
           else await store.delete(id)

@@ -284,7 +284,7 @@ test("stop() closes a streaming route answered on an unmatched upgrade", async (
   }
 })
 
-test("signals: { drainMs } is the drain window a signal's stop() gives in-flight requests", async () => {
+test("gracefulSignals: { drainMs } is the drain window a signal's stop() gives in-flight requests", async () => {
   let entered!: () => void
   const inHandler = new Promise<void>((resolve) => {
     entered = resolve
@@ -299,7 +299,11 @@ test("signals: { drainMs } is the drain window a signal's stop() gives in-flight
     return "late"
   })
   const before = process.listenerCount("SIGTERM")
-  const running = await serve(app, { port: 0, hostname: "127.0.0.1", signals: { drainMs: 0 } })
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    gracefulSignals: { drainMs: 0 },
+  })
   try {
     assert.equal(process.listenerCount("SIGTERM"), before + 1)
     const held = fetch(`http://127.0.0.1:${running.port}/held`).then(

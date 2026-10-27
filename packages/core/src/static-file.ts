@@ -2,12 +2,12 @@
  * What a file served from disk is typed as, which files are never served, and when a client's copy of
  * one is still current - the shared owner for every static-file surface.
  *
- * `@nifrajs/web`'s `servePublicDir` (dev, the Bun entry), the Deno entry's handler and
- * `@nifrajs/node`'s `static` reader (the Node entry) answer the same deployed files. Copies that drift
+ * `serveStatic()` on Bun (`@nifrajs/core/serve-static`, also `nifra dev`), `@nifrajs/deno` and
+ * `@nifrajs/node` answer the same deployed files. Copies that drift
  * serve a `.pdf` as a download on one runtime and inline on the other, a `.well-known` file on one and
  * a 404 on the other, or a resumed download spliced from two versions of a file on one, so all three
- * read this module. The Node adapter runs a generated copy (scripts/gen-vendored.ts), so this
- * module imports nothing.
+ * read this module. The Node and Deno adapters run a generated copy (scripts/gen-vendored.ts), so
+ * this module imports nothing.
  */
 
 /**
@@ -359,4 +359,350 @@ export function contentTags(
       }
     },
   }
+}
+
+/** `cache-control` for a content-hashed file: its name changes with its bytes. */
+export const IMMUTABLE = "public, max-age=31536000, immutable"
+/** `cache-control` for a file that keeps its name across deploys, as a build's `public/` files do. */
+export const ONE_DAY = "public, max-age=86400"
+
+/** Which files {@link ServeStaticOptions.hashedFiles} names: paths, patterns, or a predicate. */
+export type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)
+
+/**
+ * One directory `serveStatic()` serves under a URL prefix: the same options on Bun
+ * (`@nifrajs/core/serve-static`), `@nifrajs/node` and `@nifrajs/deno`. Each runtime reads the files
+ * with its own fastest file API; which request a mount takes, and how it answers, is decided here.
+ */
+export interface ServeStaticOptions {
+  /** Directory to read files from - an absolute path or a `file://` URL (`new URL("./assets/", import.meta.url)`). */
+  readonly dir: string | URL
+  /** URL prefix these files are served under. Default `"/assets"`. Use `"/"` to serve the whole dir. */
+  readonly prefix?: string
+  /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */
+  readonly immutable?: boolean
+  /**
+   * The content-hashed files, matched on the URL path as sent. When set, `immutable` applies only to
+   * these, and any other file is sent with `cacheControl`, so a file that keeps its name across deploys
+   * still revalidates. One of:
+   *
+   * - paths, such as a build manifest's `assets`;
+   * - patterns, for files a pre-build step hashed that no manifest lists:
+   *   `[/^\/fonts\/[\w-]+-[0-9a-f]{16}\.woff2$/]`;
+   * - a predicate, to combine the two: `(path) => assets.has(path) || FONT.test(path)`. It runs as
+   *   written, so a RegExp it tests should be neither global nor sticky.
+   */
+  readonly hashedFiles?: HashedFiles
+  /**
+   * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside
+   * `hashedFiles`). Unset, such a file carries only its validators.
+   */
+  readonly cacheControl?: string
+  /**
+   * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under
+   * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so
+   * a mount over a directory that also holds the server bundle can expose just the build's listed
+   * files. A later mount over the same paths can still serve the rest.
+   */
+  readonly files?: Iterable<string>
+  /**
+   * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to
+   * `host`. `false` passes the request on, without touching the filesystem, to the next mount and then
+   * the app - the seam a host policy uses so a host's refused file meets the app's own refusal instead
+   * of being served.
+   */
+  readonly allow?: (host: string, pathname: string) => boolean
+  /** Extra headers merged onto every served file. */
+  readonly headers?: Readonly<Record<string, string>>
+  /**
+   * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is
+   * served. Default `"deny"`: answered as a missing file is, so probing can't distinguish "hidden" from
+   * "absent". `/.well-known` is public by definition (RFC 8615) and always served. The rule applies to
+   * the requested path and again to the file it resolves to, so a visible name linking to `.env` is
+   * denied too. Set `"allow"` if the directory deliberately holds dotfiles.
+   */
+  readonly dotfiles?: "deny" | "allow"
+  /**
+   * What a path under `prefix` this mount cannot serve does: a missing or hidden file, a link out of
+   * the directory, a malformed or traversing path. Default `false`: answered `404` (`400` malformed,
+   * `403` traversing), so a missing asset is never rendered as a page. `true` passes it to the next
+   * mount, then the app - for a mount at `"/"` beside the app's own routes.
+   */
+  readonly fallthrough?: boolean
+}
+
+/** A {@link ServeStaticOptions} checked once, with its directory resolved by the runtime's reader. */
+export interface StaticMount {
+  readonly root: string
+  /** `"/"`, or the prefix with one leading and no trailing slash. */
+  readonly prefix: string
+  readonly isImmutable: (path: string) => boolean
+  readonly cacheControl: string | undefined
+  readonly files: ReadonlySet<string> | undefined
+  readonly allow: ((host: string, pathname: string) => boolean) | undefined
+  /** Lowercased names. */
+  readonly headers: Readonly<Record<string, string>> | undefined
+  readonly denyDotfiles: boolean
+  readonly fallthrough: boolean
+}
+
+// `Array.isArray` does not narrow a readonly array out of a union.
+const isPatternList = (value: HashedFiles): value is readonly RegExp[] =>
+  Array.isArray(value) && value.length > 0 && value.every((item) => item instanceof RegExp)
+
+function hashedTest(hashedFiles: HashedFiles): (path: string) => boolean {
+  if (typeof hashedFiles === "function") return hashedFiles
+  if (isPatternList(hashedFiles)) {
+    // A global or sticky RegExp keeps `lastIndex` between tests, so every other match would miss.
+    const patterns = hashedFiles.map((pattern) =>
+      pattern.global || pattern.sticky
+        ? new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ""))
+        : pattern,
+    )
+    return (path) => patterns.some((pattern) => pattern.test(path))
+  }
+  const value: unknown = hashedFiles
+  // A Map iterates entries and tests keys, so a path it maps to `false` would still be immutable.
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    value instanceof Map ||
+    !(Symbol.iterator in value)
+  ) {
+    throw new TypeError(
+      "[nifra] serveStatic hashedFiles must be paths, an array of RegExps, or a function",
+    )
+  }
+  const paths = new Set<string>()
+  for (const path of hashedFiles) {
+    const item: unknown = path
+    if (typeof item !== "string") {
+      throw new TypeError(
+        "[nifra] serveStatic hashedFiles must be paths, an array of RegExps, or a function",
+      )
+    }
+    paths.add(item)
+  }
+  return (path) => paths.has(path)
+}
+
+/** Check `options` once, with `root` the absolute path its runtime resolved `options.dir` to. */
+export function staticMountOf(options: ServeStaticOptions, root: string): StaticMount {
+  const raw = options.prefix ?? "/assets"
+  // Index scans, not `/^\/+|\/+$/g` - the trailing-run half backtracks quadratically.
+  let from = 0
+  while (from < raw.length && raw.charCodeAt(from) === 47 /* '/' */) from++
+  let to = raw.length
+  while (to > from && raw.charCodeAt(to - 1) === 47) to--
+  const prefix = from === to ? "/" : `/${raw.slice(from, to)}`
+  const immutable = options.immutable !== false
+  const hashed = options.hashedFiles === undefined ? undefined : hashedTest(options.hashedFiles)
+  // fromEntries defines each name as its own property, so a `__proto__` header stays a header.
+  const headers =
+    options.headers === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(options.headers).map(([name, value]) => [name.toLowerCase(), value]),
+        )
+  return {
+    root,
+    prefix,
+    isImmutable: !immutable ? () => false : hashed === undefined ? () => true : hashed,
+    cacheControl: options.cacheControl,
+    files: options.files === undefined ? undefined : new Set(options.files),
+    allow: options.allow,
+    headers,
+    denyDotfiles: options.dotfiles !== "allow",
+    fallthrough: options.fallthrough === true,
+  }
+}
+
+/** One mount or several, as `serveStatic()` takes them, each checked by {@link staticMountOf}. */
+export function staticMountsOf(
+  mounts: ServeStaticOptions | readonly ServeStaticOptions[],
+  rootOf: (dir: string | URL) => string,
+): readonly StaticMount[] {
+  const list: readonly ServeStaticOptions[] = "dir" in mounts ? [mounts] : mounts
+  return list.map((options) => staticMountOf(options, rootOf(options.dir)))
+}
+
+/**
+ * What a mount does with a request path: `"pass"` to the next mount and then the app, a status to
+ * answer with, or the decoded path relative to the mount's directory (no leading slash, no `.` or `..`
+ * segment, no backslash or NUL) to read.
+ */
+export type StaticMatch =
+  | "pass"
+  | { readonly status: 400 | 403 | 404 }
+  | { readonly rel: string; readonly immutable: boolean }
+
+/**
+ * Match `path` (the URL path as sent, without the query) against `mount`, without touching the
+ * filesystem. `host` names the request's host, read only when the mount has an `allow`.
+ */
+export function matchStatic(mount: StaticMount, path: string, host: () => string): StaticMatch {
+  const { prefix } = mount
+  if (prefix !== "/" && path !== prefix && !path.startsWith(`${prefix}/`)) return "pass"
+  if (mount.files !== undefined && !mount.files.has(path)) return "pass"
+  if (mount.allow !== undefined && !mount.allow(host(), path)) return "pass"
+  let rel: string
+  try {
+    rel = decodeURIComponent(prefix === "/" ? path : path.slice(prefix.length))
+  } catch {
+    return mount.fallthrough ? "pass" : { status: 400 }
+  }
+  let start = 0
+  while (start < rel.length && rel.charCodeAt(start) === 47) start++
+  rel = rel.slice(start)
+  // A directory request is the app's to answer.
+  if (rel === "" || rel.charCodeAt(rel.length - 1) === 47) return "pass"
+  if (rel.includes("\0")) return mount.fallthrough ? "pass" : { status: 400 }
+  // Traversal in the REQUEST form never reaches a path join: a `..` segment, or a backslash Windows
+  // would treat as a separator, has no use in a file URL. A name merely CONTAINING `..`
+  // (`logo..png`) is legal. The check runs after decoding, so `%2E`-spelled dots are plain here.
+  // Traversal answers 403 (an attack shape, nothing behind it to conceal); a hidden file answers as a
+  // missing one does.
+  const segments = rel.split("/")
+  if (rel.includes("\\") || segments.includes("..")) {
+    return mount.fallthrough ? "pass" : { status: 403 }
+  }
+  if (mount.denyDotfiles && isHiddenPath(rel)) return mount.fallthrough ? "pass" : { status: 404 }
+  return { rel, immutable: mount.isImmutable(path) }
+}
+
+/** The `cache-control` a file a mount serves carries, or `undefined` for its validators alone. */
+export function staticCacheControl(mount: StaticMount, immutable: boolean): string | undefined {
+  return immutable ? IMMUTABLE : mount.cacheControl
+}
+
+/** A request's part of a static answer: its method and its headers by lowercase name. */
+export interface StaticRequest {
+  readonly method: "GET" | "HEAD"
+  readonly header: (name: string) => string | null
+}
+
+/** How a reader reaches the opened, pinned file for {@link planStatic}. */
+export interface StaticFileAccess {
+  /** The real path the file was opened at: what tags and types it. */
+  readonly path: string
+  readonly version: FileVersion
+  /** Read the whole file, up to {@link CONTENT_SNAPSHOT_MAX} bytes, through the open descriptor. */
+  readonly readWhole: () => Promise<Uint8Array>
+  /** Stat the open descriptor again. */
+  readonly restat: () => Promise<FileVersion>
+  readonly tags: ContentTags
+  /** `@nifrajs/core/range`'s parser, passed in so this module imports nothing. */
+  readonly parseRange: (
+    value: string,
+    size: number,
+  ) =>
+    | { readonly kind: "none" | "unsatisfiable" }
+    | {
+        readonly kind: "satisfiable"
+        readonly ranges: readonly { readonly start: number; readonly end: number }[]
+      }
+}
+
+/**
+ * What a reader sends for a file a mount took: a header-only answer, or `length` bytes from `start`.
+ * When tagging it called `readWhole`, the body comes from those same bytes.
+ */
+export type StaticPlan =
+  | {
+      readonly status: 200 | 206 | 304 | 416
+      readonly headers: Record<string, string>
+      readonly body: false
+    }
+  | {
+      readonly status: 200 | 206
+      readonly headers: Record<string, string>
+      readonly body: true
+      readonly start: number
+      readonly length: number
+    }
+
+/**
+ * The answer for an opened file, the one sequence every runtime's reader runs: the mount's headers
+ * (a caller's own `cache-control`, `last-modified` or `etag` kept), a strong tag from the snapshot
+ * served for a file up to {@link CONTENT_SNAPSHOT_MAX} bytes, a `304` for a current copy, then one
+ * byte range or the whole file. A larger file streams with no tag, and its date is weak: an
+ * `If-Range` gets the whole file rather than a range spliced from two versions.
+ */
+export async function planStatic(
+  mount: StaticMount,
+  immutable: boolean,
+  request: StaticRequest,
+  file: StaticFileAccess,
+): Promise<StaticPlan> {
+  const headers: Record<string, string> = { ...mount.headers }
+  if (headers["cache-control"] === undefined) {
+    const cacheControl = staticCacheControl(mount, immutable)
+    if (cacheControl !== undefined) headers["cache-control"] = cacheControl
+  }
+  const { size } = file.version
+  const streamed = size > CONTENT_SNAPSHOT_MAX
+  const modified = streamed ? streamedLastModifiedOf(file.version) : lastModifiedOf(file.version)
+  // A date this reader chose for a streamed body is weak; a caller's own stays theirs to vouch for.
+  const weakDate = streamed && headers["last-modified"] === undefined
+  if (modified !== undefined) headers["last-modified"] ??= new Date(modified).toUTCString()
+  const parsedLastModified = Date.parse(headers["last-modified"] ?? "")
+  const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
+  const ifNoneMatch = request.header("if-none-match")
+  const ifModifiedSince = request.header("if-modified-since")
+  if (headers.etag === undefined && !streamed) {
+    // A HEAD or a 304 sends none of the file, so the tag remembered for this settled version
+    // answers it from the stat alone: a write since that tag would show in the stat.
+    const known = file.tags.cached(file.path, file.version)
+    if (
+      known !== undefined &&
+      (request.method === "HEAD" ||
+        isNotModified(ifNoneMatch, ifModifiedSince, known, lastModified))
+    ) {
+      headers.etag = known
+    } else {
+      const whole = await file.readWhole()
+      headers.etag = await file.tags.ofSnapshot(file.path, file.version, whole, file.restat)
+    }
+  }
+  // Custom validators are response headers, not decoration: compare the exact values the client saw.
+  const etag = headers.etag
+  if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
+    delete headers["content-length"]
+    delete headers["content-type"]
+    return { status: 304, headers, body: false }
+  }
+  // The file served, not the name asked for: a link is typed by its target.
+  headers["content-type"] = contentTypeOf(file.path)
+  // Never let a client sniff a served file into a more dangerous type (an .svg as active content).
+  headers["x-content-type-options"] = "nosniff"
+  // Advertised unconditionally: a client that never sees it will not seek in a video or audio file.
+  headers["accept-ranges"] = "bytes"
+  // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
+  const rangeHeader = request.method === "GET" ? request.header("range") : null
+  const parsed =
+    rangeHeader !== null &&
+    ifRangeAllowsPartial(request.header("if-range"), etag, weakDate ? undefined : lastModified)
+      ? file.parseRange(rangeHeader, size)
+      : undefined
+  if (parsed?.kind === "unsatisfiable") {
+    headers["content-range"] = `bytes */${size}`
+    delete headers["content-length"]
+    delete headers["content-type"]
+    return { status: 416, headers, body: false }
+  }
+  // Several disjoint ranges would need a `multipart/byteranges` body assembled from disk; RFC 9110
+  // lets a server ignore Range, so the whole file answers them.
+  const range =
+    parsed?.kind === "satisfiable" && parsed.ranges.length === 1 ? parsed.ranges[0] : undefined
+  if (range !== undefined) {
+    headers["content-range"] = `bytes ${range.start}-${range.end}/${size}`
+    headers["content-length"] = String(range.end - range.start + 1)
+  } else {
+    headers["content-length"] = String(size)
+  }
+  const status = range === undefined ? 200 : 206
+  if (request.method === "HEAD") return { status, headers, body: false }
+  const start = range === undefined ? 0 : range.start
+  const length = range === undefined ? size : range.end - range.start + 1
+  return { status, headers, body: true, start, length }
 }

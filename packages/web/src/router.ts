@@ -308,7 +308,7 @@ export interface FetcherState {
  * monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without
  * disturbing the active view. Loads/submits write the shared cache and honor `X-Nifra-Revalidate`.
  * When the visitor changes (`identityChanged()` in this tab, or a new identity epoch cookie, read on
- * the next `fetcher()`), every fetcher goes back to idle.
+ * the next `fetcher()`), every fetcher goes back to idle; a submit in flight still answers.
  */
 export interface Fetcher {
   /** Current state; stable reference between transitions. */
@@ -1158,14 +1158,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // Refetch what is on screen + republish, single-flight via the shared `generation`. Shared by
   // `invalidate` and targeted revalidation: `inScope` says which paths to refresh, and a page or held
   // target outside it is kept. Rejects if the page's fetch fails (clearing its own `pending` first).
-  // A reload for a visitor change: a change while it runs is taken as its own, so a server that rotates
-  // the epoch on every response costs one reload, never a loop. One that fails names the document to
-  // load in the page's place.
-  const reloadForChange = (): void => void refetchActive(undefined, true).catch(() => {})
-  const refetchActive = async (
-    inScope?: (path: string) => boolean,
-    forChange = false,
-  ): Promise<void> => {
+  // A reload for a visitor change loads once more for another change while it runs, as any reload does,
+  // and takes one after that as its own: a server that rotates the epoch on every response costs two
+  // reloads, never a loop. One that fails names the document to load in the page's place.
+  const reloadForChange = (): void => void refetchActive().catch(() => {})
+  const refetchActive = async (inScope?: (path: string) => boolean): Promise<void> => {
     const page = inScope === undefined || inScope(pagePathOf(state))
     const target = state.intercepted !== undefined && (inScope === undefined || inScope(state.path))
     if (!page && !target) return
@@ -1181,7 +1178,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       let { fields, route } = await reloadActive(ac.signal, page, target, mine)
       // A visitor change while it loaded: what came back may be the previous visitor's.
       checkEpoch()
-      if (!forChange && mine === generation && seen !== visitor) {
+      if (mine === generation && seen !== visitor) {
         ;({ fields, route } = await reloadActive(ac.signal, page, target, mine))
         checkEpoch()
       }
@@ -1247,9 +1244,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
 
   const createFetcher = (): FetcherEntry => {
     let fState: FetcherState = { pending: false, data: undefined }
-    // Bumped by every load, submit and forget; `fOps` by loads and submits only.
-    let fGeneration = 0
+    // Bumped by every load and submit; `fPosting` says which is the latest.
     let fOps = 0
+    let fPosting = false
     let fAbort: AbortController | undefined
     let loadedPath: string | undefined
     // `data` as loaded, with the response text it was read from.
@@ -1267,8 +1264,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       // Data held from before a new epoch goes first, so what this load reads is not dropped as the
       // previous visitor's on the next read.
       checkEpoch()
-      ++fGeneration
       const op = ++fOps
+      fPosting = false
       const seen = visitor
       fAbort?.abort()
       const ac = new AbortController()
@@ -1322,8 +1319,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       load: runLoad,
       submit: async (action, body) => {
         checkEpoch()
-        const mine = ++fGeneration
-        ++fOps
+        const op = ++fOps
+        fPosting = true
         // Abort any prior in-flight load/submit on THIS fetcher (its fetch + NDJSON drain) - like
         // `runLoad` does for a superseding load. The mutation POST is left to complete; the
         // signal cancels the follow-up data drain if a newer op supersedes this one.
@@ -1349,7 +1346,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             throw new Error(`[nifra/web] fetcher action failed (${res.status}): ${action}`)
           const actionData = res.status === 204 ? undefined : await readResponseData(res, ac.signal)
           const changed = parseRevalidate(res.headers.get(REVALIDATE_HEADER))
-          if (mine !== fGeneration) return
+          if (op !== fOps) return
           // A sign-in or sign-out answers with the new epoch: what the fetcher held goes, and this
           // answer, given once the action ran, stays.
           checkEpoch()
@@ -1363,7 +1360,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             await refreshMounted(changed, false)
           }
         } catch (err) {
-          if (mine === fGeneration) {
+          if (op === fOps) {
             fState = { pending: false, data: fState.data }
             fEmit()
           }
@@ -1379,11 +1376,15 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           await runLoad(loadedPath, false).catch(() => {})
       },
       forget: () => {
-        fGeneration++
-        fAbort?.abort()
-        fAbort = undefined
         loadedPath = undefined
         shown = undefined
+        // A submit in flight still answers, as it ran for whoever posted it.
+        if (fPosting && fState.pending) {
+          fState = { ...fState, data: undefined }
+          return
+        }
+        fAbort?.abort()
+        fAbort = undefined
         fState = { pending: false, data: undefined }
       },
       notify: fEmit,

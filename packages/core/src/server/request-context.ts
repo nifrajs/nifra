@@ -22,6 +22,7 @@ import type {
   ResponseContractRuntime,
 } from "./response-contract-lane.ts"
 import {
+  CONTEXT_IDLE_TIMEOUT,
   CONTEXT_REQUEST,
   CONTEXT_SEARCH,
   CONTEXT_SET,
@@ -170,8 +171,18 @@ const TEXT_CONTENT_TYPE = "text/plain; charset=utf-8"
  * handler never reads it costs the adapter neither a lookup nor a platform object of its own. */
 export const PLATFORM_PEER = Symbol()
 
+/** Where a Bun listener leaves the idle timeout of a request's connection: called with the request
+ * and the seconds to allow, or `undefined` to put back the listener's own. */
+export const PLATFORM_IDLE_TIMEOUT = Symbol()
+
+/** The request the adapter received, on a platform made for one request: the routed source may be a
+ * rewritten or stripped copy, which Bun does not know. */
+export const PLATFORM_REQUEST = Symbol()
+
 export type PeerPlatform = Platform & {
   readonly [PLATFORM_PEER]?: (source: RequestSource) => string | undefined
+  readonly [PLATFORM_IDLE_TIMEOUT]?: (source: RequestSource, seconds: number | undefined) => void
+  readonly [PLATFORM_REQUEST]?: RequestSource
 }
 
 export class RequestContext implements RawContext {
@@ -273,6 +284,14 @@ export class RequestContext implements RawContext {
 
   get [CONTEXT_REQUEST](): Request {
     return requestOf(this.source)
+  }
+
+  [CONTEXT_IDLE_TIMEOUT](seconds: number | undefined): boolean {
+    const platform = this.platformValue
+    const set = platform?.[PLATFORM_IDLE_TIMEOUT]
+    if (set === undefined) return false
+    set(platform?.[PLATFORM_REQUEST] ?? this.source, seconds)
+    return true
   }
 
   get [CONTEXT_SEARCH](): string {

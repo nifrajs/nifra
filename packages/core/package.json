@@ -210,6 +210,11 @@
       "types": "./dist/static-file.d.ts",
       "default": "./dist/static-file.js"
     },
+    "./serve-static": {
+      "bun": "./src/serve-static.ts",
+      "types": "./dist/serve-static.d.ts",
+      "default": "./dist/serve-static.js"
+    },
     "./file-type": {
       "bun": "./src/file-type.ts",
       "types": "./dist/file-type.d.ts",
@@ -259,6 +264,11 @@
       "bun": "./src/server/body-parser.ts",
       "types": "./dist/server/body-parser.d.ts",
       "default": "./dist/server/body-parser.js"
+    },
+    "./idle-timeout": {
+      "bun": "./src/server/idle-timeout.ts",
+      "types": "./dist/server/idle-timeout.d.ts",
+      "default": "./dist/server/idle-timeout.js"
     },
     "./methods": {
       "bun": "./src/server/methods.ts",

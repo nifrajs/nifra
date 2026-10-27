@@ -527,7 +527,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   }
 
   // Vite's public middleware serves every file under the public directory, dotfiles included. A
-  // build ships no hidden file and the Bun pipeline's `servePublicDir` refuses one, so a request for
+  // build ships no hidden file and `serveStatic` refuses one, so a request for
   // `/.env` or `/.git/config` goes to the app here too, as it does in production.
   function isHiddenPublicFile(url: string): boolean {
     const configured = vite.config?.publicDir
@@ -543,7 +543,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     const file = resolvePath(publicDir, rel)
     if (!file.startsWith(publicDir + sep) || !existsSync(file)) return false
     if (isHiddenPath(rel)) return true
-    // A visible name linking to a hidden file is refused too, as `servePublicDir` refuses it.
+    // A visible name linking to a hidden file is refused too, as `serveStatic` refuses it.
     try {
       const real = realpathSync(file)
       const realRoot = realpathSync(publicDir)

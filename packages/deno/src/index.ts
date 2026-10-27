@@ -20,6 +20,9 @@
 import { assertCloseArgs, exceedsPayloadCap } from "./generated/ws-close.ts"
 import type { NifraWs, NifraWsData, WsUpgradeOutcome } from "./generated/ws-types.ts"
 
+export type { HashedFiles, ServeStaticOptions } from "./generated/static-file.ts"
+export { serveStatic } from "./serve-static.ts"
+
 // The WS dispatch is inlined below, mirroring core's `attachWebSocket`; kept in lockstep by the live
 // `deno run` WS round-trip.
 
@@ -39,16 +42,29 @@ export interface ServeOptions {
   readonly hostname?: string
   /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
-   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
-   * mirroring nifra's Bun `listen({ gracefulSignals })`. The object form is passed to `stop()`.
+   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as
+   * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.
    */
-  readonly signals?: boolean | DenoStopOptions
+  readonly gracefulSignals?: boolean | DenoStopOptions
   /**
    * Serve HTTPS directly, with no proxy in front: `cert` and `key` as PEM text or the files' bytes.
    * Unset, the server speaks plain HTTP, which is what a proxy or platform that terminates TLS
    * expects.
    */
   readonly tls?: { readonly cert: string | Uint8Array; readonly key: string | Uint8Array }
+  /**
+   * Sees every request before the app does, so a file it answers wins over any route at the same
+   * path. It returns the file's response, or `undefined` to let the app route the request. No hook
+   * of the app runs for a request it answers. {@link serveStatic} builds one for files on disk, and
+   * `@nifrajs/web`'s Deno build serves its client bundle and public files through it.
+   */
+  readonly static?: (request: Request) => Response | Promise<Response | undefined> | undefined
+}
+
+/** What `Deno.serve` tells the handler about a request besides the request itself. */
+interface DenoRequestInfo {
+  readonly remoteAddr?: { readonly hostname?: string }
+  readonly completed?: Promise<void>
 }
 
 /** How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes. */
@@ -100,6 +116,11 @@ const pemText = (value: string | Uint8Array): string =>
  * (matters for `port: 0`).
  */
 export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoServer> {
+  if ("signals" in options) {
+    throw new TypeError(
+      "[nifra/deno] `signals` is now `gracefulSignals`, as on Bun's server options",
+    )
+  }
   // Aborting this signal force-closes the server - used when the drain deadline elapses.
   const controller = new AbortController()
   let stopping = false
@@ -108,6 +129,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   let idleResolvers: Array<() => void> = []
   // Bound once: a plain `{ fetch }` handler leaves this undefined and skips the seam entirely.
   const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
+  const first = options.static
 
   function beginRequest(): () => void {
     activeRequests += 1
@@ -144,13 +166,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
         ? {}
         : { cert: pemText(options.tls.cert), key: pemText(options.tls.key) }),
     },
-    (
-      request,
-      info: {
-        readonly remoteAddr?: { readonly hostname?: string }
-        readonly completed?: Promise<void>
-      },
-    ) => {
+    (request, info: DenoRequestInfo) => {
       // Deno has no separate "stop accepting" primitive: shutdown() starts closing the same
       // resource that the signal abort listener owns. Calling abort after shutdown began is a
       // BadResource on current Deno releases, so mark the adapter closed first and reject the tiny
@@ -163,35 +179,69 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       const completed = info.completed
       if (completed !== undefined) completed.then(release, release)
       const handled = completed === undefined ? release : noop
-      // WebSocket upgrade for a registered `app.ws()` route → Deno.upgradeWebSocket. The shared
-      // resolveWebSocketUpgrade seam runs the route's upgrade() guard; pass falls through to HTTP.
-      //
-      // Deliberately NOT gated on reading the `Upgrade` header here. That gate looks like a cheap
-      // pre-filter but is the opposite: the seam already returns `pass` on a WS-free app without
-      // touching headers (it checks its ws-route count first), whereas reading `upgrade` forces the
-      // runtime to materialize the request's header list on EVERY plain HTTP request. Deno bills
-      // that lazily, so the probe cost ~7% of throughput on a bare route under Deno 2.9 (~4.5% on
-      // 2.8) - i.e. the gate charged every request to save nothing. Calling the seam directly puts
-      // the adapter within a few percent of a hand-written `Deno.serve` handler.
-      if (resolveWs !== undefined) {
-        try {
-          const clientIp = info.remoteAddr?.hostname
-          const outcome = resolveWs(request, clientIp === undefined ? undefined : { clientIp })
-          if (outcome instanceof Promise) {
-            return settleRequest(
-              outcome.then((o) => finishWs(o, request, info)).catch(() => internalError()),
-              handled,
-            )
-          }
-          return settleRequest(finishWs(outcome, request, info), handled)
-        } catch {
-          handled()
-          return internalError()
-        }
-      }
-      return settleRequest(runFetch(request, info), handled)
+      return first === undefined
+        ? route(request, info, handled)
+        : front(first, request, info, handled)
     },
   )
+
+  /** The app's answer to a request, `handled` once it settles. */
+  function route(
+    request: Request,
+    info: DenoRequestInfo,
+    handled: () => void,
+  ): Response | Promise<Response> {
+    // WebSocket upgrade for a registered `app.ws()` route → Deno.upgradeWebSocket. The shared
+    // resolveWebSocketUpgrade seam runs the route's upgrade() guard; pass falls through to HTTP.
+    //
+    // Deliberately NOT gated on reading the `Upgrade` header here. That gate looks like a cheap
+    // pre-filter but is the opposite: the seam already returns `pass` on a WS-free app without
+    // touching headers (it checks its ws-route count first), whereas reading `upgrade` forces the
+    // runtime to materialize the request's header list on EVERY plain HTTP request. Deno bills
+    // that lazily, so the probe cost ~7% of throughput on a bare route under Deno 2.9 (~4.5% on
+    // 2.8) - i.e. the gate charged every request to save nothing. Calling the seam directly puts
+    // the adapter within a few percent of a hand-written `Deno.serve` handler.
+    if (resolveWs !== undefined) {
+      try {
+        const clientIp = info.remoteAddr?.hostname
+        const outcome = resolveWs(request, clientIp === undefined ? undefined : { clientIp })
+        if (outcome instanceof Promise) {
+          return settleRequest(
+            outcome.then((o) => finishWs(o, request, info)).catch(() => internalError()),
+            handled,
+          )
+        }
+        return settleRequest(finishWs(outcome, request, info), handled)
+      } catch {
+        handled()
+        return internalError()
+      }
+    }
+    return settleRequest(runFetch(request, info), handled)
+  }
+
+  /** The `static` handler's answer, or the app's when it has none. */
+  function front(
+    first: NonNullable<ServeOptions["static"]>,
+    request: Request,
+    info: DenoRequestInfo,
+    handled: () => void,
+  ): Response | Promise<Response> {
+    let answer: ReturnType<typeof first>
+    try {
+      answer = first(request)
+    } catch {
+      handled()
+      return internalError()
+    }
+    if (answer === undefined) return route(request, info, handled)
+    if (!(answer instanceof Promise)) return settleRequest(answer, handled)
+    return answer.then(
+      (response) =>
+        response === undefined ? route(request, info, handled) : settleRequest(response, handled),
+      () => settleRequest(internalError(), handled),
+    )
+  }
 
   /** Resolve a settled upgrade outcome. Hoisted out of the request closure so the common `pass`
    * (plain HTTP) case allocates nothing per request. */
@@ -231,7 +281,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     }
   }
 
-  const signals = options.signals === true ? {} : options.signals || undefined
+  const signals = options.gracefulSignals === true ? {} : options.gracefulSignals || undefined
   const onSignal = (): void => {
     void stop(signals)
   }

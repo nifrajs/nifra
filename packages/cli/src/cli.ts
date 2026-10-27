@@ -949,6 +949,7 @@ async function buildForTarget(
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
+    ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
     live: fw.live?.clientEntry,
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server
     // answers its prerendered pages from their file. Not under Vite, whose server bundle may rely on

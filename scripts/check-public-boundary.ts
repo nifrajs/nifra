@@ -189,6 +189,7 @@ export async function runPublicBoundary(
     ["./data", coreExports, "@nifrajs/core"],
     ["./range", coreExports, "@nifrajs/core"],
     ["./static-file", coreExports, "@nifrajs/core"],
+    ["./serve-static", coreExports, "@nifrajs/core"],
     ["./file-type", coreExports, "@nifrajs/core"],
     ["./og", imageExports, "@nifrajs/image"],
   ] as const) {

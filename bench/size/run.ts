@@ -284,6 +284,18 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // only the sse and typebox-t caps are crossed.
   // That GET/HEAD skip together with the request-locals link and t.date() below: bare 38,514 B,
   // effect-ledger 40,554, typebox-form 72,301 (Bun 1.4.4); these three caps take the next 0.1 KiB step.
+  // A Bun request's idle-timeout control for `withIdleTimeout()`, and the per-request Bun platform
+  // built as a class: bare 38,453 -> 38,566 B, idempotency 42,850 -> 42,978, effect-ledger 40,468 ->
+  // 40,592, sse 39,315 -> 39,435, mcp 38,714 -> 38,842, valibot 39,425 -> 39,550, typebox-t 65,416 ->
+  // 65,557, typebox-form 70,396 -> 70,526 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step
+  // that fits.
+  // listen()'s `static` handler in front of Bun's table and fetch: bare 38,566 -> 38,647 B,
+  // idempotency 42,978 -> 43,069, effect-ledger 40,592 -> 40,686, sse 39,435 -> 39,521, mcp 38,842 ->
+  // 38,939, valibot 39,550 -> 39,637, typebox-t 65,557 -> 65,640, typebox-form 70,526 -> 70,614
+  // (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step that fits.
+  // The idle-timeout control and listen()'s `static` merged with all of the above: bare 38,773 B,
+  // idempotency 43,539, effect-ledger 40,790, sse 39,621, mcp 39,029, valibot 39,739, typebox-t
+  // 67,584, typebox-form 72,561 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step that fits.
   // A plain `Date` in a JSON answer written ahead of the serializer when the first row holds one:
   // bare 38,472 -> 38,862 B, idempotency 43,247 -> 43,629, effect-ledger 40,488 -> 40,892, sse
   // 39,333 -> 39,722, mcp 38,732 -> 39,131, valibot 39,438 -> 39,858, typebox-t 65,436 -> 65,833,
@@ -299,7 +311,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // B, idempotency 43,785 -> 43,853, effect-ledger 41,026 -> 41,133, sse 39,892 -> 39,970, mcp 39,297 ->
   // 39,373, valibot 40,018 -> 40,098, typebox-t 67,811 -> 67,895, typebox-form 72,778 -> 72,836 (Bun
   // 1.4.4); each cap crossed takes the next 0.1 KiB step.
-  "nifra-bare": 38.2,
+  // The idle-timeout control and listen()'s `static` merged with the Date writer: bare 39,297 B,
+  // idempotency 44,079, effect-ledger 41,333, sse 40,173, mcp 39,570, valibot 40,301, typebox-t
+  // 68,108, typebox-form 73,080 (Bun 1.4.4); each cap takes the next 0.1 KiB step that fits.
+  "nifra-bare": 38.4,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -323,15 +338,15 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A request's t.date() strings handed on as Dates by a schema-directed decoder, and date-time and
   // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
-  "nifra-idempotency": 42.9,
-  "nifra-effect-ledger": 40.2,
-  "nifra-mcp": 38.5,
+  "nifra-idempotency": 43.1,
+  "nifra-effect-ledger": 40.4,
+  "nifra-mcp": 38.7,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 39.1,
-  "nifra-valibot": 39.2,
-  "nifra-typebox-t": 66.4,
+  "nifra-sse": 39.3,
+  "nifra-valibot": 39.4,
+  "nifra-typebox-t": 66.6,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 71.2,
+  "nifra-typebox-form": 71.4,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

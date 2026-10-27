@@ -243,15 +243,11 @@ export {
   type NonceHeader,
   type NonceHeaderContext,
 } from "./nonce.ts"
-// public/ - user-authored static files, served identically in dev and production by one handler.
+// public/ - user-authored static files; `@nifrajs/core/serve-static` serves them on Bun.
 export {
-  type HashedFiles,
   type PrerenderedPageReaderOptions,
-  type PublicDirCache,
   prerenderedPageReader,
   resolvePublicPath,
-  type ServePublicDirOptions,
-  servePublicDir,
 } from "./public-dir.ts"
 // Keyed query-cache (agnostic) - a `query(key, fn)` primitive (dedup + staleness + invalidation + GC)
 // consumed by the per-adapter `useQuery`/`createQuery` bindings.

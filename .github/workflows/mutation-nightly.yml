@@ -1,0 +1,98 @@
+name: Mutation nightly
+
+# Whole-file mutation testing of the security boundaries in `mutation-targets.json` (`scripts/mutate.ts`),
+# every night. A job fails on a survivor `mutation-baseline.json` does not list and on a listed one a
+# test now kills, so a kill cannot quietly rot and the baseline only shrinks. Kill a new survivor with a
+# test, or record it in `mutation-equivalents.json` with a reason if no test could notice it. Run by
+# hand with `gate` off, the jobs only report; `bun scripts/mutate.ts --baseline-from <dirs>` turns the
+# downloaded `mutation-*` artifacts into a baseline.
+
+on:
+  schedule:
+    - cron: "11 1 * * *"
+  workflow_dispatch:
+    inputs:
+      gate:
+        description: Fail on survivors the baseline does not list
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: mutation-nightly
+  cancel-in-progress: false
+
+jobs:
+  target:
+    name: mutation (${{ matrix.target }} ${{ matrix.shard }}/${{ matrix.shards }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: mcp-db-postgres, shard: 0, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 1, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 2, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 3, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 4, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 5, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 6, shards: 8, postgres: true }
+          - { target: mcp-db-postgres, shard: 7, shards: 8, postgres: true }
+          - { target: web-router, shard: 0, shards: 2, postgres: false }
+          - { target: web-router, shard: 1, shards: 2, postgres: false }
+          - { target: web-keep-alive, shard: 0, shards: 2, postgres: false }
+          - { target: web-keep-alive, shard: 1, shards: 2, postgres: false }
+          - { target: web-visitor, shard: 0, shards: 1, postgres: false }
+          - { target: auth-session, shard: 0, shards: 1, postgres: false }
+          - { target: authjs, shard: 0, shards: 1, postgres: false }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # Some selected tests read built output; without it they fail on the baseline and kill nothing.
+      - name: Build
+        run: bun run build
+
+      # The runner image ships PostgreSQL with its service off; the password only guards a throwaway
+      # server bound to localhost.
+      - name: Start PostgreSQL
+        if: matrix.postgres
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          # Without dblink the suite's dblink checks return early and pass.
+          test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
+        env:
+          NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
+
+      # --bail stops each test run at its first failure, so the kill matrix names one killer per mutant.
+      - name: Mutate
+        run: |
+          args=(--target "$TARGET" --shard "$SHARD/$SHARDS" --bail)
+          if [ "$GATE" != "false" ]; then args+=(--gate); fi
+          bun scripts/mutate.ts "${args[@]}"
+        env:
+          TARGET: ${{ matrix.target }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
+          GATE: ${{ inputs.gate }}
+          NIFRA_TEST_POSTGRES_URL: ${{ matrix.postgres && 'postgres://postgres:nifra-ci@127.0.0.1:5432/postgres' || '' }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: mutation-${{ matrix.target }}-${{ matrix.shard }}
+          path: .mutation/
+          if-no-files-found: ignore

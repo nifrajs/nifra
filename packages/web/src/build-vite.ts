@@ -483,6 +483,8 @@ export interface BuildServerViteOptions {
   readonly generatedFiles?: readonly string[]
   /** The public-env prefix browser code may read (default `"PUBLIC_"`). */
   readonly publicEnvPrefix?: string
+  /** Node built-ins the runtime provides besides what `target` implies - mirrors `buildServer`. */
+  readonly providedBuiltins?: readonly string[]
 }
 
 interface EdgeBundleChunk {
@@ -520,7 +522,7 @@ interface EdgeGuardPlugin {
 }
 
 /** Fail closed if Rollup would leave a Node builtin import in a workerd/edge worker. */
-function edgeBuiltinGuard(): EdgeGuardPlugin {
+function edgeBuiltinGuard(provided: ReadonlySet<string>): EdgeGuardPlugin {
   const plugin: EdgeGuardPlugin = {
     name: "nifra:edge-node-builtin-guard",
     generateBundle(_options, bundle) {
@@ -529,12 +531,12 @@ function edgeBuiltinGuard(): EdgeGuardPlugin {
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue
         for (const specifier of [...(output.imports ?? []), ...(output.dynamicImports ?? [])]) {
-          if (unsupportedBuiltin(specifier, "browser")) builtins.add(specifier)
+          if (unsupportedBuiltin(specifier, "browser", provided)) builtins.add(specifier)
         }
         for (const id of output.moduleIds ?? []) {
           const info = this.getModuleInfo(id)
           const imports = [...(info?.importedIds ?? []), ...(info?.dynamicallyImportedIds ?? [])]
-          if (imports.some((specifier) => unsupportedBuiltin(specifier, "browser")))
+          if (imports.some((specifier) => unsupportedBuiltin(specifier, "browser", provided)))
             importers.add(id)
         }
       }
@@ -597,7 +599,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   // mismatch throws `jsxDEV is not a function` at SSR (see buildClientVite for the full reasoning).
   const mode = options.minify === false ? "development" : "production"
   const vite = await loadVite()
-  const edgeGuard = edgeBuiltinGuard()
+  const edgeGuard = edgeBuiltinGuard(new Set(options.providedBuiltins))
   const zoneGuard = viteServerZoneGuard({
     appRoot: root,
     routesDir: resolvePath(routesDir),

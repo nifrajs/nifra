@@ -61,6 +61,7 @@ let manager: ReturnType<typeof createSessions> | undefined
 export const getSessions = () => (manager ??= createSessions({
   secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret
   store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore
+  // identity: ["userId", "orgId", "role"],     // the keys that say who the visitor is; unset, all of them
   // cookie: { secure: false },                 // local http dev only
 }))`
 
@@ -202,9 +203,10 @@ export default function Auth() {
       <h2 id="sessions">Set up a session manager</h2>
       <p>
         <code>createSessions</code> signs the cookie (HMAC, verified constant-time) and always marks it{" "}
-        <code>HttpOnly</code>. In <b>store mode</b> the cookie is just an opaque id and the data lives in
-        a <code>SessionStore</code>; in <b>cookie mode</b> (no store) the data is signed into the cookie.
-        <code>MemorySessionStore</code> is prod-guarded. Production store mode needs a strongly
+        <code>HttpOnly</code>. In <b>store mode</b> the cookie is an opaque id, with a tag that changes
+        whenever the data that says who the visitor is does, and the data lives in a{" "}
+        <code>SessionStore</code>; in <b>cookie mode</b> (no store) the data is signed into the
+        cookie. <code>MemorySessionStore</code> is prod-guarded. Production store mode needs a strongly
         consistent shared <code>SessionStore</code>, such as a transactional adapter or Durable Object.
         Every instance must observe completed writes and deletes, including revocation markers.
       </p>
@@ -225,6 +227,14 @@ export default function Auth() {
         (each such session is re-signed on its next commit), then remove it, since while it is on any
         session-shaped value the app signs with the same secret through <code>signValue</code> reads
         as a session.
+      </p>
+      <p>
+        <code>identity</code> names the data keys that say who the visitor is: the user id, and any
+        key that changes what a page may show, such as an organization or a role. The cookie's tag,
+        in either mode, then changes only when one of them does, so{" "}
+        <a href="/docs/keep-alive#sign-in">keep-alive</a> keeps the pages it holds across a commit
+        that writes a cart or a preference. Unset, every key counts. A key left out that decides what
+        a page shows lets the next visitor of a browser see the pages kept for the previous one.
       </p>
       <CodeBlock code={SETUP} />
 

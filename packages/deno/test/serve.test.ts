@@ -70,6 +70,20 @@ Deno.test("passes a 204 (no body) through correctly", async () => {
   }
 })
 
+Deno.test("the old `signals` option is refused and names gracefulSignals", () => {
+  const options = { hostname: "127.0.0.1", port: 0, signals: true }
+  let message = ""
+  try {
+    Reflect.apply(serve, undefined, [{ fetch: () => new Response("") }, options])
+  } catch (error) {
+    message = error instanceof TypeError ? error.message : ""
+  }
+  assert(
+    message.includes("gracefulSignals"),
+    `expected a TypeError naming gracefulSignals, got "${message}"`,
+  )
+})
+
 Deno.test("a throwing app yields a flat 500 (no leak)", async () => {
   const running = await serve(
     {
@@ -946,4 +960,112 @@ Deno.test("serves a QUERY route: its body validated, its method kept, GET beside
   } finally {
     await running.stop({ drainMs: 0 })
   }
+})
+
+/** Answers `/robots.txt` at once and `/later` after a tick; leaves `/pending` and the rest to the app. */
+function robotsFirst(request: Request): Response | Promise<Response | undefined> | undefined {
+  const { pathname } = new URL(request.url)
+  if (pathname === "/robots.txt") return new Response("file")
+  if (pathname === "/later") return Promise.resolve(new Response("file later"))
+  if (pathname === "/pending") return Promise.resolve(undefined)
+  if (pathname === "/sync-throw") throw new Error("disk gone")
+  if (pathname === "/async-throw") return Promise.reject(new Error("disk gone"))
+  return undefined
+}
+
+Deno.test("static answers before any route, hands undefined to the app, and runs no app hook", async () => {
+  const hooked: string[] = []
+  const app = server()
+    .onRequest((request) => {
+      hooked.push(new URL(request.url).pathname)
+    })
+    .get("/:slug", (c) => ({ slug: c.params.slug }))
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0, static: robotsFirst })
+  try {
+    const base = `http://127.0.0.1:${running.port}`
+    const answers: string[] = []
+    for (const path of ["/robots.txt", "/later", "/pending", "/about"]) {
+      const res = await fetch(base + path)
+      answers.push(`${res.status} ${await res.text()}`)
+    }
+    assertEquals(answers, [
+      "200 file",
+      "200 file later",
+      '200 {"slug":"pending"}',
+      '200 {"slug":"about"}',
+    ])
+    assertEquals(hooked, ["/pending", "/about"])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("static fronts an app with WebSocket routes, which still upgrade", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/echo", { open: (ws) => ws.send("welcome") })
+    .get("/:slug", (c) => ({ slug: c.params.slug }))
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0, static: robotsFirst })
+  try {
+    assertEquals(await (await fetch(`http://127.0.0.1:${running.port}/robots.txt`)).text(), "file")
+    const first = await new Promise<string>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${running.port}/echo`)
+      const timer = setTimeout(() => reject(new Error("ws timed out")), 5000)
+      socket.onmessage = (ev) => {
+        clearTimeout(timer)
+        socket.close()
+        resolve(String(ev.data))
+      }
+      socket.onerror = () => {
+        clearTimeout(timer)
+        reject(new Error("ws error"))
+      }
+    })
+    assertEquals(first, "welcome")
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a static handler that throws or rejects answers a flat 500", async () => {
+  const app = server().get("/:slug", (c) => ({ slug: c.params.slug }))
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0, static: robotsFirst })
+  try {
+    for (const path of ["/sync-throw", "/async-throw"]) {
+      const res = await fetch(`http://127.0.0.1:${running.port}${path}`)
+      assertEquals(res.status, 500)
+      assertEquals(await res.json(), { ok: false, error: "internal_error" })
+    }
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("stop() drains a static response in flight", async () => {
+  let entered = (): void => {}
+  const inFlight = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const app = server().get("/", () => "app")
+  const running = await serve(app, {
+    hostname: "127.0.0.1",
+    port: 0,
+    static: (request) => {
+      if (new URL(request.url).pathname !== "/slow") return undefined
+      entered()
+      return new Promise((resolve) => setTimeout(() => resolve(new Response("slow file")), 80))
+    },
+  })
+  const pending = fetch(`http://127.0.0.1:${running.port}/slow`)
+    .then((r) => r.text())
+    .catch(() => "ERR")
+  // A request the handler never saw reaches the app's 404 and fails here instead of hanging.
+  await Promise.race([
+    inFlight,
+    pending.then(() => {
+      throw new Error("the static handler never saw /slow")
+    }),
+  ])
+  await running.stop({ drainMs: 1000 })
+  assertEquals(await pending, "slow file")
 })

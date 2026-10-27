@@ -143,9 +143,12 @@
       "name": "@nifrajs/invariants",
       "version": "5.8.0",
       "devDependencies": {
+        "@auth/core": "0.41.3",
         "@nifrajs/a2a": "workspace:*",
         "@nifrajs/ag-ui": "workspace:*",
         "@nifrajs/agent": "workspace:*",
+        "@nifrajs/auth": "workspace:*",
+        "@nifrajs/authjs": "workspace:*",
         "@nifrajs/core": "workspace:*",
         "@nifrajs/devtools": "workspace:*",
         "@nifrajs/graphql": "workspace:*",
