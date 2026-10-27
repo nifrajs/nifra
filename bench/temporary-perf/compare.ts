@@ -9,25 +9,14 @@ if (!["bun", "bun-fetch", "node", "deno"].includes(runtime ?? "")) throw Error("
 const rounds = Number(process.env.TEMP_PERF_ROUNDS ?? 8)
 const requests = Number(process.env.TEMP_PERF_REQUESTS ?? 20000)
 const versions = {
-  release55: "v5.5.0",
-  beforeDifferential: "15a16047fc",
-  afterDifferential: "57828c68bf",
-  beforeDedup: "9fd7d80b76",
-  beforeDateWriter: "9738275d7c",
-  afterDateWriter: "f90a4e4965",
-  beforeSignal: "12fdac48c4",
+  beforeBom: "aa567fa66f",
+  afterBom: "f48b2573ef",
   signalFix: "61117cd433",
-  dateProbe: "4d5b2807c1f0010a50b260ae70c02fe70cfc1485",
 } as const
 type Version = keyof typeof versions
 const pairs: ReadonlyArray<readonly [string, Version, Version]> = [
   ["A/A control", "signalFix", "signalFix"],
-  ["5.5 to signal fix", "release55", "signalFix"],
-  ["runtime differential", "beforeDifferential", "afterDifferential"],
-  ["dedup and intervening fixes", "beforeDedup", "beforeSignal"],
-  ["JSON Date writer", "beforeDateWriter", "afterDateWriter"],
-  ["Date probe PR", "signalFix", "dateProbe"],
-  ["Node signal fix", "beforeSignal", "signalFix"],
+  ["Deno BOM fix", "beforeBom", "afterBom"],
   ["A/A control (end)", "signalFix", "signalFix"],
 ]
 const split = readCoreSplit()
