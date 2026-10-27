@@ -698,7 +698,6 @@ export function createWebApp<Env = unknown>(
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
-    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: the executor takes a route's shell path only when partial prerendering is set up.
     ...(ppr === undefined ? {} : { ppr }),
     invalidate,
     liveLoadOf: liveAttachment?.loadOf,
