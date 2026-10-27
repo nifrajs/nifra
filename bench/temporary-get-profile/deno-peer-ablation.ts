@@ -4,7 +4,7 @@ import { join } from "node:path"
 const root = process.cwd()
 const variants = join(root, "bench/temporary-get-profile/deno-peer-variants")
 const resultPath = join(root, "bench/temporary-get-results/deno-peer-ablation.json")
-for (const name of ["normal", "lazy", "class"])
+for (const name of ["normal", "lazy", "class", "single"])
   await cp(join(root, "packages/deno/src"), join(variants, name), { recursive: true })
 const target = join(variants, "lazy/index.ts")
 const source = await readFile(target, "utf8")
@@ -29,14 +29,41 @@ await writeFile(
     .replace("function runFetch(", classSource)
     .replace(original, "const response = app.fetch(request, new LazyPeerPlatform(info))"),
 )
+function replaceOnce(input: string, before: string, after: string) {
+  if (input.split(before).length !== 2) throw new Error(`expected one occurrence: ${before}`)
+  return input.replace(before, after)
+}
+let single = source
+single = replaceOnce(
+  single,
+  'info: { readonly remoteAddr?: { readonly hostname?: string } },\n  ): Response | Promise<Response> {\n    if (o.kind === "pass") return runFetch(request, info)',
+  'info: { readonly remoteAddr?: { readonly hostname?: string } },\n    clientIp: string | undefined,\n  ): Response | Promise<Response> {\n    if (o.kind === "pass") return runFetch(request, info, clientIp, true)',
+)
+single = replaceOnce(single, "finishWs(o, request, info)", "finishWs(o, request, info, clientIp)")
+single = replaceOnce(
+  single,
+  "finishWs(outcome, request, info)",
+  "finishWs(outcome, request, info, clientIp)",
+)
+single = replaceOnce(
+  single,
+  "function runFetch(\n    request: Request,\n    info: { readonly remoteAddr?: { readonly hostname?: string } },\n  ): Response | Promise<Response> {",
+  "function runFetch(\n    request: Request,\n    info: { readonly remoteAddr?: { readonly hostname?: string } },\n    cachedPeer?: string,\n    peerKnown = false,\n  ): Response | Promise<Response> {",
+)
+single = replaceOnce(
+  single,
+  original,
+  "const clientIp = peerKnown ? cachedPeer : info.remoteAddr?.hostname\n      const response =\n        clientIp === undefined ? app.fetch(request) : app.fetch(request, { clientIp })",
+)
+await writeFile(join(variants, "single/index.ts"), single)
 
 const serverCpus = process.env.SERVER_CPUS
 const loadCpus = process.env.LOAD_CPUS
 if (!serverCpus || !loadCpus) throw new Error("physical core split is required")
 const rounds = 8
 const requests = 30000
-const ports = [19781, 19782, 19783, 19784]
-const modes = ["normal", "normal", "lazy", "class"]
+const ports = [19781, 19782, 19783, 19784, 19785]
+const modes = ["normal", "normal", "lazy", "class", "single"]
 const result: unknown[] = []
 const median = (xs: number[]) => {
   const x = [...xs].sort((a, b) => a - b)
@@ -119,17 +146,18 @@ for (const shape of ["bare", "realworld"]) {
       if (JSON.parse(await ready(port, "/__peer")).peer !== "127.0.0.1")
         throw new Error("peer mismatch")
     for (const port of ports) await sample(port, path)
-    const values: number[][] = [[], [], [], []]
+    const values: number[][] = [[], [], [], [], []]
     for (let round = 0; round < rounds; round++) {
-      const order = round % 2 === 0 ? [0, 1, 2, 3] : [3, 2, 1, 0]
+      const order = round % 2 === 0 ? [0, 1, 2, 3, 4] : [4, 3, 2, 1, 0]
       for (const arm of order) values[arm]!.push(await sample(ports[arm]!, path))
     }
     const aa = values[1]!.map((x, i) => x / values[0]![i]!)
     const lazy = values[2]!.map((x, i) => x / values[0]![i]!)
     const classLazy = values[3]!.map((x, i) => x / values[0]![i]!)
-    result.push({ shape, requests, rounds, values, aa, lazy, classLazy })
+    const singlePeer = values[4]!.map((x, i) => x / values[0]![i]!)
+    result.push({ shape, requests, rounds, values, aa, lazy, classLazy, singlePeer })
     console.log(
-      `${shape} A/A ${median(aa).toFixed(3)} (${Math.min(...aa).toFixed(3)}..${Math.max(...aa).toFixed(3)}) lazy ${median(lazy).toFixed(3)} (${Math.min(...lazy).toFixed(3)}..${Math.max(...lazy).toFixed(3)}) class ${median(classLazy).toFixed(3)} (${Math.min(...classLazy).toFixed(3)}..${Math.max(...classLazy).toFixed(3)})`,
+      `${shape} A/A ${median(aa).toFixed(3)} (${Math.min(...aa).toFixed(3)}..${Math.max(...aa).toFixed(3)}) lazy ${median(lazy).toFixed(3)} (${Math.min(...lazy).toFixed(3)}..${Math.max(...lazy).toFixed(3)}) class ${median(classLazy).toFixed(3)} (${Math.min(...classLazy).toFixed(3)}..${Math.max(...classLazy).toFixed(3)}) single ${median(singlePeer).toFixed(3)} (${Math.min(...singlePeer).toFixed(3)}..${Math.max(...singlePeer).toFixed(3)})`,
     )
     await writeFile(resultPath, JSON.stringify(result, null, 2))
   } finally {
