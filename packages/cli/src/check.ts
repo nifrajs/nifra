@@ -32,7 +32,7 @@ import {
 } from "./check-diagnostics.ts"
 import { appDirs, clientModuleRoot } from "./client-module.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
-import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
+import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import { installedManifest } from "./internal/installed-package.ts"
 import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-project.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
@@ -787,6 +787,25 @@ function belowError(warnings: number, infos: number): string {
   return parts.join(", ")
 }
 
+/** The check's findings as structured diagnostics: the collector's own, else each report entry mapped over. */
+export function checkDiagnostics(result: CheckResult): readonly Diagnostic[] {
+  return (
+    result.structuredDiagnostics ??
+    result.diagnostics.map((value) =>
+      diagnostic({
+        code: value.code ?? value.rule,
+        severity: normalizeSeverity(value.severity),
+        message: value.message,
+        ...(value.file === undefined ? {} : { file: value.file }),
+        ...(value.line === undefined ? {} : { line: value.line }),
+        ...(value.evidence === undefined ? {} : { evidence: value.evidence }),
+        ...(value.fix === undefined ? {} : { fix: { recipe: value.fix } }),
+        ...(value.verify === undefined ? {} : { verify: value.verify }),
+      }),
+    )
+  )
+}
+
 /** Run the full check; print a report (`--json` for machine output) and return whether it passed. */
 export async function runCheck(
   cwd: string,
@@ -802,19 +821,7 @@ export async function runCheck(
   const verification = await collectProjectVerification(cwd, { lintsOnly: opts.lintsOnly ?? false })
   const result = await verification.check()
   if (opts.sarif) {
-    const diagnostics: readonly Diagnostic[] =
-      result.structuredDiagnostics ??
-      result.diagnostics.map((value) => ({
-        code: value.code ?? value.rule,
-        severity: normalizeSeverity(value.severity),
-        message: value.message,
-        ...(value.file === undefined ? {} : { file: value.file }),
-        ...(value.line === undefined ? {} : { line: value.line }),
-        ...(value.evidence === undefined ? {} : { evidence: value.evidence }),
-        ...(value.fix === undefined ? {} : { fix: { recipe: value.fix } }),
-        ...(value.verify === undefined ? {} : { verify: value.verify }),
-      }))
-    console.log(JSON.stringify(toSarifLog(diagnostics), null, 2))
+    console.log(JSON.stringify(toSarifLog(checkDiagnostics(result)), null, 2))
     return result.ok
   }
   if (opts.json) {

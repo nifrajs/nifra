@@ -14,11 +14,11 @@ import type {
   CapabilitySnapshotCommandResult,
 } from "./capabilities-tool.ts"
 import { cdnCheckSpec } from "./cdn-check.ts"
-import { type CheckResult, renderCheckReport } from "./check.ts"
+import { type CheckResult, checkDiagnostics, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
 import { dbAuditSpec, dbQuerySpec, dbRoleSpec, dbSchemaSpec } from "./db-tool.ts"
 import { errorsSpec, explainSpec, logsSpec } from "./dev-feed-tool.ts"
-import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
+import { toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
 import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
 import type { VerificationLevelsResult } from "./levels-tool.ts"
@@ -936,6 +936,17 @@ const SYNC_SCHEMA = input<SyncInput>(
   },
 )
 
+/** What both sync commands answer, `{ ok, results }`, and their one flag. */
+const syncOutput = <Output>(): CommandOutputContract<Output> =>
+  output({
+    type: "object",
+    properties: { ok: { type: "boolean" }, results: { type: "array" } },
+    required: ["ok", "results"],
+  })
+const SYNC_ARGV: CommandArgvBinding<SyncInput> = {
+  flags: [{ name: "json", field: "json", type: "boolean" }],
+}
+
 const PROVE_SCHEMA = input<ProveInput>(
   objectSchema({
     files: { type: "array", items: { type: "string" } },
@@ -1043,25 +1054,9 @@ function backendAppFor(ctx: CommandCtx): Promise<IntrospectedApp> {
   return import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
 }
 
-function structuredDiagnostics(out: CheckCommandOutput): readonly Diagnostic[] {
-  if (out.structuredDiagnostics !== undefined) return out.structuredDiagnostics
-  return out.diagnostics.map((value) =>
-    diagnostic({
-      code: value.code ?? value.rule,
-      severity: normalizeSeverity(value.severity),
-      message: value.message,
-      ...(value.file === undefined ? {} : { file: value.file }),
-      ...(value.line === undefined ? {} : { line: value.line }),
-      ...(value.evidence === undefined ? {} : { evidence: value.evidence }),
-      ...(value.fix === undefined ? {} : { fix: { recipe: value.fix } }),
-      ...(value.verify === undefined ? {} : { verify: value.verify }),
-    }),
-  )
-}
-
 function checkJson(out: CheckCommandOutput, input?: CheckInput): unknown {
-  if (input?.sarif === true) return toSarifLog(structuredDiagnostics(out))
-  return { ...out, diagnostics: structuredDiagnostics(out) }
+  if (input?.sarif === true) return toSarifLog(checkDiagnostics(out))
+  return { ...out, diagnostics: checkDiagnostics(out) }
 }
 
 const checkSpec: CommandSpec<CheckInput, CheckCommandOutput> = {
@@ -2024,14 +2019,10 @@ const syncManifestSpec: CommandSpec<SyncInput, SyncManifestCommandOutput> = {
   name: "sync-manifest",
   summary: "Regenerate generated server-manifest route tables without a full build.",
   input: SYNC_SCHEMA,
-  output: output({
-    type: "object",
-    properties: { ok: { type: "boolean" }, results: { type: "array" } },
-    required: ["ok", "results"],
-  }),
+  output: syncOutput(),
   transports: ["cli", "mcp"],
   stability: "stable",
-  argv: { flags: [{ name: "json", field: "json", type: "boolean" }] },
+  argv: SYNC_ARGV,
   async run(_value, ctx) {
     const results = await syncServerManifests(ctx.cwd)
     return { ok: syncManifestsOk(results), results }
@@ -2044,14 +2035,10 @@ const syncRoutesSpec: CommandSpec<SyncInput, SyncCommandOutput> = {
   name: "sync-routes",
   summary: "Regenerate nifra-routes.d.ts so typed navigation follows route search schemas.",
   input: SYNC_SCHEMA,
-  output: output({
-    type: "object",
-    properties: { ok: { type: "boolean" }, results: { type: "array" } },
-    required: ["ok", "results"],
-  }),
+  output: syncOutput(),
   transports: ["cli", "mcp"],
   stability: "stable",
-  argv: { flags: [{ name: "json", field: "json", type: "boolean" }] },
+  argv: SYNC_ARGV,
   async run(_value, ctx) {
     const result = await (await import("./sync-routes.ts")).syncRouteTypes(ctx.cwd)
     return { ok: true, results: result === null ? [] : [result] }

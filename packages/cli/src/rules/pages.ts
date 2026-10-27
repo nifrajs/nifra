@@ -48,6 +48,25 @@ export function readStaticApiPrefix(source: string): StaticApiPrefix {
 
 const CONFIG_FILES = [FRAMEWORK_FILE, CONFIG_FILE] as const
 
+type RouteManifest = ReturnType<typeof discoverRoutes>
+
+/** The routes/ manifest; `undefined` without the tree or for one it refuses, which dev and build report themselves. */
+function routeManifest(routesDir: string): RouteManifest | undefined {
+  if (!existsSync(routesDir)) return undefined
+  try {
+    return discoverRoutes(routesDir)
+  } catch {
+    return undefined
+  }
+}
+
+/** The manifest's script layouts, in code-unit order of their files. */
+function scriptLayouts(manifest: RouteManifest): RouteManifest["layouts"][string][] {
+  return Object.values(manifest.layouts)
+    .filter((layout) => SCRIPT_LAYOUT.test(layout.file))
+    .sort((a, b) => codeUnitOrder(a.file, b.file))
+}
+
 export const shadowedPageRule: CheckRule = {
   code: "NF-C027",
   title: "Page route under the backend mount",
@@ -78,13 +97,8 @@ export const shadowedPageRule: CheckRule = {
     }
     if (apiPrefix === "") return []
 
-    let manifest: ReturnType<typeof discoverRoutes>
-    try {
-      manifest = discoverRoutes(routesDir)
-    } catch {
-      // A routes/ tree the manifest refuses fails dev and build with its own error.
-      return []
-    }
+    const manifest = routeManifest(routesDir)
+    if (manifest === undefined) return []
     const findings: Diagnostic[] = []
     for (const page of shadowedPages(manifest, [apiPrefix])) {
       findings.push(
@@ -128,13 +142,8 @@ export const statusLayoutRule: CheckRule = {
   title: "Root status page wraps the root layout itself",
   async scan(ctx) {
     const routesDir = join(ctx.root, "routes")
-    if (!existsSync(routesDir)) return []
-    let manifest: ReturnType<typeof discoverRoutes>
-    try {
-      manifest = discoverRoutes(routesDir)
-    } catch {
-      return []
-    }
+    const manifest = routeManifest(routesDir)
+    if (manifest === undefined) return []
     const layout = manifest.layouts._layout
     if (layout === undefined) return []
     const pages = [
@@ -240,6 +249,18 @@ function createWebAppCallee(
         callee.name.text === "createWebApp"
 }
 
+/** The object literal a `createWebApp(...)` call takes as its options; `undefined` for any other node. */
+function createWebAppOptions(
+  ts: typeof TSApi,
+  isCreateWebApp: (callee: TSApi.Expression) => boolean,
+  node: TSApi.Node,
+): TSApi.ObjectLiteralExpression | undefined {
+  if (!ts.isCallExpression(node) || !isCreateWebApp(node.expression)) return undefined
+  const arg = node.arguments[0]
+  const options = arg === undefined ? undefined : unwrapExpression(ts, arg)
+  return options !== undefined && ts.isObjectLiteralExpression(options) ? options : undefined
+}
+
 const objectPropertyName = (
   ts: typeof TSApi,
   property: TSApi.ObjectLiteralElementLike,
@@ -318,15 +339,8 @@ export function entryApiMounts(
   }
   const mounts: EntryApiMount[] = []
   const visit = (node: TSApi.Node): void => {
-    const arg = ts.isCallExpression(node) ? node.arguments[0] : undefined
-    const options = arg === undefined ? undefined : unwrapExpression(ts, arg)
-    if (
-      ts.isCallExpression(node) &&
-      isCreateWebApp(node.expression) &&
-      options !== undefined &&
-      ts.isObjectLiteralExpression(options) &&
-      options.properties.some((property) => objectPropertyName(ts, property) === "api")
-    ) {
+    const options = createWebAppOptions(ts, isCreateWebApp, node)
+    if (options?.properties.some((property) => objectPropertyName(ts, property) === "api")) {
       // The last of an `apiPrefix` property and a spread decides, as it does at runtime.
       let apiPrefix: EntryApiPrefix = { kind: "literal", value: "", unset: true }
       let prefixNode: TSApi.Node | undefined
@@ -501,14 +515,8 @@ export function entryCopyChunksGaps(
       manifest = statement.moduleSpecifier.text
   const gaps: EntryCopyChunksGap[] = []
   const visit = (node: TSApi.Node): void => {
-    const arg = ts.isCallExpression(node) ? node.arguments[0] : undefined
-    const options = arg === undefined ? undefined : unwrapExpression(ts, arg)
-    if (
-      ts.isCallExpression(node) &&
-      isCreateWebApp(node.expression) &&
-      options !== undefined &&
-      ts.isObjectLiteralExpression(options)
-    ) {
+    const options = createWebAppOptions(ts, isCreateWebApp, node)
+    if (options !== undefined) {
       const names = options.properties.map((property) =>
         ts.isSpreadAssignment(property) ? undefined : objectPropertyName(ts, property),
       )
@@ -688,16 +696,9 @@ export const layoutMetaDataRule: CheckRule = {
   title: "Layout meta reads data its layout never loads",
   async scan(ctx) {
     const routesDir = join(ctx.root, "routes")
-    if (!existsSync(routesDir)) return []
-    let manifest: ReturnType<typeof discoverRoutes>
-    try {
-      manifest = discoverRoutes(routesDir)
-    } catch {
-      return []
-    }
-    const layouts = Object.values(manifest.layouts)
-      .filter((layout) => SCRIPT_LAYOUT.test(layout.file))
-      .sort((a, b) => codeUnitOrder(a.file, b.file))
+    const manifest = routeManifest(routesDir)
+    if (manifest === undefined) return []
+    const layouts = scriptLayouts(manifest)
     if (layouts.length === 0) return []
     const loaded = await loadRuleTypeScript(ctx)
     const ts = loaded.compiler
@@ -784,16 +785,9 @@ export const ungatedLayoutRefusalRule: CheckRule = {
   title: "Layout loader refuses access without a gate",
   async scan(ctx) {
     const routesDir = join(ctx.root, "routes")
-    if (!existsSync(routesDir)) return []
-    let manifest: ReturnType<typeof discoverRoutes>
-    try {
-      manifest = discoverRoutes(routesDir)
-    } catch {
-      return []
-    }
-    const layouts = Object.values(manifest.layouts)
-      .filter((layout) => SCRIPT_LAYOUT.test(layout.file))
-      .sort((a, b) => codeUnitOrder(a.file, b.file))
+    const manifest = routeManifest(routesDir)
+    if (manifest === undefined) return []
+    const layouts = scriptLayouts(manifest)
     if (layouts.length === 0) return []
     const sources = layouts.map((layout) =>
       [layout.file, ...(layout.backend === undefined ? [] : [layout.backend])].map((file) => ({
@@ -890,13 +884,8 @@ export const frontendServerExportRule: CheckRule = {
   title: "Server-only export in a route frontend file",
   async scan(ctx) {
     const routesDir = join(ctx.root, "routes")
-    if (!existsSync(routesDir)) return []
-    let manifest: ReturnType<typeof discoverRoutes>
-    try {
-      manifest = discoverRoutes(routesDir)
-    } catch {
-      return []
-    }
+    const manifest = routeManifest(routesDir)
+    if (manifest === undefined) return []
     const files = new Set<string>()
     for (const entry of [
       ...manifest.routes,
