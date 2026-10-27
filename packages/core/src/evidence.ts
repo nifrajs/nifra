@@ -18,6 +18,7 @@ import type { ResponseClassification } from "./classification.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { sha256Hex } from "./internal/hex.ts"
 import { evidenceProvenance } from "./internal/route-assurance.ts"
+import { mapSchemaParts } from "./internal/schema-parts.ts"
 import {
   type JsonSchema,
   type ReflectedMount,
@@ -151,12 +152,6 @@ function schemaPart(value: SchemaReflection | undefined): ProjectEvidenceSchemaP
 function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
   const source = route.schema
   if (source === undefined) return undefined
-  const headers = schemaPart(source.headers)
-  const cookies = schemaPart(source.cookies)
-  const body = schemaPart(source.body)
-  const query = schemaPart(source.query)
-  const params = schemaPart(source.params)
-  const response = schemaPart(source.response)
   const sse = schemaPart(source.sse)
   const errors: Record<string, ProjectEvidenceSchemaPart> = {}
   for (const [status, value] of Object.entries(source.errors ?? {})) {
@@ -167,12 +162,7 @@ function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
     ...(source.validationOrder !== undefined ? { validationOrder: source.validationOrder } : {}),
     ...(source.bodyLimit !== undefined ? { bodyLimit: source.bodyLimit } : {}),
     ...(source.bodyLimitReason !== undefined ? { bodyLimitReason: source.bodyLimitReason } : {}),
-    ...(headers !== undefined ? { headers } : {}),
-    ...(cookies !== undefined ? { cookies } : {}),
-    ...(body !== undefined ? { body } : {}),
-    ...(query !== undefined ? { query } : {}),
-    ...(params !== undefined ? { params } : {}),
-    ...(response !== undefined ? { response } : {}),
+    ...mapSchemaParts(source, schemaPart),
     ...(Object.keys(errors).length > 0 ? { errors: Object.freeze(errors) } : {}),
     ...(sse !== undefined ? { sse } : {}),
     ...(source.validationErrorHook === true ? { validationErrorHook: true as const } : {}),
@@ -503,23 +493,12 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
       schemaPartToReflection(value) as SchemaReflection,
     ]),
   )
-  const headers = schemaPartToReflection(schema.headers)
-  const cookies = schemaPartToReflection(schema.cookies)
-  const body = schemaPartToReflection(schema.body)
-  const query = schemaPartToReflection(schema.query)
-  const params = schemaPartToReflection(schema.params)
-  const response = schemaPartToReflection(schema.response)
   const sse = schemaPartToReflection(schema.sse)
   return {
     ...(schema.validationOrder !== undefined ? { validationOrder: schema.validationOrder } : {}),
     ...(schema.bodyLimit !== undefined ? { bodyLimit: schema.bodyLimit } : {}),
     ...(schema.bodyLimitReason !== undefined ? { bodyLimitReason: schema.bodyLimitReason } : {}),
-    ...(headers !== undefined ? { headers } : {}),
-    ...(cookies !== undefined ? { cookies } : {}),
-    ...(body !== undefined ? { body } : {}),
-    ...(query !== undefined ? { query } : {}),
-    ...(params !== undefined ? { params } : {}),
-    ...(response !== undefined ? { response } : {}),
+    ...mapSchemaParts(schema, schemaPartToReflection),
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
     ...(sse !== undefined ? { sse } : {}),
     ...(schema.validationErrorHook === true ? { validationErrorHook: true as const } : {}),

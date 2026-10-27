@@ -17,7 +17,6 @@ import type {
   ArtifactPort,
   ArtifactRef,
   NodeEffectKey,
-  RunNode,
   RunNodeKind,
   RunPlan,
 } from "@nifrajs/agent-protocol"
@@ -29,6 +28,7 @@ import { noopArtifactPort } from "./artifact-port.ts"
 import type { StepCatalog } from "./catalog.ts"
 import { compileRunPlanLayers, digestRunPlan, type OrchestrationLimits } from "./compile.ts"
 import { type EvidenceCounters, type EvidenceStore, MemoryEvidenceStore } from "./evidence-store.ts"
+import { indexPlan, isGateRejection } from "./plan-index.ts"
 import { admitCapability, ChildVectorTracker, type HostPolicy } from "./policy.ts"
 
 export type RunState = "submitted" | "running" | "paused" | "succeeded" | "failed" | "cancelled"
@@ -248,7 +248,7 @@ export class OrchestrationHost {
       },
     })
 
-    const { kindById, idempotentById, nodeIds } = this.indexPlan(plan)
+    const { kindById, idempotentById, nodeIds } = indexPlan(plan, this.catalog)
     let finish!: () => void
     const done = new Promise<void>((resolve) => {
       finish = resolve
@@ -470,57 +470,12 @@ export class OrchestrationHost {
       // The caller's sink must not decide the run's outcome.
     }
   }
-
-  /** Walk the plan tree once: node kinds, idempotency flags, and the full id set. */
-  private indexPlan(plan: RunPlan): {
-    readonly kindById: ReadonlyMap<string, RunNodeKind>
-    readonly idempotentById: ReadonlyMap<string, boolean>
-    readonly nodeIds: ReadonlySet<string>
-  } {
-    const kindById = new Map<string, RunNodeKind>()
-    const idempotentById = new Map<string, boolean>()
-    const nodeIds = new Set<string>()
-    const walk = (node: RunNode): void => {
-      nodeIds.add(node.id)
-      kindById.set(node.id, node.kind)
-      const step = "step" in node ? this.catalog.get(node.step) : undefined
-      idempotentById.set(node.id, step?.selectEffect !== undefined)
-      switch (node.kind) {
-        case "sequence":
-        case "parallel":
-          for (const child of node.children) walk(child)
-          break
-        case "retry":
-          walk(node.child)
-          break
-        case "branch":
-          walk(node.then)
-          if (node.otherwise !== undefined) walk(node.otherwise)
-          break
-      }
-    }
-    for (const node of plan.nodes) walk(node)
-    return { kindById, idempotentById, nodeIds }
-  }
 }
 
-/** A verify/approve node whose output is not a pass. Other kinds never gate. */
+/** Why a gate node refused, from its output's `reason`, cut to the failure-message cap. */
 function gateReason(output: unknown): string | undefined {
   const reason =
     typeof output === "object" && output !== null && "reason" in output ? output.reason : undefined
   if (typeof reason !== "string" || reason.length === 0) return undefined
   return reason.length > MAX_FAILURE_MESSAGE ? `${reason.slice(0, MAX_FAILURE_MESSAGE)}…` : reason
-}
-
-function isGateRejection(kind: RunNodeKind | undefined, output: unknown): boolean {
-  if (kind === "verify") {
-    if (output === true) return false
-    return !(
-      typeof output === "object" &&
-      output !== null &&
-      (output as { ok?: unknown }).ok === true
-    )
-  }
-  if (kind === "approve") return output !== true
-  return false
 }

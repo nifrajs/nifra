@@ -18,60 +18,13 @@
  * memory Deno spent receiving it. Where that matters, cap message size in a proxy in front.
  */
 import { assertCloseArgs, exceedsPayloadCap } from "./generated/ws-close.ts"
+import type { NifraWs, NifraWsData, WsUpgradeOutcome } from "./generated/ws-types.ts"
 
 export type { HashedFiles, ServeStaticOptions } from "./generated/static-file.ts"
 export { serveStatic } from "./serve-static.ts"
 
-// WebSocket types: structurally mirrored from `@nifrajs/core` so this adapter keeps zero dependency on
-// nifra (and `deno check` never has to resolve `@nifrajs/core`'s types). The WS dispatch is inlined below,
-// mirroring core's `attachWebSocket`; kept in lockstep by the live `deno run` WS round-trip.
-
-/** A received frame, normalized: text → `string`, binary → `Uint8Array`. */
-type NifraWsData = string | Uint8Array
-
-/** The portable socket a nifra WS handler sees (mirror of core's `NifraWebSocket`). */
-interface NifraWs {
-  send(data: string | ArrayBufferView | ArrayBuffer): void
-  close(code?: number, reason?: string): void
-  readonly readyState: number
-  subscribe(topic: string): void
-  unsubscribe(topic: string): void
-  data: unknown
-  readonly raw: unknown
-}
-
-/** A nifra WS route's post-upgrade lifecycle (mirror of core's `WebSocketHandler`). */
-interface NifraWsHandler {
-  open?(ws: NifraWs): void | Promise<void>
-  message?(ws: NifraWs, data: NifraWsData): void | Promise<void>
-  close?(ws: NifraWs, code: number, reason: string): void | Promise<void>
-  error?(ws: NifraWs, error: unknown): void | Promise<void>
-}
-
-/** Mirror of core's `TopicRegistry` surface - the app's pub/sub the adapter wires `ws.subscribe` to. */
-interface WsPubSub {
-  subscribe(topic: string, ws: NifraWs): void
-  unsubscribe(topic: string, ws: NifraWs): void
-  unsubscribeAll(ws: NifraWs): void
-}
-
-/** Mirror of core's `WebSocketUpgradeOutcome` - what `resolveWebSocketUpgrade` returns. */
-type WsUpgradeOutcome =
-  | { readonly kind: "pass" }
-  | { readonly kind: "reject"; readonly response: Response }
-  | {
-      readonly kind: "upgrade"
-      readonly handler: NifraWsHandler
-      readonly data: unknown
-      readonly pubsub: WsPubSub
-      readonly maxPayloadBytes?: number
-      /** Builds `ws.send` with the route's outbound contract (`validateSend`). */
-      sender?(
-        handler: NifraWsHandler,
-        send: (payload: string | ArrayBufferView | ArrayBuffer) => void,
-        onError: (error: unknown) => void,
-      ): (payload: string | ArrayBufferView | ArrayBuffer) => void
-    }
+// The WS dispatch is inlined below, mirroring core's `attachWebSocket`; kept in lockstep by the live
+// `deno run` WS round-trip.
 
 /** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */
 export interface FetchHandler {

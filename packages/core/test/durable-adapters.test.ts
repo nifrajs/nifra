@@ -346,6 +346,9 @@ describe("durable execution adapter conformance", () => {
       await backend.renewLease({ name: "worker", owner: "a", token, now: 30, leaseMs: 100 }),
     ).toBe(true)
     expect(
+      await backend.renewLease({ name: "worker", owner: "a", token, now: 130, leaseMs: 100 }),
+    ).toBe(false)
+    expect(
       await backend.checkpointLease({ name: "worker", owner: "a", token, cursor: "r-2" }),
     ).toBe(true)
     expect(await backend.releaseLease({ name: "worker", owner: "a", token })).toBe(true)

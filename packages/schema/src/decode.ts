@@ -9,6 +9,7 @@
  */
 import type { TSchema } from "@sinclair/typebox"
 import { dateTimeMs } from "./formats.ts"
+import { isRecord } from "./internal/record.ts"
 
 const DATE_KEY = "x-nifra-date"
 // Deeper than any real schema; a decoder stops there and leaves the value as it is.
@@ -67,9 +68,6 @@ const toDate: Decoder = (value) => {
   const ms = dateTimeMs(value)
   return Number.isNaN(ms) ? value : new Date(ms)
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 /** `__proto__` is a field like any other here; plain assignment would set the prototype. */
 function define(out: Record<string, unknown>, key: string, value: unknown): void {
