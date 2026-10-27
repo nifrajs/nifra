@@ -63,7 +63,8 @@ import {
   type StandardSchemaV1,
 } from "../schema/standard.ts"
 import { INSTALL_RESPONSE_CONTRACT } from "./install.ts"
-import { DATE_TO_JSON, define, jsonText, readsShippedTime } from "./json-text.ts"
+import { DATE_TO_JSON, define, readsShippedTime } from "./json-shared.ts"
+import { jsonText } from "./json-text.ts"
 import type { IdentityPlugin } from "./plugin.ts"
 import { isResponseResult, status } from "./runtime-core.ts"
 import type { AnyServer } from "./server.ts"
