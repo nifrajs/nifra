@@ -12,3 +12,5 @@ Bun.serve({
   },
 })
 console.log("ready")
+
+export {}

@@ -10,7 +10,7 @@
  */
 import { tagStandIn } from "../internal/hook-origins.ts"
 import type { AnswerStages, JsonReplyContext } from "./answer-step.ts"
-import { define } from "./json-text.ts"
+import { define } from "./json-shared.ts"
 import { isResponseResult, status } from "./runtime-core.ts"
 
 // Deeper than any real payload.

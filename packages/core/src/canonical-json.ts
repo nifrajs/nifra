@@ -7,7 +7,7 @@
  * `Map` or class instance, a function, a symbol, a bigint. A `JSON.rawJSON` value is written verbatim.
  */
 
-import { isPlainPrototype, isRawJson } from "./server/json-text.ts"
+import { isPlainPrototype, isRawJson } from "./server/json-shared.ts"
 
 /** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */
 export function canonicalJson(value: unknown): string {

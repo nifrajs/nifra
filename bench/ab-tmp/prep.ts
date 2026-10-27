@@ -10,3 +10,5 @@ for (const suite of ["http", "http-realworld"]) {
   if (!r.success) throw new Error(`${suite}: ${r.logs.map(String).join("; ")}`)
 }
 console.log("prepared", tree)
+
+export {}
