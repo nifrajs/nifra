@@ -95,4 +95,5 @@ jobs:
         with:
           name: mutation-${{ matrix.target }}-${{ matrix.shard }}
           path: .mutation/
-          if-no-files-found: ignore
+          include-hidden-files: true
+          if-no-files-found: error
