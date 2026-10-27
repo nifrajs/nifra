@@ -116,6 +116,38 @@ test("every CI job that runs steps has a timeout", () => {
   expect(unbounded).toEqual([])
 })
 
+// upload-artifact leaves out every file under a dot-named directory unless told otherwise, so an
+// upload of `.mutation/` uploads nothing and `if-no-files-found: ignore` hides that it did.
+test("every artifact upload of a hidden path includes hidden files", () => {
+  const blind: string[] = []
+  const workflows = readdirSync(join(ROOT, ".github", "workflows")).filter((name) =>
+    /\.ya?ml$/.test(name),
+  )
+  let uploads = 0
+  for (const workflow of workflows) {
+    const parsed: unknown = Bun.YAML.parse(
+      readFileSync(join(ROOT, ".github", "workflows", workflow), "utf8"),
+    )
+    const jobs =
+      typeof parsed === "object" && parsed !== null && "jobs" in parsed ? parsed.jobs : undefined
+    if (typeof jobs !== "object" || jobs === null) throw new Error(`${workflow} has no jobs`)
+    for (const [name, job] of Object.entries(jobs)) {
+      const steps = typeof job === "object" && job !== null && "steps" in job ? job.steps : []
+      for (const step of Array.isArray(steps) ? steps : []) {
+        const uses: unknown = step?.uses
+        if (typeof uses !== "string" || !uses.startsWith("actions/upload-artifact@")) continue
+        uploads++
+        const paths = String(step.with?.path ?? "").split("\n")
+        const hidden = paths.some((path) => path.split("/").some((part) => part.startsWith(".")))
+        if (hidden && step.with?.["include-hidden-files"] !== true)
+          blind.push(`${workflow}: ${name} uploads ${paths.join(", ").trim()}`)
+      }
+    }
+  }
+  expect(uploads).toBeGreaterThan(0)
+  expect(blind).toEqual([])
+})
+
 // A gitignored copy of the repo (an audit snapshot, a scratch clone) carries its own root biome.json;
 // without the ignore file, lint walks into it and fails on a config the commit does not contain.
 test("lint skips what git ignores", () => {

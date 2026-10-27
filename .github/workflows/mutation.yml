@@ -66,4 +66,5 @@ jobs:
         with:
           name: mutation-report
           path: .mutation/
+          include-hidden-files: true
           if-no-files-found: ignore
