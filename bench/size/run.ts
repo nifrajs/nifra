@@ -381,8 +381,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // there read once: 21,218 B (Bun 1.4.4). A query fetch or fetcher load a visitor change catches loading
   // again inside the call, a rotating epoch costing bounded loads, and `documentLoad` when a load over the
   // previous visitor's page fails: 21,218 -> 21,579 B (Bun 1.4.4). That codec's Date copy taking only
-  // what the engine tags a plain object, and lists: 21,579 -> 21,668 B (Bun 1.4.4).
-  "nifra-web-client": 21.2,
+  // what the engine tags a plain object, and lists: 21,579 -> 21,668 B (Bun 1.4.4). A route data request's
+  // headers built by one function the live client shares: 21,699 -> 21,712 B (Bun 1.4.4).
+  "nifra-web-client": 21.3,
   "nifra-i18n": 4.3,
 }
 
