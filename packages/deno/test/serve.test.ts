@@ -790,6 +790,19 @@ Deno.test("runtime-framed JSON text keeps validation, poisoning and byte limits"
     const over = await post(JSON.stringify({ name: "a".repeat(40) }))
     assertEquals(over.status, 413)
 
+    // A lengthless streamed body must still be capped while it is read.
+    const chunked = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ name: "a".repeat(40) })))
+          controller.close()
+        },
+      }),
+    })
+    assertEquals(chunked.status, 413)
+
     // An in-process request is not runtime-framed: a forged short length cannot bypass the cap.
     const forged = await app.fetch(
       new Request("http://localhost/named", {

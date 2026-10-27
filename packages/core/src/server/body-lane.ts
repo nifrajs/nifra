@@ -85,6 +85,8 @@ export function readBoundedJsonSource<T>(
         ? Promise.resolve(plainError(413, "payload_too_large"))
         : Promise.resolve(plainError(413, "payload_too_large")).then(onResult)
 
+    // A trusted runtime frame makes Content-Length the byte bound. Wrapped or untrusted sources
+    // must keep the delivered-byte check below, and chunked bodies must keep the streaming cap.
     if (
       nativeJsonKeepsBom &&
       raw === req &&
