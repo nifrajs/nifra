@@ -113,7 +113,7 @@
   "dependencies": {
     "@nifrajs/core": "workspace:*",
     "@nifrajs/web": "workspace:*",
-    "preact-render-to-string": "^6.8.1"
+    "preact-render-to-string": "^6.8.2"
   },
   "peerDependencies": {
     "preact": "^10.19.0 || ^11.0.0",
@@ -132,7 +132,7 @@
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/image": "workspace:*",
     "happy-dom": "21.0.4",
-    "preact": "^11.0.1"
+    "preact": "^11.1.0"
   },
   "repository": {
     "type": "git",

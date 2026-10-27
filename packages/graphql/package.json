@@ -62,7 +62,7 @@
   "devDependencies": {
     "@nifrajs/core": "workspace:*",
     "graphql": "17.0.2",
-    "graphql-ws": "6.2.1"
+    "graphql-ws": "6.4.1"
   },
   "license": "MIT",
   "publishConfig": {

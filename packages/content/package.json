@@ -45,8 +45,8 @@
     "access": "public"
   },
   "dependencies": {
-    "marked": "^15.0.0",
-    "yaml": "^2.6.0"
+    "marked": "^15.0.12",
+    "yaml": "^2.9.1"
   },
   "peerDependencies": {
     "@mdx-js/mdx": "^3"

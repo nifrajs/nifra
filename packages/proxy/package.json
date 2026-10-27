@@ -51,7 +51,7 @@
   "devDependencies": {
     "@nifrajs/core": "workspace:*",
     "@nifrajs/node": "workspace:*",
-    "undici": "^8.12.2"
+    "undici": "^8.12.3"
   },
   "license": "MIT",
   "publishConfig": {
