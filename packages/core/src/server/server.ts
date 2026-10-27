@@ -58,6 +58,7 @@ import {
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
 import {
+  compileRoutePattern,
   decodeRouteParams,
   expandOptionalParams,
   type RoutePatternSegment,
@@ -475,6 +476,23 @@ function outranks(
     } else if (theirs.kind !== "param") ahead = true
   }
   return ahead && other.length === route.length
+}
+
+/** Whether one request can match both patterns: no two static segments differ before either ends
+ * in a wildcard, and the lengths agree otherwise. Errs toward `true`. */
+function mayShareRequest(
+  a: CatalogRoute["pattern"]["segments"],
+  b: CatalogRoute["pattern"]["segments"],
+): boolean {
+  const shared = Math.min(a.length, b.length)
+  for (let i = 0; i < shared; i++) {
+    const left = a[i]!
+    const right = b[i]!
+    if (left.kind === "wildcard" || right.kind === "wildcard") return true
+    if (left.kind === "static" && right.kind === "static" && left.value !== right.value)
+      return false
+  }
+  return a.length === b.length
 }
 
 /**
@@ -6625,8 +6643,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   /** Compile portable route registrations into Bun's native route table. Apps with request-rewrite
-   * hooks or WebSockets retain the single portable dispatcher because those features must run before
-   * route selection/upgrade.
+   * hooks or mounts retain the single portable dispatcher because those features must run before
+   * route selection. An app with WebSocket routes keeps the routes no handshake can reach.
    *
    * Bun and the portable router agree on which of two static-and-`:param` paths wins a request, so
    * the table is kept to those paths. Where Bun would otherwise pass a request on to a less specific
@@ -6636,14 +6654,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     fallback: BunNativeHandler,
     peer: PeerPlatform,
   ): BunNativeRoutes | undefined {
-    // A `clientIp` trust declaration must run the resolver in `dispatch`, which the fused native lane
-    // bypasses - so an app that declares trust routes through the fetch lane (where `c.clientIp`
-    // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
     if (
       (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
-      this.wsRoutes.length > 0 ||
-      this.preRouteMountCount > 0 ||
-      this.clientIpTrust !== undefined
+      this.mountsTakeUpgrades() ||
+      this.preRouteMountCount > 0
     ) {
       return undefined
     }
@@ -6663,22 +6677,33 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // A path with a wildcard or a part-literal segment cannot go in the table: Bun reads `/:name.json`
     // as one parameter named `name.json`. These are filed under each run of static segments they
     // start with, which is where a table path they could outrank looks for them.
-    const under = new Map<string, CatalogRoute[]>()
+    const under = new Map<string, CatalogRoute["pattern"]["segments"][]>()
+    const fileUnder = (segments: CatalogRoute["pattern"]["segments"]): void => {
+      let prefix = ""
+      for (const segment of segments) {
+        let bucket = under.get(prefix)
+        if (bucket === undefined) {
+          bucket = []
+          under.set(prefix, bucket)
+        }
+        bucket.push(segments)
+        if (segment.kind !== "static") break
+        prefix += `/${segment.value}`
+      }
+    }
+    // A handshake is a GET the portable dispatcher gives to a socket route before any HTTP route, so a
+    // socket path is outside the table like a wildcard path, and a GET route a request may share with
+    // one stays with the dispatcher.
+    const sockets = this.wsRoutes.map((route) => compileRoutePattern(route.path).segments)
+    for (const segments of sockets) fileUnder(segments)
     const lead = all.map((route) => {
       const segments = route.pattern.segments
       const plain = segments.every(
         (segment) => segment.kind === "static" || segment.kind === "param",
       )
+      if (!plain) fileUnder(segments)
       let prefix = ""
       for (const segment of segments) {
-        if (!plain) {
-          let bucket = under.get(prefix)
-          if (bucket === undefined) {
-            bucket = []
-            under.set(prefix, bucket)
-          }
-          bucket.push(route)
-        }
         if (segment.kind !== "static") break
         prefix += `/${segment.value}`
       }
@@ -6712,7 +6737,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         entry.idempotent !== undefined ||
         !BUN_TABLE_METHODS.includes(method as Method) ||
         (preflightOnFallback && method === "OPTIONS") ||
-        under.get(run)?.some((other) => outranks(other.pattern.segments, pattern.segments))
+        under.get(run)?.some((other) => outranks(other, pattern.segments)) ||
+        (method === "GET" && sockets.some((socket) => mayShareRequest(socket, pattern.segments)))
       ) {
         continue
       }
@@ -6886,13 +6912,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     // Bun names the socket peer of a request when its server is asked. A request served from the
     // native table carries this one platform, which asks only when a handler reads `c.clientIp`.
+    const socketPeer = (request: RequestSource): string | undefined =>
+      (running as unknown as BunPeerServer).requestIP(request as Request)?.address
+    // A `clientIp` trust declaration resolves here too, from the request's headers, when a handler reads
+    // the address; only a declaration of zero hops names the socket peer.
+    const trust = this.clientIpTrust
     const peer: PeerPlatform = {
-      [PLATFORM_PEER]: (request) =>
-        (running as unknown as BunPeerServer).requestIP(request as Request)?.address,
+      [PLATFORM_PEER]:
+        trust === undefined
+          ? socketPeer
+          : (request) =>
+              resolveClientIp(
+                !("header" in trust) && trust.trustedHops === 0 ? socketPeer(request) : undefined,
+                request as Request,
+                trust,
+              ),
       [PLATFORM_IDLE_TIMEOUT]: setIdleTimeout,
     }
-    const nativeRoutes =
-      wsHandlers === undefined ? this.buildBunNativeRoutes(fallback, peer) : undefined
+    const nativeRoutes = this.buildBunNativeRoutes(fallback, peer)
     const first = options?.static
     const before = <S, A>(
       inner: (req: Request, server: S) => MaybePromise<A>,
@@ -6926,6 +6963,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         })
       : Bun.serve<BunWsData>({
           ...listening,
+          ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
           fetch: before((req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout)),
           // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
