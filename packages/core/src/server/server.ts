@@ -410,6 +410,12 @@ interface FetchMount<Env = unknown> {
   wsPassed?: WeakMap<Request, Request>
 }
 
+/** A route Bun's table matched, as the dispatcher would have. */
+interface MatchedRoute {
+  readonly entry: RouteEntry
+  readonly params: Record<string, string>
+}
+
 type IdleTimeoutSetter = NonNullable<PeerPlatform[typeof PLATFORM_IDLE_TIMEOUT]>
 
 /**
@@ -3412,6 +3418,47 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     )
   }
 
+  /** {@link fetchMatched} for an app whose `onRequest` hooks run before the route does: the hooks see
+   * the request first, and the route Bun matched runs unless one of them replaced the request. */
+  private fetchMatchedHooked(
+    source: Request,
+    entry: RouteEntry,
+    params: Record<string, string>,
+    platform: Platform<EnvOf<Ctx>>,
+  ): MaybePromise<Response> {
+    if (this.capacityGate === undefined) {
+      return this.fetchMatchedHookedInner(source, entry, params, platform)
+    }
+    return this.admitGated(source, () =>
+      this.fetchMatchedHookedInner(source, entry, params, platform),
+    )
+  }
+
+  private fetchMatchedHookedInner(
+    source: Request,
+    entry: RouteEntry,
+    params: Record<string, string>,
+    platform: Platform<EnvOf<Ctx>>,
+  ): MaybePromise<Response> {
+    const outcome = this.runWithOnRequest<Response>(
+      source,
+      this.trustedPlatform(source, platform),
+      this.finalizeResponse,
+      this.wrapWebResponse,
+      this.webResponseTimeout,
+      true,
+      { entry, params },
+    )
+    if (this.onResponseHooks.length === 0 && this.onResponseFinalizedHooks.length === 0) {
+      return outcome
+    }
+    return outcome instanceof Promise
+      ? outcome.then((response) =>
+          this.applyOnResponseAndFinalize(response, this.takeResponseRequest(source)),
+        )
+      : this.applyOnResponseAndFinalize(outcome, this.takeResponseRequest(source))
+  }
+
   private fetchMatchedInner(
     source: RequestSource,
     entry: RouteEntry,
@@ -4234,6 +4281,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
+    matched?: MatchedRoute,
   ): MaybePromise<T> {
     const hooks = this.onRequestHooks
     const originalRequest = requestOf(source)
@@ -4263,6 +4311,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               wrapResponse,
               onTimeout,
               webFast,
+              matched,
             ),
           (err) => this.onRequestFailure(err, current, platform, finalize, wrapResponse),
         )
@@ -4275,7 +4324,43 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (outcome !== undefined) return earlyAnswer(outcome, wrapResponse)
     }
-    return this.routeAndRun(current, platform, finalize, wrapResponse, onTimeout, webFast)
+    return this.routeAfterHooks(
+      current,
+      originalRequest,
+      matched,
+      platform,
+      finalize,
+      wrapResponse,
+      onTimeout,
+      webFast,
+    )
+  }
+
+  /** Where a request goes once the `onRequest` hooks have run: straight into the route Bun matched
+   * while no hook replaced the request, else through routing again. */
+  private routeAfterHooks<T>(
+    current: RequestSource,
+    originalRequest: Request,
+    matched: MatchedRoute | undefined,
+    platform: Platform<EnvOf<Ctx>> | undefined,
+    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
+    onTimeout: () => T,
+    webFast: boolean,
+  ): MaybePromise<T> {
+    return matched !== undefined && current === originalRequest
+      ? this.runMatched(
+          current,
+          platform,
+          matched.entry,
+          matched.params,
+          undefined,
+          finalize,
+          wrapResponse,
+          onTimeout,
+          webFast,
+        )
+      : this.routeAndRun(current, platform, finalize, wrapResponse, onTimeout, webFast)
   }
 
   /** Async tail of {@link runWithOnRequest}: applies the first awaited hook's outcome, then runs
@@ -4290,6 +4375,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
+    matched?: MatchedRoute,
   ): Promise<T> {
     let current = sourceAtAwait
     let seen = requestOf(sourceAtAwait)
@@ -4313,7 +4399,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       index++
     }
-    return this.routeAndRun(current, platform, finalize, wrapResponse, onTimeout, webFast)
+    return this.routeAfterHooks(
+      current,
+      originalRequest,
+      matched,
+      platform,
+      finalize,
+      wrapResponse,
+      onTimeout,
+      webFast,
+    )
   }
 
   private takeResponseRequest(source: RequestSource): Request {
@@ -6519,6 +6614,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     budget: RequestBudget | undefined,
     peer: PeerPlatform,
     fallback: BunNativeHandler,
+    hookedPlatform?: (request: Request, server: BunPeerServer) => Platform<EnvOf<Ctx>>,
   ): BunNativeHandler {
     // This callback is reached only from Bun's compiled native route table. Bun has already parsed
     // the HTTP framing, so the JSON lane may retain its native fused `json()` parse without weakening
@@ -6592,6 +6688,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         : finishNative(request, outcome)
     }
     if (paramNames.length === 0) {
+      if (hookedPlatform !== undefined) {
+        return (request, server) => {
+          markFramed(request)
+          return this.fetchMatchedHooked(
+            request,
+            entry,
+            EMPTY_PARAMS,
+            hookedPlatform(request, server),
+          )
+        }
+      }
       if (capped === undefined) {
         return (request) => {
           markFramed(request)
@@ -6616,6 +6723,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       paramNames.length === 1
         ? (params: Record<string, string>) => unroutedParam(params[paramNames[0]!])
         : hasUnroutedParam
+    if (hookedPlatform !== undefined) {
+      return (request, server) => {
+        markFramed(request)
+        const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+        if (malformed(params)) return fallback(request, server)
+        return this.fetchMatchedHooked(request, entry, params, hookedPlatform(request, server))
+      }
+    }
     if (capped === undefined) {
       return (request, server) => {
         markFramed(request)
@@ -6653,9 +6768,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private buildBunNativeRoutes(
     fallback: BunNativeHandler,
     peer: PeerPlatform,
+    platformFor?: (request: Request, server: BunPeerServer) => Platform<EnvOf<Ctx>>,
   ): BunNativeRoutes | undefined {
+    const hooked = this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe
     if (
-      (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
+      (hooked && platformFor === undefined) ||
       this.mountsTakeUpgrades() ||
       this.preRouteMountCount > 0
     ) {
@@ -6664,6 +6781,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     const routes: BunNativeRoutes = Object.create(null) as BunNativeRoutes
     const mayUseFusedNative =
+      !hooked &&
       this.requestTimeoutMs === 0 &&
       (this.onResponseHooks.length === 0 || this.bunNativeResponseHeadersOnly) &&
       this.onResponseFinalizedHooks.length === 0 &&
@@ -6753,6 +6871,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         unboundedBudget,
         peer,
         fallback,
+        hooked ? platformFor : undefined,
       )
       // The table matched the target as sent; one `fetch` refuses or rewrites goes through it. Left
       // off, `validateHost` costs nothing here: the table holds no wildcard, a `..` parameter falls
@@ -6929,7 +7048,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               ),
       [PLATFORM_IDLE_TIMEOUT]: setIdleTimeout,
     }
-    const nativeRoutes = this.buildBunNativeRoutes(fallback, peer)
+    const nativeRoutes = this.buildBunNativeRoutes(
+      fallback,
+      peer,
+      (request, server) =>
+        new BunPeerPlatform(server, request, setIdleTimeout) as Platform<EnvOf<Ctx>>,
+    )
     const first = options?.static
     const before = <S, A>(
       inner: (req: Request, server: S) => MaybePromise<A>,
