@@ -770,6 +770,72 @@ Deno.test("a JSON body led by a byte order mark parses through a schema and c.bo
   }
 })
 
+Deno.test("runtime-framed JSON text keeps validation, poisoning and byte limits", async () => {
+  const app = server({ maxBodyBytes: 32 }).post("/named", { body: named }, (c) => c.body)
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const url = `http://127.0.0.1:${running.port}/named`
+    const post = (body: string) =>
+      fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      })
+    const unicode = await post('{"name":"é😀"}')
+    assertEquals([unicode.status, await unicode.json()], [200, { name: "é😀" }])
+    const malformed = await post('{"name":')
+    assertEquals(malformed.status, 400)
+    const poisoned = await post('{"name":"Ada","__proto__":{}}')
+    assertEquals(poisoned.status, 400)
+    const over = await post(JSON.stringify({ name: "a".repeat(40) }))
+    assertEquals(over.status, 413)
+
+    // A lengthless streamed body must still be capped while it is read.
+    const chunked = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ name: "a".repeat(40) })))
+          controller.close()
+        },
+      }),
+    })
+    assertEquals(chunked.status, 413)
+
+    // An in-process request is not runtime-framed: a forged short length cannot bypass the cap.
+    const forged = await app.fetch(
+      new Request("http://localhost/named", {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": "2" },
+        body: JSON.stringify({ name: "a".repeat(40) }),
+      }),
+    )
+    assertEquals(forged.status, 413)
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("an untouched runtime-framed JSON request uses the BOM-safe text reader", async () => {
+  const app = server().post("/named", { body: named }, (c) => c.body)
+  const body = '{"name":"Ada"}'
+  const request = new Request("http://localhost/named", {
+    method: "POST",
+    headers: { "content-type": "application/json", "content-length": String(body.length) },
+    body,
+  })
+  Object.defineProperty(request, Symbol.for("nifra.body.trustedFraming"), { value: true })
+  const originalText = request.text.bind(request)
+  let reads = 0
+  request.text = () => {
+    reads++
+    return originalText()
+  }
+  const response = await app.fetch(request)
+  assertEquals([response.status, await response.json(), reads], [200, { name: "Ada" }, 1])
+})
+
 // The framework's own 404 and 422 said `application/json;charset=utf-8`, Bun's spelling baked into core,
 // while a handler's JSON and a 405 said Deno's `application/json`. Found by
 // scripts/check-runtime-differential.ts.

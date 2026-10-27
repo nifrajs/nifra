@@ -22,6 +22,7 @@ type JsonErrorContinuation<T> = (error: unknown) => T | Promise<T>
 
 type FramedJsonSource = RequestSource & {
   readonly bytes?: () => Promise<Uint8Array>
+  readonly text?: () => Promise<string>
   readonly jsonWithByteLength?: () => Promise<{
     readonly value: unknown
     readonly byteLength: number
@@ -38,7 +39,8 @@ const fromBuffer =
     settle(new Uint8Array(buffer))
 
 // `Deno.serve`'s own `Request.json()` keeps a leading UTF-8 byte order mark that its `text()` and every
-// other runtime's `json()` drop, so it refuses a body they parse. Deno decodes the bytes itself below.
+// other runtime's `json()` drop, so it refuses a body they parse. Deno uses `text()` for an
+// untouched, runtime-framed request, or decodes the checked bytes below for other sources.
 const nativeJsonKeepsBom = "Deno" in globalThis
 
 /** Read a JSON source with the declared-length precheck, delivered-byte recheck, streaming cap, and
@@ -82,6 +84,29 @@ export function readBoundedJsonSource<T>(
       return onResult === undefined
         ? Promise.resolve(plainError(413, "payload_too_large"))
         : Promise.resolve(plainError(413, "payload_too_large")).then(onResult)
+
+    // A trusted runtime frame makes Content-Length the byte bound. Wrapped or untrusted sources
+    // must keep the delivered-byte check below, and chunked bodies must keep the streaming cap.
+    if (
+      nativeJsonKeepsBom &&
+      raw === req &&
+      hasTrustedBodyFraming(req) &&
+      raw.text !== undefined &&
+      headerOf(req, "transfer-encoding") === null
+    ) {
+      return raw.text().then(
+        (text) => {
+          let parsed: unknown
+          try {
+            parsed = parseJsonGuarded(text, protoPoisoning)
+          } catch {
+            parsed = INVALID_JSON()
+          }
+          return onResult === undefined ? parsed : onResult(parsed)
+        },
+        () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
+      )
+    }
 
     if (hasTrustedBodyFraming(req) && !nativeJsonKeepsBom) {
       return raw.json().then(
