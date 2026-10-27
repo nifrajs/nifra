@@ -2012,7 +2012,8 @@ function toWebRequest(
 ): Request {
   const url = `${protocol}://${host}${req.url ?? "/"}`
   const method = req.method ?? "GET"
-  return makeWebRequest(req, method, url, headerRecordFromNode(req.headers), undefined, res)
+  const signal = res === undefined ? undefined : disconnectSignal(res)
+  return makeWebRequest(req, method, url, headerRecordFromNode(req.headers), undefined, signal)
 }
 
 function toNodeRequestSource(
@@ -2263,7 +2264,7 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
       this.method,
       this.url,
       () => this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
-      (headers) => {
+      (headers, signal) => {
         if (this.consumedBody !== undefined) {
           const real = makeWebRequest(
             this.nodeReq,
@@ -2271,7 +2272,7 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
             this.url,
             headers,
             this.consumedBody,
-            this.nodeRes,
+            signal,
           )
           // Preserve one-shot body semantics if user code asks for `c.req` after nifra already
           // consumed it.
@@ -2293,7 +2294,7 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
               this.url,
               headers,
               new ReadableStream<Uint8Array>(),
-              this.nodeRes,
+              signal,
             )
             const standIn = real.body
             if (disturbed) void standIn?.cancel()
@@ -2301,8 +2302,9 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
             return real
           }
         }
-        return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, this.nodeRes)
+        return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, signal)
       },
+      this.nodeRes,
     ) as unknown as Request
     return this.requestValue
   }
@@ -2384,7 +2386,9 @@ class LeanNodeGetSource extends NodeSourceBase implements NodeRequestSource {
       this.method,
       this.url,
       () => this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
-      (headers) => makeWebRequest(this.nodeReq, this.method, this.url, headers, null, this.nodeRes),
+      (headers, signal) =>
+        makeWebRequest(this.nodeReq, this.method, this.url, headers, null, signal),
+      this.nodeRes,
     ) as unknown as Request
     return this.requestValue
   }
@@ -2441,25 +2445,28 @@ function headerPairsFromNode(input: IncomingHttpHeaders): Array<[string, string]
   return pairs
 }
 
+/** A request's `signal`: it aborts when the client goes away before the response finished, as on Bun
+ * and Deno. */
+function disconnectSignal(res: RequestEnd): AbortSignal {
+  const disconnect = new AbortController()
+  const onClose = (): void => {
+    if (!res.writableFinished) disconnect.abort()
+  }
+  if (res.closed) onClose()
+  else res.once("close", onClose)
+  return disconnect.signal
+}
+
 function makeWebRequest(
   req: IncomingMessage,
   method: string,
   url: string,
   headers: Headers | NodeHeaderInit,
   body?: ReadableStream<Uint8Array> | Uint8Array | null,
-  res?: RequestEnd,
+  signal?: AbortSignal,
 ): Request {
   const init: RequestInit & { duplex?: "half" } = { method, headers }
-  if (res !== undefined) {
-    // `signal` aborts when the client goes away before the response finished, as on Bun and Deno.
-    const disconnect = new AbortController()
-    init.signal = disconnect.signal
-    const onClose = (): void => {
-      if (!res.writableFinished) disconnect.abort()
-    }
-    if (res.closed) onClose()
-    else res.once("close", onClose)
-  }
+  if (signal !== undefined) init.signal = signal
   if (method !== "GET" && method !== "HEAD") {
     // Stream the body in; `duplex: "half"` is required for a streamed request body.
     init.body =
@@ -2474,9 +2481,9 @@ function makeWebRequest(
  * its internal URL parse alone showed at ~2.4% of a realistic request - yet most consumers of
  * `c.req` (and of the `req` argument Web hooks receive) only ever read `method`, `url`, or a
  * header. This class serves those three from what the adapter already has, materializes one real
- * `Headers` on first `headers` access, and defers the full undici `Request` until something
- * actually needs the rest of the surface (body readers, `signal`, `clone`, ...), forwarding to it
- * from then on. The prototype chains to the native `Request`, so `instanceof Request` holds and
+ * `Headers` on first `headers` access, builds `signal` from the response's close, and defers the full
+ * undici `Request` until something needs the rest of the surface (body readers, `clone`, ...),
+ * forwarding to it from then on. The prototype chains to the native `Request`, so `instanceof Request` holds and
  * every forwarded member runs with a genuine receiver. The `url` is ALWAYS the adapter's own
  * derivation (the declared protocol trust) - never re-derived here.
  */
@@ -2486,20 +2493,24 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
     #method: string
     #url: string
     #headersInit: (() => Headers | NodeHeaderInit) | undefined
-    #materialize: ((headers: Headers | NodeHeaderInit) => Request) | undefined
+    #materialize: ((headers: Headers | NodeHeaderInit, signal: AbortSignal) => Request) | undefined
+    #end: RequestEnd
     #headers: Headers | undefined
+    #signal: AbortSignal | undefined
     #real: Request | undefined
 
     constructor(
       method: string,
       url: string,
       headersInit: () => Headers | NodeHeaderInit,
-      materialize: (headers: Headers | NodeHeaderInit) => Request,
+      materialize: (headers: Headers | NodeHeaderInit, signal: AbortSignal) => Request,
+      end: RequestEnd,
     ) {
       this.#method = method
       this.#url = url
       this.#headersInit = headersInit
       this.#materialize = materialize
+      this.#end = end
     }
 
     get method(): string {
@@ -2521,14 +2532,25 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
       return this.#headers
     }
 
+    // A page render reads it for every document, so it must not build the real request. That one,
+    // once built, follows this signal, and reading it keeps returning this one.
+    get signal(): AbortSignal {
+      this.#signal ??= disconnectSignal(this.#end)
+      return this.#signal
+    }
+
     /** The real undici Request, built on first demand. Named for the forwarding descriptors below. */
     get _real(): Request {
       if (this.#real === undefined) {
-        const materialize = this.#materialize as (h: Headers | NodeHeaderInit) => Request
+        const materialize = this.#materialize as (
+          h: Headers | NodeHeaderInit,
+          signal: AbortSignal,
+        ) => Request
         // Hand the materializer the SAME Headers a hook may already have observed (and mutated),
         // so the real request reflects it; otherwise let it build from its own cheap record.
         this.#real = materialize(
           this.#headers ?? (this.#headersInit as () => Headers | NodeHeaderInit)(),
+          this.signal,
         )
         this.#headersInit = undefined
         this.#materialize = undefined
@@ -2540,7 +2562,7 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
   // Forward every other Request member to the lazily materialized real request. Data properties
   // (e.g. Symbol.toStringTag) are reachable through the chained prototype without a brand check,
   // so only accessors and methods need explicit forwarding.
-  const own = new Set<string | symbol>(["constructor", "method", "url", "headers"])
+  const own = new Set<string | symbol>(["constructor", "method", "url", "headers", "signal"])
   forwardToReal(LazyWebRequest.prototype, NativeRequest.prototype, own)
   Object.setPrototypeOf(LazyWebRequest.prototype, NativeRequest.prototype)
   return LazyWebRequest
