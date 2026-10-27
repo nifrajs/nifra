@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [bun, node, deno]
+        runtime: [deno]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -47,10 +47,10 @@ jobs:
           { git rev-parse HEAD; uname -a; lscpu; bun --version; node --version; deno --version; oha --version; } > bench/temporary-get-results/host.txt
           # shellcheck disable=SC2016
           bun -e 'import { readCoreSplit } from "./bench/ci/host.ts"; const s=readCoreSplit(); if (!s) throw Error("no core split"); console.log(`SERVER_CPUS=${s.server.join(",")}\nLOAD_CPUS=${s.load.join(",")}`)' >> "$GITHUB_ENV"
-      - name: Profile GET
+      - name: Measure lazy Deno peer address
         env:
           PROFILE_RUNTIME: ${{ matrix.runtime }}
-        run: bash bench/temporary-get-profile/run.sh "$PROFILE_RUNTIME"
+        run: bun run bench/temporary-get-profile/deno-peer-ablation.ts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
