@@ -4,7 +4,7 @@
  * plain-data render straight to the socket. Imports only runtime-core + respond + the spine types.
  */
 
-import { jsonText } from "./json-text.ts"
+import { type DateProbe, routeJsonText } from "./json-text.ts"
 import {
   applySetToResponse,
   applyStaticResponseHeaders,
@@ -68,10 +68,15 @@ export type NodeServeOutcome =
  * cookies appended exactly as `toResponse` does (so the set-cookie-then-`redirect()` pattern still
  * works on Node).
  */
-export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutcome {
+export function toNodeOutcome(
+  result: HandlerResult,
+  set: CtxSet,
+  _ctx?: unknown,
+  probe?: DateProbe,
+): NodeServeOutcome {
   if (isResponseResult(result)) {
     const plain = result.plain
-    if (plain !== undefined) return plainNodeOutcome(plain, set)
+    if (plain !== undefined) return plainNodeOutcome(plain, set, probe)
     const body = result.toNodeBody?.()
     if (body !== undefined) {
       return {
@@ -90,7 +95,8 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
     return nodeOutcomeFromResponse(applySetToResponse(normalizeBodylessResponse(result), set))
   }
   const status = set.status ?? (result === undefined ? 204 : 200)
-  const body = result === undefined || isBodylessStatus(status) ? null : jsonText(result)
+  const body =
+    result === undefined || isBodylessStatus(status) ? null : routeJsonText(result, probe)
   return {
     kind: "json",
     status,
@@ -105,13 +111,20 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
  * outcome a handler's plain return produces, so an early exit is written to the socket by the same
  * direct writer, with a `content-length`, and never builds a `Response`.
  */
-export function plainNodeOutcome(plain: PlainRender, set: CtxSet): NodeServeOutcome {
+export function plainNodeOutcome(
+  plain: PlainRender,
+  set: CtxSet,
+  probe?: DateProbe,
+): NodeServeOutcome {
   return {
     kind: "json",
     status: plain.status,
     headers: plainRenderHeaders(plain.headers, set._headers),
     cookies: set._cookies,
-    body: plain.body === undefined || isBodylessStatus(plain.status) ? null : jsonText(plain.body),
+    body:
+      plain.body === undefined || isBodylessStatus(plain.status)
+        ? null
+        : routeJsonText(plain.body, probe),
   }
 }
 

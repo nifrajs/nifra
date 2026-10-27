@@ -2382,7 +2382,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes` arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the handler its own `R…
 - **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined) => void`
   Write an unhandled request error to the log. An error's own text can quote the input that produced it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500 with no message and no stack is an incident nobody can diagnose, and the framework already ships the na…
-- **jsonResponse** _(function)_ - `jsonResponse: (value: unknown, init?: ResponseInit) => Response`
+- **jsonResponse** _(function)_ - `jsonResponse: (value: unknown, init?: ResponseInit, probe?: DateProbe) => Response`
   `Response.json`, with each `bigint` written as its decimal string, as `jsonText` writes it.
 - **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`
 - **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
@@ -2395,7 +2395,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
   Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
-- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request, unstamped?: boolean) => Response`
+- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request, unstamped?: boolean, probe?: DateProbe) => Response`
   Render a handler's result. `request` is the request being answered, given when response hooks will write next: a copy or body-less response built here is then recorded as that request's own, so the hooks write it in place instead of copying it again. `unstamped` is the caller's proof that no respon…
 
 ### `@nifrajs/core/effect-ledger`

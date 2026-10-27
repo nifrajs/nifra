@@ -2,6 +2,7 @@
 
 import type { Platform } from "./context.ts"
 import { hasLowercaseHeaderKeysMark, hasUpperAscii } from "./header-case.ts"
+import type { DateProbe } from "./json-text.ts"
 import type { NodeServeOutcome } from "./node-outcome.ts"
 import type { ResponseResult } from "./runtime-core.ts"
 import type { CtxSet, MaybePromise } from "./server.ts"
@@ -340,7 +341,7 @@ export function recordHeadersView(target: NodeResponseContext): ResponseHeadersV
 }
 
 export interface NodeOutcomeRuntime {
-  toOutcome(result: unknown, set: CtxSet): NodeServeOutcome
+  toOutcome(result: unknown, set: CtxSet, ctx?: unknown, probe?: DateProbe): NodeServeOutcome
   /** Materialize a buffered outcome for a Web response hook without losing its direct-write marker. */
   toResponse(outcome: NodeServeOutcome): Response
   fromResponse(response: Response | ResponseResult): NodeServeOutcome

@@ -108,6 +108,7 @@ import {
   type UrlParts,
   urlPartsOf,
 } from "./http.ts"
+import { createDateProbe, type DateProbe } from "./json-text.ts"
 import { type NodeServeOutcome, withStaticNodeHeaders } from "./node-outcome.ts"
 import type {
   NodeOutcomeRuntime,
@@ -832,6 +833,10 @@ export type CtxSet = ResponseControls & {
   _cookies?: string[]
 }
 
+/** Turns a handler result into the lane's answer; `probe` is the route's Date probe. */
+type Finalize<T> = (result: unknown, set: CtxSet, ctx: RawContext, probe?: DateProbe) => T
+type FinalizeMaybeCtx<T> = (result: unknown, set: CtxSet, ctx?: RawContext, probe?: DateProbe) => T
+
 function responseSet(ctx: RawContext): CtxSet {
   return ctx[CONTEXT_SET]() ?? EMPTY_RESPONSE_CONTROLS
 }
@@ -1395,9 +1400,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly responseBodyOwners: Set<object>
   // General lifecycles need no extra response bookkeeping when neither controls nor observers
   // use it. Share the fused renderer after the lifecycle, including on body/write routes.
-  private readonly finalizeResponse = (result: unknown, set: CtxSet, ctx?: RawContext): Response =>
+  private readonly finalizeResponse = (
+    result: unknown,
+    set: CtxSet,
+    ctx?: RawContext,
+    probe?: DateProbe,
+  ): Response =>
     set === EMPTY_RESPONSE_CONTROLS && this.onResponseHooks.length === 0
-      ? fusedRespondNoSet(result, this.responseBodyTag, this.staticResponseHeaders, true)
+      ? fusedRespondNoSet(
+          result,
+          this.responseBodyTag,
+          this.staticResponseHeaders,
+          true,
+          undefined,
+          probe,
+        )
       : toResponse(
           result as HandlerResult,
           set,
@@ -1406,6 +1423,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           // Response hooks write next, and they run for this same request object.
           ctx !== undefined && this.onResponseHooks.length > 0 ? ctx[CONTEXT_REQUEST] : undefined,
           this.onResponseHooks.length === 0,
+          probe,
         )
   private readonly responseRequests: WeakMap<Request, Request>
   /** A request the WebSocket handshake check ran the onRequest hooks on and then passed to HTTP →
@@ -2695,12 +2713,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       lanes.fusedLane === "body-derive-before-after"
     // The Node-direct dispatcher (`!webFast`) prefers these runners over the generic program. Only the
     // body-only runner also feeds the Web wrapper; the lifecycle lanes build their own Web closure.
+    const dateProbe = createDateProbe()
     const fusedBodyRunner = fusedBody
       ? this.buildFusedBodyRunner(
           handler as unknown as InternalHandler,
           schema?.body as StandardSchemaV1,
           hasDecorations ? routeDecorations : undefined,
           bodyLimit ?? UNLIMITED_BODY_BYTES,
+          dateProbe,
         )
       : fusedLifecycle
         ? this.buildFusedLifecycleRunner(
@@ -2711,6 +2731,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             schema?.query,
             schema?.body as StandardSchemaV1 | undefined,
             bodyLimit ?? UNLIMITED_BODY_BYTES,
+            dateProbe,
           )
         : undefined
     const fusedWeb =
@@ -2720,6 +2741,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             hasDecorations ? routeDecorations : undefined,
             isContextlessNoArgArrow(handler),
             bodyLimit ?? UNLIMITED_BODY_BYTES,
+            dateProbe,
           )
         : fusedQuery
           ? this.buildFusedQueryWeb(
@@ -2727,6 +2749,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               hasDecorations ? routeDecorations : undefined,
               schema?.query as StandardSchemaV1,
               bodyLimit ?? UNLIMITED_BODY_BYTES,
+              dateProbe,
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
@@ -2739,6 +2762,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                   schema?.query,
                   schema?.body as StandardSchemaV1 | undefined,
                   bodyLimit ?? UNLIMITED_BODY_BYTES,
+                  dateProbe,
                 )
               : undefined
     const program = compileRouteProgram({
@@ -2784,6 +2808,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       around: [...this.aroundHooks],
       execution,
       program,
+      dateProbe,
     }
     const descriptor: RouteDescriptor = {
       method,
@@ -3250,6 +3275,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             entry.schema?.body as StandardSchemaV1,
             entry.hasDecorations ? entry.decorations : undefined,
             entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+            entry.dateProbe,
           )
         : lifecycle
           ? this.buildFusedLifecycleRunner(
@@ -3260,6 +3286,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               entry.schema?.query,
               entry.schema?.body as StandardSchemaV1 | undefined,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+              entry.dateProbe,
             )
           : undefined
     const fusedWeb =
@@ -3271,6 +3298,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               entry.hasDecorations ? entry.decorations : undefined,
               entry.schema?.query as StandardSchemaV1,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+              entry.dateProbe,
             )
           : lifecycle
             ? this.buildFusedLifecycleWeb(
@@ -3281,12 +3309,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                 entry.schema?.query,
                 entry.schema?.body as StandardSchemaV1 | undefined,
                 entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+                entry.dateProbe,
               )
             : this.buildFusedWeb(
                 entry.handler,
                 entry.hasDecorations ? entry.decorations : undefined,
                 isContextlessNoArgArrow(entry.handler),
                 entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+                entry.dateProbe,
               )
     return {
       ...route,
@@ -4100,7 +4130,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private dispatch<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     // True only from the Web `fetch` path - unlocks each route's fused lane, whose output type IS
@@ -4138,7 +4168,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runWithNodeRequest<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): MaybePromise<T> {
@@ -4179,7 +4209,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     request: NodeRequestContext,
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): Promise<T> {
@@ -4212,7 +4242,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runWithOnRequest<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4268,7 +4298,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     originalRequest: Request,
     sourceAtAwait: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4369,7 +4399,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private routeAndRun<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4527,7 +4557,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     params: Record<string, string>,
     search: string | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4591,7 +4621,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     params: Record<string, string>,
     search: string | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
@@ -4730,7 +4760,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     signal: AbortSignal,
     budget: RequestBudget,
     platform: Platform | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
@@ -4752,7 +4782,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return result.then(
         (value) => {
           try {
-            return finalize(value, EMPTY_RESPONSE_CONTROLS)
+            return finalize(value, EMPTY_RESPONSE_CONTROLS, undefined, entry.dateProbe)
           } catch (err) {
             return this.contextlessBareError(
               err,
@@ -4779,7 +4809,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           ),
       )
     }
-    return finalize(result, EMPTY_RESPONSE_CONTROLS)
+    return finalize(result, EMPTY_RESPONSE_CONTROLS, undefined, entry.dateProbe)
   }
 
   private contextlessBareError<T>(
@@ -4822,7 +4852,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runBare<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
@@ -4838,7 +4868,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (value) => {
           // A synchronous finalize throw reaches runMatchedLanes; this one would reject.
           try {
-            return finalize(value, responseSet(ctx), ctx)
+            return finalize(value, responseSet(ctx), ctx, entry.dateProbe)
           } catch (err) {
             return this.bareError(err, ctx, finalize, wrapResponse)
           }
@@ -4846,7 +4876,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (err) => this.bareError(err, ctx, finalize, wrapResponse),
       )
     }
-    return finalize(result, responseSet(ctx), ctx)
+    return finalize(result, responseSet(ctx), ctx, entry.dateProbe)
   }
 
   /** Bare-route error rendering - identical to the compiled route program's catch minus the (absent) onError
@@ -4863,6 +4893,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     decorations: Record<PropertyKey, unknown> | undefined,
     contextless: boolean,
     maxBodyBytes: number,
+    probe: DateProbe,
   ): FusedWebRunner {
     // Same thrown-value contract as the generic lane (`bare-error-lane.ts` via `bareError`); the fused
     // lane only injects its renderer, so a thrown `status(...)` and the flat 500 fold in static headers
@@ -4928,6 +4959,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                   this.staticResponseHeaders,
                   this.onResponseHooks.length === 0,
                   this.onResponseHooks.length === 0 ? undefined : requestOf(source),
+                  probe,
                 )
               } catch (err) {
                 return fail(err, source, params, search, signal, budget, platform, nativeContext)
@@ -4942,6 +4974,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           this.staticResponseHeaders,
           this.onResponseHooks.length === 0,
           this.onResponseHooks.length === 0 ? undefined : requestOf(source),
+          probe,
         )
       }
     }
@@ -4967,7 +5000,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0, probe),
           (err) => logError(err, ctx),
         )
       }
@@ -4977,15 +5010,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         this.responseBodyTag,
         this.staticResponseHeaders,
         this.onResponseHooks.length === 0,
+        probe,
       )
     }
   }
 
   /** A fused Web lane's render in an async continuation, where a result that cannot be rendered
    * must fail like a handler throw; a synchronous render throw reaches {@link runMatchedLanes}. */
-  private respondFused(result: unknown, ctx: RawContext, unstamped?: boolean): Response {
+  private respondFused(
+    result: unknown,
+    ctx: RawContext,
+    unstamped?: boolean,
+    probe?: DateProbe,
+  ): Response {
     try {
-      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders, unstamped)
+      return fusedRespond(
+        result,
+        ctx,
+        this.responseBodyTag,
+        this.staticResponseHeaders,
+        unstamped,
+        probe,
+      )
     } catch (err) {
       return this.bareError(
         err,
@@ -5004,17 +5050,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     bodySchema: StandardSchemaV1,
     decorations: Record<PropertyKey, unknown> | undefined,
     maxBodyBytes: number,
+    probe: DateProbe,
   ): FusedBodyRunner {
     const logError = <T>(
       err: unknown,
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): T => this.bareError(err, ctx, finalize, wrapResponse)
 
     const runHandler = <T>(
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       if (decorations !== undefined) Object.assign(ctx, decorations)
@@ -5028,7 +5075,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return output.then(
           (result) => {
             try {
-              return finalize(result, responseSet(ctx), ctx)
+              return finalize(result, responseSet(ctx), ctx, probe)
             } catch (err) {
               return logError(err, ctx, finalize, wrapResponse)
             }
@@ -5037,7 +5084,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         )
       }
       try {
-        return finalize(output, responseSet(ctx), ctx)
+        return finalize(output, responseSet(ctx), ctx, probe)
       } catch (err) {
         return logError(err, ctx, finalize, wrapResponse)
       }
@@ -5046,7 +5093,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const runValidated = <T>(
       result: StandardResult<unknown>,
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       if (result.issues !== undefined) return wrapResponse(plainValidationError(result.issues))
@@ -5057,7 +5104,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const runParsed = <T>(
       parsed: unknown,
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
@@ -5093,7 +5140,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       budget: RequestBudget,
       platform: Platform | undefined,
       nativeContext: boolean,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       const ctx = nativeContext
@@ -5135,13 +5182,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         budget,
         platform,
         nativeContext,
-        (result, _set, ctx) =>
+        (result, _set, ctx, probe) =>
           fusedRespond(
             result,
             ctx,
             this.responseBodyTag,
             this.staticResponseHeaders,
             this.onResponseHooks.length === 0,
+            probe,
           ),
         this.wrapWebResponse,
       ) as MaybePromise<Response>
@@ -5159,6 +5207,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     decorations: Record<PropertyKey, unknown> | undefined,
     querySchema: StandardSchemaV1,
     maxBodyBytes: number,
+    probe: DateProbe,
   ): FusedWebRunner {
     // Same thrown-value contract as the generic lane (`bare-error-lane.ts` via `bareError`); the fused
     // lane only injects its renderer, so a thrown `status(...)` and the flat 500 fold in static headers
@@ -5180,11 +5229,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (result instanceof Promise) {
         return result.then(
-          (settled) => this.respondFused(settled, ctx, this.onResponseHooks.length === 0),
+          (settled) => this.respondFused(settled, ctx, this.onResponseHooks.length === 0, probe),
           (err) => logError(err, ctx),
         )
       }
-      return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+      return this.respondFused(result, ctx, this.onResponseHooks.length === 0, probe)
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
@@ -5239,6 +5288,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     querySchema: StandardSchemaV1 | undefined,
     bodySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
+    probe: DateProbe,
   ): FusedWebRunner {
     const logError = (err: unknown, ctx: RawContext): Response =>
       this.bareError(
@@ -5250,7 +5300,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Continuations capture route state once; each request supplies its own context.
     const runAfter = (result: unknown, ctx: RawContext): MaybePromise<Response> => {
       if (after === undefined)
-        return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+        return this.respondFused(result, ctx, this.onResponseHooks.length === 0, probe)
       let transformed: unknown
       try {
         transformed = after(result, ctx)
@@ -5259,11 +5309,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (transformed instanceof Promise) {
         return transformed.then(
-          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0, probe),
           (err) => logError(err, ctx),
         )
       }
-      return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+      return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0, probe)
     }
     const runHandler = (ctx: RawContext): MaybePromise<Response> => {
       let result: unknown
@@ -5441,23 +5491,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     querySchema: StandardSchemaV1 | undefined,
     bodySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
+    probe: DateProbe,
   ): FusedBodyRunner {
     const logError = <T>(
       err: unknown,
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): T => this.bareError(err, ctx, finalize, wrapResponse)
 
     const runFinish = <T>(
       result: unknown,
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       if (after === undefined) {
         try {
-          return finalize(result, responseSet(ctx), ctx)
+          return finalize(result, responseSet(ctx), ctx, probe)
         } catch (err) {
           return logError(err, ctx, finalize, wrapResponse)
         }
@@ -5472,7 +5523,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return transformed.then(
           (value) => {
             try {
-              return finalize(value, responseSet(ctx), ctx)
+              return finalize(value, responseSet(ctx), ctx, probe)
             } catch (err) {
               return logError(err, ctx, finalize, wrapResponse)
             }
@@ -5481,7 +5532,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         )
       }
       try {
-        return finalize(transformed, responseSet(ctx), ctx)
+        return finalize(transformed, responseSet(ctx), ctx, probe)
       } catch (err) {
         return logError(err, ctx, finalize, wrapResponse)
       }
@@ -5490,7 +5541,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const finalizeEarly = <T>(
       result: unknown,
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): T => {
       try {
@@ -5502,7 +5553,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     const runHandler = <T>(
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       let result: unknown
@@ -5522,7 +5573,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     const runBefore = <T>(
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       let early: unknown
@@ -5546,7 +5597,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     const runDerive = <T>(
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       let derived: unknown
@@ -5586,7 +5637,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const onParsed = <T>(
         parsed: unknown,
         ctx: RawContext,
-        finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+        finalize: Finalize<T>,
         wrapResponse: (response: Response | ResponseResult) => T,
       ): MaybePromise<T> => {
         let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
@@ -5619,7 +5670,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         budget: RequestBudget,
         platform: Platform | undefined,
         nativeContext: boolean,
-        finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+        finalize: Finalize<T>,
         wrapResponse: (response: Response | ResponseResult) => T,
       ): MaybePromise<T> => {
         const ctx = nativeContext
@@ -5657,7 +5708,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const runValidated = <T>(
       validation: StandardResult<unknown> | Promise<StandardResult<unknown>>,
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       if (validation instanceof Promise) {
@@ -5685,7 +5736,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       budget: RequestBudget,
       platform: Platform | undefined,
       nativeContext: boolean,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      finalize: Finalize<T>,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       const ctx = nativeContext
@@ -5714,7 +5765,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private bareError<T>(
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+    finalize: Finalize<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): T {
     // The thrown-value contract lives in `bare-error-lane.ts`, one source of truth for both this
@@ -5743,7 +5794,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     ctx: RawContext,
     run: () => MaybePromise<T>,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let outcome: MaybePromise<T>
@@ -5763,7 +5814,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return executeRouteProgram(this, entry, entry.program, source, ctx, finalize, wrapResponse)
@@ -5809,7 +5860,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     error: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     fallback?: () => T,
   ): MaybePromise<T> {
@@ -5822,7 +5873,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     ctx: RawContext,
     result: unknown,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
@@ -5851,7 +5902,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     return readBodyFramed(
@@ -5873,7 +5924,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     parsed: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
@@ -5908,14 +5959,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private executeHandler<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse?: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
     const handlerOutput = entry.handler(ctx)
     if (handlerOutput instanceof Promise) {
       return handlerOutput.then(
-        (value) => finalize(value, responseSet(ctx), ctx),
+        (value) => finalize(value, responseSet(ctx), ctx, entry.dateProbe),
         (err) => {
           if (wrapResponse) {
             return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
@@ -5924,14 +5975,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         },
       )
     }
-    return finalize(handlerOutput, responseSet(ctx), ctx)
+    return finalize(handlerOutput, responseSet(ctx), ctx, entry.dateProbe)
   }
 
   private handleValidationErrorRecovery<T>(
     entry: RouteEntry,
     recovery: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     originalIssues: ReadonlyArray<StandardIssue>,
     kind: "body" | "query",
@@ -5981,7 +6032,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
@@ -6021,7 +6072,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private runQueryOnly<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
@@ -6059,7 +6110,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
@@ -6225,20 +6276,26 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private finishLifecycleContract<T>(
     entry: RouteEntry,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     result: unknown,
   ): MaybePromise<T> {
     try {
       const contract = entry.responseContract
-      if (contract === undefined) return finalize(result, responseSet(ctx), ctx)
+      if (contract === undefined) return finalize(result, responseSet(ctx), ctx, entry.dateProbe)
       const checked = contract.runtime.check(contract.definition, result, ctx)
       if (checked instanceof Promise) {
         return checked.then(
           (outcome) => {
             // The render runs outside the try below: a throw (a BigInt, a cycle) must still reach onError.
             try {
-              return this.finishContractOutcome(ctx, finalize, wrapResponse, outcome)
+              return this.finishContractOutcome(
+                ctx,
+                finalize,
+                wrapResponse,
+                outcome,
+                entry.dateProbe,
+              )
             } catch (err) {
               return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
             }
@@ -6246,7 +6303,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
         )
       }
-      return this.finishContractOutcome(ctx, finalize, wrapResponse, checked)
+      return this.finishContractOutcome(ctx, finalize, wrapResponse, checked, entry.dateProbe)
     } catch (err) {
       return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
     }
@@ -6254,13 +6311,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   private finishContractOutcome<T>(
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     outcome: {
       readonly kind: "ok" | "warn" | "violation"
       readonly value?: unknown
       readonly message?: string
     },
+    probe?: DateProbe,
   ): T {
     if (outcome.kind === "violation") {
       this.logger.error("response contract violation", {
@@ -6277,7 +6335,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         detail: outcome.message,
       })
     }
-    return finalize(outcome.value, responseSet(ctx), ctx)
+    return finalize(outcome.value, responseSet(ctx), ctx, probe)
   }
 
   /** Synchronous by design, and `MaybePromise` rather than `Promise` for the same reason: control flow
@@ -6289,7 +6347,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     // The answer when no hook does; the default 500 unless a stage owns a different fail-closed status.
     fallback?: () => T,
@@ -6329,7 +6387,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     err: unknown,
     source: RequestSource,
     platform: Platform | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (err instanceof Response || isResponseResult(err)) return wrapResponse(err)
@@ -6360,7 +6418,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     contract: RouteEntry["responseContract"],
     err: unknown,
     ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
+    finalize: FinalizeMaybeCtx<T>,
     wrapResponse: (response: Response | ResponseResult) => T,
     fallback?: () => T,
   ): Promise<T> {

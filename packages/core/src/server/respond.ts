@@ -8,7 +8,7 @@ import { hasResidentBody, markResidentBody, residentBodiesRecorded } from "../mo
 import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
 import { plainError } from "./http.ts"
 import { jsonResponse } from "./json-response.ts"
-import { jsonText } from "./json-text.ts"
+import { type DateProbe, routeJsonText } from "./json-text.ts"
 import {
   CONTEXT_REQUEST,
   CONTEXT_SET,
@@ -218,8 +218,9 @@ function jsonResponseWithOwnHeaders(
   status: number,
   headers: Record<string, string>,
   unstamped: boolean,
+  probe: DateProbe | undefined,
 ): Response {
-  const response = jsonResponse(result, status === 200 ? undefined : { status })
+  const response = jsonResponse(result, status === 200 ? undefined : { status }, probe)
   for (const name of Object.keys(headers)) response.headers.set(name, headers[name]!)
   return withBody(response, unstamped)
 }
@@ -506,10 +507,12 @@ function tagged(
 /** A plain 200 JSON response. On Bun and Deno the native `Response.json` beats a hand-inlined
  * stringify + Response construction; on Node undici's is 18-26% slower than stringify into the
  * prebuilt init. Both keep the exact body/content-type contract. */
-function plainJsonResponse(result: object): Response {
+function plainJsonResponse(result: object, probe: DateProbe | undefined): Response {
   // `undefined` from stringify (a `toJSON` returning nothing) keeps `Response.json`'s TypeError.
-  const body = IS_BUN || IS_DENO ? undefined : (jsonText(result) as string | undefined)
-  return body === undefined ? jsonResponse(result) : new Response(body, JSON_INIT_200)
+  const body = IS_BUN || IS_DENO ? undefined : (routeJsonText(result, probe) as string | undefined)
+  return body === undefined
+    ? jsonResponse(result, undefined, probe)
+    : new Response(body, JSON_INIT_200)
 }
 
 /** Fused-lane respond when `c.set` is untouched; keep the generic fallback for non-JSON values. */
@@ -519,6 +522,7 @@ export function fusedRespondNoSet(
   statics?: StaticResponseHeaders,
   unstamped = false,
   request?: Request,
+  probe?: DateProbe,
 ): Response {
   // With no response hook registered, no code path ever asks whether this response takes writes in
   // place, so recording it in the body WeakSet is dead work - `Response.json` alone is cheaper on Bun
@@ -538,7 +542,7 @@ export function fusedRespondNoSet(
     !(result instanceof Response) &&
     !isResponseResult(result)
   ) {
-    const response = plainJsonResponse(result)
+    const response = plainJsonResponse(result, probe)
     return residentBodiesRecorded ? markResidentBody(response) : response
   }
   if (
@@ -554,7 +558,7 @@ export function fusedRespondNoSet(
     // Deno the tier's only saving here is the response walk itself; every other runtime keeps the
     // one-call prebuilt init below.
     if (statics !== undefined && IS_DENO && !tagResponseBody) {
-      const response = jsonResponse(result)
+      const response = jsonResponse(result, undefined, probe)
       // Indexed for the same reason as `applyStaticDefaults`: pair destructuring is a second
       // iterator walk per header.
       for (let i = 0; i < statics.entries.length; i++) {
@@ -567,7 +571,7 @@ export function fusedRespondNoSet(
     // content-type, so this lane still constructs the response in one call - the whole point of
     // declaring headers statically instead of writing them per response.
     if (tagResponseBody || statics !== undefined) {
-      const body = jsonText(result) as string | undefined
+      const body = routeJsonText(result, probe) as string | undefined
       // Each shape carries the content-type of the lane it stands in for: the framework's own for the
       // tagging path this branch already owned, and `Response.json`'s for the construction below that
       // the static tier replaces. They differ on Deno, and a declared header must not change one.
@@ -590,8 +594,8 @@ export function fusedRespondNoSet(
     }
     return withBody(
       statics === undefined
-        ? plainJsonResponse(result)
-        : jsonResponse(result, statics.responseJsonInit200()),
+        ? plainJsonResponse(result, probe)
+        : jsonResponse(result, statics.responseJsonInit200(), probe),
     )
   }
   return toResponse(
@@ -600,6 +604,8 @@ export function fusedRespondNoSet(
     tagResponseBody,
     statics,
     request,
+    false,
+    probe,
   )
 }
 
@@ -611,12 +617,21 @@ export function fusedRespond(
   tagResponseBody: ResponseBodyTagOption = false,
   statics?: StaticResponseHeaders,
   unstamped = false,
+  probe?: DateProbe,
 ): Response {
   const set = ctx[CONTEXT_SET]()
   const request = unstamped ? undefined : ctx[CONTEXT_REQUEST]
   if (set === undefined)
-    return fusedRespondNoSet(result, tagResponseBody, statics, unstamped, request)
-  return toResponse(result as HandlerResult, set, tagResponseBody, statics, request, unstamped)
+    return fusedRespondNoSet(result, tagResponseBody, statics, unstamped, request, probe)
+  return toResponse(
+    result as HandlerResult,
+    set,
+    tagResponseBody,
+    statics,
+    request,
+    unstamped,
+    probe,
+  )
 }
 
 /**
@@ -632,6 +647,7 @@ export function toResponse(
   statics?: StaticResponseHeaders,
   request?: Request,
   unstamped = false,
+  probe?: DateProbe,
 ): Response {
   if (isResponseResult(result)) {
     const plain = result.plain
@@ -646,6 +662,7 @@ export function toResponse(
         statics,
         request,
         unstamped,
+        probe,
       )
     }
     // A buffered page is built from the body it reports, so the bytes its hooks see are the ones sent.
@@ -678,7 +695,7 @@ export function toResponse(
       typeof tagResponseBody === "object" ? tagResponseBody : undefined,
     )
   }
-  return renderValue(result, set, tagResponseBody, statics, request, unstamped)
+  return renderValue(result, set, tagResponseBody, statics, request, unstamped, probe)
 }
 
 /**
@@ -709,6 +726,7 @@ function renderValue(
   statics: StaticResponseHeaders | undefined,
   request: Request | undefined,
   unstamped = false,
+  probe?: DateProbe,
 ): Response {
   // The static tier only changes WHICH prebuilt header shape the branches below reach for: the
   // request's own headers are folded on top of the declared defaults once, here.
@@ -738,14 +756,14 @@ function renderValue(
     typeof result === "object" &&
     result !== null
   ) {
-    return jsonResponseWithOwnHeaders(result, status, own, unstamped)
+    return jsonResponseWithOwnHeaders(result, status, own, unstamped, probe)
   }
   if (own === undefined && result !== undefined) {
     // Fast respond (profiled ~50 ns/req faster on every plain-JSON return): `JSON.stringify` + a
     // prebuilt init beats `Response.json`'s internal init handling. Output is byte-identical -
     // same body bytes, same probed content-type. `undefined` from stringify (a function/symbol
     // result) delegates to Response.json so its TypeError contract stays the single source.
-    const body = jsonText(result) as string | undefined
+    const body = routeJsonText(result, probe) as string | undefined
     if (body !== undefined) {
       const init: ResponseInit =
         status === 200
@@ -765,7 +783,7 @@ function renderValue(
   const init: ResponseInit = headers === undefined ? { status } : { status, headers }
   if (result === undefined) return ownedBy(new Response(null, init), request)
   if (tagResponseBody) {
-    const body = jsonText(result) as string | undefined
+    const body = routeJsonText(result, probe) as string | undefined
     if (body !== undefined) {
       const response =
         IS_DENO && !(headers instanceof Headers)
@@ -787,9 +805,9 @@ function renderValue(
   if (IS_DENO && headers !== undefined && !(headers instanceof Headers)) {
     // Deno's own `Response.json` then header writes measured ~10% under stringify, construction and
     // the same writes plus a content-type one; a declared content-type still overrides the default.
-    return jsonResponseWithOwnHeaders(result, status, headers, unstamped)
+    return jsonResponseWithOwnHeaders(result, status, headers, unstamped, probe)
   }
-  return withBody(jsonResponse(result, init), unstamped)
+  return withBody(jsonResponse(result, init, probe), unstamped)
 }
 
 // Add a JSON content-type without pre-building a `Headers` instance just to check-and-set one key:

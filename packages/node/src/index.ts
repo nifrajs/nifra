@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url"
 import { FastResponse } from "srvx/node"
 import { type BodyReadState, NodeBodyRead } from "./body-read.ts"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
-import { jsonText } from "./generated/json-text.ts"
+import { type DateProbe, jsonText, routeJsonText } from "./generated/json-text.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { parseByteRange } from "./generated/range.ts"
 import { plainRenderHeaders } from "./generated/render-headers.ts"
@@ -155,7 +155,12 @@ interface NodeContextSet {
 }
 
 interface NodeOutcomeRuntime {
-  toOutcome(result: unknown, set: NodeContextSet): NodeServeOutcome
+  toOutcome(
+    result: unknown,
+    set: NodeContextSet,
+    ctx?: unknown,
+    probe?: DateProbe,
+  ): NodeServeOutcome
   toResponse(outcome: NodeServeOutcome): Response
   fromResponse(response: Response | NodeResponseResult): NodeServeOutcome
   timeout(): NodeServeOutcome
@@ -232,7 +237,7 @@ function normalizeBodylessResponse(response: Response): Response {
 }
 
 const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
-  toOutcome(result, set) {
+  toOutcome(result, set, _ctx, probe) {
     if (isResponseResult(result)) {
       // A plain render never builds a `Response` - same `kind: "json"` lane a handler's return takes.
       const plain = result.plain
@@ -245,7 +250,7 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
           body:
             plain.body === undefined || isBodylessStatus(plain.status)
               ? null
-              : jsonText(plain.body),
+              : routeJsonText(plain.body, probe),
         }
       }
       const body = result.toNodeBody?.()
@@ -264,7 +269,8 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
       return nodeOutcomeFromResponse(applySetToResponse(result, set))
     }
     const status = set.status ?? (result === undefined ? 204 : 200)
-    const body = result === undefined || isBodylessStatus(status) ? null : jsonText(result)
+    const body =
+      result === undefined || isBodylessStatus(status) ? null : routeJsonText(result, probe)
     return {
       kind: "json",
       status,

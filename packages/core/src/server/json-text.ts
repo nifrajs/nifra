@@ -145,6 +145,23 @@ function datesWritten(value: object, path: object[]): unknown {
 }
 
 /**
+ * What one route's answers have taught the probe. Once `QUIET_AFTER` answers in a row held no `Date`,
+ * it looks at one answer in every `SKIPPED + 1`, and an answer holding one sets it looking at each
+ * answer again. A skipped answer goes to the serializer as it came, which writes the same JSON.
+ */
+export interface DateProbe {
+  misses: number
+  skipping: number
+}
+
+export const createDateProbe = (): DateProbe => ({ misses: 0, skipping: 0 })
+
+// A settled route pays about 3% of the probe, and one that starts answering Dates is caught within
+// 32 answers.
+const QUIET_AFTER = 16
+const SKIPPED = 31
+
+/**
  * `value` as `JSON.stringify` takes it, with each plain `Date` already written when its first row
  * holds one: the engine's serializer leaves its fast path at a `Date`, several times slower. A value
  * holding an accessor goes as it came, so each getter runs once, in the serializer.
@@ -154,12 +171,40 @@ export function withDatesWritten(value: unknown): unknown {
   return datesWritten(value, [])
 }
 
+/** {@link withDatesWritten} for an answer of the route `probe` learns from. A browser bundle, which
+ * answers no route, leaves this out. */
+export function routeDatesWritten(value: unknown, probe: DateProbe | undefined): unknown {
+  if (probe === undefined) return withDatesWritten(value)
+  if (typeof value !== "object" || value === null) return value
+  if (probe.skipping > 0) {
+    probe.skipping--
+    return value
+  }
+  if (datesAhead(value, PROBE_DEPTH)) {
+    probe.misses = 0
+    return datesWritten(value, [])
+  }
+  if (probe.misses < QUIET_AFTER) probe.misses++
+  if (probe.misses === QUIET_AFTER) probe.skipping = SKIPPED
+  return value
+}
+
 /**
  * `JSON.stringify`, with each `bigint` written as its decimal string. Typed as the lib types
  * `JSON.stringify`: a value with no JSON form (`undefined`, a function) still gives `undefined`.
  */
 export function jsonText(value: unknown): string {
   const written = withDatesWritten(value)
+  try {
+    return JSON.stringify(written)
+  } catch (error) {
+    return retried(written, error)
+  }
+}
+
+/** {@link jsonText} for an answer of the route `probe` learns from. */
+export function routeJsonText(value: unknown, probe: DateProbe | undefined): string {
+  const written = routeDatesWritten(value, probe)
   try {
     return JSON.stringify(written)
   } catch (error) {

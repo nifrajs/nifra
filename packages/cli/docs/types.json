@@ -21402,7 +21402,7 @@
     "name": "jsonResponse",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function jsonResponse(value: unknown, init?: ResponseInit): Response;",
+    "signature": "export declare function jsonResponse(value: unknown, init?: ResponseInit, probe?: DateProbe): Response;",
     "doc": "/** `Response.json`, with each `bigint` written as its decimal string, as `jsonText` writes it. */"
   },
   {
@@ -25187,7 +25187,7 @@
     "name": "toResponse",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function toResponse(result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request, unstamped?: boolean): Response;",
+    "signature": "export declare function toResponse(result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request, unstamped?: boolean, probe?: DateProbe): Response;",
     "doc": "/**\n * Render a handler's result. `request` is the request being answered, given when response hooks will\n * write next: a copy or body-less response built here is then recorded as that request's own, so the\n * hooks write it in place instead of copying it again.\n * `unstamped` is the caller's proof that no response hook follows; unknown callers keep the mark.\n */"
   },
   {

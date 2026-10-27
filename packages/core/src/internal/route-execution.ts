@@ -22,6 +22,7 @@ import type { AuthenticationStage } from "../server/auth.ts"
 import { UNLIMITED_BODY_BYTES } from "../server/body.ts"
 import type { Platform, RouteSchema } from "../server/context.ts"
 import type { ResolvedIdempotency } from "../server/idempotency-lane.ts"
+import type { DateProbe } from "../server/json-text.ts"
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "../server/ledger-lane.ts"
 import type { ProtoPoisoning } from "../server/proto-guard.ts"
 import type { Registry } from "../server/registry.ts"
@@ -343,6 +344,8 @@ export interface RouteEntry {
   readonly around: ReadonlyArray<RawAround>
   /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */
   readonly execution: RouteExecutionPlan
+  /** What the route's answers have taught the JSON writer about `Date`s, shared by every lane. */
+  readonly dateProbe: DateProbe
   /** One immutable general lifecycle program compiled at registration. */
   readonly program: RouteProgram
 }
@@ -368,6 +371,6 @@ export type FusedBodyRunner = <T>(
   budget: RequestBudget,
   platform: Platform | undefined,
   nativeContext: boolean,
-  finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+  finalize: (result: unknown, set: CtxSet, ctx: RawContext, probe?: DateProbe) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
 ) => MaybePromise<T>

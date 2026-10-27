@@ -1,8 +1,8 @@
-import { retried, withDatesWritten } from "./json-text.ts"
+import { type DateProbe, retried, routeDatesWritten } from "./json-text.ts"
 
 /** `Response.json`, with each `bigint` written as its decimal string, as `jsonText` writes it. */
-export function jsonResponse(value: unknown, init?: ResponseInit): Response {
-  const written = withDatesWritten(value)
+export function jsonResponse(value: unknown, init?: ResponseInit, probe?: DateProbe): Response {
+  const written = routeDatesWritten(value, probe)
   try {
     return Response.json(written, init)
   } catch (error) {
