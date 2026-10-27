@@ -2086,7 +2086,7 @@ export async function buildTargetWith(
       ...(prerenderedPages !== undefined ? { prerenderedPages } : {}),
     }),
   )
-  const { worker } = await bundler.buildServer({
+  const { worker, outputs } = await bundler.buildServer({
     routesDir,
     serverEntry: serverEntryPath,
     outDir: `${workDir}/server`,
@@ -2109,6 +2109,17 @@ export async function buildTargetWith(
     // The Deno entry tags its files with node:crypto, which Deno provides itself.
     ...(targetPlan.target === "deno" ? { providedBuiltins: ["node:crypto"] } : {}),
   })
+  // The deploy dir below ships `worker` alone: a code-split server would lose its chunks and fail at its
+  // first import of one, never at build time.
+  const chunks = outputs.filter(
+    (file) => resolvePath(file) !== resolvePath(worker) && /\.[cm]?js$/.test(file),
+  )
+  if (chunks.length > 0) {
+    throw new Error(
+      `[nifra/web] the server build emitted code chunks besides its entry (${chunks.map(basename).join(", ")}), ` +
+        `but the ${targetPlan.target} deploy ships the entry alone. Build the server as one file: no \`lazy\` or code splitting.`,
+    )
+  }
 
   // (3) Assemble the deploy dir for the target.
   const { cpSync } = await import("node:fs")
