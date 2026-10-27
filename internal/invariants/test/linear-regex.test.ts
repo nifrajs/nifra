@@ -184,7 +184,7 @@ const BUILT: Readonly<Record<string, Entry>> = {
     count: 1,
     reason: "a teleport id over Vue's escaped markup, where every `<` opens a tag a `>` closes",
   },
-  "packages/web/src/build.ts": { count: 2, reason: BUNDLER_FILTER },
+  "packages/web/src/build.ts": { count: 1, reason: BUNDLER_FILTER },
   "packages/web/src/dev-ssr-graph.ts": { count: 1, reason: "the project's escaped root paths" },
   "packages/web/src/internal/dev-reserved.ts": {
     count: 1,

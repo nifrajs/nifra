@@ -691,17 +691,32 @@ export function scanFetchText(
   content: string,
   externalMounts: readonly string[] = [],
 ): TypedClientFinding[] {
+  return ownPathCalls(file, content, GLOBAL_FETCH_CALL, externalMounts, (m) =>
+    hasLiteralNifraDataHeader(content, m.index + m[0].lastIndexOf("(")),
+  )
+}
+
+/**
+ * A finding for each `pattern` match in code whose first argument is a literal own-API path (`"/…"`,
+ * not `"//…"`), unless it falls under one of `externalMounts` or `skip` passes it.
+ */
+function ownPathCalls(
+  file: string,
+  content: string,
+  pattern: RegExp,
+  externalMounts: readonly string[],
+  skip?: (match: RegExpExecArray) => boolean,
+): TypedClientFinding[] {
   const out: TypedClientFinding[] = []
   const lines = content.split("\n")
   const code = codePositionMask(content)
-  GLOBAL_FETCH_CALL.lastIndex = 0
-  for (let m = GLOBAL_FETCH_CALL.exec(code); m !== null; m = GLOBAL_FETCH_CALL.exec(code)) {
+  pattern.lastIndex = 0
+  for (let m = pattern.exec(code); m !== null; m = pattern.exec(code)) {
     const argument = firstArgumentIndex(content, m.index + m[0].length)
     const quote = content[argument]
     if (quote !== "'" && quote !== '"' && quote !== "`") continue
     if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
-    const openParen = m.index + m[0].lastIndexOf("(")
-    if (hasLiteralNifraDataHeader(content, openParen)) continue
+    if (skip?.(m) === true) continue
     if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
       continue
     out.push(typedClientFinding(file, lines, lineAt(content, m.index)))
@@ -728,20 +743,7 @@ export function scanStreamText(
   content: string,
   externalMounts: readonly string[] = [],
 ): TypedClientFinding[] {
-  const out: TypedClientFinding[] = []
-  const lines = content.split("\n")
-  const code = codePositionMask(content)
-  STREAM_CONSTRUCT.lastIndex = 0
-  for (let m = STREAM_CONSTRUCT.exec(code); m !== null; m = STREAM_CONSTRUCT.exec(code)) {
-    const argument = firstArgumentIndex(content, m.index + m[0].length)
-    const quote = content[argument]
-    if (quote !== "'" && quote !== '"' && quote !== "`") continue
-    if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
-    if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
-      continue
-    out.push(typedClientFinding(file, lines, lineAt(content, m.index)))
-  }
-  return out
+  return ownPathCalls(file, content, STREAM_CONSTRUCT, externalMounts)
 }
 
 /** Statically collect simple Nifra route registrations from source, without importing app code. */

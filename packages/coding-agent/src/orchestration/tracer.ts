@@ -6,20 +6,14 @@
  * identical plan + catalog + inputs yield an identical digest, which is the deterministic-eval anchor.
  */
 
-import type {
-  ArtifactPort,
-  ArtifactRef,
-  NodeEffectKey,
-  RunEvidence,
-  RunPlan,
-} from "@nifrajs/agent-protocol"
+import type { ArtifactPort, RunEvidence, RunPlan } from "@nifrajs/agent-protocol"
 import { parseRunEvidence, parseRunPlan, RUN_PLAN_VERSION } from "@nifrajs/agent-protocol"
 import { type WorkflowEvent, WorkflowRunner } from "../workflows.ts"
 import { noopArtifactPort } from "./artifact-port.ts"
 import type { StepCatalog } from "./catalog.ts"
 import { compileRunPlan, digestRunPlan } from "./compile.ts"
 import { canonicalJson, sha256HexOf } from "./hash.ts"
-import { indexPlan, isGateRejection } from "./plan-index.ts"
+import { indexPlan, isGateRejection, nodeRecords } from "./plan-index.ts"
 
 export interface RunTraceOptions {
   /** Caller-supplied, so a trace is fully reproducible. No clock or randomness is read here. */
@@ -51,20 +45,14 @@ export async function runTrace(
   const planDigest = await digestRunPlan(plan)
   const artifactPort = options.artifactPort ?? noopArtifactPort()
 
-  const effectKeys = new Map<string, NodeEffectKey>()
-  const artifacts = new Map<string, ArtifactRef[]>()
+  const { effectKeys, artifacts, hooks } = nodeRecords()
   const { kindById, idempotentById: idempotent, nodeIds } = indexPlan(plan, options.catalog)
 
   const step = compileRunPlan(plan, {
     catalog: options.catalog,
     planDigest,
     artifactPort,
-    onNodeEffect: (nodeId, key) => effectKeys.set(nodeId, key),
-    collectArtifact: (nodeId, ref) => {
-      const list = artifacts.get(nodeId)
-      if (list === undefined) artifacts.set(nodeId, [ref])
-      else list.push(ref)
-    },
+    ...hooks,
   })
 
   const evidence: RunEvidence[] = []

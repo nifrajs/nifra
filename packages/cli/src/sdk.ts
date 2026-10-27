@@ -424,30 +424,34 @@ function pythonModelFields(
   return fields.length === 0 ? "    pass" : fields.join("\n")
 }
 
-function renderPythonModels(catalog: SchemaCatalog, tracker: OpaqueTracker): string {
+/** Every catalog model rendered, those added while rendering included, joined by a blank line. */
+function renderModels(
+  catalog: SchemaCatalog,
+  render: (name: string, schema: JsonSchema) => string,
+): string {
   const rendered: string[] = []
   let index = 0
   while (index < catalog.models.size) {
     const entries = [...catalog.models.entries()]
     const [name, schema] = entries[index++]!
-    if (isObjectModel(schema)) {
-      rendered.push(
-        "@dataclass(frozen=True)\nclass " +
-          name +
-          ":\n" +
-          pythonModelFields(schema, name, catalog, tracker),
-      )
-    } else {
-      // A `type` statement evaluates lazily, so an alias may name a model declared below it.
-      rendered.push(
-        "type " +
-          name +
-          " = " +
-          pythonType(schema, name, catalog, tracker, "schema", `model ${name}`),
-      )
-    }
+    rendered.push(render(name, schema))
   }
   return rendered.join("\n\n")
+}
+
+function renderPythonModels(catalog: SchemaCatalog, tracker: OpaqueTracker): string {
+  return renderModels(catalog, (name, schema) =>
+    isObjectModel(schema)
+      ? "@dataclass(frozen=True)\nclass " +
+        name +
+        ":\n" +
+        pythonModelFields(schema, name, catalog, tracker)
+      : // A `type` statement evaluates lazily, so an alias may name a model declared below it.
+        "type " +
+        name +
+        " = " +
+        pythonType(schema, name, catalog, tracker, "schema", `model ${name}`),
+  )
 }
 
 function pythonErrorAliases(
@@ -898,21 +902,12 @@ function goModelFields(
 }
 
 function renderGoModels(catalog: SchemaCatalog, tracker: OpaqueTracker): string {
-  const rendered: string[] = []
-  let index = 0
-  while (index < catalog.models.size) {
-    const entries = [...catalog.models.entries()]
-    const [name, schema] = entries[index++]!
+  return renderModels(catalog, (name, schema) => {
     const fields = goModelFields(schema, name, catalog, tracker)
-    if (isObjectModel(schema)) {
-      rendered.push(`type ${name} struct {\n${fields}\n}`)
-    } else {
-      rendered.push(
-        `type ${name} = ${goType(schema, name, catalog, tracker, "schema", `model ${name}`)}`,
-      )
-    }
-  }
-  return rendered.join("\n\n")
+    return isObjectModel(schema)
+      ? `type ${name} struct {\n${fields}\n}`
+      : `type ${name} = ${goType(schema, name, catalog, tracker, "schema", `model ${name}`)}`
+  })
 }
 
 interface GoErrorInfo {

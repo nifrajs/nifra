@@ -472,6 +472,19 @@ function recordFromRow<T>(row: Record<string, unknown> | undefined): T | undefin
   return clone(parseWire(text) as T)
 }
 
+/** A scan page from up to `limit + 1` rows: the first `limit` as records, with a cursor at the last of
+ * them when a row is left over. */
+function scanPage<T>(
+  rows: readonly Record<string, unknown>[],
+  limit: number,
+): ReconciliationScanPage<T> {
+  const page = rows.slice(0, limit)
+  return Object.freeze({
+    records: Object.freeze(page.map((row) => recordFromRow<T>(row) as T)),
+    ...(rows.length > limit ? { cursor: String(page.at(-1)?.id) } : {}),
+  })
+}
+
 function leaseFromRow(row: Record<string, unknown>): ReconciliationLease {
   return Object.freeze({
     name: String(row.name),
@@ -574,12 +587,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
       sqlIdentifiers`SELECT id,payload FROM ${this.recordsTable} WHERE kind=$1 AND state = ANY($2::text[]) AND ($3::bigint IS NULL OR updated_at <= $3) AND ($4::text IS NULL OR id > $4) ORDER BY id LIMIT $5`,
       [kind, input.states, input.updatedBefore ?? null, input.cursor ?? null, input.limit + 1],
     )
-    const hasMore = result.rows.length > input.limit
-    const rows = result.rows.slice(0, input.limit)
-    return Object.freeze({
-      records: Object.freeze(rows.map((row) => recordFromRow<T>(row) as T)),
-      ...(hasMore ? { cursor: String(rows.at(-1)?.id) } : {}),
-    })
+    return scanPage<T>(result.rows, input.limit)
   }
   async acquireLease(
     input: Parameters<DurableRecordBackend["acquireLease"]>[0],
@@ -748,13 +756,10 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
         input.cursor ?? null,
         input.limit + 1,
       )
-    const present = rows.filter((row): row is Record<string, unknown> => row !== undefined)
-    const hasMore = present.length > input.limit
-    const page = present.slice(0, input.limit)
-    return Object.freeze({
-      records: Object.freeze(page.map((row) => recordFromRow<T>(row) as T)),
-      ...(hasMore ? { cursor: String(page.at(-1)?.id) } : {}),
-    })
+    return scanPage<T>(
+      rows.filter((row): row is Record<string, unknown> => row !== undefined),
+      input.limit,
+    )
   }
   async acquireLease(
     input: Parameters<DurableRecordBackend["acquireLease"]>[0],

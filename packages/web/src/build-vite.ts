@@ -38,8 +38,13 @@ import {
   normalizeCssLoading,
 } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
-import { generateServerManifest } from "./index.ts"
-import { clientEntryFiles, writeClientEntry, writeClientManifest } from "./internal/build-steps.ts"
+import {
+  clientEntryFiles,
+  pageStyles,
+  writeClientEntry,
+  writeClientManifest,
+  writeServerManifest,
+} from "./internal/build-steps.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
 import { assertIdentityParity } from "./internal/parity.ts"
@@ -402,24 +407,9 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     for (const css of entry.css ?? []) allCss.add(url(css))
   }
   const css = [...allCss]
-  const routeStyles: Record<string, readonly string[]> = {}
   // A single aggregate stylesheet is deliberately the route fallback. A per-route `[]` map would
   // suppress it in `createWebApp` and produce unstyled SSR on every route.
-  if (css.length > 0 && cssCodeSplit) {
-    // A `_loading` page can show on a navigation from ANY page, and a document links only its own
-    // route's stylesheets - so every page that can start a navigation carries the loading pages' too.
-    const loadingFiles = Object.values(routeManifest.loadings ?? {}).map((page) => page.file)
-    for (const route of routeManifest.routes)
-      routeStyles[route.id] = stylesFor([...chainFiles(route), ...loadingFiles])
-    if (routeManifest.notFound)
-      routeStyles._404 = stylesFor([routeManifest.notFound.file, ...loadingFiles])
-    for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
-      routeStyles[id] = stylesFor([
-        ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),
-        page.file,
-      ])
-    }
-  }
+  const routeStyles = css.length > 0 && cssCodeSplit ? pageStyles(routeManifest, stylesFor) : {}
 
   // assets - every emitted file + stylesheet across the manifest (chunks, entries, css).
   const assets = new Set<string>()
@@ -569,10 +559,6 @@ function edgeBuiltinGuard(provided: ReadonlySet<string>): EdgeGuardPlugin {
 export async function buildServerVite(options: BuildServerViteOptions): Promise<ServerBuild> {
   const { routesDir, serverEntry, outDir, clientEntry, styles, routeStyles, cssLoading } = options
   const root = resolvePath(options.root ?? dirname(routesDir))
-  const entryDir = dirname(serverEntry)
-  const manifestFile = options.manifestFile ?? "server-manifest.ts"
-  const rel = relative(entryDir, routesDir).replaceAll("\\", "/")
-  const resolve = options.resolve ?? ((file: string) => `./${rel}/${file}`)
   mkdirSync(outDir, { recursive: true })
 
   const target = options.target ?? "browser"
@@ -581,19 +567,14 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   // edge server build; node/bun resolve their own via the target condition.
   const conditions = options.conditions ?? (edge ? ["workerd", "edge-light", "browser"] : [target])
 
-  const routeManifest = discoverRoutes(routesDir)
-  writeFileSync(
-    `${entryDir}/${manifestFile}`,
-    generateServerManifest(routeManifest, {
-      resolve,
-      clientEntry,
-      styles,
-      routeStyles,
-      ...(cssLoading !== undefined ? { cssLoading } : {}),
-      ...(options.copyChunks !== undefined ? { copyChunks: options.copyChunks } : {}),
-      ...(options.buildAssets !== undefined ? { buildAssets: options.buildAssets } : {}),
-    }),
-  )
+  const manifestFile = writeServerManifest(options, {
+    clientEntry,
+    styles,
+    routeStyles,
+    cssLoading,
+    copyChunks: options.copyChunks,
+    buildAssets: options.buildAssets,
+  })
 
   // Pin the mode to match NODE_ENV - the react plugin's JSX runtime (jsx vs jsxDEV) follows it, and a
   // mismatch throws `jsxDEV is not a function` at SSR (see buildClientVite for the full reasoning).
@@ -603,11 +584,9 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   const zoneGuard = viteServerZoneGuard({
     appRoot: root,
     routesDir: resolvePath(routesDir),
-    generatedFiles: [
-      serverEntry,
-      join(entryDir, manifestFile),
-      ...(options.generatedFiles ?? []),
-    ].map((file) => resolvePath(file)),
+    generatedFiles: [serverEntry, manifestFile, ...(options.generatedFiles ?? [])].map((file) =>
+      resolvePath(file),
+    ),
     ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
   })
   try {

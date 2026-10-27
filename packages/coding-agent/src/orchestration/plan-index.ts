@@ -1,11 +1,42 @@
-import type { RunNode, RunNodeKind, RunPlan } from "@nifrajs/agent-protocol"
+import type {
+  ArtifactRef,
+  NodeEffectKey,
+  RunNode,
+  RunNodeKind,
+  RunPlan,
+} from "@nifrajs/agent-protocol"
 import type { StepCatalog } from "./catalog.ts"
+import type { CompileOptions } from "./compile.ts"
 
 /** A plan's node kinds, idempotency flags and id set, from one walk of its tree. */
 export interface PlanIndex {
   readonly kindById: ReadonlyMap<string, RunNodeKind>
   readonly idempotentById: ReadonlyMap<string, boolean>
   readonly nodeIds: ReadonlySet<string>
+}
+
+/** Each node's effect key and artifact refs, filled by `hooks` while the compiled plan runs. */
+export interface NodeRecords {
+  readonly effectKeys: Map<string, NodeEffectKey>
+  readonly artifacts: Map<string, ArtifactRef[]>
+  readonly hooks: Required<Pick<CompileOptions, "onNodeEffect" | "collectArtifact">>
+}
+
+export function nodeRecords(): NodeRecords {
+  const effectKeys = new Map<string, NodeEffectKey>()
+  const artifacts = new Map<string, ArtifactRef[]>()
+  return {
+    effectKeys,
+    artifacts,
+    hooks: {
+      onNodeEffect: (nodeId, key) => effectKeys.set(nodeId, key),
+      collectArtifact: (nodeId, ref) => {
+        const list = artifacts.get(nodeId)
+        if (list === undefined) artifacts.set(nodeId, [ref])
+        else list.push(ref)
+      },
+    },
+  }
 }
 
 /** Walk the plan tree once: node kinds, idempotency flags, and the full id set. */

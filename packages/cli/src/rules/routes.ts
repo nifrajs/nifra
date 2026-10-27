@@ -38,6 +38,19 @@ interface StaticRouteFact {
   readonly path: string
 }
 
+/** A project file's lines, each file read and split once per scan. */
+function sourceLines(ctx: RuleContext): (file: string) => readonly string[] {
+  const linesByFile = new Map<string, readonly string[]>()
+  return (file) => {
+    let lines = linesByFile.get(file)
+    if (lines === undefined) {
+      lines = (ctx.project.source.read(file) ?? "").split("\n")
+      linesByFile.set(file, lines)
+    }
+    return lines
+  }
+}
+
 /** Parse-don't-cast over the project fact: a malformed entry is dropped, never trusted. */
 function routeFacts(ctx: RuleContext): StaticRouteFact[] {
   const raw: readonly unknown[] = ctx.project.routes
@@ -84,17 +97,13 @@ export const reservedSegmentRule: CheckRule = {
   title: "Route segment collides with a reserved client proxy key",
   async scan(ctx) {
     const findings: Diagnostic[] = []
-    const linesByFile = new Map<string, readonly string[]>()
+    const linesOf = sourceLines(ctx)
     for (const route of pathSites(routeFacts(ctx))) {
       for (const segment of route.path.split("/")) {
         if (segment === "") continue
         const collision = reservedKeyFor(segment)
         if (collision === undefined) continue
-        let lines = linesByFile.get(route.file)
-        if (lines === undefined) {
-          lines = (ctx.project.source.read(route.file) ?? "").split("\n")
-          linesByFile.set(route.file, lines)
-        }
+        const lines = linesOf(route.file)
         if (commentBlockExpectation(lines, route.line, RESERVED_SEGMENT_EXPECTATION) !== undefined)
           continue
         findings.push(
@@ -223,7 +232,7 @@ export const overlappingRouteRule: CheckRule = {
   title: "Overlapping route registration",
   async scan(ctx) {
     const findings: Diagnostic[] = []
-    const linesByFile = new Map<string, readonly string[]>()
+    const linesOf = sourceLines(ctx)
     const byFile = new Map<string, StaticRouteFact[]>()
     for (const route of routeFacts(ctx)) {
       const routes = byFile.get(route.file)
@@ -234,14 +243,7 @@ export const overlappingRouteRule: CheckRule = {
     // As in NF-C019: two multi-method calls overlap once per shared method, reported once.
     const reported = new Set<string>()
     for (const [file, routes] of byFile) {
-      const lines = (): readonly string[] => {
-        let value = linesByFile.get(file)
-        if (value === undefined) {
-          value = (ctx.project.source.read(file) ?? "").split("\n")
-          linesByFile.set(file, value)
-        }
-        return value
-      }
+      const lines = (): readonly string[] => linesOf(file)
 
       const expectationByLine = new Map<number, ReturnType<typeof commentBlockExpectation>>()
       const expectationAt = (line: number): ReturnType<typeof commentBlockExpectation> => {
@@ -357,16 +359,12 @@ export const paramModifierRule: CheckRule = {
   title: "Route param followed by an unsupported modifier",
   async scan(ctx) {
     const findings: Diagnostic[] = []
-    const linesByFile = new Map<string, readonly string[]>()
+    const linesOf = sourceLines(ctx)
     for (const route of pathSites(routeFacts(ctx))) {
       const forms = expandOptionalParams(route.path)
       const text = literalModifier(forms[forms.length - 1] ?? route.path)
       if (text === undefined) continue
-      let lines = linesByFile.get(route.file)
-      if (lines === undefined) {
-        lines = (ctx.project.source.read(route.file) ?? "").split("\n")
-        linesByFile.set(route.file, lines)
-      }
+      const lines = linesOf(route.file)
       if (commentBlockExpectation(lines, route.line, PARAM_MODIFIER_EXPECTATION) !== undefined)
         continue
       const character = text[text.length - 1]!
@@ -397,13 +395,9 @@ export const unresolvedRoutePathRule: CheckRule = {
   title: "Route path the static scan cannot read",
   async scan(ctx) {
     const findings: Diagnostic[] = []
-    const linesByFile = new Map<string, readonly string[]>()
+    const linesOf = sourceLines(ctx)
     for (const route of ctx.project.sourceFindings.routePaths) {
-      let lines = linesByFile.get(route.file)
-      if (lines === undefined) {
-        lines = (ctx.project.source.read(route.file) ?? "").split("\n")
-        linesByFile.set(route.file, lines)
-      }
+      const lines = linesOf(route.file)
       if (commentBlockExpectation(lines, route.line, DYNAMIC_PATH_EXPECTATION) !== undefined)
         continue
       findings.push(

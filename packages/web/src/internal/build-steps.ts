@@ -1,13 +1,20 @@
 /**
  * The build steps the Bun and Vite pipelines share: writing the generated bootstrap, listing the extra
- * entrypoints, and completing and writing `manifest.json`.
+ * entrypoints, completing and writing `manifest.json`, and writing the server route manifest.
  */
 
 import { mkdtempSync, writeFileSync } from "node:fs"
-import { dirname, resolve as resolvePath } from "node:path"
+import { dirname, relative, resolve as resolvePath } from "node:path"
 import type { BuildManifest } from "../build-plan.ts"
+import type { CssLoadingMode } from "../css-contract.ts"
+import { discoverRoutes } from "../fs.ts"
 import type { Manifest } from "../manifest.ts"
-import { type GenerateClientEntryOptions, generateClientEntry } from "./codegen.ts"
+import {
+  type GenerateClientEntryOptions,
+  type GenerateServerManifestOptions,
+  generateClientEntry,
+  generateServerManifest,
+} from "./codegen.ts"
 import { assertDevelopmentProductionParity, collectDevelopmentParityInput } from "./parity.ts"
 
 /**
@@ -46,6 +53,63 @@ export function clientEntryFiles(manifest: Manifest): string[] {
       ...Object.values(manifest.loadings ?? {}).map((page) => page.file),
     ]),
   ].sort()
+}
+
+/**
+ * Each page's stylesheets by id (`_404` for the root not-found page), `stylesFor` mapping the files a
+ * page renders, layouts first, to their CSS. A `_loading` page can show on a navigation from any page,
+ * and a document links only its own route's stylesheets, so every page that can start a navigation
+ * carries the loading pages' too.
+ */
+export function pageStyles(
+  manifest: Manifest,
+  stylesFor: (files: readonly string[]) => readonly string[],
+): Record<string, readonly string[]> {
+  const styles: Record<string, readonly string[]> = {}
+  const layoutFiles = (layoutIds: readonly string[]): string[] =>
+    layoutIds.map((id) => manifest.layouts[id]?.file ?? "")
+  const loadingFiles = Object.values(manifest.loadings ?? {}).map((page) => page.file)
+  for (const route of manifest.routes)
+    styles[route.id] = stylesFor([...layoutFiles(route.layoutIds), route.file, ...loadingFiles])
+  if (manifest.notFound) styles._404 = stylesFor([manifest.notFound.file, ...loadingFiles])
+  for (const [id, page] of Object.entries(manifest.notFounds ?? {}))
+    styles[id] = stylesFor([...layoutFiles(page.layoutIds), page.file])
+  return styles
+}
+
+/**
+ * Writes the routes' server manifest next to `serverEntry`, as `manifestFile` (`server-manifest.ts` by
+ * default), importing each route through `resolve`: by default relative from there to `routesDir`.
+ * Returns the manifest's path.
+ */
+export function writeServerManifest(
+  placement: {
+    readonly routesDir: string
+    readonly serverEntry: string
+    readonly manifestFile?: string | undefined
+    readonly resolve?: ((file: string) => string) | undefined
+  },
+  {
+    cssLoading,
+    ...options
+  }: Omit<GenerateServerManifestOptions, "resolve" | "cssLoading"> & {
+    readonly cssLoading?: CssLoadingMode | undefined
+  },
+): string {
+  const { routesDir } = placement
+  const entryDir = dirname(placement.serverEntry)
+  const rel = relative(entryDir, routesDir).replaceAll("\\", "/")
+  const file = `${entryDir}/${placement.manifestFile ?? "server-manifest.ts"}`
+  const resolve = placement.resolve ?? ((route: string) => `./${rel}/${route}`)
+  writeFileSync(
+    file,
+    generateServerManifest(discoverRoutes(routesDir), {
+      resolve,
+      ...options,
+      ...(cssLoading !== undefined ? { cssLoading } : {}),
+    }),
+  )
+  return file
 }
 
 /** What a client build adds to its manifest only when there is some. */
