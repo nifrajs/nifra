@@ -102,10 +102,15 @@ export const VENDORED: readonly VendoredCopy[] = [
   },
 ]
 
+/** A file's text with CRLF folded to LF: a Windows checkout under core.autocrlf holds CRLF copies. */
+export function readText(path: string): string {
+  return readFileSync(path, "utf8").replaceAll("\r\n", "\n")
+}
+
 function parse(root: string, path: string): ts.SourceFile {
   return ts.createSourceFile(
     path,
-    readFileSync(resolve(root, path), "utf8"),
+    readText(resolve(root, path)),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,
@@ -169,7 +174,7 @@ export function staleCopies(
     const expected = renderCopy(root, copy)
     for (const target of copy.targets) {
       const path = resolve(root, target)
-      if ((existsSync(path) ? readFileSync(path, "utf8") : "") !== expected)
+      if ((existsSync(path) ? readText(path) : "") !== expected)
         stale.push({ target, source: copy.source })
     }
   }
@@ -184,7 +189,8 @@ export function orphanCopies(
 ): string[] {
   const targets = new Set(manifest.flatMap((copy) => copy.targets))
   const orphans: string[] = []
-  for (const path of new Bun.Glob("packages/*/src/**/*.ts").scanSync({ cwd: root })) {
+  for (const scanned of new Bun.Glob("packages/*/src/**/*.ts").scanSync({ cwd: root })) {
+    const path = scanned.replaceAll("\\", "/")
     if (targets.has(path)) continue
     if (readFileSync(resolve(root, path), "utf8").startsWith(HEADER)) orphans.push(path)
   }
