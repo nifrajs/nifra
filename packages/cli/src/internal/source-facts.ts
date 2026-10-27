@@ -151,6 +151,27 @@ const REGISTRATION_METHODS: ReadonlySet<string> = new Set([
   "all",
 ])
 
+/** A route registration such as `app.get("/path", handler)`: its method name, path, and the arguments after the path. */
+function routeRegistration(
+  ts: TypeScriptApi,
+  node: TSApi.Node,
+):
+  | {
+      readonly name: TSApi.MemberName
+      readonly method: string
+      readonly path: string
+      readonly rest: readonly TSApi.Expression[]
+    }
+  | undefined {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression))
+    return undefined
+  const method = node.expression.name.text
+  const [first, ...rest] = node.arguments
+  if (!REGISTRATION_METHODS.has(method) || first === undefined || !ts.isStringLiteralLike(first))
+    return undefined
+  return { name: node.expression.name, method, path: first.text, rest }
+}
+
 const ZOD_MODULES: ReadonlySet<string> = new Set(["zod", "zod/v4", "zod/mini", "zod/v4/mini"])
 
 /** The names `source` binds zod's namespace to (`z`), and those it binds zod's `coerce` to. */
@@ -707,15 +728,9 @@ export function createSourceFacts(
     const routes: UndeclaredResponseRoute[] = []
     const visit = (node: TSApi.Node): void => {
       ts.forEachChild(node, visit)
-      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return
-      const method = node.expression.name.text
-      const [first, ...rest] = node.arguments
-      if (
-        !REGISTRATION_METHODS.has(method) ||
-        first === undefined ||
-        !ts.isStringLiteralLike(first)
-      )
-        return
+      const registration = routeRegistration(ts, node)
+      if (registration === undefined) return
+      const { name, method, path, rest } = registration
       const handlers: FunctionNode[] = []
       for (const argument of rest.map((value) => unwrapExpression(ts, value))) {
         const local = ts.isIdentifier(argument) ? locals.get(argument.text) : undefined
@@ -726,11 +741,7 @@ export function createSourceFacts(
       // Every registration takes a handler: `headers.get("etag")` and `map.get("/")` are reads.
       if (handlers.length === 0 || handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
         return
-      routes.push({
-        position: node.expression.name.getStart(source),
-        method: method.toUpperCase(),
-        path: first.text,
-      })
+      routes.push({ position: name.getStart(source), method: method.toUpperCase(), path })
     }
     visit(source)
     return routes.sort((a, b) => a.position - b.position)
@@ -784,15 +795,9 @@ export function createSourceFacts(
     }
     const visit = (node: TSApi.Node): void => {
       ts.forEachChild(node, visit)
-      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return
-      const method = node.expression.name.text
-      const [first, ...rest] = node.arguments
-      if (
-        !REGISTRATION_METHODS.has(method) ||
-        first === undefined ||
-        !ts.isStringLiteralLike(first)
-      )
-        return
+      const registration = routeRegistration(ts, node)
+      if (registration === undefined) return
+      const { method, path, rest } = registration
       const arguments_ = rest.map((argument) => {
         const value = unwrapExpression(ts, argument)
         const named = ts.isIdentifier(value) ? consts.get(value.text) : undefined
@@ -811,7 +816,7 @@ export function createSourceFacts(
               : undefined
           if (slot !== "query" && slot !== "headers" && slot !== "cookies") continue
           const value = ts.isPropertyAssignment(property) ? property.initializer : property.name
-          reach(value, new Set(), { slot, method: method.toUpperCase(), path: first.text })
+          reach(value, new Set(), { slot, method: method.toUpperCase(), path })
         }
       }
     }

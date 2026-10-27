@@ -1,6 +1,6 @@
 import {
+  createStylesheetEmitter,
   normalizeFilePath,
-  portablePath,
   requirePeer,
   rewriteSsrImports,
 } from "@nifrajs/web/plugins/kit"
@@ -19,7 +19,6 @@ import { compile } from "svelte/compiler"
  * so the two plugins don't collide).
  */
 const MDSVEX_MODULE = "mdsvex" // non-literal so consumers don't need mdsvex's types to typecheck
-const STYLE_SUFFIX = "?svelte-mdx-css"
 const STYLE_NS = "nifra-svelte-mdx-css"
 
 interface Mdsvex {
@@ -29,10 +28,10 @@ interface Mdsvex {
 /** Build a `Bun.build` plugin that loads `.mdx` files as Svelte components via mdsvex. `generate`:
  * `"ssr"` for the server build, `"dom"` for the client (matches `svelteBunPlugin`). */
 export function svelteMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
-  const cssByPath = new Map<string, string>()
   return {
     name: `nifra-svelte-mdx-${generate}`,
     async setup(build) {
+      const stylesheet = createStylesheetEmitter(build, STYLE_NS)
       const { compile: mdsvexCompile } = await requirePeer<Mdsvex>(MDSVEX_MODULE, {
         feature: "Svelte MDX support",
         install: "bun add mdsvex",
@@ -53,22 +52,10 @@ export function svelteMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
           css: "external",
         })
         if (generate === "dom" && css?.code) {
-          cssByPath.set(portablePath(path), css.code)
-          return {
-            contents: `${js.code}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
-            loader: "js",
-          }
+          return { contents: `${js.code}\n${stylesheet.emit(path, css.code)}`, loader: "js" }
         }
         return { contents: rewriteSsrImports(js.code, path, generate), loader: "js" }
       })
-      build.onResolve({ filter: /\?svelte-mdx-css$/ }, (args) => ({
-        path: args.path,
-        namespace: STYLE_NS,
-      }))
-      build.onLoad({ filter: /.*/, namespace: STYLE_NS }, (args) => ({
-        contents: cssByPath.get(portablePath(args.path.slice(0, -STYLE_SUFFIX.length))) ?? "",
-        loader: "css",
-      }))
     },
   }
 }

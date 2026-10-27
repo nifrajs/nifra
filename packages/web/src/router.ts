@@ -529,6 +529,20 @@ export const routeDataOf = async (
   return readResponseData(res, signal, read)
 }
 
+/** A route data GET's headers: the data marker, the holes it fills, and the layouts a navigation keeps. */
+export const routeDataHeaders = (
+  navigation: Parameters<FetchRouteData>[3],
+  hosts: readonly string[] | undefined,
+): Headers => {
+  const headers = new Headers({ [DATA_HEADER]: "1" })
+  if (hosts !== undefined && hosts.length > 0) headers.set(HOLE_FILL_HEADER, hosts.join(","))
+  if (navigation !== undefined && navigation.retain.length > 0) {
+    headers.set(RETAIN_HEADER, navigation.retain.join(","))
+    headers.set(NAV_FROM_HEADER, navigation.from)
+  }
+  return headers
+}
+
 /** The router's own transport, which a `fetchData` override may layer over. */
 export const fetchRouteData: FetchRouteData = async (
   path,
@@ -555,13 +569,8 @@ export const fetchRouteData: FetchRouteData = async (
       if (staticRes.ok) return readResponseData(staticRes, signal, read)
     }
   }
-  const headers = new Headers({ [DATA_HEADER]: "1" })
+  const headers = routeDataHeaders(navigation, hosts)
   if (purpose === "prefetch") headers.set(PREFETCH_HEADER, "1")
-  if (hosts !== undefined && hosts.length > 0) headers.set(HOLE_FILL_HEADER, hosts.join(","))
-  if (navigation !== undefined && navigation.retain.length > 0) {
-    headers.set(RETAIN_HEADER, navigation.retain.join(","))
-    headers.set(NAV_FROM_HEADER, navigation.from)
-  }
   return routeDataOf(
     await fetch(appUrl(path), { headers, signal: signal ?? null }),
     path,

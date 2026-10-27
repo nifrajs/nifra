@@ -16,8 +16,8 @@
 import { dirname } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { BunPlugin } from "bun"
-import { transformCssModule } from "./css-modules.ts"
-import { createStylesheetEmitter, normalizeFilePath, reproduciblePath, requirePeer } from "./kit.ts"
+import { stylesheetModule } from "../internal/stylesheet-module.ts"
+import { createStylesheetEmitter, normalizeFilePath, requirePeer } from "./kit.ts"
 
 const STYLE_NS = "nifra-scss"
 
@@ -86,22 +86,8 @@ export function scssBunPlugin(generate: "dom" | "ssr", options: ScssPluginOption
           )
         }
 
-        if (isModuleRequest(path)) {
-          // *.module.scss → compile, then scope class names through the shared CSS-modules transform.
-          // Scope off the cwd-relative path so names are reproducible across machines/CI.
-          const { exports, css: scopedCss } = transformCssModule(css, reproduciblePath(path))
-          const js = `export default ${JSON.stringify(exports)}\n`
-          return {
-            contents: generate === "dom" ? js + stylesheet.emit(path, scopedCss) : js,
-            loader: "js",
-          }
-        }
-
-        // Plain *.scss → side-effect import: bundle the CSS on dom, an empty module on ssr.
-        return {
-          contents: generate === "dom" ? stylesheet.emit(path, css) : "",
-          loader: "js",
-        }
+        // *.module.scss scopes its class names; plain Sass is a side-effect import, empty on ssr.
+        return stylesheetModule(path, css, isModuleRequest(path), generate, stylesheet)
       })
     },
   }

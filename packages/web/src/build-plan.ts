@@ -270,35 +270,48 @@ function shortestBuiltinChain(
   entryInputs: readonly string[],
   builtin: string,
 ): string[] {
+  return (
+    shortestImportChain(
+      inputs,
+      entryInputs,
+      // Match on the same `node:` detection the finding used (`original` first, then resolved `path`).
+      (im) => (nodeBuiltinOf(im) === builtin ? builtin : undefined),
+      // Only user modules in the input graph, so the polyfill subtree can't lengthen the path.
+      (im) => (im.path !== undefined && inputs[im.path] !== undefined ? im.path : undefined),
+    ) ?? [builtin]
+  )
+}
+
+/**
+ * The shortest import chain from any of `entryInputs` to the first edge `end` labels, as `[entry,
+ * …as-written specifiers…, end label]`; `undefined` when no entry reaches one. `target` names the input
+ * an edge continues into, `undefined` for one the walk never crosses; a `node:` target is never crossed,
+ * and no input twice. A hop shows its as-written specifier (`../db/client.ts`, `postgres`), the resolved
+ * path only without one: that is what the dev recognizes in their source.
+ */
+function shortestImportChain(
+  inputs: Readonly<Record<string, GraphInput>>,
+  entryInputs: readonly string[],
+  end: (im: GraphImport, target: string | undefined) => string | undefined,
+  target: (im: GraphImport) => string | undefined,
+): string[] | undefined {
   const seen = new Set(entryInputs)
   let frontier = entryInputs.map((node) => ({ node, chain: [node] }))
   while (frontier.length > 0) {
     const next: Array<{ node: string; chain: string[] }> = []
     for (const { node, chain } of frontier) {
       for (const im of inputs[node]?.imports ?? []) {
-        // The builtin reached via THIS edge → the chain ends here (append the builtin label). Match on
-        // the same `node:` detection the finding used (`original` first, then resolved `path`).
-        if (nodeBuiltinOf(im) === builtin) return [...chain, builtin]
-        const target = im.path
-        // Only follow edges into user (non-`node:`) modules that exist in the input graph and haven't
-        // been visited - so the polyfill subtree can't lengthen the path and there are no cycles.
-        if (
-          target === undefined ||
-          target.startsWith("node:") ||
-          inputs[target] === undefined ||
-          seen.has(target)
-        ) {
-          continue
-        }
-        seen.add(target)
-        // Display the hop by its as-written specifier (`../db/client.ts`, `postgres`), falling back to
-        // the resolved path - that's what the dev recognizes in their source, not the resolved path.
-        next.push({ node: target, chain: [...chain, im.original ?? target] })
+        const to = target(im)
+        const label = end(im, to?.startsWith("node:") ? undefined : to)
+        if (label !== undefined) return [...chain, label]
+        if (to === undefined || to.startsWith("node:") || seen.has(to)) continue
+        seen.add(to)
+        next.push({ node: to, chain: [...chain, im.original ?? to] })
       }
     }
     frontier = next
   }
-  return [builtin]
+  return undefined
 }
 
 /**
@@ -459,28 +472,18 @@ function shortestServerOnlyChain(
   const tail = (label: string): string => `${label} (marked backend-only)`
   // An entry that is ITSELF the marked module - the chain is just that one node.
   if (entryInputs.includes(markedModule)) return [tail(markedModule)]
-  const seen = new Set(entryInputs)
-  let frontier = entryInputs.map((node) => ({ node, chain: [node] }))
-  while (frontier.length > 0) {
-    const next: Array<{ node: string; chain: string[] }> = []
-    for (const { node, chain } of frontier) {
-      for (const im of inputs[node]?.imports ?? []) {
-        // Resolve the edge's `path` to the matching INPUT-GRAPH KEY - in a real build the edge `path`
-        // is absolute while the input keys are cwd-relative, so a raw equality/lookup would miss every
-        // multi-hop user edge (and the chain would degrade to just the tail). The resolver maps both.
-        const target = resolveTarget(im)
-        if (target === undefined || target.startsWith("node:")) continue
-        // The marked module reached via THIS edge → the chain ends here (label it as the marked tail
-        // using the as-written specifier the author wrote, falling back to the resolved key).
-        if (target === markedModule) return [...chain, tail(im.original ?? target)]
-        if (seen.has(target)) continue
-        seen.add(target)
-        next.push({ node: target, chain: [...chain, im.original ?? target] })
-      }
-    }
-    frontier = next
-  }
-  return [tail(markedModule)]
+  return (
+    shortestImportChain(
+      inputs,
+      entryInputs,
+      // The marked module reached via THIS edge ends the chain, labelled by the as-written specifier.
+      (im, target) => (target === markedModule ? tail(im.original ?? target) : undefined),
+      // Resolve the edge's `path` to the matching INPUT-GRAPH KEY - in a real build the edge `path`
+      // is absolute while the input keys are cwd-relative, so a raw equality/lookup would miss every
+      // multi-hop user edge (and the chain would degrade to just the tail). The resolver maps both.
+      resolveTarget,
+    ) ?? [tail(markedModule)]
+  )
 }
 
 /**

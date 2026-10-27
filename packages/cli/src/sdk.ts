@@ -199,6 +199,13 @@ function schemaProperties(schema: JsonSchema): Readonly<Record<string, JsonSchem
   return properties as Readonly<Record<string, JsonSchema>> | undefined
 }
 
+/** A map's value schema, `true` for any value: an object with open `additionalProperties` and no `properties`. */
+function schemaMapValues(schema: JsonSchema): JsonSchema | true | undefined {
+  if (schemaProperties(schema) !== undefined) return undefined
+  const extra = recordOf(schema)?.additionalProperties
+  return extra === undefined || extra === false ? undefined : (extra as JsonSchema | true)
+}
+
 function schemaRequired(schema: JsonSchema): ReadonlySet<string> {
   const required = recordOf(schema)?.required
   return new Set(
@@ -328,16 +335,12 @@ function pythonType(
   const properties = schemaProperties(schema)
   const type = schemaType(schema)
   if (type === "object" || properties !== undefined) {
-    if (
-      properties === undefined &&
-      recordOf(schema)?.additionalProperties !== undefined &&
-      recordOf(schema)?.additionalProperties !== false
-    ) {
-      const extra = recordOf(schema)?.additionalProperties
+    const extra = schemaMapValues(schema)
+    if (extra !== undefined) {
       const extraType =
         typeof extra === "boolean"
           ? "Any"
-          : pythonType(extra as JsonSchema, `${hint}Value`, catalog, tracker, operation, location)
+          : pythonType(extra, `${hint}Value`, catalog, tracker, operation, location)
       return `dict[str, ${extraType}]`
     }
     return catalog.model(schema, hint)
@@ -483,13 +486,21 @@ function pythonErrorAliases(
   return aliases.join("\n")
 }
 
-function pythonSdk(document: OpenAPIDocument, options: SdkRenderOptions): string {
+/** What each SDK renderer starts from: the operations, a unique name for each, and the schema catalog and tracker. */
+function sdkPlan(document: OpenAPIDocument) {
   const entries = operations(document)
-  const names = uniqueNames(
-    entries.map(({ method, path, operation }) => operationName(operation, method, path)),
-  )
-  const catalog = new SchemaCatalog(document.components?.schemas)
-  const tracker = new OpaqueTracker()
+  return {
+    entries,
+    names: uniqueNames(
+      entries.map(({ method, path, operation }) => operationName(operation, method, path)),
+    ),
+    catalog: new SchemaCatalog(document.components?.schemas),
+    tracker: new OpaqueTracker(),
+  }
+}
+
+function pythonSdk(document: OpenAPIDocument, options: SdkRenderOptions): string {
+  const { entries, names, catalog, tracker } = sdkPlan(document)
   const methods: string[] = []
 
   entries.forEach((entry, index) => {
@@ -761,16 +772,12 @@ function goType(
   const properties = schemaProperties(schema)
   const type = schemaType(schema)
   if (type === "object" || properties !== undefined) {
-    if (
-      properties === undefined &&
-      recordOf(schema)?.additionalProperties !== undefined &&
-      recordOf(schema)?.additionalProperties !== false
-    ) {
-      const extra = recordOf(schema)?.additionalProperties
+    const extra = schemaMapValues(schema)
+    if (extra !== undefined) {
       const extraType =
         typeof extra === "boolean"
           ? "any"
-          : goType(extra as JsonSchema, `${hint}Value`, catalog, tracker, operation, location)
+          : goType(extra, `${hint}Value`, catalog, tracker, operation, location)
       return `map[string]${extraType}`
     }
     return catalog.model(schema, hint)
@@ -1058,12 +1065,7 @@ function goQueryDefinition(
 }
 
 function goSdk(document: OpenAPIDocument, options: SdkRenderOptions): string {
-  const entries = operations(document)
-  const names = uniqueNames(
-    entries.map(({ method, path, operation }) => operationName(operation, method, path)),
-  )
-  const catalog = new SchemaCatalog(document.components?.schemas)
-  const tracker = new OpaqueTracker()
+  const { entries, names, catalog, tracker } = sdkPlan(document)
   const methods: string[] = []
   const queries: string[] = []
   const errors: string[] = []

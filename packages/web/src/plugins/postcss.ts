@@ -17,8 +17,8 @@
  * CSS is bundled (dom) and it resolves to an empty module (ssr).
  */
 import type { BunPlugin } from "bun"
-import { transformCssModule } from "./css-modules.ts"
-import { createStylesheetEmitter, normalizeFilePath, reproduciblePath, requirePeer } from "./kit.ts"
+import { stylesheetModule } from "../internal/stylesheet-module.ts"
+import { createStylesheetEmitter, normalizeFilePath, requirePeer } from "./kit.ts"
 
 const STYLE_NS = "nifra-postcss"
 
@@ -107,22 +107,8 @@ export function postcssBunPlugin(
           )
         }
 
-        if (isModuleRequest(path)) {
-          // *.module.css → process, then scope class names through the shared CSS-modules transform.
-          // Scope off the cwd-relative path so names are reproducible across machines/CI.
-          const { exports, css: scopedCss } = transformCssModule(css, reproduciblePath(path))
-          const js = `export default ${JSON.stringify(exports)}\n`
-          return {
-            contents: generate === "dom" ? js + stylesheet.emit(path, scopedCss) : js,
-            loader: "js",
-          }
-        }
-
-        // Plain CSS → side-effect import: bundle the CSS on dom, an empty module on ssr.
-        return {
-          contents: generate === "dom" ? stylesheet.emit(path, css) : "",
-          loader: "js",
-        }
+        // *.module.css scopes its class names; plain CSS is a side-effect import, empty on ssr.
+        return stylesheetModule(path, css, isModuleRequest(path), generate, stylesheet)
       })
     },
   }

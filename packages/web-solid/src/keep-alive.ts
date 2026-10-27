@@ -38,7 +38,6 @@ export function mountRouter(options: KeepAliveMountOptions): void {
 
   let current: readonly SlotNode[] = []
   let publish: ((state: RouterState) => void) | undefined
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
   solidHydrate(() => {
     const [state, setState] = createSignal(router.snapshot())
     publish = (next) => setState(() => next)

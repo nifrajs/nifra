@@ -1619,6 +1619,24 @@ export function createPageRequestExecutor<Env = unknown>(
     )
   }
 
+  /** What a page route's failed loaders answer: a status signal's page, else the loader's error boundary. */
+  const renderRouteFailure = async (
+    req: Request,
+    env: Env,
+    route: RouteEntry,
+    params: Record<string, string>,
+    err: unknown,
+    run: LayoutRun | undefined,
+    personalized: boolean,
+  ): Promise<PageResponse> => {
+    if (isStatusSignal(err))
+      return (
+        (await renderRouteNotFound(req, env, route, params, err, run, personalized)) ??
+        renderStatusSignal(req, env, err, personalized, leadingLayouts(run, err))
+      )
+    return renderLoaderFailure(route, req, env, params, err, personalized, leadingLayouts(run, err))
+  }
+
   const renderNotFound = async (
     c: PageRouteContext<Env>,
     controls: PageResponseControls,
@@ -2067,29 +2085,7 @@ export function createPageRequestExecutor<Env = unknown>(
           liveCtx = ctx
         } catch (err) {
           if (componentRequest !== undefined) return componentRuntime!.failure(err)
-          if (isStatusSignal(err)) {
-            return (
-              (await renderRouteNotFound(
-                c.req,
-                c.env,
-                route,
-                c.params,
-                err,
-                run,
-                controls.personalized,
-              )) ??
-              renderStatusSignal(c.req, c.env, err, controls.personalized, leadingLayouts(run, err))
-            )
-          }
-          return renderLoaderFailure(
-            route,
-            c.req,
-            c.env,
-            c.params,
-            err,
-            controls.personalized,
-            leadingLayouts(run, err),
-          )
+          return renderRouteFailure(c.req, c.env, route, c.params, err, run, controls.personalized)
         }
         if (componentRequest !== undefined && componentState !== undefined) {
           const answer = componentRuntime!.response(componentState, componentRequest)
@@ -2327,29 +2323,7 @@ export function createPageRequestExecutor<Env = unknown>(
           data = pageData
           responseHeaders = controls.documentHeaders()
         } catch (err) {
-          if (isStatusSignal(err)) {
-            return (
-              (await renderRouteNotFound(
-                c.req,
-                c.env,
-                route,
-                c.params,
-                err,
-                run,
-                controls.personalized,
-              )) ??
-              renderStatusSignal(c.req, c.env, err, controls.personalized, leadingLayouts(run, err))
-            )
-          }
-          return renderLoaderFailure(
-            route,
-            c.req,
-            c.env,
-            c.params,
-            err,
-            controls.personalized,
-            leadingLayouts(run, err),
-          )
+          return renderRouteFailure(c.req, c.env, route, c.params, err, run, controls.personalized)
         }
         // The re-render answers a returned redirect or status the way the page's GET does.
         if (isStatusSignal(data))

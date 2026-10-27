@@ -1,8 +1,8 @@
 import {
+  createStylesheetEmitter,
   devHotComponent,
   devServerCompile,
   normalizeFilePath,
-  portablePath,
   rewriteSsrImports,
   withDevSourceMap,
 } from "@nifrajs/web/plugins/kit"
@@ -21,11 +21,11 @@ import { compile } from "svelte/compiler"
  *
  * `<style>` blocks: Svelte scopes selectors (`.foo.svelte-<hash>`) and bakes the matching classes into
  * the markup (both client + server output), so SSR HTML is already scoped. The **client** build emits
- * the scoped stylesheet as a virtual `?svelte-css` module that `Bun.build`'s CSS bundler folds into the
- * app stylesheet (served as a `<link>`); the SSR build drops it (the stylesheet ships from the client
- * build - no double-emit). With `nifra dev`, `@sveltejs/vite-plugin-svelte` injects the CSS instead.
+ * the scoped stylesheet as a virtual `?nifra-svelte-css` module that `Bun.build`'s CSS bundler folds
+ * into the app stylesheet (served as a `<link>`); the SSR build drops it (the stylesheet ships from the
+ * client build - no double-emit). With `nifra dev`, `@sveltejs/vite-plugin-svelte` injects the CSS
+ * instead.
  */
-const STYLE_SUFFIX = "?svelte-css"
 const STYLE_NS = "nifra-svelte-css"
 
 /**
@@ -52,11 +52,10 @@ export function svelteHmrBoundary({ filename }: { filename: string }): { hmr: bo
 }
 
 export function svelteBunPlugin(generate: "dom" | "ssr"): BunPlugin {
-  // Compiled scoped CSS per `.svelte` file (client build only) - read back by the virtual-module loader.
-  const cssByPath = new Map<string, string>()
   return {
     name: `nifra-svelte-${generate}`,
     setup(build) {
+      const stylesheet = createStylesheetEmitter(build, STYLE_NS)
       // Match `.svelte`, tolerating a `?query` suffix (dev servers append one to bust Bun's import
       // cache); strip it before reading the file off disk.
       build.onLoad({ filter: /\.svelte(\?|$)/ }, async (args) => {
@@ -94,11 +93,10 @@ export function svelteBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         })
         const map = { ...js.map, version: 3 }
         if (generate === "dom" && css?.code) {
-          cssByPath.set(portablePath(path), css.code)
           // Import the virtual style module so the bundler pulls the scoped CSS into the app stylesheet.
           return {
             contents: withDevSourceMap(
-              `${js.code}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
+              `${js.code}\n${stylesheet.emit(path, css.code)}`,
               map,
               path,
               generate,
@@ -116,15 +114,6 @@ export function svelteBunPlugin(generate: "dom" | "ssr"): BunPlugin {
           loader: "js",
         }
       })
-      // Virtual CSS module: `<file>.svelte?svelte-css` → the compiled scoped stylesheet (css loader).
-      build.onResolve({ filter: /\?svelte-css$/ }, (args) => ({
-        path: args.path,
-        namespace: STYLE_NS,
-      }))
-      build.onLoad({ filter: /.*/, namespace: STYLE_NS }, (args) => ({
-        contents: cssByPath.get(portablePath(args.path.slice(0, -STYLE_SUFFIX.length))) ?? "",
-        loader: "css",
-      }))
     },
   }
 }
