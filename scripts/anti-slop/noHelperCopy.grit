@@ -4,7 +4,14 @@ language js(typescript, jsx)
 // Helpers each package keeps in one owning module: `internal/record.ts`, `internal/escape-regexp.ts`,
 // core's `canonical-json.ts`, the package's SHA-256 hex module, and middleware's chunk concat.
 pattern owned_helper() {
-  or { `isRecord`, `escapeRegExp`, `canonicalJson`, `sha256Hex`, `concatBytes`, `concatChunks` }
+  or {
+    `isRecord`,
+    `escapeRegExp`,
+    `canonicalJson`,
+    `sha256Hex`,
+    `concatBytes`,
+    `concatChunks`
+  }
 }
 
 or {

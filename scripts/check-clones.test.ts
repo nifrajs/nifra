@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test"
-import { compareCounts, findClones, WINDOW } from "./check-clones.ts"
+import { spawnSync } from "node:child_process"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { compareCounts, findClones, run, WINDOW } from "./check-clones.ts"
 
 const block = (
   name: string,
@@ -61,4 +65,42 @@ test("a third copy adds its own tokens once, and counts compare both ways", () =
     increased: [{ pkg: "alpha", was: 1, now: three.alpha ?? 0 }],
     decreased: [{ pkg: "gone", was: 5, now: 0 }],
   })
+})
+
+test("a tracked copy fails the gate until the baseline accepts it; an untracked one is not seen", async () => {
+  const project = await mkdtemp(join(tmpdir(), "clones-"))
+  const baseline = join(project, "baseline.json")
+  const git = (...args: string[]): void => {
+    const result = spawnSync("git", args, { cwd: project, encoding: "utf8" })
+    if (result.status !== 0) throw new Error(result.stderr)
+  }
+  const write = async (file: string, text: string, tracked: boolean): Promise<void> => {
+    await writeFile(join(project, file), text)
+    if (tracked) git("add", file)
+  }
+  const gate = (...flags: string[]) =>
+    run(["bun", "check-clones.ts", ...flags], { cwd: project, baseline })
+  try {
+    git("init", "-q")
+    await mkdir(join(project, "packages/alpha/src"), { recursive: true })
+    await write("packages/alpha/src/one.ts", block("first"), true)
+    expect((await gate()).code).toBe(2)
+    expect((await gate("--update")).code).toBe(0)
+    expect(JSON.parse(await readFile(baseline, "utf8"))).toEqual({})
+
+    await write("packages/alpha/src/local.ts", block("local"), false)
+    expect((await gate()).code).toBe(0)
+
+    await write("packages/alpha/src/two.ts", block("second"), true)
+    const refused = await gate()
+    expect(refused.code).toBe(1)
+    expect(refused.report.join("\n")).toContain(
+      "packages/alpha/src/one.ts:1-6 = packages/alpha/src/two.ts:1-6",
+    )
+    expect((await gate("--update")).code).toBe(1)
+    expect((await gate("--update", "--accept-increase")).code).toBe(0)
+    expect((await gate()).code).toBe(0)
+  } finally {
+    await rm(project, { recursive: true, force: true })
+  }
 })
