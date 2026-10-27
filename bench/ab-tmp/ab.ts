@@ -42,7 +42,7 @@ const bun =
 const node =
   (mod: string, ...a: string[]) =>
   (t: string, port: number) => ["node", `${H}/wrap.mjs`, `${t}/${mod}`, String(port), ...a]
-const N: [number, number] = [5_000, 25_000]
+const N: [number, number] = [10_000, 50_000]
 const ORDER = { sku: "SKU-1", qty: 2, note: "gift wrap" }
 const WORK: W[] = [
   {
