@@ -129,23 +129,13 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
   } catch (err) {
     return { code: 1, message: `✗ ${err instanceof Error ? err.message : String(err)}` }
   }
-  const { target, template, framework, deployTarget, docker, ci, db, auth, force, link } = parsed
+  const { target, force } = parsed
   if (target === undefined) return { code: 1, message: USAGE }
 
   let result: ScaffoldResult
   try {
-    result = await scaffold({
-      target,
-      ...(template !== undefined ? { template } : {}),
-      ...(framework !== undefined ? { framework } : {}),
-      ...(deployTarget !== undefined ? { deployTarget } : {}),
-      ...(docker ? { docker } : {}),
-      ...(ci !== undefined ? { ci } : {}),
-      ...(db !== undefined ? { db } : {}),
-      ...(auth !== undefined ? { auth } : {}),
-      ...(force ? { force } : {}),
-      ...(link !== undefined ? { link } : {}),
-    })
+    // parseArgs leaves out every flag not given, so what it parsed is scaffold's options as they are.
+    result = await scaffold({ ...parsed, target })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     // Without --force a copy failure is almost always "destination exists" - say so plainly. With it,
