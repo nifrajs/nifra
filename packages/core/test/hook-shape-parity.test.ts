@@ -406,14 +406,12 @@ function headerOf(
   return Array.isArray(value) ? value.join(", ") : String(value)
 }
 
-test("every hook shape answers as the generic program does, on the Web and Node-direct lanes", async () => {
-  const all = shapes()
-  let scenarios = 0
-  const mismatches: string[] = []
-  for (const shape of all) {
+// One test per shape keeps each well inside the runner's timeout, coverage instrumentation included.
+for (const shape of shapes()) {
+  test(`hooks ${JSON.stringify(shape)} answer as the generic program does, on the Web and Node-direct lanes`, async () => {
     const expectedLane = shape.schema === "body" ? "body-hooks" : "hooks"
+    const mismatches: string[] = []
     for (const plan of plans(shape)) {
-      scenarios++
       const fused = build(shape, plan, false)
       const reference = build(shape, plan, true)
       const lanes = [fused, reference].map(
@@ -421,14 +419,14 @@ test("every hook shape answers as the generic program does, on the Web and Node-
       )
       // Parity between two copies of the generic lane would prove nothing.
       if (lanes[0] !== expectedLane || lanes[1] !== undefined) {
-        mismatches.push(`${JSON.stringify(shape)} lanes ${lanes.join(" / ")}`)
+        mismatches.push(`lanes ${lanes.join(" / ")}`)
         continue
       }
       for (const request of requests(shape)) {
         const want = await webView(reference.app, reference.calls, request.clone())
         const web = await webView(fused.app, fused.calls, request.clone())
         const node = await nodeView(fused.app, fused.calls, request.clone())
-        const label = `${JSON.stringify(shape)} ${JSON.stringify(plan)} ${request.method} ${request.url}`
+        const label = `${JSON.stringify(plan)} ${request.method} ${request.url}`
         if (JSON.stringify(web) !== JSON.stringify(want)) {
           mismatches.push(
             `web ${label}\n  want ${JSON.stringify(want)}\n  got  ${JSON.stringify(web)}`,
@@ -441,7 +439,12 @@ test("every hook shape answers as the generic program does, on the Web and Node-
         }
       }
     }
-  }
-  expect(mismatches.slice(0, 5)).toEqual([])
-  expect(scenarios).toBeGreaterThan(1500)
+    expect(mismatches.slice(0, 5)).toEqual([])
+  })
+}
+
+test("the generated hook plans cover every axis", () => {
+  const all = shapes()
+  expect(all).toHaveLength(78)
+  expect(all.reduce((total, shape) => total + plans(shape).length, 0)).toBeGreaterThan(30_000)
 })
