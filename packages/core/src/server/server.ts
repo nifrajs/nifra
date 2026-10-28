@@ -863,53 +863,52 @@ function responseSet(ctx: RawContext): CtxSet {
 type Finalize<T> = (result: unknown, set: CtxSet, ctx: RawContext) => T
 type Wrap<T> = (response: Response | ResponseResult) => T
 
-/** What a fused lifecycle route runs for its hook set on the Web lane: the first derive, or the
- * handler when the set has no hooks before it. */
-type FusedWebStart = (
-  ctx: RawContext,
-  handler: InternalHandler,
-  index: number,
-) => MaybePromise<Response>
+/** A fused route's handler and hook arrays, which never change after the route is built. The route's
+ * shared stage chain reads them per request, so routes whose hooks differ still share one chain. */
+interface FusedHooks {
+  readonly handler: InternalHandler
+  readonly derives: readonly RawDerive[]
+  readonly befores: readonly RawBeforeHandle[]
+  readonly afters: readonly RawAfterHandle[]
+}
+
+/** What a fused lifecycle route runs for its hook shape on the Web lane: the first derive, or the
+ * handler when the shape has no hooks before it. */
+type FusedWebStart = (ctx: RawContext, route: FusedHooks, index: number) => MaybePromise<Response>
 
 /** The same chain for the Node-direct lane, finalizing through the caller's `finalize`. */
 type FusedNodeStart = <T>(
   ctx: RawContext,
-  handler: InternalHandler,
+  route: FusedHooks,
   finalize: Finalize<T>,
   wrapResponse: Wrap<T>,
   index: number,
 ) => MaybePromise<T>
 
-const HOOK_IDS = new WeakMap<object, number>()
-const WEB_STAGES = new WeakMap<object, Map<string, FusedWebStart>>()
-const NODE_STAGES = new WeakMap<object, Map<string, FusedNodeStart>>()
-let nextHookId = 0
+const WEB_STAGES = new WeakMap<object, Map<number, FusedWebStart>>()
+const NODE_STAGES = new WeakMap<object, Map<number, FusedNodeStart>>()
 
-function hookId(hook: object): number {
-  let id = HOOK_IDS.get(hook)
-  if (id === undefined) {
-    id = ++nextHookId
-    HOOK_IDS.set(hook, id)
-  }
-  return id
-}
+/** How many hooks a phase runs, as the chain tells them apart: none, one, or several. */
+type HookCount = 0 | 1 | 2
+
+const hookCount = (hooks: readonly object[]): HookCount =>
+  hooks.length > 1 ? 2 : (hooks.length as 0 | 1)
 
 /**
- * The fused stage chain of a hook set, built once per server and handed to every route that registers
- * the same hooks in the same order. The chain never reads a route, so sharing it changes no answer;
- * a hook that is wrapped per route simply gets a chain of its own. The chain keeps the arrays it is
- * given, so a caller passes arrays that never change afterwards: a hook registered after the route
- * must not be able to move a hook out of the chain's range.
+ * The fused stage chain of a hook shape, built once per server and handed to every route with the same
+ * number of derive, before and after hooks (none, one or several of each). The chain reads a route's
+ * hooks and handler from the `FusedHooks` it is called with, so sharing it changes no answer.
  */
-function sharedStages<T, D extends object, B extends object, A extends object>(
-  cache: WeakMap<object, Map<string, T>>,
+function sharedStages<T>(
+  cache: WeakMap<object, Map<number, T>>,
   owner: object,
-  derives: readonly D[],
-  befores: readonly B[],
-  afters: readonly A[],
-  build: (derives: readonly D[], befores: readonly B[], afters: readonly A[]) => T,
+  route: FusedHooks,
+  build: (derives: HookCount, befores: HookCount, afters: HookCount) => T,
 ): T {
-  const key = `${derives.map(hookId)}|${befores.map(hookId)}|${afters.map(hookId)}`
+  const derives = hookCount(route.derives)
+  const befores = hookCount(route.befores)
+  const afters = hookCount(route.afters)
+  const key = derives * 9 + befores * 3 + afters
   let chains = cache.get(owner)
   if (chains === undefined) {
     chains = new Map()
@@ -2778,9 +2777,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const fusedLifecycle = lanes.fusedLane === "hooks" || lanes.fusedLane === "body-hooks"
     // The fused chains keep the arrays they are built from, and `beforeHandle()` inserts into the live
     // ones ahead of `beforeHandler()` guards, so the two builders get one snapshot of this route's.
-    const fusedDerives = fusedLifecycle ? [...this.derives] : []
-    const fusedBefores = fusedLifecycle ? [...beforeHandle] : []
-    const fusedAfters = fusedLifecycle ? [...afterHandle] : []
+    const fusedHooks: FusedHooks | undefined = fusedLifecycle
+      ? {
+          handler: handler as unknown as InternalHandler,
+          derives: [...this.derives],
+          befores: [...beforeHandle],
+          afters: [...afterHandle],
+        }
+      : undefined
     // The Node-direct dispatcher (`!webFast`) prefers these runners over the generic program. Only the
     // body-only runner also feeds the Web wrapper; the lifecycle lanes build their own Web closure.
     const fusedBodyRunner = fusedBody
@@ -2790,12 +2794,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           hasDecorations ? routeDecorations : undefined,
           bodyLimit ?? UNLIMITED_BODY_BYTES,
         )
-      : fusedLifecycle
+      : fusedHooks !== undefined
         ? this.buildFusedLifecycleRunner(
-            handler as unknown as InternalHandler,
-            fusedDerives,
-            fusedBefores,
-            fusedAfters,
+            fusedHooks,
             schema?.query,
             schema?.body as StandardSchemaV1 | undefined,
             bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -2818,12 +2819,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
-            : fusedLifecycle
+            : fusedHooks !== undefined
               ? this.buildFusedLifecycleWeb(
-                  handler as unknown as InternalHandler,
-                  fusedDerives,
-                  fusedBefores,
-                  fusedAfters,
+                  fusedHooks,
                   schema?.query,
                   schema?.body as StandardSchemaV1 | undefined,
                   bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -3323,6 +3321,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Type-erase the lane so each `===` branch sees the full union, not the narrowed remainder.
     const laneName: string | undefined = lane
     const lifecycle = laneName === "hooks" || laneName === "body-hooks"
+    const hooks: FusedHooks | undefined = lifecycle
+      ? {
+          handler: entry.handler,
+          derives: entry.derives,
+          befores: entry.beforeHandle,
+          afters: entry.afterHandle,
+        }
+      : undefined
     const fusedBody =
       laneName === "body"
         ? this.buildFusedBodyRunner(
@@ -3331,12 +3337,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             entry.hasDecorations ? entry.decorations : undefined,
             entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
-        : lifecycle
+        : hooks !== undefined
           ? this.buildFusedLifecycleRunner(
-              entry.handler,
-              entry.derives,
-              entry.beforeHandle,
-              entry.afterHandle,
+              hooks,
               entry.schema?.query,
               entry.schema?.body as StandardSchemaV1 | undefined,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -3352,12 +3355,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               entry.schema?.query as StandardSchemaV1,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
-          : lifecycle
+          : hooks !== undefined
             ? this.buildFusedLifecycleWeb(
-                entry.handler,
-                entry.derives,
-                entry.beforeHandle,
-                entry.afterHandle,
+                hooks,
                 entry.schema?.query,
                 entry.schema?.body as StandardSchemaV1 | undefined,
                 entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -5377,39 +5377,38 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   /**
-   * The stage chain a hook set runs - derive, before, handler, after, respond - for the Web lane,
-   * built once per server and shared by every route with the same ordered hooks. A route's own closure
-   * (see {@link buildFusedLifecycleWeb}) holds only its handler and schemas, so memory grows with the
-   * number of distinct hook sets, not routes. The arrays are the chain's own copies.
+   * The stage chain a hook shape runs - derive, before, handler, after, respond - for the Web lane,
+   * built once per server and shared by every route with the same number of hooks in each phase (none,
+   * one or several). The chain reads a route's handler and hooks from its `FusedHooks` per request, so
+   * a route's own closure (see {@link buildFusedLifecycleWeb}) holds only that record and its schemas,
+   * and memory grows with the number of distinct shapes, not routes or hook functions.
    */
   private fusedWebStages(
-    derives: readonly RawDerive[],
-    befores: readonly RawBeforeHandle[],
-    afters: readonly RawAfterHandle[],
+    deriveCount: HookCount,
+    beforeCount: HookCount,
+    afterCount: HookCount,
   ): FusedWebStart {
-    // The stages are closures over the route's hook arrays, and a route creates only the ones it uses.
-    // Which stage follows which is settled once here, so a request makes one call per hook and per
-    // phase. A phase with a single hook, the common middleware shape, gets a straight-line closure that
-    // holds its hook directly; a phase with several loops over its array, running synchronous hooks in
-    // place so the stack stays flat however many a phase holds, and only a hook that returns a promise
-    // re-enters its stage from a microtask. Continuations capture route state once; each request
-    // supplies its own context.
-    type Stage = (
+    // A shape creates only the stages it uses. Which stage follows which is settled once here, so a
+    // request makes one call per hook and per phase. A phase with a single hook, the common middleware
+    // shape, gets a straight-line closure that reads that hook from the route; a phase with several
+    // loops over the route's array, running synchronous hooks in place so the stack stays flat however
+    // many a phase holds, and only a hook that returns a promise re-enters its stage from a microtask.
+    // Each request supplies its own context and route.
+    type Stage = (ctx: RawContext, route: FusedHooks, index: number) => MaybePromise<Response>
+    type AfterStage = (
+      result: unknown,
       ctx: RawContext,
-      handler: InternalHandler,
+      route: FusedHooks,
       index: number,
     ) => MaybePromise<Response>
-    type AfterStage = (result: unknown, ctx: RawContext, index: number) => MaybePromise<Response>
-    const onlyAfter = afters[0]
-    const lastAfter = afters.length - 1
     let runAfter: AfterStage
-    if (afters.length === 0) {
+    if (afterCount === 0) {
       runAfter = (result, ctx) => this.respondFused(result, ctx, this.onResponseHooks.length === 0)
-    } else if (afters.length === 1) {
-      runAfter = (result, ctx) => {
+    } else if (afterCount === 1) {
+      runAfter = (result, ctx, route) => {
         let transformed: unknown
         try {
-          transformed = onlyAfter!(result, ctx)
+          transformed = route.afters[0]!(result, ctx)
         } catch (err) {
           return this.fusedWebFail(err, ctx)
         }
@@ -5422,11 +5421,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
       }
     } else {
-      runAfter = (result, ctx, index) => {
+      runAfter = (result, ctx, route, index) => {
+        const lastAfter = route.afters.length - 1
         for (;;) {
           let transformed: unknown
           try {
-            transformed = afters[index]!(result, ctx)
+            transformed = route.afters[index]!(result, ctx)
           } catch (err) {
             return this.fusedWebFail(err, ctx)
           }
@@ -5434,7 +5434,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             return transformed.then(
               (value) =>
                 index < lastAfter
-                  ? runAfter(value, ctx, index + 1)
+                  ? runAfter(value, ctx, route, index + 1)
                   : this.respondFused(value, ctx, this.onResponseHooks.length === 0),
               (err) => this.fusedWebFail(err, ctx),
             )
@@ -5447,50 +5447,49 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         }
       }
     }
-    const runHandler: Stage = (ctx, handler) => {
+    const runHandler: Stage = (ctx, route) => {
       let result: unknown
       try {
-        result = handler(ctx)
+        result = route.handler(ctx)
       } catch (err) {
         return this.fusedWebFail(err, ctx)
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => runAfter(value, ctx, 0),
+          (value) => runAfter(value, ctx, route, 0),
           (err) => this.fusedWebFail(err, ctx),
         )
       }
-      return runAfter(result, ctx, 0)
+      return runAfter(result, ctx, route, 0)
     }
-    const onlyBefore = befores[0]
-    const lastBefore = befores.length - 1
     let runBefore: Stage
-    if (befores.length === 0) {
+    if (beforeCount === 0) {
       runBefore = runHandler
-    } else if (befores.length === 1) {
-      runBefore = (ctx, handler) => {
+    } else if (beforeCount === 1) {
+      runBefore = (ctx, route) => {
         let early: unknown
         try {
-          early = onlyBefore!(ctx)
+          early = route.befores[0]!(ctx)
         } catch (err) {
           return this.fusedWebFail(err, ctx)
         }
         if (early instanceof Promise) {
           return early.then(
             (settled) =>
-              settled === undefined ? runHandler(ctx, handler, 0) : this.respondFused(settled, ctx),
+              settled === undefined ? runHandler(ctx, route, 0) : this.respondFused(settled, ctx),
             (err) => this.fusedWebFail(err, ctx),
           )
         }
-        if (early === undefined) return runHandler(ctx, handler, 0)
+        if (early === undefined) return runHandler(ctx, route, 0)
         return this.respondFused(early, ctx)
       }
     } else {
-      runBefore = (ctx, handler, index) => {
+      runBefore = (ctx, route, index) => {
+        const lastBefore = route.befores.length - 1
         for (;;) {
           let early: unknown
           try {
-            early = befores[index]!(ctx)
+            early = route.befores[index]!(ctx)
           } catch (err) {
             return this.fusedWebFail(err, ctx)
           }
@@ -5499,28 +5498,26 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               (settled) => {
                 if (settled !== undefined) return this.respondFused(settled, ctx)
                 return index < lastBefore
-                  ? runBefore(ctx, handler, index + 1)
-                  : runHandler(ctx, handler, 0)
+                  ? runBefore(ctx, route, index + 1)
+                  : runHandler(ctx, route, 0)
               },
               (err) => this.fusedWebFail(err, ctx),
             )
           }
           if (early !== undefined) return this.respondFused(early, ctx)
-          if (index === lastBefore) return runHandler(ctx, handler, 0)
+          if (index === lastBefore) return runHandler(ctx, route, 0)
           index++
         }
       }
     }
-    const onlyDerive = derives[0]
-    const lastDerive = derives.length - 1
     let runDerive: Stage
-    if (derives.length === 0) {
+    if (deriveCount === 0) {
       runDerive = runBefore
-    } else if (derives.length === 1) {
-      runDerive = (ctx, handler) => {
+    } else if (deriveCount === 1) {
+      runDerive = (ctx, route) => {
         let derived: unknown
         try {
-          derived = onlyDerive!(ctx)
+          derived = route.derives[0]!(ctx)
         } catch (err) {
           return this.fusedWebFail(err, ctx)
         }
@@ -5535,7 +5532,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               } catch (err) {
                 return this.fusedWebFail(err, ctx)
               }
-              return runBefore(ctx, handler, 0)
+              return runBefore(ctx, route, 0)
             },
             (err) => this.fusedWebFail(err, ctx),
           )
@@ -5548,14 +5545,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         } catch (err) {
           return this.fusedWebFail(err, ctx)
         }
-        return runBefore(ctx, handler, 0)
+        return runBefore(ctx, route, 0)
       }
     } else {
-      runDerive = (ctx, handler, index) => {
+      runDerive = (ctx, route, index) => {
+        const lastDerive = route.derives.length - 1
         for (;;) {
           let derived: unknown
           try {
-            derived = derives[index]!(ctx)
+            derived = route.derives[index]!(ctx)
           } catch (err) {
             return this.fusedWebFail(err, ctx)
           }
@@ -5571,8 +5569,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                   return this.fusedWebFail(err, ctx)
                 }
                 return index < lastDerive
-                  ? runDerive(ctx, handler, index + 1)
-                  : runBefore(ctx, handler, 0)
+                  ? runDerive(ctx, route, index + 1)
+                  : runBefore(ctx, route, 0)
               },
               (err) => this.fusedWebFail(err, ctx),
             )
@@ -5585,7 +5583,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           } catch (err) {
             return this.fusedWebFail(err, ctx)
           }
-          if (index === lastDerive) return runBefore(ctx, handler, 0)
+          if (index === lastDerive) return runBefore(ctx, route, 0)
           index++
         }
       }
@@ -5595,25 +5593,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   /**
    * Compile a fused lifecycle route's entry closure: parse (body) → validate → the shared stage chain
-   * of its hook set (derive → before → handler → after → respond, see {@link fusedWebStages}) in a
+   * of its hook shape (derive → before → handler → after → respond, see {@link fusedWebStages}) in a
    * single frame, where the generic program walks staged hook loops. `selectRouteLanes` admits only
    * derive, before and after hooks - no params or headers schema, onError, around, decorations,
    * response contract or recovery hook, and never a query schema beside a body schema - so the behavior
    * is the compiled program's: the same stage order, the same thrown-value contract (`Response` is
    * control flow, anything else logs and 500s), the same `c.set` semantics and `fusedRespond` render.
-   * The route's own closure holds only its handler and schemas and takes the request's context as an
-   * argument, so a request allocates no step closures.
+   * The route's own closure holds only its `FusedHooks` and schemas and takes the request's context as
+   * an argument, so a request allocates no step closures.
    */
   private buildFusedLifecycleWeb(
-    handler: InternalHandler,
-    derives: readonly RawDerive[],
-    befores: readonly RawBeforeHandle[],
-    afters: readonly RawAfterHandle[],
+    route: FusedHooks,
     querySchema: StandardSchemaV1 | undefined,
     bodySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
   ): FusedWebRunner {
-    const runDerive = sharedStages(WEB_STAGES, this, derives, befores, afters, (d, b, a) =>
+    const runDerive = sharedStages(WEB_STAGES, this, route, (d, b, a) =>
       this.fusedWebStages(d, b, a),
     )
     if (bodySchema !== undefined) {
@@ -5630,7 +5625,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               if (settled.issues !== undefined)
                 return this.wrapWebResponse(plainValidationError(settled.issues))
               ctx.body = settled.value
-              return runDerive(ctx, handler, 0)
+              return runDerive(ctx, route, 0)
             },
             (err) => this.fusedWebFail(err, ctx),
           )
@@ -5638,7 +5633,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (validation.issues !== undefined)
           return this.wrapWebResponse(plainValidationError(validation.issues))
         ctx.body = validation.value
-        return runDerive(ctx, handler, 0)
+        return runDerive(ctx, route, 0)
       }
       return (source, params, search, signal, budget, platform, nativeContext) => {
         const ctx = nativeContext
@@ -5685,7 +5680,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      if (querySchema === undefined) return runDerive(ctx, handler, 0)
+      if (querySchema === undefined) return runDerive(ctx, route, 0)
       let validation: MaybePromise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
@@ -5698,7 +5693,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (settled.issues !== undefined)
               return this.wrapWebResponse(plainValidationError(settled.issues))
             ctx.query = settled.value
-            return runDerive(ctx, handler, 0)
+            return runDerive(ctx, route, 0)
           },
           (err) => this.fusedWebFail(err, ctx),
         )
@@ -5706,19 +5701,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return this.wrapWebResponse(plainValidationError(validation.issues))
       ctx.query = validation.value
-      return runDerive(ctx, handler, 0)
+      return runDerive(ctx, route, 0)
     }
   }
 
   /**
    * The Node-direct twin of {@link fusedWebStages}: the same chain, finalizing through the caller's
-   * own `finalize`, shared by every route with the same ordered hooks. A terminal `finalize` throw (an
+   * own `finalize`, shared by every route with the same hook shape. A terminal `finalize` throw (an
    * unstringifiable handler return on the Node lane) is caught as `finishLifecycleContract` catches it.
    */
   private fusedNodeStages(
-    derives: readonly RawDerive[],
-    befores: readonly RawBeforeHandle[],
-    afters: readonly RawAfterHandle[],
+    deriveCount: HookCount,
+    beforeCount: HookCount,
+    afterCount: HookCount,
   ): FusedNodeStart {
     const finishResult = <T>(
       result: unknown,
@@ -5733,12 +5728,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
 
-    // The stages are closures over the route's hook arrays, as in the Web builder: a route creates only
-    // the stages it uses, a phase with one hook gets a straight-line closure that holds it, and a phase
-    // with several loops over its array. The generic `T` of each stage is the caller's outcome type.
+    // The stages read the route's hooks, as in the Web builder: a shape creates only the stages it uses,
+    // a phase with one hook gets a straight-line closure, and a phase with several loops over the route's
+    // array. The generic `T` of each stage is the caller's outcome type.
     type Stage = <T>(
       ctx: RawContext,
-      handler: InternalHandler,
+      route: FusedHooks,
       finalize: Finalize<T>,
       wrapResponse: Wrap<T>,
       index: number,
@@ -5746,22 +5741,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     type AfterStage = <T>(
       result: unknown,
       ctx: RawContext,
+      route: FusedHooks,
       finalize: Finalize<T>,
       wrapResponse: Wrap<T>,
       index: number,
     ) => MaybePromise<T>
 
-    const onlyAfter = afters[0]
-    const lastAfter = afters.length - 1
     let runAfter: AfterStage
-    if (afters.length === 0) {
-      runAfter = (result, ctx, finalize, wrapResponse) =>
+    if (afterCount === 0) {
+      runAfter = (result, ctx, _route, finalize, wrapResponse) =>
         finishResult(result, ctx, finalize, wrapResponse)
-    } else if (afters.length === 1) {
-      runAfter = (result, ctx, finalize, wrapResponse) => {
+    } else if (afterCount === 1) {
+      runAfter = (result, ctx, route, finalize, wrapResponse) => {
         let transformed: unknown
         try {
-          transformed = onlyAfter!(result, ctx)
+          transformed = route.afters[0]!(result, ctx)
         } catch (err) {
           return this.bareError(err, ctx, finalize, wrapResponse)
         }
@@ -5774,11 +5768,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return finishResult(transformed, ctx, finalize, wrapResponse)
       }
     } else {
-      runAfter = (result, ctx, finalize, wrapResponse, index) => {
+      runAfter = (result, ctx, route, finalize, wrapResponse, index) => {
+        const lastAfter = route.afters.length - 1
         for (;;) {
           let transformed: unknown
           try {
-            transformed = afters[index]!(result, ctx)
+            transformed = route.afters[index]!(result, ctx)
           } catch (err) {
             return this.bareError(err, ctx, finalize, wrapResponse)
           }
@@ -5786,7 +5781,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             return transformed.then(
               (value) =>
                 index < lastAfter
-                  ? runAfter(value, ctx, finalize, wrapResponse, index + 1)
+                  ? runAfter(value, ctx, route, finalize, wrapResponse, index + 1)
                   : finishResult(value, ctx, finalize, wrapResponse),
               (err) => this.bareError(err, ctx, finalize, wrapResponse),
             )
@@ -5798,32 +5793,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
 
-    const runHandler: Stage = (ctx, handler, finalize, wrapResponse) => {
+    const runHandler: Stage = (ctx, route, finalize, wrapResponse) => {
       let result: unknown
       try {
-        result = handler(ctx)
+        result = route.handler(ctx)
       } catch (err) {
         return this.bareError(err, ctx, finalize, wrapResponse)
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => runAfter(value, ctx, finalize, wrapResponse, 0),
+          (value) => runAfter(value, ctx, route, finalize, wrapResponse, 0),
           (err) => this.bareError(err, ctx, finalize, wrapResponse),
         )
       }
-      return runAfter(result, ctx, finalize, wrapResponse, 0)
+      return runAfter(result, ctx, route, finalize, wrapResponse, 0)
     }
 
-    const onlyBefore = befores[0]
-    const lastBefore = befores.length - 1
     let runBefore: Stage
-    if (befores.length === 0) {
+    if (beforeCount === 0) {
       runBefore = runHandler
-    } else if (befores.length === 1) {
-      runBefore = (ctx, handler, finalize, wrapResponse) => {
+    } else if (beforeCount === 1) {
+      runBefore = (ctx, route, finalize, wrapResponse) => {
         let early: unknown
         try {
-          early = onlyBefore!(ctx)
+          early = route.befores[0]!(ctx)
         } catch (err) {
           return this.bareError(err, ctx, finalize, wrapResponse)
         }
@@ -5831,20 +5824,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           return early.then(
             (settled) =>
               settled === undefined
-                ? runHandler(ctx, handler, finalize, wrapResponse, 0)
+                ? runHandler(ctx, route, finalize, wrapResponse, 0)
                 : finishResult(settled, ctx, finalize, wrapResponse),
             (err) => this.bareError(err, ctx, finalize, wrapResponse),
           )
         }
-        if (early === undefined) return runHandler(ctx, handler, finalize, wrapResponse, 0)
+        if (early === undefined) return runHandler(ctx, route, finalize, wrapResponse, 0)
         return finishResult(early, ctx, finalize, wrapResponse)
       }
     } else {
-      runBefore = (ctx, handler, finalize, wrapResponse, index) => {
+      runBefore = (ctx, route, finalize, wrapResponse, index) => {
+        const lastBefore = route.befores.length - 1
         for (;;) {
           let early: unknown
           try {
-            early = befores[index]!(ctx)
+            early = route.befores[index]!(ctx)
           } catch (err) {
             return this.bareError(err, ctx, finalize, wrapResponse)
           }
@@ -5853,29 +5847,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               (settled) => {
                 if (settled !== undefined) return finishResult(settled, ctx, finalize, wrapResponse)
                 return index < lastBefore
-                  ? runBefore(ctx, handler, finalize, wrapResponse, index + 1)
-                  : runHandler(ctx, handler, finalize, wrapResponse, 0)
+                  ? runBefore(ctx, route, finalize, wrapResponse, index + 1)
+                  : runHandler(ctx, route, finalize, wrapResponse, 0)
               },
               (err) => this.bareError(err, ctx, finalize, wrapResponse),
             )
           }
           if (early !== undefined) return finishResult(early, ctx, finalize, wrapResponse)
-          if (index === lastBefore) return runHandler(ctx, handler, finalize, wrapResponse, 0)
+          if (index === lastBefore) return runHandler(ctx, route, finalize, wrapResponse, 0)
           index++
         }
       }
     }
 
-    const onlyDerive = derives[0]
-    const lastDerive = derives.length - 1
     let runDerive: Stage
-    if (derives.length === 0) {
+    if (deriveCount === 0) {
       runDerive = runBefore
-    } else if (derives.length === 1) {
-      runDerive = (ctx, handler, finalize, wrapResponse) => {
+    } else if (deriveCount === 1) {
+      runDerive = (ctx, route, finalize, wrapResponse) => {
         let derived: unknown
         try {
-          derived = onlyDerive!(ctx)
+          derived = route.derives[0]!(ctx)
         } catch (err) {
           return this.bareError(err, ctx, finalize, wrapResponse)
         }
@@ -5890,7 +5882,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               } catch (err) {
                 return this.bareError(err, ctx, finalize, wrapResponse)
               }
-              return runBefore(ctx, handler, finalize, wrapResponse, 0)
+              return runBefore(ctx, route, finalize, wrapResponse, 0)
             },
             (err) => this.bareError(err, ctx, finalize, wrapResponse),
           )
@@ -5903,14 +5895,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         } catch (err) {
           return this.bareError(err, ctx, finalize, wrapResponse)
         }
-        return runBefore(ctx, handler, finalize, wrapResponse, 0)
+        return runBefore(ctx, route, finalize, wrapResponse, 0)
       }
     } else {
-      runDerive = (ctx, handler, finalize, wrapResponse, index) => {
+      runDerive = (ctx, route, finalize, wrapResponse, index) => {
+        const lastDerive = route.derives.length - 1
         for (;;) {
           let derived: unknown
           try {
-            derived = derives[index]!(ctx)
+            derived = route.derives[index]!(ctx)
           } catch (err) {
             return this.bareError(err, ctx, finalize, wrapResponse)
           }
@@ -5926,8 +5919,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                   return this.bareError(err, ctx, finalize, wrapResponse)
                 }
                 return index < lastDerive
-                  ? runDerive(ctx, handler, finalize, wrapResponse, index + 1)
-                  : runBefore(ctx, handler, finalize, wrapResponse, 0)
+                  ? runDerive(ctx, route, finalize, wrapResponse, index + 1)
+                  : runBefore(ctx, route, finalize, wrapResponse, 0)
               },
               (err) => this.bareError(err, ctx, finalize, wrapResponse),
             )
@@ -5940,7 +5933,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           } catch (err) {
             return this.bareError(err, ctx, finalize, wrapResponse)
           }
-          if (index === lastDerive) return runBefore(ctx, handler, finalize, wrapResponse, 0)
+          if (index === lastDerive) return runBefore(ctx, route, finalize, wrapResponse, 0)
           index++
         }
       }
@@ -5956,15 +5949,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * `finishLifecycleContract` catches it; the body's 415/400 renders take `wrapResponse` directly.
    */
   private buildFusedLifecycleRunner(
-    handler: InternalHandler,
-    derives: readonly RawDerive[],
-    befores: readonly RawBeforeHandle[],
-    afters: readonly RawAfterHandle[],
+    route: FusedHooks,
     querySchema: StandardSchemaV1 | undefined,
     bodySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
   ): FusedBodyRunner {
-    const runDerive = sharedStages(NODE_STAGES, this, derives, befores, afters, (d, b, a) =>
+    const runDerive = sharedStages(NODE_STAGES, this, route, (d, b, a) =>
       this.fusedNodeStages(d, b, a),
     )
 
@@ -5987,7 +5977,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               if (settled.issues !== undefined)
                 return wrapResponse(plainValidationError(settled.issues))
               ctx.body = settled.value
-              return runDerive(ctx, handler, finalize, wrapResponse, 0)
+              return runDerive(ctx, route, finalize, wrapResponse, 0)
             },
             (err) => this.bareError(err, ctx, finalize, wrapResponse),
           )
@@ -5995,7 +5985,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (validation.issues !== undefined)
           return wrapResponse(plainValidationError(validation.issues))
         ctx.body = validation.value
-        return runDerive(ctx, handler, finalize, wrapResponse, 0)
+        return runDerive(ctx, route, finalize, wrapResponse, 0)
       }
       return <T>(
         source: RequestSource,
@@ -6052,7 +6042,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (settled.issues !== undefined)
               return wrapResponse(plainValidationError(settled.issues))
             ctx.query = settled.value
-            return runDerive(ctx, handler, finalize, wrapResponse, 0)
+            return runDerive(ctx, route, finalize, wrapResponse, 0)
           },
           (err) => this.bareError(err, ctx, finalize, wrapResponse),
         )
@@ -6060,7 +6050,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return wrapResponse(plainValidationError(validation.issues))
       ctx.query = validation.value
-      return runDerive(ctx, handler, finalize, wrapResponse, 0)
+      return runDerive(ctx, route, finalize, wrapResponse, 0)
     }
 
     return <T>(
@@ -6086,7 +6076,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      if (querySchema === undefined) return runDerive(ctx, handler, finalize, wrapResponse, 0)
+      if (querySchema === undefined) return runDerive(ctx, route, finalize, wrapResponse, 0)
       let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))

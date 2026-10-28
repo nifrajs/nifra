@@ -1,7 +1,7 @@
 import { heapStats } from "bun:jsc"
 import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
-import { server, silentLogger } from "../src/index.ts"
+import { type Logger, server, silentLogger } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
 
 /**
@@ -12,7 +12,9 @@ import { nodeDirect } from "../src/node-direct.ts"
 
 type Rec = Record<string, unknown>
 
-async function answers(app: ReturnType<typeof build>, request: () => Request): Promise<Rec[]> {
+type Answerable = Pick<ReturnType<typeof build>, "fetch" | "resolveNode">
+
+async function answers(app: Answerable, request: () => Request): Promise<Rec[]> {
   const web = await app.fetch(request())
   const node = await app.resolveNode(request())
   let nodeBody = ""
@@ -141,6 +143,147 @@ test("the same hooks in another order run in that order", async () => {
   expect(trace.splice(0)).toEqual(["b", "a"])
 })
 
+test("routes with different hook functions of one shape share a chain and keep their own hooks", async () => {
+  const trace: string[] = []
+  const child = (name: string) =>
+    server({ logger: silentLogger })
+      .derive(() => ({ who: name }))
+      .beforeHandle((): undefined => {
+        trace.push(`before ${name}`)
+        return undefined
+      })
+      .afterHandle((result: unknown): unknown => Object.assign({}, result, { after: name }))
+      .get(`/${name}`, (c) => ({ route: name, who: c.who }))
+  const app = server({ logger: silentLogger })
+    .use(nodeDirect())
+    .merge(child("a"))
+    .merge(child("b"))
+    .merge(child("c"))
+  for (const name of ["a", "b", "c", "b", "a"]) {
+    trace.length = 0
+    const answer = { route: name, who: name, after: name }
+    expect(await answers(app, () => new Request(`http://x/${name}`))).toEqual([answer, answer])
+    // Once on the Web lane and once on Node-direct, and never another route's hook.
+    expect(trace).toEqual([`before ${name}`, `before ${name}`])
+  }
+})
+
+/** The fluent methods the every-shape test drives, viewed structurally so one variable holds the chain. */
+interface Chain {
+  derive(hook: () => unknown): Chain
+  beforeHandle(hook: () => unknown): Chain
+  afterHandle(hook: (result: unknown) => unknown): Chain
+  get(path: string, handler: (context: Rec) => unknown): Chain
+  merge(other: unknown): Chain
+  use(plugin: unknown): Chain
+  fetch(request: Request): Promise<Response>
+  resolveNode(request: Request): ReturnType<ReturnType<typeof build>["resolveNode"]>
+}
+
+test("routes of every shape in one server each run exactly their own hooks", async () => {
+  const trace: string[] = []
+  const counts = [0, 1, 2, 3] as const
+  // biome-ignore lint/plugin/noChainedTypeAssertions: the real builder's types are per-route, and this test only needs the methods listed on Chain
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every method Chain names exists on the builder with these argument shapes
+  const fresh = (): Chain => server({ logger: silentLogger }) as unknown as Chain
+  let app = fresh().use(nodeDirect())
+  const expected = new Map<string, { body: Rec; trace: string[] }>()
+  for (const derives of counts) {
+    for (const befores of counts) {
+      for (const afters of counts) {
+        if (derives + befores + afters === 0) continue
+        const name = `d${derives}b${befores}a${afters}`
+        const steps: string[] = []
+        const body: Rec = { route: name }
+        let child = fresh()
+        for (let k = 0; k < derives; k++) {
+          child = child.derive(() => {
+            trace.push(`${name} derive ${k}`)
+            return { [`d${k}`]: name }
+          })
+          steps.push(`${name} derive ${k}`)
+          body[`d${k}`] = name
+        }
+        for (let k = 0; k < befores; k++) {
+          child = child.beforeHandle((): undefined => {
+            trace.push(`${name} before ${k}`)
+            return undefined
+          })
+          steps.push(`${name} before ${k}`)
+        }
+        for (let k = 0; k < afters; k++) {
+          child = child.afterHandle((result: unknown) => {
+            trace.push(`${name} after ${k}`)
+            return Object.assign({}, result, { [`a${k}`]: name })
+          })
+          steps.push(`${name} after ${k}`)
+          body[`a${k}`] = name
+        }
+        child = child.get(`/${name}`, (c) => {
+          const answer: Rec = { route: name }
+          for (let k = 0; k < derives; k++) answer[`d${k}`] = c[`d${k}`]
+          return answer
+        })
+        expected.set(name, { body, trace: steps })
+        app = app.merge(child)
+      }
+    }
+  }
+  expect(expected.size).toBe(63)
+  const names = [...expected.keys()]
+  // Forward, backward and strided passes, so a shared chain is entered from every route in turn.
+  const order = [...names, ...[...names].reverse(), ...names.filter((_, i) => i % 3 === 0)]
+  for (const name of order) {
+    trace.length = 0
+    const want = expected.get(name)
+    const request = (): Request => new Request(`http://x/${name}`)
+    const web = await app.fetch(request())
+    const node = await app.resolveNode(request())
+    let nodeBody = ""
+    if (node.kind === "response") nodeBody = await node.response.text()
+    else if (typeof node.body === "string") nodeBody = node.body
+    else if (node.body !== null) nodeBody = new TextDecoder().decode(node.body)
+    expect(JSON.parse(await web.text())).toEqual(want?.body)
+    expect(JSON.parse(nodeBody)).toEqual(want?.body)
+    // Once on the Web lane and once on Node-direct, in registration order, and no other route's hook.
+    expect(trace).toEqual([...(want?.trace ?? []), ...(want?.trace ?? [])])
+  }
+})
+
+test("servers with one hook shape each log a thrown hook to their own logger and policy", async () => {
+  const hook = (): undefined => {
+    throw new Error("hook failed")
+  }
+  const logs: string[] = []
+  const logger = (name: string): Logger => ({
+    debug: () => undefined,
+    info: () => undefined,
+    warn: () => undefined,
+    error: (_message, fields) => logs.push(`${name} ${JSON.stringify(fields?.detail ?? null)}`),
+  })
+  const make = (name: string, errorLogDetail: "full" | "none") =>
+    server({ logger: logger(name), errorLogDetail })
+      .use(nodeDirect())
+      .beforeHandle(hook)
+      .get("/x", () => "x")
+  const quiet = make("quiet", "none")
+  const loud = make("loud", "full")
+  for (const app of [quiet, loud, quiet]) {
+    expect((await app.fetch(new Request("http://x/x"))).status).toBe(500)
+    const node = await app.resolveNode(new Request("http://x/x"))
+    expect(node.kind === "response" ? node.response.status : node.status).toBe(500)
+  }
+  // The policy and sink belong to the server that handled the request, not to the first one to build the shape.
+  expect(logs).toEqual([
+    "quiet null",
+    "quiet null",
+    'loud "hook failed"',
+    'loud "hook failed"',
+    "quiet null",
+    "quiet null",
+  ])
+})
+
 test("routes whose hook sets differ in only one phase do not share a chain", async () => {
   const derive1 = () => ({ tag: "d1" })
   const derive2 = () => ({ tag: "d2" })
@@ -214,4 +357,31 @@ test("a fused hook route costs a fixed handful of functions, not a chain of its 
   const hooked = functionsPerRoute(1000, true)
   // A route's own entry closures; every stage closure is shared with the routes before it.
   expect(hooked - bare).toBeLessThanOrEqual(4)
+})
+
+/** Function objects the heap holds per route when every route has before hooks no other route has. */
+function functionsPerRouteWithOwnHooks(count: number, hooked: boolean): number {
+  const measure = (): number => {
+    Bun.gc(true)
+    Bun.gc(true)
+    return heapStats().objectTypeCounts.Function ?? 0
+  }
+  const app = server({ logger: silentLogger }).use(nodeDirect())
+  app.get("/first", () => "first")
+  const before = measure()
+  for (let i = 0; i < count; i++) {
+    // Each route runs the hooks registered before it, so no two routes run the same ones.
+    if (hooked) app.beforeHandle(() => undefined)
+    app.get(`/r${i}`, () => `route ${i}`)
+  }
+  const after = measure()
+  expect(app).toBeDefined()
+  return (after - before) / count
+}
+
+test("a fused hook route costs a fixed handful of functions even when no two routes share a hook", () => {
+  const bare = functionsPerRouteWithOwnHooks(1000, false)
+  const hooked = functionsPerRouteWithOwnHooks(1000, true)
+  // The hook registered for the route is its own; the Web and Node-direct entry closures are the rest.
+  expect(hooked - bare).toBeLessThanOrEqual(1 + 2)
 })
