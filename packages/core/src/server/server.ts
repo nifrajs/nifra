@@ -2782,14 +2782,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // three arrays below are the route's whole lifecycle.
     const fusedLifecycle = lanes.fusedLane === "hooks" || lanes.fusedLane === "body-hooks"
     // The fused chains keep the arrays they are built from, and `beforeHandle()` inserts into the live
-    // ones ahead of `beforeHandler()` guards, so the two builders get one snapshot of this route's.
+    // ones ahead of `beforeHandler()` guards, so the entry and the fused chains share one snapshot of
+    // this route's.
+    const derivesSnapshot = [...this.derives]
+    const beforesSnapshot = [...beforeHandle]
+    const aftersSnapshot = [...afterHandle]
+    const onErrorSnapshot = onError.length === 0 ? NO_ERROR_HOOKS : [...onError]
     const fusedHooks: FusedHooks | undefined = fusedLifecycle
       ? {
           handler: handler as unknown as InternalHandler,
-          derives: [...this.derives],
-          befores: [...beforeHandle],
-          afters: [...afterHandle],
-          errors: onError.length === 0 ? NO_ERROR_HOOKS : [...onError],
+          derives: derivesSnapshot,
+          befores: beforesSnapshot,
+          afters: aftersSnapshot,
+          errors: onErrorSnapshot,
           decorations: hasDecorations ? routeDecorations : undefined,
         }
       : undefined
@@ -2867,13 +2872,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       idempotent,
       ledgered,
       responseContract,
-      derives: [...this.derives],
+      derives: derivesSnapshot,
       authStages: [...compiled.authStages],
       decorations: routeDecorations,
       hasDecorations,
-      beforeHandle: [...beforeHandle],
-      afterHandle: [...afterHandle],
-      onError: [...onError],
+      beforeHandle: beforesSnapshot,
+      afterHandle: aftersSnapshot,
+      onError: onErrorSnapshot,
       lifecycleHookLane: lanes.lifecycleHookLane,
       around: [...this.aroundHooks],
       execution,
@@ -5616,8 +5621,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * an argument, so a request allocates no step closures.
    */
   /**
-   * The common one-derive/one-before shape stays bound to its hooks. Sharing this tiny chain adds
-   * route and array lookups to every request, while larger shapes benefit from the shared stages.
+   * Keep the common one-derive/one-before shape bound to its hooks. Inline its synchronous path to
+   * avoid stage calls; retain helper closures only for promise continuations.
    */
   private buildFusedLifecycleWebSingle(
     handler: InternalHandler,
@@ -5679,7 +5684,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return this.respondFused(early, ctx)
     }
 
-    const runDerive = (ctx: RawContext): MaybePromise<Response> => {
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+
       let derived: unknown
       try {
         derived = derive(ctx)
@@ -5703,28 +5721,48 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (isResponseResult(derived) || derived instanceof Response)
         return this.respondFused(derived, ctx)
+
+      let early: unknown
+      let result: unknown
+      let transformed: unknown
+      let handlerPromise: Promise<unknown> | undefined
       try {
         Object.assign(ctx, derived)
+        early = before(ctx)
+        if (early === undefined) {
+          result = handler(ctx)
+          if (result instanceof Promise) handlerPromise = result
+          else if (after !== undefined) transformed = after(result, ctx)
+        }
       } catch (err) {
         return this.fusedWebFail(err, ctx)
       }
-      return runBefore(ctx)
-    }
 
-    return (source, params, search, signal, budget, platform, nativeContext) => {
-      const ctx = nativeContext
-        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
-        : new RequestContext(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            maxBodyBytes,
-            this.protoPoisoning,
-          )
-      return runDerive(ctx)
+      if (early instanceof Promise) {
+        return early.then(
+          (settled) => (settled === undefined ? runHandler(ctx) : this.respondFused(settled, ctx)),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      if (early !== undefined) return this.respondFused(early, ctx)
+      if (handlerPromise !== undefined) {
+        return handlerPromise.then(
+          (value) =>
+            after === undefined
+              ? this.respondFused(value, ctx, this.onResponseHooks.length === 0)
+              : runAfter(value, ctx),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      if (after === undefined)
+        return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+      if (transformed instanceof Promise) {
+        return transformed.then(
+          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
     }
   }
 
@@ -5743,13 +5781,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       route.befores.length === 1 &&
       route.afters.length <= 1
     ) {
-      return this.buildFusedLifecycleWebSingle(
-        route.handler,
-        route.derives[0]!,
-        route.befores[0]!,
-        route.afters[0],
-        maxBodyBytes,
-      )
+      const derive = route.derives[0]
+      const before = route.befores[0]
+      if (derive !== undefined && before !== undefined) {
+        return this.buildFusedLifecycleWebSingle(
+          route.handler,
+          derive,
+          before,
+          route.afters[0],
+          maxBodyBytes,
+        )
+      }
     }
     const runDerive = sharedStages(WEB_STAGES, this, route, (d, b, a) =>
       this.fusedWebStages(d, b, a),
