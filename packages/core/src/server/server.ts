@@ -2713,6 +2713,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // `selectRouteLanes` admits the fused hook lanes only for derive, before and after hooks, so the
     // three arrays below are the route's whole lifecycle.
     const fusedLifecycle = lanes.fusedLane === "hooks" || lanes.fusedLane === "body-hooks"
+    // The fused runners index these arrays for the route's lifetime, and `beforeHandle()` inserts into
+    // the live ones ahead of `beforeHandler()` guards, so each route holds a copy of its own.
+    const fusedDerives = fusedLifecycle ? [...this.derives] : []
+    const fusedBefores = fusedLifecycle ? [...beforeHandle] : []
+    const fusedAfters = fusedLifecycle ? [...afterHandle] : []
     // The Node-direct dispatcher (`!webFast`) prefers these runners over the generic program. Only the
     // body-only runner also feeds the Web wrapper; the lifecycle lanes build their own Web closure.
     const fusedBodyRunner = fusedBody
@@ -2725,9 +2730,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       : fusedLifecycle
         ? this.buildFusedLifecycleRunner(
             handler as unknown as InternalHandler,
-            this.derives,
-            beforeHandle,
-            afterHandle,
+            fusedDerives,
+            fusedBefores,
+            fusedAfters,
             schema?.query,
             schema?.body as StandardSchemaV1 | undefined,
             bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -2753,9 +2758,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             : fusedLifecycle
               ? this.buildFusedLifecycleWeb(
                   handler as unknown as InternalHandler,
-                  this.derives,
-                  beforeHandle,
-                  afterHandle,
+                  fusedDerives,
+                  fusedBefores,
+                  fusedAfters,
                   schema?.query,
                   schema?.body as StandardSchemaV1 | undefined,
                   bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -5360,25 +5365,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
     }
+    // The several-hook stages loop over synchronous hooks, so the stack stays flat however many a phase
+    // holds; only a hook that returns a promise re-enters its stage from a microtask.
     const afterMany: AfterStage = (result, ctx, index) => {
-      let transformed: unknown
-      try {
-        transformed = afters[index]!(result, ctx)
-      } catch (err) {
-        return logError(err, ctx)
+      for (;;) {
+        let transformed: unknown
+        try {
+          transformed = afters[index]!(result, ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (transformed instanceof Promise) {
+          return transformed.then(
+            (value) =>
+              index < lastAfter
+                ? afterMany(value, ctx, index + 1)
+                : this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+            (err) => logError(err, ctx),
+          )
+        }
+        if (index === lastAfter) {
+          return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+        }
+        result = transformed
+        index++
       }
-      if (transformed instanceof Promise) {
-        return transformed.then(
-          (value) =>
-            index < lastAfter
-              ? afterMany(value, ctx, index + 1)
-              : this.respondFused(value, ctx, this.onResponseHooks.length === 0),
-          (err) => logError(err, ctx),
-        )
-      }
-      return index < lastAfter
-        ? afterMany(transformed, ctx, index + 1)
-        : this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
     }
     const respondStage: AfterStage = (result, ctx) =>
       this.respondFused(result, ctx, this.onResponseHooks.length === 0)
@@ -5417,23 +5428,26 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return this.respondFused(early, ctx)
     }
     const beforeMany: Stage = (ctx, index) => {
-      let early: unknown
-      try {
-        early = befores[index]!(ctx)
-      } catch (err) {
-        return logError(err, ctx)
+      for (;;) {
+        let early: unknown
+        try {
+          early = befores[index]!(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (early instanceof Promise) {
+          return early.then(
+            (settled) => {
+              if (settled !== undefined) return this.respondFused(settled, ctx)
+              return index < lastBefore ? beforeMany(ctx, index + 1) : runHandler(ctx, 0)
+            },
+            (err) => logError(err, ctx),
+          )
+        }
+        if (early !== undefined) return this.respondFused(early, ctx)
+        if (index === lastBefore) return runHandler(ctx, 0)
+        index++
       }
-      if (early instanceof Promise) {
-        return early.then(
-          (settled) => {
-            if (settled !== undefined) return this.respondFused(settled, ctx)
-            return index < lastBefore ? beforeMany(ctx, index + 1) : runHandler(ctx, 0)
-          },
-          (err) => logError(err, ctx),
-        )
-      }
-      if (early !== undefined) return this.respondFused(early, ctx)
-      return index < lastBefore ? beforeMany(ctx, index + 1) : runHandler(ctx, 0)
     }
     const runBefore =
       befores.length === 0 ? runHandler : befores.length === 1 ? beforeOne : beforeMany
@@ -5472,37 +5486,40 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return runBefore(ctx, 0)
     }
     const deriveMany: Stage = (ctx, index) => {
-      let derived: unknown
-      try {
-        derived = derives[index]!(ctx)
-      } catch (err) {
-        return logError(err, ctx)
+      for (;;) {
+        let derived: unknown
+        try {
+          derived = derives[index]!(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (derived instanceof Promise) {
+          return derived.then(
+            (settled) => {
+              if (isResponseResult(settled) || settled instanceof Response) {
+                return this.respondFused(settled, ctx)
+              }
+              try {
+                Object.assign(ctx, settled)
+              } catch (err) {
+                return logError(err, ctx)
+              }
+              return index < lastDerive ? deriveMany(ctx, index + 1) : runBefore(ctx, 0)
+            },
+            (err) => logError(err, ctx),
+          )
+        }
+        if (isResponseResult(derived) || derived instanceof Response) {
+          return this.respondFused(derived, ctx)
+        }
+        try {
+          Object.assign(ctx, derived)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (index === lastDerive) return runBefore(ctx, 0)
+        index++
       }
-      if (derived instanceof Promise) {
-        return derived.then(
-          (settled) => {
-            if (isResponseResult(settled) || settled instanceof Response) {
-              return this.respondFused(settled, ctx)
-            }
-            try {
-              Object.assign(ctx, settled)
-            } catch (err) {
-              return logError(err, ctx)
-            }
-            return index < lastDerive ? deriveMany(ctx, index + 1) : runBefore(ctx, 0)
-          },
-          (err) => logError(err, ctx),
-        )
-      }
-      if (isResponseResult(derived) || derived instanceof Response) {
-        return this.respondFused(derived, ctx)
-      }
-      try {
-        Object.assign(ctx, derived)
-      } catch (err) {
-        return logError(err, ctx)
-      }
-      return index < lastDerive ? deriveMany(ctx, index + 1) : runBefore(ctx, 0)
     }
     const runDerive =
       derives.length === 0 ? runBefore : derives.length === 1 ? deriveOne : deriveMany
@@ -5675,24 +5692,26 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return finishResult(transformed, ctx, finalize, wrapResponse)
     }
     const afterMany: AfterStage = (result, ctx, finalize, wrapResponse, index) => {
-      let transformed: unknown
-      try {
-        transformed = afters[index]!(result, ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+      for (;;) {
+        let transformed: unknown
+        try {
+          transformed = afters[index]!(result, ctx)
+        } catch (err) {
+          return logError(err, ctx, finalize, wrapResponse)
+        }
+        if (transformed instanceof Promise) {
+          return transformed.then(
+            (value) =>
+              index < lastAfter
+                ? afterMany(value, ctx, finalize, wrapResponse, index + 1)
+                : finishResult(value, ctx, finalize, wrapResponse),
+            (err) => logError(err, ctx, finalize, wrapResponse),
+          )
+        }
+        if (index === lastAfter) return finishResult(transformed, ctx, finalize, wrapResponse)
+        result = transformed
+        index++
       }
-      if (transformed instanceof Promise) {
-        return transformed.then(
-          (value) =>
-            index < lastAfter
-              ? afterMany(value, ctx, finalize, wrapResponse, index + 1)
-              : finishResult(value, ctx, finalize, wrapResponse),
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      return index < lastAfter
-        ? afterMany(transformed, ctx, finalize, wrapResponse, index + 1)
-        : finishResult(transformed, ctx, finalize, wrapResponse)
     }
     const finishStage: AfterStage = (result, ctx, finalize, wrapResponse) =>
       finishResult(result, ctx, finalize, wrapResponse)
@@ -5735,27 +5754,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return finishResult(early, ctx, finalize, wrapResponse)
     }
     const beforeMany: Stage = (ctx, finalize, wrapResponse, index) => {
-      let early: unknown
-      try {
-        early = befores[index]!(ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+      for (;;) {
+        let early: unknown
+        try {
+          early = befores[index]!(ctx)
+        } catch (err) {
+          return logError(err, ctx, finalize, wrapResponse)
+        }
+        if (early instanceof Promise) {
+          return early.then(
+            (settled) => {
+              if (settled !== undefined) return finishResult(settled, ctx, finalize, wrapResponse)
+              return index < lastBefore
+                ? beforeMany(ctx, finalize, wrapResponse, index + 1)
+                : runHandler(ctx, finalize, wrapResponse, 0)
+            },
+            (err) => logError(err, ctx, finalize, wrapResponse),
+          )
+        }
+        if (early !== undefined) return finishResult(early, ctx, finalize, wrapResponse)
+        if (index === lastBefore) return runHandler(ctx, finalize, wrapResponse, 0)
+        index++
       }
-      if (early instanceof Promise) {
-        return early.then(
-          (settled) => {
-            if (settled !== undefined) return finishResult(settled, ctx, finalize, wrapResponse)
-            return index < lastBefore
-              ? beforeMany(ctx, finalize, wrapResponse, index + 1)
-              : runHandler(ctx, finalize, wrapResponse, 0)
-          },
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      if (early !== undefined) return finishResult(early, ctx, finalize, wrapResponse)
-      return index < lastBefore
-        ? beforeMany(ctx, finalize, wrapResponse, index + 1)
-        : runHandler(ctx, finalize, wrapResponse, 0)
     }
     const runBefore: Stage =
       befores.length === 0 ? runHandler : befores.length === 1 ? beforeOne : beforeMany
@@ -5795,41 +5815,42 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return runBefore(ctx, finalize, wrapResponse, 0)
     }
     const deriveMany: Stage = (ctx, finalize, wrapResponse, index) => {
-      let derived: unknown
-      try {
-        derived = derives[index]!(ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+      for (;;) {
+        let derived: unknown
+        try {
+          derived = derives[index]!(ctx)
+        } catch (err) {
+          return logError(err, ctx, finalize, wrapResponse)
+        }
+        if (derived instanceof Promise) {
+          return derived.then(
+            (settled) => {
+              if (isResponseResult(settled) || settled instanceof Response) {
+                return finishResult(settled, ctx, finalize, wrapResponse)
+              }
+              try {
+                Object.assign(ctx, settled)
+              } catch (err) {
+                return logError(err, ctx, finalize, wrapResponse)
+              }
+              return index < lastDerive
+                ? deriveMany(ctx, finalize, wrapResponse, index + 1)
+                : runBefore(ctx, finalize, wrapResponse, 0)
+            },
+            (err) => logError(err, ctx, finalize, wrapResponse),
+          )
+        }
+        if (isResponseResult(derived) || derived instanceof Response) {
+          return finishResult(derived, ctx, finalize, wrapResponse)
+        }
+        try {
+          Object.assign(ctx, derived)
+        } catch (err) {
+          return logError(err, ctx, finalize, wrapResponse)
+        }
+        if (index === lastDerive) return runBefore(ctx, finalize, wrapResponse, 0)
+        index++
       }
-      if (derived instanceof Promise) {
-        return derived.then(
-          (settled) => {
-            if (isResponseResult(settled) || settled instanceof Response) {
-              return finishResult(settled, ctx, finalize, wrapResponse)
-            }
-            try {
-              Object.assign(ctx, settled)
-            } catch (err) {
-              return logError(err, ctx, finalize, wrapResponse)
-            }
-            return index < lastDerive
-              ? deriveMany(ctx, finalize, wrapResponse, index + 1)
-              : runBefore(ctx, finalize, wrapResponse, 0)
-          },
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      if (isResponseResult(derived) || derived instanceof Response) {
-        return finishResult(derived, ctx, finalize, wrapResponse)
-      }
-      try {
-        Object.assign(ctx, derived)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-      return index < lastDerive
-        ? deriveMany(ctx, finalize, wrapResponse, index + 1)
-        : runBefore(ctx, finalize, wrapResponse, 0)
     }
     const runDerive: Stage =
       derives.length === 0 ? runBefore : derives.length === 1 ? deriveOne : deriveMany

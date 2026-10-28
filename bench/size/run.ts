@@ -319,6 +319,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 39,701 -> 40,189, mcp 39,111 -> 39,589, valibot 39,836 -> 40,313, typebox-t 67,692 -> 68,128,
   // typebox-form 72,656 -> 73,081 (Bun 1.4.4). Only the bare and idempotency caps are crossed, by one
   // 0.1 KiB step each.
+  // The several-hook stages loop over synchronous hooks, each route holds its own copy of the hook
+  // arrays, and a thrown answer whose body cannot render ends as a 500: bare 39,337 -> 39,400 B,
+  // idempotency 44,163 -> 44,244, effect-ledger 41,350 -> 41,428, sse 40,189 -> 40,266, mcp 39,589 ->
+  // 39,667, valibot 40,313 -> 40,391, typebox-t 68,128 -> 68,212 (Bun 1.4.4). The six caps below the
+  // bare row take the next 0.1 KiB step.
   "nifra-bare": 38.5,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -343,13 +348,13 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A request's t.date() strings handed on as Dates by a schema-directed decoder, and date-time and
   // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
-  "nifra-idempotency": 43.2,
-  "nifra-effect-ledger": 40.4,
-  "nifra-mcp": 38.7,
+  "nifra-idempotency": 43.3,
+  "nifra-effect-ledger": 40.5,
+  "nifra-mcp": 38.8,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 39.3,
-  "nifra-valibot": 39.4,
-  "nifra-typebox-t": 66.6,
+  "nifra-sse": 39.4,
+  "nifra-valibot": 39.5,
+  "nifra-typebox-t": 66.7,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only

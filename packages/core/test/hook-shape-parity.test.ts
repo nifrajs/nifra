@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import { server, silentLogger, status } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { LAST_BEFORE_HANDLE } from "../src/server/before-handler.ts"
 import type { NodeServeOutcome } from "../src/server/node-outcome.ts"
 
 /**
@@ -13,6 +14,12 @@ import type { NodeServeOutcome } from "../src/server/node-outcome.ts"
 
 type Rec = Record<string, unknown>
 const JSON_TYPE = "application/json;charset=utf-8"
+/** A thrown answer whose body cannot render: the request must still end in a 500, never a rejection. */
+const UNRENDERABLE = {
+  toJSON(): never {
+    throw new Error("unrenderable")
+  },
+}
 type HookMode =
   | "pass"
   | "async"
@@ -25,8 +32,21 @@ type HookMode =
   | "empty"
   | "throw"
   | "reject"
-type HandlerMode = "sync" | "async" | "throw" | "reject" | "response" | "status" | "redirect"
+  | "throw-unrenderable"
+  | "reject-unrenderable"
+type HandlerMode =
+  | "sync"
+  | "async"
+  | "throw"
+  | "reject"
+  | "response"
+  | "status"
+  | "redirect"
+  | "throw-unrenderable"
+  | "reject-unrenderable"
 type SchemaKind = "none" | "query" | "body"
+/** A hook registered after the route, which must not reach it: hooks are order-scoped. */
+type Trailing = "none" | "before" | "derive" | "after"
 
 interface Shape {
   readonly derives: number
@@ -39,12 +59,36 @@ interface Plan {
   readonly before: readonly HookMode[]
   readonly after: readonly HookMode[]
   readonly handler: HandlerMode
+  readonly trailing: Trailing
+  /** The last before hook is registered with `beforeHandler()`, which a later hook is inserted ahead of. */
+  readonly guarded: boolean
 }
 
 const FAULTS: Record<"derive" | "before" | "after", readonly HookMode[]> = {
-  derive: ["early", "early-async", "response", "undefined", "null", "throw", "reject"],
-  before: ["early", "early-async", "response", "null", "null-async", "empty", "throw", "reject"],
-  after: ["undefined", "throw", "reject"],
+  derive: [
+    "early",
+    "early-async",
+    "response",
+    "undefined",
+    "null",
+    "throw",
+    "reject",
+    "throw-unrenderable",
+    "reject-unrenderable",
+  ],
+  before: [
+    "early",
+    "early-async",
+    "response",
+    "null",
+    "null-async",
+    "empty",
+    "throw",
+    "reject",
+    "throw-unrenderable",
+    "reject-unrenderable",
+  ],
+  after: ["undefined", "throw", "reject", "throw-unrenderable", "reject-unrenderable"],
 }
 const HANDLERS: readonly HandlerMode[] = [
   "async",
@@ -53,7 +97,10 @@ const HANDLERS: readonly HandlerMode[] = [
   "response",
   "status",
   "redirect",
+  "throw-unrenderable",
+  "reject-unrenderable",
 ]
+const TRAILING: readonly Trailing[] = ["none", "before", "derive", "after"]
 const SCHEMAS: readonly SchemaKind[] = ["none", "query", "body"]
 
 function shapes(): Shape[] {
@@ -73,6 +120,8 @@ function plans(shape: Shape): Plan[] {
     before: fill(shape.befores, mode),
     after: fill(shape.afters, mode),
     handler,
+    trailing: "none",
+    guarded: false,
   })
   const out: Plan[] = [baseline("pass", "sync"), baseline("async", "async")]
   // Hooks alternate between sync and async, so a continuation resumes in the middle of a chain.
@@ -85,6 +134,8 @@ function plans(shape: Shape): Plan[] {
     before: swap(alternate.before),
     after: swap(alternate.after),
     handler: "sync",
+    trailing: "none",
+    guarded: false,
   })
   for (const around of [baseline("pass", "sync"), baseline("async", "async")]) {
     for (const kind of ["derive", "before", "after"] as const) {
@@ -98,7 +149,17 @@ function plans(shape: Shape): Plan[] {
     }
   }
   for (const handler of HANDLERS) out.push({ ...baseline("pass", "sync"), handler })
-  return out
+  // Every plan again with a hook registered after the route and with its last before hook marked a
+  // guard: a later `beforeHandle()` is inserted ahead of a guard, shifting the route's hook array.
+  return out.flatMap((plan) =>
+    TRAILING.flatMap((trailing) =>
+      (shape.befores > 0 ? [false, true] : [false]).map((guarded) => ({
+        ...plan,
+        trailing,
+        guarded,
+      })),
+    ),
+  )
 }
 
 /** What a hook or handler reads off its context. */
@@ -144,13 +205,17 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
           throw new Error(`d${k}`)
         case "reject":
           return Promise.reject(new Error(`d${k}`))
+        case "throw-unrenderable":
+          throw status(401, UNRENDERABLE)
+        case "reject-unrenderable":
+          return Promise.reject(status(401, UNRENDERABLE))
         default:
           return value
       }
     })
   })
   plan.before.forEach((mode, k) => {
-    app = app.beforeHandle((c) => {
+    const hook = (c: Ctx): unknown => {
       calls.push(`b${k}`)
       c.set.headers[`x-b${k}`] = "1"
       switch (mode) {
@@ -172,10 +237,17 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
           throw new Error(`b${k}`)
         case "reject":
           return Promise.reject(new Error(`b${k}`))
+        case "throw-unrenderable":
+          throw status(401, UNRENDERABLE)
+        case "reject-unrenderable":
+          return Promise.reject(status(401, UNRENDERABLE))
         default:
           return undefined
       }
-    })
+    }
+    // What `beforeHandler(hook)` does, without its `Context` parameter type.
+    if (plan.guarded && k === plan.before.length - 1) LAST_BEFORE_HANDLE.add(hook)
+    app = app.beforeHandle(hook)
   })
   plan.after.forEach((mode, k) => {
     app = app.afterHandle((result) => {
@@ -189,6 +261,10 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
           throw new Error(`a${k}`)
         case "reject":
           return Promise.reject(new Error(`a${k}`))
+        case "throw-unrenderable":
+          throw status(401, UNRENDERABLE)
+        case "reject-unrenderable":
+          return Promise.reject(status(401, UNRENDERABLE))
         default:
           return { [`a${k}`]: result }
       }
@@ -214,6 +290,10 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
         throw new Error("handler")
       case "reject":
         return Promise.reject(new Error("handler"))
+      case "throw-unrenderable":
+        throw status(401, UNRENDERABLE)
+      case "reject-unrenderable":
+        return Promise.reject(status(401, UNRENDERABLE))
       case "response":
         return new Response("handler response", { status: 207 })
       case "status":
@@ -230,6 +310,22 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
     app = app.post("/r/:id", { body: t.object({ name: t.string() }) }, handler)
   } else {
     app = app.get("/r/:id", handler)
+  }
+  if (plan.trailing === "before") {
+    app = app.beforeHandle(() => {
+      calls.push("t")
+      return undefined
+    })
+  } else if (plan.trailing === "derive") {
+    app = app.derive(() => {
+      calls.push("t")
+      return {}
+    })
+  } else if (plan.trailing === "after") {
+    app = app.afterHandle((result) => {
+      calls.push("t")
+      return result
+    })
   }
   return { app, calls }
 }
@@ -257,7 +353,12 @@ interface View {
 
 async function webView(app: AppLike, calls: string[], request: Request): Promise<View> {
   calls.length = 0
-  const response = await app.fetch(request)
+  let response: Response
+  try {
+    response = await app.fetch(request)
+  } catch (err) {
+    return { status: -1, body: `rejected: ${String(err)}`, calls: [...calls] }
+  }
   const body = await response.text()
   const headers = ["content-type", "location", "x-b0", "x-b1"].map((n) => response.headers.get(n))
   return { status: response.status, body: `${body}|${headers.join(",")}`, calls: [...calls] }
@@ -265,7 +366,12 @@ async function webView(app: AppLike, calls: string[], request: Request): Promise
 
 async function nodeView(app: AppLike, calls: string[], request: Request): Promise<View> {
   calls.length = 0
-  const outcome = await app.resolveNode(request)
+  let outcome: NodeServeOutcome
+  try {
+    outcome = await app.resolveNode(request)
+  } catch (err) {
+    return { status: -1, body: `rejected: ${String(err)}`, calls: [...calls] }
+  }
   let status: number
   let body: string
   let headers: (string | null)[]
