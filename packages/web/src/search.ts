@@ -150,7 +150,8 @@ const jsonCodec: SearchCodec = {
     // URLSearchParams drops one leading `?` itself, so only a second one is sliced off here. One
     // `forEach` pass costs about half of iterating the keys and then the entries.
     new URLSearchParams(raw.startsWith("??") ? raw.slice(1) : raw).forEach((value, key) => {
-      if (FORBIDDEN_KEYS.has(key)) return
+      // The same three names as FORBIDDEN_KEYS, spelled out so the guard sits beside the write below.
+      if (key === "__proto__" || key === "prototype" || key === "constructor") return
       if (kept.has(key)) {
         repeated ??= new Map()
         const values = repeated.get(key)
