@@ -2776,13 +2776,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // three arrays below are the route's whole lifecycle.
     const fusedLifecycle = lanes.fusedLane === "hooks" || lanes.fusedLane === "body-hooks"
     // The fused chains keep the arrays they are built from, and `beforeHandle()` inserts into the live
-    // ones ahead of `beforeHandler()` guards, so the two builders get one snapshot of this route's.
+    // ones ahead of `beforeHandler()` guards, so the entry and the fused chains share one snapshot of
+    // this route's.
+    const derivesSnapshot = [...this.derives]
+    const beforesSnapshot = [...beforeHandle]
+    const aftersSnapshot = [...afterHandle]
     const fusedHooks: FusedHooks | undefined = fusedLifecycle
       ? {
           handler: handler as unknown as InternalHandler,
-          derives: [...this.derives],
-          befores: [...beforeHandle],
-          afters: [...afterHandle],
+          derives: derivesSnapshot,
+          befores: beforesSnapshot,
+          afters: aftersSnapshot,
         }
       : undefined
     // The Node-direct dispatcher (`!webFast`) prefers these runners over the generic program. Only the
@@ -2859,12 +2863,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       idempotent,
       ledgered,
       responseContract,
-      derives: [...this.derives],
+      derives: derivesSnapshot,
       authStages: [...compiled.authStages],
       decorations: routeDecorations,
       hasDecorations,
-      beforeHandle: [...beforeHandle],
-      afterHandle: [...afterHandle],
+      beforeHandle: beforesSnapshot,
+      afterHandle: aftersSnapshot,
       onError: [...onError],
       lifecycleHookLane: lanes.lifecycleHookLane,
       around: [...this.aroundHooks],
