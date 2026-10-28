@@ -17,7 +17,7 @@ export interface StandardSchemaV1<Output = unknown> {
     readonly version: 1
     readonly vendor: string
     readonly validate: (value: unknown) => StandardResult<Output> | Promise<StandardResult<Output>>
-    readonly types?: { readonly output: Output } | undefined
+    readonly types?: { readonly output: Output }
   }
 }
 
@@ -28,13 +28,14 @@ export type InferOutput<S extends StandardSchemaV1> = NonNullable<S["~standard"]
 export function envSchema<Output>(
   validate: (raw: string | undefined) => StandardResult<Output>,
 ): StandardSchemaV1<Output> {
+  const phantomTypes: unknown = undefined
   return {
     "~standard": {
       version: 1,
       vendor: "nifra-env",
       validate: (value) => validate(value as string | undefined),
       // Phantom: carries the output type for InferOutput; no runtime value.
-      types: undefined,
+      types: phantomTypes as { readonly output: Output },
     },
   }
 }

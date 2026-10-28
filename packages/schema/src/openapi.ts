@@ -175,7 +175,7 @@ interface OpenAPIComponents {
   securitySchemes?: Readonly<Record<string, Record<string, unknown>>>
 }
 
-export interface OpenAPIDocument extends Record<string, unknown> {
+export interface OpenAPIDocument {
   readonly openapi: OpenAPIVersion
   readonly info: OpenAPIInfo
   readonly paths: Record<string, Record<string, OpenAPIOperation>>
@@ -1012,9 +1012,7 @@ function discriminateDocument(
   }
 }
 
-type OpenAPIApp = { routes(): unknown }
-
-function isApp(input: ContractShape | Server | OpenAPIApp): input is OpenAPIApp {
+function isApp(input: ContractShape | Server): input is Server {
   // Duck-typed so @nifrajs/schema keeps @nifrajs/core a type-only dependency. A contract
   // is a plain record of operations; only a Server exposes a `routes()` method.
   return typeof (input as { routes?: unknown }).routes === "function"
@@ -1022,7 +1020,7 @@ function isApp(input: ContractShape | Server | OpenAPIApp): input is OpenAPIApp 
 
 /** Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model. */
 export function toOpenAPI(
-  input: ContractShape | Server | OpenAPIApp,
+  input: ContractShape | Server,
   options: ToOpenAPIOptions = {},
 ): OpenAPIDocument {
   const paths: Record<string, Record<string, OpenAPIOperation>> = {}
@@ -1143,8 +1141,9 @@ export function toOpenAPIFromEvidence(
   evidence: ProjectEvidenceSnapshot,
   options: Omit<ToOpenAPIOptions, "evidence"> = {},
 ): OpenAPIDocument {
-  const app = {
+  const app: unknown = {
     routes: () => reflectedRoutesFromEvidence(evidence),
   }
-  return toOpenAPI(app, { ...options, evidence })
+  // biome-ignore lint/plugin/noWidenThenAssert: toOpenAPI reads an app only through routes() (see isApp), which this shim supplies.
+  return toOpenAPI(app as Server, { ...options, evidence })
 }

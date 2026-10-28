@@ -106,8 +106,9 @@ export function buildOpenApiDocument(
   // plugin reuse the rich generator over a plain route list without holding a live Server reference.
   // The cast is required because toOpenAPI's parameter is a nominal `ContractShape | Server` union,
   // and the shim only satisfies it structurally.
-  const appShim = { routes: () => included }
-  return toOpenAPI(appShim, {
+  const appShim: unknown = { routes: () => included }
+  // biome-ignore lint/plugin/noWidenThenAssert: toOpenAPI reads an app only through routes() (see isApp), which this shim supplies.
+  const document: unknown = toOpenAPI(appShim as Parameters<typeof toOpenAPI>[0], {
     ...(options.openapiVersion !== undefined ? { openapiVersion: options.openapiVersion } : {}),
     title: options.info?.title ?? "nifra API",
     version: options.info?.version ?? "0.0.0",
@@ -117,7 +118,8 @@ export function buildOpenApiDocument(
     ...(options.security !== undefined ? { security: options.security } : {}),
     ...(options.securitySchemes !== undefined ? { securitySchemes: options.securitySchemes } : {}),
     ...(options.operations !== undefined ? { operations: options.operations } : {}),
-  }) as Record<string, unknown>
+  })
+  return document as Record<string, unknown>
 }
 
 // An exact version, so the page always loads the bytes SCALAR_INTEGRITY names: a bare package URL

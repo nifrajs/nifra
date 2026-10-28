@@ -816,7 +816,7 @@ type PendingPhase =
 
 /** Execute the general program. The first synchronous stage sequence stays synchronous. */
 export function executeRouteProgram<T>(
-  runtime: unknown,
+  runtime: object,
   entry: RouteEntry,
   program: RouteProgram,
   source: RequestSource,

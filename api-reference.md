@@ -4770,7 +4770,7 @@ _No named exports (side-effect entrypoint)._
   Register (or override) a string format usable as `t.string({ format: name })`.
 - **t** _(const)_ - `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOptions) => NifraSchema<import("@sinclair/typebox").TNumber>; readonly integer: (opt…`
   The built-in schema builder. Each constructor returns a `NifraSchema` - a Standard Schema whose validated output type flows into `c.body`/`c.query`, and whose `jsonSchema` powers `toOpenAPI`. Options (min/max, length, pattern, …) pass straight through to TypeBox and so become JSON Schema constraint…
-- **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server | OpenAPIApp, options?: ToOpenAPIOptions) => OpenAPIDocument`
+- **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
   Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
@@ -4800,7 +4800,7 @@ _No named exports (side-effect entrypoint)._
 - **SecurityRequirement** _(type)_ - `type SecurityRequirement = Readonly<Record<string, readonly string[]>>`
   A document-wide / per-operation security requirement: scheme name → required scopes.
 - **ToOpenAPIOptions** _(interface)_ - `interface ToOpenAPIOptions`
-- **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server | OpenAPIApp, options?: ToOpenAPIOptions) => OpenAPIDocument`
+- **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
   Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.

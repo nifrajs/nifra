@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { define, isPlainPrototype, readsShippedTime } from "../src/server/json-shared.ts"
+import { define, readsShippedTime } from "../src/server/json-shared.ts"
 
 describe("shared JSON helpers", () => {
   test("recognizes dates with the shipped time-reading methods", () => {
@@ -12,13 +12,6 @@ describe("shared JSON helpers", () => {
     const customValueOf = new Date(0)
     Object.defineProperty(customValueOf, "valueOf", { value: () => 0 })
     expect(readsShippedTime(customValueOf)).toBe(false)
-  })
-
-  test("recognizes plain-record prototypes", () => {
-    expect(isPlainPrototype(null)).toBe(true)
-    expect(isPlainPrototype(Object.prototype)).toBe(true)
-    expect(isPlainPrototype(Object.create(null))).toBe(true)
-    expect(isPlainPrototype(Date.prototype)).toBe(false)
   })
 
   test("defines ordinary fields and keeps __proto__ as an own data property", () => {

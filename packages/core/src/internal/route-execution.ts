@@ -45,7 +45,7 @@ export type RawErrorHandler = (error: unknown, ctx: RawContext) => MaybePromise<
 export type RawAround = <T>(ctx: RawContext, next: () => MaybePromise<T>) => MaybePromise<T>
 
 export type RouteExecutionRunner = <T>(
-  runtime: unknown,
+  runtime: object,
   entry: RouteEntry,
   source: RequestSource,
   params: Record<string, string>,
@@ -59,7 +59,7 @@ export type RouteExecutionRunner = <T>(
 ) => MaybePromise<T>
 
 export type ContextRouteRunner = <T>(
-  runtime: unknown,
+  runtime: object,
   entry: RouteEntry,
   source: RequestSource,
   ctx: RawContext,
