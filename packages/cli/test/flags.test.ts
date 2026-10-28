@@ -209,6 +209,19 @@ test("frontendCommandInput preserves the observable empty-symptom boundary", () 
     symptom: "hydration mismatch",
     json: true,
   })
+  expect(frontendCommandInput(["--help", "vue"], parse)).toEqual({
+    adapter: "vue",
+    symptom: undefined,
+    json: false,
+  })
+  expect(frontendCommandInput(["-h", "hydration"], parse)).toEqual({
+    adapter: undefined,
+    symptom: "hydration",
+    json: false,
+  })
+  expect(() => frontendCommandInput(["--jsno", "vue"], parse)).toThrow(
+    "[nifra] unknown option: --jsno",
+  )
 })
 
 // Guards the regression: `assure --json` must stay the {ok,routes,findings} report. The bundle is

@@ -1183,6 +1183,11 @@ export function frontendCommandInput(
   argv: readonly string[],
   parseAdapter: (value: string | undefined) => string | undefined,
 ): FrontendCommandInput {
+  const unknown = argv.find(
+    (arg) => arg.startsWith("-") && arg !== "--json" && arg !== "--help" && arg !== "-h",
+  )
+  if (unknown !== undefined)
+    throw new Error(`[nifra] unknown option: ${unknown} - see \`nifra help\``)
   const positional = argv.filter((arg) => !arg.startsWith("-"))
   const first = positional[0]
   const maybeAdapter = parseAdapter(first)

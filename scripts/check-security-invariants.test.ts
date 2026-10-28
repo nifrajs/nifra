@@ -43,4 +43,21 @@ describe("security invariant ledger", () => {
       true,
     )
   })
+
+  test("mutation targets require every listed path to exist", () => {
+    const ledger = readSecurityInvariantLedger(root)
+    const invariant = ledger.invariants[0]
+    const target = invariant?.mutationTargets[0]
+    if (invariant === undefined || target === undefined)
+      throw new Error("fixture ledger has no mutation target")
+    const errors = validateSecurityInvariantLedger(root, ledger, {
+      [target]: { files: ["missing-target-file.ts"], tests: ["missing-target-test.ts"] },
+    })
+    expect(errors).toContain(
+      `${invariant.id}: mutation target ${target} missing file missing-target-file.ts`,
+    )
+    expect(errors).toContain(
+      `${invariant.id}: mutation target ${target} missing test missing-target-test.ts`,
+    )
+  })
 })

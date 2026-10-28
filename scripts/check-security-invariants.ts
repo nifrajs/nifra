@@ -91,8 +91,16 @@ export function validateSecurityInvariantLedger(
       else {
         if (!strings(targetSpec.files) || targetSpec.files.length === 0)
           errors.push(`${invariant.id}: mutation target ${target} has no files`)
+        for (const file of strings(targetSpec.files) ? targetSpec.files : []) {
+          if (!existsSync(resolve(root, file)))
+            errors.push(`${invariant.id}: mutation target ${target} missing file ${file}`)
+        }
         if (!strings(targetSpec.tests) || targetSpec.tests.length === 0)
           errors.push(`${invariant.id}: mutation target ${target} has no tests`)
+        for (const test of strings(targetSpec.tests) ? targetSpec.tests : []) {
+          if (!existsSync(resolve(root, test)))
+            errors.push(`${invariant.id}: mutation target ${target} missing test ${test}`)
+        }
       }
     }
   }
