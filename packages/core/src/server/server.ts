@@ -4324,43 +4324,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (outcome !== undefined) return earlyAnswer(outcome, wrapResponse)
     }
-    return this.routeAfterHooks(
+    return this.routeAndRun(
       current,
-      originalRequest,
-      matched,
       platform,
       finalize,
       wrapResponse,
       onTimeout,
       webFast,
+      current === originalRequest ? matched : undefined,
     )
-  }
-
-  /** Where a request goes once the `onRequest` hooks have run: straight into the route Bun matched
-   * while no hook replaced the request, else through routing again. */
-  private routeAfterHooks<T>(
-    current: RequestSource,
-    originalRequest: Request,
-    matched: MatchedRoute | undefined,
-    platform: Platform<EnvOf<Ctx>> | undefined,
-    finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    onTimeout: () => T,
-    webFast: boolean,
-  ): MaybePromise<T> {
-    return matched !== undefined && current === originalRequest
-      ? this.runMatched(
-          current,
-          platform,
-          matched.entry,
-          matched.params,
-          undefined,
-          finalize,
-          wrapResponse,
-          onTimeout,
-          webFast,
-        )
-      : this.routeAndRun(current, platform, finalize, wrapResponse, onTimeout, webFast)
   }
 
   /** Async tail of {@link runWithOnRequest}: applies the first awaited hook's outcome, then runs
@@ -4399,15 +4371,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       index++
     }
-    return this.routeAfterHooks(
+    return this.routeAndRun(
       current,
-      originalRequest,
-      matched,
       platform,
       finalize,
       wrapResponse,
       onTimeout,
       webFast,
+      current === originalRequest ? matched : undefined,
     )
   }
 
@@ -4486,7 +4457,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
+    // The route Bun's table already matched for this very request, which routing would find again.
+    matched?: MatchedRoute,
   ): MaybePromise<T> {
+    if (matched !== undefined) {
+      return this.runMatched(
+        source,
+        platform,
+        matched.entry,
+        matched.params,
+        undefined,
+        finalize,
+        wrapResponse,
+        onTimeout,
+        webFast,
+      )
+    }
     // Native delimiter searches keep path/query splitting out of a character-by-character JS loop.
     // Keep the slices in locals instead of allocating the public helper's pathname/search pair.
     let pathname: string
@@ -6726,6 +6712,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (hookedPlatform !== undefined) {
       return (request, server) => {
         markFramed(request)
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Bun's route table hands each handler a Request carrying the `params` it matched.
         const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
         if (malformed(params)) return fallback(request, server)
         return this.fetchMatchedHooked(request, entry, params, hookedPlatform(request, server))
@@ -7043,6 +7030,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           : (request) =>
               resolveClientIp(
                 !("header" in trust) && trust.trustedHops === 0 ? socketPeer(request) : undefined,
+                // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every source a Bun listener routes is a `Request`.
                 request as Request,
                 trust,
               ),
@@ -7052,6 +7040,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       fallback,
       peer,
       (request, server) =>
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `fallback` hands `fetch` the same platform, which holds no environment.
         new BunPeerPlatform(server, request, setIdleTimeout) as Platform<EnvOf<Ctx>>,
     )
     const first = options?.static

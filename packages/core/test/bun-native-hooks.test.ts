@@ -14,16 +14,15 @@ type NativeTable = Record<string, Record<string, NativeHandler>> | undefined
 
 function nativeKeys(app: object): string[] {
   const portable: NativeHandler = () => new Response(null)
-  const table =
-    (
-      app as {
-        buildBunNativeRoutes(
-          fallback: NativeHandler,
-          peer: object,
-          platformFor: () => object,
-        ): NativeTable
-      }
-    ).buildBunNativeRoutes(portable, {}, () => ({})) ?? {}
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the table builder is private; the test lists what it holds.
+  const builder = app as {
+    buildBunNativeRoutes(
+      fallback: NativeHandler,
+      peer: object,
+      platformFor: () => object,
+    ): NativeTable
+  }
+  const table = builder.buildBunNativeRoutes(portable, {}, () => ({})) ?? {}
   return Object.keys(table)
     .flatMap((path) =>
       Object.keys(table[path]!)
@@ -155,12 +154,11 @@ describe("the route table beside onRequest hooks", () => {
   test("each hook runs once per request on each lane", async () => {
     const { app, calls } = hooked()
     await lanes(app, PROBES)
-    const probed = PROBES.map(([method, path]) => `${method} ${path.replace("%ff", "%ff")}`)
     const half = calls.length / 2
     expect(calls.slice(0, half)).toEqual(calls.slice(half))
     // The request a rewriting hook builds is never offered to the earlier hooks again.
     expect(calls.slice(0, half).filter((call) => call.endsWith("/rewrite"))).toHaveLength(1)
-    expect(calls.slice(0, half)).toHaveLength(probed.length)
+    expect(calls.slice(0, half)).toHaveLength(PROBES.length)
   })
 
   test("a hook that names the caller sees the socket peer", async () => {

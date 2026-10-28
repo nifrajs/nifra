@@ -13,10 +13,11 @@ type NativeTable = Record<string, Record<string, NativeHandler>> | undefined
 
 function nativeKeys(app: object): string[] {
   const portable: NativeHandler = () => new Response(null)
-  const table =
-    (
-      app as { buildBunNativeRoutes(fallback: NativeHandler, peer: object): NativeTable }
-    ).buildBunNativeRoutes(portable, {}) ?? {}
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the table builder is private; the test lists what it holds.
+  const builder = app as {
+    buildBunNativeRoutes(fallback: NativeHandler, peer: object): NativeTable
+  }
+  const table = builder.buildBunNativeRoutes(portable, {}) ?? {}
   return Object.keys(table)
     .flatMap((path) =>
       Object.keys(table[path]!)
