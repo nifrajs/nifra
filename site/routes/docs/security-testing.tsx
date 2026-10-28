@@ -16,6 +16,9 @@ bun scripts/mutate.ts --changed
 # Run a selected security target locally
 bun scripts/mutate.ts --target core-capabilities --gate
 
+# Build artifacts required by the Node, Deno, and workerd lanes
+bun run build
+
 # Exercise hostile requests across supported runtimes
 bun run check:runtime-differential`
 
