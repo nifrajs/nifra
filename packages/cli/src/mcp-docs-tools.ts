@@ -9,7 +9,7 @@
 
 import { renderDocsResult } from "./docs-search.ts"
 import { type Example, renderExamplesResult } from "./examples.ts"
-import { renderFrontendResult } from "./frontend-guidance.ts"
+import { frontendGuidanceJson, renderFrontendResult } from "./frontend-guidance.ts"
 import { renderLearnResult } from "./learn.ts"
 import type { McpTool } from "./mcp-protocol.ts"
 import { renderTypesResult, type TypeEntry } from "./types-search.ts"
@@ -190,6 +190,11 @@ export function docsTools(
               "Filter to one adapter's entries (plus the adapter-independent seam entries).",
           },
           limit: { type: "number", description: "Max entries to return (default 3, max 5)." },
+          json: {
+            type: "boolean",
+            description:
+              "Return stable structured entries with versions, category, and source instead of only rendered prose.",
+          },
         },
         additionalProperties: false,
       },
@@ -199,7 +204,15 @@ export function docsTools(
           adapter?: string
           limit?: number
         }
-        return renderFrontendResult({ symptom, adapter, limit: clamp(limit, 1, 5, 3) })
+        const json = Reflect.get(args, "json") === true
+        const input = { symptom, adapter, limit: clamp(limit, 1, 5, 3) }
+        if (json === true) {
+          return {
+            content: [{ type: "text", text: renderFrontendResult(input) }],
+            structuredContent: { ...frontendGuidanceJson(input) },
+          }
+        }
+        return renderFrontendResult(input)
       },
     },
   ]

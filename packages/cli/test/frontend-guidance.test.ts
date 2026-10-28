@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test"
-import { FRONTEND_GUIDANCE, parseAdapter, renderFrontendResult } from "../src/frontend-guidance.ts"
+import {
+  FRONTEND_GUIDANCE,
+  frontendGuidanceJson,
+  parseAdapter,
+  renderFrontendResult,
+  selectFrontendGuidance,
+} from "../src/frontend-guidance.ts"
 
 test("no args renders the full index with every entry id", () => {
   const index = renderFrontendResult({})
@@ -38,6 +44,30 @@ test("a seam entry points at a nifra tool; a framework entry points at its own l
   expect(seam).toContain("nifra_check")
   const framework = renderFrontendResult({ adapter: "react", symptom: "effect stale dependency" })
   expect(framework).toContain("eslint-plugin-react-hooks")
+})
+test("framework guidance carries version and authoritative source metadata", () => {
+  for (const adapter of ["react", "preact", "solid", "vue", "svelte"] as const) {
+    const entries = FRONTEND_GUIDANCE.filter((entry) => entry.adapters.includes(adapter))
+    expect(entries.length).toBeGreaterThanOrEqual(4)
+    expect(entries.filter((entry) => entry.versions !== undefined).length).toBeGreaterThanOrEqual(3)
+    expect(
+      entries.filter((entry) => entry.source?.startsWith("https://") === true).length,
+    ).toBeGreaterThanOrEqual(3)
+  }
+})
+test("structured guidance selection is stable for CLI and MCP consumers", () => {
+  const selected = selectFrontendGuidance({ adapter: "solid", symptom: "list reorder state" })
+  expect(selected.schemaVersion).toBe(1)
+  expect(selected.matched).toBe(true)
+  expect(selected.entries.map((entry) => entry.id)).toContain("solid-for-index")
+  expect(frontendGuidanceJson({ adapter: "solid", symptom: "list reorder state" })).toEqual(
+    selected,
+  )
+})
+test("full framework entries render their applicability and source", () => {
+  const out = renderFrontendResult({ adapter: "vue", symptom: "watcher never runs" })
+  expect(out).toContain("Applies: Vue 3.4-3.5")
+  expect(out).toContain("Source:   https://vuejs.org/guide/essentials/watchers.html")
 })
 
 test("an unmatched symptom falls back to the (filtered) index, not an empty string", () => {

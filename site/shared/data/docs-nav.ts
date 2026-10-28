@@ -38,6 +38,7 @@ export const DOCS_GROUPS: readonly DocsGroup[] = [
     title: "Frontend",
     links: [
       { href: "/docs/frameworks", label: "Frameworks" },
+      { href: "/docs/frontend-guidance", label: "Frontend gotchas" },
       { href: "/docs/routing", label: "Routing" },
       { href: "/docs/data", label: "Loaders & actions" },
       { href: "/docs/backends", label: "Backends & API" },
@@ -80,6 +81,7 @@ export const DOCS_GROUPS: readonly DocsGroup[] = [
       { href: "/docs/agents", label: "Coding agents" },
       { href: "/docs/causality", label: "Execution causality" },
       { href: "/docs/failure-lab", label: "Failure laboratory" },
+      { href: "/docs/security-testing", label: "Security testing" },
       { href: "/docs/certification", label: "Adapter certification" },
     ],
   },

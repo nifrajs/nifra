@@ -12067,6 +12067,71 @@ stylesheet can't redirect the download elsewhere - an SSRF gate), and caps each 
 Filenames are derived only from validated tokens plus a content hash, so there's no path
 traversal.
 
+## Nifra - Frontend gotchas
+
+> Version-scoped React, Preact, Solid, Vue, Svelte, and Nifra frontend gotchas exposed through the CLI and MCP.
+
+Nifra owns the server/client seam, while each frontend framework owns its own reactivity and
+lifecycle rules. The frontend catalog connects those two layers without pretending Nifra can
+replace the framework's compiler or linter.
+
+### Use the same catalog from every surface
+
+`nifra frontend` is the human CLI and `nifra_frontend` is the MCP tool. Both
+select the same entries. Pass `--json` or `json: true` to receive a stable
+result with `schemaVersion`, adapter, match status, version range, category, and
+authoritative source URL.
+
+```sh
+# Browse all entries
+nifra frontend
+
+# Search a framework and symptom
+nifra frontend solid "list reorder state"
+
+# Give an agent stable JSON with versions and source links
+nifra frontend vue "watcher never runs" --json
+
+# The same catalog is available over MCP
+nifra_frontend({ adapter: "react", symptom: "hydration mismatch", json: true })
+```
+
+### What Nifra reports
+
+-
+**Shared seam cases:** server-only imports, hydration determinism, typed loader
+data, duplicate runtimes, and stable list identity.
+
+-
+**React and Preact:** effect dependencies and cleanup, hydration browser reads,
+state identity, compat boundaries, and runtime duplication.
+
+-
+**Solid:** tracked reads, props and stores, `For` versus
+`Index`, and owner cleanup.
+
+-
+**Vue:** refs in script, watch sources and traversal, reactive props, and SSR
+hydration.
+
+-
+**Svelte:** runes, keyed each blocks, effect teardown, and browser-only SSR
+reads.
+
+### Version-sensitive advice
+
+Every ecosystem entry names the framework versions it was written for and links to the
+framework's documentation. When a major version changes the rule, add a new entry or update
+the version range with a fixture. Keep high-confidence, statically provable rules in
+`nifra check`; use this catalog for symptoms that need context or an ecosystem linter.
+
+### Contributing a gotcha
+
+Add a broken and fixed fixture, a symptom users actually report, the exact cause, a safe fix,
+and an authoritative source. If the issue is Nifra's own boundary, add a check code and a
+regression test. If it belongs to React, Preact, Solid, Vue, or Svelte, link the ecosystem
+linter or compiler instead of duplicating its entire rule set.
+
 ## Nifra - Integrations (Stripe, and any npm library)
 
 > Third-party libraries work in Nifra as-is - handlers are plain TypeScript. The Stripe recipe end-to-end: SDK calls in a route, constant-time webhook verification, and idempotent processing.
@@ -14808,6 +14873,76 @@ hardening primitives first-party, and lets `nifra assure` prove in CI that every
 route is guarded. For the full capability and throughput comparison, see
 [vs other frameworks](/docs/comparison) and the
 [per-framework pages](/compare).
+
+## Nifra - Security testing
+
+> Security invariants, mutation testing, adversarial inputs, and runtime differential checks in Nifra.
+
+Nifra treats security claims as executable invariants. A rule is useful only when a hostile
+input, a deliberate mutation, or a recovery fault would make a test fail if the protection
+disappeared.
+
+### One invariant, several kinds of evidence
+
+`security-invariants.json` is the index for the repository's security claims. Each
+entry names the behavior, regression tests, mutation targets, and documentation that explain
+it. `bun run check:security-invariants` fails when a referenced test or target is
+removed, so the index cannot silently become a list of aspirations.
+
+The ledger is intentionally separate from an application's secrets and tenant data. Add a
+reduced public regression fixture for a real finding; keep private application details in the
+private test suite.
+
+### Mutation testing
+
+Mutation testing changes one condition, operator, return value, or statement at a time. A
+security target passes only when its tests kill every meaningful mutant. A surviving mutant
+needs a regression test or an explicit equivalence explanation in
+`mutation-equivalents.json`; adding a survivor to a baseline is a temporary record,
+not proof of safety.
+
+```sh
+# Validate every invariant has executable evidence
+bun run check:security-invariants
+
+# Run the fast changed-line mutation report
+bun scripts/mutate.ts --changed --gate
+
+# Run a selected security target locally
+bun scripts/mutate.ts --target core-capabilities --gate
+
+# Exercise hostile requests across supported runtimes
+bun run check:runtime-differential
+```
+
+### What to test at a security boundary
+
+-
+**Authorization:** denial happens before the handler, database write, or side
+effect; ownership is checked for the requested resource.
+
+-
+**Replay and recovery:** repeated idempotency keys do not repeat effects, and an
+uncertain commit becomes an explicit reconciliation state.
+
+-
+**Input limits:** raw and multipart bodies stop at their read budget, malformed
+encodings are rejected, and prototype-pollution keys cannot alter output objects.
+
+-
+**Data boundaries:** response projection strips fields, errors redact provider
+details, and server-only imports cannot reach browser chunks.
+
+-
+**Runtime parity:** Bun, Node, Deno, and Workers agree on rejection status,
+headers, redaction, and side-effect behavior for the same hostile request.
+
+### Adding a new edge case
+
+Start with the smallest reproduction that proves the failure. Give it a stable diagnostic or
+test name, add the fixed behavior to the relevant invariant, add a mutation that would remove
+the guard when practical, and document the trigger, consequence, fix, and verification
+command. This keeps the docs, CLI, MCP, and test suite growing from evidence.
 
 ## Nifra - Project structure
 
