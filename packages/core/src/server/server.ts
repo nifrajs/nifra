@@ -6744,9 +6744,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
   }
 
-  /** Compile portable route registrations into Bun's native route table. Apps with request-rewrite
-   * hooks or mounts retain the single portable dispatcher because those features must run before
-   * route selection. An app with WebSocket routes keeps the routes no handshake can reach.
+  /** Compile portable route registrations into Bun's native route table. Paths a composed mount or
+   * a WebSocket handshake may reach stay with the portable dispatcher; provably disjoint HTTP routes
+   * keep native matching. Request hooks run before the matched route and rewrites return to dispatch.
    *
    * Bun and the portable router agree on which of two static-and-`:param` paths wins a request, so
    * the table is kept to those paths. Where Bun would otherwise pass a request on to a less specific
@@ -6762,8 +6762,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       (hooked && platformFor === undefined) ||
       // A hook may rewrite a handshake onto a socket path, which only the dispatcher's upgrade check follows.
       (hooked && this.wsRoutes.length > 0) ||
-      this.mountsTakeUpgrades() ||
-      this.preRouteMountCount > 0
+      this.mountsTakeUpgrades()
     ) {
       return undefined
     }
@@ -6781,6 +6780,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
     let count = 0
     const all = this.catalog.entries()
+    const preRouteMounts = this.fetchMounts.filter((mount) => mount.beforeRoutes)
     // A path with a wildcard or a part-literal segment cannot go in the table: Bun reads `/:name.json`
     // as one parameter named `name.json`. These are filed under each run of static segments they
     // start with, which is where a table path they could outrank looks for them.
@@ -6814,7 +6814,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (segment.kind !== "static") break
         prefix += `/${segment.value}`
       }
-      return plain ? prefix : undefined
+      // Mounts take every method under their literal prefix before route matching. A parameter may
+      // fill the rest of that prefix, but a static route ending above the mount cannot reach it.
+      // Conservative by design: only the leading static run proves a dynamic route disjoint.
+      const mayHitMount = preRouteMounts.some(
+        (mount) =>
+          underMountPrefix(prefix, mount.path) ||
+          (route.pattern.paramNames.length > 0 &&
+            (prefix === "" || underMountPrefix(mount.path, prefix))),
+      )
+      return plain && !mayHitMount ? prefix : undefined
     })
     // A preflight hook is intentionally handled by the fallback fetch path. Keeping OPTIONS out
     // of the native lane means Bun dispatches it through CORS's onRequest hook even when the

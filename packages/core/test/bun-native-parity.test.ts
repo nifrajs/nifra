@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { server } from "../src/index.ts"
+import { authenticated, rejected, server } from "../src/index.ts"
 import { method as route } from "../src/server/methods.ts"
 import {
   INVALID_HOSTS,
@@ -35,10 +35,17 @@ type NativeTable = Record<string, Record<string, NativeHandler>> | undefined
  */
 function nativeKeys(app: object): string[] {
   const portable: NativeHandler = () => new Response(null)
+  // Inspect the private builder without invoking the handlers it compiles.
   const table =
-    (app as { buildBunNativeRoutes(fallback: NativeHandler): NativeTable }).buildBunNativeRoutes(
-      portable,
-    ) ?? {}
+    (
+      app as {
+        buildBunNativeRoutes(
+          fallback: NativeHandler,
+          peer: object,
+          platformFor: () => object,
+        ): NativeTable
+      }
+    ).buildBunNativeRoutes(portable, {}, () => ({})) ?? {}
   return Object.keys(table)
     .flatMap((path) =>
       Object.keys(table[path]!)
@@ -55,7 +62,7 @@ function register(app: BareServer, method: string, path: string): BareServer {
 
 async function answers(
   app: Served,
-  requests: readonly (readonly [method: string, path: string])[],
+  requests: readonly (readonly [method: string, path: string, init?: RequestInit])[],
 ): Promise<{ listened: string[]; fetched: string[] }> {
   // A HEAD answer has no body on the wire, so the two lanes are compared on what both can show.
   const show = async (label: string, response: Response): Promise<string> =>
@@ -69,16 +76,19 @@ async function answers(
   // ~80k loopback round trips outran its budget on a loaded machine.
   try {
     const listened = await Promise.all(
-      requests.map(async ([method, path]) =>
+      requests.map(async ([method, path, init]) =>
         show(
           `${method} ${path}`,
-          await fetch(`http://127.0.0.1:${instance.port}${path}`, { method }),
+          await fetch(`http://127.0.0.1:${instance.port}${path}`, { ...init, method }),
         ),
       ),
     )
     const fetched = await Promise.all(
-      requests.map(async ([method, path]) =>
-        show(`${method} ${path}`, await app.fetch(new Request(`http://x${path}`, { method }))),
+      requests.map(async ([method, path, init]) =>
+        show(
+          `${method} ${path}`,
+          await app.fetch(new Request(`http://x${path}`, { ...init, method })),
+        ),
       ),
     )
     return { listened, fetched }
@@ -88,6 +98,193 @@ async function answers(
 }
 
 describe("Bun-native route table agrees with the portable router", () => {
+  test("a composed mount keeps only paths it may reach off the native table", async () => {
+    const app = server()
+      .mount({ path: "/api", app: { fetch: () => Response.json({ source: "mount" }) } })
+      .get("/", () => ({ source: "home" }))
+      .get("/health", () => ({ source: "health" }))
+      .get("/api", () => ({ source: "parent" }))
+      .get("/api/health", () => ({ source: "parent" }))
+      .get("/api2", () => ({ source: "sibling" }))
+      .get("/users/:id", (c) => ({ id: c.params.id }))
+      .post("/users", () => ({ source: "created" }))
+      .get("/:area/ping", (c) => ({ area: c.params.area }))
+    expect(nativeKeys(app)).toEqual([
+      "GET /",
+      "GET /api2",
+      "GET /health",
+      "GET /users/:id",
+      "HEAD /",
+      "HEAD /api2",
+      "HEAD /health",
+      "HEAD /users/:id",
+      "POST /users",
+    ])
+    const { listened, fetched } = await answers(app, [
+      ["GET", "/"],
+      ["GET", "/api"],
+      ["GET", "/api/health"],
+      ["GET", "/api/missing"],
+      ["GET", "/api2"],
+      ["GET", "/users/7"],
+      ["HEAD", "/users/7"],
+      ["POST", "/users"],
+      ["POST", "/api/health"],
+      ["OPTIONS", "/api/health"],
+      ["DELETE", "/users/7"],
+      ["GET", "/api/ping"],
+      ["GET", "/docs/ping"],
+    ])
+    expect(listened).toEqual(fetched)
+    expect(listened[1]).toContain('{"source":"mount"}')
+    expect(listened[4]).toContain('{"source":"sibling"}')
+    expect(listened[10]).toContain("-> 405 allow=GET, HEAD")
+    expect(listened[11]).toContain('{"source":"mount"}')
+  })
+
+  test("an ancestor's static route stays native but its param route may reach a nested mount", async () => {
+    const app = server()
+      .mount({ path: "/users/admin", app: { fetch: () => new Response("mounted admin") } })
+      .get("/users", () => "users")
+      .get("/users/:id", (c) => c.params.id)
+      .get("/users/public/:id", (c) => c.params.id)
+      .get("/users/admin/:id", () => "parent admin")
+    expect(nativeKeys(app)).toEqual([
+      "GET /users",
+      "GET /users/public/:id",
+      "HEAD /users",
+      "HEAD /users/public/:id",
+    ])
+    const { listened, fetched } = await answers(app, [
+      ["GET", "/users"],
+      ["GET", "/users/ada"],
+      ["GET", "/users/admin"],
+      ["GET", "/users/admin/7"],
+      ["GET", "/users/public/7"],
+      ["HEAD", "/users/public/7"],
+    ])
+    expect(listened).toEqual(fetched)
+    expect(listened[2]).toContain("mounted admin")
+  })
+
+  test("normalized mount prefixes keep their boundary and root mounts keep every route portable", () => {
+    for (const path of ["/api/", "/api/*"]) {
+      const app = server()
+        .mount({ path, app: { fetch: () => new Response("mounted") } })
+        .get("/api", () => "parent")
+        .get("/api/x", () => "parent")
+        .get("/api2", () => "sibling")
+      expect(nativeKeys(app)).toEqual(["GET /api2", "HEAD /api2"])
+    }
+    for (const path of ["/", "/*"]) {
+      expect(
+        nativeKeys(
+          server()
+            .mount({ path, app: { fetch: () => new Response("mounted") } })
+            .get("/health", () => "parent")
+            .post("/users", () => "parent"),
+        ),
+      ).toEqual([])
+    }
+  })
+
+  test("disjoint native routes do not bypass mount authentication or prefix stripping", async () => {
+    const child = server().get("/hello", () => "child")
+    const app = server()
+      .get("/health", () => "public")
+      .authenticate({
+        id: "token",
+        mode: "sync",
+        run: (input) =>
+          input.headers.get("authorization") === "Bearer ok"
+            ? authenticated({ id: "u1" })
+            : rejected("unauthenticated"),
+      })
+      .mount({ path: "/api", app: child, stripPrefix: true })
+      .get("/api/hello", () => "parent")
+    expect(nativeKeys(app)).toEqual(["GET /health", "HEAD /health"])
+    const { listened, fetched } = await answers(app, [
+      ["GET", "/health"],
+      ["GET", "/api/hello"],
+      ["GET", "/api/hello", { headers: { authorization: "Bearer ok" } }],
+    ])
+    expect(listened).toEqual(fetched)
+    expect(listened[1]).toContain("-> 401")
+    expect(listened[2]).toContain('"child"')
+  })
+
+  test("sync and async request rewrites into a mount still run mounts and hooks once", async () => {
+    const calls: string[] = []
+    const app = server()
+      .onRequest((req) => {
+        const path = new URL(req.url).pathname
+        calls.push(path)
+        return path === "/rewrite" ? new Request(new URL("/api/hello", req.url), req) : undefined
+      })
+      .onRequest(async (req) =>
+        new URL(req.url).pathname === "/async-rewrite"
+          ? new Request(new URL("/api/hello", req.url), req)
+          : undefined,
+      )
+      .mount({ path: "/api", app: { fetch: () => new Response("mounted") } })
+      .get("/rewrite", () => "parent")
+      .get("/async-rewrite", () => "parent")
+      .get("/health", () => "health")
+    expect(nativeKeys(app)).toContain("GET /rewrite")
+    const { listened, fetched } = await answers(app, [
+      ["GET", "/rewrite"],
+      ["GET", "/async-rewrite"],
+      ["GET", "/health"],
+    ])
+    expect(listened).toEqual(fetched)
+    expect(listened[0]).toContain("mounted")
+    expect(listened[1]).toContain("mounted")
+    expect(calls.filter((path) => path === "/rewrite")).toHaveLength(2)
+    expect(calls.filter((path) => path === "/async-rewrite")).toHaveLength(2)
+    expect(calls).toHaveLength(6)
+  })
+
+  test("mixed mount and route tables preserve precedence on every request method", async () => {
+    const paths = [
+      "/",
+      "/health",
+      "/api",
+      "/api/health",
+      "/api/missing",
+      "/api2",
+      "/api2/ping",
+      "/users",
+      "/users/7",
+      "/users/admin",
+      "/users/admin/7",
+      "/users/public/7",
+      "/users/%2F",
+      "/users/%ff",
+      "/docs/ping",
+      "/docs/a.json",
+      "/nope",
+    ]
+    const methods = ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PURGE"]
+    const probes = paths.flatMap((path) => methods.map((method) => [method, path] as const))
+    for (const prefix of ["/api", "/users/admin", "/api2", "/api/health", "/elsewhere", "/"]) {
+      const app = server()
+        .mount({ path: prefix, app: { fetch: () => new Response("mounted") } })
+        .get("/", () => "home")
+        .get("/health", () => "health")
+        .post("/api/health", () => "api parent")
+        .get("/api2", () => "api sibling")
+        .post("/users", () => "users")
+        .get("/users/:id", (c) => c.params.id)
+        .post("/users/admin", () => "admin")
+        .get("/users/public/:id", (c) => c.params.id)
+        .get("/:area/ping", (c) => c.params.area)
+        .get("/docs/:name.json", (c) => c.params.name)
+        .get("/*rest", (c) => c.params.rest)
+      const { listened, fetched } = await answers(app, probes)
+      expect(listened).toEqual(fetched)
+    }
+  })
+
   test("a wildcard route under a static prefix keeps its requests from a broader param route", async () => {
     const app = server()
       .get("/admin/*rest", (c) => ({ route: "admin", rest: c.params.rest }))
