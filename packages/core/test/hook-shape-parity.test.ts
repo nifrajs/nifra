@@ -34,6 +34,8 @@ type HookMode =
   | "reject"
   | "throw-unrenderable"
   | "reject-unrenderable"
+  | "assign-throw"
+  | "assign-throw-async"
 type HandlerMode =
   | "sync"
   | "async"
@@ -75,6 +77,8 @@ const FAULTS: Record<"derive" | "before" | "after", readonly HookMode[]> = {
     "reject",
     "throw-unrenderable",
     "reject-unrenderable",
+    "assign-throw",
+    "assign-throw-async",
   ],
   before: [
     "early",
@@ -149,6 +153,17 @@ function plans(shape: Shape): Plan[] {
     }
   }
   for (const handler of HANDLERS) out.push({ ...baseline("pass", "sync"), handler })
+  // A handler fault behind async hooks resumes in a continuation, and one async hook beside
+  // synchronous ones resumes the chain from that hook alone.
+  for (const handler of HANDLERS) out.push({ ...baseline("async", "async"), handler })
+  const quiet = baseline("pass", "sync")
+  for (const kind of ["derive", "before", "after"] as const) {
+    for (let i = 0; i < quiet[kind].length; i++) {
+      const modes = [...quiet[kind]]
+      modes[i] = "async"
+      out.push({ ...quiet, [kind]: modes })
+    }
+  }
   // Every plan again with a hook registered after the route and with its last before hook marked a
   // guard: a later `beforeHandle()` is inserted ahead of a guard, shifting the route's hook array.
   return out.flatMap((plan) =>
@@ -209,6 +224,11 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
           throw status(401, UNRENDERABLE)
         case "reject-unrenderable":
           return Promise.reject(status(401, UNRENDERABLE))
+        // `set` is read-only on the context, so merging this result throws.
+        case "assign-throw":
+          return { set: 1 }
+        case "assign-throw-async":
+          return Promise.resolve({ set: 1 })
         default:
           return value
       }
