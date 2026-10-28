@@ -64,16 +64,55 @@ test("structured guidance selection is stable for CLI and MCP consumers", () => 
     selected,
   )
 })
+test("selection covers optional metadata and ignores one-character noise", () => {
+  const bySeeAlso = selectFrontendGuidance({ adapter: "all", symptom: "structure" })
+  expect(bySeeAlso.entries.map((entry) => entry.id)).toContain("server-import")
+
+  const byCategory = selectFrontendGuidance({ adapter: "vue", symptom: "effects" })
+  expect(byCategory.entries.map((entry) => entry.id)).toContain("vue-watch-source")
+
+  const byVersion = selectFrontendGuidance({ adapter: "vue", symptom: "3.5" })
+  expect(byVersion.entries.map((entry) => entry.id)).toContain("vue-ref-script-access")
+
+  const oneCharacter = selectFrontendGuidance({ symptom: "r" })
+  expect(oneCharacter.matched).toBe(false)
+  expect(oneCharacter.entries).toEqual([])
+})
+
+test("unknown adapter keeps the complete catalog and no-query result is matched", () => {
+  const result = selectFrontendGuidance({ adapter: "angular" })
+  expect(result.adapter).toBeUndefined()
+  expect(result.matched).toBe(true)
+  expect(result.entries).toHaveLength(FRONTEND_GUIDANCE.length)
+})
+
 test("full framework entries render their applicability and source", () => {
   const out = renderFrontendResult({ adapter: "vue", symptom: "watcher never runs" })
   expect(out).toContain("Applies: Vue 3.4-3.5")
   expect(out).toContain("Source:   https://vuejs.org/guide/essentials/watchers.html")
+  expect(out).toContain("Category: effects")
+})
+
+test("seam entries do not print absent optional metadata", () => {
+  const out = renderFrontendResult({ symptom: "server-only import leaked into client component" })
+  expect(out).not.toContain("Category: undefined")
+  expect(out).not.toContain("Source:   undefined")
 })
 
 test("an unmatched symptom falls back to the (filtered) index, not an empty string", () => {
   const out = renderFrontendResult({ adapter: "svelte", symptom: "zzz-nonsense-token" })
   expect(out).toContain("No frontend-guidance entry matched")
+  expect(out).toContain("for svelte")
   expect(out).toContain("svelte-runes") // the filtered index is still shown
+
+  const unfiltered = renderFrontendResult({ symptom: "zzz-nonsense-token" })
+  expect(unfiltered).not.toContain("for undefined")
+})
+
+test("a matched symptom never uses the no-match fallback", () => {
+  const out = renderFrontendResult({ adapter: "react", symptom: "effect stale dependency" })
+  expect(out).toContain("[react-stale-deps]")
+  expect(out).not.toContain("No frontend-guidance entry matched")
 })
 
 test("parseAdapter normalizes case/whitespace and rejects non-adapters", () => {

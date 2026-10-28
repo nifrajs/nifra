@@ -20045,7 +20045,7 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function docsTools(loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeEntry[] | undefined>): McpTool[];",
-    "doc": "/** Build `nifra_docs` + `nifra_example` + `nifra_types` over injected corpus loaders. */"
+    "doc": "/** Build the read-only docs, examples, types, learning, and frontend tools over injected loaders. */"
   },
   {
     "name": "durableCommand",

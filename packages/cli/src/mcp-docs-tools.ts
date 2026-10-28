@@ -14,10 +14,11 @@ import { renderLearnResult } from "./learn.ts"
 import type { McpTool } from "./mcp-protocol.ts"
 import { renderTypesResult, type TypeEntry } from "./types-search.ts"
 
+/** Clamp optional MCP pagination input to a safe, deterministic range. */
 const clamp = (n: number | undefined, lo: number, hi: number, dflt: number): number =>
   Math.min(Math.max(typeof n === "number" ? n : dflt, lo), hi)
 
-/** Build `nifra_docs` + `nifra_example` + `nifra_types` over injected corpus loaders. */
+/** Build the read-only docs, examples, types, learning, and frontend tools over injected loaders. */
 export function docsTools(
   loadDocs: () => Promise<string | undefined>,
   loadExamples: () => Promise<Example[] | undefined>,

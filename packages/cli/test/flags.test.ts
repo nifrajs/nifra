@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { DEFAULT_DEV_PORT } from "@nifrajs/web"
-import { assureBundleRequested, commandArgv, formatCliError, parseFlags } from "../src/cli.ts"
+import {
+  assureBundleRequested,
+  commandArgv,
+  formatCliError,
+  frontendCommandInput,
+  parseFlags,
+} from "../src/cli.ts"
 
 // parseFlags reads Bun.env.PORT; snapshot + restore so tests don't leak the override into each other.
 const savedPort = Bun.env.PORT
@@ -149,6 +155,60 @@ test("a command that fails under --json still prints one JSON document on stdout
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
+})
+
+test("frontend command keeps flags out of adapter and symptom parsing", async () => {
+  const cli = resolve(import.meta.dir, "../src/cli.ts")
+  const run = async (args: readonly string[]) => {
+    const proc = Bun.spawn([process.execPath, cli, ...args], { stdout: "pipe", stderr: "pipe" })
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    return { stdout, stderr, exit }
+  }
+
+  const json = await run(["frontend", "--json", "vue", "list", "reorder", "state"])
+  expect(json.exit).toBe(0)
+  expect(json.stderr).toBe("")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the CLI JSON contract is asserted field-by-field below.
+  const parsed = JSON.parse(json.stdout) as {
+    adapter?: string
+    symptom?: string
+    matched: boolean
+    entries: unknown[]
+  }
+  expect(parsed.adapter).toBe("vue")
+  expect(parsed.symptom).toBe("list reorder state")
+  expect(parsed.matched).toBe(true)
+  expect(parsed.entries.length).toBeGreaterThan(0)
+
+  const adapterOnly = await run(["frontend", "--json", "vue"])
+  expect(JSON.parse(adapterOnly.stdout).symptom).toBeUndefined()
+
+  const noAdapter = await run(["frontend", "--json", "hydration", "mismatch"])
+  expect(JSON.parse(noAdapter.stdout).symptom).toBe("hydration mismatch")
+
+  const prose = await run(["frontend", "vue", "list", "reorder"])
+  expect(prose.exit).toBe(0)
+  expect(prose.stdout).toContain("[list-key]")
+  expect(() => JSON.parse(prose.stdout)).toThrow()
+})
+
+test("frontendCommandInput preserves the observable empty-symptom boundary", () => {
+  const parse = (value: string | undefined) =>
+    value?.trim().toLowerCase() === "vue" ? "vue" : undefined
+  expect(frontendCommandInput(["--json", "vue"], parse)).toEqual({
+    adapter: "vue",
+    symptom: undefined,
+    json: true,
+  })
+  expect(frontendCommandInput(["--json", "hydration", "mismatch"], parse)).toEqual({
+    adapter: undefined,
+    symptom: "hydration mismatch",
+    json: true,
+  })
 })
 
 // Guards the regression: `assure --json` must stay the {ok,routes,findings} report. The bundle is

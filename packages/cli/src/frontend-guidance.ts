@@ -443,8 +443,16 @@ export function parseAdapter(value: string | undefined): GuidanceAdapter | undef
   return ADAPTER_ALIASES[value.trim().toLowerCase()]
 }
 
+/** Return whether a catalog entry applies to the requested adapter. */
 const appliesTo = (entry: GuidanceEntry, adapter: GuidanceAdapter): boolean =>
   adapter === "all" || entry.adapters.includes("all") || entry.adapters.includes(adapter)
+
+/** Scope the catalog once so the CLI and MCP heads cannot drift in their adapter filtering. */
+function scopedEntries(adapter: GuidanceAdapter | undefined): readonly GuidanceEntry[] {
+  return adapter === undefined
+    ? FRONTEND_GUIDANCE
+    : FRONTEND_GUIDANCE.filter((entry) => appliesTo(entry, adapter))
+}
 
 /** Keyword score of an entry against a query - counts distinct query words found in its text. */
 function score(entry: GuidanceEntry, words: readonly string[]): number {
@@ -462,10 +470,7 @@ export function selectFrontendGuidance(args: {
   limit?: number | undefined
 }): FrontendGuidanceResult {
   const adapter = parseAdapter(args.adapter)
-  const scoped =
-    adapter === undefined
-      ? FRONTEND_GUIDANCE
-      : FRONTEND_GUIDANCE.filter((e) => appliesTo(e, adapter))
+  const scoped = scopedEntries(adapter)
   const query = args.symptom?.trim()
   if (query === undefined || query.length === 0) {
     return { schemaVersion: 1, adapter, matched: true, entries: scoped }
@@ -493,6 +498,7 @@ export function frontendGuidanceJson(args: {
   return selectFrontendGuidance(args)
 }
 
+/** Render one matched entry with all optional metadata that is actually present. */
 function renderEntry(entry: GuidanceEntry): string {
   const scope = entry.adapters.includes("all") ? "all adapters" : entry.adapters.join(", ")
   const parts = [
@@ -509,6 +515,7 @@ function renderEntry(entry: GuidanceEntry): string {
   return parts.join("\n")
 }
 
+/** Render the compact index used when no symptom matched or was supplied. */
 function renderIndex(
   entries: readonly GuidanceEntry[],
   adapter: GuidanceAdapter | undefined,
@@ -537,10 +544,7 @@ export function renderFrontendResult(args: {
 }): string {
   const selected = selectFrontendGuidance(args)
   const selectedAdapter = selected.adapter
-  const scoped =
-    selectedAdapter === undefined
-      ? FRONTEND_GUIDANCE
-      : FRONTEND_GUIDANCE.filter((e) => appliesTo(e, selectedAdapter))
+  const scoped = scopedEntries(selectedAdapter)
   if (selected.symptom === undefined) return renderIndex(scoped, selectedAdapter)
   if (!selected.matched) {
     return `No frontend-guidance entry matched "${selected.symptom}"${selectedAdapter ? ` for ${selectedAdapter}` : ""}.\n\n${renderIndex(scoped, selectedAdapter)}`
