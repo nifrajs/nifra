@@ -473,3 +473,36 @@ test("a fused hook route costs a fixed handful of functions even when no two rou
   // The hook registered for the route is its own; the Web and Node-direct entry closures are the rest.
   expect(hooked - bare).toBeLessThanOrEqual(1 + 2)
 })
+
+test("fused hook routes get their own signal per request under a request timeout", async () => {
+  const signals: AbortSignal[] = []
+  const hooked = server({ logger: silentLogger, requestTimeoutMs: 60_000 })
+    .derive(() => ({ user: "u" }))
+    .beforeHandle(() => undefined)
+    .afterHandle((result) => result)
+    .get("/bound", (c) => {
+      signals.push(c.signal)
+      return { user: c.user }
+    })
+  const shared = server({ logger: silentLogger, requestTimeoutMs: 60_000 })
+    .derive(() => ({ user: "u" }))
+    .derive(() => ({ team: "t" }))
+    .beforeHandle(() => undefined)
+    .get("/shared", (c) => {
+      signals.push(c.signal)
+      return { user: c.user, team: c.team }
+    })
+  for (const [app, path] of [
+    [hooked, "/bound"],
+    [shared, "/shared"],
+  ] as const) {
+    signals.length = 0
+    for (let i = 0; i < 2; i++) {
+      const response = await app.fetch(new Request(`http://x${path}`))
+      expect(response.status).toBe(200)
+    }
+    expect(signals).toHaveLength(2)
+    expect(signals[0]).not.toBe(signals[1])
+    expect(signals[0]?.aborted).toBe(false)
+  }
+})
