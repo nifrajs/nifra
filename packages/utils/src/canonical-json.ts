@@ -15,6 +15,7 @@ const isPlainObjectPrototype = (proto: unknown): boolean =>
   proto === null || proto === Object.prototype || Object.getPrototypeOf(proto) === null
 
 /** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */
+// biome-ignore lint/plugin/noHelperCopy: canonical implementation owned by @nifrajs/utils.
 export function canonicalJson(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return JSON.stringify(value)

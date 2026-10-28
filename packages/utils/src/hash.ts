@@ -8,6 +8,7 @@ export function bytesToHex(bytes: Uint8Array): string {
 }
 
 /** SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. */
+// biome-ignore lint/plugin/noHelperCopy: canonical implementation owned by @nifrajs/utils.
 export async function sha256Hex(input: string | Uint8Array): Promise<string> {
   const bytes = typeof input === "string" ? encoder.encode(input) : new Uint8Array(input)
   return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
