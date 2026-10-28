@@ -2,7 +2,7 @@
  * WORST-CASE throughput matrix - nifra vs Elysia only, on Bun/Node/Deno - driven by
  * `oha`. The app under test combines hooks +
  * multi-param route + validated query + JSON body validation + per-request dynamic
- * response headers. BENCH_GENERIC=1 adds a second before hook to measure the GENERIC lane
+ * response headers. BENCH_GENERIC=1 adds a second before hook (and, for nifra, an error hook) to measure the GENERIC lane
  * against Elysia's AOT-compiled
  * handler - the shape most likely to show nifra behind. Harness mechanics mirror
  * ../run.ts (isolated subprocess per server, warmup, median-of-N, ratios are the signal).
