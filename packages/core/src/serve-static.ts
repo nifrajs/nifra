@@ -158,8 +158,9 @@ async function readStatic(
     const stream = opened.createReadStream({ start, end: start + length - 1 })
     // createReadStream owns closing the descriptor after EOF or abort.
     handle = undefined
+    const rawBody: unknown = Readable.toWeb(stream)
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: node:stream/web's ReadableStream is the global one on Bun; only the declarations differ.
-    const body = Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>
+    const body = rawBody as ReadableStream<Uint8Array>
     return new Response(body, { status: plan.status, headers })
   } catch {
     // Unreadable under the prefix: a 404 (not an SSR 404 page), unless the mount falls through.

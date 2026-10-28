@@ -26,7 +26,7 @@ Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled valida
 - **importOpenAPI** _(function)_ - `importOpenAPI: (document: unknown, options?: ImportOpenAPIOptions) => ImportedApiInventory` · from `@nifrajs/schema`
 - **paginate** _(function)_ - `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>` · from `@nifrajs/schema`
 - **registerFormat** _(function)_ - `registerFormat: (name: string, validate: (value: string) => boolean) => void` · from `@nifrajs/schema`
-- **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument` · from `@nifrajs/schema`
+- **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server | OpenAPIApp, options?: ToOpenAPIOptions) => OpenAPIDocument` · from `@nifrajs/schema`
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument` · from `@nifrajs/schema`
 
 _…and 23 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._

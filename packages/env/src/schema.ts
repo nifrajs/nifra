@@ -17,7 +17,7 @@ export interface StandardSchemaV1<Output = unknown> {
     readonly version: 1
     readonly vendor: string
     readonly validate: (value: unknown) => StandardResult<Output> | Promise<StandardResult<Output>>
-    readonly types?: { readonly output: Output }
+    readonly types?: { readonly output: Output } | undefined
   }
 }
 
@@ -34,7 +34,7 @@ export function envSchema<Output>(
       vendor: "nifra-env",
       validate: (value) => validate(value as string | undefined),
       // Phantom: carries the output type for InferOutput; no runtime value.
-      types: undefined as unknown as { readonly output: Output },
+      types: undefined,
     },
   }
 }

@@ -175,7 +175,7 @@ interface OpenAPIComponents {
   securitySchemes?: Readonly<Record<string, Record<string, unknown>>>
 }
 
-export interface OpenAPIDocument {
+export interface OpenAPIDocument extends Record<string, unknown> {
   readonly openapi: OpenAPIVersion
   readonly info: OpenAPIInfo
   readonly paths: Record<string, Record<string, OpenAPIOperation>>
@@ -1012,7 +1012,9 @@ function discriminateDocument(
   }
 }
 
-function isApp(input: ContractShape | Server): input is Server {
+type OpenAPIApp = { routes(): unknown }
+
+function isApp(input: ContractShape | Server | OpenAPIApp): input is OpenAPIApp {
   // Duck-typed so @nifrajs/schema keeps @nifrajs/core a type-only dependency. A contract
   // is a plain record of operations; only a Server exposes a `routes()` method.
   return typeof (input as { routes?: unknown }).routes === "function"
@@ -1020,7 +1022,7 @@ function isApp(input: ContractShape | Server): input is Server {
 
 /** Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model. */
 export function toOpenAPI(
-  input: ContractShape | Server,
+  input: ContractShape | Server | OpenAPIApp,
   options: ToOpenAPIOptions = {},
 ): OpenAPIDocument {
   const paths: Record<string, Record<string, OpenAPIOperation>> = {}
@@ -1143,6 +1145,6 @@ export function toOpenAPIFromEvidence(
 ): OpenAPIDocument {
   const app = {
     routes: () => reflectedRoutesFromEvidence(evidence),
-  } as unknown as Server
+  }
   return toOpenAPI(app, { ...options, evidence })
 }

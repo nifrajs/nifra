@@ -146,7 +146,7 @@ export async function runDataAdapterConformance<Adapter, Row, Snapshot, Cursor =
   const scopes = options.scopes ?? defaultScopes
   const rows =
     options.rows ??
-    (defaultRows as unknown as {
+    (defaultRows as {
       readonly left: Row
       readonly right: Row
       readonly rollback: Row
@@ -285,7 +285,7 @@ export async function runDataAdapterConformance<Adapter, Row, Snapshot, Cursor =
   } finally {
     try {
       await closeAll(
-        target as unknown as DataAdapterConformanceTarget<Adapter, unknown, unknown, unknown>,
+        target as DataAdapterConformanceTarget<Adapter, unknown, unknown, unknown>,
         adapters,
       )
     } catch {

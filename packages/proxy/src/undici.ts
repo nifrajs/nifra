@@ -77,9 +77,10 @@ function requestBody(body: ReadableStream<Uint8Array> | null): Readable | null {
   if (body === null) return null
   // Node's `fromWeb` declaration is tied to its own stream generic; the runtime value is the
   // Web stream supplied by Fetch, so this adapter boundary deliberately bridges the declarations.
+  const webBody: unknown = body
   return (
     claimNodeStream(body) ??
-    Readable.fromWeb(body as unknown as NodeWebReadableStream<Uint8Array<ArrayBufferLike>>)
+    Readable.fromWeb(webBody as NodeWebReadableStream<Uint8Array<ArrayBufferLike>>)
   )
 }
 

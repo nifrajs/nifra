@@ -252,11 +252,11 @@ export function withToolMeta(tool: McpTool): McpTool {
   const annotated = { ...tool, annotations: tool.annotations ?? meta.annotations }
   const fields = meta.fields
   const properties = tool.inputSchema.properties
-  if (fields === undefined || !isRecord(properties)) return annotated
+  if (fields === undefined || !isNonNullObject(properties)) return annotated
   const described = Object.fromEntries(
     Object.entries(properties).map(([name, property]) => {
       const description = fields[name]
-      return description === undefined || !isRecord(property) || "description" in property
+      return description === undefined || !isNonNullObject(property) || "description" in property
         ? [name, property]
         : [name, { ...property, description }]
     }),
@@ -264,5 +264,5 @@ export function withToolMeta(tool: McpTool): McpTool {
   return { ...annotated, inputSchema: { ...tool.inputSchema, properties: described } }
 }
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+const isNonNullObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null

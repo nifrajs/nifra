@@ -82,5 +82,5 @@ export function formFor<
     read: (form: FormData, name: string): FormEntry => form.get(name),
     readAll: (form: FormData, name: string): FormEntries => form.getAll(name),
   }
-  return handle as unknown as FormHandle<App, Path, Method>
+  return handle as FormHandle<App, Path, Method>
 }

@@ -309,9 +309,9 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       subscribers: 0,
       gcAt: undefined,
       listeners: new Set(),
-      setState: undefined as unknown as Entry["setState"],
-      run: undefined as unknown as Entry["run"],
-      handle: undefined as unknown as QueryHandle,
+      setState: undefined as never,
+      run: undefined as never,
+      handle: undefined as never,
     }
     const emit = (): void => {
       // Iterate the live set - no per-emit copy (the common case is 0-1 subscribers). Contract: a

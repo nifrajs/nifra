@@ -1060,7 +1060,7 @@ function reviewResolution(answer: unknown): NativeApprovalResolution | undefined
 }
 
 function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
-  ;(timer as unknown as { unref?: () => void }).unref?.()
+  ;(timer as { unref?: () => void }).unref?.()
 }
 
 function failedStream(error: unknown): AgentEventStream {

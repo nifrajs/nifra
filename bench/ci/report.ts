@@ -66,8 +66,7 @@ export interface CiReport {
   readonly runs: readonly RunOutput[]
 }
 
-const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> =>
-  typeof v === "object" && v !== null && !Array.isArray(v)
+import { isRecord } from "@nifrajs/utils/record"
 
 function record(v: unknown, where: string): Readonly<Record<string, unknown>> {
   if (!isRecord(v)) throw new Error(`${where}: expected an object`)

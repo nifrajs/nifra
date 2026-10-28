@@ -277,7 +277,7 @@ export class ApprovalManager {
       timer = setTimeout(() => {
         this.settle(request.id, false, "approval timed out")
       }, timeoutMs)
-      ;(timer as unknown as { unref?: () => void }).unref?.()
+      ;(timer as { unref?: () => void }).unref?.()
     }
     const pending: PendingApproval = { request, decided, settle, timer }
     this.pendingApprovals.set(request.id, pending)

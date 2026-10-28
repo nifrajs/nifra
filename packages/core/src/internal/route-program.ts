@@ -13,7 +13,6 @@ import { declaredHeaderNames } from "../server/headers.ts"
 import { pathnameOf } from "../server/http.ts"
 import type { Logger } from "../server/logger.ts"
 import { queryObjectOf } from "../server/query.ts"
-import type { Registry } from "../server/registry.ts"
 import { toResponse } from "../server/respond.ts"
 import {
   CONTEXT_SEARCH,
@@ -24,7 +23,7 @@ import {
   requestOf,
   status,
 } from "../server/runtime-core.ts"
-import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
+import type { CtxSet, MaybePromise, RawContext, RequestSource } from "../server/server.ts"
 import type {
   InternalHandler,
   RawAfterHandle,
@@ -816,8 +815,8 @@ type PendingPhase =
   | { readonly kind: "after"; readonly next: number }
 
 /** Execute the general program. The first synchronous stage sequence stays synchronous. */
-export function executeRouteProgram<T, R extends Registry, Ctx>(
-  runtime: Server<R, Ctx>,
+export function executeRouteProgram<T>(
+  runtime: unknown,
   entry: RouteEntry,
   program: RouteProgram,
   source: RequestSource,
@@ -825,7 +824,7 @@ export function executeRouteProgram<T, R extends Registry, Ctx>(
   finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
   wrapResponse: (response: Response | ResponseResult) => T,
 ): ProgramResult<T> {
-  const host = runtime as unknown as RouteProgramRuntime
+  const host = runtime as RouteProgramRuntime
   // An auth-first program meets the idempotency gate once authentication has passed, so the gate
   // never buffers a body for a caller it would refuse. Every other program meets it first.
   if (entry.idempotent !== undefined && !program.authBeforeValidation) {

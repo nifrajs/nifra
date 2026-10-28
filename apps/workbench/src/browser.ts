@@ -664,9 +664,7 @@ async function uiGraph(method: "ui.preview" | "ui.reload"): Promise<void> {
   if (outcome.ok) await refreshUi()
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
+import { isRecord } from "@nifrajs/utils/record"
 
 ui.composer.addEventListener("submit", (event) => {
   event.preventDefault()

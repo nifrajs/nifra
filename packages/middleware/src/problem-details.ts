@@ -42,7 +42,7 @@ interface ErrorEnvelope {
   readonly issues?: unknown
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isNonNullObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
@@ -60,7 +60,7 @@ function readEnvelope(
   } catch {
     return undefined
   }
-  if (!isRecord(parsed) || parsed.ok !== false || typeof parsed.error !== "string") {
+  if (!isNonNullObject(parsed) || parsed.ok !== false || typeof parsed.error !== "string") {
     return undefined
   }
   return {

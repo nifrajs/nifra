@@ -459,7 +459,8 @@ function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBod
   // The reader methods live on the prototype as writable data properties, so a plain instance
   // assignment shadows them - materially cheaper than defineProperty on this per-read path. Only
   // `body` (a prototype accessor) needs defineProperty below.
-  const shadowed = request as unknown as Record<string, unknown> & {
+  const rawRequest: unknown = request
+  const shadowed = rawRequest as Record<string, unknown> & {
     [RAW_BODY_READERS]?: RawBodyReaders
   }
   shadowed[RAW_BODY_READERS] = raw
@@ -560,7 +561,7 @@ export function applyTransportCap(source: object, request: Request): void {
   // A wrapper source (Node's lazy source) delegates its own body readers to the request once it
   // materializes - which are now the shadowed ones. Mirror the raw-reader stash onto the source so
   // framework readers (`rawBodySourceOf(source)`) keep reading pre-shadow there too.
-  const raw = (request as unknown as { [RAW_BODY_READERS]?: RawBodyReaders })[RAW_BODY_READERS]
+  const raw = (request as { [RAW_BODY_READERS]?: RawBodyReaders })[RAW_BODY_READERS]
   if ((source as unknown) !== request && raw !== undefined) {
     ;(source as { [RAW_BODY_READERS]?: RawBodyReaders })[RAW_BODY_READERS] = raw
   }

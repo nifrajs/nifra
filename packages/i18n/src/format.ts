@@ -502,10 +502,9 @@ export function createFormatter<M extends object = RegisteredMessages>(
   options?: NoInfer<FormatterOptions<M>>,
 ): Formatter<M> {
   if (!isCatalog(messages)) invalid("messages", "a catalog object")
-  const configured = optionsCacheKey(
-    locale,
-    options as unknown as FormatterOptions<MessageTree> | undefined,
-  )
+  const unknownOptions: unknown = options
+  const catalogOptions = unknownOptions as FormatterOptions<MessageTree> | undefined
+  const configured = optionsCacheKey(locale, catalogOptions)
   let cached = FORMATTERS.get(messages)
   if (cached === undefined) {
     cached = { plain: new Map(), configured: new Map() }
@@ -514,14 +513,18 @@ export function createFormatter<M extends object = RegisteredMessages>(
   const map = configured === undefined ? cached.plain : cached.configured
   const key = configured ?? locale
   const hit = map.get(key)
-  if (hit !== undefined) return hit as unknown as Formatter<M>
+  if (hit !== undefined) {
+    const unknownHit: unknown = hit
+    return unknownHit as Formatter<M>
+  }
   const formatter = buildFormatter(
     locale,
     messages,
-    configured === undefined ? undefined : (options as unknown as FormatterOptions<MessageTree>),
+    configured === undefined ? undefined : catalogOptions,
   )
   remember(map, key, formatter, MAX_FORMATTERS)
-  return formatter as unknown as Formatter<M>
+  const unknownFormatter: unknown = formatter
+  return unknownFormatter as Formatter<M>
 }
 
 // Formatters for one-off messages, which have no catalog of their own: one per locale, shared.

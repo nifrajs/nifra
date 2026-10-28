@@ -35,7 +35,8 @@
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
   },
   "dependencies": {
-    "@nifrajs/agent-protocol": "workspace:*"
+    "@nifrajs/agent-protocol": "workspace:*",
+    "@nifrajs/utils": "workspace:*"
   },
   "license": "MIT",
   "publishConfig": {

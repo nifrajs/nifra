@@ -394,7 +394,9 @@ const DeferringResponse = /* @__PURE__ */ (() => {
     /** A deferred response over an already-built direct-write view - the seam core's `c.json`/`c.text`
      * register (see below), skipping the `deferredBodyView` walk the raw `new Response` patch runs. */
     static fromView(view: DeferredBodyView): Response {
-      return new DeferringResponse(undefined, undefined, view) as unknown as Response
+      const created = new DeferringResponse(undefined, undefined, view)
+      const deferred: unknown = created
+      return deferred as Response
     }
 
     get status(): number {
@@ -454,7 +456,7 @@ const DeferringResponse = /* @__PURE__ */ (() => {
 // helper skips the header re-walk `deferredBodyView` does for the raw `new Response` patch. `??=`:
 // first adapter load wins; a re-import is a no-op.
 const DEFERRED_RESPONDER_KEY = Symbol.for("nifra.deferred.responder")
-;(globalThis as unknown as Record<symbol, unknown>)[DEFERRED_RESPONDER_KEY] ??= (
+;(globalThis as Record<symbol, unknown>)[DEFERRED_RESPONDER_KEY] ??= (
   body: string,
   status: number,
   headers: Record<string, string>,
@@ -468,7 +470,8 @@ const DEFERRED_RESPONDER_KEY = Symbol.for("nifra.deferred.responder")
  */
 function installFastResponse(): void {
   if (globalThis.Response === (DeferringResponse as unknown)) return
-  globalThis.Response = DeferringResponse as unknown as typeof Response
+  const deferredResponse: unknown = DeferringResponse
+  globalThis.Response = deferredResponse as typeof Response
 }
 
 /**
@@ -600,7 +603,7 @@ function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
   const response = new FastResponse(body, {
     status: outcome.status,
     headers: pairs,
-  }) as unknown as Response
+  }) as Response
   if (body !== null) Object.defineProperty(response, NODE_RESPONSE_BODY, { value: body })
   return response
 }
@@ -1080,7 +1083,8 @@ function errorReporterOf(app: FetchHandler): ((error: unknown) => void) | undefi
 }
 
 function enableNodeDirect(app: FetchHandler): void {
-  const install = (app as unknown as Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
+  const appProperties: unknown = app
+  const install = (appProperties as Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
   if (typeof install !== "function") return
   try {
     ;(install as (runtime: NodeOutcomeRuntime) => void).call(app, NODE_OUTCOME_RUNTIME)
@@ -1576,7 +1580,8 @@ function toApp(
   // `nodeRes`; `false` means its optional transport was unavailable, so the same untouched source
   // continues through the ordinary Web/direct path below.
   const resolveNodeSource = (app as Partial<NodeFastHandler>).resolveNodeSource
-  const resolveNodeMount = (app as unknown as Record<symbol, unknown>)[RESOLVE_NODE_MOUNT]
+  const appProperties: unknown = app
+  const resolveNodeMount = (appProperties as Record<symbol, unknown>)[RESOLVE_NODE_MOUNT]
   if (typeof resolveNodeSource === "function" || typeof resolveNodeMount === "function") {
     const nodeSource = toNodeRequestSource(nodeReq, protocol, host, nodeRes)
 
@@ -2242,7 +2247,7 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
   private handedBody(): ReadableStream<Uint8Array> | undefined {
     const handed = this.bodyValue
     if (handed == null || !handed.locked) return handed ?? undefined
-    const owner = this.requestValue as unknown as { readonly _real?: Request } | undefined
+    const owner = this.requestValue as { readonly _real?: Request } | undefined
     return owner?._real?.body ?? handed
   }
 
@@ -2282,8 +2287,9 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
         const handed = this.bodyValue
         if (handed != null) {
           const locked = handed.locked
-          // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: isDisturbed reads any Web stream at runtime; only the DOM and node:stream/web typings fail to overlap
-          const disturbed = Readable.isDisturbed(handed as unknown as NodeWebReadableStream)
+          const webStream: unknown = handed
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: isDisturbed reads any Web stream at runtime; only the DOM and node:stream/web typings fail to overlap
+          const disturbed = Readable.isDisturbed(webStream as NodeWebReadableStream)
           // undici refuses a body stream that was already read or locked, which `body` has handed
           // out before any member forced this request. Seed it with a stand-in in the same state so
           // `bodyUsed`, `signal`, and the rest answer as they would on a native request.
@@ -2305,7 +2311,7 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
         return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, signal)
       },
       this.nodeRes,
-    ) as unknown as Request
+    )
     return this.requestValue
   }
 
@@ -2389,7 +2395,7 @@ class LeanNodeGetSource extends NodeSourceBase implements NodeRequestSource {
       (headers, signal) =>
         makeWebRequest(this.nodeReq, this.method, this.url, headers, null, signal),
       this.nodeRes,
-    ) as unknown as Request
+    )
     return this.requestValue
   }
 }
@@ -2489,7 +2495,29 @@ function makeWebRequest(
  */
 const LazyWebRequest = /* @__PURE__ */ (() => {
   const NativeRequest = globalThis.Request
-  class LazyWebRequest {
+  class LazyWebRequest implements Request {
+    // `forwardToReal` installs these descriptors at runtime; declarations make that contract
+    // visible to TypeScript without emitting class fields.
+    declare readonly body: Request["body"]
+    declare readonly bodyUsed: Request["bodyUsed"]
+    declare readonly duplex: Request extends { readonly duplex: infer Duplex } ? Duplex : never
+    declare readonly textStream: Request["textStream"]
+    declare arrayBuffer: Request["arrayBuffer"]
+    declare blob: Request["blob"]
+    declare bytes: Request["bytes"]
+    declare formData: Request["formData"]
+    declare json: Request["json"]
+    declare text: Request["text"]
+    declare readonly cache: Request["cache"]
+    declare readonly credentials: Request["credentials"]
+    declare readonly destination: Request["destination"]
+    declare readonly integrity: Request["integrity"]
+    declare readonly keepalive: Request["keepalive"]
+    declare readonly mode: Request["mode"]
+    declare readonly redirect: Request["redirect"]
+    declare readonly referrer: Request["referrer"]
+    declare readonly referrerPolicy: Request["referrerPolicy"]
+    declare clone: Request["clone"]
     #method: string
     #url: string
     #headersInit: (() => Headers | NodeHeaderInit) | undefined

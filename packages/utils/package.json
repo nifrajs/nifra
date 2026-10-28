@@ -1,0 +1,60 @@
+{
+  "name": "@nifrajs/utils",
+  "version": "5.8.0",
+  "license": "MIT",
+  "description": "Runtime-neutral utility functions shared across Nifra packages.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./record": {
+      "bun": "./src/record.ts",
+      "types": "./dist/record.d.ts",
+      "default": "./dist/record.js"
+    },
+    "./escape-regexp": {
+      "bun": "./src/escape-regexp.ts",
+      "types": "./dist/escape-regexp.d.ts",
+      "default": "./dist/escape-regexp.js"
+    },
+    "./hash": {
+      "bun": "./src/hash.ts",
+      "types": "./dist/hash.d.ts",
+      "default": "./dist/hash.js"
+    },
+    "./canonical-json": {
+      "bun": "./src/canonical-json.ts",
+      "types": "./dist/canonical-json.d.ts",
+      "default": "./dist/canonical-json.js"
+    },
+    "./bytes": {
+      "bun": "./src/bytes.ts",
+      "types": "./dist/bytes.d.ts",
+      "default": "./dist/bytes.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/utils"
+  },
+  "nifra": {
+    "environment": "shared"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

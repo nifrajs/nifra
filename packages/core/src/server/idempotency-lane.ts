@@ -124,7 +124,7 @@ export interface IdempotencyPluginOptions {
 export function idempotency(options?: IdempotencyPluginOptions): IdentityPlugin {
   const runtime = createIdempotencyRuntime(options)
   const apply = <S extends AnyServer>(app: S): S => {
-    ;(app as unknown as IdempotencyInstallable)[INSTALL_IDEMPOTENCY](runtime)
+    ;(app as IdempotencyInstallable)[INSTALL_IDEMPOTENCY](runtime)
     return app
   }
   return Object.assign(apply, { pluginName: "nifra:idempotency" }) as IdentityPlugin

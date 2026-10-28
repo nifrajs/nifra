@@ -227,7 +227,7 @@ export class MemoryDurableRecordBackend implements DurableRecordBackend {
       .filter(([key]) => input.cursor === undefined || key > prefix + input.cursor)
     const page = records.slice(0, input.limit)
     return Object.freeze({
-      records: Object.freeze(page.map(([, value]) => clone(value as unknown as T))),
+      records: Object.freeze(page.map(([, value]) => clone(value as MemoryRecord & T))),
       ...(records.length > input.limit
         ? { cursor: (page.at(-1)?.[0] ?? "").slice(prefix.length) }
         : {}),

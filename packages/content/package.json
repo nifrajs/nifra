@@ -45,6 +45,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@nifrajs/utils": "workspace:*",
     "marked": "^15.0.0",
     "yaml": "^2.6.0"
   },

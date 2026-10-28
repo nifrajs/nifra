@@ -288,8 +288,7 @@ const DEFAULT_INDEX_PAGE_SIZE = 20
 const MAX_INDEX_PAGE_SIZE = 100
 const MAX_CURSOR_LENGTH = 4096
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
+import { isRecord } from "@nifrajs/utils/record"
 
 /** Stable JSON for frontmatter keys/filter fingerprints. It rejects values JSON cannot preserve. */
 const stableJson = (value: unknown, seen = new Set<object>()): string | undefined => {

@@ -244,7 +244,7 @@ export function compileRouteOptions(
   }
 
   const capabilities = normalizeRouteCapabilities(schema?.capabilities)
-  const handlerAssurance = assuranceDeclarationsOf(handler as unknown as object)
+  const handlerAssurance = assuranceDeclarationsOf(handler as object)
   const invalidHandlerScope = handlerAssurance.find((declaration) => declaration.scope !== "plugin")
   if (invalidHandlerScope !== undefined) {
     throw new RouteConfigError(

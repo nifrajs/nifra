@@ -201,8 +201,7 @@ function written(value: unknown): unknown {
   )
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
+import { isRecord } from "@nifrajs/utils/record"
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 

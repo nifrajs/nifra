@@ -92,13 +92,13 @@ type CoercionPlan = ReadonlyArray<readonly [key: string, kind: ScalarKind]>
 
 /** Extract a flat conversion plan, or `null` when this schema needs the full recursive Convert. */
 function flatCoercionPlan(schema: TSchema): CoercionPlan | null {
-  if ((schema as unknown as Record<symbol, unknown>)[Kind] !== "Object") return null
+  if ((schema as TSchema & { [Kind]?: unknown })[Kind] !== "Object") return null
   const props = (schema as { readonly properties?: unknown }).properties
   if (props === null || typeof props !== "object") return null
   const record = props as Record<string, TSchema>
   const plan: Array<readonly [string, ScalarKind]> = []
   for (const key of Object.getOwnPropertyNames(record)) {
-    const kind = (record[key] as unknown as Record<symbol, unknown> | undefined)?.[Kind]
+    const kind = (record[key] as Record<symbol, unknown> | undefined)?.[Kind]
     if (kind === "String" || kind === "Number" || kind === "Integer" || kind === "Boolean") {
       plan.push([key, kind])
     } else {
@@ -109,9 +109,11 @@ function flatCoercionPlan(schema: TSchema): CoercionPlan | null {
 }
 
 // TypeBox's IsStringNumeric: global isNaN (string-coercing) + parseFloat guard, verbatim.
-const isStringNumeric = (v: string): boolean =>
-  // biome-ignore lint/suspicious/noGlobalIsNan: mirrors TypeBox's own coercing `isNaN` check exactly.
-  !isNaN(v as unknown as number) && !isNaN(parseFloat(v))
+const isStringNumeric = (v: string): boolean => {
+  const input: unknown = v
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/suspicious/noGlobalIsNan: TypeBox relies on JavaScript's string coercion at this boundary.
+  return !isNaN(input as number) && !isNaN(parseFloat(v))
+}
 
 const isValueTrue = (v: unknown): boolean =>
   v === true ||
@@ -382,6 +384,7 @@ export function fromTypeBox<T extends TSchema>(
     if (Value.Check(schema, input)) return { value: input as Static<T> }
     return { issues: firstIssues(Value.Errors(schema, input)) }
   }
+  const standardTypes: unknown = undefined
   const result: NifraSchema<T> = {
     "~standard": {
       version: 1,
@@ -390,7 +393,7 @@ export function fromTypeBox<T extends TSchema>(
       validate: declaresDate(schema) ? decodingAfter(schema, checked) : checked,
       // Phantom: `types` carries no runtime value; this cast supplies the
       // compile-time `Static<T>` that nifra's `InferOutput` reads to type `c.body`.
-      types: undefined as unknown as StandardTypes<Static<T>, Static<T>>,
+      types: standardTypes as StandardTypes<Static<T>, Static<T>>,
     },
     jsonSchema: schema,
   }

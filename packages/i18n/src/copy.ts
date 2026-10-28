@@ -149,8 +149,8 @@ const realm = (): CopyRealm => {
   return created
 }
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
+import { isRecord } from "@nifrajs/utils/record"
+
 // Another copy of this module in the realm may be an older one, with a different shape: then this one
 // keeps its own.
 const isRealm = (value: unknown): value is CopyRealm =>

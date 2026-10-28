@@ -924,8 +924,8 @@ async function buildForTarget(
   // whatever it's given straight to the chosen bundler, which casts to its own plugin type.
   const plugins = useVite
     ? {
-        clientPlugins: app.resolvedPlugins.vitePlugins as unknown as BunPlugin[],
-        serverPlugins: app.resolvedPlugins.vitePlugins as unknown as BunPlugin[],
+        clientPlugins: app.resolvedPlugins.vitePlugins as BunPlugin[],
+        serverPlugins: app.resolvedPlugins.vitePlugins as BunPlugin[],
       }
     : {
         clientPlugins: asBunPlugins(app.resolvedPlugins.clientPlugins),
@@ -1335,7 +1335,7 @@ async function main(): Promise<void> {
       markReflecting(command)
       const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
       markReflecting(undefined)
-      const asRecord = output as unknown as Record<string, unknown>
+      const asRecord = output as Record<string, unknown>
       const wantsJson = asRecord.json === true || argv.includes("--json")
       if (wantsJson) {
         const value = catalogSpec.json?.(output, input) ?? output
@@ -1498,7 +1498,7 @@ function isMainModule(): boolean {
    * Only non-flag entries are considered and every match must resolve to this exact file, so an
    * unresolved or arbitrary flag can never turn an imported CLI module into a running CLI.
    */
-  const bunMain = (Bun as unknown as { main?: unknown }).main
+  const bunMain = (Bun as { main?: unknown }).main
   const argvEntries = (argv: readonly string[]): string[] => {
     const entries: string[] = []
     for (const value of argv.slice(1)) {
