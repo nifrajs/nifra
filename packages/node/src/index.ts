@@ -1083,8 +1083,7 @@ function errorReporterOf(app: FetchHandler): ((error: unknown) => void) | undefi
 }
 
 function enableNodeDirect(app: FetchHandler): void {
-  const appProperties: unknown = app
-  const install = (appProperties as Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
+  const install = (app as FetchHandler & Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
   if (typeof install !== "function") return
   try {
     ;(install as (runtime: NodeOutcomeRuntime) => void).call(app, NODE_OUTCOME_RUNTIME)
@@ -1580,8 +1579,7 @@ function toApp(
   // `nodeRes`; `false` means its optional transport was unavailable, so the same untouched source
   // continues through the ordinary Web/direct path below.
   const resolveNodeSource = (app as Partial<NodeFastHandler>).resolveNodeSource
-  const appProperties: unknown = app
-  const resolveNodeMount = (appProperties as Record<symbol, unknown>)[RESOLVE_NODE_MOUNT]
+  const resolveNodeMount = (app as FetchHandler & Record<symbol, unknown>)[RESOLVE_NODE_MOUNT]
   if (typeof resolveNodeSource === "function" || typeof resolveNodeMount === "function") {
     const nodeSource = toNodeRequestSource(nodeReq, protocol, host, nodeRes)
 

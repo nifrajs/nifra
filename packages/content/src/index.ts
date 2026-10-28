@@ -17,6 +17,8 @@
  *   //    posts[0].frontmatter is { title: string; date: string; draft: boolean }
  *   //    posts[0].html is the rendered Markdown
  */
+
+import { isRecord } from "@nifrajs/utils/record"
 import { marked } from "marked"
 import { parse as parseYaml } from "yaml"
 
@@ -287,8 +289,6 @@ export interface IndexOptions<
 const DEFAULT_INDEX_PAGE_SIZE = 20
 const MAX_INDEX_PAGE_SIZE = 100
 const MAX_CURSOR_LENGTH = 4096
-
-import { isRecord } from "@nifrajs/utils/record"
 
 /** Stable JSON for frontmatter keys/filter fingerprints. It rejects values JSON cannot preserve. */
 const stableJson = (value: unknown, seen = new Set<object>()): string | undefined => {

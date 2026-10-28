@@ -20,6 +20,7 @@ import {
   type ToolError,
   type ToolEvidence,
 } from "@nifrajs/core/tool-contract"
+import { isRecord } from "@nifrajs/utils/record"
 
 const MAX_ID_LENGTH = 128
 const MAX_PATH_LENGTH = 256
@@ -981,8 +982,6 @@ function decodePointer(path: string): readonly string[] {
     throw new TypeError("agent surface: prototype path is forbidden")
   return Object.freeze(segments)
 }
-
-import { isRecord } from "@nifrajs/utils/record"
 
 function applyPredictionPatch<State>(
   state: State,

@@ -502,8 +502,7 @@ export function createFormatter<M extends object = RegisteredMessages>(
   options?: NoInfer<FormatterOptions<M>>,
 ): Formatter<M> {
   if (!isCatalog(messages)) invalid("messages", "a catalog object")
-  const unknownOptions: unknown = options
-  const catalogOptions = unknownOptions as FormatterOptions<MessageTree> | undefined
+  const catalogOptions = options as FormatterOptions<MessageTree> | undefined
   const configured = optionsCacheKey(locale, catalogOptions)
   let cached = FORMATTERS.get(messages)
   if (cached === undefined) {

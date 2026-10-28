@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { isRecord } from "@nifrajs/utils/record"
 import fc from "fast-check"
 import { type NifraSchema, t } from "../../schema/src/index.ts"
 import { server, silentLogger } from "../src/index.ts"
@@ -200,8 +201,6 @@ function written(value: unknown): unknown {
     }),
   )
 }
-
-import { isRecord } from "@nifrajs/utils/record"
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 

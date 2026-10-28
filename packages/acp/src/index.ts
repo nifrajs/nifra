@@ -21,6 +21,7 @@ import {
   type SendMessageInput,
   splitAgentText,
 } from "@nifrajs/agent-protocol"
+import { isRecord } from "@nifrajs/utils/record"
 
 export interface AcpClientInfo {
   readonly name: string
@@ -1046,8 +1047,6 @@ function bounded(
     throw new RangeError(`acp backend: ${name} must be between ${min} and ${max}`)
   return resolved
 }
-
-import { isRecord } from "@nifrajs/utils/record"
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined

@@ -28,6 +28,7 @@ import {
   toRunStudioView,
   virtualizeEvidenceRows,
 } from "@nifrajs/agent-app"
+import { isRecord } from "@nifrajs/utils/record"
 
 const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
 const endpoint = params.get("rpc") ?? ""
@@ -663,8 +664,6 @@ async function uiGraph(method: "ui.preview" | "ui.reload"): Promise<void> {
   addTimeline(outcome.ok ? `${method} · ok` : `${method} · error ${outcome.status}`)
   if (outcome.ok) await refreshUi()
 }
-
-import { isRecord } from "@nifrajs/utils/record"
 
 ui.composer.addEventListener("submit", (event) => {
   event.preventDefault()
