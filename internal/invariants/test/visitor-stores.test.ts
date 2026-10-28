@@ -1464,6 +1464,10 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "listeners@createClientRouter": LISTENERS,
     "prefetched@createClientRouter": { scenario: "router-prefetch" },
   },
+  "packages/web/src/search.ts": {
+    "kept@parse": ONE_CALL,
+    "repeated@parse": ONE_CALL,
+  },
   "packages/web/src/server-components/client.ts": {
     "#mountWaiters@ComponentController": LISTENERS,
     "#mounted@ComponentController": SCOPE_CLEARS,
