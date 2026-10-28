@@ -120,6 +120,31 @@ test("a merged server and a group keep their own hook chains", async () => {
   expect(trace.splice(0)).toEqual(["parent", "group"])
 })
 
+test("a merged server and a group keep their own error hooks and decorations", async () => {
+  const fail = (): never => {
+    throw new Error("x")
+  }
+  const child = server({ logger: silentLogger })
+    .decorate("tag", "child")
+    .beforeHandle(() => undefined)
+    .onError((_error, c) => ({ from: "child", tag: c.tag }))
+    .get("/child", fail)
+  const app = server({ logger: silentLogger })
+    .use(nodeDirect())
+    .beforeHandle(() => undefined)
+    .get("/parent", fail)
+    .merge(child)
+    .group("/g", (g) => g.onError(() => ({ from: "group" })).get("/x", fail))
+  const get = (path: string) => () => new Request(`http://x${path}`)
+  for (let round = 0; round < 2; round++) {
+    const plain = { ok: false, error: "internal_error" }
+    expect(await answers(app, get("/parent"))).toEqual([plain, plain])
+    const merged = { from: "child", tag: "child" }
+    expect(await answers(app, get("/child"))).toEqual([merged, merged])
+    expect(await answers(app, get("/g/x"))).toEqual([{ from: "group" }, { from: "group" }])
+  }
+})
+
 test("the same hooks in another order run in that order", async () => {
   const trace: string[] = []
   const hook = (name: string) => (): undefined => {
@@ -351,6 +376,69 @@ function functionsPerRoute(count: number, hooked: boolean): number {
   expect(handlers).toHaveLength(count)
   return (after - before) / count
 }
+
+test("routes of one shape keep their own error hooks and decorations", async () => {
+  const trace: string[] = []
+  const app = server({ logger: silentLogger })
+    .use(nodeDirect())
+    .beforeHandle(() => undefined)
+    .get("/before-hooks", () => {
+      throw new Error("boom")
+    })
+    .decorate("tag", "t")
+    .onError((error, c) => {
+      trace.push("first")
+      const message = error instanceof Error ? error.message : ""
+      return message === "pass" ? undefined : { from: "first", message, tag: c.tag }
+    })
+    .get("/first", () => {
+      throw new Error("boom")
+    })
+    .onError((_error, c) => {
+      trace.push("second")
+      return { from: "second", tag: c.tag }
+    })
+    .get("/second", () => {
+      throw new Error("pass")
+    })
+    .post("/body", { body: t.object({ name: t.string() }) }, (c) => {
+      throw new Error(c.body.name)
+    })
+  const get = (path: string) => () => new Request(`http://x${path}`)
+  const post = () =>
+    new Request("http://x/body", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "boom" }),
+    })
+  for (let round = 0; round < 3; round++) {
+    trace.length = 0
+    // Registered before any error hook or decoration, so it has neither.
+    expect(await answers(app, get("/before-hooks"))).toEqual([
+      { ok: false, error: "internal_error" },
+      { ok: false, error: "internal_error" },
+    ])
+    expect(trace).toEqual([])
+    expect(await answers(app, get("/first"))).toEqual([
+      { from: "first", message: "boom", tag: "t" },
+      { from: "first", message: "boom", tag: "t" },
+    ])
+    expect(trace).toEqual(["first", "first"])
+    trace.length = 0
+    // The first hook passes, so the second answers.
+    expect(await answers(app, get("/second"))).toEqual([
+      { from: "second", tag: "t" },
+      { from: "second", tag: "t" },
+    ])
+    expect(trace).toEqual(["first", "second", "first", "second"])
+    trace.length = 0
+    // A body route's handler fails after validation, and the error hooks see the decoration.
+    expect(await answers(app, post)).toEqual([
+      { from: "first", message: "boom", tag: "t" },
+      { from: "first", message: "boom", tag: "t" },
+    ])
+  }
+})
 
 test("a fused hook route costs a fixed handful of functions, not a chain of its own", () => {
   const bare = functionsPerRoute(1000, false)

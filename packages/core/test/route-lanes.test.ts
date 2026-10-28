@@ -7,7 +7,6 @@ const base = {
   hasIdempotency: false,
   hasLedger: false,
   hasResponseContract: false,
-  hasDecorations: false,
   derives: 0,
   beforeHandle: 0,
   afterHandle: 0,
@@ -131,18 +130,33 @@ describe("selectRouteLanes", () => {
         }
   })
 
-  test("keeps hook routes that can observe errors, decorations or a contract on the generic lane", () => {
+  test("keeps hook routes that can observe around hooks, a contract, idempotency or a ledger on the generic lane", () => {
     const hooks = { ...base, beforeHandle: 1 }
     for (const lanes of [
-      selectRouteLanes({ ...hooks, onError: 1 }),
-      selectRouteLanes({ ...hooks, hasDecorations: true }),
+      selectRouteLanes({ ...hooks, around: 1 }),
       selectRouteLanes({ ...hooks, hasResponseContract: true }),
       selectRouteLanes({ ...hooks, hasIdempotency: true }),
-      selectRouteLanes({ ...hooks, afterHandle: 1, onError: 1 }),
+      selectRouteLanes({ ...hooks, hasLedger: true }),
+      selectRouteLanes({ ...hooks, afterHandle: 1, around: 1 }),
     ]) {
       expect(lanes.lifecycleHookLane).toBeUndefined()
       expect(lanes.fusedLane).toBeUndefined()
     }
+  })
+
+  test("fuses hook routes that carry error hooks", () => {
+    const body = { body: t.object({ name: t.string() }) }
+    for (const hooks of [{ beforeHandle: 1 }, { derives: 2, afterHandle: 1 }]) {
+      expect(selectRouteLanes({ ...base, ...hooks, onError: 1 })).toMatchObject({
+        lifecycleHookLane: "hooks",
+        fusedLane: "hooks",
+      })
+      expect(selectRouteLanes({ ...base, ...hooks, schema: body, onError: 2 })).toMatchObject({
+        fusedLane: "body-hooks",
+      })
+    }
+    // Error hooks alone, with no derive, before or after hook, have no lifecycle to fuse.
+    expect(selectRouteLanes({ ...base, onError: 1 }).fusedLane).toBeUndefined()
   })
 
   test("fuses body lifecycle routes only when the complete shape is eligible", () => {

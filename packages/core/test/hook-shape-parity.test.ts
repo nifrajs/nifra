@@ -7,9 +7,10 @@ import type { NodeServeOutcome } from "../src/server/node-outcome.ts"
 
 /**
  * Every derive/before/after mix the fused hook lanes accept must answer exactly as the generic
- * program does. The generic program is the reference: the same hooks plus an error hook that never
- * changes an answer, which keeps the route off the fused lanes. The shapes, the way each hook
- * behaves and the way the handler ends are all generated, so no combination is picked by hand.
+ * program does. The generic program is the reference: the same hooks, error hooks and decorations
+ * behind a pass-through `around` hook, which keeps the route off the fused lanes. The shapes, the way
+ * each hook behaves, the error hooks, the decorations and the way the handler ends are all generated,
+ * so no combination is picked by hand.
  */
 
 type Rec = Record<string, unknown>
@@ -34,6 +35,7 @@ type HookMode =
   | "reject"
   | "throw-unrenderable"
   | "reject-unrenderable"
+  | "unrenderable"
 type HandlerMode =
   | "sync"
   | "async"
@@ -44,9 +46,21 @@ type HandlerMode =
   | "redirect"
   | "throw-unrenderable"
   | "reject-unrenderable"
+  | "unrenderable"
+  | "async-unrenderable"
 type SchemaKind = "none" | "query" | "body"
+/** How the app's error hooks answer a thrown error, registered before the route. */
+type ErrorMode =
+  | "none"
+  | "pass"
+  | "answer"
+  | "answer-async"
+  | "throw-response"
+  | "throw-error"
+  | "unrenderable"
+  | "chain"
 /** A hook registered after the route, which must not reach it: hooks are order-scoped. */
-type Trailing = "none" | "before" | "derive" | "after"
+type Trailing = "none" | "before" | "derive" | "after" | "error"
 
 interface Shape {
   readonly derives: number
@@ -62,6 +76,9 @@ interface Plan {
   readonly trailing: Trailing
   /** The last before hook is registered with `beforeHandler()`, which a later hook is inserted ahead of. */
   readonly guarded: boolean
+  readonly errors: ErrorMode
+  /** The app decorates its context, which every hook, error hook and the handler can read. */
+  readonly decorated: boolean
 }
 
 const FAULTS: Record<"derive" | "before" | "after", readonly HookMode[]> = {
@@ -87,8 +104,16 @@ const FAULTS: Record<"derive" | "before" | "after", readonly HookMode[]> = {
     "reject",
     "throw-unrenderable",
     "reject-unrenderable",
+    "unrenderable",
   ],
-  after: ["undefined", "throw", "reject", "throw-unrenderable", "reject-unrenderable"],
+  after: [
+    "undefined",
+    "throw",
+    "reject",
+    "throw-unrenderable",
+    "reject-unrenderable",
+    "unrenderable",
+  ],
 }
 const HANDLERS: readonly HandlerMode[] = [
   "async",
@@ -99,8 +124,19 @@ const HANDLERS: readonly HandlerMode[] = [
   "redirect",
   "throw-unrenderable",
   "reject-unrenderable",
+  "unrenderable",
+  "async-unrenderable",
 ]
-const TRAILING: readonly Trailing[] = ["none", "before", "derive", "after"]
+const TRAILING: readonly Trailing[] = ["none", "before", "derive", "after", "error"]
+const ERROR_MODES: readonly ErrorMode[] = [
+  "pass",
+  "answer",
+  "answer-async",
+  "throw-response",
+  "throw-error",
+  "unrenderable",
+  "chain",
+]
 const SCHEMAS: readonly SchemaKind[] = ["none", "query", "body"]
 
 function shapes(): Shape[] {
@@ -122,6 +158,8 @@ function plans(shape: Shape): Plan[] {
     handler,
     trailing: "none",
     guarded: false,
+    errors: "none",
+    decorated: false,
   })
   const out: Plan[] = [baseline("pass", "sync"), baseline("async", "async")]
   // Hooks alternate between sync and async, so a continuation resumes in the middle of a chain.
@@ -136,6 +174,8 @@ function plans(shape: Shape): Plan[] {
     handler: "sync",
     trailing: "none",
     guarded: false,
+    errors: "none",
+    decorated: false,
   })
   for (const around of [baseline("pass", "sync"), baseline("async", "async")]) {
     for (const kind of ["derive", "before", "after"] as const) {
@@ -151,7 +191,7 @@ function plans(shape: Shape): Plan[] {
   for (const handler of HANDLERS) out.push({ ...baseline("pass", "sync"), handler })
   // Every plan again with a hook registered after the route and with its last before hook marked a
   // guard: a later `beforeHandle()` is inserted ahead of a guard, shifting the route's hook array.
-  return out.flatMap((plan) =>
+  const trailed = out.flatMap((plan) =>
     TRAILING.flatMap((trailing) =>
       (shape.befores > 0 ? [false, true] : [false]).map((guarded) => ({
         ...plan,
@@ -160,6 +200,15 @@ function plans(shape: Shape): Plan[] {
       })),
     ),
   )
+  // And every plan again with each way of answering errors, decorated or not: a thrown error reaches
+  // the app's error hooks from every step, and a decoration is there before the first one.
+  const answered = out.flatMap((plan) => [
+    { ...plan, decorated: true },
+    ...ERROR_MODES.flatMap((errors) =>
+      [false, true].map((decorated) => ({ ...plan, errors, decorated })),
+    ),
+  ])
+  return [...trailed, ...answered]
 }
 
 /** What a hook or handler reads off its context. */
@@ -170,7 +219,9 @@ interface AppLike {
   derive(hook: (c: Ctx) => unknown): AppLike
   beforeHandle(hook: (c: Ctx) => unknown): AppLike
   afterHandle(hook: (result: unknown, c: Ctx) => unknown): AppLike
-  onError(hook: () => unknown): AppLike
+  onError(hook: (error: unknown, c: Ctx) => unknown): AppLike
+  decorate(key: string, value: unknown): AppLike
+  around(hook: (c: Ctx, next: () => unknown) => unknown): AppLike
   get(path: string, ...rest: unknown[]): AppLike
   post(path: string, ...rest: unknown[]): AppLike
   fetch(request: Request): Promise<Response>
@@ -178,11 +229,57 @@ interface AppLike {
   catalog: { entries(): { entry: { execution: { fusedLane: string | undefined } } }[] }
 }
 
+/** The app's error hooks for a mode: what they see, whether they answer, and whether they fail. */
+function errorHooks(mode: ErrorMode, calls: string[]): ((error: unknown, c: Ctx) => unknown)[] {
+  const report = (error: unknown, c: Ctx): Rec => ({
+    handled: error instanceof Error ? error.message : String(error),
+    deco: c.deco ?? null,
+    ds: Object.keys(c)
+      .filter((key) => /^d\d$/.test(key))
+      .sort(),
+  })
+  switch (mode) {
+    case "none":
+      return []
+    case "pass":
+      return [() => (calls.push("e0"), undefined)]
+    case "answer":
+      return [(error, c) => (calls.push("e0"), status(502, report(error, c)))]
+    case "answer-async":
+      return [(error, c) => (calls.push("e0"), Promise.resolve(report(error, c)))]
+    case "throw-response":
+      return [
+        () => {
+          calls.push("e0")
+          throw new Response("hook response", { status: 418 })
+        },
+      ]
+    case "throw-error":
+      return [
+        () => {
+          calls.push("e0")
+          throw new Error("hook failed")
+        },
+      ]
+    case "unrenderable":
+      return [() => (calls.push("e0"), status(409, UNRENDERABLE))]
+    case "chain":
+      return [
+        () => (calls.push("e0"), undefined),
+        (error, c) => (calls.push("e1"), report(error, c)),
+      ]
+  }
+}
+
 function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; calls: string[] } {
   const calls: string[] = []
   // biome-ignore lint/plugin/noChainedTypeAssertions: the real builder's types are per-route, and this test only needs the methods listed on AppLike
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every method AppLike names exists on the builder with these argument shapes
   let app = server({ logger: silentLogger }).use(nodeDirect()) as unknown as AppLike
+  // A pass-through `around` keeps the reference off the fused lanes without changing an answer.
+  if (reference) app = app.around((_c, next) => next())
+  if (plan.decorated) app = app.decorate("deco", "d")
+  for (const hook of errorHooks(plan.errors, calls)) app = app.onError(hook)
 
   plan.derive.forEach((mode, k) => {
     app = app.derive((c) => {
@@ -241,6 +338,8 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
           throw status(401, UNRENDERABLE)
         case "reject-unrenderable":
           return Promise.reject(status(401, UNRENDERABLE))
+        case "unrenderable":
+          return UNRENDERABLE
         default:
           return undefined
       }
@@ -265,14 +364,13 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
           throw status(401, UNRENDERABLE)
         case "reject-unrenderable":
           return Promise.reject(status(401, UNRENDERABLE))
+        case "unrenderable":
+          return UNRENDERABLE
         default:
           return { [`a${k}`]: result }
       }
     })
   })
-  // Never answers, so a thrown error keeps its default response; its presence alone refuses fusion.
-  if (reference) app = app.onError(() => undefined)
-
   const handler = (c: Ctx): unknown => {
     calls.push("h")
     const seen = {
@@ -280,6 +378,7 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
         .filter((key) => /^d\d$/.test(key))
         .sort(),
       id: c.params.id,
+      deco: c.deco,
       query: c.query,
       body: c.body,
     }
@@ -294,6 +393,10 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
         throw status(401, UNRENDERABLE)
       case "reject-unrenderable":
         return Promise.reject(status(401, UNRENDERABLE))
+      case "unrenderable":
+        return UNRENDERABLE
+      case "async-unrenderable":
+        return Promise.resolve(UNRENDERABLE)
       case "response":
         return new Response("handler response", { status: 207 })
       case "status":
@@ -326,6 +429,8 @@ function build(shape: Shape, plan: Plan, reference: boolean): { app: AppLike; ca
       calls.push("t")
       return result
     })
+  } else if (plan.trailing === "error") {
+    app = app.onError(() => (calls.push("t"), status(499, { late: true })))
   }
   return { app, calls }
 }
@@ -341,7 +446,15 @@ function requests(shape: Shape): Request[] {
   if (shape.schema === "query") {
     return [new Request(url("/r/7?limit=3")), new Request(url("/r/7"))]
   }
-  if (shape.schema === "body") return [post({ name: "ada" }), post({})]
+  if (shape.schema === "body") {
+    // A body that is not JSON fails in the reader, which hands it to the error hooks.
+    const malformed = new Request(url("/r/7"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    })
+    return [post({ name: "ada" }), post({}), malformed]
+  }
   return [new Request(url("/r/7"))]
 }
 
@@ -446,5 +559,5 @@ for (const shape of shapes()) {
 test("the generated hook plans cover every axis", () => {
   const all = shapes()
   expect(all).toHaveLength(78)
-  expect(all.reduce((total, shape) => total + plans(shape).length, 0)).toBeGreaterThan(30_000)
+  expect(all.reduce((total, shape) => total + plans(shape).length, 0)).toBeGreaterThan(100_000)
 })
