@@ -334,21 +334,6 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   if (requestedNonce !== undefined && requestedNonce.trim() === "") {
     throw new TypeError("[nifra/web] renderPage nonce must be non-empty when provided")
   }
-  // Each handover entry after the data is `,"<global>":<json>`; the data opens the object, so it always
-  // has a first member and every other entry is a plain suffix.
-  const route = routeId === undefined ? "" : `,"${ROUTE_GLOBAL}":${serializeData(routeId)}`
-  // The SSG prerendered-path set (when an app declares it) - the client reads it to fetch a static
-  // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
-  const prerendered =
-    prerenderedListUrl !== undefined
-      ? `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedListUrl)}`
-      : prerenderedPaths.length === 0
-        ? ""
-        : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
-  const copyHandover =
-    copyChunks === undefined ? "" : `,"${COPY_CHUNKS_GLOBAL}":${serializeData(copyChunks)}`
-  const localesHandover =
-    options.locales === undefined ? "" : `,"${LOCALES_GLOBAL}":${serializeData(options.locales)}`
   // A route's `lang` wins with its own `dir`; otherwise the page's registered locale names both.
   const lang = head?.lang ?? locale?.lang ?? "en"
   const dir = head?.dir ?? (head?.lang === undefined ? locale?.dir : undefined)
@@ -508,6 +493,24 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     for (const src of islandScripts)
       islandTags += `<script type="module" src="${escapeAttr(src)}"${nonceAttr}></script>`
     if (hydrate) {
+      // Each handover entry after the data is `,"<global>":<json>`; the data opens the object, so it always
+      // has a first member and every other entry is a plain suffix. Built here, with the cached tail they
+      // end up in, so a cached route does not serialize them again.
+      const route = routeId === undefined ? "" : `,"${ROUTE_GLOBAL}":${serializeData(routeId)}`
+      // The SSG prerendered-path set (when an app declares it) - the client reads it to fetch a static
+      // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
+      const prerendered =
+        prerenderedListUrl !== undefined
+          ? `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedListUrl)}`
+          : prerenderedPaths.length === 0
+            ? ""
+            : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
+      const copyHandover =
+        copyChunks === undefined ? "" : `,"${COPY_CHUNKS_GLOBAL}":${serializeData(copyChunks)}`
+      const localesHandover =
+        options.locales === undefined
+          ? ""
+          : `,"${LOCALES_GLOBAL}":${serializeData(options.locales)}`
       // Inert JSON, never executed: the page state needs no nonce and no hash under any CSP.
       slot.tailPre = `<script type="application/json" id="${HANDOVER_ID}">{"${DATA_GLOBAL}":`
       slot.tailPost = `${route}${prerendered}${copyHandover}${localesHandover}}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>${islandTags}</body></html>`
