@@ -4,8 +4,8 @@
     {
       "id": "auth-before-side-effect",
       "area": "authorization",
-      "statement": "A denied request does not execute the handler or any registered side effect.",
-      "tests": ["packages/core/test/auth-stage.test.ts", "packages/auth/test/guards.test.ts"],
+      "statement": "A denied capability request does not execute its effect or any registered side effect.",
+      "tests": ["packages/core/test/capabilities.test.ts"],
       "mutationTargets": ["core-capabilities"],
       "docs": "/docs/security"
     },
@@ -97,8 +97,16 @@
     {
       "id": "runtime-security-parity",
       "area": "runtime",
-      "statement": "Supported runtimes agree on status, headers, redaction, and rejection for the same hostile request.",
-      "tests": ["scripts/check-runtime-differential.ts", "packages/web/test/parity.test.ts"],
+      "statement": "Client navigation preserves terminal status, rejection, and identity boundaries across the supported route surfaces.",
+      "tests": [
+        "packages/web/test/router.test.ts",
+        "packages/web/test/router-intercept.test.ts",
+        "packages/web/test/router-origin.test.ts",
+        "packages/web/test/router-share.test.ts",
+        "packages/web/test/navigation.test.ts",
+        "packages/web/test/navigation-redirect.test.ts",
+        "internal/invariants/test/visitor-stores.test.ts"
+      ],
       "mutationTargets": ["web-router"],
       "docs": "/docs/verification"
     }

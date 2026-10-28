@@ -12079,8 +12079,9 @@ replace the framework's compiler or linter.
 
 `nifra frontend` is the human CLI and `nifra_frontend` is the MCP tool. Both
 select the same entries. Pass `--json` or `json: true` to receive a stable
-result with `schemaVersion`, adapter, match status, version range, category, and
-authoritative source URL.
+result with `schemaVersion`, an optional top-level `adapter`, match status,
+and `entries`. Entries include their `adapters` and may omit framework
+version ranges, categories, or source URLs.
 
 ```sh
 # Browse all entries
@@ -12120,7 +12121,7 @@ reads.
 
 ### Version-sensitive advice
 
-Every ecosystem entry names the framework versions it was written for and links to the
+Ecosystem entries may include the framework versions covered by the advice and link to the
 framework's documentation. When a major version changes the rule, add a new entry or update
 the version range with a fixture. Keep high-confidence, statically provable rules in
 `nifra check`; use this catalog for symptoms that need context or an ecosystem linter.
@@ -14906,7 +14907,7 @@ not proof of safety.
 bun run check:security-invariants
 
 # Run the fast changed-line mutation report
-bun scripts/mutate.ts --changed --gate
+bun scripts/mutate.ts --changed
 
 # Run a selected security target locally
 bun scripts/mutate.ts --target core-capabilities --gate

@@ -94,6 +94,7 @@
   "core-durable-execution": {
     "files": [
       "packages/core/src/durable-execution.ts",
+      "packages/core/src/durable-approval.ts",
       "packages/core/src/durable-saga.ts",
       "packages/core/src/durable-effect.ts"
     ],

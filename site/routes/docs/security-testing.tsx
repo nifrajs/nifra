@@ -11,7 +11,7 @@ const COMMANDS = `# Validate every invariant has executable evidence
 bun run check:security-invariants
 
 # Run the fast changed-line mutation report
-bun scripts/mutate.ts --changed --gate
+bun scripts/mutate.ts --changed
 
 # Run a selected security target locally
 bun scripts/mutate.ts --target core-capabilities --gate

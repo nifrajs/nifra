@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 import {
   readMutationTargets,
   readSecurityInvariantLedger,
   validateSecurityInvariantLedger,
 } from "./check-security-invariants.ts"
 
-const root = new URL("..", import.meta.url).pathname
+const root = fileURLToPath(new URL("..", import.meta.url))
 
 describe("security invariant ledger", () => {
   test("every published invariant has executable test and mutation evidence", () => {
@@ -31,5 +32,15 @@ describe("security invariant ledger", () => {
     expect(errors.some((error) => error.includes("duplicates"))).toBe(true)
     expect(errors.some((error) => error.includes("missing test path"))).toBe(true)
     expect(errors.some((error) => error.includes("missing mutation target"))).toBe(true)
+  })
+
+  test("mutation targets require both files and test evidence", () => {
+    const ledger = readSecurityInvariantLedger(root)
+    const target = ledger.invariants[0]?.mutationTargets[0]
+    if (target === undefined) throw new Error("fixture ledger has no mutation target")
+    const errors = validateSecurityInvariantLedger(root, ledger, { [target]: { files: ["x.ts"] } })
+    expect(errors.some((error) => error.includes(`mutation target ${target} has no tests`))).toBe(
+      true,
+    )
   })
 })

@@ -23,12 +23,15 @@ export interface SecurityInvariantLedger {
   readonly invariants: readonly SecurityInvariant[]
 }
 
-type MutationTargets = Readonly<Record<string, { readonly files?: readonly string[] }>>
+type MutationTargets = Readonly<
+  Record<string, { readonly files?: readonly string[]; readonly tests?: readonly string[] }>
+>
 
-const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
+const asRecord = (value: unknown): Record<string, unknown> | undefined => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Object-shape guard above excludes null, arrays, and primitives.
+  return value as Record<string, unknown>
+}
 
 const strings = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((entry) => typeof entry === "string" && entry.length > 0)
@@ -39,6 +42,7 @@ export function readSecurityInvariantLedger(root: string): SecurityInvariantLedg
   if (record?.schemaVersion !== 1 || !Array.isArray(record.invariants)) {
     throw new Error("security-invariants.json must declare schemaVersion 1 and invariants[]")
   }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The schemaVersion and invariants checks above establish the ledger shape.
   return value as SecurityInvariantLedger
 }
 
@@ -46,6 +50,7 @@ export function readMutationTargets(root: string): MutationTargets {
   const value: unknown = JSON.parse(readFileSync(resolve(root, "mutation-targets.json"), "utf8"))
   const record = asRecord(value)
   if (record === undefined) throw new Error("mutation-targets.json must be an object")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Mutation target entries are validated before use.
   return record as MutationTargets
 }
 
@@ -83,8 +88,12 @@ export function validateSecurityInvariantLedger(
       const targetSpec = targets[target]
       if (targetSpec === undefined)
         errors.push(`${invariant.id}: missing mutation target ${target}`)
-      else if (!Array.isArray(targetSpec.files) || targetSpec.files.length === 0)
-        errors.push(`${invariant.id}: mutation target ${target} has no files`)
+      else {
+        if (!strings(targetSpec.files) || targetSpec.files.length === 0)
+          errors.push(`${invariant.id}: mutation target ${target} has no files`)
+        if (!strings(targetSpec.tests) || targetSpec.tests.length === 0)
+          errors.push(`${invariant.id}: mutation target ${target} has no tests`)
+      }
     }
   }
   return errors

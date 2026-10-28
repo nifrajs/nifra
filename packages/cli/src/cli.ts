@@ -1269,12 +1269,11 @@ async function main(): Promise<void> {
     const { frontendGuidanceJson, renderFrontendResult, parseAdapter } = await import(
       "./frontend-guidance.ts"
     )
-    const first = argv[1]
+    const positional = argv.slice(1).filter((a) => !a.startsWith("-"))
+    const first = positional[0]
     const maybeAdapter = parseAdapter(first)
     const adapter = maybeAdapter === undefined ? undefined : first
-    const symptom = (maybeAdapter === undefined ? argv.slice(1) : argv.slice(2))
-      .filter((a) => !a.startsWith("-"))
-      .join(" ")
+    const symptom = (maybeAdapter === undefined ? positional : positional.slice(1)).join(" ")
     const input = { adapter, symptom: symptom.length > 0 ? symptom : undefined }
     console.log(
       argv.includes("--json")

@@ -49,12 +49,12 @@ jobs:
           - { target: web-visitor, shard: 0, shards: 1, postgres: false }
           - { target: auth-session, shard: 0, shards: 1, postgres: false }
           - { target: authjs, shard: 0, shards: 1, postgres: false }
-- { target: core-capabilities, shard: 0, shards: 1, postgres: false }
-- { target: core-idempotency, shard: 0, shards: 1, postgres: false }
-- { target: core-ledger, shard: 0, shards: 1, postgres: false }
-- { target: core-durable-execution, shard: 0, shards: 1, postgres: false }
-- { target: core-body-boundary, shard: 0, shards: 1, postgres: false }
-- { target: web-server-boundary, shard: 0, shards: 1, postgres: false }
+          - { target: core-capabilities, shard: 0, shards: 1, postgres: false }
+          - { target: core-idempotency, shard: 0, shards: 1, postgres: false }
+          - { target: core-ledger, shard: 0, shards: 1, postgres: false }
+          - { target: core-durable-execution, shard: 0, shards: 1, postgres: false }
+          - { target: core-body-boundary, shard: 0, shards: 1, postgres: false }
+          - { target: web-server-boundary, shard: 0, shards: 1, postgres: false }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

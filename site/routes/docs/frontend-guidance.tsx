@@ -33,8 +33,9 @@ export default function FrontendGuidance() {
       <p>
         <code>nifra frontend</code> is the human CLI and <code>nifra_frontend</code> is the MCP tool. Both
         select the same entries. Pass <code>--json</code> or <code>json: true</code> to receive a stable
-        result with <code>schemaVersion</code>, adapter, match status, version range, category, and
-        authoritative source URL.
+        result with <code>schemaVersion</code>, an optional top-level <code>adapter</code>, match status,
+        and <code>entries</code>. Entries include their <code>adapters</code> and may omit framework
+        version ranges, categories, or source URLs.
       </p>
       <CodeBlock code={COMMANDS} lang="sh" />
 
@@ -49,7 +50,7 @@ export default function FrontendGuidance() {
           state identity, compat boundaries, and runtime duplication.
         </li>
         <li>
-          <strong>Solid:</strong> tracked reads, props and stores, <code>For</code> versus
+          <strong>Solid:</strong> tracked reads, props and stores, <code>For</code> versus{" "}
           <code>Index</code>, and owner cleanup.
         </li>
         <li>
@@ -64,9 +65,9 @@ export default function FrontendGuidance() {
 
       <h2>Version-sensitive advice</h2>
       <p>
-        Every ecosystem entry names the framework versions it was written for and links to the
+        Ecosystem entries may include the framework versions covered by the advice and link to the
         framework&apos;s documentation. When a major version changes the rule, add a new entry or update
-        the version range with a fixture. Keep high-confidence, statically provable rules in
+        the version range with a fixture. Keep high-confidence, statically provable rules in{" "}
         <code>nifra check</code>; use this catalog for symptoms that need context or an ecosystem linter.
       </p>
 
