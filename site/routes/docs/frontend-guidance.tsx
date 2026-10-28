@@ -16,8 +16,8 @@ nifra frontend solid "list reorder state"
 # Give an agent stable JSON with versions and source links
 nifra frontend vue "watcher never runs" --json
 
-# The same catalog is available over MCP
-nifra_frontend({ adapter: "react", symptom: "hydration mismatch", json: true })`
+# The same catalog is available over MCP, as text plus structuredContent
+nifra_frontend({ adapter: "react", symptom: "hydration mismatch" })`
 
 export default function FrontendGuidance() {
   return (
@@ -32,8 +32,8 @@ export default function FrontendGuidance() {
       <h2>Use the same catalog from every surface</h2>
       <p>
         <code>nifra frontend</code> is the human CLI and <code>nifra_frontend</code> is the MCP tool. Both
-        select the same entries. Pass <code>--json</code> or <code>json: true</code> to receive a stable
-        result with <code>schemaVersion</code>, an optional top-level <code>adapter</code>, match status,
+        select the same entries. Pass <code>--json</code> to the CLI, or read the MCP result&apos;s <code>structuredContent</code>,
+        to receive a stable result with <code>schemaVersion</code>, an optional top-level <code>adapter</code>, match status,
         and <code>entries</code>. Entries include their <code>adapters</code> and may omit framework
         version ranges, categories, or source URLs.
       </p>

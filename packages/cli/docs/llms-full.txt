@@ -12078,7 +12078,7 @@ replace the framework's compiler or linter.
 ### Use the same catalog from every surface
 
 `nifra frontend` is the human CLI and `nifra_frontend` is the MCP tool. Both
-select the same entries. Pass `--json` or `json: true` to receive a stable
+select the same entries. Pass `--json` to the CLI, or read the MCP result's `structuredContent`, to receive a stable
 result with `schemaVersion`, an optional top-level `adapter`, match status,
 and `entries`. Entries include their `adapters` and may omit framework
 version ranges, categories, or source URLs.
@@ -12093,8 +12093,8 @@ nifra frontend solid "list reorder state"
 # Give an agent stable JSON with versions and source links
 nifra frontend vue "watcher never runs" --json
 
-# The same catalog is available over MCP
-nifra_frontend({ adapter: "react", symptom: "hydration mismatch", json: true })
+# The same catalog is available over MCP, as text plus structuredContent
+nifra_frontend({ adapter: "react", symptom: "hydration mismatch" })
 ```
 
 ### What Nifra reports

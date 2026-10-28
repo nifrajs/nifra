@@ -102,6 +102,7 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     fix: "Dedupe the framework to a single version across the workspace (one entry in the lockfile). The adapter must resolve the app's copy, not bundle its own.",
     verify: "nifra_doctor - it detects a duplicated framework runtime (NF-H002).",
     seeAlso: "duplicate framework runtime dedupe NF-H002",
+    category: "runtime",
   },
   {
     id: "loader-typing",
@@ -138,6 +139,9 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     verify:
       "eslint-plugin-vue - it is the authority on Vue reactivity; nifra does not re-implement it.",
     seeAlso: "eslint-plugin-vue toRefs reactivity",
+    versions: ["Vue 3.4-3.5"],
+    source: "https://vuejs.org/guide/essentials/reactivity-fundamentals.html",
+    category: "reactivity",
   },
   {
     id: "solid-lost-reactivity",
@@ -149,6 +153,9 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     verify:
       "eslint-plugin-solid - the authority on Solid reactivity; nifra routes you to it, not around it.",
     seeAlso: "eslint-plugin-solid splitProps props getters",
+    versions: ["Solid 1.8-1.9"],
+    source: "https://docs.solidjs.com/concepts/components/props",
+    category: "reactivity",
   },
   {
     id: "svelte-runes",
@@ -161,6 +168,9 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     verify:
       "eslint-plugin-svelte and the Svelte compiler warnings own this; nifra points you at them.",
     seeAlso: "eslint-plugin-svelte runes $props $derived",
+    versions: ["Svelte 5"],
+    source: "https://svelte.dev/docs/svelte/$props",
+    category: "reactivity",
   },
   {
     id: "react-stale-deps",
@@ -412,6 +422,7 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     verify:
       "nifra_check runs NF-C047 (a binding names no state or handler), NF-C048 (a binding outside a bindIsland host) and NF-C022 (a positional list key) over the island code.",
     seeAlso: "bindIsland state data-bind bindList resource islands",
+    category: "seam",
   },
   {
     id: "swap-a-region",
@@ -424,6 +435,7 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     verify:
       "nifra_check runs NF-C049 to NF-C052 over the swap markup and NF-C048 over bindings inside a slot.",
     seeAlso: "data-swap data-swap-slot slot enableSwap islands",
+    category: "seam",
   },
 ]
 
@@ -463,7 +475,10 @@ function score(entry: GuidanceEntry, words: readonly string[]): number {
   return hits
 }
 
-/** Select the same entries rendered by the CLI and MCP heads. */
+/** Longest symptom text scored; the MCP schema advertises the same cap, this enforces it. */
+const MAX_SYMPTOM_LENGTH = 256
+
+/** Select the entries rendered by the CLI and MCP heads; also the stable JSON shape for agents (no rendered prose). */
 export function selectFrontendGuidance(args: {
   adapter?: string | undefined
   symptom?: string | undefined
@@ -471,7 +486,7 @@ export function selectFrontendGuidance(args: {
 }): FrontendGuidanceResult {
   const adapter = parseAdapter(args.adapter)
   const scoped = scopedEntries(adapter)
-  const query = args.symptom?.trim()
+  const query = args.symptom?.trim().slice(0, MAX_SYMPTOM_LENGTH)
   if (query === undefined || query.length === 0) {
     return { schemaVersion: 1, adapter, matched: true, entries: scoped }
   }
@@ -487,15 +502,6 @@ export function selectFrontendGuidance(args: {
     .slice(0, limit)
     .map((r) => r.entry)
   return { schemaVersion: 1, adapter, symptom: query, matched: entries.length > 0, entries }
-}
-
-/** Stable JSON shape for agents and integrations; it intentionally contains no rendered prose. */
-export function frontendGuidanceJson(args: {
-  adapter?: string | undefined
-  symptom?: string | undefined
-  limit?: number | undefined
-}): FrontendGuidanceResult {
-  return selectFrontendGuidance(args)
 }
 
 /** Render one matched entry with all optional metadata that is actually present. */

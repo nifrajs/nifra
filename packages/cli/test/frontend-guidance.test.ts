@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test"
 import {
   FRONTEND_GUIDANCE,
-  frontendGuidanceJson,
   parseAdapter,
   renderFrontendResult,
   selectFrontendGuidance,
@@ -60,9 +59,6 @@ test("structured guidance selection is stable for CLI and MCP consumers", () => 
   expect(selected.schemaVersion).toBe(1)
   expect(selected.matched).toBe(true)
   expect(selected.entries.map((entry) => entry.id)).toContain("solid-for-index")
-  expect(frontendGuidanceJson({ adapter: "solid", symptom: "list reorder state" })).toEqual(
-    selected,
-  )
 })
 test("selection covers optional metadata and ignores one-character noise", () => {
   const bySeeAlso = selectFrontendGuidance({ adapter: "all", symptom: "structure" })
@@ -129,5 +125,24 @@ test("every entry declares a non-empty adapters list and the core fields", () =>
     expect(e.cause.length).toBeGreaterThan(0)
     expect(e.fix.length).toBeGreaterThan(0)
     expect(e.verify.length).toBeGreaterThan(0)
+  }
+})
+
+test("symptom text beyond the cap is ignored", () => {
+  const padded = `${"x".repeat(300)} hydration`
+  expect(selectFrontendGuidance({ symptom: padded }).matched).toBe(false)
+  expect(selectFrontendGuidance({ symptom: "hydration" }).matched).toBe(true)
+})
+
+// Nifra-owned seam entries have no third-party framework doc to cite or version to scope.
+const NIFRA_OWNED = new Set(["duplicate-runtime", "prefer-reactive-island", "swap-a-region"])
+
+test("every framework entry carries versions and an https source; every non-universal entry a category", () => {
+  for (const e of FRONTEND_GUIDANCE) {
+    if (e.adapters.includes("all")) continue
+    expect(e.category, `${e.id} category`).toBeDefined()
+    if (NIFRA_OWNED.has(e.id)) continue
+    expect(e.versions?.length ?? 0, `${e.id} versions`).toBeGreaterThan(0)
+    expect(e.source?.startsWith("https://"), `${e.id} source`).toBe(true)
   }
 })

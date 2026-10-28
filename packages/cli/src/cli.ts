@@ -1296,13 +1296,13 @@ async function main(): Promise<void> {
   // Project-independent and static. `nifra frontend` for the index, `nifra frontend vue "lost reactivity"`
   // to filter by adapter and/or symptom (either arg may be omitted; an adapter is recognized by name).
   if (command === "frontend") {
-    const { frontendGuidanceJson, renderFrontendResult, parseAdapter } = await import(
+    const { selectFrontendGuidance, renderFrontendResult, parseAdapter } = await import(
       "./frontend-guidance.ts"
     )
     const input = frontendCommandInput(argv.slice(1), parseAdapter)
     console.log(
       input.json
-        ? JSON.stringify(frontendGuidanceJson(input), null, 2)
+        ? JSON.stringify(selectFrontendGuidance(input), null, 2)
         : renderFrontendResult(input),
     )
     return
