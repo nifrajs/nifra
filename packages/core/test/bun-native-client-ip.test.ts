@@ -178,3 +178,70 @@ describe("c.clientIp under Bun listen()", () => {
     expect(late).toEqual(["127.0.0.1", "127.0.0.1"])
   })
 })
+
+describe("c.clientIp under a trust declaration on Bun listen()", () => {
+  const routes = <App extends ReturnType<typeof server>>(app: App) =>
+    app
+      .get("/static", (c) => ({ ip: c.clientIp ?? null }))
+      .get("/users/:id", (c) => ({ ip: c.clientIp ?? null }))
+      .post("/users/:id", async (c) => {
+        await c.req.text()
+        return { ip: c.clientIp ?? null }
+      })
+  const forwarded = { headers: { "x-forwarded-for": "9.9.9.9, 8.8.8.8", "x-real-ip": "7.7.7.7" } }
+  const trusts = [
+    [{ trustedHops: 1 }, "8.8.8.8", null],
+    [{ trustedHops: 2 }, "9.9.9.9", null],
+    [{ trustedHops: 3 }, null, null],
+    [{ trustedHops: 0 }, "127.0.0.1", "127.0.0.1"],
+    [{ header: "x-real-ip" }, "7.7.7.7", null],
+  ] as const
+
+  test("the table keeps its routes and each names the caller the declaration trusts", async () => {
+    for (const [clientIp, trusted, bare] of trusts) {
+      const app = routes(server({ clientIp }))
+      expect(nativeKeys(app)).toEqual([
+        "GET /static",
+        "GET /users/:id",
+        "HEAD /static",
+        "HEAD /users/:id",
+        "POST /users/:id",
+      ])
+      const post = { ...forwarded, method: "POST", body: "x" }
+      expect(
+        await served(app, [
+          ["/static", forwarded],
+          ["/users/7", forwarded],
+          ["/users/7", post],
+          ["/static"],
+          ["/users/7"],
+        ]),
+      ).toEqual([
+        `200 ${JSON.stringify({ ip: trusted })}`,
+        `200 ${JSON.stringify({ ip: trusted })}`,
+        `200 ${JSON.stringify({ ip: trusted })}`,
+        `200 ${JSON.stringify({ ip: bare })}`,
+        `200 ${JSON.stringify({ ip: bare })}`,
+      ])
+    }
+  })
+
+  test("the table names the caller the portable dispatcher names", async () => {
+    for (const [clientIp] of trusts) {
+      const app = routes(server({ clientIp }))
+      const [native] = await served(app, [["/users/7", forwarded]])
+      const portable = await app.fetch(new Request("http://x/users/7", forwarded), {
+        clientIp: "127.0.0.1",
+      })
+      expect(native).toBe(`${portable.status} ${await portable.text()}`)
+    }
+  })
+
+  test("a timed or deadline-bound table names the trusted caller too", async () => {
+    for (const options of [{ requestTimeoutMs: 5_000 }, { acceptInboundDeadlines: true }]) {
+      const app = routes(server({ ...options, clientIp: { trustedHops: 1 } }))
+      expect(nativeKeys(app)).toContain("GET /users/:id")
+      expect(await served(app, [["/users/7", forwarded]])).toEqual(['200 {"ip":"8.8.8.8"}'])
+    }
+  })
+})
