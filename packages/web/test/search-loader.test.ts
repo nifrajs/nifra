@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
 import { searchOfRequest } from "../src/internal/request-search.ts"
 import type { LoaderContext } from "../src/manifest.ts"
@@ -30,7 +31,7 @@ const searchSchema = {
       return { value: { page, q } }
     },
   },
-}
+} as const
 
 // A stub that renders RenderProps.search between markers, so a test can assert the SERVER threads the
 // validated search into the adapter's render input (RenderProps), not just into the loader's ctx.
@@ -115,7 +116,7 @@ const layoutSchema = {
       return { value: { org: typeof raw.org === "string" ? raw.org : "none" } }
     },
   },
-}
+} as const
 
 test("a layout's searchSchema merges with the page's (page-wins) in ctx.search", async () => {
   const app = createWebApp({
@@ -151,7 +152,7 @@ test("a layout's searchSchema merges with the page's (page-wins) in ctx.search",
 })
 
 // A schema that counts its runs, so a test can see how often a request validates its search.
-const counting = (base: typeof searchSchema) => {
+const counting = <S extends StandardSchemaV1>(base: S) => {
   const state = { runs: 0 }
   const schema = {
     "~standard": {
@@ -245,7 +246,9 @@ test("searchOfRequest reads a request's query again when its text changed, and r
   expect(searchOfRequest(request, [undefined], "?q=a")).toEqual({ q: "a" })
   expect(searchOfRequest(new Request("http://x/"), [undefined], "")).toEqual({})
   expect(searchOfRequest(new Request("http://x/"), [schema], "")).toEqual({ page: 1, q: "" })
-  const array = { "~standard": { version: 1, vendor: "test", validate: () => ({ value: [] }) } }
+  const array: StandardSchemaV1 = {
+    "~standard": { version: 1, vendor: "test", validate: () => ({ value: [] }) },
+  }
   expect(() => searchOfRequest(new Request("http://x/"), [array], "?q=a")).toThrow(
     "a search schema must produce an object",
   )
