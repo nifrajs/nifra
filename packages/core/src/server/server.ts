@@ -2710,13 +2710,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       handler = this.idempotencyRuntime.wrapHandler(handler)
     }
     const { bare, fusedQuery, fusedBody } = lanes
-    // `selectRouteLanes` admits a fused lifecycle lane only for one derive, one before and at most one
-    // after hook, so those are the hooks below; a derive-before lane has no after, so `afterHandle[0]`
-    // is `undefined` there.
-    const fusedLifecycle =
-      (lanes.lifecycleHookLane !== undefined && this.derives.length === 1) ||
-      lanes.fusedLane === "body-derive-before" ||
-      lanes.fusedLane === "body-derive-before-after"
+    // `selectRouteLanes` admits the fused hook lanes only for derive, before and after hooks, so the
+    // three arrays below are the route's whole lifecycle.
+    const fusedLifecycle = lanes.fusedLane === "hooks" || lanes.fusedLane === "body-hooks"
     // The Node-direct dispatcher (`!webFast`) prefers these runners over the generic program. Only the
     // body-only runner also feeds the Web wrapper; the lifecycle lanes build their own Web closure.
     const fusedBodyRunner = fusedBody
@@ -2729,9 +2725,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       : fusedLifecycle
         ? this.buildFusedLifecycleRunner(
             handler as unknown as InternalHandler,
-            this.derives[0]!,
-            beforeHandle[0]!,
-            afterHandle[0],
+            this.derives,
+            beforeHandle,
+            afterHandle,
             schema?.query,
             schema?.body as StandardSchemaV1 | undefined,
             bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -2757,9 +2753,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             : fusedLifecycle
               ? this.buildFusedLifecycleWeb(
                   handler as unknown as InternalHandler,
-                  this.derives[0]!,
-                  beforeHandle[0]!,
-                  afterHandle[0],
+                  this.derives,
+                  beforeHandle,
+                  afterHandle,
                   schema?.query,
                   schema?.body as StandardSchemaV1 | undefined,
                   bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -3258,15 +3254,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const lane = entry.execution.fusedLane
     // Type-erase the lane so each `===` branch sees the full union, not the narrowed remainder.
     const laneName: string | undefined = lane
-    const derive = entry.derives[0]
-    const before = entry.beforeHandle[0]
-    const lifecycle =
-      (laneName === "derive-before" ||
-        laneName === "derive-before-after" ||
-        laneName === "body-derive-before" ||
-        laneName === "body-derive-before-after") &&
-      derive !== undefined &&
-      before !== undefined
+    const lifecycle = laneName === "hooks" || laneName === "body-hooks"
     const fusedBody =
       laneName === "body"
         ? this.buildFusedBodyRunner(
@@ -3278,9 +3266,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         : lifecycle
           ? this.buildFusedLifecycleRunner(
               entry.handler,
-              derive,
-              before,
-              entry.afterHandle[0],
+              entry.derives,
+              entry.beforeHandle,
+              entry.afterHandle,
               entry.schema?.query,
               entry.schema?.body as StandardSchemaV1 | undefined,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -3299,9 +3287,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           : lifecycle
             ? this.buildFusedLifecycleWeb(
                 entry.handler,
-                derive,
-                before,
-                entry.afterHandle[0],
+                entry.derives,
+                entry.beforeHandle,
+                entry.afterHandle,
                 entry.schema?.query,
                 entry.schema?.body as StandardSchemaV1 | undefined,
                 entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -5332,9 +5320,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private buildFusedLifecycleWeb(
     handler: InternalHandler,
-    derive: RawDerive,
-    before: RawBeforeHandle,
-    after: RawAfterHandle | undefined,
+    derives: readonly RawDerive[],
+    befores: readonly RawBeforeHandle[],
+    afters: readonly RawAfterHandle[],
     querySchema: StandardSchemaV1 | undefined,
     bodySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
@@ -5346,13 +5334,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (result, set) => this.wrapWebResponse(toResponse(result, set)),
         this.wrapWebResponse,
       )
-    // Continuations capture route state once; each request supplies its own context.
-    const runAfter = (result: unknown, ctx: RawContext): MaybePromise<Response> => {
-      if (after === undefined)
-        return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+    // The stages are closures over the route's hook arrays. Which stage follows which is settled once
+    // here, so a request makes one call per hook and per phase with no loop. A phase with a single hook,
+    // the common middleware shape, gets a straight-line closure that holds its hook directly; a phase
+    // with several indexes into its array. Continuations capture route state once; each request
+    // supplies its own context.
+    type Stage = (ctx: RawContext, index: number) => MaybePromise<Response>
+    type AfterStage = (result: unknown, ctx: RawContext, index: number) => MaybePromise<Response>
+    const lastDerive = derives.length - 1
+    const lastBefore = befores.length - 1
+    const lastAfter = afters.length - 1
+    const onlyAfter = afters[0]
+    const afterOne: AfterStage = (result, ctx) => {
       let transformed: unknown
       try {
-        transformed = after(result, ctx)
+        transformed = onlyAfter!(result, ctx)
       } catch (err) {
         return logError(err, ctx)
       }
@@ -5364,7 +5360,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
     }
-    const runHandler = (ctx: RawContext): MaybePromise<Response> => {
+    const afterMany: AfterStage = (result, ctx, index) => {
+      let transformed: unknown
+      try {
+        transformed = afters[index]!(result, ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (transformed instanceof Promise) {
+        return transformed.then(
+          (value) =>
+            index < lastAfter
+              ? afterMany(value, ctx, index + 1)
+              : this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+          (err) => logError(err, ctx),
+        )
+      }
+      return index < lastAfter
+        ? afterMany(transformed, ctx, index + 1)
+        : this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+    }
+    const respondStage: AfterStage = (result, ctx) =>
+      this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+    const runAfter = afters.length === 0 ? respondStage : afters.length === 1 ? afterOne : afterMany
+    const runHandler: Stage = (ctx) => {
       let result: unknown
       try {
         result = handler(ctx)
@@ -5373,35 +5392,56 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => runAfter(value, ctx),
+          (value) => runAfter(value, ctx, 0),
           (err) => logError(err, ctx),
         )
       }
-      return runAfter(result, ctx)
+      return runAfter(result, ctx, 0)
     }
-    const runBefore = (ctx: RawContext): MaybePromise<Response> => {
+    const onlyBefore = befores[0]
+    const beforeOne: Stage = (ctx) => {
       let early: unknown
       try {
-        early = before(ctx)
+        early = onlyBefore!(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (early instanceof Promise) {
+        return early.then(
+          (settled) =>
+            settled === undefined ? runHandler(ctx, 0) : this.respondFused(settled, ctx),
+          (err) => logError(err, ctx),
+        )
+      }
+      if (early === undefined) return runHandler(ctx, 0)
+      return this.respondFused(early, ctx)
+    }
+    const beforeMany: Stage = (ctx, index) => {
+      let early: unknown
+      try {
+        early = befores[index]!(ctx)
       } catch (err) {
         return logError(err, ctx)
       }
       if (early instanceof Promise) {
         return early.then(
           (settled) => {
-            if (settled === undefined) return runHandler(ctx)
-            return this.respondFused(settled, ctx)
+            if (settled !== undefined) return this.respondFused(settled, ctx)
+            return index < lastBefore ? beforeMany(ctx, index + 1) : runHandler(ctx, 0)
           },
           (err) => logError(err, ctx),
         )
       }
-      if (early === undefined) return runHandler(ctx)
-      return this.respondFused(early, ctx)
+      if (early !== undefined) return this.respondFused(early, ctx)
+      return index < lastBefore ? beforeMany(ctx, index + 1) : runHandler(ctx, 0)
     }
-    const runDerive = (ctx: RawContext): MaybePromise<Response> => {
+    const runBefore =
+      befores.length === 0 ? runHandler : befores.length === 1 ? beforeOne : beforeMany
+    const onlyDerive = derives[0]
+    const deriveOne: Stage = (ctx) => {
       let derived: unknown
       try {
-        derived = derive(ctx)
+        derived = onlyDerive!(ctx)
       } catch (err) {
         return logError(err, ctx)
       }
@@ -5412,11 +5452,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               return this.respondFused(settled, ctx)
             }
             try {
-              Object.assign(ctx, settled as object)
+              Object.assign(ctx, settled)
             } catch (err) {
               return logError(err, ctx)
             }
-            return runBefore(ctx)
+            return runBefore(ctx, 0)
           },
           (err) => logError(err, ctx),
         )
@@ -5425,12 +5465,47 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return this.respondFused(derived, ctx)
       }
       try {
-        Object.assign(ctx, derived as object)
+        Object.assign(ctx, derived)
       } catch (err) {
         return logError(err, ctx)
       }
-      return runBefore(ctx)
+      return runBefore(ctx, 0)
     }
+    const deriveMany: Stage = (ctx, index) => {
+      let derived: unknown
+      try {
+        derived = derives[index]!(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (derived instanceof Promise) {
+        return derived.then(
+          (settled) => {
+            if (isResponseResult(settled) || settled instanceof Response) {
+              return this.respondFused(settled, ctx)
+            }
+            try {
+              Object.assign(ctx, settled)
+            } catch (err) {
+              return logError(err, ctx)
+            }
+            return index < lastDerive ? deriveMany(ctx, index + 1) : runBefore(ctx, 0)
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (isResponseResult(derived) || derived instanceof Response) {
+        return this.respondFused(derived, ctx)
+      }
+      try {
+        Object.assign(ctx, derived)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      return index < lastDerive ? deriveMany(ctx, index + 1) : runBefore(ctx, 0)
+    }
+    const runDerive =
+      derives.length === 0 ? runBefore : derives.length === 1 ? deriveOne : deriveMany
     if (bodySchema !== undefined) {
       const onParsed = (parsed: unknown, ctx: RawContext): MaybePromise<Response> => {
         let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
@@ -5445,7 +5520,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               if (settled.issues !== undefined)
                 return this.wrapWebResponse(plainValidationError(settled.issues))
               ctx.body = settled.value
-              return runDerive(ctx)
+              return runDerive(ctx, 0)
             },
             (err) => logError(err, ctx),
           )
@@ -5453,7 +5528,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (validation.issues !== undefined)
           return this.wrapWebResponse(plainValidationError(validation.issues))
         ctx.body = validation.value
-        return runDerive(ctx)
+        return runDerive(ctx, 0)
       }
       return (source, params, search, signal, budget, platform, nativeContext) => {
         const ctx = nativeContext
@@ -5500,7 +5575,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      if (querySchema === undefined) return runDerive(ctx)
+      if (querySchema === undefined) return runDerive(ctx, 0)
       let validation: MaybePromise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
@@ -5513,7 +5588,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (settled.issues !== undefined)
               return this.wrapWebResponse(plainValidationError(settled.issues))
             ctx.query = settled.value
-            return runDerive(ctx)
+            return runDerive(ctx, 0)
           },
           (err) => logError(err, ctx),
         )
@@ -5521,7 +5596,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return this.wrapWebResponse(plainValidationError(validation.issues))
       ctx.query = validation.value
-      return runDerive(ctx)
+      return runDerive(ctx, 0)
     }
   }
 
@@ -5534,9 +5609,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private buildFusedLifecycleRunner(
     handler: InternalHandler,
-    derive: RawDerive,
-    before: RawBeforeHandle,
-    after: RawAfterHandle | undefined,
+    derives: readonly RawDerive[],
+    befores: readonly RawBeforeHandle[],
+    afters: readonly RawAfterHandle[],
     querySchema: StandardSchemaV1 | undefined,
     bodySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
@@ -5548,45 +5623,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       wrapResponse: (response: Response | ResponseResult) => T,
     ): T => this.bareError(err, ctx, finalize, wrapResponse)
 
-    const runFinish = <T>(
-      result: unknown,
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      if (after === undefined) {
-        try {
-          return finalize(result, responseSet(ctx), ctx)
-        } catch (err) {
-          return logError(err, ctx, finalize, wrapResponse)
-        }
-      }
-      let transformed: unknown
-      try {
-        transformed = after(result, ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-      if (transformed instanceof Promise) {
-        return transformed.then(
-          (value) => {
-            try {
-              return finalize(value, responseSet(ctx), ctx)
-            } catch (err) {
-              return logError(err, ctx, finalize, wrapResponse)
-            }
-          },
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      try {
-        return finalize(transformed, responseSet(ctx), ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-    }
-
-    const finalizeEarly = <T>(
+    const finishResult = <T>(
       result: unknown,
       ctx: RawContext,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
@@ -5599,11 +5636,69 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
 
-    const runHandler = <T>(
+    // The stages are closures over the route's hook arrays, as in the Web builder: a phase with one hook
+    // gets a straight-line closure that holds it, a phase with several indexes into its array. The
+    // generic `T` of each stage is the caller's outcome type.
+    type Finalize<T> = (result: unknown, set: CtxSet, ctx: RawContext) => T
+    type Wrap<T> = (response: Response | ResponseResult) => T
+    type Stage = <T>(
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
+      finalize: Finalize<T>,
+      wrapResponse: Wrap<T>,
+      index: number,
+    ) => MaybePromise<T>
+    type AfterStage = <T>(
+      result: unknown,
+      ctx: RawContext,
+      finalize: Finalize<T>,
+      wrapResponse: Wrap<T>,
+      index: number,
+    ) => MaybePromise<T>
+    const lastDerive = derives.length - 1
+    const lastBefore = befores.length - 1
+    const lastAfter = afters.length - 1
+
+    const onlyAfter = afters[0]
+    const afterOne: AfterStage = (result, ctx, finalize, wrapResponse) => {
+      let transformed: unknown
+      try {
+        transformed = onlyAfter!(result, ctx)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
+      if (transformed instanceof Promise) {
+        return transformed.then(
+          (value) => finishResult(value, ctx, finalize, wrapResponse),
+          (err) => logError(err, ctx, finalize, wrapResponse),
+        )
+      }
+      return finishResult(transformed, ctx, finalize, wrapResponse)
+    }
+    const afterMany: AfterStage = (result, ctx, finalize, wrapResponse, index) => {
+      let transformed: unknown
+      try {
+        transformed = afters[index]!(result, ctx)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
+      if (transformed instanceof Promise) {
+        return transformed.then(
+          (value) =>
+            index < lastAfter
+              ? afterMany(value, ctx, finalize, wrapResponse, index + 1)
+              : finishResult(value, ctx, finalize, wrapResponse),
+          (err) => logError(err, ctx, finalize, wrapResponse),
+        )
+      }
+      return index < lastAfter
+        ? afterMany(transformed, ctx, finalize, wrapResponse, index + 1)
+        : finishResult(transformed, ctx, finalize, wrapResponse)
+    }
+    const finishStage: AfterStage = (result, ctx, finalize, wrapResponse) =>
+      finishResult(result, ctx, finalize, wrapResponse)
+    const runAfter = afters.length === 0 ? finishStage : afters.length === 1 ? afterOne : afterMany
+
+    const runHandler: Stage = (ctx, finalize, wrapResponse) => {
       let result: unknown
       try {
         result = handler(ctx)
@@ -5612,21 +5707,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => runFinish(value, ctx, finalize, wrapResponse),
+          (value) => runAfter(value, ctx, finalize, wrapResponse, 0),
           (err) => logError(err, ctx, finalize, wrapResponse),
         )
       }
-      return runFinish(result, ctx, finalize, wrapResponse)
+      return runAfter(result, ctx, finalize, wrapResponse, 0)
     }
 
-    const runBefore = <T>(
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
+    const onlyBefore = befores[0]
+    const beforeOne: Stage = (ctx, finalize, wrapResponse) => {
       let early: unknown
       try {
-        early = before(ctx)
+        early = onlyBefore!(ctx)
       } catch (err) {
         return logError(err, ctx, finalize, wrapResponse)
       }
@@ -5634,23 +5726,45 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return early.then(
           (settled) =>
             settled === undefined
-              ? runHandler(ctx, finalize, wrapResponse)
-              : finalizeEarly(settled, ctx, finalize, wrapResponse),
+              ? runHandler(ctx, finalize, wrapResponse, 0)
+              : finishResult(settled, ctx, finalize, wrapResponse),
           (err) => logError(err, ctx, finalize, wrapResponse),
         )
       }
-      if (early === undefined) return runHandler(ctx, finalize, wrapResponse)
-      return finalizeEarly(early, ctx, finalize, wrapResponse)
+      if (early === undefined) return runHandler(ctx, finalize, wrapResponse, 0)
+      return finishResult(early, ctx, finalize, wrapResponse)
     }
+    const beforeMany: Stage = (ctx, finalize, wrapResponse, index) => {
+      let early: unknown
+      try {
+        early = befores[index]!(ctx)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
+      if (early instanceof Promise) {
+        return early.then(
+          (settled) => {
+            if (settled !== undefined) return finishResult(settled, ctx, finalize, wrapResponse)
+            return index < lastBefore
+              ? beforeMany(ctx, finalize, wrapResponse, index + 1)
+              : runHandler(ctx, finalize, wrapResponse, 0)
+          },
+          (err) => logError(err, ctx, finalize, wrapResponse),
+        )
+      }
+      if (early !== undefined) return finishResult(early, ctx, finalize, wrapResponse)
+      return index < lastBefore
+        ? beforeMany(ctx, finalize, wrapResponse, index + 1)
+        : runHandler(ctx, finalize, wrapResponse, 0)
+    }
+    const runBefore: Stage =
+      befores.length === 0 ? runHandler : befores.length === 1 ? beforeOne : beforeMany
 
-    const runDerive = <T>(
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
+    const onlyDerive = derives[0]
+    const deriveOne: Stage = (ctx, finalize, wrapResponse) => {
       let derived: unknown
       try {
-        derived = derive(ctx)
+        derived = onlyDerive!(ctx)
       } catch (err) {
         return logError(err, ctx, finalize, wrapResponse)
       }
@@ -5658,28 +5772,67 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return derived.then(
           (settled) => {
             if (isResponseResult(settled) || settled instanceof Response) {
-              return finalizeEarly(settled, ctx, finalize, wrapResponse)
+              return finishResult(settled, ctx, finalize, wrapResponse)
             }
             try {
-              Object.assign(ctx, settled as object)
+              Object.assign(ctx, settled)
             } catch (err) {
               return logError(err, ctx, finalize, wrapResponse)
             }
-            return runBefore(ctx, finalize, wrapResponse)
+            return runBefore(ctx, finalize, wrapResponse, 0)
           },
           (err) => logError(err, ctx, finalize, wrapResponse),
         )
       }
       if (isResponseResult(derived) || derived instanceof Response) {
-        return finalizeEarly(derived, ctx, finalize, wrapResponse)
+        return finishResult(derived, ctx, finalize, wrapResponse)
       }
       try {
-        Object.assign(ctx, derived as object)
+        Object.assign(ctx, derived)
       } catch (err) {
         return logError(err, ctx, finalize, wrapResponse)
       }
-      return runBefore(ctx, finalize, wrapResponse)
+      return runBefore(ctx, finalize, wrapResponse, 0)
     }
+    const deriveMany: Stage = (ctx, finalize, wrapResponse, index) => {
+      let derived: unknown
+      try {
+        derived = derives[index]!(ctx)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
+      if (derived instanceof Promise) {
+        return derived.then(
+          (settled) => {
+            if (isResponseResult(settled) || settled instanceof Response) {
+              return finishResult(settled, ctx, finalize, wrapResponse)
+            }
+            try {
+              Object.assign(ctx, settled)
+            } catch (err) {
+              return logError(err, ctx, finalize, wrapResponse)
+            }
+            return index < lastDerive
+              ? deriveMany(ctx, finalize, wrapResponse, index + 1)
+              : runBefore(ctx, finalize, wrapResponse, 0)
+          },
+          (err) => logError(err, ctx, finalize, wrapResponse),
+        )
+      }
+      if (isResponseResult(derived) || derived instanceof Response) {
+        return finishResult(derived, ctx, finalize, wrapResponse)
+      }
+      try {
+        Object.assign(ctx, derived)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
+      return index < lastDerive
+        ? deriveMany(ctx, finalize, wrapResponse, index + 1)
+        : runBefore(ctx, finalize, wrapResponse, 0)
+    }
+    const runDerive: Stage =
+      derives.length === 0 ? runBefore : derives.length === 1 ? deriveOne : deriveMany
 
     if (bodySchema !== undefined) {
       const onParsed = <T>(
@@ -5700,7 +5853,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               if (settled.issues !== undefined)
                 return wrapResponse(plainValidationError(settled.issues))
               ctx.body = settled.value
-              return runDerive(ctx, finalize, wrapResponse)
+              return runDerive(ctx, finalize, wrapResponse, 0)
             },
             (err) => logError(err, ctx, finalize, wrapResponse),
           )
@@ -5708,7 +5861,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         if (validation.issues !== undefined)
           return wrapResponse(plainValidationError(validation.issues))
         ctx.body = validation.value
-        return runDerive(ctx, finalize, wrapResponse)
+        return runDerive(ctx, finalize, wrapResponse, 0)
       }
       return <T>(
         source: RequestSource,
@@ -5765,7 +5918,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (settled.issues !== undefined)
               return wrapResponse(plainValidationError(settled.issues))
             ctx.query = settled.value
-            return runDerive(ctx, finalize, wrapResponse)
+            return runDerive(ctx, finalize, wrapResponse, 0)
           },
           (err) => logError(err, ctx, finalize, wrapResponse),
         )
@@ -5773,7 +5926,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return wrapResponse(plainValidationError(validation.issues))
       ctx.query = validation.value
-      return runDerive(ctx, finalize, wrapResponse)
+      return runDerive(ctx, finalize, wrapResponse, 0)
     }
 
     return <T>(
@@ -5799,7 +5952,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      if (querySchema === undefined) return runDerive(ctx, finalize, wrapResponse)
+      if (querySchema === undefined) return runDerive(ctx, finalize, wrapResponse, 0)
       let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))

@@ -5,7 +5,7 @@
  * read + validated query (GET) or body (POST) + a ~2.4 KB JSON response.
  *
  * This is deliberately NOT the bare-route shape bench/http/ measures - auth and middleware are exactly
- * what moves a route off nifra's bare/query/body lanes onto its derive-before lane, so this suite
+ * what moves a route off nifra's bare/query/body lanes onto its hooks lane, so this suite
  * answers "what does a route that looks like production actually get," separately from "what does the
  * fast path get on a route with nothing on it." Read both suites together; neither replaces the other.
  *

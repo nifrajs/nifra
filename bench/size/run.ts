@@ -314,7 +314,12 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The idle-timeout control and listen()'s `static` merged with the Date writer: bare 39,297 B,
   // idempotency 44,079, effect-ledger 41,333, sse 40,173, mcp 39,570, valibot 40,301, typebox-t
   // 68,108, typebox-form 73,080 (Bun 1.4.4); each cap takes the next 0.1 KiB step that fits.
-  "nifra-bare": 38.4,
+  // Fused lanes for any mix of derive, before and after hooks, each single-hook phase a straight-line
+  // closure: bare 38,849 -> 39,337 B, idempotency 43,682 -> 44,163, effect-ledger 40,881 -> 41,350, sse
+  // 39,701 -> 40,189, mcp 39,111 -> 39,589, valibot 39,836 -> 40,313, typebox-t 67,692 -> 68,128,
+  // typebox-form 72,656 -> 73,081 (Bun 1.4.4). Only the bare and idempotency caps are crossed, by one
+  // 0.1 KiB step each.
+  "nifra-bare": 38.5,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -338,7 +343,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A request's t.date() strings handed on as Dates by a schema-directed decoder, and date-time and
   // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
-  "nifra-idempotency": 43.1,
+  "nifra-idempotency": 43.2,
   "nifra-effect-ledger": 40.4,
   "nifra-mcp": 38.7,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
