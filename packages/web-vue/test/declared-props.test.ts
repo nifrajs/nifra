@@ -4,7 +4,6 @@ import {
   createSSRApp,
   defineAsyncComponent,
   defineComponent,
-  getCurrentInstance,
   h,
   type Slots,
 } from "vue"
@@ -19,8 +18,12 @@ import { EVERY_ROUTE_PROP, ROUTE_PROP_NAMES } from "./fixtures/route-props.ts"
 
 let rendered: ComponentInternalInstance | null = null
 const root = (slots: Slots) => {
-  rendered = getCurrentInstance()
-  return h("div", { id: "root" }, slots.default?.())
+  const vnode = h("div", { id: "root" }, slots.default?.())
+  // getCurrentInstance() can name an outer async setup instead of the component rendering this
+  // root. Vue records the actual rendering owner on the VNode, whose subtree we inspect below.
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Vue's internal VNode ctx is its ComponentInternalInstance rendering owner, omitted from the public VNode type.
+  rendered = Reflect.get(vnode, "ctx") as ComponentInternalInstance | null
+  return vnode
 }
 const kebab = (name: string): string => name.replace(/\B([A-Z])/g, "-$1").toLowerCase()
 
@@ -149,6 +152,31 @@ test("a page whose options a hot reload rewrote gets the props it declares now",
   // What Vue's hot reload does to the component a route module exported.
   Object.assign(Page, { props: ["data", "pending"] })
   expect((await render([Page])).props).toEqual({ data: EVERY_ROUTE_PROP.data, pending: true })
+})
+
+test("a render nested in async setup inspects its rendering owner, not the outer setup instance", async () => {
+  // The SFC compiler helper exists at runtime but is deliberately absent from Vue's public types.
+  const withAsyncContext: (awaitable: () => Promise<void>) => [Promise<void>, () => void] =
+    Reflect.get(await import("vue"), "withAsyncContext")
+  let seen: Awaited<ReturnType<typeof render>> | undefined
+  const errors: unknown[] = []
+  const Outer = defineComponent({
+    async setup() {
+      // Vue's SFC compiler restores the setup instance after a top-level await. A nested SSR
+      // render has its own rendering instance while this outer setup instance is still current.
+      const [pending, restore] = withAsyncContext(() => Promise.resolve())
+      await pending
+      restore()
+      seen = await render([declaring["a props array"]!(["data"])])
+      return () => h("main", null, "outer")
+    },
+  })
+  const app = createSSRApp(Outer)
+  app.config.errorHandler = (error) => errors.push(error)
+  app.config.warnHandler = () => {}
+  await renderToString(app)
+  expect(errors).toEqual([])
+  expect(seen).toEqual({ root: [], props: { data: EVERY_ROUTE_PROP.data }, warnings: [] })
 })
 
 test("an async page gets each route prop it declares", async () => {
