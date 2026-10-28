@@ -12078,8 +12078,8 @@ replace the framework's compiler or linter.
 ### Use the same catalog from every surface
 
 `nifra frontend` is the human CLI and `nifra_frontend` is the MCP tool. Both
-select the same entries. Pass `--json` to the CLI, or read the MCP result's `structuredContent`, to receive a stable
-result with `schemaVersion`, an optional top-level `adapter`, match status,
+select the same entries. Pass `--json` to the CLI, or read the MCP result's `structuredContent`,
+to receive a stable result with `schemaVersion`, an optional top-level `adapter`, match status,
 and `entries`. Entries include their `adapters` and may omit framework
 version ranges, categories, or source URLs.
 
