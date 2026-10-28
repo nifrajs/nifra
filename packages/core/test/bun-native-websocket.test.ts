@@ -15,9 +15,13 @@ function nativeKeys(app: object): string[] {
   const portable: NativeHandler = () => new Response(null)
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the table builder is private; the test lists what it holds.
   const builder = app as {
-    buildBunNativeRoutes(fallback: NativeHandler, peer: object): NativeTable
+    buildBunNativeRoutes(
+      fallback: NativeHandler,
+      peer: object,
+      platformFor: () => object,
+    ): NativeTable
   }
-  const table = builder.buildBunNativeRoutes(portable, {}) ?? {}
+  const table = builder.buildBunNativeRoutes(portable, {}, () => ({})) ?? {}
   return Object.keys(table)
     .flatMap((path) =>
       Object.keys(table[path]!)
@@ -123,6 +127,33 @@ describe("the route table beside WebSocket routes", () => {
       .mount({ path: "/child", app: child })
       .get("/users/:id", (c) => c.params.id)
     expect(nativeKeys(app)).toEqual([])
+  })
+})
+
+describe("the route table beside WebSocket routes and onRequest hooks", () => {
+  test("a handshake a hook rewrites onto a socket path still upgrades", async () => {
+    const app = server()
+      .use(websocket())
+      .onRequest((req) => {
+        const url = new URL(req.url)
+        return url.pathname === "/health" && req.headers.get("upgrade") === "websocket"
+          ? new Request(new URL("/chat", url), req)
+          : undefined
+      })
+      .ws("/chat", echo)
+      .get("/health", () => "ok")
+    expect(nativeKeys(app)).toEqual([])
+    const host = listening(app)
+    expect(await (await fetch(`http://${host}/health`)).json()).toBe("ok")
+    expect(await echoed(`ws://${host}/health`, "hi")).toBe("hi")
+  })
+
+  test("without a hook that can rewrite, the table stays", () => {
+    const app = server()
+      .use(websocket())
+      .ws("/chat", echo)
+      .get("/health", () => "ok")
+    expect(nativeKeys(app)).toEqual(["GET /health", "HEAD /health"])
   })
 })
 

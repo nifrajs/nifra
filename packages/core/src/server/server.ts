@@ -6760,6 +6760,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const hooked = this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe
     if (
       (hooked && platformFor === undefined) ||
+      // A hook may rewrite a handshake onto a socket path, which only the dispatcher's upgrade check follows.
+      (hooked && this.wsRoutes.length > 0) ||
       this.mountsTakeUpgrades() ||
       this.preRouteMountCount > 0
     ) {
