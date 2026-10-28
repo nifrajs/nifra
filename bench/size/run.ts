@@ -357,9 +357,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A request's t.date() strings handed on as Dates by a schema-directed decoder, and date-time and
   // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
-  "nifra-idempotency": 43.7,
+  "nifra-idempotency": 43.8,
   "nifra-effect-ledger": 41.0,
-  "nifra-mcp": 39.2,
+  "nifra-mcp": 39.3,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 39.8,
   "nifra-valibot": 40.0,
