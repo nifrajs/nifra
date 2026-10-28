@@ -5679,7 +5679,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (isResponseResult(settled) || settled instanceof Response)
               return this.respondFused(settled, ctx)
             try {
-              Object.assign(ctx, settled as object)
+              Object.assign(ctx, settled)
             } catch (err) {
               return this.fusedWebFail(err, ctx)
             }
@@ -5691,7 +5691,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (isResponseResult(derived) || derived instanceof Response)
         return this.respondFused(derived, ctx)
       try {
-        Object.assign(ctx, derived as object)
+        Object.assign(ctx, derived)
       } catch (err) {
         return this.fusedWebFail(err, ctx)
       }
