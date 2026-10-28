@@ -5421,12 +5421,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           transformed = route.afters[0]!(result, ctx)
         } catch (err) {
-          return this.fusedWebFail(err, ctx, route)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (transformed instanceof Promise) {
           return transformed.then(
             (value) => this.respondHooks(value, ctx, route, this.onResponseHooks.length === 0),
-            (err) => this.fusedWebFail(err, ctx, route),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         return this.respondHooks(transformed, ctx, route, this.onResponseHooks.length === 0)
@@ -5439,7 +5439,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             transformed = route.afters[index]!(result, ctx)
           } catch (err) {
-            return this.fusedWebFail(err, ctx, route)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (transformed instanceof Promise) {
             return transformed.then(
@@ -5447,7 +5447,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                 index < lastAfter
                   ? runAfter(value, ctx, route, index + 1)
                   : this.respondHooks(value, ctx, route, this.onResponseHooks.length === 0),
-              (err) => this.fusedWebFail(err, ctx, route),
+              (err) => this.fusedWebRouteFail(err, ctx, route),
             )
           }
           if (index === lastAfter) {
@@ -5463,12 +5463,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       try {
         result = route.handler(ctx)
       } catch (err) {
-        return this.fusedWebFail(err, ctx, route)
+        return this.fusedWebRouteFail(err, ctx, route)
       }
       if (result instanceof Promise) {
         return result.then(
           (value) => runAfter(value, ctx, route, 0),
-          (err) => this.fusedWebFail(err, ctx, route),
+          (err) => this.fusedWebRouteFail(err, ctx, route),
         )
       }
       return runAfter(result, ctx, route, 0)
@@ -5482,7 +5482,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           early = route.befores[0]!(ctx)
         } catch (err) {
-          return this.fusedWebFail(err, ctx, route)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (early instanceof Promise) {
           return early.then(
@@ -5490,7 +5490,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               settled === undefined
                 ? runHandler(ctx, route, 0)
                 : this.respondHooks(settled, ctx, route),
-            (err) => this.fusedWebFail(err, ctx, route),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         if (early === undefined) return runHandler(ctx, route, 0)
@@ -5504,7 +5504,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             early = route.befores[index]!(ctx)
           } catch (err) {
-            return this.fusedWebFail(err, ctx, route)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (early instanceof Promise) {
             return early.then(
@@ -5514,7 +5514,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                   ? runBefore(ctx, route, index + 1)
                   : runHandler(ctx, route, 0)
               },
-              (err) => this.fusedWebFail(err, ctx, route),
+              (err) => this.fusedWebRouteFail(err, ctx, route),
             )
           }
           if (early !== undefined) return this.respondHooks(early, ctx, route)
@@ -5532,7 +5532,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           derived = route.derives[0]!(ctx)
         } catch (err) {
-          return this.fusedWebFail(err, ctx, route)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (derived instanceof Promise) {
           return derived.then(
@@ -5543,11 +5543,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               try {
                 Object.assign(ctx, settled)
               } catch (err) {
-                return this.fusedWebFail(err, ctx, route)
+                return this.fusedWebRouteFail(err, ctx, route)
               }
               return runBefore(ctx, route, 0)
             },
-            (err) => this.fusedWebFail(err, ctx, route),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         if (isResponseResult(derived) || derived instanceof Response) {
@@ -5556,7 +5556,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           Object.assign(ctx, derived)
         } catch (err) {
-          return this.fusedWebFail(err, ctx, route)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         return runBefore(ctx, route, 0)
       }
@@ -5568,7 +5568,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             derived = route.derives[index]!(ctx)
           } catch (err) {
-            return this.fusedWebFail(err, ctx, route)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (derived instanceof Promise) {
             return derived.then(
@@ -5579,13 +5579,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                 try {
                   Object.assign(ctx, settled)
                 } catch (err) {
-                  return this.fusedWebFail(err, ctx, route)
+                  return this.fusedWebRouteFail(err, ctx, route)
                 }
                 return index < lastDerive
                   ? runDerive(ctx, route, index + 1)
                   : runBefore(ctx, route, 0)
               },
-              (err) => this.fusedWebFail(err, ctx, route),
+              (err) => this.fusedWebRouteFail(err, ctx, route),
             )
           }
           if (isResponseResult(derived) || derived instanceof Response) {
@@ -5594,7 +5594,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             Object.assign(ctx, derived)
           } catch (err) {
-            return this.fusedWebFail(err, ctx, route)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (index === lastDerive) return runBefore(ctx, route, 0)
           index++
@@ -5615,12 +5615,142 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * The route's own closure holds only its `FusedHooks` and schemas and takes the request's context as
    * an argument, so a request allocates no step closures.
    */
+  /**
+   * The common one-derive/one-before shape stays bound to its hooks. Sharing this tiny chain adds
+   * route and array lookups to every request, while larger shapes benefit from the shared stages.
+   */
+  private buildFusedLifecycleWebSingle(
+    handler: InternalHandler,
+    derive: RawDerive,
+    before: RawBeforeHandle,
+    after: RawAfterHandle | undefined,
+    maxBodyBytes: number,
+  ): FusedWebRunner {
+    const runAfter =
+      after === undefined
+        ? (result: unknown, ctx: RawContext): MaybePromise<Response> =>
+            this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+        : (result: unknown, ctx: RawContext): MaybePromise<Response> => {
+            let transformed: unknown
+            try {
+              transformed = after(result, ctx)
+            } catch (err) {
+              return this.fusedWebFail(err, ctx)
+            }
+            if (transformed instanceof Promise) {
+              return transformed.then(
+                (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+                (err) => this.fusedWebFail(err, ctx),
+              )
+            }
+            return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+          }
+
+    const runHandler = (ctx: RawContext): MaybePromise<Response> => {
+      let result: unknown
+      try {
+        result = handler(ctx)
+      } catch (err) {
+        return this.fusedWebFail(err, ctx)
+      }
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => runAfter(value, ctx),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      return runAfter(result, ctx)
+    }
+
+    const runBefore = (ctx: RawContext): MaybePromise<Response> => {
+      let early: unknown
+      try {
+        early = before(ctx)
+      } catch (err) {
+        return this.fusedWebFail(err, ctx)
+      }
+      if (early instanceof Promise) {
+        return early.then(
+          (settled) => (settled === undefined ? runHandler(ctx) : this.respondFused(settled, ctx)),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      if (early === undefined) return runHandler(ctx)
+      return this.respondFused(early, ctx)
+    }
+
+    const runDerive = (ctx: RawContext): MaybePromise<Response> => {
+      let derived: unknown
+      try {
+        derived = derive(ctx)
+      } catch (err) {
+        return this.fusedWebFail(err, ctx)
+      }
+      if (derived instanceof Promise) {
+        return derived.then(
+          (settled) => {
+            if (isResponseResult(settled) || settled instanceof Response)
+              return this.respondFused(settled, ctx)
+            try {
+              Object.assign(ctx, settled)
+            } catch (err) {
+              return this.fusedWebFail(err, ctx)
+            }
+            return runBefore(ctx)
+          },
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      if (isResponseResult(derived) || derived instanceof Response)
+        return this.respondFused(derived, ctx)
+      try {
+        Object.assign(ctx, derived)
+      } catch (err) {
+        return this.fusedWebFail(err, ctx)
+      }
+      return runBefore(ctx)
+    }
+
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+      return runDerive(ctx)
+    }
+  }
+
   private buildFusedLifecycleWeb(
     route: FusedHooks,
     querySchema: StandardSchemaV1 | undefined,
     bodySchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
   ): FusedWebRunner {
+    if (
+      querySchema === undefined &&
+      bodySchema === undefined &&
+      route.errors.length === 0 &&
+      route.decorations === undefined &&
+      route.derives.length === 1 &&
+      route.befores.length === 1 &&
+      route.afters.length <= 1
+    ) {
+      return this.buildFusedLifecycleWebSingle(
+        route.handler,
+        route.derives[0]!,
+        route.befores[0]!,
+        route.afters[0],
+        maxBodyBytes,
+      )
+    }
     const runDerive = sharedStages(WEB_STAGES, this, route, (d, b, a) =>
       this.fusedWebStages(d, b, a),
     )
@@ -5631,7 +5761,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           validation = bodySchema["~standard"].validate(parsed)
         } catch (err) {
-          return this.fusedWebFail(err, ctx, route)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (validation instanceof Promise) {
           return validation.then(
@@ -5641,7 +5771,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               ctx.body = settled.value
               return runDerive(ctx, route, 0)
             },
-            (err) => this.fusedWebFail(err, ctx, route),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         if (validation.issues !== undefined)
@@ -5676,7 +5806,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           this.protoPoisoning,
           (parsed) => onParsed(parsed, ctx),
           this.wrapWebResponse,
-          (err) => this.fusedWebFail(err, ctx, route),
+          (err) => this.fusedWebRouteFail(err, ctx, route),
           bodySchema,
           this.formOrigins,
         ) as MaybePromise<Response>
@@ -5701,7 +5831,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
       } catch (err) {
-        return this.fusedWebFail(err, ctx, route)
+        return this.fusedWebRouteFail(err, ctx, route)
       }
       if (validation instanceof Promise) {
         return validation.then(
@@ -5711,7 +5841,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             ctx.query = settled.value
             return runDerive(ctx, route, 0)
           },
-          (err) => this.fusedWebFail(err, ctx, route),
+          (err) => this.fusedWebRouteFail(err, ctx, route),
         )
       }
       if (validation.issues !== undefined)
@@ -6109,8 +6239,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
   }
 
-  /** The thrown-value render of the Web fused lifecycle lanes. */
-  private fusedWebFail(err: unknown, ctx: RawContext, route: FusedHooks): MaybePromise<Response> {
+  /** The thrown-value render of the Web fused lifecycle lanes for a route with no error hooks: a
+   * `Response` is control flow, anything else is logged and answered with a plain 500. */
+  private fusedWebFail(err: unknown, ctx: RawContext): Response {
+    return this.bareError(
+      err,
+      ctx,
+      (result, set) => this.wrapWebResponse(toResponse(result, set)),
+      this.wrapWebResponse,
+    )
+  }
+
+  /** {@link fusedWebFail} for a fused route that may have error hooks. */
+  private fusedWebRouteFail(
+    err: unknown,
+    ctx: RawContext,
+    route: FusedHooks,
+  ): MaybePromise<Response> {
     return this.fusedFail(
       err,
       ctx,
@@ -6159,7 +6304,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     try {
       return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders, unstamped)
     } catch (err) {
-      return this.fusedWebFail(err, ctx, route)
+      return this.fusedWebRouteFail(err, ctx, route)
     }
   }
 
