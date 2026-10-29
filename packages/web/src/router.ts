@@ -677,6 +677,13 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // The path the page on screen was loaded from. While a boundary holds an intercepted target, `path`
   // is that target's URL, so anything that reloads or caches the page must read this instead.
   const pagePathOf = (current: RouterState): string => current.intercepted?.pagePath ?? current.path
+  // An intercept boundary holding nothing: what a page's own load names it.
+  const unresolvedBoundary = (boundary: BoundaryState): BoundaryState => ({
+    name: boundary.name,
+    mode: boundary.mode,
+    status: "unresolved",
+    ...(boundary.errorId === undefined ? {} : { errorId: boundary.errorId }),
+  })
   // `boundaries` with `name` holding a target's outcome. The URL names one target, so every other
   // intercept boundary goes back to unresolved. A target that answered with a status, or failed, is
   // an error state: its data never reaches the boundary.
@@ -690,12 +697,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       next[name] =
         typeof boundary.mode === "string" || name === descriptor.name
           ? boundary
-          : {
-              name: boundary.name,
-              mode: boundary.mode,
-              status: "unresolved",
-              ...(boundary.errorId === undefined ? {} : { errorId: boundary.errorId }),
-            }
+          : unresolvedBoundary(boundary)
     }
     const base = {
       name: descriptor.name,
@@ -1469,6 +1471,44 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         path === state.path
       ) {
         emit()
+        return
+      }
+      // Back out of a boundary to the page it covers. The page is still in `state` and every reload an
+      // open boundary runs keeps it fresh, so show it again: fetching it rebuilt its dynamic boundaries
+      // (a fallback, then the data) under a page that never left. One loaded for another visitor, or
+      // marked stale, loads as any navigation does.
+      const held = state.intercepted
+      if (
+        held !== undefined &&
+        path === held.pagePath &&
+        matched.routeId === state.routeId &&
+        shownFor === visitor &&
+        state.documentLoad === undefined &&
+        cache.get(path)?.status !== "stale"
+      ) {
+        const mine = ++generation
+        navAbort?.abort()
+        await present(() => {
+          if (mine !== generation) return
+          const { intercepted: _closed, ...page } = state
+          const boundary = state.boundaries?.[held.boundary]
+          state = {
+            ...page,
+            path,
+            ...(boundary === undefined
+              ? {}
+              : {
+                  boundaries: {
+                    ...state.boundaries,
+                    [held.boundary]: unresolvedBoundary(boundary),
+                  },
+                }),
+            pending: false,
+            pendingPath: undefined,
+          }
+          emit()
+        })
+        if (mine === generation) reloadIfStale()
         return
       }
       // Client-only search fast path: same route + same pathname, and every changed search key is
