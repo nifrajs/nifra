@@ -86,7 +86,7 @@ describe("selectRouteLanes", () => {
     })
   })
 
-  test("preserves lifecycle sublanes and the derive-before specializations", () => {
+  test("preserves lifecycle sublanes and fuses any mix of derive, before and after hooks", () => {
     const hooks = selectRouteLanes({ ...base, derives: 1, beforeHandle: 1 })
     const hooksAfter = selectRouteLanes({ ...base, derives: 1, beforeHandle: 1, afterHandle: 1 })
     const hooksAfterChain = selectRouteLanes({
@@ -105,30 +105,69 @@ describe("selectRouteLanes", () => {
     expect(hooks).toMatchObject({
       lane: "lifecycle",
       lifecycleLane: "hooks",
-      lifecycleHookLane: "derive-before",
+      lifecycleHookLane: "hooks",
     })
     expect(hooksAfter).toMatchObject({
       lane: "lifecycle",
       lifecycleLane: "hooks",
-      lifecycleHookLane: "derive-before-after",
+      lifecycleHookLane: "hooks",
     })
-    expect(hooksAfterChain.lifecycleHookLane).toBeUndefined()
+    expect(hooksAfterChain.lifecycleHookLane).toBe("hooks")
     expect(bodyQuery).toMatchObject({ lane: "lifecycle", lifecycleLane: "body-query" })
     expect(around).toMatchObject({ lane: "bare", fusedLane: undefined })
+  })
+
+  test("fuses every non-empty mix of derive, before and after hooks", () => {
+    const counts = [0, 1, 2, 3]
+    for (const derives of counts)
+      for (const beforeHandle of counts)
+        for (const afterHandle of counts) {
+          const lanes = selectRouteLanes({ ...base, derives, beforeHandle, afterHandle })
+          if (derives + beforeHandle + afterHandle === 0) {
+            expect(lanes.fusedLane).toBe("bare")
+          } else {
+            expect(lanes).toMatchObject({ lifecycleHookLane: "hooks", fusedLane: "hooks" })
+          }
+        }
+  })
+
+  test("keeps hook routes that can observe errors, decorations or a contract on the generic lane", () => {
+    const hooks = { ...base, beforeHandle: 1 }
+    for (const lanes of [
+      selectRouteLanes({ ...hooks, onError: 1 }),
+      selectRouteLanes({ ...hooks, hasDecorations: true }),
+      selectRouteLanes({ ...hooks, hasResponseContract: true }),
+      selectRouteLanes({ ...hooks, hasIdempotency: true }),
+      selectRouteLanes({ ...hooks, afterHandle: 1, onError: 1 }),
+    ]) {
+      expect(lanes.lifecycleHookLane).toBeUndefined()
+      expect(lanes.fusedLane).toBeUndefined()
+    }
   })
 
   test("fuses body lifecycle routes only when the complete shape is eligible", () => {
     const body = { body: t.object({ name: t.string() }) }
     expect(selectRouteLanes({ ...base, schema: body, derives: 1, beforeHandle: 1 })).toMatchObject({
       lane: "lifecycle",
-      fusedLane: "body-derive-before",
+      fusedLane: "body-hooks",
     })
     expect(
       selectRouteLanes({ ...base, schema: body, derives: 1, beforeHandle: 1, afterHandle: 1 }),
     ).toMatchObject({
       lane: "lifecycle",
-      fusedLane: "body-derive-before-after",
+      fusedLane: "body-hooks",
     })
+    for (const hooks of [
+      { derives: 1 },
+      { beforeHandle: 1 },
+      { afterHandle: 1 },
+      { derives: 2, beforeHandle: 3, afterHandle: 2 },
+    ]) {
+      expect(selectRouteLanes({ ...base, schema: body, ...hooks })).toMatchObject({
+        lane: "lifecycle",
+        fusedLane: "body-hooks",
+      })
+    }
   })
 
   test("does not fuse lifecycle routes that need generic wrappers or recovery", () => {

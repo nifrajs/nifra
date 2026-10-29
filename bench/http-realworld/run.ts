@@ -8,8 +8,8 @@
  * validated body - the shape nifra's fused Web lane targets, and the shape most benchmarks (including
  * TechEmpower) use. This suite measures the same GET/POST split but on a route that has what a real
  * API route actually has: security headers, CORS, a request-id hook, bearer-token auth via a derive,
- * and a cookie read - on nifra specifically, that combination compiles into the fused derive-before
- * lane (body-derive-before for the POST), not the bare/query/body lanes. Run both suites and compare
+ * and a cookie read - on nifra specifically, that combination compiles into the fused hooks
+ * lane (body-hooks for the POST), not the bare/query/body lanes. Run both suites and compare
  * the SAME framework's ratio across them to see what the middleware work costs directly, rather than
  * taking the bare-route number as if it generalizes.
  *

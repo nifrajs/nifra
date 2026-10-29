@@ -73,9 +73,46 @@ function sanitize(value: unknown): unknown {
   return value
 }
 
+// JSON.parse throws on every plain word, and a throw costs several times a parse: only a value that can
+// be JSON is handed to it. `ws` is JSON's whitespace, which a value may carry on either side.
+const JSON_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?[ \t\n\r]*$/
+const JSON_LITERAL = /^(?:true|false|null)[ \t\n\r]*$/
+
+function mayBeJson(raw: string): boolean {
+  switch (raw.charCodeAt(0)) {
+    case 34: // "
+    case 91: // [
+    case 123: // {
+    case 32: // whitespace before the value
+    case 9:
+    case 10:
+    case 13:
+      return true
+    case 116: // t
+    case 102: // f
+    case 110: // n
+      return JSON_LITERAL.test(raw)
+    case 45: // -
+    case 48: // 0-9
+    case 49:
+    case 50:
+    case 51:
+    case 52:
+    case 53:
+    case 54:
+    case 55:
+    case 56:
+    case 57:
+      return JSON_NUMBER.test(raw)
+    default:
+      return false
+  }
+}
+
 // One query value: JSON-decode it (so `2` is a number, `true` a boolean, `{...}` an object), falling back
 // to the raw string when it is not JSON or nests past the depth cap.
 function decodeValue(raw: string, limits: SearchLimits): unknown {
+  if (!mayBeJson(raw)) return raw
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -105,36 +142,26 @@ function encodeValue(value: unknown): string {
 const jsonCodec: SearchCodec = {
   parse(raw, limits) {
     if (raw === "" || raw === "?") return {}
-    const usp = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw)
-    // Two passes instead of the old `Set(keys) + getAll(key)` shape, which rescanned the complete
-    // URLSearchParams list once per distinct key (O(keys²)). Admission must be decided BEFORE any
-    // value is grouped: a single grouping pass that also applies the maxKeys cutoff drops the later
-    // occurrences of an already-admitted repeated key the moment some interleaved OTHER key trips the
-    // cutoff (e.g. `?a=1&b=1&a=2` with maxKeys=1 would wrongly yield `{ a: "1" }` instead of
-    // `{ a: ["1", "2"] }`). Deciding the admitted key set first, then grouping only admitted keys,
-    // keeps insertion order, repeated-key semantics, and the maxKeys cutoff byte-identical to the old
-    // code while still making the common bounded query O(entries).
-    const admitted = new Set<string>()
-    for (const key of usp.keys()) {
-      if (admitted.has(key) || FORBIDDEN_KEYS.has(key)) continue
-      if (admitted.size + 1 > limits.maxKeys) break
-      admitted.add(key)
-    }
-    const rawValues = new Map<string, string[]>()
-    for (const [key, value] of usp) {
-      if (!admitted.has(key)) continue
-      let values = rawValues.get(key)
-      if (values === undefined) {
-        values = []
-        rawValues.set(key, values)
-      }
-      values.push(value)
-    }
     const out: Record<string, unknown> = {}
-    for (const [key, values] of rawValues) {
-      const decoded = values.map((value) => decodeValue(value, limits))
-      out[key] = decoded.length > 1 ? decoded : decoded[0]
-    }
+    // The first `maxKeys` distinct keys are kept, in the order they first appear; a later value of a kept
+    // key is still grouped with it, and a key past the cap is dropped whenever it appears.
+    const kept = new Set<string>()
+    let repeated: Map<string, unknown[]> | undefined
+    // URLSearchParams drops one leading `?` itself, so only a second one is sliced off here. One
+    // `forEach` pass costs about half of iterating the keys and then the entries.
+    new URLSearchParams(raw.startsWith("??") ? raw.slice(1) : raw).forEach((value, key) => {
+      if (FORBIDDEN_KEYS.has(key)) return
+      if (kept.has(key)) {
+        repeated ??= new Map()
+        const values = repeated.get(key)
+        if (values === undefined) repeated.set(key, [out[key], decodeValue(value, limits)])
+        else values.push(decodeValue(value, limits))
+      } else if (kept.size < limits.maxKeys) {
+        kept.add(key)
+        out[key] = decodeValue(value, limits)
+      }
+    })
+    if (repeated !== undefined) for (const [key, values] of repeated) out[key] = values
     return out
   },
   serialize(value) {

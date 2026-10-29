@@ -18,8 +18,8 @@
  * artifact a real `bun add @nifrajs/core` user gets. Type-only imports are unaffected (the "types"
  * condition already always points at `dist/*.d.ts`), so only the value import changes.
  *
- * One `.derive()` plus one `.use(beforeHandle)` is the shape nifra compiles into its fused derive-before
- * lane (body-derive-before for the POST), not the bare/query/body-only lanes. That's the point: this
+ * One `.derive()` plus one `.use(beforeHandle)` is the shape nifra compiles into its fused hooks
+ * lane (body-hooks for the POST), not the bare/query/body-only lanes. That's the point: this
  * suite measures what a route with auth and middleware actually gets, not the bare-route shape.
  */
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core/server"
