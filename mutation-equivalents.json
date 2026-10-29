@@ -703,6 +703,13 @@
       "from": "cbs.onSettled !== undefined",
       "nth": 1,
       "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "return undefined",
+      "fn": "wasCancelled",
+      "code": "return false",
+      "from": "return false",
+      "reason": "Every caller reads the result only in an `if`, where `undefined` and `false` take the same branch."
     }
   ],
   "packages/web/src/router.ts": [

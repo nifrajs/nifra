@@ -685,7 +685,7 @@ const SURFACES: readonly Surface[] = [
         },
         settled: () => ({
           handles: handles.map((handle) => handle.snapshot()),
-          cache: queries.dehydrate(),
+          cache: queries.dehydrate({ shouldDehydrateQuery: () => true }),
         }),
         close: () => {
           for (const unmount of mounted) unmount()

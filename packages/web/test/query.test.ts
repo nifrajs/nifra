@@ -417,7 +417,7 @@ describe("SSR bridge: dehydrate / hydrate", () => {
     const server = createQueryClient({ now: () => 100 })
     await server.prefetchQuery(["user", 1], async () => ({ name: "Ada" }))
     server.query(["pending"], async () => "never fetched") // pending → not dehydrated
-    const state = server.dehydrate()
+    const state = server.dehydrate({ shouldDehydrateQuery: () => true })
     expect(state.queries).toEqual([{ key: ["user", 1], data: { name: "Ada" }, updatedAt: 100 }])
 
     const client = createQueryClient({ now: () => 200 })
@@ -450,6 +450,26 @@ describe("SSR bridge: dehydrate / hydrate", () => {
       { key: ["public", "profile"], data: { name: "Ada" }, updatedAt: 100 },
     ])
     expect(state.infiniteQueries).toEqual([])
+  })
+
+  test("dehydrate sends nothing until a filter selects queries, whatever the cache holds", async () => {
+    const server = createQueryClient({ now: () => 100 })
+    await server.prefetchQuery(["private", "token"], async () => "server-only-token")
+    const feed = server.infiniteQuery(["private", "feed"], async (page: number) => `page-${page}`, {
+      initialPageParam: 0,
+      getNextPageParam: () => undefined,
+    })
+    await feed.fetch()
+
+    const empty = { queries: [], infiniteQueries: [] }
+    expect(server.dehydrate()).toEqual(empty)
+    expect(server.dehydrate({})).toEqual(empty)
+    expect(JSON.stringify(server.dehydrate())).not.toContain("server-only-token")
+
+    const all = server.dehydrate({ shouldDehydrateQuery: () => true })
+    expect(all.queries).toHaveLength(1)
+    expect(all.infiniteQueries).toHaveLength(1)
+    expect(server.dehydrate({ shouldDehydrateQuery: () => false })).toEqual(empty)
   })
 
   test("hydrate does not clobber a client entry that is already fresher", () => {
@@ -792,7 +812,7 @@ describe("infinite queries share the cache's invalidation, SSR bridge and evicti
     const h = server.infiniteQuery(["feed"], async (p: number) => `p${p}`, opts)
     await h.fetch()
     await h.fetchNextPage()
-    const state = server.dehydrate()
+    const state = server.dehydrate({ shouldDehydrateQuery: () => true })
     expect(state.infiniteQueries).toEqual([
       { key: ["feed"], data: { pages: ["p0", "p1"], pageParams: [0, 1] }, updatedAt: 100 },
     ])

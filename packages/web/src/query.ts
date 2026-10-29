@@ -74,6 +74,8 @@ export interface DehydratedQueryInfo {
 
 /** Select which successful query values may cross the SSR-to-browser boundary. */
 export interface DehydrateOptions {
+  /** Every dehydrated value is serialized into the page and readable by the visitor, so a query is
+   * included only when this returns `true`. Without it `dehydrate` sends nothing. */
   readonly shouldDehydrateQuery?: (query: DehydratedQueryInfo) => boolean
 }
 
@@ -163,7 +165,8 @@ export interface QueryClient {
   /** Fetch + cache a query's data WITHOUT subscribing (SSR prefetch, hover warm). Resolves when cached;
    * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */
   prefetchQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => Promise<void>
-  /** Serialize every successful query to a transferable snapshot (server → client SSR bridge). */
+  /** Serialize the successful queries that `options.shouldDehydrateQuery` selects to a transferable
+   * snapshot (server → client SSR bridge). Deny by default: with no filter the snapshot is empty. */
   dehydrate: (options?: DehydrateOptions) => DehydratedState
   /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */
   hydrate: (state: DehydratedState) => void
@@ -543,7 +546,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   const dehydrate = (options: DehydrateOptions = {}): DehydratedState => {
     checkEpoch()
-    const shouldDehydrateQuery = options.shouldDehydrateQuery ?? (() => true)
+    const shouldDehydrateQuery = options.shouldDehydrateQuery ?? (() => false)
     const queries: Array<{ key: unknown; data: unknown; updatedAt: number }> = []
     for (const entry of cache.values()) {
       if (

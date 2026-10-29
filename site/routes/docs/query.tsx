@@ -59,7 +59,8 @@ const SSR_QUERY_CACHE = `// Create one QueryClient for this server request.
 const queryClient = createQueryClient({ now: () => Date.now() })
 await queryClient.prefetchQuery(["profile", user.id], loadProfile)
 const queryState = queryClient.dehydrate({
-  shouldDehydrateQuery: ({ key }) => !(Array.isArray(key) && key[0] === "private"),
+  // Nothing is sent unless this returns true: name what is safe for the visitor to read.
+  shouldDehydrateQuery: ({ key }) => Array.isArray(key) && key[0] === "profile",
 })
 
 // Return queryState through the route's normal loader-data serializer.
@@ -116,9 +117,10 @@ export default function Query() {
       </p>
       <p>
         Every value included by <code>dehydrate</code> is serialized to the browser and is visible to
-        that visitor. Prefetch client-safe data only; never include tokens or server-only fields. Use
-        <code>shouldDehydrateQuery</code> to filter both regular and infinite queries as an additional
-        boundary check.
+        that visitor, so <code>dehydrate</code> sends nothing by default. Pass
+        <code>shouldDehydrateQuery</code> to name the regular and infinite queries that are safe to
+        send; pass <code>() =&gt; true</code> only when every successful query in that client is
+        meant for the browser. Never include tokens or server-only fields.
       </p>
       <CodeBlock code={SSR_QUERY_CACHE} />
 

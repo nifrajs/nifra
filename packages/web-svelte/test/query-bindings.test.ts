@@ -126,7 +126,7 @@ test("provideQueryClient seeds the client first and then needs a component to ho
 
   const untouched = createQueryClient({ now: () => 10 })
   expect(() => provideQueryClient(untouched)).toThrow()
-  expect(untouched.dehydrate().queries).toEqual([])
+  expect(untouched.dehydrate({ shouldDehydrateQuery: () => true }).queries).toEqual([])
 })
 
 test("on the server a paged query store is idle, has no pages, and its actions reject", async () => {

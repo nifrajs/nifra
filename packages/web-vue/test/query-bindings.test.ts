@@ -253,6 +253,32 @@ test("provideQueryClient seeds a snapshot only when given one and rejects use af
   }
 })
 
+test("provideQueryClient refuses a component that has already mounted, without seeding", () => {
+  const client = createQueryClient({ now: () => 0 })
+  const hydrate = spyOn(client, "hydrate")
+  let refused: unknown
+  try {
+    mount(
+      defineComponent({
+        setup() {
+          onMounted(() => {
+            try {
+              provideQueryClient(client, { queries: [], infiniteQueries: [] })
+            } catch (error) {
+              refused = error
+            }
+          })
+          return empty
+        },
+      }),
+    ).unmount()
+    expect(String(refused)).toContain("must run during component setup")
+    expect(hydrate).not.toHaveBeenCalled()
+  } finally {
+    hydrate.mockRestore()
+  }
+})
+
 test("outside a component useQueryClient neither injects nor warns", () => {
   const warn = spyOn(console, "warn").mockImplementation(() => {})
   try {

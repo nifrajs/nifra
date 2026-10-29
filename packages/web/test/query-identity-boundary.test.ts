@@ -463,6 +463,7 @@ describe("dehydrate with a filter", () => {
       .prefetchQuery(["failed"], async () => Promise.reject(new Error("no")))
       .catch(() => {})
 
+    const everything = { shouldDehydrateQuery: () => true }
     const offered: unknown[] = []
     const state = client.dehydrate({
       shouldDehydrateQuery: ({ key }) => {
@@ -472,7 +473,7 @@ describe("dehydrate with a filter", () => {
     })
     expect(offered).toEqual([["ok"]])
     expect(state.queries).toEqual([{ key: ["ok"], data: "value", updatedAt: 5 }])
-    expect(client.dehydrate()).toEqual(state)
+    expect(client.dehydrate(everything)).toEqual(state)
 
     expect(() =>
       client.dehydrate({
@@ -481,7 +482,7 @@ describe("dehydrate with a filter", () => {
         },
       }),
     ).toThrow("filter bug")
-    expect(client.dehydrate()).toEqual(state)
+    expect(client.dehydrate(everything)).toEqual(state)
   })
 })
 
