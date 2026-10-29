@@ -75,3 +75,59 @@ declare const name: string
   )
   expect(await findings()).toEqual([])
 })
+
+test("a name the file declares again is not the import, in any scope", async () => {
+  writeAppFile(
+    root,
+    "backend/shadow.ts",
+    `import { serverFunctions } from "@nifrajs/web/fn"
+import * as todos from "./todos.fn"
+import * as items from "./items.fn"
+export const local = (() => {
+  const serverFunctions = (namespace: string, module: unknown) => ({ namespace, module })
+  return [serverFunctions("other", todos)]
+})()
+export const param = (items: unknown) => serverFunctions("other", items)
+`,
+  )
+  expect(await findings()).toEqual([])
+})
+
+test("a nifra-expect above a call that spans lines accepts it", async () => {
+  writeAppFile(
+    root,
+    "backend/mount.ts",
+    `import { serverFunctions } from "@nifrajs/web/fn"
+import * as kept from "./kept.fn"
+import * as wrong from "./wrong.fn"
+export const plugins = [
+  // nifra-expect NF-C056: mounted under an alias on purpose
+  serverFunctions(
+    "alias",
+    kept,
+  ),
+  serverFunctions(
+    "other",
+    wrong,
+  ),
+]
+`,
+  )
+  expect(await findings()).toEqual(["backend/mount.ts:11 error"])
+})
+
+test("a nifra-expect with no reason does not hide an error, and the finding says so", async () => {
+  writeAppFile(
+    root,
+    "backend/mount.ts",
+    `import { serverFunctions } from "@nifrajs/web/fn"
+import * as todos from "./todos.fn"
+// nifra-expect NF-C056:
+export const plugin = serverFunctions("todo", todos)
+`,
+  )
+  const result = await collectCheckResult(root, { lintsOnly: true })
+  const found = result.diagnostics.filter((diagnostic) => diagnostic.code === "NF-C056")
+  expect(found.map((diagnostic) => diagnostic.line)).toEqual([4])
+  expect(found[0]?.message).toContain("gives no reason after its colon")
+})

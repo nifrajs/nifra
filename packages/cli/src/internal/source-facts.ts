@@ -40,6 +40,8 @@ export interface TextSlotBooleanCoercion {
 export interface ServerFunctionMount {
   /** The start of the namespace literal. */
   readonly position: number
+  /** The start of the `serverFunctions(...)` call, where a `nifra-expect` comment is written above. */
+  readonly callPosition: number
   readonly namespace: string
   /** The specifier the mounted module namespace was imported from. */
   readonly specifier: string
@@ -217,6 +219,23 @@ function zodBindings(
     }
   }
   return { namespaces, coerce }
+}
+
+/** Every name `source` declares other than by import: variables, parameters, functions and classes, any scope. */
+function declaredNames(ts: TypeScriptApi, source: TSApi.SourceFile): Set<string> {
+  const names = new Set<string>()
+  const bind = (name: TSApi.BindingName): void => {
+    if (ts.isIdentifier(name)) names.add(name.text)
+    else for (const element of name.elements) if (ts.isBindingElement(element)) bind(element.name)
+  }
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) bind(node.name)
+    else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name)
+      names.add(node.name.text)
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return names
 }
 
 /** The initializer of each variable of `source`, any scope, by name: the first one wins. */
@@ -896,6 +915,13 @@ export function createSourceFacts(
       }
     }
     if (modules.size === 0 || (callees.size === 0 && members.size === 0)) return []
+    // A name the file declares again (a local `serverFunctions`, a parameter called like the module) is
+    // not the import, whatever scope it sits in: leave those calls out rather than guess the scope.
+    for (const name of declaredNames(ts, source)) {
+      callees.delete(name)
+      members.delete(name)
+      modules.delete(name)
+    }
     const mounts: ServerFunctionMount[] = []
     const visit = (node: TSApi.Node): void => {
       if (ts.isCallExpression(node)) {
@@ -917,6 +943,7 @@ export function createSourceFacts(
           if (specifier !== undefined)
             mounts.push({
               position: namespace.getStart(source),
+              callPosition: node.getStart(source),
               namespace: namespace.text,
               specifier,
             })

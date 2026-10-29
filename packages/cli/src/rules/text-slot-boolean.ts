@@ -15,11 +15,10 @@ export const textSlotBooleanRule: CheckRule = {
   code: "NF-C055",
   title: "zod coerce.boolean() reads request text",
   scan: (ctx) =>
-    scanSources(
-      ctx,
-      TEXT_SLOT_BOOLEAN_EXPECTATION,
-      (text) => text.includes("coerce") && ZOD_IMPORT.test(text),
-      (facts, tree) =>
+    scanSources(ctx, {
+      expectation: TEXT_SLOT_BOOLEAN_EXPECTATION,
+      mayMatch: (text) => text.includes("coerce") && ZOD_IMPORT.test(text),
+      find: (facts, tree) =>
         facts.textSlotBooleanCoercions(tree).map((found) => ({
           position: found.position,
           report: (line) =>
@@ -37,5 +36,5 @@ export const textSlotBooleanRule: CheckRule = {
               verify: "nifra check",
             }),
         })),
-    ),
+    }),
 }

@@ -13,11 +13,11 @@ export const serverFnNamespaceRule: CheckRule = {
   code: "NF-C056",
   title: "serverFunctions namespace differs from its module's filename",
   scan: (ctx) =>
-    scanSources(
-      ctx,
-      ["NF-C056", "server-fn-namespace"],
-      (text) => text.includes("serverFunctions") && text.includes(".fn"),
-      (facts, tree) =>
+    scanSources(ctx, {
+      expectation: ["NF-C056", "server-fn-namespace"],
+      requireReason: true,
+      mayMatch: (text) => text.includes("serverFunctions") && text.includes(".fn"),
+      find: (facts, tree) =>
         facts.serverFunctionMounts(tree).flatMap((mount) => {
           const base = mount.specifier.split("/").pop() ?? ""
           const expected = base.replace(SERVER_FN_SUFFIX, "")
@@ -25,13 +25,14 @@ export const serverFnNamespaceRule: CheckRule = {
           return [
             {
               position: mount.position,
-              report: (line) =>
+              expectAt: mount.callPosition,
+              report: (line, note) =>
                 diagnostic({
                   code: "NF-C056",
                   severity: "error",
                   file: tree.fileName,
                   line,
-                  message: `serverFunctions(${JSON.stringify(mount.namespace)}, ...) mounts ${base}, whose client stubs call the namespace ${JSON.stringify(expected)}: every call 404s. Mount it as serverFunctions(${JSON.stringify(expected)}, ...), or rename the file.`,
+                  message: `serverFunctions(${JSON.stringify(mount.namespace)}, ...) mounts ${base}, whose client stubs call the namespace ${JSON.stringify(expected)}: every call 404s. Mount it as serverFunctions(${JSON.stringify(expected)}, ...), or rename the file.${note === undefined ? "" : ` ${note}.`}`,
                   evidence: [
                     "the client build names a *.fn.ts module's namespace after its filename without .fn",
                     `the server mounts it under /_nifra/fn/${mount.namespace}/, the stubs POST to /_nifra/fn/${expected}/`,
@@ -42,5 +43,5 @@ export const serverFnNamespaceRule: CheckRule = {
             },
           ]
         }),
-    ),
+    }),
 }
