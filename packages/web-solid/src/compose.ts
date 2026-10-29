@@ -29,7 +29,9 @@ export function compose(chain: readonly unknown[], props: RenderProps): () => JS
         get data() {
           return props.layoutData?.[i] ?? null
         },
-        ...(props.boundaries !== undefined ? { boundaries: props.boundaries } : {}),
+        get boundaries() {
+          return props.boundaries
+        },
         children: child(),
       })
   }
