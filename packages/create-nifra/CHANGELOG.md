@@ -1,5 +1,22 @@
 # create-nifra
 
+## 5.9.0
+
+### Patch Changes
+
+- 7ee17d0: `nifra check --sarif` and the command catalog's check output map report entries to diagnostics through one step. The CLI's page rules read the routes manifest and a `createWebApp` call's options through shared helpers, the layout migration applies its text edits through one function, two source scans share one route-registration reader, the two sync commands share their output schema and flag, and the Python and Go SDK generators share their setup and map-type reading.
+  
+  `create-nifra` passes the flags it parsed to `scaffold` as they are.
+  
+  `@nifrajs/web`'s PostCSS and Sass plugins build their JS module through one function, its client-build guards share one import-chain search, a page route's failed loaders answer through one step, and the router and the live client build a route data request's headers through one function.
+  
+  `@nifrajs/web-svelte`'s Svelte and MDX plugins emit scoped CSS through the stylesheet emitter in `@nifrajs/web/plugins/kit`, as the other kit plugins do. The virtual stylesheet import they write is now `?nifra-svelte-css` (`?nifra-svelte-mdx-css` for MDX), and its resolved path stays slash-separated on Windows.
+  
+  `@nifrajs/mcp` builds its capabilities once for `initialize` and `server/discover`. `@nifrajs/agent-review`'s composer uses the parser's outcome rule and evidence order, and the parser reads its two string lists through one reader. `@nifrajs/pi` reads message text through one helper, and core's evidence report sorts its findings through one comparator.
+- bc42fd2: The modules a package carries as its own copy of another package's file (the static-file open helper, the agent-file generators, the Node-stream hand-off, and core's helpers inside the Node and Deno adapters) are generated from one source each, under a header naming it. No API or behavior change.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- b5152a3: A new Vue site's home page declares only the `data` route prop it reads.
+
 ## 5.8.0
 
 No changes in this release.

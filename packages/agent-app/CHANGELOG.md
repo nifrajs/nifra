@@ -1,5 +1,13 @@
 # @nifrajs/agent-app
 
+## 5.9.0
+
+### Patch Changes
+
+- 5bc60b7: Small helpers that several modules of a package each defined (the object check, RegExp escaping, `\` to `/` path conversion, line lookup) now have one definition per package. No API or behavior change.
+- Updated dependencies [5bc60b7]
+  - @nifrajs/agent-protocol@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

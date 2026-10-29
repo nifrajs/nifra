@@ -1,5 +1,40 @@
 # @nifrajs/webmcp
 
+## 5.9.0
+
+### Patch Changes
+
+- Updated dependencies [8cdb138]
+- Updated dependencies [be1c677]
+- Updated dependencies [f399e06]
+- Updated dependencies [93e7078]
+- Updated dependencies [2c2f58b]
+- Updated dependencies [123409c]
+- Updated dependencies [7ee17d0]
+- Updated dependencies [68d9f31]
+- Updated dependencies [ddeb735]
+- Updated dependencies [a3fb195]
+- Updated dependencies [ffcf41a]
+- Updated dependencies [7a15327]
+- Updated dependencies [866c8ec]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [9942748]
+- Updated dependencies [77b98ea]
+- Updated dependencies [a3caf9b]
+- Updated dependencies [7ba5c9b]
+- Updated dependencies [0445564]
+- Updated dependencies [180bf9d]
+- Updated dependencies [ff9bc11]
+- Updated dependencies [8094874]
+- Updated dependencies [a7b89ee]
+- Updated dependencies [d6e6617]
+- Updated dependencies [6ba9740]
+- Updated dependencies [5f4416a]
+- Updated dependencies [c4ed3e9]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [3299474]
+  - @nifrajs/core@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

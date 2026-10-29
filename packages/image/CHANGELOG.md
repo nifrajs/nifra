@@ -1,5 +1,13 @@
 # @nifrajs/image
 
+## 5.9.0
+
+### Patch Changes
+
+- bc42fd2: The modules a package carries as its own copy of another package's file (the static-file open helper, the agent-file generators, the Node-stream hand-off, and core's helpers inside the Node and Deno adapters) are generated from one source each, under a header naming it. No API or behavior change.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- d6e6617: More helpers that several modules of a package each defined (SHA-256 to hex, the control-character check, code-unit string order, the child-process environment allowlist, realpath with a fallback, the MCP worker's console redirect and reply line) now have one definition per package. No API change. The `git diff` that `@nifrajs/coding-agent` runs now inherits `CI` like its other child processes.
+
 ## 5.8.0
 
 No changes in this release.

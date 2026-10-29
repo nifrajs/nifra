@@ -1,5 +1,63 @@
 # @nifrajs/ts-plugin
 
+## 5.9.0
+
+### Patch Changes
+
+- Updated dependencies [2ffa7c1]
+- Updated dependencies [100a0aa]
+- Updated dependencies [71dea89]
+- Updated dependencies [9c20e05]
+- Updated dependencies [9942748]
+- Updated dependencies [8cdb138]
+- Updated dependencies [be1c677]
+- Updated dependencies [f399e06]
+- Updated dependencies [93e7078]
+- Updated dependencies [2c2f58b]
+- Updated dependencies [123409c]
+- Updated dependencies [7ee17d0]
+- Updated dependencies [68d9f31]
+- Updated dependencies [fa7d102]
+- Updated dependencies [ddeb735]
+- Updated dependencies [a3fb195]
+- Updated dependencies [47a864f]
+- Updated dependencies [9942748]
+- Updated dependencies [ffcf41a]
+- Updated dependencies [7a15327]
+- Updated dependencies [866c8ec]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [a29d1cc]
+- Updated dependencies [9942748]
+- Updated dependencies [77b98ea]
+- Updated dependencies [a3caf9b]
+- Updated dependencies [a0fe5bf]
+- Updated dependencies [7ba5c9b]
+- Updated dependencies [0445564]
+- Updated dependencies [180bf9d]
+- Updated dependencies [ff9bc11]
+- Updated dependencies [8094874]
+- Updated dependencies [a7b89ee]
+- Updated dependencies [34b780e]
+- Updated dependencies [111c3be]
+- Updated dependencies [5bd225e]
+- Updated dependencies [d6e6617]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [159ae97]
+- Updated dependencies [6ba9740]
+- Updated dependencies [5f4416a]
+- Updated dependencies [bc05ec5]
+- Updated dependencies [d3c050e]
+- Updated dependencies [c4ed3e9]
+- Updated dependencies [9942748]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [3299474]
+- Updated dependencies [543d00a]
+- Updated dependencies [020eb7b]
+- Updated dependencies [9942748]
+- Updated dependencies [9785cd4]
+  - @nifrajs/web@5.9.0
+  - @nifrajs/core@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

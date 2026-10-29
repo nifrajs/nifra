@@ -1,5 +1,154 @@
 # @nifrajs/web
 
+## 5.9.0
+
+### Minor Changes
+
+- fa7d102: `@nifrajs/deno`'s `serve` takes `static`, a handler that sees every request before the app does. It answers with a response, or hands the request to the app with `undefined`. A file it answers wins over any route at the same path, no hook of the app runs for it, and a throw answers a plain `500`.
+  
+  `nifra build --target deno` emits a server that runs on `@nifrajs/deno`'s `serve` and serves its client bundle and public files through `static`, so a Deno app installs `@nifrajs/deno` of the same release, as a Node app installs `@nifrajs/node`. The built server serves WebSocket routes, and `stop()` drains its in-flight requests. With an older adapter installed the build stops before bundling and names both versions.
+  
+  A built Deno server serves its static files again. Bun's browser stand-in for `node:crypto`, which the Deno entry tags files with, has no working `createHash`, so every file answered `404` and pages loaded without their client bundle. The Deno server bundle now imports `node:crypto` from Deno itself, and a `--vite` Deno build no longer refuses it as an edge built-in. `buildServer` and `buildServerVite` take `providedBuiltins`, the Node built-ins the runtime that runs the bundle has besides what its target implies.
+  
+  `nifra.config.ts` takes `selfHost`, the settings the server a `bun`, `node` or `deno` build emits starts with, `nifra start` included. `gracefulSignals` (`true`, or `{ drainMs, delayMs }`) drains the server on SIGTERM and SIGINT instead of letting the signal kill it. `idleTimeoutSec` is how long a Bun server keeps a connection that moves no bytes, from `0` (never) to 255; Node and Deno ignore it, and an edge build ignores `selfHost`. `buildTarget` and `generateServerEntry` take the same `selfHost` and refuse a value of the wrong shape before building.
+- 111c3be: `createWebApp({ nonce, cspHeader })` writes the Content-Security-Policy header itself. `cspHeader` receives `{ sources, nonce }`, where `sources` is `'nonce-…'` plus a `'sha256-…'` hash for each constant inline script nifra writes, and returns the header value or `undefined` to send none. Every document the app renders carries it, built from the nonce on that document's own scripts: pages, status pages, `_error`, and streamed and deferred documents. A wrapper that rebuilds the request with `new Request(url, req)` in front of the app no longer has to find out which nonce a document used. A document the resolver leaves nonce-free gets the hash sources alone. Nonce documents stay `private, no-store`. `cspHeader` needs `nonce`, and is refused beside `csp` or beside a `createNonceResolver({ header })` resolver. A nonce nifra writes into a policy, under `cspHeader` or `createCspPolicy`, must be base64 or base64url characters; any other value fails the render instead of reaching the header, where a quote would add sources to the policy.
+- c4ed3e9: `serveStatic(mounts)` serves files on disk with one set of options on every runtime: from `@nifrajs/core/serve-static` for Bun's `app.listen({ static })`, and from `@nifrajs/node` and `@nifrajs/deno` for their `serve({ static })`. Each reads files with its runtime's own file API, and a mount answers a request the same way on all three.
+  
+  ```ts
+  import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
+  
+  app.listen(3000, {
+    static: serveStatic([
+      { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets, cacheControl: ONE_DAY },
+      { dir: new URL("./public/", import.meta.url), prefix: "/", immutable: false, cacheControl: ONE_DAY, fallthrough: true },
+    ]),
+  })
+  ```
+  
+  A mount takes `dir`, `prefix` (default `/assets`), `immutable`, `hashedFiles`, `cacheControl`, `files`, `allow`, `headers`, `dotfiles` and `fallthrough`. `hashedFiles` takes paths, an array of RegExps or a `(pathname) => boolean` predicate, matched on the encoded URL path, so files a pre-build step content-hashed, such as the fonts `loadGoogleFont` writes into `public/fonts/`, are cached immutably without being in the build manifest. A global or sticky pattern is used without that flag; a predicate runs as written. A path under a mount's prefix that it cannot serve answers `404` (`400` malformed, `403` traversing) unless the mount sets `fallthrough: true`, which hands it to the next mount and then the app. A request no mount takes returns `undefined` synchronously.
+  
+  `@nifrajs/web`'s `servePublicDir`, `ServePublicDirOptions`, `PublicDirCache` and `HashedFiles` are removed. `servePublicDir({ dir })` answers as `serveStatic({ dir, prefix: "/", fallthrough: true, hashedFiles: (path) => path.startsWith("/assets/"), cacheControl: ONE_DAY })` does, and `nifra upgrade 5.9.0` makes that edit. `nifra dev` serves `public/` with it, and the servers `nifra build` emits for bun, node and deno pass their runtime's `serveStatic` the same mounts.
+- 543d00a: `RouterState.documentLoad` names a URL to load as a document when the page on screen was loaded for the previous visitor and a load for the visitor now here failed: its reload, or a navigation or submit away from it. `installHistory` loads it in place of the current history entry; without it, the router keeps what it shows and sets the flag. A form a visitor change caught before its POST reached the server is not posted again for the new visitor.
+
+### Patch Changes
+
+- 2ffa7c1: The React, Preact, Solid, Svelte and Vue `useServerFn` bindings take their function through one shared helper in `@nifrajs/web/internal/client-server-fn`.
+  
+  The React, Svelte and Vue client and keep-alive mounts read a hydration verification runner's hooks through one reader in `@nifrajs/web/internal/hydration-assurance`. Recoverable errors and warnings reach the runner as before.
+- 100a0aa: The React and Preact `ServerComponent` outlets mount, adopt and tear down their instance through one lifecycle in `@nifrajs/web/internal/component-outlet`, and behave alike. An outlet whose host holds no `<nifra-component>` reports `component_contract` through `onError` rather than returning silently in React or throwing in Preact. A mount, adoption or teardown failure reaches both the controller a page passes and the outlet's own `onError`. A React outlet adopts new component state only when that state changes, not when its `onError` does.
+- 71dea89: Every binding's `useNavigate` returns one navigate from `@nifrajs/web/internal/navigate-runtime`, the same function on every call. The React, Preact, Solid and Vue `Hole` components read their boundary state through the `HoleState` type in `@nifrajs/web/internal/hole-runtime`.
+- 9c20e05: `@nifrajs/node`'s and `@nifrajs/deno`'s `serve` take `gracefulSignals` in place of `signals`, the name Bun's `server({ gracefulSignals })` already uses. The value is unchanged: `true`, or the `{ drainMs, delayMs }` passed to `stop()`.
+  
+  ```ts
+  // before
+  await serve(app, { port: 3000, signals: { drainMs: 8_000 } })
+  // after
+  await serve(app, { port: 3000, gracefulSignals: { drainMs: 8_000 } })
+  ```
+  
+  A `signals` option is refused with a `TypeError` that names `gracefulSignals`, so a server cannot start without the signal handling it asked for. `nifra build --target node` and `--target deno` emit `gracefulSignals`.
+- 9942748: An Auth.js session read under `@nifrajs/web` keep-alive keeps the identity epoch. Auth.js encrypts a new session token on every read, so each one used to rotate the epoch, drop every kept page and reload the page on screen. When the request carries an epoch, the `authjs()` mount decrypts the token it received and the one it sent, and when every claim but `iat`, `exp` and `jti` matches it names that cookie as re-issued to the same visitor, in a response header the epoch hook reads and removes. A sign-in, a switch to another user and a sign-out still rotate the epoch, and a request without an epoch costs nothing extra.
+- f399e06: `listen()` takes `static`, a handler that sees every request before the app does, the ones Bun's route table serves included. It answers with a response, or hands the request to the app with `undefined`. A file it answers wins over any route at the same path, and no hook of the app runs for it.
+  
+  `nifra build --target bun` emits a server that runs on `app.listen()` and serves its client bundle and public files through `static`. The built server answers a failing request with the listener's plain 500, serves WebSocket routes, and supports `stop()` and `withIdleTimeout()`. Pages of an app without request hooks are served from Bun's route table.
+  
+  A `createWebApp` host policy refuses requests on every route of an app served by `app.listen()`, the routes Bun's route table holds included.
+- 93e7078: `@nifrajs/core/canonical-json` exports `canonicalJson(value)`: JSON text with object keys sorted by UTF-16 code unit, no whitespace, and `undefined` members left out. A `JSON.rawJSON` value is written verbatim. A value JSON cannot carry throws a `TypeError` instead of being written as something else: a non-finite number, an `undefined` or missing array item, a `Date`, `Map`, typed array or class instance, a function, a symbol, a bigint.
+  
+  Route manifests and their signatures, project evidence, idempotency fingerprints, agent resume and registry digests, `canonicalJson` from `@nifrajs/coding-agent/orchestration`, agent-eval and certification digests, contract-lab and adversarial body comparisons, and server-component input keys all use this encoding. Their bytes for JSON data are unchanged, so stored manifests, signatures, fingerprints and digests still match. Where one of them used to write a non-JSON value lossily (a `Date` as `{}`, `NaN` as `null`, an `undefined` array item as an empty slot), it now throws. In contract-lab and adversarial runs, an expected body's `undefined` members are left out, so they match a response that omits those members.
+- 123409c: `@nifrajs/node` and `@nifrajs/deno` read core's WebSocket upgrade outcome through one generated type view, which core checks its own types against, instead of two hand-written mirrors.
+  
+  The CLI's MCP workers share one request reader, its project children one stdout guard, six `nifra check` security scans one file walker, and its route-text scans one string-aware scanner.
+  
+  The Bun and Vite builds of `@nifrajs/web` share their client-entry, manifest and server-build steps, and the Vite client leak guard and server zone guard share one plugin body. `bunBundler.buildServer` and `viteBundler.buildServer` pass every option they receive through to `buildServer` and `buildServerVite`, so an option the `Bundler` type leaves out, such as `conditions`, `minify` or `lazy`, takes effect instead of being dropped.
+  
+  Core's evidence, diff and saga code share their schema-part mapping and saga ownership steps, its SQL and Durable Object lease stores share their row mapping and held-lease update, and the JSON body lane's byte readers share one settle step.
+  
+  `@nifrajs/node`'s two request sources share one base for their URL and header reads, and its Web-request fallback and Request/Response forwarding each live once.
+  
+  The coding agent's dispatch store checks a lease once for every write, its host and tracer share one plan index and gate check, and its two UI extension calls share one handler.
+  
+  `@nifrajs/agent` checks a tool step's deadline through one helper before and after approval, and its fake and replay gateways validate their scripted responses once. `@nifrajs/testing`'s agent-eval composition records its contract-lab and certification components through one helper.
+  
+  `@nifrajs/schema` reads one record guard from a single module.
+- 7ee17d0: `nifra check --sarif` and the command catalog's check output map report entries to diagnostics through one step. The CLI's page rules read the routes manifest and a `createWebApp` call's options through shared helpers, the layout migration applies its text edits through one function, two source scans share one route-registration reader, the two sync commands share their output schema and flag, and the Python and Go SDK generators share their setup and map-type reading.
+  
+  `create-nifra` passes the flags it parsed to `scaffold` as they are.
+  
+  `@nifrajs/web`'s PostCSS and Sass plugins build their JS module through one function, its client-build guards share one import-chain search, a page route's failed loaders answer through one step, and the router and the live client build a route data request's headers through one function.
+  
+  `@nifrajs/web-svelte`'s Svelte and MDX plugins emit scoped CSS through the stylesheet emitter in `@nifrajs/web/plugins/kit`, as the other kit plugins do. The virtual stylesheet import they write is now `?nifra-svelte-css` (`?nifra-svelte-mdx-css` for MDX), and its resolved path stays slash-separated on Windows.
+  
+  `@nifrajs/mcp` builds its capabilities once for `initialize` and `server/discover`. `@nifrajs/agent-review`'s composer uses the parser's outcome rule and evidence order, and the parser reads its two string lists through one reader. `@nifrajs/pi` reads message text through one helper, and core's evidence report sorts its findings through one comparator.
+- 68d9f31: Internal cleanup: the CLI's check rules, the coding agent's per-node records, the durable backends' scan pages and the web build's steps each have one implementation where there were copies. No behaviour changes.
+- 47a864f: Build a server-rendered document's component props without copying the render options, and skip validating an empty ISR tag list. Output and headers are unchanged.
+- 9942748: The identity epoch stays put while the same visitor's session renews. An `@nifrajs/auth` cookie-mode session re-signed with the same data, as a rolling session is on every commit, renews the epoch it holds with the new lifetime instead of rotating it, so kept pages survive and the page on screen does not reload on each response. A sign-in, a sign-out or a change to the session's data still rotates it.
+- a29d1cc: A hydrating page's handover entries (the route id, the prerendered paths, the copy chunks and the locales) are serialized when its cached document pieces are built, instead of on every render. A page that does not hydrate serializes none. The document bytes are unchanged.
+- 9942748: A partially prerendered hole ignores a fill that is an array, as it ignores any other fill that is not an object, so an interactive hole's root never renders one as its props.
+  
+  `@nifrajs/node` merges a plain render's headers and checks a WebSocket close through generated copies of `@nifrajs/core`'s own functions, which `check:vendored` keeps identical to their source.
+  
+  A WebSocket text message or close reason whose length alone cannot settle its byte cap is sized by the runtime's native `Buffer.byteLength` where a global `Buffer` exists (Bun, Node, Deno, and Workers on a recent compatibility date), and counted character by character where it does not.
+  
+  `nifra stylex-migrate` reads nested style objects through the CLI's shared record check.
+- a0fe5bf: The keep-alive mounts of the React, Preact, Svelte, Solid and Vue adapters take their framework-free half from `@nifrajs/web/internal/keep-alive-mount`. This covers the slot tree of each router state, the parking each committed tree goes to, render props made once per state, and the slots under each layout. Each adapter still renders the slots its own way. Kept pages behave as before.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- 34b780e: `@nifrajs/node`'s `serve` takes `static` as a function, the same option as Bun's `app.listen()` and `@nifrajs/deno`'s `serve`. It sees every request before the app does and answers with a response, or hands the request to the app with `undefined`. A throw or a rejection answers a plain `500`.
+  
+  Mounts move into `serveStatic(mounts)`, which takes the options `static` took before:
+  
+  ```ts
+  // before
+  await serve(app, { port: 3000, static: { dir: new URL("./assets/", import.meta.url) } })
+  // after
+  await serve(app, { port: 3000, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) })
+  ```
+  
+  `serve` runs `serveStatic`'s mounts on Node's own request, so a request they pass on still reaches the app on its direct lane. Any other function needs a Web `Request` for every request. Called with a Web `Request`, `serveStatic`'s function answers as its mounts do. A mount object passed to `static` is refused with a `TypeError` that names `serveStatic`.
+  
+  `nifra build --target node` emits `static: serveStatic([...])`.
+- 5bd225e: `nifra context`, the MCP route tools and a served `llms.txt` now print the same typed-client call for a route. A `QUERY` route is a `.$query(body, { query })` call: `nifra context` printed a plain `fetch` for it, and `llms.txt` a `.query()` call the client does not have. `nifra context` now keeps a `DELETE` route's body in its options (`.delete({ body })`), and `llms.txt` prints a path segment spelled `$query` as a call on its parent node, as it already did for the other reserved client keys. A WebSocket route is printed as the `.ws()` call that returns its handle, unawaited: `nifra context` printed a `fetch` for it, and `llms.txt` an awaited `.ws()`.
+- 5bc60b7: Small helpers that several modules of a package each defined (the object check, RegExp escaping, `\` to `/` path conversion, line lookup) now have one definition per package. No API or behavior change.
+- 159ae97: The React, Preact and Vue client mounts and the Svelte keep-alive mount build a route's props with one builder from `@nifrajs/web`. The props a page receives are unchanged.
+- 6ba9740: `requestLocal<T>()` from `@nifrajs/core/server` is a per-request slot with `get`, `set`, `has` and `delete` whose value follows the request through the copies nifra makes of it: a `mount()` that strips its prefix, a mount's WebSocket pass reused for HTTP, a request target nifra resolves, the transport-codec and idempotency lanes, `methodOverride()`, a rewriting `trimTrailingSlash()` or `appendTrailingSlash()`, a live load, and the owner page's re-render after a progressive action. Every copy shares one scope: a value set before a mount is read in the child, and one the child sets is read through the parent's request. `carryRequestLocals(from, to)` joins a request a wrapper or an `onRequest` hook rebuilt to the same scope; a copy made without it starts empty. Values are held weakly and never cross requests. Make slots at startup: copies are linked only once a first slot exists, so a request copied before then starts empty.
+- bc05ec5: A page request parses its query string once, however many places read the search (the loader context, the effective search, the render props). Before, a page with a query string parsed it three times per document request. Each reader still validates and receives its own copy, so the values and their independence from one another are unchanged.
+- d3c050e: A route's query string is read in one pass, and a value is handed to `JSON.parse` only when it can be JSON, so plain words no longer go through a throwing parse. The parsed values, their order, the key limit, the depth cap and the dropped keys are unchanged.
+- 9942748: `createSessions({ identity })` names the data keys that say who the visitor is, such as a user id, an organization or a role. The session cookie's tag then changes only when one of them does, in either mode, so `@nifrajs/web` keep-alive keeps the pages it holds across a commit that writes other data, a cart say. Unset, every key counts. Once `identity` is set, a cookie-mode cookie carries the tag in its signed payload, and an earlier version still reads it.
+- 020eb7b: Query clients and router fetchers hold nothing for the next visitor. `identityChanged()` clears every query client the page made, cached, infinite and hydrated queries alike, and returns every fetcher to idle. In an app with a `keepAlive` route, a new identity epoch cookie does the same on the next read, through the client or through a query handle or fetcher the page kept from before: data goes at once, and mounted queries and fetchers hear of it once the current render is over. The router reloads the page on screen in place, shown as it was and pending until the reload lands. A query fetch or refetch, an infinite query's page fetch, a fetcher load, a navigation or `invalidate()` still loading loads once more for the new visitor, or answers as the reload the change started, and its promise settles once that answer is shown, or rejects if that load fails; a submit still posting finishes before the page reloads. A server that sets a new epoch on every response costs a bounded number of loads, never a loop. The epoch is read once per synchronous run, since a `document.cookie` read costs microseconds.
+- 9942748: A reload for a visitor change loads once more when the identity epoch moves while it runs, so the router and the query client see another tab's sign-in or sign-out that lands during the reload. A fetcher's submit keeps its answer, and its pending state, when the visitor changes while its POST is in flight.
+- 9785cd4: `buildTargetWith` refuses a server build that emitted code chunks besides its entry, naming them, because every server target's deploy ships the entry file alone. A split server used to build and then fail at its first import of a chunk.
+- Updated dependencies [8cdb138]
+- Updated dependencies [be1c677]
+- Updated dependencies [f399e06]
+- Updated dependencies [93e7078]
+- Updated dependencies [2c2f58b]
+- Updated dependencies [123409c]
+- Updated dependencies [7ee17d0]
+- Updated dependencies [68d9f31]
+- Updated dependencies [ddeb735]
+- Updated dependencies [a3fb195]
+- Updated dependencies [ffcf41a]
+- Updated dependencies [7a15327]
+- Updated dependencies [866c8ec]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [9942748]
+- Updated dependencies [77b98ea]
+- Updated dependencies [a3caf9b]
+- Updated dependencies [7ba5c9b]
+- Updated dependencies [0445564]
+- Updated dependencies [180bf9d]
+- Updated dependencies [ff9bc11]
+- Updated dependencies [8094874]
+- Updated dependencies [a7b89ee]
+- Updated dependencies [d6e6617]
+- Updated dependencies [6ba9740]
+- Updated dependencies [5f4416a]
+- Updated dependencies [c4ed3e9]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [3299474]
+  - @nifrajs/core@5.9.0
+  - @nifrajs/island-trigger@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

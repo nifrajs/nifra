@@ -1,5 +1,69 @@
 # @nifrajs/deno
 
+## 5.9.0
+
+### Minor Changes
+
+- 9c20e05: `@nifrajs/node`'s and `@nifrajs/deno`'s `serve` take `gracefulSignals` in place of `signals`, the name Bun's `server({ gracefulSignals })` already uses. The value is unchanged: `true`, or the `{ drainMs, delayMs }` passed to `stop()`.
+  
+  ```ts
+  // before
+  await serve(app, { port: 3000, signals: { drainMs: 8_000 } })
+  // after
+  await serve(app, { port: 3000, gracefulSignals: { drainMs: 8_000 } })
+  ```
+  
+  A `signals` option is refused with a `TypeError` that names `gracefulSignals`, so a server cannot start without the signal handling it asked for. `nifra build --target node` and `--target deno` emit `gracefulSignals`.
+- fa7d102: `@nifrajs/deno`'s `serve` takes `static`, a handler that sees every request before the app does. It answers with a response, or hands the request to the app with `undefined`. A file it answers wins over any route at the same path, no hook of the app runs for it, and a throw answers a plain `500`.
+  
+  `nifra build --target deno` emits a server that runs on `@nifrajs/deno`'s `serve` and serves its client bundle and public files through `static`, so a Deno app installs `@nifrajs/deno` of the same release, as a Node app installs `@nifrajs/node`. The built server serves WebSocket routes, and `stop()` drains its in-flight requests. With an older adapter installed the build stops before bundling and names both versions.
+  
+  A built Deno server serves its static files again. Bun's browser stand-in for `node:crypto`, which the Deno entry tags files with, has no working `createHash`, so every file answered `404` and pages loaded without their client bundle. The Deno server bundle now imports `node:crypto` from Deno itself, and a `--vite` Deno build no longer refuses it as an edge built-in. `buildServer` and `buildServerVite` take `providedBuiltins`, the Node built-ins the runtime that runs the bundle has besides what its target implies.
+  
+  `nifra.config.ts` takes `selfHost`, the settings the server a `bun`, `node` or `deno` build emits starts with, `nifra start` included. `gracefulSignals` (`true`, or `{ drainMs, delayMs }`) drains the server on SIGTERM and SIGINT instead of letting the signal kill it. `idleTimeoutSec` is how long a Bun server keeps a connection that moves no bytes, from `0` (never) to 255; Node and Deno ignore it, and an edge build ignores `selfHost`. `buildTarget` and `generateServerEntry` take the same `selfHost` and refuse a value of the wrong shape before building.
+- c4ed3e9: `serveStatic(mounts)` serves files on disk with one set of options on every runtime: from `@nifrajs/core/serve-static` for Bun's `app.listen({ static })`, and from `@nifrajs/node` and `@nifrajs/deno` for their `serve({ static })`. Each reads files with its runtime's own file API, and a mount answers a request the same way on all three.
+  
+  ```ts
+  import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
+  
+  app.listen(3000, {
+    static: serveStatic([
+      { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets, cacheControl: ONE_DAY },
+      { dir: new URL("./public/", import.meta.url), prefix: "/", immutable: false, cacheControl: ONE_DAY, fallthrough: true },
+    ]),
+  })
+  ```
+  
+  A mount takes `dir`, `prefix` (default `/assets`), `immutable`, `hashedFiles`, `cacheControl`, `files`, `allow`, `headers`, `dotfiles` and `fallthrough`. `hashedFiles` takes paths, an array of RegExps or a `(pathname) => boolean` predicate, matched on the encoded URL path, so files a pre-build step content-hashed, such as the fonts `loadGoogleFont` writes into `public/fonts/`, are cached immutably without being in the build manifest. A global or sticky pattern is used without that flag; a predicate runs as written. A path under a mount's prefix that it cannot serve answers `404` (`400` malformed, `403` traversing) unless the mount sets `fallthrough: true`, which hands it to the next mount and then the app. A request no mount takes returns `undefined` synchronously.
+  
+  `@nifrajs/web`'s `servePublicDir`, `ServePublicDirOptions`, `PublicDirCache` and `HashedFiles` are removed. `servePublicDir({ dir })` answers as `serveStatic({ dir, prefix: "/", fallthrough: true, hashedFiles: (path) => path.startsWith("/assets/"), cacheControl: ONE_DAY })` does, and `nifra upgrade 5.9.0` makes that edit. `nifra dev` serves `public/` with it, and the servers `nifra build` emits for bun, node and deno pass their runtime's `serveStatic` the same mounts.
+
+### Patch Changes
+
+- 123409c: `@nifrajs/node` and `@nifrajs/deno` read core's WebSocket upgrade outcome through one generated type view, which core checks its own types against, instead of two hand-written mirrors.
+  
+  The CLI's MCP workers share one request reader, its project children one stdout guard, six `nifra check` security scans one file walker, and its route-text scans one string-aware scanner.
+  
+  The Bun and Vite builds of `@nifrajs/web` share their client-entry, manifest and server-build steps, and the Vite client leak guard and server zone guard share one plugin body. `bunBundler.buildServer` and `viteBundler.buildServer` pass every option they receive through to `buildServer` and `buildServerVite`, so an option the `Bundler` type leaves out, such as `conditions`, `minify` or `lazy`, takes effect instead of being dropped.
+  
+  Core's evidence, diff and saga code share their schema-part mapping and saga ownership steps, its SQL and Durable Object lease stores share their row mapping and held-lease update, and the JSON body lane's byte readers share one settle step.
+  
+  `@nifrajs/node`'s two request sources share one base for their URL and header reads, and its Web-request fallback and Request/Response forwarding each live once.
+  
+  The coding agent's dispatch store checks a lease once for every write, its host and tracer share one plan index and gate check, and its two UI extension calls share one handler.
+  
+  `@nifrajs/agent` checks a tool step's deadline through one helper before and after approval, and its fake and replay gateways validate their scripted responses once. `@nifrajs/testing`'s agent-eval composition records its contract-lab and certification components through one helper.
+  
+  `@nifrajs/schema` reads one record guard from a single module.
+- bc42fd2: `ws.close()` on Deno counts a lone surrogate in the reason as the three bytes of U+FFFD it is sent as, as Bun and Node do. A reason over 123 bytes that way now throws the same `RangeError` before the socket is touched; it used to reach Deno's `WebSocket.close`, which threw a `SyntaxError`.
+- 9942748: A partially prerendered hole ignores a fill that is an array, as it ignores any other fill that is not an object, so an interactive hole's root never renders one as its props.
+  
+  `@nifrajs/node` merges a plain render's headers and checks a WebSocket close through generated copies of `@nifrajs/core`'s own functions, which `check:vendored` keeps identical to their source.
+  
+  A WebSocket text message or close reason whose length alone cannot settle its byte cap is sized by the runtime's native `Buffer.byteLength` where a global `Buffer` exists (Bun, Node, Deno, and Workers on a recent compatibility date), and counted character by character where it does not.
+  
+  `nifra stylex-migrate` reads nested style objects through the CLI's shared record check.
+
 ## 5.8.0
 
 No changes in this release.

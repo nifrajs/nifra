@@ -1,5 +1,104 @@
 # @nifrajs/core
 
+## 5.9.0
+
+### Minor Changes
+
+- be1c677: `withIdleTimeout(c, seconds, work)` from `@nifrajs/core/idle-timeout` sets the idle timeout of one request's connection on a Bun `listen()` server while `work` runs, then puts the `idleTimeoutSec` value back before the response is sent. `0` turns the timeout off. A slow handler no longer requires raising `idleTimeoutSec` for every connection, idle keep-alive ones included. When the request's deadline answers `503` first, the listener's value is back before that response too. Scopes nest, the longest applies, and `0` outlasts any number, so `app.around((c, next) => withIdleTimeout(c, 120, next))` covers a group of routes. `seconds` runs from 0 to 255, the longest Bun holds an idle connection; longer work takes `0`. It works on routes served from Bun's route table, from the portable dispatcher, from a mounted app, and from an app with WebSocket routes, and it times the request Bun received even when an `onRequest` hook rewrote it. Off `listen()` it runs `work` unchanged.
+- f399e06: `listen()` takes `static`, a handler that sees every request before the app does, the ones Bun's route table serves included. It answers with a response, or hands the request to the app with `undefined`. A file it answers wins over any route at the same path, and no hook of the app runs for it.
+  
+  `nifra build --target bun` emits a server that runs on `app.listen()` and serves its client bundle and public files through `static`. The built server answers a failing request with the listener's plain 500, serves WebSocket routes, and supports `stop()` and `withIdleTimeout()`. Pages of an app without request hooks are served from Bun's route table.
+  
+  A `createWebApp` host policy refuses requests on every route of an app served by `app.listen()`, the routes Bun's route table holds included.
+- 93e7078: `@nifrajs/core/canonical-json` exports `canonicalJson(value)`: JSON text with object keys sorted by UTF-16 code unit, no whitespace, and `undefined` members left out. A `JSON.rawJSON` value is written verbatim. A value JSON cannot carry throws a `TypeError` instead of being written as something else: a non-finite number, an `undefined` or missing array item, a `Date`, `Map`, typed array or class instance, a function, a symbol, a bigint.
+  
+  Route manifests and their signatures, project evidence, idempotency fingerprints, agent resume and registry digests, `canonicalJson` from `@nifrajs/coding-agent/orchestration`, agent-eval and certification digests, contract-lab and adversarial body comparisons, and server-component input keys all use this encoding. Their bytes for JSON data are unchanged, so stored manifests, signatures, fingerprints and digests still match. Where one of them used to write a non-JSON value lossily (a `Date` as `{}`, `NaN` as `null`, an `undefined` array item as an empty slot), it now throws. In contract-lab and adversarial runs, an expected body's `undefined` members are left out, so they match a response that omits those members.
+- a3fb195: Make strict Host validation opt-in on Deno with `server({ validateHost: true })`. Deno builds `Request.url` from Host, so leave the option enabled when requests can carry an untrusted Host header.
+- 7ba5c9b: `invariants.setup` in `nifra.assurance.ts` may return `witnesses` and `prepareRequest` beside `executor` and `teardown`, so a success witness can name what exists only once the throwaway target is up: a real slug, a row id, a signed-in session. Its witnesses are merged over the static `invariants.witnesses`, a `"METHOD /path"` in both taking the setup's, and validated the same way, so a malformed one fails with the same `route assurance:` error. Its `prepareRequest` replaces the static one. `setup` now runs once per L4 run before the run generates its first case, still never on import, and `teardown` still runs after a failure, a malformed setup result included. `nifra levels` lists the witnesses that came from setup under L4, and the `nifra_levels` result carries them as `setupWitnesses`. `applyInvariantSetup` from `@nifrajs/core/assurance` merges and validates a setup result for a harness that runs L4 itself.
+- 6ba9740: `requestLocal<T>()` from `@nifrajs/core/server` is a per-request slot with `get`, `set`, `has` and `delete` whose value follows the request through the copies nifra makes of it: a `mount()` that strips its prefix, a mount's WebSocket pass reused for HTTP, a request target nifra resolves, the transport-codec and idempotency lanes, `methodOverride()`, a rewriting `trimTrailingSlash()` or `appendTrailingSlash()`, a live load, and the owner page's re-render after a progressive action. Every copy shares one scope: a value set before a mount is read in the child, and one the child sets is read through the parent's request. `carryRequestLocals(from, to)` joins a request a wrapper or an `onRequest` hook rebuilt to the same scope; a copy made without it starts empty. Values are held weakly and never cross requests. Make slots at startup: copies are linked only once a first slot exists, so a request copied before then starts empty.
+- c4ed3e9: `serveStatic(mounts)` serves files on disk with one set of options on every runtime: from `@nifrajs/core/serve-static` for Bun's `app.listen({ static })`, and from `@nifrajs/node` and `@nifrajs/deno` for their `serve({ static })`. Each reads files with its runtime's own file API, and a mount answers a request the same way on all three.
+  
+  ```ts
+  import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
+  
+  app.listen(3000, {
+    static: serveStatic([
+      { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets, cacheControl: ONE_DAY },
+      { dir: new URL("./public/", import.meta.url), prefix: "/", immutable: false, cacheControl: ONE_DAY, fallthrough: true },
+    ]),
+  })
+  ```
+  
+  A mount takes `dir`, `prefix` (default `/assets`), `immutable`, `hashedFiles`, `cacheControl`, `files`, `allow`, `headers`, `dotfiles` and `fallthrough`. `hashedFiles` takes paths, an array of RegExps or a `(pathname) => boolean` predicate, matched on the encoded URL path, so files a pre-build step content-hashed, such as the fonts `loadGoogleFont` writes into `public/fonts/`, are cached immutably without being in the build manifest. A global or sticky pattern is used without that flag; a predicate runs as written. A path under a mount's prefix that it cannot serve answers `404` (`400` malformed, `403` traversing) unless the mount sets `fallthrough: true`, which hands it to the next mount and then the app. A request no mount takes returns `undefined` synchronously.
+  
+  `@nifrajs/web`'s `servePublicDir`, `ServePublicDirOptions`, `PublicDirCache` and `HashedFiles` are removed. `servePublicDir({ dir })` answers as `serveStatic({ dir, prefix: "/", fallthrough: true, hashedFiles: (path) => path.startsWith("/assets/"), cacheControl: ONE_DAY })` does, and `nifra upgrade 5.9.0` makes that edit. `nifra dev` serves `public/` with it, and the servers `nifra build` emits for bun, node and deno pass their runtime's `serveStatic` the same mounts.
+- 5bc60b7: `@nifrajs/core` exports `varyOn(value, names)` from its root and `/server`: the `Vary` value that names each of `names` once, matched without regard to case, with `Vary: *` returned unchanged. The i18n `localeDetector()` and the middleware `language()` plugin set their `Vary` with it.
+  
+  `@nifrajs/agent` exports `parseAgentResume(raw)`, which reads a turn's `resume` (`{ continuation, approval? }`) from an untrusted value and returns `undefined` for anything else. The agent mount, A2A and AG-UI transports all parse a resume with it, so a continuation is accepted on the same terms whichever protocol carries it.
+  
+  `etag()` and `prettyJson()` release the upstream body's reader lock once a replayed body ends, fails, or is cancelled, as `cache()` already did.
+- 3299474: Make request-target normalization opt-in on Deno and Node with `server({ normalizeTarget: true })` and `serve(app, { normalizeTarget: true })`. Off, both runtimes route the target as sent, as most frameworks do; on, dot segments, backslashes and the characters a URL parser percent-encodes are resolved before routing so every runtime routes the same path. Enable it when path guards, or a proxy that normalizes paths, sit in front of or inside the app. Bun already delivers parsed targets and is unchanged. On Node, a request handed over as a Web `Request` (a `static` callback, a WebSocket upgrade) is parsed by the platform and resolved either way.
+
+### Patch Changes
+
+- 8cdb138: Serve a GET or HEAD route from Bun's native table without the per-request method check that only applies a body cap to other methods. Body caps are unchanged.
+- 2c2f58b: A `derive` result that cannot be merged into the request context, such as one naming a read-only key like `env` or one whose getter throws, is answered with the logged `500 internal_error` on every route, as a throwing `derive` is. A throw raised after a JSON body is read is never answered `400 invalid_json`.
+- 123409c: `@nifrajs/node` and `@nifrajs/deno` read core's WebSocket upgrade outcome through one generated type view, which core checks its own types against, instead of two hand-written mirrors.
+  
+  The CLI's MCP workers share one request reader, its project children one stdout guard, six `nifra check` security scans one file walker, and its route-text scans one string-aware scanner.
+  
+  The Bun and Vite builds of `@nifrajs/web` share their client-entry, manifest and server-build steps, and the Vite client leak guard and server zone guard share one plugin body. `bunBundler.buildServer` and `viteBundler.buildServer` pass every option they receive through to `buildServer` and `buildServerVite`, so an option the `Bundler` type leaves out, such as `conditions`, `minify` or `lazy`, takes effect instead of being dropped.
+  
+  Core's evidence, diff and saga code share their schema-part mapping and saga ownership steps, its SQL and Durable Object lease stores share their row mapping and held-lease update, and the JSON body lane's byte readers share one settle step.
+  
+  `@nifrajs/node`'s two request sources share one base for their URL and header reads, and its Web-request fallback and Request/Response forwarding each live once.
+  
+  The coding agent's dispatch store checks a lease once for every write, its host and tracer share one plan index and gate check, and its two UI extension calls share one handler.
+  
+  `@nifrajs/agent` checks a tool step's deadline through one helper before and after approval, and its fake and replay gateways validate their scripted responses once. `@nifrajs/testing`'s agent-eval composition records its contract-lab and certification components through one helper.
+  
+  `@nifrajs/schema` reads one record guard from a single module.
+- 7ee17d0: `nifra check --sarif` and the command catalog's check output map report entries to diagnostics through one step. The CLI's page rules read the routes manifest and a `createWebApp` call's options through shared helpers, the layout migration applies its text edits through one function, two source scans share one route-registration reader, the two sync commands share their output schema and flag, and the Python and Go SDK generators share their setup and map-type reading.
+  
+  `create-nifra` passes the flags it parsed to `scaffold` as they are.
+  
+  `@nifrajs/web`'s PostCSS and Sass plugins build their JS module through one function, its client-build guards share one import-chain search, a page route's failed loaders answer through one step, and the router and the live client build a route data request's headers through one function.
+  
+  `@nifrajs/web-svelte`'s Svelte and MDX plugins emit scoped CSS through the stylesheet emitter in `@nifrajs/web/plugins/kit`, as the other kit plugins do. The virtual stylesheet import they write is now `?nifra-svelte-css` (`?nifra-svelte-mdx-css` for MDX), and its resolved path stays slash-separated on Windows.
+  
+  `@nifrajs/mcp` builds its capabilities once for `initialize` and `server/discover`. `@nifrajs/agent-review`'s composer uses the parser's outcome rule and evidence order, and the parser reads its two string lists through one reader. `@nifrajs/pi` reads message text through one helper, and core's evidence report sorts its findings through one comparator.
+- 68d9f31: Internal cleanup: the CLI's check rules, the coding agent's per-node records, the durable backends' scan pages and the web build's steps each have one implementation where there were copies. No behaviour changes.
+- ddeb735: Read runtime-framed Deno JSON through its BOM-safe text reader, preserving bounded and untrusted body checks.
+- ffcf41a: A route with derive, before or after hooks keeps its fused closure chain when the app also registers an error hook or decorates its context, instead of falling back to the general runner. Error hooks see the same errors in the same order, a decoration is on the context before the first hook runs, and a thrown `status()` or `Response` whose body cannot be written reaches the error hooks as a fault.
+- 7a15327: A route whose only lifecycle steps are derive, before and after hooks now runs them in one fused closure chain for any number and mix of them, instead of only for one derive and one before hook. Routes with just a before, derive or after hook, and routes with several of a kind, answer exactly as before and skip the general runner's per-request setup. The Web, Node and Bun lanes are covered, with or without a query or body schema.
+  
+  A `status()` or `Response` thrown from a fused or bare route whose body cannot be written now ends the request as a 500 instead of rejecting it.
+- 866c8ec: A route with one `derive`, one `beforeHandle`, an optional `afterHandle` and a query or body schema runs through one fused lifecycle runner on the Node-direct lane and one on the Web lane, shared by query and body routes. On the Web lane a body route's lifecycle steps are built once when the route registers rather than on each request.
+- bc42fd2: The modules a package carries as its own copy of another package's file (the static-file open helper, the agent-file generators, the Node-stream hand-off, and core's helpers inside the Node and Deno adapters) are generated from one source each, under a header naming it. No API or behavior change.
+- 9942748: A partially prerendered hole ignores a fill that is an array, as it ignores any other fill that is not an object, so an interactive hole's root never renders one as its props.
+  
+  `@nifrajs/node` merges a plain render's headers and checks a WebSocket close through generated copies of `@nifrajs/core`'s own functions, which `check:vendored` keeps identical to their source.
+  
+  A WebSocket text message or close reason whose length alone cannot settle its byte cap is sized by the runtime's native `Buffer.byteLength` where a global `Buffer` exists (Bun, Node, Deno, and Workers on a recent compatibility date), and counted character by character where it does not.
+  
+  `nifra stylex-migrate` reads nested style objects through the CLI's shared record check.
+- 77b98ea: A JSON request body that is not valid UTF-8 now fingerprints its exact bytes for idempotency. Two such bodies that differed only in their invalid bytes, such as `0xff` and `0xfe` inside a string, used to decode to the same replacement character and share a fingerprint, so a retry that reused a key with the other body replayed the first response instead of being refused with 409. A body that contains the replacement character U+FFFD itself also fingerprints its exact bytes. Either kind of body therefore gets a new fingerprint, and a retry of it stored before the upgrade is refused as a reused key. Every other body, with or without a leading byte order mark, keeps its fingerprint.
+- a3caf9b: An idempotency fingerprint now tells apart JSON bodies whose numbers differ only past what a double holds, such as `12345678901234567890` and `12345678901234567891`, `4e-324` and `5e-324`, or `1e-400` and `0`, so a retry that reuses a key with such a different body is refused with 409 instead of replayed. Such a number, one written with 16 or more digits in a row (a decimal point counted) or with a negative exponent of 3 or more digits, now enters the fingerprint as written rather than as the rounded double. A body holding one can therefore get a new fingerprint, and a retry of it stored before the upgrade is refused as a reused key. Every other body keeps its fingerprint.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- 180bf9d: Stop marking GET and HEAD requests as runtime-framed on Bun's native route table. Those slots take no body, so the symbol write on every request was dead work; body methods are still marked.
+- ff9bc11: On Bun, `listen()` keeps serving an app's routes from Bun's native route table when the app registers `onRequest` hooks that may answer or rewrite a request. The hooks run first, and the route the table matched runs unless a hook replaced the request.
+- 8094874: On Bun, `listen()` keeps serving an app's routes from Bun's native route table when the app declares a `clientIp` trust or has WebSocket routes. `c.clientIp` applies the declared trust when a handler reads it. The GET routes a WebSocket handshake can reach stay with the portable dispatcher, as do the wildcard paths and idempotent routes the table never held.
+- a7b89ee: Keep Bun's native route table for HTTP routes provably outside composed mount prefixes. Mounting an API no longer sends unrelated parent routes through the portable dispatcher. Routes that may overlap a mount, root mounts, and mounts serving WebSocket upgrades retain their existing dispatch behavior.
+- d6e6617: More helpers that several modules of a package each defined (SHA-256 to hex, the control-character check, code-unit string order, the child-process environment allowlist, realpath with a fallback, the MCP worker's console redirect and reply line) now have one definition per package. No API change. The `git diff` that `@nifrajs/coding-agent` runs now inherits `CI` like its other child processes.
+- 5f4416a: `t.date()` is a `Date` in code and an RFC 3339 `date-time` string on the wire, in a request and a response alike.
+  
+  - A request `body`, `query` or `params`, and a server function's `input`, that declares `t.date()` takes the string and hands the handler a `Date`. Only places the schema declares `t.date()` are read as dates: a `t.string()` holding a date-like string stays a string. In a union, the first branch that accepts the value decides.
+  - A route `response` may declare `t.date()` for a timestamp column: the handler returns the `Date` or the string, and the JSON carries the string.
+  - `responseContract()` judges a `Date` as the ISO string JSON writes for it when the schema carries its JSON Schema (every `t` schema), so a `Date` under `t.string({ format: "date-time" })` passes `enforce` and logs nothing in `warn`, at any depth and under `extra: "strip"`. A schema without one (zod, valibot) is still shown the `Date`.
+  - The `date-time`, `date` and `time` string formats follow RFC 3339 in full: a day the calendar lacks (`2026-02-30`), an hour of `24` and an offset past `23:59` fail.
+  - A `c.json(...)` reply on a route with a contract calls each `toJSON` hook once, a `Date`'s included, and sends the value the contract judged.
+  - The typed client writes a `Date` in `query` as its ISO string.
+
 ## 5.8.0
 
 ### Minor Changes

@@ -1,5 +1,65 @@
 # @nifrajs/testing
 
+## 5.9.0
+
+### Patch Changes
+
+- 93e7078: `@nifrajs/core/canonical-json` exports `canonicalJson(value)`: JSON text with object keys sorted by UTF-16 code unit, no whitespace, and `undefined` members left out. A `JSON.rawJSON` value is written verbatim. A value JSON cannot carry throws a `TypeError` instead of being written as something else: a non-finite number, an `undefined` or missing array item, a `Date`, `Map`, typed array or class instance, a function, a symbol, a bigint.
+  
+  Route manifests and their signatures, project evidence, idempotency fingerprints, agent resume and registry digests, `canonicalJson` from `@nifrajs/coding-agent/orchestration`, agent-eval and certification digests, contract-lab and adversarial body comparisons, and server-component input keys all use this encoding. Their bytes for JSON data are unchanged, so stored manifests, signatures, fingerprints and digests still match. Where one of them used to write a non-JSON value lossily (a `Date` as `{}`, `NaN` as `null`, an `undefined` array item as an empty slot), it now throws. In contract-lab and adversarial runs, an expected body's `undefined` members are left out, so they match a response that omits those members.
+- 123409c: `@nifrajs/node` and `@nifrajs/deno` read core's WebSocket upgrade outcome through one generated type view, which core checks its own types against, instead of two hand-written mirrors.
+  
+  The CLI's MCP workers share one request reader, its project children one stdout guard, six `nifra check` security scans one file walker, and its route-text scans one string-aware scanner.
+  
+  The Bun and Vite builds of `@nifrajs/web` share their client-entry, manifest and server-build steps, and the Vite client leak guard and server zone guard share one plugin body. `bunBundler.buildServer` and `viteBundler.buildServer` pass every option they receive through to `buildServer` and `buildServerVite`, so an option the `Bundler` type leaves out, such as `conditions`, `minify` or `lazy`, takes effect instead of being dropped.
+  
+  Core's evidence, diff and saga code share their schema-part mapping and saga ownership steps, its SQL and Durable Object lease stores share their row mapping and held-lease update, and the JSON body lane's byte readers share one settle step.
+  
+  `@nifrajs/node`'s two request sources share one base for their URL and header reads, and its Web-request fallback and Request/Response forwarding each live once.
+  
+  The coding agent's dispatch store checks a lease once for every write, its host and tracer share one plan index and gate check, and its two UI extension calls share one handler.
+  
+  `@nifrajs/agent` checks a tool step's deadline through one helper before and after approval, and its fake and replay gateways validate their scripted responses once. `@nifrajs/testing`'s agent-eval composition records its contract-lab and certification components through one helper.
+  
+  `@nifrajs/schema` reads one record guard from a single module.
+- d6e6617: More helpers that several modules of a package each defined (SHA-256 to hex, the control-character check, code-unit string order, the child-process environment allowlist, realpath with a fallback, the MCP worker's console redirect and reply line) now have one definition per package. No API change. The `git diff` that `@nifrajs/coding-agent` runs now inherits `CI` like its other child processes.
+- 5bc60b7: Small helpers that several modules of a package each defined (the object check, RegExp escaping, `\` to `/` path conversion, line lookup) now have one definition per package. No API or behavior change.
+- Updated dependencies [8cdb138]
+- Updated dependencies [be1c677]
+- Updated dependencies [f399e06]
+- Updated dependencies [93e7078]
+- Updated dependencies [2c2f58b]
+- Updated dependencies [123409c]
+- Updated dependencies [7ee17d0]
+- Updated dependencies [68d9f31]
+- Updated dependencies [ddeb735]
+- Updated dependencies [a3fb195]
+- Updated dependencies [ffcf41a]
+- Updated dependencies [7a15327]
+- Updated dependencies [866c8ec]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [9942748]
+- Updated dependencies [77b98ea]
+- Updated dependencies [a3caf9b]
+- Updated dependencies [7ba5c9b]
+- Updated dependencies [0445564]
+- Updated dependencies [180bf9d]
+- Updated dependencies [ff9bc11]
+- Updated dependencies [8094874]
+- Updated dependencies [a7b89ee]
+- Updated dependencies [d6e6617]
+- Updated dependencies [6ba9740]
+- Updated dependencies [5f4416a]
+- Updated dependencies [c4ed3e9]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [3299474]
+  - @nifrajs/core@5.9.0
+  - @nifrajs/agent@5.9.0
+  - @nifrajs/mcp@5.9.0
+  - @nifrajs/client@5.9.0
+  - @nifrajs/mock@5.9.0
+  - @nifrajs/webmcp@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes
