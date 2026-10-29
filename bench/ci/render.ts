@@ -113,6 +113,6 @@ export function renderFootnote(maxCiWidthPts: number): string {
     "(distribution-free, from order statistics). % of ceiling divides a row by its workload's ceiling in the same",
     "round: the runtime's raw server for http and realworld, the table's baseline row for ssr (the divisor of",
     "bench:ssr's ratios); nifra vs row divides nifra by that row. req/s is the median over every round: on a",
-    `shared runner it moves between jobs, so compare the ratios. A row is noisy when an interval is wider than ${maxCiWidthPts} points.`,
+    `shared runner it moves between jobs, so compare the ratios. A row is noisy when an interval is wider than ${maxCiWidthPts}% of its median.`,
   ].join("\n")
 }

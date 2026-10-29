@@ -34,12 +34,8 @@ const SUITE_RUN: Readonly<Record<Suite, (runtime: Runtime) => readonly [string, 
   ssr: (runtime) => ["bench/ssr/run.ts", "--runtime", runtime, "--json"],
 }
 
-/** Env a suite needs unless the caller set it. SSR defaults to 5 rounds; the offset needs pairs. */
-const SUITE_ENV: Readonly<Record<Suite, Readonly<Record<string, string>>>> = {
-  http: {},
-  realworld: {},
-  ssr: { BENCH_ROUNDS: "4" },
-}
+/** SSR runs as `bun run bench:ssr` does: its own rounds and timings, servers and oha unpinned. */
+const UNPINNED: ReadonlySet<Suite> = new Set<Suite>(["ssr"])
 
 interface Options {
   readonly suite: Suite
@@ -73,7 +69,7 @@ function parseOptions(argv: readonly string[]): Options {
   if (maxRuns < minRuns) throw new Error("--max-runs must be at least --min-runs")
   const width = value("--max-ci-width") ?? "10"
   if (!/^\d+(?:\.\d+)?$/.test(width) || Number(width) <= 0) {
-    throw new Error("--max-ci-width takes a positive number of percentage points")
+    throw new Error("--max-ci-width takes a positive percentage of the median")
   }
   return {
     suite,
@@ -94,7 +90,6 @@ async function runOnce(
   const argv = SUITE_RUN[options.suite](options.runtime)
   // An even offset keeps each run's rounds in forward/reversed pairs (bench/rounds.ts).
   const env: Record<string, string | undefined> = {
-    ...SUITE_ENV[options.suite],
     ...Bun.env,
     BENCH_ROUND_OFFSET: String(2 * index),
   }
@@ -128,8 +123,9 @@ async function runOnce(
 const options = parseOptions(process.argv.slice(2))
 let split: CoreSplit | null = null
 if (options.pin) {
-  split = readCoreSplit() ?? null
-  if (split === null) throw new Error("--pin needs Linux: /proc/self/status lists no allowed CPUs")
+  const found = readCoreSplit() ?? null
+  if (found === null) throw new Error("--pin needs Linux: /proc/self/status lists no allowed CPUs")
+  split = UNPINNED.has(options.suite) ? null : found
 }
 
 const runs: RunOutput[] = []

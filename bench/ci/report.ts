@@ -46,7 +46,7 @@ export interface RunOutput {
 export interface ReportSettings {
   readonly minRuns: number
   readonly maxRuns: number
-  /** A row whose interval is wider than this many percentage points is noisy. */
+  /** A row whose interval is wider than this percentage of its median is noisy. */
   readonly maxCiWidthPts: number
 }
 
@@ -210,7 +210,9 @@ export interface WorkloadSummary {
   readonly rows: readonly RowSummary[]
 }
 
-const widthPts = (i: MedianInterval): number => (i.hi - i.lo) * 100
+/** The interval's width as a percentage of its median, so a 10x ratio is held to the same relative precision as a 1x one. */
+const widthPct = (i: MedianInterval): number =>
+  i.median > 0 ? ((i.hi - i.lo) / i.median) * 100 : Number.POSITIVE_INFINITY
 
 /** In first-seen order, so the summary follows run.ts's own section and workload order. */
 function unique(values: Iterable<string>): string[] {
@@ -262,7 +264,7 @@ export function summarize(
       ]
       let verdict: Verdict = "ok"
       if (needed.some((i) => i === undefined)) verdict = "too few rounds"
-      else if (needed.some((i) => i !== undefined && widthPts(i) > maxCiWidthPts)) verdict = "noisy"
+      else if (needed.some((i) => i !== undefined && widthPct(i) > maxCiWidthPts)) verdict = "noisy"
       const rps = runs.flatMap(
         (run) => run.results[runtime]?.[row]?.[workload]?.rounds.map((m) => m.rps) ?? [],
       )
