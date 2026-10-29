@@ -51,7 +51,8 @@ function queryClientForCurrentTree(): QueryClient | undefined {
 
 /** Provide a request-scoped client and optionally hydrate it before child setup runs. */
 export function provideQueryClient(client: QueryClient, state?: DehydratedState): void {
-  if (!getCurrentInstance()) {
+  const instance = getCurrentInstance()
+  if (instance === null || instance.isMounted || instance.isUnmounted) {
     throw new Error("[nifra/web-vue] provideQueryClient must run during component setup")
   }
   if (state !== undefined) client.hydrate(state)
