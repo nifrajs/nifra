@@ -44,14 +44,16 @@ const dispatchIdentityChange = (): void => {
 }
 
 const identityChannel = (): BroadcastChannel | undefined => {
-  if (typeof (globalThis as { window?: unknown }).window === "undefined") return undefined
+  if (Reflect.get(globalThis, "window") === undefined) return undefined
   const existing: unknown = Reflect.get(globalThis, CHANNEL)
   if (
     typeof existing === "object" &&
     existing !== null &&
     typeof Reflect.get(existing, "postMessage") === "function"
-  )
+  ) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The private symbol is written only with the channel constructed below; this shape check distinguishes an initialized slot.
     return existing as BroadcastChannel
+  }
   if (typeof BroadcastChannel === "undefined") return undefined
 
   let channel: BroadcastChannel | undefined

@@ -1446,6 +1446,8 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "warned@liveClient": "codes already warned about",
   },
   "packages/web/src/query.ts": {
+    "active@createMutation":
+      "abort controllers for pending mutations; cancel() aborts and clears them on identity change",
     "cache@createQueryClient": { scenario: "query" },
     "infinite@createQueryClient": { scenario: "query-infinite" },
     "listeners@createMutation": LISTENERS,

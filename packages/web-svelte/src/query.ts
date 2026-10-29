@@ -142,7 +142,10 @@ export function useInfiniteQuery<T, P>(
   const enabled = options.enabled !== false
   const handle = client?.infiniteQuery<T, P>(key, fn, options)
   const snapshot = (): InfiniteQuerySnapshot<T, P> => {
-    const state = handle ? handle.snapshot() : (IDLE_QUERY_STATE as QueryState<InfiniteData<T, P>>)
+    const state = handle
+      ? handle.snapshot()
+      : // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: An idle query has no generic page data; a provider supplies the typed state before use.
+        (IDLE_QUERY_STATE as QueryState<InfiniteData<T, P>>)
     return {
       ...state,
       hasNextPage: handle?.hasNextPage() ?? false,

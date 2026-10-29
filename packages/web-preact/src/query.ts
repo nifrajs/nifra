@@ -166,6 +166,7 @@ export interface UseInfiniteQueryResult<T, P> extends QueryState<InfiniteData<T,
   readonly refetch: () => Promise<InfiniteData<T, P>>
 }
 
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The idle state has no query data, so its generic payload is unused.
 const IDLE_INFINITE_STATE = IDLE_QUERY_STATE as QueryState<InfiniteData<never, never>>
 const idleInfiniteSnapshot = (): QueryState<InfiniteData<never, never>> => IDLE_INFINITE_STATE
 

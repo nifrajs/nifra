@@ -474,12 +474,15 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     ) {
       cache.delete(h)
     } else if (existing !== undefined) {
-      return upsert(
+      const rebound = upsert(
         key,
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The shared cache erases the result type; Promise<T> safely widens to Promise<unknown>.
         fn as () => Promise<unknown>,
         opts?.staleTime ?? defaultStaleTime,
         opts?.live ?? [],
-      ).handle as QueryHandle<T>
+      )
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: One canonical query key owns one typed handle; callers must use a stable data type for that key.
+      return rebound.handle as QueryHandle<T>
     }
     // Existing handles are the render hot path; sweep only when adding/recreating a key.
     sweep()
@@ -1088,7 +1091,7 @@ export function createMutation<TData, TVariables>(
   }
   const watchIdentity = (): void => {
     if (stopIdentityWatch !== undefined) return
-    if (typeof (globalThis as { window?: unknown }).window === "undefined") return
+    if (Reflect.get(globalThis, "window") === undefined) return
     stopIdentityWatch = onIdentityChange(cancel)
   }
   const cancel = (): void => {
@@ -1096,6 +1099,7 @@ export function createMutation<TData, TVariables>(
     latest++
     const pending = [...active]
     active.clear()
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The idle mutation state carries no generic data or variables, only undefined payloads.
     setState(IDLE_MUTATION as MutationState<TData, TVariables>)
     for (const controller of pending) controller.abort()
     stopWatchingWhenIdle()
