@@ -17,6 +17,7 @@ import { assertByteLimit } from "../server/body.ts"
 import type { RouteSchema } from "../server/context.ts"
 import type { IdempotencyRuntime, ResolvedIdempotency } from "../server/idempotency-lane.ts"
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "../server/ledger-lane.ts"
+import { decorationsAssignable } from "../server/request-context.ts"
 import type {
   ResponseContractDefinition,
   ResponseContractRuntime,
@@ -296,6 +297,7 @@ export function compileRouteOptions(
     hasIdempotency: idempotent !== undefined,
     hasLedger: ledgered !== undefined,
     hasResponseContract: contracted !== undefined,
+    decorationsAssignable: !hasDecorations || decorationsAssignable(routeDecorations),
     derives: context.derives.length,
     beforeHandle: context.beforeHandleHooks.length,
     afterHandle: context.afterHandleHooks.length,

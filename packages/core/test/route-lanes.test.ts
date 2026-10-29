@@ -159,6 +159,22 @@ describe("selectRouteLanes", () => {
     expect(selectRouteLanes({ ...base, onError: 1 }).fusedLane).toBeUndefined()
   })
 
+  test("keeps the generic program for a decoration the context cannot take", () => {
+    const body = { body: t.object({ name: t.string() }) }
+    expect(
+      selectRouteLanes({ ...base, beforeHandle: 1, onError: 1, decorationsAssignable: false }),
+    ).toMatchObject({ lifecycleHookLane: undefined, fusedLane: undefined })
+    expect(
+      selectRouteLanes({
+        ...base,
+        schema: body,
+        beforeHandle: 1,
+        onError: 1,
+        decorationsAssignable: false,
+      }).fusedLane,
+    ).toBeUndefined()
+  })
+
   test("fuses body lifecycle routes only when the complete shape is eligible", () => {
     const body = { body: t.object({ name: t.string() }) }
     expect(selectRouteLanes({ ...base, schema: body, derives: 1, beforeHandle: 1 })).toMatchObject({

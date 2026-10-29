@@ -27,6 +27,8 @@ export function selectRouteLanes(options: {
   readonly hasIdempotency: boolean
   readonly hasLedger: boolean
   readonly hasResponseContract: boolean
+  /** False when a decoration cannot be merged into the context, which keeps the fused hook lanes off. */
+  readonly decorationsAssignable?: boolean
   readonly derives: number
   readonly beforeHandle: number
   readonly afterHandle: number
@@ -39,6 +41,7 @@ export function selectRouteLanes(options: {
     hasIdempotency,
     hasLedger,
     hasResponseContract,
+    decorationsAssignable = true,
     derives,
     beforeHandle,
     afterHandle,
@@ -154,6 +157,7 @@ export function selectRouteLanes(options: {
     lane === "lifecycle" &&
     !authBeforeValidation &&
     !hasResponseContract &&
+    decorationsAssignable &&
     !hasIdempotency &&
     !hasLedger &&
     schema?.onValidationError === undefined &&
@@ -176,6 +180,7 @@ export function selectRouteLanes(options: {
     schema?.onValidationError === undefined &&
     !defaultOnValidationError &&
     !hasResponseContract &&
+    decorationsAssignable &&
     !hasIdempotency &&
     !hasLedger &&
     hookCount > 0 &&

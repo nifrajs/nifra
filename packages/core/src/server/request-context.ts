@@ -185,6 +185,28 @@ export type PeerPlatform = Platform & {
   readonly [PLATFORM_REQUEST]?: RequestSource
 }
 
+/**
+ * Whether merging `decorations` into a context can complete. A decoration named for a read-only
+ * accessor of the context (`req`, `set`, `signal`) makes `Object.assign` throw on every request, a
+ * failure the general program routes to the route's error hooks and a fused lane would not.
+ */
+export function decorationsAssignable(decorations: Record<PropertyKey, unknown>): boolean {
+  for (const key of Reflect.ownKeys(decorations)) {
+    for (
+      let proto: object | null = RequestContext.prototype;
+      proto !== null && proto !== Object.prototype;
+      proto = Object.getPrototypeOf(proto)
+    ) {
+      const descriptor = Object.getOwnPropertyDescriptor(proto, key)
+      if (descriptor === undefined) continue
+      if (descriptor.get !== undefined && descriptor.set === undefined) return false
+      if (descriptor.writable === false) return false
+      break
+    }
+  }
+  return true
+}
+
 export class RequestContext implements RawContext {
   // `declare` keeps TypeScript's class-field emit from first writing `undefined` to every slot; the
   // constructor initializes only the eager request state, while lazy fields remain absent until used.

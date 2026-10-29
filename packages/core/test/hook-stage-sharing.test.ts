@@ -15,6 +15,10 @@ type Rec = Record<string, unknown>
 
 type Answerable = Pick<ReturnType<typeof build>, "fetch" | "resolveNode">
 
+interface Cataloged {
+  entries(): { entry: { execution: { fusedLane: string | undefined } } }[]
+}
+
 async function answers(app: Answerable, request: () => Request): Promise<Rec[]> {
   const web = await app.fetch(request())
   const node = await app.resolveNode(request())
@@ -544,4 +548,28 @@ test("a fused hook route hands a rendered failure answer to the body observer, n
   }
   expect(await answered(bound, "/bound")).toBe('{"conflict":true}')
   expect(await answered(hooked, "/hooked")).toBe('{"handled":true}')
+})
+
+test("a decoration the context cannot take reaches the route's error hook, as in the general program", async () => {
+  for (const key of ["req", "set", "signal"]) {
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .decorate(key, 1)
+      .onError(() => ({ handled: true }))
+      .beforeHandle(() => undefined)
+      .get("/r", () => ({ ok: true }))
+    const response = await app.fetch(new Request("http://x/r"))
+    expect([key, response.status, await response.json()]).toEqual([key, 200, { handled: true }])
+  }
+  // A decoration the context takes keeps the route on the fused lane.
+  const fused = server({ logger: silentLogger })
+    .use(nodeDirect())
+    .decorate("greeting", "hi")
+    .onError(() => ({ handled: true }))
+    .beforeHandle(() => undefined)
+    .get("/r", (c) => ({ greeting: c.greeting }))
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route catalog is private to the builder, and this test only reads the lane a route was given
+  const catalog = Reflect.get(fused, "catalog") as Cataloged
+  expect(catalog.entries()[0]?.entry.execution.fusedLane).toBe("hooks")
+  expect(await (await fused.fetch(new Request("http://x/r"))).json()).toEqual({ greeting: "hi" })
 })
