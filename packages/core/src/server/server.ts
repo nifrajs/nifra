@@ -866,13 +866,16 @@ function responseSet(ctx: RawContext): CtxSet {
 type Finalize<T> = (result: unknown, set: CtxSet, ctx: RawContext) => T
 type Wrap<T> = (response: Response | ResponseResult) => T
 
-/** A fused route's handler and hook arrays, which never change after the route is built. The route's
- * shared stage chain reads them per request, so routes whose hooks differ still share one chain. */
+/** A fused route's handler, hook arrays, error hooks and decorations, which never change after the
+ * route is built. The route's shared stage chain reads them per request, so routes whose hooks differ
+ * still share one chain. */
 interface FusedHooks {
   readonly handler: InternalHandler
   readonly derives: readonly RawDerive[]
   readonly befores: readonly RawBeforeHandle[]
   readonly afters: readonly RawAfterHandle[]
+  readonly errors: readonly RawErrorHandler[]
+  readonly decorations: Record<PropertyKey, unknown> | undefined
 }
 
 /** What a fused lifecycle route runs for its hook shape on the Web lane: the first derive, or the
@@ -887,6 +890,9 @@ type FusedNodeStart = <T>(
   wrapResponse: Wrap<T>,
   index: number,
 ) => MaybePromise<T>
+
+/** The error hooks of the many fused routes that have none, shared so each does not allocate its own. */
+const NO_ERROR_HOOKS: readonly RawErrorHandler[] = []
 
 const WEB_STAGES = new WeakMap<object, Map<number, FusedWebStart>>()
 const NODE_STAGES = new WeakMap<object, Map<number, FusedNodeStart>>()
@@ -2784,12 +2790,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const derivesSnapshot = [...this.derives]
     const beforesSnapshot = [...beforeHandle]
     const aftersSnapshot = [...afterHandle]
+    const onErrorSnapshot = onError.length === 0 ? NO_ERROR_HOOKS : [...onError]
     const fusedHooks: FusedHooks | undefined = fusedLifecycle
       ? {
           handler: handler as unknown as InternalHandler,
           derives: derivesSnapshot,
           befores: beforesSnapshot,
           afters: aftersSnapshot,
+          errors: onErrorSnapshot,
+          decorations: hasDecorations ? routeDecorations : undefined,
         }
       : undefined
     // The Node-direct dispatcher (`!webFast`) prefers these runners over the generic program. Only the
@@ -2872,7 +2881,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       hasDecorations,
       beforeHandle: beforesSnapshot,
       afterHandle: aftersSnapshot,
-      onError: [...onError],
+      onError: onErrorSnapshot,
       lifecycleHookLane: lanes.lifecycleHookLane,
       around: [...this.aroundHooks],
       execution,
@@ -3334,6 +3343,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           derives: entry.derives,
           befores: entry.beforeHandle,
           afters: entry.afterHandle,
+          errors: entry.onError,
+          decorations: entry.hasDecorations ? entry.decorations : undefined,
         }
       : undefined
     const fusedBody =
@@ -5410,22 +5421,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ) => MaybePromise<Response>
     let runAfter: AfterStage
     if (afterCount === 0) {
-      runAfter = (result, ctx) => this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+      runAfter = (result, ctx, route) =>
+        this.respondHooks(result, ctx, route, this.onResponseHooks.length === 0)
     } else if (afterCount === 1) {
       runAfter = (result, ctx, route) => {
         let transformed: unknown
         try {
           transformed = route.afters[0]!(result, ctx)
         } catch (err) {
-          return this.fusedWebFail(err, ctx)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (transformed instanceof Promise) {
           return transformed.then(
-            (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
-            (err) => this.fusedWebFail(err, ctx),
+            (value) => this.respondHooks(value, ctx, route, this.onResponseHooks.length === 0),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
-        return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+        return this.respondHooks(transformed, ctx, route, this.onResponseHooks.length === 0)
       }
     } else {
       runAfter = (result, ctx, route, index) => {
@@ -5435,19 +5447,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             transformed = route.afters[index]!(result, ctx)
           } catch (err) {
-            return this.fusedWebFail(err, ctx)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (transformed instanceof Promise) {
             return transformed.then(
               (value) =>
                 index < lastAfter
                   ? runAfter(value, ctx, route, index + 1)
-                  : this.respondFused(value, ctx, this.onResponseHooks.length === 0),
-              (err) => this.fusedWebFail(err, ctx),
+                  : this.respondHooks(value, ctx, route, this.onResponseHooks.length === 0),
+              (err) => this.fusedWebRouteFail(err, ctx, route),
             )
           }
           if (index === lastAfter) {
-            return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+            return this.respondHooks(transformed, ctx, route, this.onResponseHooks.length === 0)
           }
           result = transformed
           index++
@@ -5459,12 +5471,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       try {
         result = route.handler(ctx)
       } catch (err) {
-        return this.fusedWebFail(err, ctx)
+        return this.fusedWebRouteFail(err, ctx, route)
       }
       if (result instanceof Promise) {
         return result.then(
           (value) => runAfter(value, ctx, route, 0),
-          (err) => this.fusedWebFail(err, ctx),
+          (err) => this.fusedWebRouteFail(err, ctx, route),
         )
       }
       return runAfter(result, ctx, route, 0)
@@ -5478,17 +5490,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           early = route.befores[0]!(ctx)
         } catch (err) {
-          return this.fusedWebFail(err, ctx)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (early instanceof Promise) {
           return early.then(
             (settled) =>
-              settled === undefined ? runHandler(ctx, route, 0) : this.respondFused(settled, ctx),
-            (err) => this.fusedWebFail(err, ctx),
+              settled === undefined
+                ? runHandler(ctx, route, 0)
+                : this.respondHooks(settled, ctx, route),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         if (early === undefined) return runHandler(ctx, route, 0)
-        return this.respondFused(early, ctx)
+        return this.respondHooks(early, ctx, route)
       }
     } else {
       runBefore = (ctx, route, index) => {
@@ -5498,20 +5512,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             early = route.befores[index]!(ctx)
           } catch (err) {
-            return this.fusedWebFail(err, ctx)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (early instanceof Promise) {
             return early.then(
               (settled) => {
-                if (settled !== undefined) return this.respondFused(settled, ctx)
+                if (settled !== undefined) return this.respondHooks(settled, ctx, route)
                 return index < lastBefore
                   ? runBefore(ctx, route, index + 1)
                   : runHandler(ctx, route, 0)
               },
-              (err) => this.fusedWebFail(err, ctx),
+              (err) => this.fusedWebRouteFail(err, ctx, route),
             )
           }
-          if (early !== undefined) return this.respondFused(early, ctx)
+          if (early !== undefined) return this.respondHooks(early, ctx, route)
           if (index === lastBefore) return runHandler(ctx, route, 0)
           index++
         }
@@ -5526,31 +5540,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           derived = route.derives[0]!(ctx)
         } catch (err) {
-          return this.fusedWebFail(err, ctx)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (derived instanceof Promise) {
           return derived.then(
             (settled) => {
               if (isResponseResult(settled) || settled instanceof Response) {
-                return this.respondFused(settled, ctx)
+                return this.respondHooks(settled, ctx, route)
               }
               try {
                 Object.assign(ctx, settled)
               } catch (err) {
-                return this.fusedWebFail(err, ctx)
+                return this.fusedWebRouteFail(err, ctx, route)
               }
               return runBefore(ctx, route, 0)
             },
-            (err) => this.fusedWebFail(err, ctx),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         if (isResponseResult(derived) || derived instanceof Response) {
-          return this.respondFused(derived, ctx)
+          return this.respondHooks(derived, ctx, route)
         }
         try {
           Object.assign(ctx, derived)
         } catch (err) {
-          return this.fusedWebFail(err, ctx)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         return runBefore(ctx, route, 0)
       }
@@ -5562,33 +5576,33 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             derived = route.derives[index]!(ctx)
           } catch (err) {
-            return this.fusedWebFail(err, ctx)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (derived instanceof Promise) {
             return derived.then(
               (settled) => {
                 if (isResponseResult(settled) || settled instanceof Response) {
-                  return this.respondFused(settled, ctx)
+                  return this.respondHooks(settled, ctx, route)
                 }
                 try {
                   Object.assign(ctx, settled)
                 } catch (err) {
-                  return this.fusedWebFail(err, ctx)
+                  return this.fusedWebRouteFail(err, ctx, route)
                 }
                 return index < lastDerive
                   ? runDerive(ctx, route, index + 1)
                   : runBefore(ctx, route, 0)
               },
-              (err) => this.fusedWebFail(err, ctx),
+              (err) => this.fusedWebRouteFail(err, ctx, route),
             )
           }
           if (isResponseResult(derived) || derived instanceof Response) {
-            return this.respondFused(derived, ctx)
+            return this.respondHooks(derived, ctx, route)
           }
           try {
             Object.assign(ctx, derived)
           } catch (err) {
-            return this.fusedWebFail(err, ctx)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (index === lastDerive) return runBefore(ctx, route, 0)
           index++
@@ -5764,6 +5778,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (
       querySchema === undefined &&
       bodySchema === undefined &&
+      route.errors.length === 0 &&
+      route.decorations === undefined &&
       route.derives.length === 1 &&
       route.befores.length === 1 &&
       route.afters.length <= 1
@@ -5783,13 +5799,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const runDerive = sharedStages(WEB_STAGES, this, route, (d, b, a) =>
       this.fusedWebStages(d, b, a),
     )
+    const decorations = route.decorations
     if (bodySchema !== undefined) {
       const onParsed = (parsed: unknown, ctx: RawContext): MaybePromise<Response> => {
         let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
         try {
           validation = bodySchema["~standard"].validate(parsed)
         } catch (err) {
-          return this.fusedWebFail(err, ctx)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (validation instanceof Promise) {
           return validation.then(
@@ -5799,7 +5816,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               ctx.body = settled.value
               return runDerive(ctx, route, 0)
             },
-            (err) => this.fusedWebFail(err, ctx),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         if (validation.issues !== undefined)
@@ -5827,13 +5844,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               maxBodyBytes,
               this.protoPoisoning,
             )
+        if (decorations !== undefined) Object.assign(ctx, decorations)
         return readBodyFramed(
           source,
           maxBodyBytes,
           this.protoPoisoning,
           (parsed) => onParsed(parsed, ctx),
           this.wrapWebResponse,
-          (err) => this.fusedWebFail(err, ctx),
+          (err) => this.fusedWebRouteFail(err, ctx, route),
           bodySchema,
           this.formOrigins,
         ) as MaybePromise<Response>
@@ -5852,12 +5870,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
+      if (decorations !== undefined) Object.assign(ctx, decorations)
       if (querySchema === undefined) return runDerive(ctx, route, 0)
       let validation: MaybePromise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
       } catch (err) {
-        return this.fusedWebFail(err, ctx)
+        return this.fusedWebRouteFail(err, ctx, route)
       }
       if (validation instanceof Promise) {
         return validation.then(
@@ -5867,7 +5886,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             ctx.query = settled.value
             return runDerive(ctx, route, 0)
           },
-          (err) => this.fusedWebFail(err, ctx),
+          (err) => this.fusedWebRouteFail(err, ctx, route),
         )
       }
       if (validation.issues !== undefined)
@@ -5890,13 +5909,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const finishResult = <T>(
       result: unknown,
       ctx: RawContext,
+      route: FusedHooks,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
       wrapResponse: (response: Response | ResponseResult) => T,
-    ): T => {
+    ): MaybePromise<T> => {
       try {
         return finalize(result, responseSet(ctx), ctx)
       } catch (err) {
-        return this.bareError(err, ctx, finalize, wrapResponse)
+        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
       }
     }
 
@@ -5921,23 +5941,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     let runAfter: AfterStage
     if (afterCount === 0) {
-      runAfter = (result, ctx, _route, finalize, wrapResponse) =>
-        finishResult(result, ctx, finalize, wrapResponse)
+      runAfter = (result, ctx, route, finalize, wrapResponse) =>
+        finishResult(result, ctx, route, finalize, wrapResponse)
     } else if (afterCount === 1) {
       runAfter = (result, ctx, route, finalize, wrapResponse) => {
         let transformed: unknown
         try {
           transformed = route.afters[0]!(result, ctx)
         } catch (err) {
-          return this.bareError(err, ctx, finalize, wrapResponse)
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
         }
         if (transformed instanceof Promise) {
           return transformed.then(
-            (value) => finishResult(value, ctx, finalize, wrapResponse),
-            (err) => this.bareError(err, ctx, finalize, wrapResponse),
+            (value) => finishResult(value, ctx, route, finalize, wrapResponse),
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
           )
         }
-        return finishResult(transformed, ctx, finalize, wrapResponse)
+        return finishResult(transformed, ctx, route, finalize, wrapResponse)
       }
     } else {
       runAfter = (result, ctx, route, finalize, wrapResponse, index) => {
@@ -5947,18 +5967,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             transformed = route.afters[index]!(result, ctx)
           } catch (err) {
-            return this.bareError(err, ctx, finalize, wrapResponse)
+            return this.fusedFail(err, ctx, route, finalize, wrapResponse)
           }
           if (transformed instanceof Promise) {
             return transformed.then(
               (value) =>
                 index < lastAfter
                   ? runAfter(value, ctx, route, finalize, wrapResponse, index + 1)
-                  : finishResult(value, ctx, finalize, wrapResponse),
-              (err) => this.bareError(err, ctx, finalize, wrapResponse),
+                  : finishResult(value, ctx, route, finalize, wrapResponse),
+              (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
             )
           }
-          if (index === lastAfter) return finishResult(transformed, ctx, finalize, wrapResponse)
+          if (index === lastAfter)
+            return finishResult(transformed, ctx, route, finalize, wrapResponse)
           result = transformed
           index++
         }
@@ -5970,12 +5991,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       try {
         result = route.handler(ctx)
       } catch (err) {
-        return this.bareError(err, ctx, finalize, wrapResponse)
+        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
       }
       if (result instanceof Promise) {
         return result.then(
           (value) => runAfter(value, ctx, route, finalize, wrapResponse, 0),
-          (err) => this.bareError(err, ctx, finalize, wrapResponse),
+          (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
         )
       }
       return runAfter(result, ctx, route, finalize, wrapResponse, 0)
@@ -5990,19 +6011,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           early = route.befores[0]!(ctx)
         } catch (err) {
-          return this.bareError(err, ctx, finalize, wrapResponse)
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
         }
         if (early instanceof Promise) {
           return early.then(
             (settled) =>
               settled === undefined
                 ? runHandler(ctx, route, finalize, wrapResponse, 0)
-                : finishResult(settled, ctx, finalize, wrapResponse),
-            (err) => this.bareError(err, ctx, finalize, wrapResponse),
+                : finishResult(settled, ctx, route, finalize, wrapResponse),
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
           )
         }
         if (early === undefined) return runHandler(ctx, route, finalize, wrapResponse, 0)
-        return finishResult(early, ctx, finalize, wrapResponse)
+        return finishResult(early, ctx, route, finalize, wrapResponse)
       }
     } else {
       runBefore = (ctx, route, finalize, wrapResponse, index) => {
@@ -6012,20 +6033,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             early = route.befores[index]!(ctx)
           } catch (err) {
-            return this.bareError(err, ctx, finalize, wrapResponse)
+            return this.fusedFail(err, ctx, route, finalize, wrapResponse)
           }
           if (early instanceof Promise) {
             return early.then(
               (settled) => {
-                if (settled !== undefined) return finishResult(settled, ctx, finalize, wrapResponse)
+                if (settled !== undefined)
+                  return finishResult(settled, ctx, route, finalize, wrapResponse)
                 return index < lastBefore
                   ? runBefore(ctx, route, finalize, wrapResponse, index + 1)
                   : runHandler(ctx, route, finalize, wrapResponse, 0)
               },
-              (err) => this.bareError(err, ctx, finalize, wrapResponse),
+              (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
             )
           }
-          if (early !== undefined) return finishResult(early, ctx, finalize, wrapResponse)
+          if (early !== undefined) return finishResult(early, ctx, route, finalize, wrapResponse)
           if (index === lastBefore) return runHandler(ctx, route, finalize, wrapResponse, 0)
           index++
         }
@@ -6041,31 +6063,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           derived = route.derives[0]!(ctx)
         } catch (err) {
-          return this.bareError(err, ctx, finalize, wrapResponse)
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
         }
         if (derived instanceof Promise) {
           return derived.then(
             (settled) => {
               if (isResponseResult(settled) || settled instanceof Response) {
-                return finishResult(settled, ctx, finalize, wrapResponse)
+                return finishResult(settled, ctx, route, finalize, wrapResponse)
               }
               try {
                 Object.assign(ctx, settled)
               } catch (err) {
-                return this.bareError(err, ctx, finalize, wrapResponse)
+                return this.fusedFail(err, ctx, route, finalize, wrapResponse)
               }
               return runBefore(ctx, route, finalize, wrapResponse, 0)
             },
-            (err) => this.bareError(err, ctx, finalize, wrapResponse),
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
           )
         }
         if (isResponseResult(derived) || derived instanceof Response) {
-          return finishResult(derived, ctx, finalize, wrapResponse)
+          return finishResult(derived, ctx, route, finalize, wrapResponse)
         }
         try {
           Object.assign(ctx, derived)
         } catch (err) {
-          return this.bareError(err, ctx, finalize, wrapResponse)
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
         }
         return runBefore(ctx, route, finalize, wrapResponse, 0)
       }
@@ -6077,33 +6099,33 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           try {
             derived = route.derives[index]!(ctx)
           } catch (err) {
-            return this.bareError(err, ctx, finalize, wrapResponse)
+            return this.fusedFail(err, ctx, route, finalize, wrapResponse)
           }
           if (derived instanceof Promise) {
             return derived.then(
               (settled) => {
                 if (isResponseResult(settled) || settled instanceof Response) {
-                  return finishResult(settled, ctx, finalize, wrapResponse)
+                  return finishResult(settled, ctx, route, finalize, wrapResponse)
                 }
                 try {
                   Object.assign(ctx, settled)
                 } catch (err) {
-                  return this.bareError(err, ctx, finalize, wrapResponse)
+                  return this.fusedFail(err, ctx, route, finalize, wrapResponse)
                 }
                 return index < lastDerive
                   ? runDerive(ctx, route, finalize, wrapResponse, index + 1)
                   : runBefore(ctx, route, finalize, wrapResponse, 0)
               },
-              (err) => this.bareError(err, ctx, finalize, wrapResponse),
+              (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
             )
           }
           if (isResponseResult(derived) || derived instanceof Response) {
-            return finishResult(derived, ctx, finalize, wrapResponse)
+            return finishResult(derived, ctx, route, finalize, wrapResponse)
           }
           try {
             Object.assign(ctx, derived)
           } catch (err) {
-            return this.bareError(err, ctx, finalize, wrapResponse)
+            return this.fusedFail(err, ctx, route, finalize, wrapResponse)
           }
           if (index === lastDerive) return runBefore(ctx, route, finalize, wrapResponse, 0)
           index++
@@ -6129,6 +6151,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const runDerive = sharedStages(NODE_STAGES, this, route, (d, b, a) =>
       this.fusedNodeStages(d, b, a),
     )
+    const decorations = route.decorations
 
     if (bodySchema !== undefined) {
       const onParsed = <T>(
@@ -6141,7 +6164,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         try {
           validation = bodySchema["~standard"].validate(parsed)
         } catch (err) {
-          return this.bareError(err, ctx, finalize, wrapResponse)
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
         }
         if (validation instanceof Promise) {
           return validation.then(
@@ -6151,7 +6174,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               ctx.body = settled.value
               return runDerive(ctx, route, finalize, wrapResponse, 0)
             },
-            (err) => this.bareError(err, ctx, finalize, wrapResponse),
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
           )
         }
         if (validation.issues !== undefined)
@@ -6189,13 +6212,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               maxBodyBytes,
               this.protoPoisoning,
             )
+        if (decorations !== undefined) Object.assign(ctx, decorations)
         return readBodyFramed(
           source,
           maxBodyBytes,
           this.protoPoisoning,
           (parsed) => onParsed(parsed, ctx, finalize, wrapResponse),
           wrapResponse,
-          (err) => this.bareError(err, ctx, finalize, wrapResponse),
+          (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
           bodySchema,
           this.formOrigins,
         )
@@ -6216,7 +6240,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             ctx.query = settled.value
             return runDerive(ctx, route, finalize, wrapResponse, 0)
           },
-          (err) => this.bareError(err, ctx, finalize, wrapResponse),
+          (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
         )
       }
       if (validation.issues !== undefined)
@@ -6248,26 +6272,74 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
+      if (decorations !== undefined) Object.assign(ctx, decorations)
       if (querySchema === undefined) return runDerive(ctx, route, finalize, wrapResponse, 0)
       let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
       } catch (err) {
-        return this.bareError(err, ctx, finalize, wrapResponse)
+        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
       }
       return runValidated(validation, ctx, finalize, wrapResponse)
     }
   }
 
-  /** The thrown-value render of the Web fused lifecycle lanes: a `Response` is control flow, anything
-   * else is logged and answered with a plain 500. */
+  /** The thrown-value render of the Web fused lifecycle lanes for a route with no error hooks: a
+   * `Response` is control flow, anything else is logged and answered with a plain 500. */
   private fusedWebFail(err: unknown, ctx: RawContext): Response {
-    return this.bareError(
-      err,
+    return this.bareError(err, ctx, this.finalizeResponse, this.wrapWebResponse)
+  }
+
+  /** {@link fusedWebFail} for a fused route that may have error hooks. */
+  private fusedWebRouteFail(
+    err: unknown,
+    ctx: RawContext,
+    route: FusedHooks,
+  ): MaybePromise<Response> {
+    return this.fusedFail(err, ctx, route, this.finalizeResponse, this.wrapWebResponse)
+  }
+
+  /** The thrown-value render of a fused lifecycle route. A `Response` or `status(...)` is control flow
+   * that no error hook sees, unless it cannot render, which is a fault like any other. Anything else
+   * goes to the route's error hooks; with none it is logged and answered with a plain 500. */
+  private fusedFail<T>(
+    err: unknown,
+    ctx: RawContext,
+    route: FusedHooks,
+    finalize: Finalize<T>,
+    wrapResponse: Wrap<T>,
+  ): MaybePromise<T> {
+    if (route.errors.length === 0) return this.bareError(err, ctx, finalize, wrapResponse)
+    let fault = err
+    if (err instanceof Response || isResponseResult(err)) {
+      try {
+        return finalize(err, responseSet(ctx), ctx)
+      } catch (renderError) {
+        fault = renderError
+      }
+    }
+    return this.runErrorHooks(
+      route.errors,
+      undefined,
+      fault,
       ctx,
-      (result, set) => this.wrapWebResponse(toResponse(result, set)),
-      this.wrapWebResponse,
+      (result, set) => finalize(result, set, ctx),
+      wrapResponse,
     )
+  }
+
+  /** {@link respondFused} for a fused lifecycle route, whose failures reach its error hooks. */
+  private respondHooks(
+    result: unknown,
+    ctx: RawContext,
+    route: FusedHooks,
+    unstamped?: boolean,
+  ): MaybePromise<Response> {
+    try {
+      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders, unstamped)
+    } catch (err) {
+      return this.fusedWebRouteFail(err, ctx, route)
+    }
   }
 
   private bareError<T>(
