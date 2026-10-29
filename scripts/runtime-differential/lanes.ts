@@ -100,7 +100,11 @@ export async function startBunServe(publicDir: string): Promise<Lane> {
     "../fixtures/runtime-differential/app.ts"
   )
   const { serveStatic } = await import("@nifrajs/core/serve-static")
-  const app = createDifferentialApp({ staticFiles: serveStatic(staticMount(publicDir)) })
+  // Host validation is opt-in on Bun; the parity lane keeps it on, as the Deno lane does.
+  const app = createDifferentialApp({
+    staticFiles: serveStatic(staticMount(publicDir)),
+    validateHost: true,
+  })
   const running = app.listen(0, { hostname: "127.0.0.1" })
   return {
     name: "bun-serve",
