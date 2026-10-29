@@ -377,8 +377,7 @@ export default function PartialPrerendering() {
           <a href="/docs/routing#modal-routes">modal route</a>) beside its holes. It is not a hole and
           is not counted against the limit above. The shell carries it unresolved; a client
           navigation to its URL opens the target over the page, which stays mounted with its holes
-          filled. Closing it with Back loads the page again, so its holes show their fallback until
-          they refill.
+          filled.
         </li>
         <li>
           <code>shellVariations</code> lists closed sets of query values that each select their own

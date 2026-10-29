@@ -611,7 +611,7 @@ async function checkKeptHoles(
 
 /**
  * A modal route on a PPR page: a client navigation to the intercepted URL opens the target over the
- * gallery, which stays mounted with its hole in place; Back closes it and the hole refills; a reload of
+ * gallery, which stays mounted with its hole in place; Back closes it and the hole is filled; a reload of
  * the target's URL is the full page.
  */
 async function checkModalRoute(
@@ -669,7 +669,7 @@ async function checkModalRoute(
   await page.evaluate(() => history.back())
   await page.waitForFunction(() => document.querySelector("#modal-title") === null)
   assert.equal(new URL(page.url()).pathname, "/g/1", `${name}: Back restores the page URL`)
-  // Closing is a navigation to the page's own URL: the page is fetched again and its hole refills.
+  // Whether the page is shown again or fetched again, its hole ends filled.
   await page.waitForFunction(() => document.querySelector("#greeting")?.textContent === "hello ada")
   await go(page, "#to-photo-7")
   await page.waitForSelector("#modal-title")
