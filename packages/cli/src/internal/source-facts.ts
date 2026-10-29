@@ -36,6 +36,15 @@ export interface TextSlotBooleanCoercion {
   readonly path: string
 }
 
+/** A `serverFunctions("namespace", module)` mount of a `*.fn.ts` module, from {@link SourceFacts.serverFunctionMounts}. */
+export interface ServerFunctionMount {
+  /** The start of the namespace literal. */
+  readonly position: number
+  readonly namespace: string
+  /** The specifier the mounted module namespace was imported from. */
+  readonly specifier: string
+}
+
 export interface SourceFacts {
   parse(file: string, content: string): TSApi.SourceFile | undefined
   isValueImportAt(
@@ -92,6 +101,11 @@ export interface SourceFacts {
    * another file is not followed.
    */
   textSlotBooleanCoercions(source: TSApi.SourceFile): readonly TextSlotBooleanCoercion[]
+  /**
+   * The `serverFunctions("namespace", module)` calls in `source` whose `module` is a namespace import
+   * (`import * as todos from "./todos.fn"`) of a `*.fn` file. A module reached any other way is left out.
+   */
+  serverFunctionMounts(source: TSApi.SourceFile): readonly ServerFunctionMount[]
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -171,6 +185,9 @@ function routeRegistration(
     return undefined
   return { name: node.expression.name, method, path: first.text, rest }
 }
+
+const SERVER_FN_MODULE_ID = "@nifrajs/web/fn"
+const SERVER_FN_FILE = /\.fn(?:\.[cm]?[jt]sx?)?$/
 
 const ZOD_MODULES: ReadonlySet<string> = new Set(["zod", "zod/v4", "zod/mini", "zod/v4/mini"])
 
@@ -853,6 +870,64 @@ export function createSourceFacts(
     }
   }
 
+  const serverFunctionMounts = (source: TSApi.SourceFile): readonly ServerFunctionMount[] => {
+    const callees = new Set<string>()
+    const members = new Set<string>()
+    const modules = new Map<string, string>()
+    for (const statement of source.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+        continue
+      const clause = statement.importClause
+      if (clause === undefined || clause.isTypeOnly) continue
+      const specifier = statement.moduleSpecifier.text
+      const bindings = clause.namedBindings
+      if (bindings === undefined) continue
+      if (ts.isNamespaceImport(bindings)) {
+        if (specifier === SERVER_FN_MODULE_ID) members.add(bindings.name.text)
+        else if (SERVER_FN_FILE.test(specifier)) modules.set(bindings.name.text, specifier)
+      } else if (specifier === SERVER_FN_MODULE_ID) {
+        for (const element of bindings.elements) {
+          if (
+            !element.isTypeOnly &&
+            (element.propertyName ?? element.name).text === "serverFunctions"
+          )
+            callees.add(element.name.text)
+        }
+      }
+    }
+    if (modules.size === 0 || (callees.size === 0 && members.size === 0)) return []
+    const mounts: ServerFunctionMount[] = []
+    const visit = (node: TSApi.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression
+        const [namespace, module] = node.arguments
+        if (
+          (ts.isIdentifier(callee)
+            ? callees.has(callee.text)
+            : ts.isPropertyAccessExpression(callee) &&
+              ts.isIdentifier(callee.expression) &&
+              members.has(callee.expression.text) &&
+              callee.name.text === "serverFunctions") &&
+          namespace !== undefined &&
+          ts.isStringLiteralLike(namespace) &&
+          module !== undefined &&
+          ts.isIdentifier(module)
+        ) {
+          const specifier = modules.get(module.text)
+          if (specifier !== undefined)
+            mounts.push({
+              position: namespace.getStart(source),
+              namespace: namespace.text,
+              specifier,
+            })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return mounts
+  }
+
   return {
     parse,
     isValueImportAt,
@@ -863,6 +938,7 @@ export function createSourceFacts(
     untypedResponseRoutes,
     undeclaredResponseRoutes,
     textSlotBooleanCoercions,
+    serverFunctionMounts,
     exportReturnsResponse,
     isDynamicImportAt,
   }

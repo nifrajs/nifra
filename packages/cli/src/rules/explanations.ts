@@ -289,6 +289,11 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Use `z.stringbool()`, which reads `true`/`1`/`yes`/`on` as true, `false`/`0`/`no`/`off` as false, and refuses other text. A use kept on purpose takes `// nifra-expect NF-C055: <reason>` above the call.",
     docs: "/docs/api",
   },
+  "NF-C056": {
+    why: "The client build calls the namespace named by a `*.fn.ts` file (`todos.fn.ts` posts under `todos`). A `serverFunctions` mount under another word serves routes the stubs never reach, so every call 404s.",
+    fix: 'Pass the filename\'s namespace to `serverFunctions` (`serverFunctions("todos", todos)` for `todos.fn.ts`), or rename the file. A mount kept on purpose takes `// nifra-expect NF-C056: <reason>` above the call.',
+    docs: "/docs/server-functions",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",
