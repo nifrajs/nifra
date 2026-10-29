@@ -36,6 +36,17 @@ export interface TextSlotBooleanCoercion {
   readonly path: string
 }
 
+/** A `serverFunctions("namespace", module)` mount of a `*.fn.ts` module, from {@link SourceFacts.serverFunctionMounts}. */
+export interface ServerFunctionMount {
+  /** The start of the namespace literal. */
+  readonly position: number
+  /** The start of the `serverFunctions(...)` call, where a `nifra-expect` comment is written above. */
+  readonly callPosition: number
+  readonly namespace: string
+  /** The specifier the mounted module namespace was imported from. */
+  readonly specifier: string
+}
+
 export interface SourceFacts {
   parse(file: string, content: string): TSApi.SourceFile | undefined
   isValueImportAt(
@@ -92,6 +103,11 @@ export interface SourceFacts {
    * another file is not followed.
    */
   textSlotBooleanCoercions(source: TSApi.SourceFile): readonly TextSlotBooleanCoercion[]
+  /**
+   * The `serverFunctions("namespace", module)` calls in `source` whose `module` is a namespace import
+   * (`import * as todos from "./todos.fn"`) of a `*.fn` file. A module reached any other way is left out.
+   */
+  serverFunctionMounts(source: TSApi.SourceFile): readonly ServerFunctionMount[]
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -172,6 +188,9 @@ function routeRegistration(
   return { name: node.expression.name, method, path: first.text, rest }
 }
 
+const SERVER_FN_MODULE_ID = "@nifrajs/web/fn"
+const SERVER_FN_FILE = /\.fn(?:\.[cm]?[jt]sx?)?$/
+
 const ZOD_MODULES: ReadonlySet<string> = new Set(["zod", "zod/v4", "zod/mini", "zod/v4/mini"])
 
 /** The names `source` binds zod's namespace to (`z`), and those it binds zod's `coerce` to. */
@@ -200,6 +219,23 @@ function zodBindings(
     }
   }
   return { namespaces, coerce }
+}
+
+/** Every name `source` declares other than by import: variables, parameters, functions and classes, any scope. */
+function declaredNames(ts: TypeScriptApi, source: TSApi.SourceFile): Set<string> {
+  const names = new Set<string>()
+  const bind = (name: TSApi.BindingName): void => {
+    if (ts.isIdentifier(name)) names.add(name.text)
+    else for (const element of name.elements) if (ts.isBindingElement(element)) bind(element.name)
+  }
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) bind(node.name)
+    else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name)
+      names.add(node.name.text)
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return names
 }
 
 /** The initializer of each variable of `source`, any scope, by name: the first one wins. */
@@ -853,6 +889,72 @@ export function createSourceFacts(
     }
   }
 
+  const serverFunctionMounts = (source: TSApi.SourceFile): readonly ServerFunctionMount[] => {
+    const callees = new Set<string>()
+    const members = new Set<string>()
+    const modules = new Map<string, string>()
+    for (const statement of source.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+        continue
+      const clause = statement.importClause
+      if (clause === undefined || clause.isTypeOnly) continue
+      const specifier = statement.moduleSpecifier.text
+      const bindings = clause.namedBindings
+      if (bindings === undefined) continue
+      if (ts.isNamespaceImport(bindings)) {
+        if (specifier === SERVER_FN_MODULE_ID) members.add(bindings.name.text)
+        else if (SERVER_FN_FILE.test(specifier)) modules.set(bindings.name.text, specifier)
+      } else if (specifier === SERVER_FN_MODULE_ID) {
+        for (const element of bindings.elements) {
+          if (
+            !element.isTypeOnly &&
+            (element.propertyName ?? element.name).text === "serverFunctions"
+          )
+            callees.add(element.name.text)
+        }
+      }
+    }
+    if (modules.size === 0 || (callees.size === 0 && members.size === 0)) return []
+    // A name the file declares again (a local `serverFunctions`, a parameter called like the module) is
+    // not the import, whatever scope it sits in: leave those calls out rather than guess the scope.
+    for (const name of declaredNames(ts, source)) {
+      callees.delete(name)
+      members.delete(name)
+      modules.delete(name)
+    }
+    const mounts: ServerFunctionMount[] = []
+    const visit = (node: TSApi.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression
+        const [namespace, module] = node.arguments
+        if (
+          (ts.isIdentifier(callee)
+            ? callees.has(callee.text)
+            : ts.isPropertyAccessExpression(callee) &&
+              ts.isIdentifier(callee.expression) &&
+              members.has(callee.expression.text) &&
+              callee.name.text === "serverFunctions") &&
+          namespace !== undefined &&
+          ts.isStringLiteralLike(namespace) &&
+          module !== undefined &&
+          ts.isIdentifier(module)
+        ) {
+          const specifier = modules.get(module.text)
+          if (specifier !== undefined)
+            mounts.push({
+              position: namespace.getStart(source),
+              callPosition: node.getStart(source),
+              namespace: namespace.text,
+              specifier,
+            })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return mounts
+  }
+
   return {
     parse,
     isValueImportAt,
@@ -863,6 +965,7 @@ export function createSourceFacts(
     untypedResponseRoutes,
     undeclaredResponseRoutes,
     textSlotBooleanCoercions,
+    serverFunctionMounts,
     exportReturnsResponse,
     isDynamicImportAt,
   }

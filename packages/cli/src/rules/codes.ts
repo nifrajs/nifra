@@ -54,6 +54,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C053": "Partially prerendered page reads the request",
   "NF-C054": "Route without a response schema in a published document",
   "NF-C055": "zod coerce.boolean() reads request text",
+  "NF-C056": "serverFunctions namespace differs from its module's filename",
   "NF-D001": "Doctor check",
   "NF-D002": "Mixed nifra versions",
   "NF-D003": "Stale file: dependencies in bun.lock",

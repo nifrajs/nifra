@@ -1897,9 +1897,10 @@ The namespace becomes a URL segment, so it is constrained to lowercase dot/dash 
 branded export mounts at `/_nifra/fn/<namespace>/<exportName>`; anything
 in the module that is not a server function is ignored rather than mounted.
 
-One thing worth knowing: the namespace you pass here and the `*.fn.ts` filename are
-not statically checked against each other. If they disagree the call 404s, and the generated
-stub names the mismatch - but the compiler will not catch it for you. The build fails on a
+One thing worth knowing: the namespace you pass here and the `*.fn.ts` filename must
+agree, or the call 404s. The compiler does not compare them, but `nifra check`
+reports a mismatch as NF-C056 when the module is imported with
+`import * as todos from "./todos.fn"` and mounted in the same file. The build fails on a
 filename that is not a valid namespace (`todoItems.fn.ts`; use
 `todo-items.fn.ts`). Two files with one basename (`admin/todos.fn.ts`
 and `user/todos.fn.ts`) share the namespace: both mount, and an export name they
