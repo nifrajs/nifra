@@ -3,6 +3,7 @@
  * reload, cache and retain under their own path, never the other's.
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { identityChanged } from "../src/identity.ts"
 import {
   type BoundaryStates,
   createClientRouter,
@@ -553,5 +554,77 @@ describe("an open intercept boundary", () => {
     expect(calls.map((call) => call.path)).toEqual(["/photos/2"])
     expect(router.snapshot().boundaries?.photo?.status).toBe("ready")
     expect(router.snapshot().intercepted).toEqual({ boundary: "photo", pagePath: "/" })
+  })
+})
+
+describe("closing an intercept boundary", () => {
+  test("Back to the page's own URL shows the page held in state, without fetching it", async () => {
+    const { calls, fetchData } = server()
+    const router = await opened(fetchData)
+    const page = router.snapshot().data
+    calls.length = 0
+    await router.navigate("/")
+    expect(calls).toEqual([])
+    expect(router.snapshot()).toMatchObject({
+      routeId: "index",
+      path: "/",
+      pending: false,
+      boundaries: {
+        photo: unresolved("photo", "/photos/:id"),
+        user: unresolved("user", "/users/:id"),
+      },
+    })
+    expect(router.snapshot().data).toBe(page)
+    expect(router.snapshot().intercepted).toBeUndefined()
+  })
+
+  test("the page a reload refreshed under the boundary is the one shown again", async () => {
+    const { calls, fetchData } = server()
+    const router = await opened(fetchData)
+    const { spy } = actionAnswers()
+    restore = () => spy.mockRestore()
+    await router.submit("/", new FormData())
+    const refreshed = router.snapshot().data
+    expect(refreshed).toEqual({ from: "/", n: 1 })
+    calls.length = 0
+    await router.navigate("/")
+    expect(calls).toEqual([])
+    expect(router.snapshot().data).toBe(refreshed)
+  })
+
+  test("a page loaded for the previous visitor loads again", async () => {
+    const { calls, fetchData } = server()
+    const router = await opened(fetchData)
+    identityChanged()
+    calls.length = 0
+    await router.navigate("/")
+    expect(calls.map((call) => call.path)).toContain("/")
+    expect(router.snapshot().intercepted).toBeUndefined()
+  })
+
+  test("a navigation to any other URL still loads it and closes the boundary", async () => {
+    const { calls, fetchData } = server()
+    const router = await opened(fetchData)
+    calls.length = 0
+    await router.navigate("/about")
+    expect(calls.map((call) => call.path)).toEqual(["/about"])
+    expect(router.snapshot()).toMatchObject({ routeId: "about", path: "/about" })
+    expect(router.snapshot().intercepted).toBeUndefined()
+  })
+
+  test("Back before the target settled leaves the page as it was", async () => {
+    const { fetchData } = server()
+    let release: (() => void) | undefined
+    const gated: FetchRouteData = async (path, match, signal, navigation) => {
+      if (path === "/photos/2") await new Promise<void>((resolve) => (release = resolve))
+      return fetchData(path, match, signal, navigation)
+    }
+    const router = createClientRouter({ patterns, initial, fetchData: gated, routeHooks: hooks })
+    const opening = router.navigate("/photos/2")
+    await router.navigate("/")
+    release?.()
+    await opening
+    expect(router.snapshot().intercepted).toBeUndefined()
+    expect(router.snapshot()).toMatchObject({ routeId: "index", path: "/" })
   })
 })

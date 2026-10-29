@@ -497,9 +497,10 @@ export default function Routing() {
           stays an ordinary page.
         </li>
         <li>
-          Back closes the modal and forward reopens it. A link inside the modal to another matching
-          URL replaces its content, and back steps through each one. Navigating anywhere else closes
-          it.
+          Back closes the modal and forward reopens it. Closing shows the page underneath as it was,
+          with its loader data and boundaries, without fetching it again; a page loaded for a
+          previous visitor loads again. A link inside the modal to another matching URL replaces its
+          content, and back steps through each one. Navigating anywhere else closes it.
         </li>
         <li>
           A reload, a shared link, or a navigation from a page outside the declaring layout or page

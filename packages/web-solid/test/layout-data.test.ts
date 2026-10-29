@@ -58,3 +58,32 @@ test("a snapshot with no layout data renders the layouts with null", () => {
   expect(props.layoutData).toBeUndefined()
   expect(decode(renderToString(compose([layout("root"), Page], props)))).toContain("<root:null>")
 })
+
+test("a layout reads boundaries through a getter, so a modal opening does not rebuild the chain", () => {
+  // Copying the value into the layout's props read it inside the mount's tracking scope, so any change
+  // to a boundary (an intercept boundary taking its target) re-composed the whole page and lost its state.
+  let state = snapshot({
+    boundaries: { photo: { name: "photo", mode: { intercept: "/p/:id" }, status: "unresolved" } },
+  })
+  const props = routeProps(() => state, undefined)
+  let seen: { readonly boundaries?: unknown } | undefined
+  const Probe = (layoutProps: { boundaries?: unknown; children?: JSX.Element }) => {
+    seen = layoutProps
+    return layoutProps.children
+  }
+  renderToString(compose([Probe, Page], props))
+  expect(seen?.boundaries).toBe(state.boundaries)
+  state = snapshot({
+    boundaries: {
+      photo: {
+        name: "photo",
+        mode: { intercept: "/p/:id" },
+        status: "ready",
+        data: { title: "7" },
+      },
+    },
+  })
+  expect(seen?.boundaries).toBe(state.boundaries)
+  state = snapshot()
+  expect(seen?.boundaries).toBeUndefined()
+})
