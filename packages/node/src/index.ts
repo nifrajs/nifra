@@ -688,6 +688,10 @@ export interface ServeOptions {
    * characters a parser percent-encodes are resolved before routing, so every runtime routes the
    * same path. Off by default; enable it when path guards, or a path-normalizing proxy, sit in front
    * of or inside the app. The same option as `server({ normalizeTarget })` on Deno.
+   *
+   * Off applies to requests the adapter serves from Node's own request object. A request the adapter
+   * must hand over as a Web `Request` - one a `static` callback sees, and every WebSocket upgrade -
+   * is built by the platform's URL parser, which resolves dot segments whatever this option says.
    */
   readonly normalizeTarget?: boolean
   /**

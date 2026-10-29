@@ -132,6 +132,25 @@ test("dot segments are routed as sent unless normalizeTarget is set", async () =
   expect(await statusOf(running.port, "/public/../admin")).toBe(200)
 })
 
+test("a request handed over as a Web Request is resolved by the platform whatever normalizeTarget says", async () => {
+  const app = server()
+    .get("/admin", () => ({ where: "admin" }))
+    .get("/public/:name", (c) => ({ where: "public", name: c.params.name }))
+  running = await serve(app, { port: 0, hostname: "127.0.0.1", static: () => undefined })
+  const res = await new Promise<number>((resolve, reject) => {
+    const socket = connect(running!.port, "127.0.0.1", () =>
+      socket.write("GET /public/../admin HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n"),
+    )
+    let text = ""
+    socket.on("data", (chunk) => {
+      text += chunk
+    })
+    socket.on("error", reject)
+    socket.on("close", () => resolve(Number(text.slice(9, 12))))
+  })
+  expect(res).toBe(200)
+})
+
 test("Node adapter runs the dedicated auth stage before body validation", async () => {
   let validations = 0
   const guarded = server()
