@@ -3,7 +3,7 @@
  * facts beside them, and the summary computed from them. The raw rounds are what the artifact keeps;
  * every percentage is recomputed from them, so a later regression gate can re-pool old reports.
  */
-import { type Matrix, type Measure, pooledRatios, type RoundCell } from "../rounds.ts"
+import { type Matrix, type Measure, median, pooledRatios, type RoundCell } from "../rounds.ts"
 import type { CoreSplit } from "./host.ts"
 import { type MedianInterval, medianInterval } from "./stats.ts"
 
@@ -46,7 +46,7 @@ export interface RunOutput {
 export interface ReportSettings {
   readonly minRuns: number
   readonly maxRuns: number
-  /** A row whose interval is wider than this many percentage points is noisy. */
+  /** A row whose interval is wider than this percentage of its median is noisy. */
   readonly maxCiWidthPts: number
 }
 
@@ -192,6 +192,8 @@ export type Verdict = "ok" | "noisy" | "too few rounds"
 
 export interface RowSummary {
   readonly row: string
+  /** Median req/s over every round of every run; load on a shared runner moves it between jobs. */
+  readonly rps: number | undefined
   /** `undefined` throughout a workload without a ceiling row. */
   readonly ofCeiling: MedianInterval | undefined
   /** nifra's req/s over this row's, round by round; `undefined` on nifra's own row. */
@@ -208,7 +210,9 @@ export interface WorkloadSummary {
   readonly rows: readonly RowSummary[]
 }
 
-const widthPts = (i: MedianInterval): number => (i.hi - i.lo) * 100
+/** The interval's width as a percentage of its median, so a 10x ratio is held to the same relative precision as a 1x one. */
+const widthPct = (i: MedianInterval): number =>
+  i.median > 0 ? ((i.hi - i.lo) / i.median) * 100 : Number.POSITIVE_INFINITY
 
 /** In first-seen order, so the summary follows run.ts's own section and workload order. */
 function unique(values: Iterable<string>): string[] {
@@ -260,8 +264,17 @@ export function summarize(
       ]
       let verdict: Verdict = "ok"
       if (needed.some((i) => i === undefined)) verdict = "too few rounds"
-      else if (needed.some((i) => i !== undefined && widthPts(i) > maxCiWidthPts)) verdict = "noisy"
-      return { row, ofCeiling, nifraOver, verdict }
+      else if (needed.some((i) => i !== undefined && widthPct(i) > maxCiWidthPts)) verdict = "noisy"
+      const rps = runs.flatMap(
+        (run) => run.results[runtime]?.[row]?.[workload]?.rounds.map((m) => m.rps) ?? [],
+      )
+      return {
+        row,
+        rps: rps.length === 0 ? undefined : median(rps),
+        ofCeiling,
+        nifraOver,
+        verdict,
+      }
     })
     // Without a ceiling the rows keep the run's order: nifra's row, then its rivals.
     if (ceiling !== undefined) {
