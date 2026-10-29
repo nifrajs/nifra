@@ -697,8 +697,8 @@ function hasUnroutedParam(params: Record<string, string>): boolean {
 }
 
 /**
- * Deno is the runtime that hands an app a `Request` whose `url` is the target as the client sent it;
- * Bun, workerd and every `new Request()` parse it first. Only there does `fetch` read the URL up front.
+ * Deno's server builds `Request.url` from the Host and target as received, without normalizing the
+ * target first. Bun, workerd, and `new Request()` parse it before core sees it.
  */
 const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 
@@ -779,24 +779,29 @@ const invalidHost = (host: string): boolean => {
  * Host (400), a URL replaces the target, `false` keeps it. Deno hands the target over as sent, so
  * its dot segments are resolved; so does Bun when HTTP/1.0 leaves the Host out, and its route table
  * matched `/files/..` raw. Such a request is served as `localhost`, as Node and Deno serve it.
- * `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every
- * header. On Bun only a target that needs resolving is checked unless `validateHost` is set.
+ * `headerOf`, not `req.headers`: on Deno it reads Host only when `validateHost` is set. Dot
+ * segments are still resolved when strict validation is off. On Bun only a target that needs
+ * resolving is checked unless `validateHost` is set.
  */
 const requestTarget = (req: Request, validateHost: boolean): string | boolean => {
-  if (!rawRequestTargets && !(unparsedBunTargets && (validateHost || needsResolving(req.url))))
-    return false
+  if (rawRequestTargets) {
+    if (validateHost) {
+      const host = headerOf(req, "host")
+      if (host !== null && invalidHost(host)) return true
+    }
+    return needsResolving(req.url) && resolveDotSegments(req.url)
+  }
+  if (!(unparsedBunTargets && (validateHost || needsResolving(req.url)))) return false
   const host = headerOf(req, "host")
   if (host !== null && invalidHost(host)) {
-    if (rawRequestTargets) return true
     // Bun served it anyway: it could not read the Host, so it left the target unparsed, or it
     // built the URL on it - sent twice (joined with ", ", the URL on the first; RFC 9112 section
-    // 3.2 answers 400), percent-encoded (`%61.example` routed as `a.example`), or with a
-    // sub-delimiter (`a!b`). A request built in process keeps the URL its caller built, unless Bun
+    // 3.2 answers 400), percent-encoded (%61.example routed as a.example), or with a
+    // sub-delimiter (a!b). A request built in process keeps the URL its caller built, unless Bun
     // would have built it so.
     const routed = URL.parse(req.url)?.host
     return routed === undefined || URL.parse(`//${host.split(", ")[0]}`, req.url)?.host === routed
   }
-  if (rawRequestTargets) return needsResolving(req.url) && resolveDotSegments(req.url)
   // A request built in process carries an absolute URL whatever its headers say.
   return (
     host === null &&
