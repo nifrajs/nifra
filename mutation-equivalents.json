@@ -27,6 +27,41 @@
       "code": "const id = unsigned === null ? null : (DATA_TAG.exec(unsigned)?.[1] ?? unsigned)",
       "from": "unsigned === null",
       "reason": "DATA_TAG.exec coerces null to the string \"null\", which carries no tag, so the id stays null."
+    },
+    {
+      "op": "condition->false",
+      "fn": "loadFromRaw",
+      "code": "if (raw === undefined || raw === \"\") return make({})",
+      "from": "raw === undefined || raw === \"\"",
+      "reason": "An absent or empty cookie fails the signature check in unsign and ends as the same anonymous session; the guard only skips that check."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "loadFromRaw",
+      "code": "if (raw === undefined || raw === \"\") return make({})",
+      "from": "||",
+      "reason": "An absent or empty cookie fails the signature check in unsign and ends as the same anonymous session; the guard only skips that check."
+    },
+    {
+      "op": "condition->false",
+      "fn": "revoke",
+      "code": "if (store === undefined) return",
+      "from": "store === undefined",
+      "reason": "Only called with a store: destroy and commit reach it inside their own store checks."
+    },
+    {
+      "op": "condition->false",
+      "fn": "commit",
+      "code": "family === state.id ? undefined : store.get(revokedKey(family)),",
+      "from": "family === state.id",
+      "reason": "When the family is the id, its marker is the id's own marker, which the same Promise.all already reads."
+    },
+    {
+      "op": "condition->false",
+      "fn": "destroy",
+      "code": "const state = session === undefined ? undefined : states.get(session)",
+      "from": "session === undefined",
+      "reason": "WeakMap.get(undefined) returns undefined, so the guard changes nothing."
     }
   ],
   "packages/authjs/src/index.ts": [
@@ -36,6 +71,83 @@
       "code": "payload === null",
       "from": "payload === null",
       "reason": "Object.keys(null) throws, and the catch around the comparison returns the response without the header."
+    },
+    {
+      "op": "condition->false",
+      "fn": "readEnvSecret",
+      "code": "if (typeof process === \"undefined\") return undefined",
+      "from": "typeof process === \"undefined\"",
+      "reason": "process is defined on every runtime these tests run on; the guard serves platforms without that global, which no test here can remove."
+    },
+    {
+      "op": "condition->true",
+      "fn": "resolveSecret",
+      "code": "if (configured !== undefined) return typeof configured === \"string\" ? configured : [...configured]",
+      "from": "typeof configured === \"string\"",
+      "reason": "resolveSecret runs on every request, so the copy it makes of a rotation list is never shared between requests, and activeConfig copies the list again."
+    },
+    {
+      "op": "condition->false",
+      "fn": "authEnv",
+      "code": "const processEnv = typeof process === \"undefined\" ? undefined : process.env",
+      "from": "typeof process === \"undefined\"",
+      "reason": "process is defined on every runtime these tests run on; the guard serves platforms without that global, which no test here can remove."
+    },
+    {
+      "op": "condition->false",
+      "fn": "get",
+      "code": "if (typeof key !== \"string\") return undefined",
+      "from": "typeof key !== \"string\"",
+      "reason": "A symbol key reads undefined from both the bindings and the process environment, the same as the early return."
+    },
+    {
+      "op": "condition->true",
+      "fn": "activeConfig",
+      "code": "secret: typeof secret === \"string\" ? secret : [...secret],",
+      "from": "typeof secret === \"string\"",
+      "reason": "resolveSecret already hands over its own copy of a rotation list."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "activeConfig",
+      "code": "applyEnvDefaults(env, active, true)",
+      "from": "true",
+      "reason": "basePath is always explicit here, so the warning this flag suppresses is never raised."
+    },
+    {
+      "op": "delete statement",
+      "fn": "sanitizePublicRequest",
+      "code": "rewritten.headers.delete(\"host\")",
+      "from": "rewritten.headers.delete(\"host\")",
+      "reason": "The set on the next line replaces any host header the delete would have removed."
+    },
+    {
+      "op": "condition->false",
+      "fn": "publicUrl",
+      "code": "if (proto === null && host === null) return url",
+      "from": "proto === null && host === null",
+      "reason": "With neither header the code goes on to rebuild the same request URL."
+    },
+    {
+      "op": "condition->false",
+      "fn": "unauthenticatedResult",
+      "code": "return custom.headers === undefined",
+      "from": "custom.headers === undefined",
+      "reason": "Passing headers: undefined to status adds no header, the same as the call without the option."
+    },
+    {
+      "op": "binary ??->&&",
+      "fn": "getSession",
+      "code": "const base = normalizeBasePath(options.basePath ?? config.basePath)",
+      "from": "??",
+      "reason": "The base path only ties the session request to the config built from the same value, so any value reads the same session."
+    },
+    {
+      "op": "condition->false",
+      "fn": "getSession",
+      "code": "if (!response.ok) return null",
+      "from": "!response.ok",
+      "reason": "An Auth.js failure answers JSON with a message and no user, so the user check that follows returns null the same way."
     }
   ],
   "packages/coding-agent/src/subagents.ts": [
@@ -644,6 +756,22 @@
       "code": "cachePut(pagePath, reloaded)",
       "from": "cachePut(pagePath, reloaded)",
       "reason": "Cache entries are only marked stale and their keys only pick which fetchers invalidate() refreshes; a fetcher's own load already caches the path it shows."
+    }
+  ],
+  "packages/mcp-db/src/internal/pg-exec.ts": [
+    {
+      "op": "binary <-><=",
+      "fn": "planReads",
+      "code": "for (let i = 0; i + 2 < tokens.length; i++) {",
+      "from": "<",
+      "reason": "The extra iteration reads tokens[i + 2] past the end, which the `column === undefined` check on the next lines skips, so it changes nothing."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "planReads",
+      "code": "for (let i = 0; i + 2 < tokens.length; i++) {",
+      "from": "+",
+      "reason": "The loop only runs further past the end, where every iteration meets an undefined token and skips: `qualifier` or `dot` or `column` is undefined."
     }
   ]
 }

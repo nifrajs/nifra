@@ -830,7 +830,7 @@ async function runTests(
   }
 }
 
-/** What a mutant run says against the unmutated baseline: only a test that passed there can kill. */
+/** What a mutant run says against the unmutated baseline: a test that already failed there cannot kill. */
 export function classify(
   baseline: { readonly cases: readonly TestCase[]; readonly errors: number },
   run: Run,
@@ -839,8 +839,11 @@ export function classify(
   if (run.timedOut) return { status: "timeout", killedBy: [] }
   if (run.cases === undefined) return { status: "error", killedBy: [] }
   const passing = new Set(baseline.cases.filter((c) => !c.failed).map((c) => c.id))
+  const red = new Set(baseline.cases.filter((c) => c.failed).map((c) => c.id))
   const seen = new Set(run.cases.map((c) => c.id))
-  const failed = run.cases.filter((c) => c.failed && passing.has(c.id)).map((c) => c.id)
+  // A case that failed with the mutant but not without it kills, one a hook broke (`beforeAll`, which
+  // `--bail` stops on before later files run) included: it has no baseline entry of its own.
+  const failed = run.cases.filter((c) => c.failed && !red.has(c.id)).map((c) => c.id)
   // A test that vanished was in a file that no longer loads; under --bail the rest never ran.
   const vanished = bail || run.cases.length === 0 ? [] : [...passing].filter((id) => !seen.has(id))
   const killedBy = [...new Set([...failed, ...vanished])]

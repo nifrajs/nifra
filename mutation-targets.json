@@ -7,6 +7,7 @@
     "files": ["packages/authjs/src/index.ts"],
     "tests": [
       "packages/authjs/test/authjs.test.ts",
+      "packages/authjs/test/authjs-boundaries.test.ts",
       "packages/authjs/test/client.test.ts",
       "internal/invariants/test/identity-epoch.test.ts"
     ]

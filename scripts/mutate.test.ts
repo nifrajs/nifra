@@ -460,6 +460,19 @@ describe("parseJunit and classify", () => {
     expect(classify(baseline, run(green), false)).toEqual({ status: "survived", killedBy: [] })
   })
 
+  test("a hook that breaks under the mutant kills, and the same hook already red does not", () => {
+    const hooked = `<testsuites><testsuite file="h.test.ts"><testcase name="(unnamed)" classname="a" file="h.test.ts" line="2"><failure /></testcase></testsuite></testsuites>`
+    expect(classify(baseline, run(parseJunit(hooked)), true)).toEqual({
+      status: "killed",
+      killedBy: ["h.test.ts:2 (unnamed)"],
+    })
+    const red = {
+      ...baseline,
+      cases: [...baseline.cases, { id: "h.test.ts:2 (unnamed)", failed: true }],
+    }
+    expect(classify(red, run(parseJunit(hooked)), true).status).toBe("survived")
+  })
+
   test("a timeout, a missing report and a new error outside a test are detections", () => {
     const green = baseline.cases.map((c) => ({ ...c }))
     expect(classify(baseline, run(green, { timedOut: true }), false).status).toBe("timeout")
