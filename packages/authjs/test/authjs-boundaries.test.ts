@@ -16,6 +16,14 @@ const config: AuthJSConfig = {
   logger: { error() {}, warn() {}, debug() {} },
 }
 
+const csrfTokenOf = async (response: Response): Promise<string> => {
+  const body: unknown = await response.json()
+  const token =
+    typeof body === "object" && body !== null ? Reflect.get(body, "csrfToken") : undefined
+  if (typeof token !== "string") throw new Error("the response carries no csrfToken")
+  return token
+}
+
 const mount = (options: Parameters<typeof authjs>[1] = {}, over: Partial<AuthJSConfig> = {}) =>
   server().use(authjs({ ...config, ...over }, options))
 
@@ -51,6 +59,8 @@ const sessionRequest = (headers: Record<string, string> = {}) =>
   new Request(`${ORIGIN}/me`, { headers })
 
 describe("the secret", () => {
+  // biome-ignore lint/plugin/noChainedTypeAssertions: the secret reader looks only at secret and trustHost; the fixture leaves the rest of the config out on purpose.
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the secret reader looks only at secret and trustHost; the fixture leaves the rest of the config out on purpose.
   const bare = { providers: [], trustHost: true } as unknown as AuthJSConfig
 
   test("comes from AUTH_SECRET in the process environment when nothing is configured", async () => {
@@ -106,7 +116,7 @@ describe("the secret", () => {
     }
     const app = server().use(authjs(credentials))
     const csrf = await app.fetch(new Request(`${ORIGIN}/api/auth/csrf`))
-    const { csrfToken } = (await csrf.json()) as { csrfToken: string }
+    const csrfToken = await csrfTokenOf(csrf)
     const cookies = csrf.headers
       .getSetCookie()
       .map((line) => line.split(";")[0])
@@ -190,7 +200,7 @@ describe("Auth.js environment defaults", () => {
       { AUTH_GITHUB_ID: "from-env", AUTH_GITHUB_SECRET: "from-env-secret" },
       async () => {
         const csrf = await app.fetch(new Request(`${ORIGIN}/api/auth/csrf`))
-        const { csrfToken } = (await csrf.json()) as { csrfToken: string }
+        const csrfToken = await csrfTokenOf(csrf)
         const response = await app.fetch(
           new Request(`${ORIGIN}/api/auth/signin/github`, {
             method: "POST",
@@ -211,10 +221,17 @@ describe("Auth.js environment defaults", () => {
 })
 
 describe("the request Auth.js sees", () => {
-  const providers = async (app: ReturnType<typeof mount>, headers: Record<string, string>) =>
-    (await (
-      await app.fetch(new Request(`${ORIGIN}/api/auth/providers`, { headers }))
-    ).json()) as Record<string, { signinUrl: string }>
+  const providers = async (
+    app: ReturnType<typeof mount>,
+    headers: Record<string, string>,
+  ): Promise<{ github?: { signinUrl: unknown } }> => {
+    const response = await app.fetch(new Request(`${ORIGIN}/api/auth/providers`, { headers }))
+    const body: unknown = await response.json()
+    const github =
+      typeof body === "object" && body !== null ? Reflect.get(body, "github") : undefined
+    if (typeof github !== "object" || github === null) return {}
+    return { github: { signinUrl: Reflect.get(github, "signinUrl") } }
+  }
 
   test("forwarded host and protocol headers name nothing without trustProxy", async () => {
     const app = mount()
@@ -286,6 +303,7 @@ describe("guards", () => {
     try {
       await requireAuthUser(sessionRequest(), config, options)
     } catch (error) {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a guard throws a carrier whose plain form is { status, body?, headers? }; a different shape fails the assertions that read it.
       return Reflect.get(Object(error), "plain") as {
         status: number
         body?: unknown
@@ -387,7 +405,7 @@ describe("the request a credentials provider receives", () => {
       ),
     )
     const csrf = await app.fetch(new Request(`${ORIGIN}/api/auth/csrf`, { headers }))
-    const { csrfToken } = (await csrf.json()) as { csrfToken: string }
+    const csrfToken = await csrfTokenOf(csrf)
     const cookie = csrf.headers
       .getSetCookie()
       .map((line) => line.split(";")[0])
@@ -444,6 +462,7 @@ describe("reading a session token", () => {
     const cookie = `authjs.session-token=${await token("authjs.session-token")}`
     const stripped: AuthJSConfig = {
       ...config,
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the callback result stands in for a session without a user; Auth.js reads only expires from it.
       callbacks: { session: () => ({ expires: "2999-01-01T00:00:00.000Z" }) as never },
     }
     expect(await getSession(sessionRequest({ cookie }), stripped)).toBeNull()

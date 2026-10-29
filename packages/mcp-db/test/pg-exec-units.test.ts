@@ -53,6 +53,8 @@ describe("pgFailure", () => {
 
 describe("the read-only transaction", () => {
   const client = (calls: string[] = []): PostgresClient => {
+    // biome-ignore lint/plugin/noChainedTypeAssertions: the fake implements only the members the code under test calls: the template call, unsafe and release.
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the fake implements only the members the code under test calls: the template call, unsafe and release.
     const connection = Object.assign(
       () => {
         throw new Error("unexpected template call")
@@ -213,6 +215,8 @@ describe("fetchThroughCursor", () => {
     Object.assign(Promise.resolve(found), { values: async () => found })
 
   const read = (first: unknown) => {
+    // biome-ignore lint/plugin/noChainedTypeAssertions: the fake implements only the members the code under test calls: the template call, unsafe and release.
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the fake implements only the members the code under test calls: the template call, unsafe and release.
     const connection = Object.assign(
       (strings: TemplateStringsArray) =>
         answer(strings[0]?.startsWith("EXPLAIN") ? [{ "QUERY PLAN": [] }] : []),

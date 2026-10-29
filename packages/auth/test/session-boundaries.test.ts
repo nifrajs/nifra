@@ -24,6 +24,7 @@ const jar = (cookies: Record<string, string> = {}, request?: Request) => {
   const deleted: { name: string; options: object }[] = []
   const c: SessionContext = {
     cookies,
+    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: an option left unset must be absent, not undefined, so the default applies.
     ...(request === undefined ? {} : { request }),
     set: {
       cookie(_name, value, options) {
@@ -81,6 +82,7 @@ const spyStore = (
       ops.push(`delete ${id}`)
       map.delete(id)
     },
+    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: an option left unset must be absent, not undefined, so the default applies.
     ...(hooks.rotate === undefined ? {} : { rotate: hooks.rotate }),
   }
   return { store, map, ops }
@@ -128,6 +130,7 @@ describe("options", () => {
         secret: SECRET,
         maxAge: MAX_AGE,
         now: () => time,
+        // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: an option left unset must be absent, not undefined, so the default applies.
         ...(rolling === undefined ? {} : { rolling }),
       })
       const first = jar()
