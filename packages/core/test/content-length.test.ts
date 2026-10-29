@@ -538,4 +538,21 @@ describe("capBodyBytes", () => {
       '400 {"ok":false,"error":"invalid_content_length"}',
     )
   })
+
+  test("Bun's route table marks a body method's request as runtime-framed and leaves a GET alone", async () => {
+    const marked = (request: Request): boolean => hasTrustedBodyFraming(request)
+    const app = server()
+      .get("/probe/:id", (c) => ({ marked: marked(c.req) }))
+      .post("/probe", (c) => ({ marked: marked(c.req) }))
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const base = `http://127.0.0.1:${instance.port}`
+      expect(await (await fetch(`${base}/probe/1`)).json()).toEqual({ marked: false })
+      expect(await (await fetch(`${base}/probe`, { method: "POST" })).json()).toEqual({
+        marked: true,
+      })
+    } finally {
+      instance.stop(true)
+    }
+  })
 })
