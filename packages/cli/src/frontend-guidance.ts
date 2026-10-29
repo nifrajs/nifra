@@ -134,8 +134,8 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     symptom:
       "A value stops updating the template after you pull it out of a ref, reactive object, or props.",
     cause:
-      "Destructuring a `reactive()` object or `props` copies the current value and drops the reactive link; a `ref` read in script forgets `.value`.",
-    fix: "Keep the reactive source intact: use `toRefs`/`storeToRefs` when you must destructure, access `props.x` directly, and remember `.value` on a ref in script (templates unwrap it for you).",
+      "Destructuring a `reactive()` object or the `props` argument of `setup(props)` copies the current value and drops the reactive link; a `ref` read in script forgets `.value`. In Vue 3.5 `<script setup>`, destructuring `defineProps()` is compiled to keep reads reactive, but passing the destructured name to `watch` still hands it a plain value.",
+    fix: "Keep the reactive source intact: use `toRefs`/`storeToRefs` when you must destructure, access `props.x` directly, watch a getter such as `() => foo` for a destructured prop, and remember `.value` on a ref in script (templates unwrap it for you).",
     verify:
       "eslint-plugin-vue - it is the authority on Vue reactivity; nifra does not re-implement it.",
     seeAlso: "eslint-plugin-vue toRefs reactivity",

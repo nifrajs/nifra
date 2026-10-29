@@ -1,8 +1,9 @@
 import { heapStats } from "bun:jsc"
 import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
-import { type Logger, server, silentLogger } from "../src/index.ts"
+import { type Logger, server, silentLogger, status } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { responseObserver } from "../src/response-observer.ts"
 
 /**
  * Routes that register the same hooks in the same order share one stage chain per server, so the
@@ -13,6 +14,10 @@ import { nodeDirect } from "../src/node-direct.ts"
 type Rec = Record<string, unknown>
 
 type Answerable = Pick<ReturnType<typeof build>, "fetch" | "resolveNode">
+
+interface Cataloged {
+  entries(): { entry: { execution: { fusedLane: string | undefined } } }[]
+}
 
 async function answers(app: Answerable, request: () => Request): Promise<Rec[]> {
   const web = await app.fetch(request())
@@ -118,6 +123,31 @@ test("a merged server and a group keep their own hook chains", async () => {
   const node = await app.resolveNode(new Request("http://x/g/x"))
   expect(node.kind === "response" ? node.response.status : node.status).toBe(200)
   expect(trace.splice(0)).toEqual(["parent", "group"])
+})
+
+test("a merged server and a group keep their own error hooks and decorations", async () => {
+  const fail = (): never => {
+    throw new Error("x")
+  }
+  const child = server({ logger: silentLogger })
+    .decorate("tag", "child")
+    .beforeHandle(() => undefined)
+    .onError((_error, c) => ({ from: "child", tag: c.tag }))
+    .get("/child", fail)
+  const app = server({ logger: silentLogger })
+    .use(nodeDirect())
+    .beforeHandle(() => undefined)
+    .get("/parent", fail)
+    .merge(child)
+    .group("/g", (g) => g.onError(() => ({ from: "group" })).get("/x", fail))
+  const get = (path: string) => () => new Request(`http://x${path}`)
+  for (let round = 0; round < 2; round++) {
+    const plain = { ok: false, error: "internal_error" }
+    expect(await answers(app, get("/parent"))).toEqual([plain, plain])
+    const merged = { from: "child", tag: "child" }
+    expect(await answers(app, get("/child"))).toEqual([merged, merged])
+    expect(await answers(app, get("/g/x"))).toEqual([{ from: "group" }, { from: "group" }])
+  }
 })
 
 test("the same hooks in another order run in that order", async () => {
@@ -352,6 +382,69 @@ function functionsPerRoute(count: number, hooked: boolean): number {
   return (after - before) / count
 }
 
+test("routes of one shape keep their own error hooks and decorations", async () => {
+  const trace: string[] = []
+  const app = server({ logger: silentLogger })
+    .use(nodeDirect())
+    .beforeHandle(() => undefined)
+    .get("/before-hooks", () => {
+      throw new Error("boom")
+    })
+    .decorate("tag", "t")
+    .onError((error, c) => {
+      trace.push("first")
+      const message = error instanceof Error ? error.message : ""
+      return message === "pass" ? undefined : { from: "first", message, tag: c.tag }
+    })
+    .get("/first", () => {
+      throw new Error("boom")
+    })
+    .onError((_error, c) => {
+      trace.push("second")
+      return { from: "second", tag: c.tag }
+    })
+    .get("/second", () => {
+      throw new Error("pass")
+    })
+    .post("/body", { body: t.object({ name: t.string() }) }, (c) => {
+      throw new Error(c.body.name)
+    })
+  const get = (path: string) => () => new Request(`http://x${path}`)
+  const post = () =>
+    new Request("http://x/body", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "boom" }),
+    })
+  for (let round = 0; round < 3; round++) {
+    trace.length = 0
+    // Registered before any error hook or decoration, so it has neither.
+    expect(await answers(app, get("/before-hooks"))).toEqual([
+      { ok: false, error: "internal_error" },
+      { ok: false, error: "internal_error" },
+    ])
+    expect(trace).toEqual([])
+    expect(await answers(app, get("/first"))).toEqual([
+      { from: "first", message: "boom", tag: "t" },
+      { from: "first", message: "boom", tag: "t" },
+    ])
+    expect(trace).toEqual(["first", "first"])
+    trace.length = 0
+    // The first hook passes, so the second answers.
+    expect(await answers(app, get("/second"))).toEqual([
+      { from: "second", tag: "t" },
+      { from: "second", tag: "t" },
+    ])
+    expect(trace).toEqual(["first", "second", "first", "second"])
+    trace.length = 0
+    // A body route's handler fails after validation, and the error hooks see the decoration.
+    expect(await answers(app, post)).toEqual([
+      { from: "first", message: "boom", tag: "t" },
+      { from: "first", message: "boom", tag: "t" },
+    ])
+  }
+})
+
 test("a fused hook route costs a fixed handful of functions, not a chain of its own", () => {
   const bare = functionsPerRoute(1000, false)
   const hooked = functionsPerRoute(1000, true)
@@ -417,4 +510,66 @@ test("fused hook routes get their own signal per request under a request timeout
     expect(signals[0]).not.toBe(signals[1])
     expect(signals[0]?.aborted).toBe(false)
   }
+})
+
+test("a fused hook route hands a rendered failure answer to the body observer, not the raw one", async () => {
+  const seen: string[] = []
+  const observed = () =>
+    server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(responseObserver())
+      .onResponseBody((body) => {
+        seen.push(typeof body === "string" ? body : new TextDecoder().decode(body))
+        return undefined
+      })
+      .onResponseRaw((response) => {
+        seen.push("raw")
+        return response
+      })
+  // One derive and one before hook with no error hook: the bound single-shape lane.
+  const bound = observed()
+    .derive(() => ({ user: "u" }))
+    .beforeHandle(() => {
+      throw status(409, { conflict: true })
+    })
+    .get("/bound", () => ({ ok: true }))
+  // A before hook and an error hook that answers: the shared stage chain.
+  const hooked = observed()
+    .onError(() => ({ handled: true }))
+    .beforeHandle(() => {
+      throw new Error("boom")
+    })
+    .get("/hooked", () => ({ ok: true }))
+  const answered = async (app: Pick<typeof bound, "fetch">, path: string): Promise<string> => {
+    seen.length = 0
+    const response = await app.fetch(new Request(`http://x${path}`))
+    await response.text()
+    return seen.join("|")
+  }
+  expect(await answered(bound, "/bound")).toBe('{"conflict":true}')
+  expect(await answered(hooked, "/hooked")).toBe('{"handled":true}')
+})
+
+test("a decoration the context cannot take reaches the route's error hook, as in the general program", async () => {
+  for (const key of ["req", "set", "signal"]) {
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .decorate(key, 1)
+      .onError(() => ({ handled: true }))
+      .beforeHandle(() => undefined)
+      .get("/r", () => ({ ok: true }))
+    const response = await app.fetch(new Request("http://x/r"))
+    expect([key, response.status, await response.json()]).toEqual([key, 200, { handled: true }])
+  }
+  // A decoration the context takes keeps the route on the fused lane.
+  const fused = server({ logger: silentLogger })
+    .use(nodeDirect())
+    .decorate("greeting", "hi")
+    .onError(() => ({ handled: true }))
+    .beforeHandle(() => undefined)
+    .get("/r", (c) => ({ greeting: c.greeting }))
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route catalog is private to the builder, and this test only reads the lane a route was given
+  const catalog = Reflect.get(fused, "catalog") as Cataloged
+  expect(catalog.entries()[0]?.entry.execution.fusedLane).toBe("hooks")
+  expect(await (await fused.fetch(new Request("http://x/r"))).json()).toEqual({ greeting: "hi" })
 })
