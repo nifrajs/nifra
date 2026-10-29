@@ -13,6 +13,7 @@ import {
   rawBodySourceOf,
   readBoundedBytes,
 } from "../src/server/body.ts"
+import { method } from "../src/server/methods.ts"
 
 /**
  * `parseContentLength` is the integer guard at the front of the body-size cap (it replaced a
@@ -551,6 +552,26 @@ describe("capBodyBytes", () => {
       expect(await (await fetch(`${base}/probe`, { method: "POST" })).json()).toEqual({
         marked: true,
       })
+    } finally {
+      instance.stop(true)
+    }
+  })
+
+  test("Bun's route table leaves an explicit HEAD route's request unmarked too", async () => {
+    // The implicit HEAD slot reuses the GET handler, so only a registered HEAD route reaches the
+    // HEAD term of the mark choice. A HEAD response has no body to carry the answer, so record it.
+    let marked: boolean | undefined
+    const app = server().use(
+      method("HEAD", "/probe", (c) => {
+        marked = hasTrustedBodyFraming(c.req)
+        return new Response(null)
+      }),
+    )
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const response = await fetch(`http://127.0.0.1:${instance.port}/probe`, { method: "HEAD" })
+      expect(response.status).toBe(200)
+      expect(marked).toBe(false)
     } finally {
       instance.stop(true)
     }
