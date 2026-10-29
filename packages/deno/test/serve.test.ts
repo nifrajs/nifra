@@ -676,8 +676,11 @@ Deno.test("a target with dot segments or a backslash routes the path it resolves
 
 // Deno builds the request URL from the Host as received: `Host: x/users/7#` with `GET /posts` was
 // routed to `/users/:id`. Such a Host is refused, as Node refuses it.
-Deno.test("a Host that is not an authority never steers the routed path", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+Deno.test("validateHost prevents a Host from steering the routed path", async () => {
+  const running = await serve(requestTargetApp(server({ validateHost: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
   try {
     assertEquals(await invalidHostMismatches(running.port), [])
     assertEquals(await refusedHostMismatches(running.port), [])
@@ -692,10 +695,38 @@ Deno.test("a Host that is not an authority never steers the routed path", async 
   }
 })
 
+Deno.test("validateHost is opt-in on Deno", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const served = await rawExchange(running.port, "GET", "/posts", undefined, "a!b")
+    assertEquals(served, { status: 200, body: '{"route":"GET /posts"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+Deno.test("unparseable Host cannot steer dot-segment routing with validation off", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const refused = await rawExchange(
+      running.port,
+      "GET",
+      "/users/../posts",
+      undefined,
+      "127.0.0.1:99999",
+    )
+    assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 // No URL can be built on a port past 65535, so resolving the dot segment threw out of `fetch` and the
 // adapter answered 500. Found by the runtime differential (scripts/check-runtime-differential.ts).
 Deno.test("a Host port past 65535 is refused, dot segments or not", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  const running = await serve(requestTargetApp(server({ validateHost: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
   try {
     for (const target of ["/posts", "/users/../posts"]) {
       const refused = await rawExchange(running.port, "GET", target, undefined, "127.0.0.1:99999")
@@ -888,7 +919,7 @@ function headersCacheSlot(): symbol {
 Deno.test("the Host check, upgrade probe and JSON body lane leave the header list unbuilt", async () => {
   const headersCache = headersCacheSlot()
   const seen: Request[] = []
-  const app = server()
+  const app = server({ validateHost: true })
     .use(websocket())
     .ws("/socket", { message: (ws, data) => ws.send(data) })
     .get("/bare", (c) => {
@@ -945,7 +976,7 @@ Deno.test("the body lane reads the headers of a request a hook rebuilt", async (
 
 // A request Deno did not parse off the wire has no single-header reader; its Host is still checked.
 Deno.test("a constructed request's Host is checked through its headers", async () => {
-  const app = requestTargetApp(server())
+  const app = requestTargetApp(server({ validateHost: true }))
   const refused = await app.fetch(
     new Request("http://127.0.0.1/posts", { headers: { host: "x/users/7#" } }),
   )
@@ -958,7 +989,7 @@ Deno.test("a constructed request's Host is checked through its headers", async (
 })
 
 Deno.test("a handshake whose Host is not an authority is refused", async () => {
-  const app = server()
+  const app = server({ validateHost: true })
     .use(websocket())
     .ws("/echo", { message: (ws, data) => ws.send(data) })
   const running = await serve(app, { port: 0, hostname: "127.0.0.1" })

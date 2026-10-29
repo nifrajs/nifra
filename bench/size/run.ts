@@ -333,7 +333,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // hooks: bare 39,400 -> 39,436 B, idempotency 44,244 -> 44,289, effect-ledger 41,428 -> 41,501, sse
   // 40,266 -> 40,312, mcp 39,667 -> 39,707, valibot 40,391 -> 40,443, typebox-t 68,212 -> 68,311,
   // typebox-form to 73,258 (Bun 1.4.4). The caps crossed take the next 0.1 KiB step.
-  "nifra-bare": 39.2,
+  // Deno's opt-in Host validation lives in shared core measured by this Bun build; 40,142 B needs
+  // the next 0.1 KiB cap.
+  "nifra-bare": 39.3,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -358,11 +360,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
   "nifra-idempotency": 44.0,
-  "nifra-effect-ledger": 41.2,
+  "nifra-effect-ledger": 41.3,
   "nifra-mcp": 39.5,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 40.1,
-  "nifra-valibot": 40.2,
+  "nifra-valibot": 40.3,
   "nifra-typebox-t": 67.5,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON

@@ -90,15 +90,16 @@ export interface ServerOptions {
    */
   readonly trustBodyFraming?: boolean
   /**
-   * Answer `400 invalid_host` on Bun to every Host that Node and Deno refuse: one sent twice, one
-   * no URL can be built on (a space, a byte past ASCII, a port past 65535, an IPv6 literal no parser
-   * takes), a percent-encoded or sub-delimiter one, and serve an HTTP/1.0 request with no Host as
-   * `localhost`. Bun serves those requests itself, building `c.req.url` on the first Host or leaving
-   * it relative, so `new URL(c.req.url)` can throw in a handler.
+   * Answer `400 invalid_host` for Hosts the request target cannot safely be built on: one sent
+   * twice, one with a space or byte past ASCII, a port past 65535, an IPv6 literal no URL parser
+   * takes, a percent-encoded or sub-delimiter Host, or an authority that can change Deno's route.
+   * Bun may leave `c.req.url` relative or build it on the first Host, so `new URL(c.req.url)` can
+   * throw in a handler.
    *
-   * Disabled by default: the check reads the Host on every request, which measured about 6% of a bare
-   * route on Bun. Left off, a target with `.` or `..` segments is still checked, so a dot segment is
-   * never routed raw. Node and Deno refuse these Hosts either way; the option changes nothing there.
+   * Disabled by default: checking Host on every request measured about 6% of a bare route on Bun.
+   * Dot-segment targets are still resolved when this is off. Deno builds `Request.url` from Host;
+   * without this check, a malformed Host can change the routed path. Enable it when Deno receives
+   * requests with an untrusted Host header.
    */
   readonly validateHost?: boolean
   /**
