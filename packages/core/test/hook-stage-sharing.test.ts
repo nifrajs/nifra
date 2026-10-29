@@ -1,8 +1,9 @@
 import { heapStats } from "bun:jsc"
 import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
-import { type Logger, server, silentLogger } from "../src/index.ts"
+import { type Logger, server, silentLogger, status } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { responseObserver } from "../src/response-observer.ts"
 
 /**
  * Routes that register the same hooks in the same order share one stage chain per server, so the
@@ -505,4 +506,42 @@ test("fused hook routes get their own signal per request under a request timeout
     expect(signals[0]).not.toBe(signals[1])
     expect(signals[0]?.aborted).toBe(false)
   }
+})
+
+test("a fused hook route hands a rendered failure answer to the body observer, not the raw one", async () => {
+  const seen: string[] = []
+  const observed = () =>
+    server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(responseObserver())
+      .onResponseBody((body) => {
+        seen.push(typeof body === "string" ? body : new TextDecoder().decode(body))
+        return undefined
+      })
+      .onResponseRaw((response) => {
+        seen.push("raw")
+        return response
+      })
+  // One derive and one before hook with no error hook: the bound single-shape lane.
+  const bound = observed()
+    .derive(() => ({ user: "u" }))
+    .beforeHandle(() => {
+      throw status(409, { conflict: true })
+    })
+    .get("/bound", () => ({ ok: true }))
+  // A before hook and an error hook that answers: the shared stage chain.
+  const hooked = observed()
+    .onError(() => ({ handled: true }))
+    .beforeHandle(() => {
+      throw new Error("boom")
+    })
+    .get("/hooked", () => ({ ok: true }))
+  const answered = async (app: Pick<typeof bound, "fetch">, path: string): Promise<string> => {
+    seen.length = 0
+    const response = await app.fetch(new Request(`http://x${path}`))
+    await response.text()
+    return seen.join("|")
+  }
+  expect(await answered(bound, "/bound")).toBe('{"conflict":true}')
+  expect(await answered(hooked, "/hooked")).toBe('{"handled":true}')
 })

@@ -6284,12 +6284,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** The thrown-value render of the Web fused lifecycle lanes for a route with no error hooks: a
    * `Response` is control flow, anything else is logged and answered with a plain 500. */
   private fusedWebFail(err: unknown, ctx: RawContext): Response {
-    return this.bareError(
-      err,
-      ctx,
-      (result, set) => this.wrapWebResponse(toResponse(result, set)),
-      this.wrapWebResponse,
-    )
+    return this.bareError(err, ctx, this.finalizeResponse, this.wrapWebResponse)
   }
 
   /** {@link fusedWebFail} for a fused route that may have error hooks. */
@@ -6298,13 +6293,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     route: FusedHooks,
   ): MaybePromise<Response> {
-    return this.fusedFail(
-      err,
-      ctx,
-      route,
-      (result, set) => this.wrapWebResponse(toResponse(result, set)),
-      this.wrapWebResponse,
-    )
+    return this.fusedFail(err, ctx, route, this.finalizeResponse, this.wrapWebResponse)
   }
 
   /** The thrown-value render of a fused lifecycle route. A `Response` or `status(...)` is control flow
