@@ -1471,10 +1471,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private staticResponseHeaders: StaticResponseHeaders | undefined
   /** A group's view of the static headers its enclosing scopes declared before it was created. */
-  declare private inheritedStatics: Readonly<Record<string, string>> | undefined
+  private declare inheritedStatics: Readonly<Record<string, string>> | undefined
   /** A group's view of the plugins its enclosing scopes applied before it was created; unset while
    * a plugin applies, so its own dependency `use()` shares the parent's copy. */
-  declare private inheritedPlugins: ReadonlyMap<string, unknown> | undefined
+  private declare inheritedPlugins: ReadonlyMap<string, unknown> | undefined
   /** `wrapResponse` for the Web lanes: identity until static headers exist to fold into the
    * framework's own error/404/timeout renders, which are built outside the header init. */
   private wrapWebResponse: (response: Response | ResponseResult) => Response
