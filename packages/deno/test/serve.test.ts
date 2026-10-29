@@ -664,8 +664,11 @@ Deno.test("a method token that differs only in case is a different method on the
 
 // Deno hands the adapter the target exactly as sent; the app routes the path a URL parser resolves
 // it to, as it does on every other runtime.
-Deno.test("a target with dot segments or a backslash routes the path it resolves to", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+Deno.test("normalizeTarget routes a target with dot segments or a backslash on the path it resolves to", async () => {
+  const running = await serve(requestTargetApp(server({ normalizeTarget: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
   try {
     assertEquals(await requestTargetMismatches(running.port), [])
     assertEquals(await requestTargetMismatches(running.port, true), [])
@@ -705,7 +708,10 @@ Deno.test("validateHost is opt-in on Deno", async () => {
   }
 })
 Deno.test("unparseable Host cannot steer dot-segment routing with validation off", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  const running = await serve(requestTargetApp(server({ normalizeTarget: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
   try {
     const refused = await rawExchange(
       running.port,
@@ -723,10 +729,13 @@ Deno.test("unparseable Host cannot steer dot-segment routing with validation off
 // No URL can be built on a port past 65535, so resolving the dot segment threw out of `fetch` and the
 // adapter answered 500. Found by the runtime differential (scripts/check-runtime-differential.ts).
 Deno.test("a Host port past 65535 is refused, dot segments or not", async () => {
-  const running = await serve(requestTargetApp(server({ validateHost: true })), {
-    port: 0,
-    hostname: "127.0.0.1",
-  })
+  const running = await serve(
+    requestTargetApp(server({ validateHost: true, normalizeTarget: true })),
+    {
+      port: 0,
+      hostname: "127.0.0.1",
+    },
+  )
   try {
     for (const target of ["/posts", "/users/../posts"]) {
       const refused = await rawExchange(running.port, "GET", target, undefined, "127.0.0.1:99999")
@@ -1002,7 +1011,7 @@ Deno.test("a handshake whose Host is not an authority is refused", async () => {
 })
 
 Deno.test("a handshake target with dot segments upgrades on the path it resolves to", async () => {
-  const app = server()
+  const app = server({ normalizeTarget: true })
     .use(websocket())
     .ws("/echo", { message: (ws, data) => ws.send(data) })
   const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
@@ -1165,4 +1174,25 @@ Deno.test("stop() drains a static response in flight", async () => {
   ])
   await running.stop({ drainMs: 1000 })
   assertEquals(await pending, "slow file")
+})
+
+Deno.test("dot segments are routed as sent unless normalizeTarget is set", async () => {
+  const build = (normalizeTarget: boolean) =>
+    server({ normalizeTarget })
+      .get("/admin", () => ({ where: "admin" }))
+      .get("/public/:name", (c) => ({ where: "public", name: c.params.name }))
+  const off = await serve(build(false), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const missed = await rawExchange(off.port, "GET", "/public/../admin")
+    assertEquals(missed.status, 404)
+  } finally {
+    await off.stop({ drainMs: 0 })
+  }
+  const on = await serve(build(true), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const hit = await rawExchange(on.port, "GET", "/public/../admin")
+    assertEquals(hit.status, 200)
+  } finally {
+    await on.stop({ drainMs: 0 })
+  }
 })

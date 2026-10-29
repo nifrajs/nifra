@@ -779,15 +779,19 @@ const invalidHost = (host: string): boolean => {
  * Host (400), a URL replaces the target, `false` keeps it. Deno hands the target over as sent, so
  * its dot segments are resolved; so does Bun when HTTP/1.0 leaves the Host out, and its route table
  * matched `/files/..` raw. Such a request is served as `localhost`, as Node and Deno serve it.
- * `headerOf`, not `req.headers`: on Deno it reads Host only when `validateHost` is set. Dot
- * segments are still resolved when strict validation is off. On Bun only a target that needs
- * resolving is checked unless `validateHost` is set.
+ * `headerOf`, not `req.headers`: on Deno it reads Host only when `validateHost` is set, and dot
+ * segments are resolved only when `normalizeTarget` is. On Bun only a target that needs resolving
+ * is checked unless `validateHost` is set.
  */
-const requestTarget = (req: Request, validateHost: boolean): string | boolean => {
+const requestTarget = (
+  req: Request,
+  validateHost: boolean,
+  normalizeTarget: boolean,
+): string | boolean => {
   if (rawRequestTargets) {
     const host = validateHost ? headerOf(req, "host") : null
     if (host !== null && invalidHost(host)) return true
-    if (!needsResolving(req.url)) return false
+    if (!normalizeTarget || !needsResolving(req.url)) return false
     // Deno can preserve an unparseable absolute URL when Host is malformed. Do not route its
     // unresolved dot segments through the raw-target fallback.
     if (!URL.canParse(req.url, "http://localhost")) return true
@@ -1396,6 +1400,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
   private readonly trustBodyFraming: boolean
   private readonly validateHost: boolean
+  private readonly normalizeTarget: boolean
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
   private readonly wsUpgradeTimeoutMs: number
@@ -1541,6 +1546,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.formOrigins = options.formOrigins
     this.trustBodyFraming = options.trustBodyFraming ?? false
     this.validateHost = options.validateHost ?? false
+    this.normalizeTarget = options.normalizeTarget ?? false
     const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
     assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
     this.maxBodyBytes = maxBodyBytes
@@ -3424,7 +3430,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
     // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
-    const target = requestTarget(req, this.validateHost)
+    const target = requestTarget(req, this.validateHost, this.normalizeTarget)
     if (target === true) return jsonError(400, "invalid_host")
     if (target !== false) {
       const rebuilt = withResolvedTarget(req, target)
@@ -3969,7 +3975,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The adapter answers a pass by handing this same object to `fetch`.
     const received = req
     // The handshake routes the path `fetch` would: Host checked, dot segments resolved (see `fetch`).
-    const target = requestTarget(req, this.validateHost)
+    const target = requestTarget(req, this.validateHost, this.normalizeTarget)
     if (target === true) {
       return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
     }
@@ -7412,7 +7418,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // back, and reading the Host on every request measured about 6% of a bare route.
       tableAt(path, pattern.segments)[method as Method] = this.validateHost
         ? (request, server) =>
-            requestTarget(request, true) ? fallback(request, server) : handler(request, server)
+            requestTarget(request, true, this.normalizeTarget)
+              ? fallback(request, server)
+              : handler(request, server)
         : handler
       count += 1
       if (paramNames.length > 0) {
