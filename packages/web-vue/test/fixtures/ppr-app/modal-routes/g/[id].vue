@@ -22,7 +22,7 @@ const props = defineProps<{
       string,
       {
         readonly status: "unresolved" | "pending" | "ready" | "error"
-        readonly data?: unknown
+        readonly data?: { readonly title?: string }
         readonly ppr?: true
       }
     >
@@ -39,7 +39,7 @@ const props = defineProps<{
     {{ " " }}
     <a id="to-photo-8" href="/photo/8">photo 8</a>
     <dialog v-if="props.boundaries?.photo?.status === 'ready'" open data-nifra-boundary="photo">
-      <h2 id="modal-title">{{ (props.boundaries.photo.data as { title: string }).title }}</h2>
+      <h2 id="modal-title">{{ props.boundaries.photo.data?.title }}</h2>
       <button id="close" type="button" @click="closeBoundary('photo')">close</button>
     </dialog>
   </main>

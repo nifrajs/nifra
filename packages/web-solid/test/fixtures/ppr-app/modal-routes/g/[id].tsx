@@ -11,7 +11,9 @@ const greeting = {
 const photo = {
   name: "photo",
   mode: { intercept: "/photo/:id" },
-  render: (data: { readonly title: string }) => <h2 id="modal-title">{data.title}</h2>,
+  render: (data: { readonly title?: string } | undefined) => (
+    <h2 id="modal-title">{data?.title}</h2>
+  ),
 }
 
 export const boundaries = [greeting, photo]
@@ -21,7 +23,7 @@ type BoundaryStates = Readonly<
     string,
     {
       readonly status: "unresolved" | "pending" | "ready" | "error"
-      readonly data?: unknown
+      readonly data?: { readonly title?: string }
       readonly ppr?: true
     }
   >
@@ -44,7 +46,7 @@ export default function Gallery(props: {
       </a>
       {props.boundaries?.photo?.status === "ready" ? (
         <dialog open data-nifra-boundary="photo">
-          {photo.render(props.boundaries?.photo?.data as { readonly title: string })}
+          {photo.render(props.boundaries?.photo?.data)}
           <button id="close" type="button" onClick={() => closeBoundary("photo")}>
             close
           </button>
