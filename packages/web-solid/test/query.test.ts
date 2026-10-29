@@ -155,6 +155,20 @@ test("Solid mutation state uses accessors and cancels old identity work", async 
   }
 })
 
+test("on the server an infinite query stays idle and its actions reject", async () => {
+  await createRoot(async (dispose) => {
+    const query = createInfiniteQuery(["solid", "server-pages"], async (page: number) => page, {
+      initialPageParam: 0,
+      getNextPageParam: () => undefined,
+    })
+    expect(query.state().status).toBe("pending")
+    expect(query.hasNextPage()).toBe(false)
+    expect(query.hasPreviousPage()).toBe(false)
+    await expect(query.fetchNextPage()).rejects.toThrow("no query client")
+    dispose()
+  })
+})
+
 test("Solid infinite query exposes reactive pagination controls", async () => {
   let query!: ReturnType<typeof createInfiniteQuery<number, number>>
   let dispose!: () => void

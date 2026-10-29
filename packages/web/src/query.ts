@@ -273,24 +273,37 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   const cache = new Map<string, Entry>()
 
   // Lazily evict entries whose GC timer has elapsed (no subscribers), then enforce the hard cap by
-  // dropping the oldest-inserted unsubscribed entries. Called on every `query()` - no background timer.
+  // dropping the oldest-inserted unsubscribed entries. Runs from `query()` when `sweepDue()` - no
+  // background timer. Returns the earliest GC time still pending, for `sweepAt`.
   const sweepEntries = (
     entries: Map<string, { readonly subscribers: number; readonly gcAt: number | undefined }>,
     t: number,
-  ): void => {
+  ): number => {
+    let next = Number.POSITIVE_INFINITY
     for (const [h, e] of entries) {
-      if (e.subscribers === 0 && e.gcAt !== undefined && t >= e.gcAt) entries.delete(h)
+      if (e.subscribers !== 0 || e.gcAt === undefined) continue
+      if (t >= e.gcAt) entries.delete(h)
+      else if (e.gcAt < next) next = e.gcAt
     }
-    if (entries.size <= max) return
+    if (entries.size <= max) return next
     for (const [h, e] of entries) {
       if (entries.size <= max) break
       if (e.subscribers === 0) entries.delete(h) // oldest-inserted unsubscribed first (Map order)
     }
+    return next
+  }
+  // The earliest time a GC timer can have elapsed. A read of a cached key walks the caches only once
+  // this has passed or a cache is over its cap; a stale value only costs one extra walk, which resets it.
+  let sweepAt = Number.POSITIVE_INFINITY
+  const sweepDue = (): boolean => cache.size > max || infinite.size > max || now() >= sweepAt
+  // Start the GC timer of an entry whose last subscriber left.
+  const scheduleGc = (entry: { gcAt: number | undefined }): void => {
+    entry.gcAt = now() + gcTime
+    sweepAt = Math.min(sweepAt, entry.gcAt)
   }
   const sweep = (): void => {
     const t = now()
-    sweepEntries(cache, t)
-    sweepEntries(infinite, t)
+    sweepAt = Math.min(sweepEntries(cache, t), sweepEntries(infinite, t))
   }
 
   // Build a cache entry + its handle. `fn`/`staleTime` are mutated in place on re-bind (closures change
@@ -414,7 +427,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           entry.listeners.delete(listener)
           entry.subscribers--
           if (entry.subscribers === 0) {
-            entry.gcAt = now() + gcTime
+            scheduleGc(entry)
             querySeam()?.track(lq, false)
           }
         }
@@ -464,28 +477,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   const query = <T>(key: unknown, fn: () => Promise<T>, opts?: QueryOptions): QueryHandle<T> => {
     checkEpoch()
-    const h = hashQueryKey(key)
-    const existing = cache.get(h)
-    if (
-      existing !== undefined &&
-      existing.gcAt !== undefined &&
-      existing.subscribers === 0 &&
-      now() >= existing.gcAt
-    ) {
-      cache.delete(h)
-    } else if (existing !== undefined) {
-      const rebound = upsert(
-        key,
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The shared cache erases the result type; Promise<T> safely widens to Promise<unknown>.
-        fn as () => Promise<unknown>,
-        opts?.staleTime ?? defaultStaleTime,
-        opts?.live ?? [],
-      )
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: One canonical query key owns one typed handle; callers must use a stable data type for that key.
-      return rebound.handle as QueryHandle<T>
-    }
-    // Existing handles are the render hot path; sweep only when adding/recreating a key.
-    sweep()
+    if (sweepDue()) sweep()
     return upsert(
       key,
       fn as () => Promise<unknown>,
@@ -617,24 +609,16 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     opts: InfiniteQueryOptions<T, P>,
   ): InfiniteQueryHandle<T, P> => {
     checkEpoch()
+    if (sweepDue()) sweep()
     const h = hashQueryKey(key)
     const existing = infinite.get(h)
-    if (
-      existing !== undefined &&
-      existing.gcAt !== undefined &&
-      existing.subscribers === 0 &&
-      now() >= existing.gcAt
-    ) {
-      infinite.delete(h)
-    } else if (existing !== undefined) {
+    if (existing !== undefined) {
       existing.rebind(
         fn as (p: unknown) => Promise<unknown>,
         opts as InfiniteQueryOptions<unknown, unknown>,
       )
       return existing.handle as InfiniteQueryHandle<T, P>
     }
-    // Rebinding the stable handle is common during renders; don't scan both caches for that path.
-    sweep()
     const created = makeInfinite<T, P>(key, fn, opts)
     infinite.set(h, created as InfiniteEntry<unknown, unknown>)
     const snapshot = seeded.get(h)
@@ -796,7 +780,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           listeners.delete(listener)
           entry.subscribers--
           if (entry.subscribers === 0) {
-            entry.gcAt = now() + gcTime
+            scheduleGc(entry)
             querySeam()?.track(lq, false)
           }
         }
@@ -1030,32 +1014,10 @@ export class MutationCancelledError extends Error {
   }
 }
 
-/** Let cancellation settle the local mutation even when user work ignores its signal or never settles. */
-const awaitMutationWork = <T>(signal: AbortSignal, work: () => T | PromiseLike<T>): Promise<T> => {
-  if (signal.aborted) return Promise.reject(new MutationCancelledError())
-  return new Promise<T>((resolve, reject) => {
-    let settled = false
-    const cleanup = (): void => signal.removeEventListener("abort", onAbort)
-    const resolveOnce = (value: T): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      resolve(value)
-    }
-    const rejectOnce = (error: unknown): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(error)
-    }
-    const onAbort = (): void => rejectOnce(new MutationCancelledError())
-    signal.addEventListener("abort", onAbort, { once: true })
-    try {
-      Promise.resolve(work()).then(resolveOnce, rejectOnce)
-    } catch (error) {
-      rejectOnce(error)
-    }
-  })
+/** A call in flight: its abort controller, and the way to settle it as cancelled whatever its work does. */
+interface MutationFlight {
+  readonly controller: AbortController
+  stop: (error: unknown) => void
 }
 
 /**
@@ -1073,9 +1035,8 @@ export function createMutation<TData, TVariables>(
   let cbs = callbacks
   let state = IDLE_MUTATION as MutationState<TData, TVariables>
   let latest = 0
-  let cancellation = 0
   const listeners = new Set<() => void>()
-  const active = new Set<AbortController>()
+  const active = new Set<MutationFlight>()
   let stopIdentityWatch: (() => void) | undefined
   const emit = (): void => {
     for (const l of listeners) l()
@@ -1095,13 +1056,14 @@ export function createMutation<TData, TVariables>(
     stopIdentityWatch = onIdentityChange(cancel)
   }
   const cancel = (): void => {
-    cancellation++
-    latest++
     const pending = [...active]
     active.clear()
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The idle mutation state carries no generic data or variables, only undefined payloads.
     setState(IDLE_MUTATION as MutationState<TData, TVariables>)
-    for (const controller of pending) controller.abort()
+    for (const { controller, stop } of pending) {
+      controller.abort()
+      stop(new MutationCancelledError())
+    }
     stopWatchingWhenIdle()
   }
   return {
@@ -1123,12 +1085,17 @@ export function createMutation<TData, TVariables>(
     cancel,
     mutate: async (variables) => {
       const mine = ++latest
-      const mineCancellation = cancellation
       const controller = new AbortController()
       const context: MutationContext = { signal: controller.signal }
-      active.add(controller)
-      const wasCancelled = (): boolean =>
-        mineCancellation !== cancellation || controller.signal.aborted
+      const flight: MutationFlight = { controller, stop: () => {} }
+      active.add(flight)
+      const wasCancelled = (): boolean => controller.signal.aborted
+      const cancelled = new Promise<never>((_, reject) => {
+        flight.stop = reject
+      })
+      cancelled.catch(() => {}) // it may reject while no call is waiting on it
+      const within = <T>(work: () => T | PromiseLike<T>): Promise<T> =>
+        Promise.race([work(), cancelled])
       try {
         watchIdentity()
         setState({ status: "pending", data: undefined, error: undefined, variables })
@@ -1136,10 +1103,9 @@ export function createMutation<TData, TVariables>(
         let data: TData
         try {
           // Only await a callback when one is supplied; awaiting undefined adds a microtask.
-          if (cbs.onMutate !== undefined)
-            await awaitMutationWork(context.signal, () => cbs.onMutate?.(variables, context))
+          if (cbs.onMutate !== undefined) await within(() => cbs.onMutate?.(variables, context))
           if (wasCancelled()) throw new MutationCancelledError()
-          data = await awaitMutationWork(context.signal, () => mutationFn(variables, context))
+          data = await within(() => mutationFn(variables, context))
           if (wasCancelled()) throw new MutationCancelledError()
         } catch (error) {
           if (wasCancelled()) throw new MutationCancelledError()
@@ -1147,14 +1113,10 @@ export function createMutation<TData, TVariables>(
           if (wasCancelled()) throw new MutationCancelledError()
           try {
             if (cbs.onError !== undefined)
-              await awaitMutationWork(context.signal, () =>
-                cbs.onError?.(error, variables, context),
-              )
+              await within(() => cbs.onError?.(error, variables, context))
             if (wasCancelled()) throw new MutationCancelledError()
             if (cbs.onSettled !== undefined)
-              await awaitMutationWork(context.signal, () =>
-                cbs.onSettled?.(undefined, error, variables, context),
-              )
+              await within(() => cbs.onSettled?.(undefined, error, variables, context))
             if (wasCancelled()) throw new MutationCancelledError()
           } catch (callbackError) {
             if (wasCancelled()) throw new MutationCancelledError()
@@ -1171,7 +1133,7 @@ export function createMutation<TData, TVariables>(
         let successCallbackError: unknown
         try {
           if (cbs.onSuccess !== undefined)
-            await awaitMutationWork(context.signal, () => cbs.onSuccess?.(data, variables, context))
+            await within(() => cbs.onSuccess?.(data, variables, context))
         } catch (error) {
           successCallbackFailed = true
           successCallbackError = error
@@ -1182,9 +1144,7 @@ export function createMutation<TData, TVariables>(
         let settledCallbackError: unknown
         try {
           if (cbs.onSettled !== undefined)
-            await awaitMutationWork(context.signal, () =>
-              cbs.onSettled?.(data, undefined, variables, context),
-            )
+            await within(() => cbs.onSettled?.(data, undefined, variables, context))
         } catch (error) {
           settledCallbackFailed = true
           settledCallbackError = error
@@ -1194,7 +1154,7 @@ export function createMutation<TData, TVariables>(
         if (successCallbackFailed) throw successCallbackError
         return data
       } finally {
-        active.delete(controller)
+        active.delete(flight)
         stopWatchingWhenIdle()
       }
     },

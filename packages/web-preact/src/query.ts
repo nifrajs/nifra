@@ -184,9 +184,7 @@ export function useInfiniteQuery<T, P>(
     handle ? handle.snapshot : idleInfiniteSnapshot,
     handle ? handle.snapshot : idleInfiniteSnapshot,
   )
-  useEffect(() => {
-    if (enabled) handle?.fetch().catch(noop)
-  }, [handle, enabled])
+  useEffect(fetchOnMount(enabled ? handle : undefined), [handle, enabled])
   const noClientAction = createNoClientRefetch<InfiniteData<T, P>>(
     "[nifra/web-preact]",
     "infinite query action",

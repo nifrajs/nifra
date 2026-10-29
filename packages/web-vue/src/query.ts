@@ -175,9 +175,7 @@ export function useInfiniteQuery<T, P>(
       state.value = handle.snapshot()
     })
     onScopeDispose(unsubscribe)
-    onMounted(() => {
-      if (enabled) handle.fetch().catch(noop)
-    })
+    onMounted(fetchOnMount(enabled ? handle : undefined))
   }
   const noClientAction = createNoClientRefetch<InfiniteData<T, P>>(
     "[nifra/web-vue]",

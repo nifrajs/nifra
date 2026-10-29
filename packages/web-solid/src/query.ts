@@ -171,9 +171,7 @@ export function createInfiniteQuery<T, P>(
   )
   if (handle) {
     onCleanup(handle.subscribe(() => setState(() => handle.snapshot())))
-    onMount(() => {
-      if (enabled) handle.fetch().catch(noop)
-    })
+    onMount(fetchOnMount(enabled ? handle : undefined))
   }
   const noClientAction = createNoClientRefetch<InfiniteData<T, P>>(
     "[nifra/web-solid]",

@@ -244,7 +244,7 @@ describe("createQueryClient", () => {
     expect(c.query(["kept"], g.fn)).toBe(kept) // subscribed entry survived
   })
 
-  test("existing-key lookups skip full cache sweeps while a miss still collects expired entries", async () => {
+  test("a read of a cached key collects expired entries on the first read after their timer, and no sooner", async () => {
     let t = 0
     const c = createQueryClient({ now: () => t, gcTime: 10 })
     const expired = c.query(["expired"], async () => "old")
@@ -255,13 +255,15 @@ describe("createQueryClient", () => {
     const hot = c.query(["hot"], async () => "current")
     const stopHot = hot.subscribe(() => {})
     await hot.fetch()
-    t = 11
 
+    t = 9
     for (let i = 0; i < 100; i++) expect(c.query(["hot"], async () => "rebound")).toBe(hot)
     expect(c.getQueryData(["expired"])).toBe("old")
 
-    c.query(["new-key"], async () => "new")
+    t = 11
+    expect(c.query(["hot"], async () => "rebound")).toBe(hot)
     expect(c.getQueryData(["expired"])).toBeUndefined()
+    expect(c.getQueryData(["hot"])).toBe("current")
     stopHot()
   })
 

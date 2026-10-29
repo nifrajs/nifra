@@ -29,7 +29,9 @@ export const noop = (): void => {}
 export const noopSubscribe = (): (() => void) => noop
 
 /** A binding's fetch on mount. A failed fetch shows as the query's `error`, so its promise is let go. */
-export const fetchOnMount = (handle: QueryHandle<unknown> | undefined): (() => void) =>
+export const fetchOnMount = (
+  handle: Pick<QueryHandle<unknown>, "fetch"> | undefined,
+): (() => void) =>
   handle === undefined
     ? noop
     : () => {

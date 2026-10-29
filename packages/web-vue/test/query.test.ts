@@ -147,7 +147,7 @@ test("Vue mutation state follows the effect scope and async calls resolve", asyn
 
 test("Vue fire-and-forget mutation contains rejected work", async () => {
   const { value: mutation, stop } = inScope(() =>
-    useMutation(async () => {
+    useMutation(async (_value: number) => {
       throw new Error("expected failure")
     }),
   )
