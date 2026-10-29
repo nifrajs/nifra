@@ -8,6 +8,7 @@ import {
   type EffectScope,
   effectScope,
   h,
+  onMounted,
   type VNode,
 } from "vue"
 import {
@@ -218,7 +219,7 @@ test("on the server a paged query is idle, has no pages, and its actions reject"
   scope.stop()
 })
 
-test("provideQueryClient seeds a snapshot only when it is given one, and only inside a component", () => {
+test("provideQueryClient seeds a snapshot only when given one and rejects use after mount", () => {
   const client = createQueryClient({ now: () => 0 })
   const hydrate = spyOn(client, "hydrate")
   const state: DehydratedState = { queries: [], infiniteQueries: [] }
@@ -237,6 +238,9 @@ test("provideQueryClient seeds a snapshot only when it is given one, and only in
       defineComponent({
         setup() {
           provideQueryClient(client, state)
+          onMounted(() => {
+            expect(() => provideQueryClient(client)).toThrow("must run during component setup")
+          })
           return empty
         },
       }),
@@ -244,7 +248,6 @@ test("provideQueryClient seeds a snapshot only when it is given one, and only in
     withState.unmount()
     expect(hydrate).toHaveBeenCalledTimes(1)
     expect(hydrate).toHaveBeenCalledWith(state)
-    expect(() => provideQueryClient(client)).toThrow("must run during component setup")
   } finally {
     hydrate.mockRestore()
   }
