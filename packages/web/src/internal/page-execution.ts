@@ -1736,7 +1736,8 @@ export function createPageRequestExecutor<Env = unknown>(
           : routeTags(hole.revalidateTags, { params, url: shellUrl() }, `${route.id}#${hole.name}`),
       loadShell: async (signal) => shellLoader({ ...shellContext, signal }),
       renderShellDocument: async (shellData, states) => {
-        const statics = boundaries.some((boundary) => boundary.mode === "static")
+        // Static and intercepting boundaries both need a state in the document; a hole's comes from `states`.
+        const statics = boundaries.some((boundary) => !isHole(boundary))
           ? await resolveStaticBoundaries(
               boundaries,
               { phase: "build" },

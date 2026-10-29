@@ -27,7 +27,7 @@ export interface PprApp {
 
 /** A twin module's exports, as `app-browser.ts` loads them. */
 export interface PprTwin {
-  startPprApp(): Promise<PprApp>
+  startPprApp(options?: undefined, routesDir?: string): Promise<PprApp>
   /**
    * The Trusted Types policy the framework's client creates for its own templates, "" for none, or
    * `null` when the client writes raw HTML outside any policy, so no app on it can enforce them.

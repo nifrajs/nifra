@@ -15,10 +15,13 @@ plugin(solidBunPlugin("ssr"))
 /** Solid's compiled templates write plain strings to `innerHTML`, under no policy. */
 export const trustedTypesPolicy: string | null = null
 
-export const startPprApp = (options?: Parameters<typeof startFixture>[1]): Promise<PprApp> =>
+export const startPprApp = (
+  options?: Parameters<typeof startFixture>[1],
+  routesDir = `${import.meta.dir}/routes`,
+): Promise<PprApp> =>
   startFixture(
     {
-      routesDir: `${import.meta.dir}/routes`,
+      routesDir,
       adapter: solidAdapter,
       clientModule: "@nifrajs/web-solid/client",
       clientPlugins: [solidBunPlugin("dom")],

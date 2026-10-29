@@ -5,7 +5,7 @@
  * unrelated fetch survives; an unchecked shell renders blocking. Each hole is filled once whether it
  * arrives before or after hydration; a tampered invoker is blocked; fills work under enforced Trusted
  * Types where the framework's client can run under them; the router keeps the holes through a param
- * change and back; a shared hole is built once and filled once for each visitor. Chromium also checks the heap and listener count stay flat over 1000 soft
+ * change and back; a modal route opens over a PPR page that stays mounted; a shared hole is built once and filled once for each visitor. Chromium also checks the heap and listener count stay flat over 1000 soft
  * navigations. On React served by Bun, a `keepAlive` page from a PPR document cancels its slow hole when
  * left, comes back at once with its state, and refills its holes in place. Run:
  * `bun packages/web/test/fixtures/ppr/app-browser.ts`, with `FRAMEWORK=<name>` for the twin of the app
@@ -49,6 +49,18 @@ const kept: PprApp | undefined =
       )
     : undefined
 assert.deepEqual(kept?.shellFailures ?? [], [], "the kept page's shell passes its check")
+const modal: PprApp | undefined =
+  RUNTIME !== "bun"
+    ? undefined
+    : FRAMEWORK === "react"
+      ? await import("./app/server.ts").then(({ REACT, startPprApp }) =>
+          startPprApp({ ...REACT, routesDir: `${import.meta.dir}/modal/routes` }),
+        )
+      : await twin.startPprApp(
+          undefined,
+          `${import.meta.dir}/../../../../web-${FRAMEWORK}/test/fixtures/ppr-app/modal-routes`,
+        )
+assert.deepEqual(modal?.shellFailures ?? [], [], "the modal page's shell passes its check")
 const app =
   RUNTIME === "deno"
     ? await (await import("./app/deno-app.ts")).startPprAppOnDeno()
@@ -598,6 +610,85 @@ async function checkKeptHoles(
 }
 
 /**
+ * A modal route on a PPR page: a client navigation to the intercepted URL opens the target over the
+ * gallery, which stays mounted with its hole in place; Back closes it and the hole is filled; a reload of
+ * the target's URL is the full page.
+ */
+async function checkModalRoute(
+  name: string,
+  browser: Browser,
+  at: string,
+): Promise<Record<string, unknown>> {
+  const { context, page, errors } = await visit(browser, at)
+  const holeDom = () =>
+    page.evaluate(() => ({
+      greeting: document.querySelector("#greeting")?.textContent ?? null,
+      filled: document.querySelectorAll("[data-nifra-hole][data-nifra-filled]").length,
+    }))
+  await page.goto(`${at}/g/1`, { waitUntil: "commit" })
+  await routed(page)
+  await filled(page, "greeting")
+  await hydrated(page)
+  const before = await holeDom()
+  assert.equal(before.greeting, "hello ada", `${name}: the hole fills`)
+  assert.equal(await page.locator("#modal-title").count(), 0, `${name}: no modal on first load`)
+  // A node and a typed value the page owns: a remount of the page would replace one and clear the other.
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>("#probe")
+    if (input === null) throw new Error("the gallery has no #probe input")
+    input.value = "typed"
+    Object.assign(window, { __probe: input })
+  })
+  const mounted = () =>
+    page.evaluate(() => {
+      const input = document.querySelector<HTMLInputElement>("#probe")
+      return input !== null && input.value === "typed" && input === Reflect.get(window, "__probe")
+    })
+  await go(page, "#to-photo-7")
+  await page.waitForSelector("#modal-title")
+  assert.equal(
+    await page.textContent("#modal-title"),
+    "Photo 7",
+    `${name}: the modal shows the target`,
+  )
+  assert.equal(
+    new URL(page.url()).pathname,
+    "/photo/7",
+    `${name}: the address bar shows the target`,
+  )
+  assert.deepEqual(await holeDom(), before, `${name}: the hole is untouched under the modal`)
+  assert.equal(await mounted(), true, `${name}: the page stays mounted under the modal`)
+  await go(page, "#to-photo-8")
+  await page.waitForFunction(
+    () => document.querySelector("#modal-title")?.textContent === "Photo 8",
+  )
+  await page.evaluate(() => history.back())
+  await page.waitForFunction(
+    () => document.querySelector("#modal-title")?.textContent === "Photo 7",
+  )
+  await page.evaluate(() => history.back())
+  await page.waitForFunction(() => document.querySelector("#modal-title") === null)
+  assert.equal(new URL(page.url()).pathname, "/g/1", `${name}: Back restores the page URL`)
+  // Whether the page is shown again or fetched again, its hole ends filled.
+  await page.waitForFunction(() => document.querySelector("#greeting")?.textContent === "hello ada")
+  await go(page, "#to-photo-7")
+  await page.waitForSelector("#modal-title")
+  await page.click("#close")
+  await page.waitForFunction(() => document.querySelector("#modal-title") === null)
+  await page.goto(`${at}/photo/7`, { waitUntil: "commit" })
+  await page.waitForSelector("#photo-page")
+  assert.equal(
+    await page.textContent("#photo-page"),
+    "Photo 7",
+    `${name}: a reload is the full page`,
+  )
+  assert.deepEqual(await page.evaluate(() => window.__violations), [], `${name}: modal CSP`)
+  assert.deepEqual(errors, [], `${name}: modal page errors`)
+  await context.close()
+  return { engine: name, modal: "open, replace, back, back, close, reload" }
+}
+
+/**
  * A shared hole: the first visitor waits on its build, the next gets its frame with the shell, both
  * fill once with their own per-visitor hole beside it; a soft navigation renders it from the held
  * entry's data.
@@ -732,6 +823,8 @@ try {
       console.log(JSON.stringify(await checkSharedHole(name, browser)))
       if (kept !== undefined)
         console.log(JSON.stringify(await checkKeptHoles(name, browser, kept.origin)))
+      if (modal !== undefined)
+        console.log(JSON.stringify(await checkModalRoute(name, browser, modal.origin)))
       if (name === "chromium") console.log(JSON.stringify(await checkHeap(browser)))
     } finally {
       await browser.close()
@@ -745,4 +838,5 @@ try {
 } finally {
   await app.stop()
   await kept?.stop()
+  await modal?.stop()
 }
