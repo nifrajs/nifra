@@ -11,7 +11,7 @@
  * + navigation use the path cache; component-level interactive data (search, infinite scroll, polling)
  * uses this arbitrary-keyed query cache. The two coexist.
  */
-import { documentEpoch } from "./identity.ts"
+import { documentEpoch, onIdentityChange } from "./identity.ts"
 import { adoptClient, type LiveQuery, querySeam } from "./internal/query-seam.ts"
 
 /** A query's lifecycle status. `pending` = no data yet; `success`/`error` once it has settled once. */
@@ -62,6 +62,19 @@ export interface QueryClientOptions {
   readonly gcTime?: number
   /** Hard cap on cached entries - LRU-evict the oldest *unsubscribed* entry past it (default 1000). */
   readonly max?: number
+}
+
+/** Metadata passed to a dehydration filter before query data is sent to the browser. */
+export interface DehydratedQueryInfo {
+  readonly kind: "query" | "infinite"
+  readonly key: unknown
+  readonly data: unknown
+  readonly updatedAt: number
+}
+
+/** Select which successful query values may cross the SSR-to-browser boundary. */
+export interface DehydrateOptions {
+  readonly shouldDehydrateQuery?: (query: DehydratedQueryInfo) => boolean
 }
 
 /** An infinite (paged) query's accumulated data: the fetched `pages` in order + the `pageParam` each
@@ -151,7 +164,7 @@ export interface QueryClient {
    * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */
   prefetchQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => Promise<void>
   /** Serialize every successful query to a transferable snapshot (server → client SSR bridge). */
-  dehydrate: () => DehydratedState
+  dehydrate: (options?: DehydrateOptions) => DehydratedState
   /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */
   hydrate: (state: DehydratedState) => void
   /** Drop every cached query: mounted ones go back to pending and refetch, the rest are removed. Every
@@ -451,6 +464,24 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   const query = <T>(key: unknown, fn: () => Promise<T>, opts?: QueryOptions): QueryHandle<T> => {
     checkEpoch()
+    const h = hashQueryKey(key)
+    const existing = cache.get(h)
+    if (
+      existing !== undefined &&
+      existing.gcAt !== undefined &&
+      existing.subscribers === 0 &&
+      now() >= existing.gcAt
+    ) {
+      cache.delete(h)
+    } else if (existing !== undefined) {
+      return upsert(
+        key,
+        fn as () => Promise<unknown>,
+        opts?.staleTime ?? defaultStaleTime,
+        opts?.live ?? [],
+      ).handle as QueryHandle<T>
+    }
+    // Existing handles are the render hot path; sweep only when adding/recreating a key.
     sweep()
     return upsert(
       key,
@@ -515,11 +546,20 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     ).run(false)
   }
 
-  const dehydrate = (): DehydratedState => {
+  const dehydrate = (options: DehydrateOptions = {}): DehydratedState => {
     checkEpoch()
+    const shouldDehydrateQuery = options.shouldDehydrateQuery ?? (() => true)
     const queries: Array<{ key: unknown; data: unknown; updatedAt: number }> = []
     for (const entry of cache.values()) {
-      if (entry.state.status === "success")
+      if (
+        entry.state.status === "success" &&
+        shouldDehydrateQuery({
+          kind: "query",
+          key: entry.key,
+          data: entry.state.data,
+          updatedAt: entry.state.updatedAt,
+        })
+      )
         queries.push({ key: entry.key, data: entry.state.data, updatedAt: entry.state.updatedAt })
     }
     const infiniteQueries: Array<{
@@ -529,7 +569,11 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     }> = []
     for (const entry of infinite.values()) {
       const { status, data, updatedAt } = entry.handle.snapshot()
-      if (status === "success" && data !== undefined)
+      if (
+        status === "success" &&
+        data !== undefined &&
+        shouldDehydrateQuery({ kind: "infinite", key: entry.key, data, updatedAt })
+      )
         infiniteQueries.push({ key: entry.key, data, updatedAt })
     }
     return { queries, infiniteQueries }
@@ -570,16 +614,24 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     opts: InfiniteQueryOptions<T, P>,
   ): InfiniteQueryHandle<T, P> => {
     checkEpoch()
-    sweep()
     const h = hashQueryKey(key)
     const existing = infinite.get(h)
-    if (existing !== undefined) {
+    if (
+      existing !== undefined &&
+      existing.gcAt !== undefined &&
+      existing.subscribers === 0 &&
+      now() >= existing.gcAt
+    ) {
+      infinite.delete(h)
+    } else if (existing !== undefined) {
       existing.rebind(
         fn as (p: unknown) => Promise<unknown>,
         opts as InfiniteQueryOptions<unknown, unknown>,
       )
       return existing.handle as InfiniteQueryHandle<T, P>
     }
+    // Rebinding the stable handle is common during renders; don't scan both caches for that path.
+    sweep()
     const created = makeInfinite<T, P>(key, fn, opts)
     infinite.set(h, created as InfiniteEntry<unknown, unknown>)
     const snapshot = seeded.get(h)
@@ -915,14 +967,28 @@ export interface MutationState<TData, TVariables> {
 
 /** Lifecycle callbacks for a mutation. All optional; `onSettled` runs after success OR error. */
 export interface MutationCallbacks<TData, TVariables> {
-  readonly onMutate?: (variables: TVariables) => void | Promise<void>
-  readonly onSuccess?: (data: TData, variables: TVariables) => void | Promise<void>
-  readonly onError?: (error: unknown, variables: TVariables) => void | Promise<void>
+  readonly onMutate?: (variables: TVariables, context: MutationContext) => void | Promise<void>
+  readonly onSuccess?: (
+    data: TData,
+    variables: TVariables,
+    context: MutationContext,
+  ) => void | Promise<void>
+  readonly onError?: (
+    error: unknown,
+    variables: TVariables,
+    context: MutationContext,
+  ) => void | Promise<void>
   readonly onSettled?: (
     data: TData | undefined,
     error: unknown,
     variables: TVariables,
+    context: MutationContext,
   ) => void | Promise<void>
+}
+
+/** Cooperative cancellation context supplied to mutation functions and callbacks. */
+export interface MutationContext {
+  readonly signal: AbortSignal
 }
 
 /** A standalone mutation store: subscribe to its state, fire `mutate`, `reset` back to idle. */
@@ -936,11 +1002,14 @@ export interface MutationHandle<TData, TVariables> {
   mutate: (variables: TVariables) => Promise<TData>
   /** Rebind the latest `fn`/callbacks (closures change between renders) without losing state. */
   rebind: (
-    fn: (variables: TVariables) => Promise<TData>,
+    fn: (variables: TVariables, context: MutationContext) => Promise<TData>,
     callbacks: MutationCallbacks<TData, TVariables>,
   ) => void
   /** Reset to the idle state (clears data/error/variables). */
   reset: () => void
+  /** Reject pending mutate promises, discard local state and abort the signal. Uncooperative work may
+   * continue; the server may still finish an accepted request. */
+  cancel: () => void
 }
 
 const IDLE_MUTATION: MutationState<unknown, unknown> = Object.freeze({
@@ -950,6 +1019,42 @@ const IDLE_MUTATION: MutationState<unknown, unknown> = Object.freeze({
   variables: undefined,
 })
 
+/** Rejection returned when {@link MutationHandle.cancel} discards an in-flight result. */
+export class MutationCancelledError extends Error {
+  constructor() {
+    super("[nifra/web] mutation result was cancelled")
+    this.name = "MutationCancelledError"
+  }
+}
+
+/** Let cancellation settle the local mutation even when user work ignores its signal or never settles. */
+const awaitMutationWork = <T>(signal: AbortSignal, work: () => T | PromiseLike<T>): Promise<T> => {
+  if (signal.aborted) return Promise.reject(new MutationCancelledError())
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const cleanup = (): void => signal.removeEventListener("abort", onAbort)
+    const resolveOnce = (value: T): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+    const rejectOnce = (error: unknown): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+    const onAbort = (): void => rejectOnce(new MutationCancelledError())
+    signal.addEventListener("abort", onAbort, { once: true })
+    try {
+      Promise.resolve(work()).then(resolveOnce, rejectOnce)
+    } catch (error) {
+      rejectOnce(error)
+    }
+  })
+}
+
 /**
  * Create a standalone mutation state machine - framework-agnostic, so a per-adapter `useMutation`
  * binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each
@@ -958,20 +1063,42 @@ const IDLE_MUTATION: MutationState<unknown, unknown> = Object.freeze({
  * `onSettled`.
  */
 export function createMutation<TData, TVariables>(
-  fn: (variables: TVariables) => Promise<TData>,
+  fn: (variables: TVariables, context: MutationContext) => Promise<TData>,
   callbacks: MutationCallbacks<TData, TVariables> = {},
 ): MutationHandle<TData, TVariables> {
   let mutationFn = fn
   let cbs = callbacks
   let state = IDLE_MUTATION as MutationState<TData, TVariables>
   let latest = 0
+  let cancellation = 0
   const listeners = new Set<() => void>()
+  const active = new Set<AbortController>()
+  let stopIdentityWatch: (() => void) | undefined
   const emit = (): void => {
     for (const l of listeners) l()
   }
   const setState = (next: MutationState<TData, TVariables>): void => {
     state = Object.freeze(next)
     emit()
+  }
+  const stopWatchingWhenIdle = (): void => {
+    if (active.size !== 0) return
+    stopIdentityWatch?.()
+    stopIdentityWatch = undefined
+  }
+  const watchIdentity = (): void => {
+    if (stopIdentityWatch !== undefined) return
+    if (typeof (globalThis as { window?: unknown }).window === "undefined") return
+    stopIdentityWatch = onIdentityChange(cancel)
+  }
+  const cancel = (): void => {
+    cancellation++
+    latest++
+    const pending = [...active]
+    active.clear()
+    setState(IDLE_MUTATION as MutationState<TData, TVariables>)
+    for (const controller of pending) controller.abort()
+    stopWatchingWhenIdle()
   }
   return {
     snapshot: () => state,
@@ -985,31 +1112,87 @@ export function createMutation<TData, TVariables>(
       mutationFn = nextFn
       cbs = nextCallbacks
     },
-    reset: () => setState(IDLE_MUTATION as MutationState<TData, TVariables>),
+    reset: () => {
+      latest++
+      setState(IDLE_MUTATION as MutationState<TData, TVariables>)
+    },
+    cancel,
     mutate: async (variables) => {
       const mine = ++latest
-      setState({ status: "pending", data: undefined, error: undefined, variables })
-      let data: TData
+      const mineCancellation = cancellation
+      const controller = new AbortController()
+      const context: MutationContext = { signal: controller.signal }
+      active.add(controller)
+      const wasCancelled = (): boolean =>
+        mineCancellation !== cancellation || controller.signal.aborted
       try {
-        // Only await a callback when one is actually supplied - an `await undefined` would insert a
-        // needless microtask before the mutationFn runs (and complicates single-flight timing).
-        if (cbs.onMutate !== undefined) await cbs.onMutate(variables)
-        data = await mutationFn(variables)
-      } catch (error) {
-        if (mine === latest) setState({ status: "error", data: undefined, error, variables })
-        if (cbs.onError !== undefined) await cbs.onError(error, variables)
-        if (cbs.onSettled !== undefined) await cbs.onSettled(undefined, error, variables)
-        throw error
-      }
-      if (mine === latest) setState({ status: "success", data, error: undefined, variables })
-      // The write happened: a success callback that throws rejects the call, but is no failure of the
-      // write, so it never reaches onError (which would roll back what the server kept).
-      try {
-        if (cbs.onSuccess !== undefined) await cbs.onSuccess(data, variables)
+        watchIdentity()
+        setState({ status: "pending", data: undefined, error: undefined, variables })
+        if (wasCancelled()) throw new MutationCancelledError()
+        let data: TData
+        try {
+          // Only await a callback when one is supplied; awaiting undefined adds a microtask.
+          if (cbs.onMutate !== undefined)
+            await awaitMutationWork(context.signal, () => cbs.onMutate?.(variables, context))
+          if (wasCancelled()) throw new MutationCancelledError()
+          data = await awaitMutationWork(context.signal, () => mutationFn(variables, context))
+          if (wasCancelled()) throw new MutationCancelledError()
+        } catch (error) {
+          if (wasCancelled()) throw new MutationCancelledError()
+          if (mine === latest) setState({ status: "error", data: undefined, error, variables })
+          if (wasCancelled()) throw new MutationCancelledError()
+          try {
+            if (cbs.onError !== undefined)
+              await awaitMutationWork(context.signal, () =>
+                cbs.onError?.(error, variables, context),
+              )
+            if (wasCancelled()) throw new MutationCancelledError()
+            if (cbs.onSettled !== undefined)
+              await awaitMutationWork(context.signal, () =>
+                cbs.onSettled?.(undefined, error, variables, context),
+              )
+            if (wasCancelled()) throw new MutationCancelledError()
+          } catch (callbackError) {
+            if (wasCancelled()) throw new MutationCancelledError()
+            throw callbackError
+          }
+          throw error
+        }
+
+        if (mine === latest) setState({ status: "success", data, error: undefined, variables })
+        if (wasCancelled()) throw new MutationCancelledError()
+        // A callback failure after the write rejects the call but must not be reported as a write
+        // failure through onError, which could incorrectly roll back successful server state.
+        let successCallbackFailed = false
+        let successCallbackError: unknown
+        try {
+          if (cbs.onSuccess !== undefined)
+            await awaitMutationWork(context.signal, () => cbs.onSuccess?.(data, variables, context))
+        } catch (error) {
+          successCallbackFailed = true
+          successCallbackError = error
+        }
+        if (wasCancelled()) throw new MutationCancelledError()
+
+        let settledCallbackFailed = false
+        let settledCallbackError: unknown
+        try {
+          if (cbs.onSettled !== undefined)
+            await awaitMutationWork(context.signal, () =>
+              cbs.onSettled?.(data, undefined, variables, context),
+            )
+        } catch (error) {
+          settledCallbackFailed = true
+          settledCallbackError = error
+        }
+        if (wasCancelled()) throw new MutationCancelledError()
+        if (settledCallbackFailed) throw settledCallbackError
+        if (successCallbackFailed) throw successCallbackError
+        return data
       } finally {
-        if (cbs.onSettled !== undefined) await cbs.onSettled(data, undefined, variables)
+        active.delete(controller)
+        stopWatchingWhenIdle()
       }
-      return data
     },
   }
 }

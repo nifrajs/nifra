@@ -5315,6 +5315,10 @@ _No named exports (side-effect entrypoint)._
   What the router knows about the response text a path's data on screen was read from. The router's own transport resolves a reload answering that same text to this object itself, and the router keeps the data on screen without parsing it; for any other plain JSON response it records the text in `tex…
 - **Deferred** _(interface)_ - `interface Deferred<T>`
   A loader value marked to stream in after the shell. The component consumes it with the adapter's `<Await resolve={...}>`; until the promise settles the shell shows the `<Suspense>` fallback. `id` is assigned by the server at serialization time - the streamed resolve script keys off it.
+- **DehydrateOptions** _(interface)_ - `interface DehydrateOptions`
+  Select which successful query values may cross the SSR-to-browser boundary.
+- **DehydratedQueryInfo** _(interface)_ - `interface DehydratedQueryInfo`
+  Metadata passed to a dehydration filter before query data is sent to the browser.
 - **DehydratedState** _(interface)_ - `interface DehydratedState`
   A serializable snapshot of the cache's successful queries - the SSR→client bridge payload.
 - **DocumentParts** _(interface)_ - `interface DocumentParts`
@@ -5430,6 +5434,10 @@ _No named exports (side-effect entrypoint)._
   Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders).
 - **MutationCallbacks** _(interface)_ - `interface MutationCallbacks<TData, TVariables>`
   Lifecycle callbacks for a mutation. All optional; `onSettled` runs after success OR error.
+- **MutationCancelledError** _(class)_ - `class MutationCancelledError`
+  Rejection returned when {@link MutationHandle.cancel} discards an in-flight result.
+- **MutationContext** _(interface)_ - `interface MutationContext`
+  Cooperative cancellation context supplied to mutation functions and callbacks.
 - **MutationHandle** _(interface)_ - `interface MutationHandle<TData, TVariables>`
   A standalone mutation store: subscribe to its state, fire `mutate`, `reset` back to idle.
 - **MutationState** _(interface)_ - `interface MutationState<TData, TVariables>`
@@ -5611,7 +5619,7 @@ _No named exports (side-effect entrypoint)._
   Declare which pages and files each host serves. Hand the result to `createWebApp({ hostPolicy })` (or export it as `hostPolicy` from the framework module, which `nifra build`'s server entry reads): it is evaluated before the build's static files, the prerendered pages, the mounts and every page. On…
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
-- **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
+- **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
   Create a standalone mutation state machine - framework-agnostic, so a per-adapter `useMutation` binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each run their `fn`, but only the latest publishes state (an older, slower response can't clobber a newer one…
 - **createNonceResolver** _(function)_ - `createNonceResolver: <Env = unknown>(options?: CreateNonceResolverOptions<Env>) => NonceResolver<Env>`
   Create a request-memoized CSP nonce resolver for `createWebApp`.
@@ -5935,6 +5943,8 @@ _No named exports (side-effect entrypoint)._
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
   The idle blocker - a stable reference (no needless adapter re-renders while unblocked).
 - **InstallHistoryOptions** _(interface)_ - `interface InstallHistoryOptions`
+- **MutationCancelledError** _(class)_ - `class MutationCancelledError`
+  Rejection returned when {@link MutationHandle.cancel} discards an in-flight result.
 - **WaitForStylesOptions** _(interface)_ - `interface WaitForStylesOptions`
   Options for {@link waitForStyles}.
 - **applyHead** _(function)_ - `applyHead: (head: Meta, path?: string) => void`
@@ -5944,7 +5954,7 @@ _No named exports (side-effect entrypoint)._
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
-- **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
+- **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
   Create a standalone mutation state machine - framework-agnostic, so a per-adapter `useMutation` binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each run their `fn`, but only the latest publishes state (an older, slower response can't clobber a newer one…
 - **createQueryClient** _(function)_ - `createQueryClient: (options: QueryClientOptions) => QueryClient`
 - **currentDocumentNonce** _(function)_ - `currentDocumentNonce: () => string | undefined`
@@ -6990,8 +7000,22 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-preact/query`
 
+- **HydrationBoundary** _(function)_ - `HydrationBoundary: (props: { readonly state: DehydratedState | undefined; readonly children?: ComponentChildren; }) => ComponentChildren`
+  Seed the provider's cache before its child queries read their first snapshot.
+- **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ComponentChildren; }) => ComponentChildren`
+  Provide an SSR/request-scoped query client or an application-specific client.
+- **UseInfiniteQueryOptions** _(interface)_ - `interface UseInfiniteQueryOptions<T, P>`
+  Options for an infinite query.
+- **UseInfiniteQueryResult** _(interface)_ - `interface UseInfiniteQueryResult<T, P>`
+  Infinite-query state and page controls.
+- **UseMutationResult** _(interface)_ - `interface UseMutationResult<TData, TVariables>`
+  Observable mutation state and imperative controls.
 - **UseQueryResult** _(interface)_ - `interface UseQueryResult<T>`
   A query's reactive {@link QueryState} plus `isPending` + `refetch`.
+- **useInfiniteQuery** _(function)_ - `useInfiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: UseInfiniteQueryOptions<T, P>) => UseInfiniteQueryResult<T, P>`
+  A paged query binding that follows Preact's mount and subscription lifecycle.
+- **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
+  A mutation binding with Preact state subscriptions and identity-boundary cancellation.
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => UseQueryResult<T>`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle. `options.live`…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
@@ -7158,7 +7182,7 @@ _No named exports (side-effect entrypoint)._
   A query's reactive {@link QueryState} plus `isPending` + `refetch`.
 - **useInfiniteQuery** _(function)_ - `useInfiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: UseInfiniteQueryOptions<T, P>) => UseInfiniteQueryResult<T, P>`
   Subscribe to a paged (infinite-scroll) query. Returns the accumulated `data.pages` plus `fetchNextPage`/`fetchPreviousPage`/`hasNextPage`/`hasPreviousPage`. Fetches the first page on mount. SSR-idle unless a `QueryClientProvider` supplies a hydrated client.
-- **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
+- **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
   A mutation hook (create/update/delete). Returns `{ mutate, mutateAsync, data, error, variables, isIdle, isPending, isError, isSuccess, reset }`. Invalidate affected queries from `onSuccess` via `useQueryClient().invalidateQueries(...)`. The handle is stable across renders; the latest `fn`/ callback…
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: UseQueryOptions) => UseQueryResult<T>`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, isError, isSuccess, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount and when the key changes; `enabl…
@@ -7378,8 +7402,20 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-solid/query`
 
+- **CreateInfiniteQueryOptions** _(interface)_ - `interface CreateInfiniteQueryOptions<T, P>`
+  Options for a Solid infinite query.
+- **CreateInfiniteQueryResult** _(interface)_ - `interface CreateInfiniteQueryResult<T, P>`
+  Infinite-query state and page controls expressed as Solid accessors.
+- **CreateMutationResult** _(interface)_ - `interface CreateMutationResult<TData, TVariables>`
+  A mutation result expressed as Solid accessors and imperative controls.
 - **CreateQueryResult** _(interface)_ - `interface CreateQueryResult<T>`
   A query's reactive state accessor plus `refetch`.
+- **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly state?: DehydratedState; readonly children?: JSX.Element; }) => JSX.Element`
+  Provide a request-scoped client and optionally seed it before descendants run.
+- **createInfiniteQuery** _(function)_ - `createInfiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: CreateInfiniteQueryOptions<T, P>) => CreateInfiniteQueryResult<T, P>`
+  Bind a paged query to a Solid owner and fetch its first page on mount.
+- **createMutation** _(function)_ - `createMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => CreateMutationResult<TData, TVariables>`
+  Bind a mutation to a Solid owner. Identity changes discard late results and callbacks.
 - **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => CreateQueryResult<T>`
   Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`. Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. Call inside a component (owns the subscription). `options.live` names the…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
@@ -7530,8 +7566,22 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-svelte/query`
 
+- **InfiniteQuerySnapshot** _(interface)_ - `interface InfiniteQuerySnapshot<T, P>`
+  Svelte's infinite-query snapshot includes page availability alongside the shared query state.
+- **InfiniteQueryStore** _(type)_ - `type InfiniteQueryStore<T, P>`
+  A Svelte readable infinite-query snapshot with page controls.
+- **MutationStore** _(type)_ - `type MutationStore<TData, TVariables>`
+  A Svelte readable mutation state, augmented with imperative controls.
 - **QueryStore** _(type)_ - `type QueryStore<T> = Readable<QueryState<T>> & { readonly refetch: () => Promise<T> }`
   A query store: a `Readable<QueryState<T>>` (read via `$`) plus `refetch`.
+- **UseInfiniteQueryOptions** _(interface)_ - `interface UseInfiniteQueryOptions<T, P>`
+  Options for a Svelte infinite query.
+- **provideQueryClient** _(function)_ - `provideQueryClient: (client: QueryClient, state?: DehydratedState) => void`
+  Set the component-tree client and hydrate it before descendants subscribe to queries.
+- **useInfiniteQuery** _(function)_ - `useInfiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: UseInfiniteQueryOptions<T, P>) => InfiniteQueryStore<T, P>`
+  Bind a paged query as a Svelte readable store. Fetching starts on the first browser subscription.
+- **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationStore<TData, TVariables>`
+  Bind a mutation as a Svelte store. Identity changes discard late results and callbacks.
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryStore<T>`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle. `options.live` names the live keys that refetch it.
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
@@ -7703,8 +7753,20 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/query`
 
+- **UseInfiniteQueryOptions** _(interface)_ - `interface UseInfiniteQueryOptions<T, P>`
+  Options for a Vue infinite query.
+- **UseInfiniteQueryResult** _(interface)_ - `interface UseInfiniteQueryResult<T, P>`
+  Infinite-query state and page controls as Vue refs/computed values.
+- **UseMutationResult** _(interface)_ - `interface UseMutationResult<TData, TVariables>`
+  A Vue mutation result with reactive state and promise/fire-and-forget controls.
 - **UseQueryResult** _(interface)_ - `interface UseQueryResult<T>`
   A query's reactive {@link QueryState} (read `.value`) plus `refetch`.
+- **provideQueryClient** _(function)_ - `provideQueryClient: (client: QueryClient, state?: DehydratedState) => void`
+  Provide a request-scoped client and optionally hydrate it before child setup runs.
+- **useInfiniteQuery** _(function)_ - `useInfiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: UseInfiniteQueryOptions<T, P>) => UseInfiniteQueryResult<T, P>`
+  Bind a paged query to Vue's mount and effect-scope lifecycles.
+- **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
+  Bind a mutation to Vue's effect scope. Identity changes discard late results and callbacks.
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => UseQueryResult<T>`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. `options.live` names…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`

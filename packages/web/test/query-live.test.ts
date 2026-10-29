@@ -1,6 +1,6 @@
 /** Queries with live keys: registration while mounted, refresh, the tick a fetch asked at, and clear. */
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { identityChanged } from "../src/identity.ts"
+import { IDENTITY_CHANNEL, identityChanged } from "../src/identity.ts"
 import {
   advanceLiveTick,
   clearQueryClients,
@@ -11,7 +11,7 @@ import {
   watchLiveQueries,
 } from "../src/internal/live-queries.ts"
 import { installQuerySeam, queryClients, querySeam } from "../src/internal/query-seam.ts"
-import { createQueryClient } from "../src/query.ts"
+import { createMutation, createQueryClient } from "../src/query.ts"
 
 function gated() {
   const resolvers: ((value: unknown) => void)[] = []
@@ -26,6 +26,14 @@ function gated() {
     calls: () => resolvers.length,
     resolve: (i: number, value: unknown) => resolvers[i]?.(value),
     reject: (i: number, error: unknown) => rejecters[i]?.(error),
+  }
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for the identity broadcast")
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
   }
 }
 
@@ -259,6 +267,45 @@ test("identityChanged() clears every query client the page made, and no server-s
   identityChanged()
   expect(mine.getQueryData(["k"])).toBeUndefined()
   expect(serverSide.getQueryData(["k"])).toBe("request-scoped")
+})
+
+test("a remote identity broadcast clears query data and cancels a pending mutation", async () => {
+  const client = createQueryClient({ now: () => 0 })
+  client.setQueryData(["profile"], { name: "Previous visitor" })
+
+  let resolveMutation!: (value: string) => void
+  let signal: AbortSignal | undefined
+  let successCalled = false
+  const mutation = createMutation(
+    (_variables: undefined, context) => {
+      signal = context.signal
+      return new Promise<string>((resolve) => {
+        resolveMutation = resolve
+      })
+    },
+    {
+      onSuccess: () => {
+        successCalled = true
+      },
+    },
+  )
+  const pending = mutation.mutate(undefined)
+  void pending.catch(() => {})
+  expect(signal?.aborted).toBe(false)
+
+  const otherTab = new BroadcastChannel(IDENTITY_CHANNEL)
+  try {
+    otherTab.postMessage("changed")
+    await waitFor(() => client.getQueryData(["profile"]) === undefined)
+    expect(signal?.aborted).toBe(true)
+
+    await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    expect(mutation.snapshot().status).toBe("idle")
+    expect(successCalled).toBe(false)
+    resolveMutation("late result")
+  } finally {
+    otherTab.close()
+  }
 })
 
 // A sign-in or sign-out response rotates the document's identity epoch, in a task of its own.

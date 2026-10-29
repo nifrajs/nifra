@@ -244,6 +244,27 @@ describe("createQueryClient", () => {
     expect(c.query(["kept"], g.fn)).toBe(kept) // subscribed entry survived
   })
 
+  test("existing-key lookups skip full cache sweeps while a miss still collects expired entries", async () => {
+    let t = 0
+    const c = createQueryClient({ now: () => t, gcTime: 10 })
+    const expired = c.query(["expired"], async () => "old")
+    const stopExpired = expired.subscribe(() => {})
+    await expired.fetch()
+    stopExpired()
+
+    const hot = c.query(["hot"], async () => "current")
+    const stopHot = hot.subscribe(() => {})
+    await hot.fetch()
+    t = 11
+
+    for (let i = 0; i < 100; i++) expect(c.query(["hot"], async () => "rebound")).toBe(hot)
+    expect(c.getQueryData(["expired"])).toBe("old")
+
+    c.query(["new-key"], async () => "new")
+    expect(c.getQueryData(["expired"])).toBeUndefined()
+    stopHot()
+  })
+
   test("the cache is bounded - past `max`, the oldest unsubscribed entries are evicted", () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0, max: 3 })
@@ -402,6 +423,33 @@ describe("SSR bridge: dehydrate / hydrate", () => {
     expect(client.getQueryData<{ name: string }>(["user", 1])).toEqual({ name: "Ada" })
   })
 
+  test("dehydrate filters both query kinds before including browser-visible data", async () => {
+    const server = createQueryClient({ now: () => 100 })
+    await server.prefetchQuery(["public", "profile"], async () => ({ name: "Ada" }))
+    await server.prefetchQuery(["private", "token"], async () => "server-only-token")
+    const privateFeed = server.infiniteQuery(
+      ["private", "feed"],
+      async (page: number) => `page-${page}`,
+      { initialPageParam: 0, getNextPageParam: () => undefined },
+    )
+    await privateFeed.fetch()
+
+    const seen: string[] = []
+    const state = server.dehydrate({
+      shouldDehydrateQuery: ({ kind, key }) => {
+        const firstKey = Array.isArray(key) ? key[0] : "unknown"
+        seen.push(`${kind}:${String(firstKey)}`)
+        return firstKey !== "private"
+      },
+    })
+
+    expect(seen).toEqual(["query:public", "query:private", "infinite:private"])
+    expect(state.queries).toEqual([
+      { key: ["public", "profile"], data: { name: "Ada" }, updatedAt: 100 },
+    ])
+    expect(state.infiniteQueries).toEqual([])
+  })
+
   test("hydrate does not clobber a client entry that is already fresher", () => {
     const client = createQueryClient({ now: () => 0 })
     client.setQueryData(["k"], "CLIENT") // updatedAt 0
@@ -551,6 +599,146 @@ describe("createMutation", () => {
     await m.mutate(1)
     expect(m.snapshot().data).toBe(101)
   })
+
+  test("cancel discards an in-flight result and skips its callbacks", async () => {
+    let resolve!: (value: number) => void
+    const callbacks: string[] = []
+    const m = createMutation(() => new Promise<number>((done) => (resolve = done)), {
+      onSuccess: () => {
+        callbacks.push("success")
+      },
+      onSettled: () => {
+        callbacks.push("settled")
+      },
+    })
+
+    const pending = m.mutate(undefined)
+    expect(m.snapshot().status).toBe("pending")
+    m.cancel()
+    expect(m.snapshot().status).toBe("idle")
+    resolve(42)
+
+    await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    expect(m.snapshot().status).toBe("idle")
+    expect(callbacks).toEqual([])
+  })
+
+  test("passes one cooperative abort signal to the mutation function and callbacks", async () => {
+    const signals: AbortSignal[] = []
+    const m = createMutation(
+      async (value: number, context) => {
+        signals.push(context.signal)
+        return value * 2
+      },
+      {
+        onMutate: (_value, context) => {
+          signals.push(context.signal)
+        },
+        onSuccess: (_data, _value, context) => {
+          signals.push(context.signal)
+        },
+        onSettled: (_data, _error, _value, context) => {
+          signals.push(context.signal)
+        },
+      },
+    )
+
+    await expect(m.mutate(21)).resolves.toBe(42)
+    expect(signals).toHaveLength(4)
+    expect(new Set(signals).size).toBe(1)
+    expect(signals[0]?.aborted).toBe(false)
+  })
+
+  test("cancellation aborts an async onMutate signal and prevents the write", async () => {
+    let finishOnMutate!: () => void
+    let signal: AbortSignal | undefined
+    let mutationStarted = false
+    const m = createMutation(
+      async (_value: number, context) => {
+        signal = context.signal
+        mutationStarted = true
+        return 1
+      },
+      {
+        onMutate: async (_value, context) => {
+          signal = context.signal
+          await new Promise<void>((resolve) => {
+            finishOnMutate = resolve
+          })
+        },
+      },
+    )
+
+    const pending = m.mutate(1)
+    expect(signal?.aborted).toBe(false)
+    m.cancel()
+    expect(signal?.aborted).toBe(true)
+    await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    finishOnMutate()
+
+    expect(mutationStarted).toBe(false)
+  })
+
+  test("cancellation triggered by a pending-state subscriber prevents mutation callbacks", async () => {
+    let mutationStarted = false
+    let callbackStarted = false
+    const m = createMutation(
+      async () => {
+        mutationStarted = true
+        return 1
+      },
+      {
+        onMutate: () => {
+          callbackStarted = true
+        },
+      },
+    )
+    const stop = m.subscribe(() => {
+      if (m.snapshot().status === "pending") m.cancel()
+    })
+
+    const pending = m.mutate(undefined)
+    await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    expect(callbackStarted).toBe(false)
+    expect(mutationStarted).toBe(false)
+    stop()
+  })
+
+  test("cancellation during an async success callback skips error and settled callbacks", async () => {
+    let finishOnSuccess!: () => void
+    let enterOnSuccess!: () => void
+    const enteredSuccess = new Promise<void>((resolve) => {
+      enterOnSuccess = resolve
+    })
+    let signal: AbortSignal | undefined
+    const callbacks: string[] = []
+    const m = createMutation(async (value: number) => value, {
+      onSuccess: async (_data, _value, context) => {
+        signal = context.signal
+        callbacks.push("success")
+        enterOnSuccess()
+        await new Promise<void>((resolve) => {
+          finishOnSuccess = resolve
+        })
+      },
+      onError: () => {
+        callbacks.push("error")
+      },
+      onSettled: () => {
+        callbacks.push("settled")
+      },
+    })
+
+    const pending = m.mutate(1)
+    await enteredSuccess
+    expect(callbacks).toEqual(["success"])
+    m.cancel()
+    expect(signal?.aborted).toBe(true)
+    await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    finishOnSuccess()
+
+    expect(callbacks).toEqual(["success"])
+  })
 })
 
 describe("infinite queries share the cache's invalidation, SSR bridge and eviction", () => {
@@ -692,5 +880,22 @@ describe("createMutation callbacks that throw", () => {
     await expect(m.mutate(1)).rejects.toThrow("refresh failed")
     expect(m.snapshot()).toEqual({ status: "success", data: 1, error: undefined, variables: 1 })
     expect(order).toEqual(["settled:1:undefined"])
+  })
+
+  test("an onSettled that throws after a successful write does not call onError", async () => {
+    const order: string[] = []
+    const m = createMutation(async (value: number) => value, {
+      onError: () => {
+        order.push("error")
+      },
+      onSettled: () => {
+        order.push("settled")
+        throw new Error("settled failed")
+      },
+    })
+
+    await expect(m.mutate(7)).rejects.toThrow("settled failed")
+    expect(m.snapshot()).toMatchObject({ status: "success", data: 7 })
+    expect(order).toEqual(["settled"])
   })
 })

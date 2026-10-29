@@ -15,6 +15,7 @@ import type {
   InfiniteData,
   InfiniteQueryOptions,
   MutationCallbacks,
+  MutationContext,
   MutationHandle,
   MutationState,
   QueryClient,
@@ -176,7 +177,7 @@ export interface UseMutationResult<TData, TVariables> extends MutationState<TDat
  * callbacks re-bind each render.
  */
 export function useMutation<TData, TVariables = void>(
-  fn: (variables: TVariables) => Promise<TData>,
+  fn: (variables: TVariables, context: MutationContext) => Promise<TData>,
   callbacks: MutationCallbacks<TData, TVariables> = {},
 ): UseMutationResult<TData, TVariables> {
   const ref = useRef<MutationHandle<TData, TVariables> | undefined>(undefined)
