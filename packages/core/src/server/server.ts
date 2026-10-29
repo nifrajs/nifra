@@ -785,10 +785,8 @@ const invalidHost = (host: string): boolean => {
  */
 const requestTarget = (req: Request, validateHost: boolean): string | boolean => {
   if (rawRequestTargets) {
-    if (validateHost) {
-      const host = headerOf(req, "host")
-      if (host !== null && invalidHost(host)) return true
-    }
+    const host = validateHost ? headerOf(req, "host") : null
+    if (host !== null && invalidHost(host)) return true
     return needsResolving(req.url) && resolveDotSegments(req.url)
   }
   if (!(unparsedBunTargets && (validateHost || needsResolving(req.url)))) return false
@@ -1473,10 +1471,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private staticResponseHeaders: StaticResponseHeaders | undefined
   /** A group's view of the static headers its enclosing scopes declared before it was created. */
-  private declare inheritedStatics: Readonly<Record<string, string>> | undefined
+  declare private inheritedStatics: Readonly<Record<string, string>> | undefined
   /** A group's view of the plugins its enclosing scopes applied before it was created; unset while
    * a plugin applies, so its own dependency `use()` shares the parent's copy. */
-  private declare inheritedPlugins: ReadonlyMap<string, unknown> | undefined
+  declare private inheritedPlugins: ReadonlyMap<string, unknown> | undefined
   /** `wrapResponse` for the Web lanes: identity until static headers exist to fold into the
    * framework's own error/404/timeout renders, which are built outside the header init. */
   private wrapWebResponse: (response: Response | ResponseResult) => Response

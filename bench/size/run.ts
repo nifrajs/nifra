@@ -361,7 +361,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-effect-ledger": 41.0,
   "nifra-mcp": 39.3,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 39.8,
+  // Deno's opt-in Host branch brings the shared-core bundle to 40,762 B (Bun 1.4.4).
+  "nifra-sse": 39.9,
   "nifra-valibot": 40.0,
   "nifra-typebox-t": 67.2,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).

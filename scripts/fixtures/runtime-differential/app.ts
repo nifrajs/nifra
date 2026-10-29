@@ -26,6 +26,7 @@ export function staticMount(dir: string) {
 
 export interface DifferentialAppOptions {
   readonly staticFiles?: StaticHandler
+  readonly validateHost?: boolean
 }
 
 /** The route cap: small, so a generated length crosses it without sending a megabyte. */
@@ -72,7 +73,11 @@ function encodePath(path: string): string | undefined {
 
 export function createDifferentialApp(options: DifferentialAppOptions = {}) {
   const staticFiles = options.staticFiles
-  const app = server({ logger: silentLogger, maxBodyBytes: MAX_BODY_BYTES })
+  const app = server({
+    logger: silentLogger,
+    maxBodyBytes: MAX_BODY_BYTES,
+    validateHost: options.validateHost,
+  })
     .use(websocket())
     .use(responseContract("enforce", { extra: "strip" }))
     .use(responseObserver())
