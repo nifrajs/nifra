@@ -704,6 +704,22 @@ Deno.test("validateHost is opt-in on Deno", async () => {
     await running.stop({ drainMs: 0 })
   }
 })
+Deno.test("unparseable Host cannot steer dot-segment routing with validation off", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const refused = await rawExchange(
+      running.port,
+      "GET",
+      "/users/../posts",
+      undefined,
+      "127.0.0.1:99999",
+    )
+    assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 // No URL can be built on a port past 65535, so resolving the dot segment threw out of `fetch` and the
 // adapter answered 500. Found by the runtime differential (scripts/check-runtime-differential.ts).
 Deno.test("a Host port past 65535 is refused, dot segments or not", async () => {

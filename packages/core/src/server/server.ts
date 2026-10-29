@@ -787,7 +787,11 @@ const requestTarget = (req: Request, validateHost: boolean): string | boolean =>
   if (rawRequestTargets) {
     const host = validateHost ? headerOf(req, "host") : null
     if (host !== null && invalidHost(host)) return true
-    return needsResolving(req.url) && resolveDotSegments(req.url)
+    if (!needsResolving(req.url)) return false
+    // Deno can preserve an unparseable absolute URL when Host is malformed. Do not route its
+    // unresolved dot segments through the raw-target fallback.
+    if (!URL.canParse(req.url, "http://localhost")) return true
+    return resolveDotSegments(req.url)
   }
   if (!(unparsedBunTargets && (validateHost || needsResolving(req.url)))) return false
   const host = headerOf(req, "host")

@@ -360,11 +360,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
   "nifra-idempotency": 44.0,
-  "nifra-effect-ledger": 41.2,
+  "nifra-effect-ledger": 41.3,
   "nifra-mcp": 39.5,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 40.1,
-  "nifra-valibot": 40.2,
+  "nifra-valibot": 40.3,
   "nifra-typebox-t": 67.5,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
