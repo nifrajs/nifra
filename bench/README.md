@@ -117,13 +117,12 @@ budget is spent. Those rows remain marked unsettled, and benchmark measurements 
 and the HTTP matrices alone on a PR labelled `bench`: one job per suite x runtime (SSR on Bun and Node
 only, see `bench/ssr/README.md`), each through `bench/ci/run.ts`. A job splits the runner's
 physical cores in two (`BENCH_SERVER_CPUS` for the servers, `BENCH_LOAD_CPUS` for oha, both taskset
-lists the matrices also take by hand on Linux; the SSR jobs stay unpinned, as `bun run bench:ssr` is),
-runs the matrix 3 times in fresh processes, and keeps going up to 5 runs while any row's 95% interval
+lists the matrices also take by hand on Linux), runs the matrix 3 times in fresh processes, and keeps going up to 5 runs while any row's 95% interval
 is wider than 10% of its median. The stopping rule reads only interval widths, never which row leads.
 Every ratio in the job summary is a median of per-round ratios with a distribution-free interval
 (`bench/ci/stats.ts`); the req/s beside it is the median over every round and moves with the runner.
-An SSR job runs `bench/ssr/run.ts` with its defaults (5 rounds, 3 s warmup, 5 s oha, 50 connections)
-and logs the same round and result lines as a local run. The report is
+An SSR job runs `bench/ssr/run.ts` with its defaults (5 rounds, 3 s warmup, 5 s oha, 50 connections),
+pinned like the other suites, and logs the same round and result lines as a local run. The report is
 uploaded as an artifact with every raw round, and nothing gates a merge yet: the nightly runs measure
 the runner's noise floor that a later regression gate will take its tolerance from.
 

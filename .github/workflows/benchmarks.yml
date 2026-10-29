@@ -4,7 +4,7 @@ name: Benchmarks
 # between runs, so the ratios are what compare: each row against its workload's ceiling (the runtime's
 # raw server; for SSR the table's baseline row, the divisor of bench:ssr's ratios), and nifra against
 # each rival, with the median req/s printed beside them, sampled seconds apart in interleaved rounds, with the
-# server and oha pinned to separate physical cores (SSR runs unpinned, like bench:ssr). Each job keeps sampling until every
+# server and oha pinned to separate physical cores. Each job keeps sampling until every
 # row's 95% interval is narrow or its run budget is spent, and lists what stayed noisy.
 #
 # Nothing here gates a merge. The nightly reports exist to measure this runner's noise floor first;

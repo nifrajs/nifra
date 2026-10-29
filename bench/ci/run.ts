@@ -34,9 +34,6 @@ const SUITE_RUN: Readonly<Record<Suite, (runtime: Runtime) => readonly [string, 
   ssr: (runtime) => ["bench/ssr/run.ts", "--runtime", runtime, "--json"],
 }
 
-/** SSR runs as `bun run bench:ssr` does: its own rounds and timings, servers and oha unpinned. */
-const UNPINNED: ReadonlySet<Suite> = new Set<Suite>(["ssr"])
-
 interface Options {
   readonly suite: Suite
   readonly runtime: Runtime
@@ -123,9 +120,8 @@ async function runOnce(
 const options = parseOptions(process.argv.slice(2))
 let split: CoreSplit | null = null
 if (options.pin) {
-  const found = readCoreSplit() ?? null
-  if (found === null) throw new Error("--pin needs Linux: /proc/self/status lists no allowed CPUs")
-  split = UNPINNED.has(options.suite) ? null : found
+  split = readCoreSplit() ?? null
+  if (split === null) throw new Error("--pin needs Linux: /proc/self/status lists no allowed CPUs")
 }
 
 const runs: RunOutput[] = []
