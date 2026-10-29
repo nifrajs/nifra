@@ -215,10 +215,15 @@ Usage:
                                          nifra_explain (structured errors), nifra_inspect (request
                                          traces), nifra_learn (guided build path).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs, nifra_example,
-                                         nifra_types, nifra_learn, nifra_frontend, nifra_gallery) -
+                                         nifra_types, nifra_learn, nifra_frontend, nifra_runtime, nifra_gallery) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra learn   [<step>]                 Print the guided build-an-app path (the human view of nifra_learn):
                                          no arg for the step index, a number for one step's goal/do/verify.
+  nifra frontend [<adapter>] [<symptom>] [--json]
+                                         Print the frontend gotcha catalog (the human view of nifra_frontend).
+  nifra runtime  [<runtime>] [<symptom>] [--json]
+                                         Print where Bun, Node, Deno and Workers differ (the human view of
+                                         nifra_runtime): cause, fix and how to verify, with measured versions.
   nifra check   [--json] [--sarif] [--lints-only]
                                          Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          backend code in browser code). Run as "done"; --json for agents;
@@ -1304,6 +1309,22 @@ async function main(): Promise<void> {
       input.json
         ? JSON.stringify(selectFrontendGuidance(input), null, 2)
         : renderFrontendResult(input),
+    )
+    return
+  }
+  // `runtime` prints the Bun/Node/Deno/Workers differences catalog (the human head of `nifra_runtime`).
+  // Project-independent and static. `nifra runtime` for the index, `nifra runtime deno "path guard"` to
+  // filter by runtime and/or symptom (either arg may be omitted; a runtime is recognized by name).
+  if (command === "runtime") {
+    const { selectRuntimeDifferences, renderRuntimeResult, parseRuntime } = await import(
+      "./runtime-differences.ts"
+    )
+    const input = frontendCommandInput(argv.slice(1), parseRuntime)
+    const query = { runtime: input.adapter, symptom: input.symptom }
+    console.log(
+      input.json
+        ? JSON.stringify(selectRuntimeDifferences(query), null, 2)
+        : renderRuntimeResult(query),
     )
     return
   }

@@ -61,6 +61,11 @@ export default function FrontendGuidance() {
           <strong>Svelte:</strong> runes, keyed each blocks, effect teardown, and browser-only SSR
           reads.
         </li>
+        <li>
+          <strong>CSP and browser:</strong> React <code>Activity</code> hydration, inline styles under a
+          strict Content-Security-Policy, and WebKit&apos;s handling of streamed module scripts. Server-runtime differences are in{" "}
+          <a href="/docs/runtime-differences">runtime differences</a>.
+        </li>
       </ul>
 
       <h2>Version-sensitive advice</h2>

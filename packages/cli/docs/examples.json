@@ -642,6 +642,12 @@
     "code": "// routes/users/[id].backend.ts - its server half\nimport { t } from \"@nifrajs/schema\"\nimport type { Route } from \"./+types/[id]\"\n\nexport const loaderOutput = t.object({ name: t.string() })\n\nexport async function loader({ params }: Route.LoaderArgs) {\n  return { name: `User ${params.id}` }\n}"
   },
   {
+    "name": "OPTIONS",
+    "topic": "Nifra - Runtime differences",
+    "slug": "runtime-differences",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { serve } from \"@nifrajs/node\"\n\n// Deno (and Bun's Host handling): the Host header and the request target are checked and resolved.\nconst app = server({ validateHost: true, normalizeTarget: true })\n\n// Node: the adapter has the same normalizeTarget switch.\nawait serve(app, { port: 3000, normalizeTarget: true })"
+  },
+  {
     "name": "BOUNDED",
     "topic": "Nifra - security & hardening",
     "slug": "security",

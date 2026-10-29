@@ -21,6 +21,7 @@ describe("publicDocsTools", () => {
       "nifra_frontend",
       "nifra_gallery",
       "nifra_learn",
+      "nifra_runtime",
       "nifra_types",
     ])
   })
@@ -63,6 +64,7 @@ describe("handleMcpHttp", () => {
       "nifra_frontend",
       "nifra_gallery",
       "nifra_learn",
+      "nifra_runtime",
       "nifra_types",
     ])
     expect(body.result.tools[0]?.inputSchema).toBeDefined()
@@ -89,6 +91,7 @@ describe("handleMcpHttp", () => {
       "nifra_example",
       "nifra_frontend",
       "nifra_learn",
+      "nifra_runtime",
       "nifra_types",
     ])
     for (const tool of body.result.tools) {

@@ -19,6 +19,7 @@
  */
 
 import type { Framework } from "./scaffold.ts"
+import { rankBySymptom, symptomQuery } from "./symptom-search.ts"
 
 /** An adapter an entry applies to, or `all` for a seam issue that is adapter-independent. */
 export type GuidanceAdapter = Framework | "all"
@@ -437,6 +438,49 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     seeAlso: "data-swap data-swap-slot slot enableSwap islands",
     category: "seam",
   },
+  {
+    id: "react-activity-markers",
+    adapters: ["react"],
+    symptom:
+      "The tab freezes on load: the main thread spins and hydration never finishes, with no error, on a page that renders `<Activity>`.",
+    cause:
+      "React hydrates an `<Activity>` against server HTML that lacks its `<!--&-->` and `<!--/&-->` boundary comments and never returns. The server HTML carries the markers only when the server tree rendered the Activity. React also writes a component's `<title>` ahead of the opening comment in `renderToString` output.",
+    fix: "Make server and client agree: wrap in `<Activity>` on the client only where the server did, and when you detect the boundary in server HTML, skip leading `<title>` elements before looking for the comment.",
+    verify:
+      "Hydrate the route in a real browser (a test runner just times out without an error) and confirm the page becomes interactive.",
+    versions: ["React 19.3.1"],
+    source: "https://react.dev/reference/react/Activity",
+    category: "hydration",
+    seeAlso: "react activity hydration boundary",
+  },
+  {
+    id: "csp-inline-style-attribute",
+    adapters: ["all"],
+    symptom:
+      'A wrapper element with an inline `style` attribute, such as `<div style="display:contents">`, is ignored under a Content-Security-Policy and the layout breaks.',
+    cause:
+      "`style-src 'self'` refuses inline `style` attributes, and a framework's hydration does not set the attribute again from script. A `<slot>` element is `display: contents` by the user-agent stylesheet in Chromium, Firefox and WebKit, needs no CSP exception, and does not close an open `<p>`. Svelte reserves the `<slot>` tag name.",
+    fix: 'Use a `<slot>` wrapper for a layout-neutral container, or a class in a stylesheet. In Svelte write `<svelte:element this={"slot"}>`; a string-literal `this` warns.',
+    verify:
+      "Load the page with the production `style-src` and check the console for a blocked inline style.",
+    versions: ["Chromium, Firefox, WebKit (2026-10)"],
+    category: "ssr",
+    seeAlso: "csp style-src display contents slot wrapper",
+  },
+  {
+    id: "webkit-streamed-modules",
+    adapters: ["all"],
+    symptom:
+      "On a streamed HTML document, Safari or a WebKit test runs the page's module scripts only after the whole response arrives, and anything gated on `requestAnimationFrame` lags.",
+    cause:
+      'WebKit evaluates a `<script type="module">`, `async` or not, only when the parser finishes. A dynamic `import()` of the same URL waits with it, while one from a classic inline script with no module tag for that URL runs at once. Headless WebKit also runs no `requestAnimationFrame` callback until a streamed document ends, and Playwright\'s `page.click` waits two animation frames.',
+    fix: "Do not assume a streamed page hydrates early in WebKit. In WebKit tests, trigger timing-sensitive navigation with `locator.evaluate((el) => el.click())` and wait on app state, not on animation frames.",
+    verify:
+      "Stream a document for several seconds and log when the module and the first animation frame run in Chromium and WebKit.",
+    versions: ["Playwright 1.63 WebKit"],
+    category: "ssr",
+    seeAlso: "webkit streaming hydration module script requestAnimationFrame",
+  },
 ]
 
 const ADAPTER_ALIASES: Record<string, GuidanceAdapter> = {
@@ -475,9 +519,6 @@ function score(entry: GuidanceEntry, words: readonly string[]): number {
   return hits
 }
 
-/** Longest symptom text scored; the MCP schema advertises the same cap, this enforces it. */
-const MAX_SYMPTOM_LENGTH = 256
-
 /** Select the entries rendered by the CLI and MCP heads; also the stable JSON shape for agents (no rendered prose). */
 export function selectFrontendGuidance(args: {
   adapter?: string | undefined
@@ -486,21 +527,11 @@ export function selectFrontendGuidance(args: {
 }): FrontendGuidanceResult {
   const adapter = parseAdapter(args.adapter)
   const scoped = scopedEntries(adapter)
-  const query = args.symptom?.trim().slice(0, MAX_SYMPTOM_LENGTH)
-  if (query === undefined || query.length === 0) {
+  const query = symptomQuery(args.symptom)
+  if (query === undefined) {
     return { schemaVersion: 1, adapter, matched: true, entries: scoped }
   }
-  const words = query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 1)
-  const limit = Math.min(Math.max(args.limit ?? 3, 1), 5)
-  const entries = scoped
-    .map((entry) => ({ entry, s: score(entry, words) }))
-    .filter((r) => r.s > 0)
-    .sort((a, b) => b.s - a.s)
-    .slice(0, limit)
-    .map((r) => r.entry)
+  const entries = rankBySymptom(scoped, query, args.limit, score)
   return { schemaVersion: 1, adapter, symptom: query, matched: entries.length > 0, entries }
 }
 
