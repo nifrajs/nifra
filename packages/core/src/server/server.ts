@@ -7146,8 +7146,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): BunNativeHandler {
     // This callback is reached only from Bun's compiled native route table. Bun has already parsed
     // the HTTP framing, so the JSON lane may retain its native fused `json()` parse without weakening
-    // the portable/adapted source contract (those sources are never marked).
-    const markFramed = (request: Request): void => markTrustedBodyFraming(request)
+    // the portable/adapted source contract (those sources are never marked). Bun hands a GET or
+    // HEAD slot no body, so it skips the symbol write on every request.
+    const markFramed =
+      method === "GET" || method === "HEAD" ? (): void => undefined : markTrustedBodyFraming
     // The direct native lanes bypass `runMatched`, so the route's transport byte cap must be
     // marked here too - otherwise a Bun `listen()` fused route would leave direct `c.req` body
     // reads uncapped. The fallback branches go through `fetchMatched` -> `runMatched`, which marks.

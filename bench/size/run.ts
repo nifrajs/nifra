@@ -370,8 +370,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only
-  // this cap is crossed.
-  "nifra-typebox-form": 72.3,
+  // this cap is crossed. A GET/HEAD native slot skipping the framing mark: typebox-form 74,037 B.
+  "nifra-typebox-form": 72.4,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
