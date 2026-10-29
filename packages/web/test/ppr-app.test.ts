@@ -650,9 +650,10 @@ describe("PPR app configuration", () => {
     expect(await failureOf([{ name: "a", mode: "dynamic", render: () => "" }])).toContain(
       'boundary \\"a\\" of route \\"p\\" has no boundaryLoaders entry',
     )
-    expect(
-      await failureOf([{ name: "a", mode: { intercept: "/x" }, render: () => "", load: () => 1 }]),
-    ).toContain('an intercepting boundary \\"a\\"')
+    // An intercepting boundary is no hole: it is not counted against the limits, and it is not refused.
+    const modal = { name: "m", mode: { intercept: "/x" }, render: () => "" } as const
+    expect(await failureOf([modal])).toContain("0 dynamic or shared boundaries; it needs 1 to 2")
+    expect(await failureOf([hole("a"), hole("b"), modal])).toContain('hole \\"a\\" has no host')
     expect(await failureOf([hole("a")], { loader: () => ({}) })).toContain(
       'its layout \\"_layout\\" has a loader that is not a gate',
     )

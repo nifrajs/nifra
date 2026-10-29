@@ -125,6 +125,7 @@
     "bench/ppr",
     "packages/web/test/fixtures/ppr/app/routes",
     "packages/web/test/fixtures/ppr/kept/routes",
+    "packages/web/test/fixtures/ppr/modal/routes",
     "packages/web/test/fixtures/ppr/app-browser.ts",
     "packages/web/test/fixtures/ppr/runtime-browser.ts",
     "packages/web/test/fixtures/ppr/transport-cost.ts",

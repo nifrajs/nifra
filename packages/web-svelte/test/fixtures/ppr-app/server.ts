@@ -14,10 +14,13 @@ plugin(svelteBunPlugin("ssr"))
 
 export const trustedTypesPolicy: string | null = "svelte-trusted-html"
 
-export const startPprApp = (options?: Parameters<typeof startFixture>[1]): Promise<PprApp> =>
+export const startPprApp = (
+  options?: Parameters<typeof startFixture>[1],
+  routesDir = `${import.meta.dir}/routes`,
+): Promise<PprApp> =>
   startFixture(
     {
-      routesDir: `${import.meta.dir}/routes`,
+      routesDir,
       adapter: svelteAdapter,
       clientModule: "@nifrajs/web-svelte/client",
       clientPlugins: [svelteBunPlugin("dom")],

@@ -14093,7 +14093,15 @@ largest timeout plus one second, at most 30 seconds.
 
 -
 A layout above it may have a loader only as a `gate`: the gate runs to redirect
-or refuse, and its data reaches no response. Intercepting boundaries are not supported.
+or refuse, and its data reaches no response.
+
+-
+A route may declare an intercepting boundary (a
+[modal route](/docs/routing#modal-routes)) beside its holes. It is not a hole and
+is not counted against the limit above. The shell carries it unresolved; a client
+navigation to its URL opens the target over the page, which stays mounted with its holes
+filled. Closing it with Back loads the page again, so its holes show their fallback until
+they refill.
 
 -
 `shellVariations` lists closed sets of query values that each select their own

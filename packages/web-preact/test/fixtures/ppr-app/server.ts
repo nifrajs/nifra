@@ -11,10 +11,13 @@ import { preactAdapter } from "../../../src/index.ts"
 /** Preact's client creates no policy. */
 export const trustedTypesPolicy: string | null = ""
 
-export const startPprApp = (options?: Parameters<typeof startFixture>[1]): Promise<PprApp> =>
+export const startPprApp = (
+  options?: Parameters<typeof startFixture>[1],
+  routesDir = `${import.meta.dir}/routes`,
+): Promise<PprApp> =>
   startFixture(
     {
-      routesDir: `${import.meta.dir}/routes`,
+      routesDir,
       adapter: preactAdapter,
       clientModule: "@nifrajs/web-preact/client",
       clientPlugins: [],
