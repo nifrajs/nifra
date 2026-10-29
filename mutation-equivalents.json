@@ -27,6 +27,41 @@
       "code": "const id = unsigned === null ? null : (DATA_TAG.exec(unsigned)?.[1] ?? unsigned)",
       "from": "unsigned === null",
       "reason": "DATA_TAG.exec coerces null to the string \"null\", which carries no tag, so the id stays null."
+    },
+    {
+      "op": "condition->false",
+      "fn": "loadFromRaw",
+      "code": "if (raw === undefined || raw === \"\") return make({})",
+      "from": "raw === undefined || raw === \"\"",
+      "reason": "An absent or empty cookie fails the signature check in unsign and ends as the same anonymous session; the guard only skips that check."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "loadFromRaw",
+      "code": "if (raw === undefined || raw === \"\") return make({})",
+      "from": "||",
+      "reason": "An absent or empty cookie fails the signature check in unsign and ends as the same anonymous session; the guard only skips that check."
+    },
+    {
+      "op": "condition->false",
+      "fn": "revoke",
+      "code": "if (store === undefined) return",
+      "from": "store === undefined",
+      "reason": "Only called with a store: destroy and commit reach it inside their own store checks."
+    },
+    {
+      "op": "condition->false",
+      "fn": "commit",
+      "code": "family === state.id ? undefined : store.get(revokedKey(family)),",
+      "from": "family === state.id",
+      "reason": "When the family is the id, its marker is the id's own marker, which the same Promise.all already reads."
+    },
+    {
+      "op": "condition->false",
+      "fn": "destroy",
+      "code": "const state = session === undefined ? undefined : states.get(session)",
+      "from": "session === undefined",
+      "reason": "WeakMap.get(undefined) returns undefined, so the guard changes nothing."
     }
   ],
   "packages/authjs/src/index.ts": [
