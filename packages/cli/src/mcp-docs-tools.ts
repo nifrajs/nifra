@@ -218,7 +218,7 @@ export function docsTools(
         openWorldHint: false,
       },
       description:
-        'Explain a behavior that differs between Bun, Node, Deno and Cloudflare Workers by symptom. These are runtime behaviors, not Nifra\'s: request-target and Host handling, GET bodies, pipelining, JSON content-type, engine error messages, recursion depth, .env loading, and runtime-specific APIs. Returns what each runtime does, the fix (and the Nifra option that decides it when there is one), how to verify it, and the versions it was measured on. Call with no args for the index; pass `symptom` (e.g. "path guard skipped", "env var undefined") and/or `runtime` to filter.',
+        'Explain a behavior that differs between Bun, Node, Deno and Cloudflare Workers by symptom. These are runtime behaviors, not Nifra\'s: request-target and Host handling, pipelining, JSON content-type, engine error messages, recursion depth, .env loading, and runtime-specific APIs. Returns what each runtime does, the fix (and the Nifra option that decides it when there is one), how to verify it, and the versions it was measured on. Call with no args for the index; pass `symptom` (e.g. "path guard skipped", "env var undefined") and/or `runtime` to filter.',
       inputSchema: {
         type: "object",
         properties: {

@@ -12120,9 +12120,8 @@ hydration.
 reads.
 
 -
-**Bundler, CSP and browser:** React `Activity` hydration, Vite 8
-plugin hook ordering, strict Content-Security-Policy in dev and inline styles, and WebKit's
-handling of streamed module scripts. Server-runtime differences are in
+**CSP and browser:** React `Activity` hydration, inline styles under a
+strict Content-Security-Policy, and WebKit's handling of streamed module scripts. Server-runtime differences are in
 [runtime differences](/docs/runtime-differences).
 
 ### Version-sensitive advice
@@ -14510,27 +14509,22 @@ Bun and Workers hand over a resolved URL, so `/public/../admin` arrives as
 `host-builds-url`
 
 Deno builds `Request.url` from the Host it received, so a Host holding
-`/` or `#` changes the routed path; Bun leaves the URL relative.
+`/` or `#` changes the routed path; Bun leaves the URL relative;
+`@nifrajs/node` answers 400.
 
 `validateHost`
 
 `missing-or-repeated-host`
 
-No Host: relative URL on Bun, `http://localhost:port/…` on Deno. Two Host lines:
-Bun joins them, Deno answers 400, Node keeps the first.
+No Host: a relative URL on Bun, `http://localhost/…` through
+`@nifrajs/node`, `http://localhost:port/…` on Deno. Two Host lines:
+Bun uses the first, `@nifrajs/node` and Deno answer 400.
 
 `validateHost`
 
-`get-request-body`
-
-A GET that carries a body reads as empty on Bun and Deno; Node's `http`
-exposes the bytes.
-
-none: do not read a GET body
-
 `pipelined-requests`
 
-Node runs every pipelined request's handler at once (50 of 50 in the probe); Bun and
+Node runs every pipelined request's handler at once (30 of 30 in the probe); Bun and
 Deno run one per connection.
 
 `requestTimeoutMs`, proxy limits
@@ -14558,7 +14552,7 @@ what differs
 `json-content-type`
 
 `Response.json` sends `application/json;charset=utf-8` on Bun and
-`application/json` on Node and Deno.
+`application/json` on Node and Deno, and Nifra keeps each runtime's value.
 
 `engine-error-messages`
 
@@ -14593,9 +14587,9 @@ after startup.
 Which `node:` builtins a Worker gets without `nodejs_compat` depends on
 its `compatibility_date`.
 
-### Frontend frameworks and bundlers
+### Frontend frameworks and browsers
 
-The browser and bundler side has the same property: the behavior belongs to React, Vite or the
+The browser side has the same property: the behavior belongs to React or the
 browser, and Nifra only sits on top of it. Those entries live in the
 [frontend gotchas](/docs/frontend-guidance) catalog (`nifra frontend`),
 next to the per-framework reactivity cases:
@@ -14605,12 +14599,8 @@ next to the per-framework reactivity cases:
 whose boundary comments are missing from the server HTML.
 
 -
-`vite-resolveid-order` and `vite-resolve-custom-dropped`: Vite 8 plugin
-hook ordering, and a `this.resolve` option that rolldown drops in some builds.
-
--
-`vite-dev-csp-nonce` and `csp-inline-style-attribute`: what a strict
-Content-Security-Policy blocks in Vite dev and in inline `style` attributes.
+`csp-inline-style-attribute`: what a strict Content-Security-Policy does to inline
+`style` attributes, and the `<slot>` wrapper that avoids it.
 
 -
 `webkit-streamed-modules`: WebKit runs module scripts of a streamed document only

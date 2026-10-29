@@ -453,46 +453,6 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     seeAlso: "react activity hydration boundary",
   },
   {
-    id: "vite-resolveid-order",
-    adapters: ["all"],
-    symptom:
-      "A Rollup plugin added under `build.rollupOptions.plugins` never sees `resolveId` for imports Vite has already resolved, so a guard on the written import specifier never fires.",
-    cause:
-      "`resolveId` is a first-wins hook, and Vite's own resolver answers bare imports before a plugin placed last gets a turn. Rollup's module info keeps only resolved ids, never the specifier as written.",
-    fix: 'Use the object form with `order: "pre"`: `resolveId: { order: "pre", handler }`. Record the specifier, then return `null` (or call `this.resolve(source, importer, { skipSelf: true })`) so resolution proceeds.',
-    verify:
-      "Build a fixture whose import the plugin must see and assert the plugin recorded the specifier.",
-    versions: ["Vite 8.2.1 (rolldown)"],
-    category: "runtime",
-    seeAlso: "vite plugin resolveId order pre rolldown",
-  },
-  {
-    id: "vite-resolve-custom-dropped",
-    adapters: ["all"],
-    symptom:
-      "A Vite plugin handshake through `this.resolve(id, importer, { custom })` works in most builds and fails in about one in three.",
-    cause:
-      "Vite 8 with rolldown does not reliably forward the `custom` option of `this.resolve` to other plugins' `resolveId` hooks.",
-    fix: "Do not pass state between plugins through `custom`. Give the plugin a construction-time option instead, and prove a fix for a flaky build with a loop of builds, not one.",
-    verify: "Run the build six times in a loop; a one-in-three failure shows within a few runs.",
-    versions: ["Vite 8 (rolldown)"],
-    category: "runtime",
-    seeAlso: "vite plugin this.resolve custom rolldown",
-  },
-  {
-    id: "vite-dev-csp-nonce",
-    adapters: ["all"],
-    symptom:
-      "Under a strict Content-Security-Policy, `vite dev` shows a blank or unstyled page, or a `blob:` SharedWorker error in the console.",
-    cause:
-      "Vite injects an inline refresh preamble and runtime `<style>`, which a policy without `unsafe-inline` or the page's nonce blocks. Vite's own `html.cspNonce` is a static config value, so it cannot carry a per-request nonce. While Vite polls a restarted dev server it creates a `blob:` SharedWorker, which a strict `script-src` without `worker-src blob:` refuses; Vite reconnects anyway.",
-    fix: "Give Vite's injected tags the page's nonce after `transformIndexHtml` (Nifra's `--vite` dev path does this), or relax the policy in development only. Treat the `blob:` worker error as expected under a strict policy.",
-    verify:
-      "Load the dev page with the production policy and check the console for `script-src-elem` and `style-src-elem` violations.",
-    category: "runtime",
-    seeAlso: "vite dev csp nonce style-src script-src",
-  },
-  {
     id: "csp-inline-style-attribute",
     adapters: ["all"],
     symptom:

@@ -62,9 +62,8 @@ export default function FrontendGuidance() {
           reads.
         </li>
         <li>
-          <strong>Bundler, CSP and browser:</strong> React <code>Activity</code> hydration, Vite 8
-          plugin hook ordering, strict Content-Security-Policy in dev and inline styles, and WebKit&apos;s
-          handling of streamed module scripts. Server-runtime differences are in{" "}
+          <strong>CSP and browser:</strong> React <code>Activity</code> hydration, inline styles under a
+          strict Content-Security-Policy, and WebKit&apos;s handling of streamed module scripts. Server-runtime differences are in{" "}
           <a href="/docs/runtime-differences">runtime differences</a>.
         </li>
       </ul>

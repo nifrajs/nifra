@@ -16,7 +16,7 @@
 export type RuntimeName = "bun" | "node" | "deno" | "workerd" | "all"
 
 export interface RuntimeEntry {
-  /** Stable slug, e.g. `get-request-body`. */
+  /** Stable slug, e.g. `pipelined-requests`. */
   readonly id: string
   /** Which runtimes show the difference. */
   readonly runtimes: readonly RuntimeName[]
@@ -67,7 +67,7 @@ export const RUNTIME_DIFFERENCES: readonly RuntimeEntry[] = [
     symptom:
       "`c.req.url` points at a path the client did not ask for, or is a relative string, after a request with an odd `Host` header such as `Host: h.test/admin#`.",
     cause:
-      "Deno builds `Request.url` by putting the Host and the target together as received, so a Host holding `/` or `#` can change the routed path. Bun leaves `Request.url` relative (`/url`) when it cannot read the Host it was given. `@nifrajs/node` refuses a Host like that before routing.",
+      "With `Host: h.test/admin#` and no options set, Deno builds `Request.url` from the Host as received and routes `/admin`, Bun leaves `c.req.url` relative (`/url`), and `@nifrajs/node` answers `400 Bad Request`.",
     fix: "Set `validateHost: true` so Nifra answers `400 invalid_host` for a Host the request target cannot safely be built on. Off by default: reading the Host header measured about 6% of a bare route on Bun.",
     verify:
       "`printf 'GET /url HTTP/1.1\\r\\nhost: h.test/admin#\\r\\n\\r\\n' | nc 127.0.0.1 <port>` against a route that echoes `c.req.url`.",
@@ -81,25 +81,11 @@ export const RUNTIME_DIFFERENCES: readonly RuntimeEntry[] = [
     symptom:
       "`new URL(c.req.url)` throws, or the request is answered 400, for an HTTP/1.0 request with no Host or a request that sends Host twice.",
     cause:
-      "With no Host, Bun leaves `Request.url` relative (`/url`) while Deno fills in `http://localhost:<port>/url`. With `Host: a.test` and `Host: b.test`, Bun joins them as `a.test, b.test` and builds the URL on the first, Deno answers `400 Bad Request` itself, and Node keeps the first.",
+      "With no Host (HTTP/1.0), `c.req.url` is relative (`/url`) on Bun, `http://localhost/url` through `@nifrajs/node`, and `http://localhost:<port>/url` on Deno. With `Host: a.test` and `Host: b.test`, Bun builds the URL on the first, while `@nifrajs/node` and Deno answer `400`.",
     fix: "Parse against a base when you must, `new URL(c.req.url, base)`, or enable `validateHost: true` so Nifra refuses the malformed Hosts it can see with a `400`. Do not use the Host header for security decisions.",
     verify:
       "Send `GET /url HTTP/1.0` with no Host, and a request with two Host lines, to a route that echoes `c.req.url` and the `host` header.",
     seeAlso: "validateHost Host header relative url",
-    versions: MEASURED,
-    category: "request",
-  },
-  {
-    id: "get-request-body",
-    runtimes: ["bun", "node", "deno"],
-    symptom:
-      "A GET (or HEAD) that arrives with a body reads as empty in your handler on one runtime and has bytes on another.",
-    cause:
-      "HTTP gives a GET body no defined meaning. Bun and Deno hand a GET handler an empty body even when `content-length: 5` and five bytes were sent. Node's `http` server exposes the bytes on the request stream.",
-    fix: "Do not read a body in a GET or HEAD handler. Carry the data in the query string, or make the route a POST.",
-    verify:
-      "`printf 'GET /body HTTP/1.1\\r\\nhost: x\\r\\ncontent-length: 5\\r\\n\\r\\nhello' | nc 127.0.0.1 <port>` against a handler that returns `await c.req.text()`.",
-    seeAlso: "GET request body query string",
     versions: MEASURED,
     category: "request",
   },
@@ -109,10 +95,10 @@ export const RUNTIME_DIFFERENCES: readonly RuntimeEntry[] = [
     symptom:
       "A client that writes many requests down one connection without waiting makes a Node server run all their handlers at once, using far more memory than on Bun or Deno.",
     cause:
-      "Node's `http` server dispatches every pipelined request it has parsed: 50 requests in one write ran 50 handlers concurrently. Bun and Deno ran one at a time per connection.",
+      "Node's `http` server dispatches every pipelined request it has parsed: 30 requests in one write ran 30 handlers concurrently through `@nifrajs/node`. Bun and Deno ran one at a time per connection.",
     fix: "Bound per-connection work yourself on Node: cap buffered response size, use `requestTimeoutMs`, and put a connection or concurrency limit in the proxy in front. Measure with unread pipelined load, not only one slow client.",
     verify:
-      "Write 50 `GET` requests in one `socket.write`, never read, and count handlers running at once with an in-flight counter.",
+      "Write 30 `GET` requests in one `socket.write`, never read, and count handlers running at once with an in-flight counter.",
     seeAlso: "requestTimeoutMs slow client capacity",
     versions: MEASURED,
     category: "request",
@@ -123,7 +109,7 @@ export const RUNTIME_DIFFERENCES: readonly RuntimeEntry[] = [
     symptom:
       "A test or client that compares the `content-type` of a JSON response exactly passes on one runtime and fails on another.",
     cause:
-      "`Response.json(...)` sets `application/json;charset=utf-8` on Bun and `application/json` on Node (undici) and Deno.",
+      "`Response.json(...)` sets `application/json;charset=utf-8` on Bun and `application/json` on Node (undici) and Deno, and Nifra keeps each runtime's own value: the same route answered `application/json;charset=utf-8` on Bun and `application/json` on Node and Deno.",
     fix: "Compare the media type, not the whole header: `contentType.split(';')[0]` or `startsWith('application/json')`. When you must pin one value, set the header yourself on every response.",
     verify:
       "Return `Response.json({ a: 1 })` and print `response.headers.get('content-type')` on each runtime.",

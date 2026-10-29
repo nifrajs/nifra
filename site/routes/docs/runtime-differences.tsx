@@ -76,7 +76,8 @@ export default function RuntimeDifferences() {
             </td>
             <td>
               Deno builds <code>Request.url</code> from the Host it received, so a Host holding{" "}
-              <code>/</code> or <code>#</code> changes the routed path; Bun leaves the URL relative.
+              <code>/</code> or <code>#</code> changes the routed path; Bun leaves the URL relative;{" "}
+              <code>@nifrajs/node</code> answers 400.
             </td>
             <td>
               <code>validateHost</code>
@@ -87,8 +88,9 @@ export default function RuntimeDifferences() {
               <code>missing-or-repeated-host</code>
             </td>
             <td>
-              No Host: relative URL on Bun, <code>http://localhost:port/…</code> on Deno. Two Host lines:
-              Bun joins them, Deno answers 400, Node keeps the first.
+              No Host: a relative URL on Bun, <code>http://localhost/…</code> through{" "}
+              <code>@nifrajs/node</code>, <code>http://localhost:port/…</code> on Deno. Two Host lines:
+              Bun uses the first, <code>@nifrajs/node</code> and Deno answer 400.
             </td>
             <td>
               <code>validateHost</code>
@@ -96,20 +98,10 @@ export default function RuntimeDifferences() {
           </tr>
           <tr>
             <td>
-              <code>get-request-body</code>
-            </td>
-            <td>
-              A GET that carries a body reads as empty on Bun and Deno; Node&apos;s <code>http</code>{" "}
-              exposes the bytes.
-            </td>
-            <td>none: do not read a GET body</td>
-          </tr>
-          <tr>
-            <td>
               <code>pipelined-requests</code>
             </td>
             <td>
-              Node runs every pipelined request&apos;s handler at once (50 of 50 in the probe); Bun and
+              Node runs every pipelined request&apos;s handler at once (30 of 30 in the probe); Bun and
               Deno run one per connection.
             </td>
             <td>
@@ -140,7 +132,7 @@ export default function RuntimeDifferences() {
             </td>
             <td>
               <code>Response.json</code> sends <code>application/json;charset=utf-8</code> on Bun and{" "}
-              <code>application/json</code> on Node and Deno.
+              <code>application/json</code> on Node and Deno, and Nifra keeps each runtime&apos;s value.
             </td>
           </tr>
           <tr>
@@ -210,9 +202,9 @@ export default function RuntimeDifferences() {
         </tbody>
       </table>
 
-      <h2>Frontend frameworks and bundlers</h2>
+      <h2>Frontend frameworks and browsers</h2>
       <p>
-        The browser and bundler side has the same property: the behavior belongs to React, Vite or the
+        The browser side has the same property: the behavior belongs to React or the
         browser, and Nifra only sits on top of it. Those entries live in the{" "}
         <a href="/docs/frontend-guidance">frontend gotchas</a> catalog (<code>nifra frontend</code>),
         next to the per-framework reactivity cases:
@@ -223,12 +215,8 @@ export default function RuntimeDifferences() {
           whose boundary comments are missing from the server HTML.
         </li>
         <li>
-          <code>vite-resolveid-order</code> and <code>vite-resolve-custom-dropped</code>: Vite 8 plugin
-          hook ordering, and a <code>this.resolve</code> option that rolldown drops in some builds.
-        </li>
-        <li>
-          <code>vite-dev-csp-nonce</code> and <code>csp-inline-style-attribute</code>: what a strict
-          Content-Security-Policy blocks in Vite dev and in inline <code>style</code> attributes.
+          <code>csp-inline-style-attribute</code>: what a strict Content-Security-Policy does to inline{" "}
+          <code>style</code> attributes, and the <code>&lt;slot&gt;</code> wrapper that avoids it.
         </li>
         <li>
           <code>webkit-streamed-modules</code>: WebKit runs module scripts of a streamed document only
