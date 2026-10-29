@@ -1,6 +1,6 @@
 name: Partial prerendering
 
-# Experimental partial prerendering's server, adapter and browser checks, on macOS as well as Linux.
+# Partial prerendering's server, adapter and browser checks, on macOS as well as Linux.
 # CI runs the server, adapter and Node tests on Linux in every PR; this adds the browser engines and
 # macOS nightly, and on dispatch for a branch: installing the engines' Linux packages has run past
 # the job's 40 minutes on a slow package mirror. Each framework with a twin of the fixture app

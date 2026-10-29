@@ -862,5 +862,14 @@
       "from": "+",
       "reason": "The loop only runs further past the end, where every iteration meets an undefined token and skips: `qualifier` or `dot` or `column` is undefined."
     }
+  ],
+  "packages/cli/src/source-rewrites.ts": [
+    {
+      "op": "condition->true",
+      "fn": "move",
+      "code": "const inner = ts.isPropertyAssignment(experimental) ? experimental.initializer : undefined",
+      "from": "ts.isPropertyAssignment(experimental)",
+      "reason": "A shorthand `experimental` has no `initializer`, so reading it gives the `undefined` the other branch returns."
+    }
   ]
 }

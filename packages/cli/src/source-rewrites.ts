@@ -73,13 +73,19 @@ function propertyName(ts: typeof TS, name: TS.PropertyName): string | undefined 
  * `serveStatic()`; and `signals` on `@nifrajs/node`'s and `@nifrajs/deno`'s `serve()` becomes
  * `gracefulSignals`.
  */
-function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteResult {
+/** Parse `text` as `file`, with the line lookup a rewrite lists its manual sites by. */
+function parseSource(ts: typeof TS, file: string, text: string) {
   const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKindOf(ts, file))
+  const lineOf = (node: TS.Node): number =>
+    tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+  return { tree, lineOf }
+}
+
+function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteResult {
+  const { tree, lineOf } = parseSource(ts, file, text)
   const edits: Edit[] = []
   const manual: ManualSite[] = []
   let count = 0
-  const lineOf = (node: TS.Node): number =>
-    tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
   const source = (node: TS.Node): string => node.getText(tree)
   const imports = new Map<string, ModuleImport>()
   // Every import of @nifrajs/web, with the specifiers of names 5.9 moved out of it.
@@ -446,6 +452,124 @@ function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteR
   return { text: applyEdits(text, edits), count, manual }
 }
 
+const WEB_APP = "createWebApp"
+
+/** `createWebApp({ experimental: { ppr } })` becomes `createWebApp({ ppr })`: 5.10 moved the option. */
+function rewritePprOption(ts: typeof TS, file: string, text: string): RewriteResult {
+  const { tree, lineOf } = parseSource(ts, file, text)
+  const edits: Edit[] = []
+  const manual: ManualSite[] = []
+  let count = 0
+  // The names createWebApp is imported under, and the names @nifrajs/web is imported as a namespace.
+  const locals = new Set<string>()
+  const namespaces = new Set<string>()
+  for (const statement of tree.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+      continue
+    if (statement.moduleSpecifier.text !== WEB) continue
+    const bindings = statement.importClause?.namedBindings
+    if (bindings === undefined) continue
+    if (ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text)
+    else {
+      for (const element of bindings.elements) {
+        if ((element.propertyName ?? element.name).text === WEB_APP) locals.add(element.name.text)
+      }
+    }
+  }
+  const isCreateWebApp = (callee: TS.Expression): boolean =>
+    (ts.isIdentifier(callee) && locals.has(callee.text)) ||
+    (ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      namespaces.has(callee.expression.text) &&
+      callee.name.text === WEB_APP)
+  const nameOf = (property: TS.ObjectLiteralElementLike): string | undefined =>
+    ts.isShorthandPropertyAssignment(property)
+      ? property.name.text
+      : ts.isPropertyAssignment(property)
+        ? propertyName(ts, property.name)
+        : undefined
+  const property = (
+    object: TS.ObjectLiteralExpression,
+    name: string,
+  ): TS.ObjectLiteralElementLike | undefined => object.properties.find((p) => nameOf(p) === name)
+  const handled = new Set<TS.ObjectLiteralExpression>()
+
+  const move = (options: TS.ObjectLiteralExpression): void => {
+    const experimental = property(options, "experimental")
+    if (experimental === undefined) return
+    const inner = ts.isPropertyAssignment(experimental) ? experimental.initializer : undefined
+    const moved = inner !== undefined && ts.isObjectLiteralExpression(inner) ? inner : undefined
+    const only = moved?.properties.length === 1 ? moved.properties[0] : undefined
+    if (
+      moved === undefined ||
+      only === undefined ||
+      nameOf(only) !== "ppr" ||
+      property(options, "ppr") !== undefined
+    ) {
+      manual.push({
+        line: lineOf(experimental),
+        reason:
+          "experimental.ppr is now ppr: pass it beside the other createWebApp options and remove `experimental`",
+      })
+      return
+    }
+    edits.push({
+      start: experimental.getStart(tree),
+      end: experimental.end,
+      text: ts.isPropertyAssignment(only) ? `ppr: ${only.initializer.getText(tree)}` : "ppr",
+    })
+    count++
+  }
+
+  const visit = (node: TS.Node): void => {
+    if (ts.isCallExpression(node) && isCreateWebApp(node.expression)) {
+      const options = node.arguments[0]
+      if (options !== undefined && ts.isObjectLiteralExpression(options)) {
+        handled.add(options)
+        move(options)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+
+  // Options built apart from the call, or passed through a name, are the user's to move.
+  const sweep = (node: TS.Node): void => {
+    if (ts.isObjectLiteralExpression(node) && !handled.has(node)) {
+      const experimental = property(node, "experimental")
+      const inner =
+        experimental !== undefined && ts.isPropertyAssignment(experimental)
+          ? experimental.initializer
+          : undefined
+      if (
+        inner !== undefined &&
+        ts.isObjectLiteralExpression(inner) &&
+        property(inner, "ppr") !== undefined
+      ) {
+        manual.push({
+          line: lineOf(node),
+          reason:
+            "experimental.ppr is now ppr: pass it beside the other createWebApp options and remove `experimental`",
+        })
+      }
+    }
+    ts.forEachChild(node, sweep)
+  }
+  sweep(tree)
+  return {
+    text: applyEdits(text, edits),
+    count,
+    manual: manual.toSorted((a, b) => a.line - b.line),
+  }
+}
+
+const PPR_OPTION: SourceRewrite = {
+  id: "ppr-option",
+  description: "createWebApp({ experimental: { ppr } }) → createWebApp({ ppr })",
+  mentions: (text) => /\bexperimental\b/.test(text) && /\bppr\b/.test(text),
+  rewrite: rewritePprOption,
+}
+
 const SERVE_STATIC: SourceRewrite = {
   id: "serve-static",
   description:
@@ -456,7 +580,10 @@ const SERVE_STATIC: SourceRewrite = {
   rewrite: rewriteServeStatic,
 }
 
-const REWRITES: Readonly<Record<string, SourceRewrite>> = { [SERVE_STATIC.id]: SERVE_STATIC }
+const REWRITES: Readonly<Record<string, SourceRewrite>> = {
+  [SERVE_STATIC.id]: SERVE_STATIC,
+  [PPR_OPTION.id]: PPR_OPTION,
+}
 
 export function getSourceRewrite(id: string): SourceRewrite | undefined {
   return REWRITES[id]

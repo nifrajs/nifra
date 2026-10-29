@@ -381,14 +381,14 @@ export interface RouteModule {
   /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */
   readonly actionOutput?: StandardSchemaV1
   /**
-   * Experimental, backend half only: the loader of a partially prerendered page's shared shell. It
+   * Backend half only: the loader of a partially prerendered page's shared shell. It
    * receives no request, so its output is the same for every visitor and the shell is cached.
    */
   readonly shellLoader?: (ctx: ShellCtx) => unknown
-  /** Experimental, backend half only: the schema of what {@link shellLoader} returns. */
+  /** Backend half only: the schema of what {@link shellLoader} returns. */
   readonly shellOutput?: StandardSchemaV1
   /**
-   * Experimental, backend half only: query parameters that select a different shell, each with its
+   * Backend half only: query parameters that select a different shell, each with its
    * closed set of values (`{ search: { color: ["red", "blue"] } }`). Any other parameter, or a value
    * outside its set, builds the default shell; holes still read the whole query.
    */

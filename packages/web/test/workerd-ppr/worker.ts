@@ -140,14 +140,12 @@ function deploy(env: Env) {
       adapter,
       manifest: manifestFor(app),
       clientEntry: "/c.js",
-      experimental: {
-        ppr: partialPrerendering({
-          shellChecks: { v: 1, deployment: "/c.js", routes: { "p/[id]": "p1", "d/[id]": "d1" } },
-          store,
-          storeSecret: SECRET,
-          deployment,
-        }),
-      },
+      ppr: partialPrerendering({
+        shellChecks: { v: 1, deployment: "/c.js", routes: { "p/[id]": "p1", "d/[id]": "d1" } },
+        store,
+        storeSecret: SECRET,
+        deployment,
+      }),
     })
     created.use(compression())
     return { app: created, handler: toFetchHandler(created) }

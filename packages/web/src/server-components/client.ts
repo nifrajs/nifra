@@ -727,7 +727,7 @@ export function resolveComponentRecord<Input>(
 }
 
 /**
- * Experimental: how the client islands inside partially prerendered holes that show server
+ * How the client islands inside partially prerendered holes that show server
  * components mount, as the adapter's component client, such as `vueComponentClient({ islands })`;
  * `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a
  * hole shows its error slot.

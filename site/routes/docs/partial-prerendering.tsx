@@ -3,7 +3,7 @@ import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/partial-prerendering",
-  "Nifra - Partial prerendering (experimental)",
+  "Nifra - Partial prerendering",
   "Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Shared holes, server components in holes, a store shared by processes, Deno and Workers, eligibility rules, the no-JavaScript limit, proxies and connection limits.",
 )
 
@@ -34,9 +34,7 @@ export const app = createWebApp({
   csp: createCspPolicy({
     header: ({ sources }) => \`script-src 'self' \${sources}; object-src 'none'; base-uri 'none'\`,
   }),
-  experimental: {
-    ppr: partialPrerendering({ shellChecks, origin: "https://shop.example" }),
-  },
+  ppr: partialPrerendering({ shellChecks, origin: "https://shop.example" }),
 })`
 
 const BACKEND = `import { t } from "@nifrajs/schema"
@@ -292,11 +290,6 @@ export default function PartialPrerendering() {
         partially prerendered route serves that part from a cached shell at once, then streams each
         per-visitor part, a hole, into it as its own loader settles.
       </p>
-      <blockquote>
-        [!WARNING] Experimental. It is enabled through <code>experimental.ppr</code>, and its API may
-        change in any release.
-      </blockquote>
-
       <h2>Set it up</h2>
       <p>
         <code>compileShells</code> bundles each route's shell and refuses one whose emitted code

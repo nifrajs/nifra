@@ -5559,11 +5559,11 @@ _No named exports (side-effect entrypoint)._
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "shared"; readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
-  Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
+  Partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
 - **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
-  Experimental: what a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
+  What a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
 - **ShellCtx** _(interface)_ - `interface ShellCtx`
-  Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
+  What a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
 - **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
   A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
 - **ShouldRevalidateArgs** _(interface)_ - `interface ShouldRevalidateArgs`
@@ -6567,20 +6567,20 @@ _No named exports (side-effect entrypoint)._
 - **PprOptions** _(interface)_ - `interface PprOptions`
   Overrides for {@link PPR_DEFAULTS}. Every field is optional; an omitted one keeps its default.
 - **PprSetup** _(interface)_ - `interface PprSetup`
-  What `partialPrerendering()` returns for `createWebApp({ experimental: { ppr } })`.
+  What `partialPrerendering()` returns for `createWebApp({ ppr })`.
 - **PprShells** _(interface)_ - `interface PprShells`
   One app's shell cache.
 - **PprStats** _(type)_ - `type PprStats = PprServerStats`
   Admission, shedding and unsent-byte counters of one app's partially prerendered responses.
 - **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
-  Experimental: what a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
+  What a shared hole's loader receives. The keys it declares are kept with the built entry and watched for every visitor it serves; a change reloads the hole, which the shared entry answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
 - **ShellCanaryFinding** _(interface)_ - `interface ShellCanaryFinding`
 - **ShellCanaryOptions** _(interface)_ - `interface ShellCanaryOptions`
 - **ShellCheckError** _(class)_ - `class ShellCheckError`
 - **ShellCheckRecord** _(interface)_ - `interface ShellCheckRecord`
   Which routes passed the shell check for one deployment. The server shares a shell only for a route listed here under its own deployment; anything else renders blocking (fail closed).
 - **ShellCtx** _(interface)_ - `interface ShellCtx`
-  Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
+  What a partially prerendered page's `shellLoader` receives. No request, env, draft or search: the shell is shared by every visitor whose URL maps to the same params and locale.
 - **checkShellCanaries** _(function)_ - `checkShellCanaries: (app: { fetch(request: Request): Response | Promise<Response>; }, paths: readonly string[], options?: ShellCanaryOptions) => Promise<readonly ShellCanaryFinding[]>`
   The canary check. Each path is requested through the app's own middleware and gates with a unique value in a cookie, an `Authorization` header, a custom header and the query, until a response carries a shell (`shellAfterRequests` decides which request builds it) and a built frame for each shared ho…
 - **compileShells** _(function)_ - `compileShells: (options: CompileShellsOptions) => Promise<ShellCheckRecord>`
@@ -6588,9 +6588,9 @@ _No named exports (side-effect entrypoint)._
 - **defineShellLoader** _(const)_ - `defineShellLoader: <Data>(loader: (ctx: ShellCtx) => Data | Promise<Data>) => ((ctx: ShellCtx) => Data | Promise<Data>)`
   Types a backend half's `shellLoader` from its context; returns it unchanged.
 - **partialPrerendering** _(function)_ - `partialPrerendering: (config: PprConfig) => PprSetup`
-  Experimental: partial prerendering for `createWebApp({ experimental: { ppr } })`. Options are checked here, at startup; each app the value is given to gets its own shell cache.
+  Partial prerendering for `createWebApp({ ppr })`. Options are checked here, at startup; each app the value is given to gets its own shell cache.
 - **pprShells** _(function)_ - `pprShells: (app: object) => PprShells`
-  The shell cache of an app made with `experimental.ppr`. Pass it in `createInvalidator`'s `dataCaches` so a purge by tag also drops the shells built from the purged data.
+  The shell cache of an app made with `ppr`. Pass it in `createInvalidator`'s `dataCaches` so a purge by tag also drops the shells built from the purged data.
 
 ### `@nifrajs/web/pwa-manifest`
 
@@ -6725,7 +6725,7 @@ _No named exports (side-effect entrypoint)._
 - **bindComponentRouter** _(function)_ - `bindComponentRouter: (router: Pick<ClientRouter, "snapshot" | "subscribe">) => () => void`
   Optional router integration; imported only by opted-in application entries. The components of a `keepAlive` page are parked while it is hidden, so navigation leaves them as they are.
 - **holeComponents** _(function)_ - `holeComponents: (client: ComponentClientAdapter | undefined) => void`
-  Experimental: how the client islands inside partially prerendered holes that show server components mount, as the adapter's component client, such as `vueComponentClient({ islands })`; `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a hole shows its er…
+  How the client islands inside partially prerendered holes that show server components mount, as the adapter's component client, such as `vueComponentClient({ islands })`; `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a hole shows its error slot.
 - **invalidateComponentScope** _(function)_ - `invalidateComponentScope: () => Promise<void>`
 - **parseComponentState** _(function)_ - `parseComponentState: (value: unknown, maxBytes?: number, externalParent?: string | null) => ComponentState`
 - **refreshAfterComponentMutation** _(function)_ - `refreshAfterComponentMutation: <T extends { readonly ok: boolean; }>(mutation: Promise<T>, controller: ComponentController, instances: readonly string[]) => Promise<T>`
@@ -6993,7 +6993,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-preact/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ComponentChildren`
-  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+  One `dynamic` or `shared` boundary of a partially prerendered page.
 - **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
   The fields of a route's boundary declaration a hole renders from.
 - **HoleProps** _(interface)_ - `interface HoleProps<Data>`
@@ -7157,7 +7157,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-react/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ReactNode`
-  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+  One `dynamic` or `shared` boundary of a partially prerendered page.
 - **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
   The fields of a route's boundary declaration a hole renders from.
 - **HoleProps** _(interface)_ - `interface HoleProps<Data>`
@@ -7395,7 +7395,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-solid/ppr`
 
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => JSX.Element`
-  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+  One `dynamic` or `shared` boundary of a partially prerendered page.
 - **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
   The fields of a route's boundary declaration a hole renders from. `fallback` is a function: JSX evaluated at import is one DOM node, so every place that shows it would take it from the last.
 - **HoleProps** _(interface)_ - `interface HoleProps<Data>`
@@ -7562,7 +7562,7 @@ _No named exports (side-effect entrypoint)._
   What a Svelte boundary's `render` and `fallback` return: a component and the props it renders with. Svelte components compile from files, so a hole's output is this pair instead of a node.
 - **isSvelteUI** _(const)_ - `isSvelteUI: (value: unknown) => value is SvelteUI`
 - **ui** _(function)_ - `ui: <Props extends Record<string, unknown>>(component: Component<Props>, ...props: Record<string, never> extends Props ? [props?: Props] : [props: Props]) => SvelteUI`
-  Experimental: `component` rendered with `props`, for a partially prerendered hole.
+  `component` rendered with `props`, for a partially prerendered hole.
 
 ### `@nifrajs/web-svelte/query`
 
@@ -7746,7 +7746,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-vue/ppr`
 
 - **Hole** _(const)_ - `Hole: new <Data>(props: HoleProps<Data> & {} & import("vue").VNodeProps & import("vue").AllowedComponentProps & import("vue").ComponentCustomProps) => import("vue").CreateComponentPublicInstanceWithMixins<HoleProps<Data…`
-  Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+  One `dynamic` or `shared` boundary of a partially prerendered page.
 - **HoleDefinition** _(interface)_ - `interface HoleDefinition<Data>`
   The fields of a route's boundary declaration a hole renders from: `h()` output, not templates. `render` is a method so a definition fits `h(Hole, ...)`, which cannot carry its data type.
 - **HoleProps** _(interface)_ - `interface HoleProps<Data>`

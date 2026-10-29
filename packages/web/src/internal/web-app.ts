@@ -129,15 +129,12 @@ export interface CreateWebAppOptions<Env = unknown> {
    * and stays cacheable by `withISR` or a CDN. `meta` still receives a nonce to name.
    */
   readonly csp?: CspPolicy
-  /** Experimental and unstable: features whose API may change in any release. */
-  readonly experimental?: {
-    /**
-     * Partial prerendering, from `partialPrerendering()` in `@nifrajs/web/ppr`. A route whose backend
-     * half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary
-     * as it settles. Needs `csp` (hashes), not `nonce`.
-     */
-    readonly ppr?: PprSetup
-  }
+  /**
+   * Partial prerendering, from `partialPrerendering()` in `@nifrajs/web/ppr`. A route whose backend
+   * half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary
+   * as it settles. Needs `csp` (hashes), not `nonce`.
+   */
+  readonly ppr?: PprSetup
   /**
    * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
    * the rest of {@link ServerOptions}.
@@ -465,6 +462,11 @@ export function createWebApp<Env = unknown>(
   options: CreateWebAppOptions<Env>,
 ): ReturnType<typeof server<Env>> {
   const { adapter, manifest, clientEntry, title, api } = options
+  if ("experimental" in options) {
+    throw new TypeError(
+      "[nifra/web] createWebApp `experimental.ppr` is now `ppr`: pass partialPrerendering() as createWebApp({ ppr })",
+    )
+  }
   if (options.csp !== undefined && options.nonce !== undefined) {
     throw new TypeError("[nifra/web] createWebApp takes `csp` or `nonce`, not both")
   }
@@ -639,7 +641,7 @@ export function createWebApp<Env = unknown>(
   const prerenderedList = ownPatterns.has(PRERENDERED_LIST_PATH)
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
-  const ppr = options.experimental?.ppr?.[PPR_SETUP]({
+  const ppr = options.ppr?.[PPR_SETUP]({
     adapter,
     // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: partial prerendering lists its scripts by hash only under an app's own policy.
     ...(options.csp === undefined ? {} : { csp: options.csp }),

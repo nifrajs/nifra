@@ -1,5 +1,5 @@
 /**
- * The partial prerendering fixture: a real `createWebApp` with `experimental.ppr`, its client built by
+ * The partial prerendering fixture: a real `createWebApp` with `ppr`, its client built by
  * `buildClient` and its shells checked by `compileShells` at start. `startPprApp()` serves it on
  * 127.0.0.1 and returns its origin; `app-browser.ts` drives it. Each other framework's twin, in
  * `web-<name>/test/fixtures/ppr-app/server.ts`, passes its own `PprFixtureSetup` and exports a `PprTwin`.

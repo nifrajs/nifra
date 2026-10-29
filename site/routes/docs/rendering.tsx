@@ -226,7 +226,7 @@ export default function Rendering() {
         This is request-time progressive SSR: the whole page, shell included, renders for each
         request, and deferred values remain request-scoped. To serve the part that is the same for
         every visitor from a cache and stream only the per-visitor parts, use{" "}
-        <a href="/docs/partial-prerendering">partial prerendering</a> (experimental).
+        <a href="/docs/partial-prerendering">partial prerendering</a>.
       </p>
 
       <h2>SSG - prerender at build</h2>
@@ -484,8 +484,7 @@ export default function Rendering() {
         Content that's the same for everyone and changes rarely → <b>SSG</b>. Content that changes
         occasionally and can tolerate seconds-to-minutes of staleness → <b>ISR</b>. Per-request or
         per-user content → plain <b>SSR</b> (the default). A page that is mostly shared with a few
-        per-visitor parts → <a href="/docs/partial-prerendering">partial prerendering</a>{" "}
-        (experimental). You can mix them in one app, route by route. A page that must update while it
+        per-visitor parts → <a href="/docs/partial-prerendering">partial prerendering</a>. You can mix them in one app, route by route. A page that must update while it
         is open, without a reload, adds <a href="/docs/live">live refresh</a> to any of them.
       </p>
     </div>

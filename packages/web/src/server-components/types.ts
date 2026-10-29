@@ -98,7 +98,7 @@ export interface ComponentOwner {
   readonly scope: "anonymous" | ((ctx: ServerComponentContext) => string | Promise<string>)
 }
 
-/** Experimental: the server components a partially prerendered route's holes may show. */
+/** The server components a partially prerendered route's holes may show. */
 export interface ComponentHoles {
   readonly components: readonly ServerComponentHandle[]
   readonly capabilities?: readonly string[]

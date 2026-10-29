@@ -59,7 +59,7 @@ const app = createWebApp({
       `default-src 'self'; script-src 'self' ${sources}; style-src 'self'; object-src 'none'; base-uri 'none'`,
   }),
   live: runtime,
-  experimental: { ppr: partialPrerendering({ shellChecks }) },
+  ppr: partialPrerendering({ shellChecks }),
 })
 app.get("/assets/*", async (c) => {
   const name = new URL(c.req.url).pathname.slice("/assets/".length)

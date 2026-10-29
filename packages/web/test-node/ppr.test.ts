@@ -67,7 +67,7 @@ function appWith(signals: Array<(signal: AbortSignal) => void>) {
     adapter,
     manifest,
     clientEntry: "/c.js",
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
   })
 }
 

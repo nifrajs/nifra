@@ -554,9 +554,34 @@ describe("PPR app configuration", () => {
         manifest,
         clientEntry: "/c.js",
         nonce: () => "n",
-        experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+        ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
       }),
-    ).toThrow("experimental.ppr needs `csp: createCspPolicy(...)`, not `nonce`")
+    ).toThrow("ppr needs `csp: createCspPolicy(...)`, not `nonce`")
+  })
+
+  test("the experimental key partial prerendering used to live under is refused, naming ppr", () => {
+    const manifest: Manifest = {
+      routes: [],
+      layouts: {},
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    }
+    const legacy = {
+      experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    }
+    expect(() =>
+      createWebApp({
+        adapter: {
+          renderToStream: () => new ReadableStream(),
+          hydrationHead: () => "",
+          renderFragment: () => "",
+        },
+        manifest,
+        clientEntry: "/c.js",
+        ...legacy,
+      }),
+    ).toThrow(
+      "`experimental.ppr` is now `ppr`: pass partialPrerendering() as createWebApp({ ppr })",
+    )
   })
 
   test("an origin with a path, a query or another scheme is refused at startup", () => {
@@ -569,7 +594,7 @@ describe("PPR app configuration", () => {
       "ftp://shop.example",
       "shop.example",
     ]) {
-      expect(() => start(origin)).toThrow("experimental.ppr.origin must be an http(s) origin")
+      expect(() => start(origin)).toThrow("ppr.origin must be an http(s) origin")
     }
     expect(() => start("http://127.0.0.1:3000")).not.toThrow()
   })
@@ -617,12 +642,10 @@ describe("PPR app configuration", () => {
         adapter,
         manifest,
         clientEntry: "/c.js",
-        experimental: {
-          ppr: partialPrerendering({
-            shellChecks: "unchecked-development",
-            options: { maxHolesPerRoute: 2 },
-          }),
-        },
+        ppr: partialPrerendering({
+          shellChecks: "unchecked-development",
+          options: { maxHolesPerRoute: 2 },
+        }),
       })
       const write = process.stderr.write
       let logged = ""

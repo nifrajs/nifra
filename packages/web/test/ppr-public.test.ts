@@ -45,12 +45,12 @@ const appOf = (ppr: boolean, onShell = () => {}) => {
     adapter,
     manifest,
     clientEntry: "/c.js",
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
   })
 }
 
-test("pprShells reaches an app's shell cache, and refuses an app without experimental.ppr", async () => {
-  expect(() => pprShells(appOf(false))).toThrow("created without experimental.ppr")
+test("pprShells reaches an app's shell cache, and refuses an app without ppr", async () => {
+  expect(() => pprShells(appOf(false))).toThrow("created without ppr")
   let builds = 0
   const app = appOf(true, () => {
     builds++
@@ -119,12 +119,10 @@ test.each([
       notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
     },
     clientEntry: "/c.js",
-    experimental: {
-      ppr: partialPrerendering({
-        shellChecks: "unchecked-development",
-        options: { shellAfterRequests, shellStoreBytes: 100_000 },
-      }),
-    },
+    ppr: partialPrerendering({
+      shellChecks: "unchecked-development",
+      options: { shellAfterRequests, shellStoreBytes: 100_000 },
+    }),
   })
   await (await app.fetch(new Request("http://localhost/filler"))).text()
   const withMiddleware = {
@@ -210,7 +208,7 @@ const sharedApp = (
       notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
     },
     clientEntry: "/c.js",
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
   })
   return app
 }

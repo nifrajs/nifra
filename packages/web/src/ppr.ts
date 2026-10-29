@@ -1,9 +1,9 @@
 /**
- * `@nifrajs/web/ppr` - experimental and unstable: partial prerendering.
+ * `@nifrajs/web/ppr` - partial prerendering.
  *
  * A route whose backend half exports `shellLoader` streams a shell shared by every visitor, then each
- * `dynamic` boundary as it settles. Turn it on with `createWebApp({ experimental: { ppr:
- * partialPrerendering({ shellChecks }) } })`, where `shellChecks` is the record `compileShells` returns
+ * `dynamic` boundary as it settles. Turn it on with `createWebApp({ ppr:
+ * partialPrerendering({ shellChecks }) })`, where `shellChecks` is the record `compileShells` returns
  * for this deployment; a route left out of it renders whole. `pprShells(app)` reaches the shell cache,
  * for `createInvalidator`'s `dataCaches` and for metrics. The server lives in this module, so an app
  * that never imports it ships none of it. Backend-only: a browser build that reaches this module fails.
@@ -80,7 +80,7 @@ function isOrigin(value: string): boolean {
 }
 
 /**
- * Experimental: partial prerendering for `createWebApp({ experimental: { ppr } })`. Options are
+ * Partial prerendering for `createWebApp({ ppr })`. Options are
  * checked here, at startup; each app the value is given to gets its own shell cache.
  */
 export function partialPrerendering(config: PprConfig): PprSetup {
@@ -88,21 +88,21 @@ export function partialPrerendering(config: PprConfig): PprSetup {
   const { origin, shellChecks, store, storeSecret, deployment } = config
   if (origin !== undefined && !isOrigin(origin)) {
     throw new TypeError(
-      `[nifra/web] experimental.ppr.origin must be an http(s) origin such as "https://shop.example", with no path; got ${JSON.stringify(origin)}`,
+      `[nifra/web] ppr.origin must be an http(s) origin such as "https://shop.example", with no path; got ${JSON.stringify(origin)}`,
     )
   }
   if (deployment !== undefined && (typeof deployment !== "string" || deployment === "")) {
-    throw new TypeError("[nifra/web] experimental.ppr.deployment must be a non-empty string")
+    throw new TypeError("[nifra/web] ppr.deployment must be a non-empty string")
   }
   if (store !== undefined) {
     if (shellChecks === "unchecked-development") {
       throw new TypeError(
-        "[nifra/web] experimental.ppr.store needs the build's shell check records: an unchecked shell is never shared",
+        "[nifra/web] ppr.store needs the build's shell check records: an unchecked shell is never shared",
       )
     }
     if (!isStoreSecret(storeSecret)) {
       throw new TypeError(
-        `[nifra/web] experimental.ppr.store needs storeSecret, at least ${MIN_STORE_SECRET_LENGTH} characters, to sign the shells it shares`,
+        `[nifra/web] ppr.store needs storeSecret, at least ${MIN_STORE_SECRET_LENGTH} characters, to sign the shells it shares`,
       )
     }
   }
@@ -138,13 +138,13 @@ const isPprServer = (value: unknown): value is PprServer =>
   typeof value === "object" && value !== null && "invalidateTag" in value && "stats" in value
 
 /**
- * The shell cache of an app made with `experimental.ppr`. Pass it in `createInvalidator`'s
+ * The shell cache of an app made with `ppr`. Pass it in `createInvalidator`'s
  * `dataCaches` so a purge by tag also drops the shells built from the purged data.
  */
 export function pprShells(app: object): PprShells {
   const server: unknown = Reflect.get(app, PPR_SERVER)
   if (!isPprServer(server)) {
-    throw new TypeError("[nifra/web/ppr] pprShells: this app was created without experimental.ppr")
+    throw new TypeError("[nifra/web/ppr] pprShells: this app was created without ppr")
   }
   return {
     invalidateTag: (tag) => server.invalidateTag(tag),

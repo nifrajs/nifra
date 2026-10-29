@@ -45,14 +45,12 @@ export const app = createWebApp({
   csp: createCspPolicy({
     header: ({ sources }) => `script-src 'self' ${sources}; object-src 'none'; base-uri 'none'`,
   }),
-  experimental: {
-    ppr: partialPrerendering({
-      shellChecks,
-      origin: "https://shop.example",
-      // A 0% hit rate at 128 connections builds a shell per request; the default of 4 builds per
-      // route would render most of them whole instead.
-      options: { shellBuildConcurrency: 1_024, ...JSON.parse(process.env.PPR_OPTIONS ?? "{}") },
-    }),
-  },
+  ppr: partialPrerendering({
+    shellChecks,
+    origin: "https://shop.example",
+    // A 0% hit rate at 128 connections builds a shell per request; the default of 4 builds per
+    // route would render most of them whole instead.
+    options: { shellBuildConcurrency: 1_024, ...JSON.parse(process.env.PPR_OPTIONS ?? "{}") },
+  }),
 })
 if (process.env.PPR_COMPRESS === "1") app.use(compression())

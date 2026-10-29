@@ -74,7 +74,7 @@ export default function Comparison() {
         </li>
         <li>
           SSR · SSG · ISR, streaming SSR with out-of-order Suspense,{" "}
-          <a href="/docs/partial-prerendering">partial prerendering</a> (experimental), view
+          <a href="/docs/partial-prerendering">partial prerendering</a>, view
           transitions, and a ~0&nbsp;KB-client vanilla adapter with{" "}
           <a href="/docs/islands">islands</a> and slot swaps.
         </li>
@@ -127,7 +127,7 @@ export default function Comparison() {
           <b>
             <a href="/docs/partial-prerendering">Partial prerendering</a>
           </b>{" "}
-          (experimental, all five adapters). The part of a page that is the same for every visitor is
+          (all five adapters). The part of a page that is the same for every visitor is
           built once, cached and sent at once; each per-visitor hole streams into it as its own loader
           settles. The build refuses a shell whose code reaches a module that reads the visitor, and{" "}
           <code>checkShellCanaries</code> looks for visitor data in a served shell. A shared hole, such

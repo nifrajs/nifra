@@ -54,7 +54,7 @@ export function shellDeployment(
   return `${clientEntry}~${digest(`${routes}|${named ?? ""}`)}`
 }
 
-/** One app's partial prerendering, made when `createWebApp` reaches its `experimental.ppr`. */
+/** One app's partial prerendering, made when `createWebApp` reaches its `ppr`. */
 export function createPprIntegration(
   options: ResolvedPprOptions,
   shellChecks: ShellCheckRecord | "unchecked-development",
@@ -65,7 +65,7 @@ export function createPprIntegration(
   const { perRequestNonce, ...app } = environment
   if (perRequestNonce) {
     throw new TypeError(
-      "[nifra/web] experimental.ppr needs `csp: createCspPolicy(...)`, not `nonce`: a per-request nonce would make every shell unique",
+      "[nifra/web] ppr needs `csp: createCspPolicy(...)`, not `nonce`: a per-request nonce would make every shell unique",
     )
   }
   const deployment = shellDeployment(app.deployment, shellChecks, sharing.deployment)

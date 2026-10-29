@@ -227,7 +227,7 @@ export default function Frameworks() {
         <li>
           <a href="/docs/live">Live refresh</a>, <a href="/docs/keep-alive">keep-alive</a> pages,{" "}
           <a href="/docs/server-components">server components</a>, and{" "}
-          <a href="/docs/partial-prerendering">partial prerendering</a> (experimental).
+          <a href="/docs/partial-prerendering">partial prerendering</a>.
         </li>
         <li>
           True HMR in dev for all five (<code>@nifrajs/web/vite</code>) - see{" "}

@@ -9,7 +9,7 @@ export interface SvelteUI {
   readonly props: Record<string, unknown>
 }
 
-/** Experimental: `component` rendered with `props`, for a partially prerendered hole. */
+/** `component` rendered with `props`, for a partially prerendered hole. */
 export function ui<Props extends Record<string, unknown>>(
   component: Component<Props>,
   ...props: Record<string, never> extends Props ? [props?: Props] : [props: Props]
