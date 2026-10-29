@@ -113,8 +113,10 @@ export default function RuntimeDifferences() {
       <CodeBlock code={OPTIONS} lang="ts" />
       <p>
         Both switches are off by default because checking costs throughput: about 6% of a bare route
-        for Host validation on Bun, and about 3% for target normalization on Deno. Turn them on when path
-        guards, or a proxy that normalizes paths, sit in front of or inside the app.
+        for Host validation on Bun, and about 3% for target normalization on Deno. Turn on target
+        normalization when upstream guards and proxies apply a different path policy, or when your path
+        guards run after Nifra normalizes the target. Turn on Host validation when the app builds URLs
+        from the Host header.
       </p>
 
       <h2>Responses and the language</h2>
@@ -226,8 +228,8 @@ export default function RuntimeDifferences() {
 
       <h2>Keeping it true</h2>
       <p>
-        A runtime release can change any entry. The catalog test runs the Bun claims against the Bun it
-        runs on, so a drift fails a build instead of going stale. To add or fix an entry, reproduce it on
+        A runtime release can change any entry. The catalog test checks the Bun claims for JSON parsing, JSON content type, recursion depth and
+        URL errors against the Bun it runs on; the other entries are recorded observations. To add or fix an entry, reproduce it on
         each runtime, record the versions, and keep the cause to what the runtime does.
       </p>
     </div>

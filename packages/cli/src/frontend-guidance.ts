@@ -473,7 +473,7 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
       "On a streamed HTML document, Safari or a WebKit test runs the page's module scripts only after the whole response arrives, and anything gated on `requestAnimationFrame` lags.",
     cause:
       'WebKit evaluates a `<script type="module">`, `async` or not, only when the parser finishes. A dynamic `import()` of the same URL waits with it, while one from a classic inline script with no module tag for that URL runs at once. Headless WebKit also runs no `requestAnimationFrame` callback until a streamed document ends, and Playwright\'s `page.click` waits two animation frames.',
-    fix: "Do not assume a streamed page hydrates early in WebKit. In WebKit tests, trigger timing-sensitive navigation with `page.evaluate(() => el.click())` and wait on app state, not on animation frames.",
+    fix: "Do not assume a streamed page hydrates early in WebKit. In WebKit tests, trigger timing-sensitive navigation with `locator.evaluate((el) => el.click())` and wait on app state, not on animation frames.",
     verify:
       "Stream a document for several seconds and log when the module and the first animation frame run in Chromium and WebKit.",
     versions: ["Playwright 1.63 WebKit"],

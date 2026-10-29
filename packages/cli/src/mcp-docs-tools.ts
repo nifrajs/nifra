@@ -237,6 +237,7 @@ export function docsTools(
         additionalProperties: false,
       },
       handler: async (args) => {
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the MCP layer validated args against inputSchema
         const { symptom, runtime, limit } = args as {
           symptom?: string
           runtime?: string

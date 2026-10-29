@@ -54,7 +54,7 @@ export const RUNTIME_DIFFERENCES: readonly RuntimeEntry[] = [
       "A path guard on `/admin` is skipped, or one request reaches different routes on different runtimes: `GET /public/../admin` or `/users/%2e%2e/9`.",
     cause:
       "Bun and Cloudflare Workers hand the app a URL their parser has already resolved, so `/public/../admin` arrives as `/admin`. Deno's `Request.url` and Node's `IncomingMessage.url` carry the target exactly as the client sent it, dot segments included.",
-    fix: "Set `normalizeTarget: true` (`server({ normalizeTarget: true })` on Deno, `serve(app, { normalizeTarget: true })` from `@nifrajs/node`) so Nifra resolves dot segments, backslashes and the characters a URL parser percent-encodes before routing. It is off by default because it costs about 3% of a bare route on Deno. Or normalize paths in the proxy in front of the app.",
+    fix: "Set `normalizeTarget: true` (`server({ normalizeTarget: true })` on Deno, `serve(app, { normalizeTarget: true })` from `@nifrajs/node`) so Nifra resolves dot segments, backslashes and the characters a URL parser percent-encodes before routing. It is off by default because it costs about 3% of a bare route on Deno. Turn it on when guards or proxies upstream use a different path policy, or when your path guards run after Nifra normalizes the target. Or normalize paths in the proxy in front of the app.",
     verify:
       "Send the raw target with `curl --path-as-is http://host/public/../admin` to each runtime and compare the route that answers.",
     seeAlso: "normalizeTarget request target dot segments",
@@ -193,7 +193,7 @@ export const RUNTIME_DIFFERENCES: readonly RuntimeEntry[] = [
       "A Worker that imports `node:async_hooks` (or another Node builtin) fails to start on an older `compatibility_date`, or works on a newer one without `nodejs_compat`.",
     cause:
       "Which `node:` builtins a Cloudflare Worker gets without the `nodejs_compat` flag depends on its `compatibility_date`. With the 2026-08-18 date, `import 'node:async_hooks'` works. With 2024-06-01, the Worker fails to start on that import, and `process` is undefined.",
-    fix: "Do not `import` a Node builtin in code that also runs on Workers. Look it up lazily with `process.getBuiltinModule('node:async_hooks')` and handle `undefined`, and set the compatibility date and flags in `wrangler.toml` deliberately.",
+    fix: "Do not `import` a Node builtin in code that also runs on Workers. Look it up lazily behind a guard, `typeof process !== 'undefined' ? process.getBuiltinModule('node:async_hooks') : undefined`, and handle `undefined`: `process` does not exist on an old date without Node compatibility. Set the compatibility date and flags in `wrangler.toml` deliberately.",
     verify:
       "Run the Worker under `wrangler dev` with each `compatibility_date` and check that it starts and the lookup returns a module or `undefined`.",
     seeAlso: "cloudflare workers edge nodejs_compat compatibility date",
