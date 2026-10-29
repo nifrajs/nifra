@@ -1,5 +1,80 @@
 # @nifrajs/node
 
+## 5.9.0
+
+### Minor Changes
+
+- 9c20e05: `@nifrajs/node`'s and `@nifrajs/deno`'s `serve` take `gracefulSignals` in place of `signals`, the name Bun's `server({ gracefulSignals })` already uses. The value is unchanged: `true`, or the `{ drainMs, delayMs }` passed to `stop()`.
+  
+  ```ts
+  // before
+  await serve(app, { port: 3000, signals: { drainMs: 8_000 } })
+  // after
+  await serve(app, { port: 3000, gracefulSignals: { drainMs: 8_000 } })
+  ```
+  
+  A `signals` option is refused with a `TypeError` that names `gracefulSignals`, so a server cannot start without the signal handling it asked for. `nifra build --target node` and `--target deno` emit `gracefulSignals`.
+- 34b780e: `@nifrajs/node`'s `serve` takes `static` as a function, the same option as Bun's `app.listen()` and `@nifrajs/deno`'s `serve`. It sees every request before the app does and answers with a response, or hands the request to the app with `undefined`. A throw or a rejection answers a plain `500`.
+  
+  Mounts move into `serveStatic(mounts)`, which takes the options `static` took before:
+  
+  ```ts
+  // before
+  await serve(app, { port: 3000, static: { dir: new URL("./assets/", import.meta.url) } })
+  // after
+  await serve(app, { port: 3000, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) })
+  ```
+  
+  `serve` runs `serveStatic`'s mounts on Node's own request, so a request they pass on still reaches the app on its direct lane. Any other function needs a Web `Request` for every request. Called with a Web `Request`, `serveStatic`'s function answers as its mounts do. A mount object passed to `static` is refused with a `TypeError` that names `serveStatic`.
+  
+  `nifra build --target node` emits `static: serveStatic([...])`.
+- c4ed3e9: `serveStatic(mounts)` serves files on disk with one set of options on every runtime: from `@nifrajs/core/serve-static` for Bun's `app.listen({ static })`, and from `@nifrajs/node` and `@nifrajs/deno` for their `serve({ static })`. Each reads files with its runtime's own file API, and a mount answers a request the same way on all three.
+  
+  ```ts
+  import { ONE_DAY, serveStatic } from "@nifrajs/core/serve-static"
+  
+  app.listen(3000, {
+    static: serveStatic([
+      { dir: new URL("./dist/assets/", import.meta.url), hashedFiles: build.assets, cacheControl: ONE_DAY },
+      { dir: new URL("./public/", import.meta.url), prefix: "/", immutable: false, cacheControl: ONE_DAY, fallthrough: true },
+    ]),
+  })
+  ```
+  
+  A mount takes `dir`, `prefix` (default `/assets`), `immutable`, `hashedFiles`, `cacheControl`, `files`, `allow`, `headers`, `dotfiles` and `fallthrough`. `hashedFiles` takes paths, an array of RegExps or a `(pathname) => boolean` predicate, matched on the encoded URL path, so files a pre-build step content-hashed, such as the fonts `loadGoogleFont` writes into `public/fonts/`, are cached immutably without being in the build manifest. A global or sticky pattern is used without that flag; a predicate runs as written. A path under a mount's prefix that it cannot serve answers `404` (`400` malformed, `403` traversing) unless the mount sets `fallthrough: true`, which hands it to the next mount and then the app. A request no mount takes returns `undefined` synchronously.
+  
+  `@nifrajs/web`'s `servePublicDir`, `ServePublicDirOptions`, `PublicDirCache` and `HashedFiles` are removed. `servePublicDir({ dir })` answers as `serveStatic({ dir, prefix: "/", fallthrough: true, hashedFiles: (path) => path.startsWith("/assets/"), cacheControl: ONE_DAY })` does, and `nifra upgrade 5.9.0` makes that edit. `nifra dev` serves `public/` with it, and the servers `nifra build` emits for bun, node and deno pass their runtime's `serveStatic` the same mounts.
+- 3299474: Make request-target normalization opt-in on Deno and Node with `server({ normalizeTarget: true })` and `serve(app, { normalizeTarget: true })`. Off, both runtimes route the target as sent, as most frameworks do; on, dot segments, backslashes and the characters a URL parser percent-encodes are resolved before routing so every runtime routes the same path. Enable it when path guards, or a proxy that normalizes paths, sit in front of or inside the app. Bun already delivers parsed targets and is unchanged. On Node, a request handed over as a Web `Request` (a `static` callback, a WebSocket upgrade) is parsed by the platform and resolved either way.
+
+### Patch Changes
+
+- 123409c: `@nifrajs/node` and `@nifrajs/deno` read core's WebSocket upgrade outcome through one generated type view, which core checks its own types against, instead of two hand-written mirrors.
+  
+  The CLI's MCP workers share one request reader, its project children one stdout guard, six `nifra check` security scans one file walker, and its route-text scans one string-aware scanner.
+  
+  The Bun and Vite builds of `@nifrajs/web` share their client-entry, manifest and server-build steps, and the Vite client leak guard and server zone guard share one plugin body. `bunBundler.buildServer` and `viteBundler.buildServer` pass every option they receive through to `buildServer` and `buildServerVite`, so an option the `Bundler` type leaves out, such as `conditions`, `minify` or `lazy`, takes effect instead of being dropped.
+  
+  Core's evidence, diff and saga code share their schema-part mapping and saga ownership steps, its SQL and Durable Object lease stores share their row mapping and held-lease update, and the JSON body lane's byte readers share one settle step.
+  
+  `@nifrajs/node`'s two request sources share one base for their URL and header reads, and its Web-request fallback and Request/Response forwarding each live once.
+  
+  The coding agent's dispatch store checks a lease once for every write, its host and tracer share one plan index and gate check, and its two UI extension calls share one handler.
+  
+  `@nifrajs/agent` checks a tool step's deadline through one helper before and after approval, and its fake and replay gateways validate their scripted responses once. `@nifrajs/testing`'s agent-eval composition records its contract-lab and certification components through one helper.
+  
+  `@nifrajs/schema` reads one record guard from a single module.
+- bc42fd2: The modules a package carries as its own copy of another package's file (the static-file open helper, the agent-file generators, the Node-stream hand-off, and core's helpers inside the Node and Deno adapters) are generated from one source each, under a header naming it. No API or behavior change.
+- 9942748: A partially prerendered hole ignores a fill that is an array, as it ignores any other fill that is not an object, so an interactive hole's root never renders one as its props.
+  
+  `@nifrajs/node` merges a plain render's headers and checks a WebSocket close through generated copies of `@nifrajs/core`'s own functions, which `check:vendored` keeps identical to their source.
+  
+  A WebSocket text message or close reason whose length alone cannot settle its byte cap is sized by the runtime's native `Buffer.byteLength` where a global `Buffer` exists (Bun, Node, Deno, and Workers on a recent compatibility date), and counted character by character where it does not.
+  
+  `nifra stylex-migrate` reads nested style objects through the CLI's shared record check.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- 61117cd: Reading `signal` on a Node request no longer builds the full undici `Request`. The signal still aborts when the client goes away before the response finishes, and a request built later follows it. Server-rendered pages read it on every document.
+- 3e050f4: A static mount's `allow` gets the host the app sees on Node's own request too: `canonicalHost` when it is set, and the normalized `Host` otherwise, as a Web request's URL carries it. A file that grows after its stat is streamed at the length its `content-length` declares, so the extra bytes never reach the connection.
+
 ## 5.8.0
 
 No changes in this release.

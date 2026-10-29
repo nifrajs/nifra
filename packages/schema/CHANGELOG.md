@@ -1,5 +1,38 @@
 # @nifrajs/schema
 
+## 5.9.0
+
+### Minor Changes
+
+- 5f4416a: `t.date()` is a `Date` in code and an RFC 3339 `date-time` string on the wire, in a request and a response alike.
+  
+  - A request `body`, `query` or `params`, and a server function's `input`, that declares `t.date()` takes the string and hands the handler a `Date`. Only places the schema declares `t.date()` are read as dates: a `t.string()` holding a date-like string stays a string. In a union, the first branch that accepts the value decides.
+  - A route `response` may declare `t.date()` for a timestamp column: the handler returns the `Date` or the string, and the JSON carries the string.
+  - `responseContract()` judges a `Date` as the ISO string JSON writes for it when the schema carries its JSON Schema (every `t` schema), so a `Date` under `t.string({ format: "date-time" })` passes `enforce` and logs nothing in `warn`, at any depth and under `extra: "strip"`. A schema without one (zod, valibot) is still shown the `Date`.
+  - The `date-time`, `date` and `time` string formats follow RFC 3339 in full: a day the calendar lacks (`2026-02-30`), an hour of `24` and an offset past `23:59` fail.
+  - A `c.json(...)` reply on a route with a contract calls each `toJSON` hook once, a `Date`'s included, and sends the value the contract judged.
+  - The typed client writes a `Date` in `query` as its ISO string.
+
+### Patch Changes
+
+- 123409c: `@nifrajs/node` and `@nifrajs/deno` read core's WebSocket upgrade outcome through one generated type view, which core checks its own types against, instead of two hand-written mirrors.
+  
+  The CLI's MCP workers share one request reader, its project children one stdout guard, six `nifra check` security scans one file walker, and its route-text scans one string-aware scanner.
+  
+  The Bun and Vite builds of `@nifrajs/web` share their client-entry, manifest and server-build steps, and the Vite client leak guard and server zone guard share one plugin body. `bunBundler.buildServer` and `viteBundler.buildServer` pass every option they receive through to `buildServer` and `buildServerVite`, so an option the `Bundler` type leaves out, such as `conditions`, `minify` or `lazy`, takes effect instead of being dropped.
+  
+  Core's evidence, diff and saga code share their schema-part mapping and saga ownership steps, its SQL and Durable Object lease stores share their row mapping and held-lease update, and the JSON body lane's byte readers share one settle step.
+  
+  `@nifrajs/node`'s two request sources share one base for their URL and header reads, and its Web-request fallback and Request/Response forwarding each live once.
+  
+  The coding agent's dispatch store checks a lease once for every write, its host and tracer share one plan index and gate check, and its two UI extension calls share one handler.
+  
+  `@nifrajs/agent` checks a tool step's deadline through one helper before and after approval, and its fake and replay gateways validate their scripted responses once. `@nifrajs/testing`'s agent-eval composition records its contract-lab and certification components through one helper.
+  
+  `@nifrajs/schema` reads one record guard from a single module.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- 2383330: `compileSchema` output typechecks under `strict` TypeScript, `noUnusedLocals` and `noUnusedParameters` included, and Node loads it with its built-in type stripping. An array check no longer annotates its `for...of` binding (TS2483, which Node's type stripping also refuses), the import line names only what the module uses, and the schema literal converts to the source schema's type through `unknown` instead of failing TS2352. A schema whose own text holds the statement `for(const value: any of array)` is refused.
+
 ## 5.8.0
 
 No changes in this release.

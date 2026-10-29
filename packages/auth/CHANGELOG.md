@@ -1,5 +1,16 @@
 # @nifrajs/auth
 
+## 5.9.0
+
+### Minor Changes
+
+- 9942748: `createSessions({ identity })` names the data keys that say who the visitor is, such as a user id, an organization or a role. The session cookie's tag then changes only when one of them does, in either mode, so `@nifrajs/web` keep-alive keeps the pages it holds across a commit that writes other data, a cart say. Unset, every key counts. Once `identity` is set, a cookie-mode cookie carries the tag in its signed payload, and an earlier version still reads it.
+
+### Patch Changes
+
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- 9942748: A store-mode session cookie changes whenever the session's data does. It carries the session id with a tag that a commit renews only when the data changed, so a commit with the same data writes the same cookie and a sign-in, an account switch or `clear()` under a kept session id writes a new one. A response that changes who is signed in now shows it, and `@nifrajs/web` keep-alive drops the pages kept for the previous visitor even when the app does not regenerate the id. A cookie from an earlier version still loads and keeps its form until the data changes; a cookie with a tag reads as signed out on an earlier version.
+
 ## 5.8.0
 
 No changes in this release.

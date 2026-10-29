@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/acp",
-  "version": "5.8.0",
+  "version": "5.9.0",
   "description": "Agent Client Protocol backend for the Nifra agent protocol: drive Claude Code, Gemini CLI, Codex, or any ACP agent over stdio.",
   "keywords": [
     "bun",

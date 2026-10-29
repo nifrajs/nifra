@@ -1,5 +1,139 @@
 # @nifrajs/cli
 
+## 5.9.0
+
+### Minor Changes
+
+- fa7d102: `@nifrajs/deno`'s `serve` takes `static`, a handler that sees every request before the app does. It answers with a response, or hands the request to the app with `undefined`. A file it answers wins over any route at the same path, no hook of the app runs for it, and a throw answers a plain `500`.
+  
+  `nifra build --target deno` emits a server that runs on `@nifrajs/deno`'s `serve` and serves its client bundle and public files through `static`, so a Deno app installs `@nifrajs/deno` of the same release, as a Node app installs `@nifrajs/node`. The built server serves WebSocket routes, and `stop()` drains its in-flight requests. With an older adapter installed the build stops before bundling and names both versions.
+  
+  A built Deno server serves its static files again. Bun's browser stand-in for `node:crypto`, which the Deno entry tags files with, has no working `createHash`, so every file answered `404` and pages loaded without their client bundle. The Deno server bundle now imports `node:crypto` from Deno itself, and a `--vite` Deno build no longer refuses it as an edge built-in. `buildServer` and `buildServerVite` take `providedBuiltins`, the Node built-ins the runtime that runs the bundle has besides what its target implies.
+  
+  `nifra.config.ts` takes `selfHost`, the settings the server a `bun`, `node` or `deno` build emits starts with, `nifra start` included. `gracefulSignals` (`true`, or `{ drainMs, delayMs }`) drains the server on SIGTERM and SIGINT instead of letting the signal kill it. `idleTimeoutSec` is how long a Bun server keeps a connection that moves no bytes, from `0` (never) to 255; Node and Deno ignore it, and an edge build ignores `selfHost`. `buildTarget` and `generateServerEntry` take the same `selfHost` and refuse a value of the wrong shape before building.
+- 7ba5c9b: `invariants.setup` in `nifra.assurance.ts` may return `witnesses` and `prepareRequest` beside `executor` and `teardown`, so a success witness can name what exists only once the throwaway target is up: a real slug, a row id, a signed-in session. Its witnesses are merged over the static `invariants.witnesses`, a `"METHOD /path"` in both taking the setup's, and validated the same way, so a malformed one fails with the same `route assurance:` error. Its `prepareRequest` replaces the static one. `setup` now runs once per L4 run before the run generates its first case, still never on import, and `teardown` still runs after a failure, a malformed setup result included. `nifra levels` lists the witnesses that came from setup under L4, and the `nifra_levels` result carries them as `setupWitnesses`. `applyInvariantSetup` from `@nifrajs/core/assurance` merges and validates a setup result for a harness that runs L4 itself.
+- e19b8ad: `@nifrajs/mcp-db/postgres` checks the connected role's own privileges before every query and explain: a role that may read a masked column, an excluded table or one inheriting from it, or a view or materialized view that reads any of them or reaches outside `schemas`, is refused with the new code `NIFRA_DB_ROLE_GRANTS`. The database then refuses those reads itself, including through a function body or the rows a materialized view stores. `postgresRoleSql` takes `redaction` and writes the matching grants: a `REVOKE` for each excluded table, its partitions and children, and each view or materialized view over hidden data, and a column-level `GRANT` of the other columns of a table with a masked column. A query that names a column the role may not read is refused with `NIFRA_DB_COLUMN_REFUSED`, which names the columns it may read. `readPostgresSchema` lists a table the role may read some columns of. The gate also refuses a role that may execute a SECURITY DEFINER function, or an aggregate over one, unless `allowFunctions` names it, since such a function reads with its owner's rights through an operator, a cast, a view or another function. Either refusal names each grantee the role holds the privilege through: PUBLIC, the role itself, or a role whose privileges it has. `postgresRoleSql` takes `allowFunctions` and writes the `REVOKE EXECUTE` each function needs from each such grantee, and the `REVOKE SELECT` for a table or column grant that would still expose hidden data; a grant to the role itself is revoked by a statement, the rest are listed as comments since they reach other roles.
+  
+  Functions go through an allowlist read from `pg_proc`, for every function the statement names and every one its plan calls, each overload a name can resolve to: a built-in or extension function must be immutable or stable and parallel safe (plus a few value-only ones such as `random()`), one the database defines must be immutable or stable, and none may be SECURITY DEFINER. The option `allowFunctions` (`name` or `schema.name`) accepts a function past it. `lintPostgresStatement` refuses statement shapes only; function refusals come from the allowlist once connected.
+  
+  `nifra db` reads `devDatabase.allowFunctions`, and `nifra db role` writes the grants for the declaration's masking.
+- 09c69b0: Add `nifra runtime` and the `nifra_runtime` MCP tool: a symptom-indexed catalog of where Bun, Node, Deno and Cloudflare Workers behave differently under the same app (request-target and Host handling, pipelining, JSON content-type, engine error messages, recursion depth, `.env` loading, and runtime-specific APIs), each with the fix, how to verify it, and the versions it was measured on. The frontend catalog gains entries for React `Activity` hydration, inline-style CSP, and WebKit's handling of streamed module scripts. Documented at `/docs/runtime-differences`.
+- 2069cff: `nifra upgrade 5.9.0` rewrites the code the release changes, on the syntax tree, with the project's TypeScript (or the CLI's own):
+  
+  - each `servePublicDir(...)` call becomes the runtime's `serveStatic(...)` with options that keep its answers, and its import moves;
+  - an object or array that `@nifrajs/node`'s `static` takes is wrapped in `serveStatic(...)`;
+  - `signals` on `@nifrajs/node`'s and `@nifrajs/deno`'s `serve()` becomes `gracefulSignals`.
+  
+  A site it cannot rewrite whole, such as options built in another variable or a `cache.hashed` policy with no counterpart, is listed with its line and what to write. When no TypeScript resolves, the upgrade refuses before it writes anything.
+
+### Patch Changes
+
+- 123409c: `@nifrajs/node` and `@nifrajs/deno` read core's WebSocket upgrade outcome through one generated type view, which core checks its own types against, instead of two hand-written mirrors.
+  
+  The CLI's MCP workers share one request reader, its project children one stdout guard, six `nifra check` security scans one file walker, and its route-text scans one string-aware scanner.
+  
+  The Bun and Vite builds of `@nifrajs/web` share their client-entry, manifest and server-build steps, and the Vite client leak guard and server zone guard share one plugin body. `bunBundler.buildServer` and `viteBundler.buildServer` pass every option they receive through to `buildServer` and `buildServerVite`, so an option the `Bundler` type leaves out, such as `conditions`, `minify` or `lazy`, takes effect instead of being dropped.
+  
+  Core's evidence, diff and saga code share their schema-part mapping and saga ownership steps, its SQL and Durable Object lease stores share their row mapping and held-lease update, and the JSON body lane's byte readers share one settle step.
+  
+  `@nifrajs/node`'s two request sources share one base for their URL and header reads, and its Web-request fallback and Request/Response forwarding each live once.
+  
+  The coding agent's dispatch store checks a lease once for every write, its host and tracer share one plan index and gate check, and its two UI extension calls share one handler.
+  
+  `@nifrajs/agent` checks a tool step's deadline through one helper before and after approval, and its fake and replay gateways validate their scripted responses once. `@nifrajs/testing`'s agent-eval composition records its contract-lab and certification components through one helper.
+  
+  `@nifrajs/schema` reads one record guard from a single module.
+- 7ee17d0: `nifra check --sarif` and the command catalog's check output map report entries to diagnostics through one step. The CLI's page rules read the routes manifest and a `createWebApp` call's options through shared helpers, the layout migration applies its text edits through one function, two source scans share one route-registration reader, the two sync commands share their output schema and flag, and the Python and Go SDK generators share their setup and map-type reading.
+  
+  `create-nifra` passes the flags it parsed to `scaffold` as they are.
+  
+  `@nifrajs/web`'s PostCSS and Sass plugins build their JS module through one function, its client-build guards share one import-chain search, a page route's failed loaders answer through one step, and the router and the live client build a route data request's headers through one function.
+  
+  `@nifrajs/web-svelte`'s Svelte and MDX plugins emit scoped CSS through the stylesheet emitter in `@nifrajs/web/plugins/kit`, as the other kit plugins do. The virtual stylesheet import they write is now `?nifra-svelte-css` (`?nifra-svelte-mdx-css` for MDX), and its resolved path stays slash-separated on Windows.
+  
+  `@nifrajs/mcp` builds its capabilities once for `initialize` and `server/discover`. `@nifrajs/agent-review`'s composer uses the parser's outcome rule and evidence order, and the parser reads its two string lists through one reader. `@nifrajs/pi` reads message text through one helper, and core's evidence report sorts its findings through one comparator.
+- 68d9f31: Internal cleanup: the CLI's check rules, the coding agent's per-node records, the durable backends' scan pages and the web build's steps each have one implementation where there were copies. No behaviour changes.
+- c04c1a9: `nifra doctor` no longer warns that nothing names an app's sign-in cookie when the app reaches `@nifrajs/auth`, Better Auth or Auth.js through a package of its own, such as a workspace or linked wrapper. It follows the app's installed and linked dependencies - a library a wrapper declares but the install lacks, such as an unmet peer or optional dependency, does not count - and prints a note instead, naming the dependency chain and the rule that covers the cookie: its default name, or Better Auth's `<prefix>.session_token` suffix. The JSON result carries it as `keepAliveIdentityCovered`. A session cookie renamed outright, in the app's own source or in a workspace or linked package on that chain, still warns, and so does an app that reaches no supported auth library and sets no `identityCookies`.
+- bc42fd2: The modules a package carries as its own copy of another package's file (the static-file open helper, the agent-file generators, the Node-stream hand-off, and core's helpers inside the Node and Deno adapters) are generated from one source each, under a header naming it. No API or behavior change.
+- 9942748: A partially prerendered hole ignores a fill that is an array, as it ignores any other fill that is not an object, so an interactive hole's root never renders one as its props.
+  
+  `@nifrajs/node` merges a plain render's headers and checks a WebSocket close through generated copies of `@nifrajs/core`'s own functions, which `check:vendored` keeps identical to their source.
+  
+  A WebSocket text message or close reason whose length alone cannot settle its byte cap is sized by the runtime's native `Buffer.byteLength` where a global `Buffer` exists (Bun, Node, Deno, and Workers on a recent compatibility date), and counted character by character where it does not.
+  
+  `nifra stylex-migrate` reads nested style objects through the CLI's shared record check.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- 5bd225e: `nifra context`, the MCP route tools and a served `llms.txt` now print the same typed-client call for a route. A `QUERY` route is a `.$query(body, { query })` call: `nifra context` printed a plain `fetch` for it, and `llms.txt` a `.query()` call the client does not have. `nifra context` now keeps a `DELETE` route's body in its options (`.delete({ body })`), and `llms.txt` prints a path segment spelled `$query` as a call on its parent node, as it already did for the other reserved client keys. A WebSocket route is printed as the `.ws()` call that returns its handle, unawaited: `nifra context` printed a `fetch` for it, and `llms.txt` an awaited `.ws()`.
+- d6e6617: More helpers that several modules of a package each defined (SHA-256 to hex, the control-character check, code-unit string order, the child-process environment allowlist, realpath with a fallback, the MCP worker's console redirect and reply line) now have one definition per package. No API change. The `git diff` that `@nifrajs/coding-agent` runs now inherits `CI` like its other child processes.
+- 5bc60b7: Small helpers that several modules of a package each defined (the object check, RegExp escaping, `\` to `/` path conversion, line lookup) now have one definition per package. No API or behavior change.
+- a565d7b: Expand `nifra frontend` and `nifra_frontend` with version-scoped, source-linked React, Preact, Solid, Vue, and Svelte gotchas. `nifra frontend --json` prints stable structured entries, and `nifra_frontend` now returns them as `structuredContent` beside the rendered text. `nifra frontend` now rejects unknown flags instead of ignoring them, and symptom text is capped at 256 characters. Add executable security invariant coverage and nightly mutation targets for core security boundaries.
+- 3265900: NF-C055 no longer reads the options of a call with a path and no handler as a route's, such as `config.get("flags", { query: z.object({ on: z.coerce.boolean() }) })`.
+- 85b88bf: NF-C054 no longer reports a call with a path and no handler as a route, such as `headers.get("if-none-match")`, `url.searchParams.get("id")` or `map.get("/")` in a file that creates the server.
+- 69dc913: `nifra upgrade --write` run from a CLI whose `@nifrajs/core` is not the project's, such as `bunx @nifrajs/cli@<new> upgrade <new>` before the new release is installed, no longer prints `Hook scope: not captured (merge() requires a server() from this copy of @nifrajs/core, ...)` with a list of copies. That state is expected mid-upgrade, so it skips the hook report and prints one line saying `nifra routes --hooks` shows the hook scope once the release is installed. The JSON report carries `hooks: { "skipped": "other-core" }`.
+- Updated dependencies [2ffa7c1]
+- Updated dependencies [100a0aa]
+- Updated dependencies [71dea89]
+- Updated dependencies [9c20e05]
+- Updated dependencies [9942748]
+- Updated dependencies [8cdb138]
+- Updated dependencies [be1c677]
+- Updated dependencies [f399e06]
+- Updated dependencies [93e7078]
+- Updated dependencies [2c2f58b]
+- Updated dependencies [123409c]
+- Updated dependencies [7ee17d0]
+- Updated dependencies [68d9f31]
+- Updated dependencies [fa7d102]
+- Updated dependencies [ddeb735]
+- Updated dependencies [a3fb195]
+- Updated dependencies [47a864f]
+- Updated dependencies [9942748]
+- Updated dependencies [ffcf41a]
+- Updated dependencies [7a15327]
+- Updated dependencies [866c8ec]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [a29d1cc]
+- Updated dependencies [9942748]
+- Updated dependencies [77b98ea]
+- Updated dependencies [a3caf9b]
+- Updated dependencies [a0fe5bf]
+- Updated dependencies [7ba5c9b]
+- Updated dependencies [0445564]
+- Updated dependencies [e19b8ad]
+- Updated dependencies [180bf9d]
+- Updated dependencies [ff9bc11]
+- Updated dependencies [8094874]
+- Updated dependencies [a7b89ee]
+- Updated dependencies [34b780e]
+- Updated dependencies [111c3be]
+- Updated dependencies [5bd225e]
+- Updated dependencies [d6e6617]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [159ae97]
+- Updated dependencies [2383330]
+- Updated dependencies [6ba9740]
+- Updated dependencies [5f4416a]
+- Updated dependencies [bc05ec5]
+- Updated dependencies [d3c050e]
+- Updated dependencies [c4ed3e9]
+- Updated dependencies [9942748]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [3299474]
+- Updated dependencies [543d00a]
+- Updated dependencies [020eb7b]
+- Updated dependencies [9942748]
+- Updated dependencies [9785cd4]
+  - @nifrajs/web@5.9.0
+  - @nifrajs/core@5.9.0
+  - @nifrajs/testing@5.9.0
+  - @nifrajs/schema@5.9.0
+  - @nifrajs/mcp@5.9.0
+  - @nifrajs/agent-review@5.9.0
+  - @nifrajs/i18n@5.9.0
+  - @nifrajs/mcp-db@5.9.0
+  - @nifrajs/client@5.9.0
+  - @nifrajs/runner@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

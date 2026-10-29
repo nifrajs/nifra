@@ -1,5 +1,11 @@
 # @nifrajs/proxy
 
+## 5.9.0
+
+### Patch Changes
+
+- bc42fd2: The modules a package carries as its own copy of another package's file (the static-file open helper, the agent-file generators, the Node-stream hand-off, and core's helpers inside the Node and Deno adapters) are generated from one source each, under a header naming it. No API or behavior change.
+
 ## 5.8.0
 
 No changes in this release.
