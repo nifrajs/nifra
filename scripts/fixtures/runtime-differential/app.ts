@@ -76,7 +76,7 @@ export function createDifferentialApp(options: DifferentialAppOptions = {}) {
   const app = server({
     logger: silentLogger,
     maxBodyBytes: MAX_BODY_BYTES,
-    validateHost: options.validateHost,
+    ...(options.validateHost === undefined ? {} : { validateHost: options.validateHost }),
   })
     .use(websocket())
     .use(responseContract("enforce", { extra: "strip" }))
