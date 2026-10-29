@@ -65,6 +65,7 @@ const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
   ["nifra_types", "reads", "The exact declaration of an export."],
   ["nifra_learn", "reads", "The guided build-an-app path."],
   ["nifra_frontend", "reads", "Frontend guidance for a framework and topic."],
+  ["nifra_runtime", "reads", "Where Bun, Node, Deno and Workers differ, with the fix."],
   ["nifra_check", "reads", "Typecheck and contract lints, each with a structured fix."],
   ["nifra_contract_proof", "reads", "Each changed route, joined to its assurance and capability evidence."],
   ["nifra_port", "reads", "Which features each deploy target supports, with file:line evidence."],

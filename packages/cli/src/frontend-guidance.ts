@@ -437,6 +437,89 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     seeAlso: "data-swap data-swap-slot slot enableSwap islands",
     category: "seam",
   },
+  {
+    id: "react-activity-markers",
+    adapters: ["react"],
+    symptom:
+      "The tab freezes on load: the main thread spins and hydration never finishes, with no error, on a page that renders `<Activity>`.",
+    cause:
+      "React hydrates an `<Activity>` against server HTML that lacks its `<!--&-->` and `<!--/&-->` boundary comments and never returns. The server HTML carries the markers only when the server tree rendered the Activity. React also writes a component's `<title>` ahead of the opening comment in `renderToString` output.",
+    fix: "Make server and client agree: wrap in `<Activity>` on the client only where the server did, and when you detect the boundary in server HTML, skip leading `<title>` elements before looking for the comment.",
+    verify:
+      "Hydrate the route in a real browser (a test runner just times out without an error) and confirm the page becomes interactive.",
+    versions: ["React 19.3.1"],
+    source: "https://react.dev/reference/react/Activity",
+    category: "hydration",
+    seeAlso: "react activity hydration boundary",
+  },
+  {
+    id: "vite-resolveid-order",
+    adapters: ["all"],
+    symptom:
+      "A Rollup plugin added under `build.rollupOptions.plugins` never sees `resolveId` for imports Vite has already resolved, so a guard on the written import specifier never fires.",
+    cause:
+      "`resolveId` is a first-wins hook, and Vite's own resolver answers bare imports before a plugin placed last gets a turn. Rollup's module info keeps only resolved ids, never the specifier as written.",
+    fix: 'Use the object form with `order: "pre"`: `resolveId: { order: "pre", handler }`. Record the specifier, then return `null` (or call `this.resolve(source, importer, { skipSelf: true })`) so resolution proceeds.',
+    verify:
+      "Build a fixture whose import the plugin must see and assert the plugin recorded the specifier.",
+    versions: ["Vite 8.2.1 (rolldown)"],
+    category: "runtime",
+    seeAlso: "vite plugin resolveId order pre rolldown",
+  },
+  {
+    id: "vite-resolve-custom-dropped",
+    adapters: ["all"],
+    symptom:
+      "A Vite plugin handshake through `this.resolve(id, importer, { custom })` works in most builds and fails in about one in three.",
+    cause:
+      "Vite 8 with rolldown does not reliably forward the `custom` option of `this.resolve` to other plugins' `resolveId` hooks.",
+    fix: "Do not pass state between plugins through `custom`. Give the plugin a construction-time option instead, and prove a fix for a flaky build with a loop of builds, not one.",
+    verify: "Run the build six times in a loop; a one-in-three failure shows within a few runs.",
+    versions: ["Vite 8 (rolldown)"],
+    category: "runtime",
+    seeAlso: "vite plugin this.resolve custom rolldown",
+  },
+  {
+    id: "vite-dev-csp-nonce",
+    adapters: ["all"],
+    symptom:
+      "Under a strict Content-Security-Policy, `vite dev` shows a blank or unstyled page, or a `blob:` SharedWorker error in the console.",
+    cause:
+      "Vite injects an inline refresh preamble and runtime `<style>`, which a policy without `unsafe-inline` or the page's nonce blocks. Vite's own `html.cspNonce` is a static config value, so it cannot carry a per-request nonce. While Vite polls a restarted dev server it creates a `blob:` SharedWorker, which a strict `script-src` without `worker-src blob:` refuses; Vite reconnects anyway.",
+    fix: "Give Vite's injected tags the page's nonce after `transformIndexHtml` (Nifra's `--vite` dev path does this), or relax the policy in development only. Treat the `blob:` worker error as expected under a strict policy.",
+    verify:
+      "Load the dev page with the production policy and check the console for `script-src-elem` and `style-src-elem` violations.",
+    category: "runtime",
+    seeAlso: "vite dev csp nonce style-src script-src",
+  },
+  {
+    id: "csp-inline-style-attribute",
+    adapters: ["all"],
+    symptom:
+      'A wrapper element with an inline `style` attribute, such as `<div style="display:contents">`, is ignored under a Content-Security-Policy and the layout breaks.',
+    cause:
+      "`style-src 'self'` refuses inline `style` attributes, and a framework's hydration does not set the attribute again from script. A `<slot>` element is `display: contents` by the user-agent stylesheet in Chromium, Firefox and WebKit, needs no CSP exception, and does not close an open `<p>`. Svelte reserves the `<slot>` tag name.",
+    fix: 'Use a `<slot>` wrapper for a layout-neutral container, or a class in a stylesheet. In Svelte write `<svelte:element this={"slot"}>`; a string-literal `this` warns.',
+    verify:
+      "Load the page with the production `style-src` and check the console for a blocked inline style.",
+    versions: ["Chromium, Firefox, WebKit (2026-10)"],
+    category: "ssr",
+    seeAlso: "csp style-src display contents slot wrapper",
+  },
+  {
+    id: "webkit-streamed-modules",
+    adapters: ["all"],
+    symptom:
+      "On a streamed HTML document, Safari or a WebKit test runs the page's module scripts only after the whole response arrives, and anything gated on `requestAnimationFrame` lags.",
+    cause:
+      'WebKit evaluates a `<script type="module">`, `async` or not, only when the parser finishes. A dynamic `import()` of the same URL waits with it, while one from a classic inline script with no module tag for that URL runs at once. Headless WebKit also runs no `requestAnimationFrame` callback until a streamed document ends, and Playwright\'s `page.click` waits two animation frames.',
+    fix: "Do not assume a streamed page hydrates early in WebKit. In WebKit tests, trigger timing-sensitive navigation with `page.evaluate(() => el.click())` and wait on app state, not on animation frames.",
+    verify:
+      "Stream a document for several seconds and log when the module and the first animation frame run in Chromium and WebKit.",
+    versions: ["Playwright 1.63 WebKit"],
+    category: "ssr",
+    seeAlso: "webkit streaming hydration module script requestAnimationFrame",
+  },
 ]
 
 const ADAPTER_ALIASES: Record<string, GuidanceAdapter> = {

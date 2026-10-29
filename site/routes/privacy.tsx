@@ -54,10 +54,10 @@ export default function Privacy() {
       <h2>What the MCP tools can access</h2>
       <p>
         Every tool the server exposes (<code>nifra_docs</code>, <code>nifra_example</code>,{" "}
-        <code>nifra_types</code>, <code>nifra_learn</code>, <code>nifra_frontend</code>, and the
-        optional <code>nifra_gallery</code> widget) is read-only over public documentation. The
-        server never reads your code, files, or any data from your machine or your AI assistant
-        beyond the query text you send it.
+        <code>nifra_types</code>, <code>nifra_learn</code>, <code>nifra_frontend</code>,{" "}
+        <code>nifra_runtime</code>, and the optional <code>nifra_gallery</code> widget) is read-only
+        over public documentation. The server never reads your code, files, or any data from your
+        machine or your AI assistant beyond the query text you send it.
       </p>
 
       <h2>Changes</h2>
