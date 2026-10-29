@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { NIFRA_ASSURANCE, withRouteAssurance } from "../src/assurance.ts"
 import {
+  attachCapabilityJournal,
+  type CapabilityExecutionJournal,
+  capabilityJournalOf,
   declaredCapabilities,
   defineCapabilityPolicy,
   evaluateCapabilityAssurance,
@@ -28,6 +31,18 @@ const policy = defineCapabilityPolicy({
 })
 
 describe("route capabilities", () => {
+  test("attaches a capability journal to request context", () => {
+    const journal: CapabilityExecutionJournal = {
+      intent() {},
+      executing() {},
+      committed() {},
+      failed() {},
+    }
+    const context = {}
+    attachCapabilityJournal(context, journal)
+    expect(capabilityJournalOf(context)).toBe(journal)
+  })
+
   test("caps interceptor timeouts that JavaScript timers would wrap", async () => {
     const app = server()
       .aroundCapability(

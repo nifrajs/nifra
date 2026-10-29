@@ -117,6 +117,38 @@ describe("handleMcpHttp", () => {
     expect(body.result.content[0]?.text).toContain("@nifrajs/") // a real, framework-importing snippet
   })
 
+  test("nifra_frontend returns prose and structured JSON together", async () => {
+    const structured = await handleMcpHttp(
+      post({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: {
+          name: "nifra_frontend",
+          arguments: { adapter: "solid", symptom: "list reorder state" },
+        },
+      }),
+    )
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the MCP response shape is asserted immediately below.
+    const structuredBody = (await structured.json()) as {
+      result: {
+        content: Array<{ type: string; text: string }>
+        structuredContent?: {
+          schemaVersion?: number
+          adapter?: string
+          entries?: unknown[]
+        }
+      }
+    }
+    expect(structuredBody.result.content[0]?.type).toBe("text")
+    expect(structuredBody.result.content[0]?.text).toContain("[solid-for-index]")
+    expect(structuredBody.result.structuredContent).toMatchObject({
+      schemaVersion: 1,
+      adapter: "solid",
+    })
+    expect(structuredBody.result.structuredContent?.entries?.length).toBeGreaterThan(0)
+  })
+
   test("nifra_gallery returns structuredContent + serves its ui:// widget resource", async () => {
     const call = await handleMcpHttp(
       post({

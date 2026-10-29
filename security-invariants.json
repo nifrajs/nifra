@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "invariants": [
+    {
+      "id": "auth-before-side-effect",
+      "area": "authorization",
+      "statement": "A denied capability request does not execute its effect or any registered side effect.",
+      "tests": ["packages/core/test/capabilities.test.ts"],
+      "mutationTargets": ["core-capabilities"],
+      "docs": "/docs/security"
+    },
+    {
+      "id": "idempotent-replay",
+      "area": "replay",
+      "statement": "A repeated idempotency key returns the recorded outcome without executing the effect twice.",
+      "tests": [
+        "packages/core/test/idempotency-gate.test.ts",
+        "packages/core/test/idempotency-replay-auth.test.ts"
+      ],
+      "mutationTargets": ["core-idempotency"],
+      "docs": "/docs/security"
+    },
+    {
+      "id": "capability-denial-fails-closed",
+      "area": "capabilities",
+      "statement": "Unknown, expired, forged, or denied capability evidence prevents effect execution.",
+      "tests": [
+        "packages/core/test/capabilities.test.ts",
+        "packages/core/test/durable-execution.test.ts"
+      ],
+      "mutationTargets": ["core-capabilities", "core-durable-execution"],
+      "docs": "/docs/capabilities"
+    },
+    {
+      "id": "ledger-redacts-failures",
+      "area": "ledger",
+      "statement": "Ledger failure entries contain bounded stable error data and never provider payloads or secrets.",
+      "tests": ["packages/core/test/ledger.test.ts"],
+      "mutationTargets": ["core-ledger"],
+      "docs": "/docs/capabilities"
+    },
+    {
+      "id": "durable-recovery-no-duplicate",
+      "area": "durable-execution",
+      "statement": "Crash recovery reconciles uncertain commits explicitly and never silently repeats a committed effect.",
+      "tests": [
+        "packages/core/test/durable-execution.test.ts",
+        "packages/core/test/recovery.test.ts"
+      ],
+      "mutationTargets": ["core-durable-execution"],
+      "docs": "/docs/verification"
+    },
+    {
+      "id": "bounded-body-read",
+      "area": "input-boundary",
+      "statement": "Raw and multipart bodies are rejected at the read boundary once their byte budget is exceeded.",
+      "tests": [
+        "packages/core/test/body-parser.test.ts",
+        "packages/middleware/test/body-limit.test.ts"
+      ],
+      "mutationTargets": ["core-body-boundary"],
+      "docs": "/docs/security"
+    },
+    {
+      "id": "prototype-pollution-blocked",
+      "area": "input-boundary",
+      "statement": "Prototype-pollution keys cannot mutate the object or schema output used by a handler.",
+      "tests": [
+        "packages/core/test/proto-poisoning.test.ts",
+        "packages/testing/test/adversarial-inputs.test.ts"
+      ],
+      "mutationTargets": ["core-body-boundary"],
+      "docs": "/docs/security"
+    },
+    {
+      "id": "server-code-stays-server",
+      "area": "bundle-boundary",
+      "statement": "A server-only import, credential, or Node builtin cannot reach a browser bundle through an indirect import.",
+      "tests": [
+        "packages/web/test/leak-matrix.test.ts",
+        "packages/web/test/build-server-only-marker.test.ts"
+      ],
+      "mutationTargets": ["web-server-boundary"],
+      "docs": "/docs/troubleshooting"
+    },
+    {
+      "id": "identity-cache-isolation",
+      "area": "cache-boundary",
+      "statement": "A response or query snapshot from one identity cannot be reused by another identity.",
+      "tests": [
+        "packages/web/test/identity-policy.test.ts",
+        "internal/invariants/test/stored-responses.test.ts"
+      ],
+      "mutationTargets": ["web-visitor"],
+      "docs": "/docs/keep-alive"
+    },
+    {
+      "id": "runtime-security-parity",
+      "area": "runtime",
+      "statement": "Client navigation preserves terminal status, rejection, and identity boundaries across the supported route surfaces.",
+      "tests": [
+        "packages/web/test/router.test.ts",
+        "packages/web/test/router-intercept.test.ts",
+        "packages/web/test/router-origin.test.ts",
+        "packages/web/test/router-share.test.ts",
+        "packages/web/test/navigation.test.ts",
+        "packages/web/test/navigation-redirect.test.ts",
+        "internal/invariants/test/visitor-stores.test.ts"
+      ],
+      "mutationTargets": ["web-router"],
+      "docs": "/docs/verification"
+    }
+  ]
+}

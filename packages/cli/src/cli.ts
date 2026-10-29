@@ -1171,6 +1171,36 @@ function exitIfHeldOpen(command: string): void {
 /** Set on the copy of `nifra mcp` that serves without `.env` files, so it does not restart again. */
 const MCP_WITHOUT_ENV_FILES = "NIFRA_MCP_WITHOUT_ENV_FILES"
 
+/** Parsed arguments for the project-independent `nifra frontend` command. */
+export interface FrontendCommandInput {
+  readonly adapter?: string | undefined
+  readonly symptom?: string | undefined
+  readonly json: boolean
+}
+
+/** Parse frontend positionals separately from flags so `--json` never becomes a symptom. */
+export function frontendCommandInput(
+  argv: readonly string[],
+  parseAdapter: (value: string | undefined) => string | undefined,
+): FrontendCommandInput {
+  const unknown = argv.find(
+    (arg) => arg.startsWith("-") && arg !== "--json" && arg !== "--help" && arg !== "-h",
+  )
+  if (unknown !== undefined)
+    throw new Error(`[nifra] unknown option: ${unknown} - see \`nifra help\``)
+  const positional = argv.filter((arg) => !arg.startsWith("-"))
+  const first = positional[0]
+  const maybeAdapter = parseAdapter(first)
+  const adapter = maybeAdapter === undefined ? undefined : first
+  const symptom = (maybeAdapter === undefined ? positional : positional.slice(1)).join(" ")
+  return {
+    adapter,
+    symptom: symptom.length > 0 ? symptom : undefined,
+    json: argv.includes("--json"),
+  }
+}
+
+/** Dispatch a CLI invocation, including project-independent agent and documentation commands. */
 async function main(): Promise<void> {
   const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
   // `nifra mcp` keeps none of the `.env` values Bun loaded at startup. Decided before the
@@ -1266,18 +1296,14 @@ async function main(): Promise<void> {
   // Project-independent and static. `nifra frontend` for the index, `nifra frontend vue "lost reactivity"`
   // to filter by adapter and/or symptom (either arg may be omitted; an adapter is recognized by name).
   if (command === "frontend") {
-    const { renderFrontendResult, parseAdapter } = await import("./frontend-guidance.ts")
-    const first = argv[1]
-    const maybeAdapter = parseAdapter(first)
-    const adapter = maybeAdapter === undefined ? undefined : first
-    const symptom = (maybeAdapter === undefined ? argv.slice(1) : argv.slice(2))
-      .filter((a) => !a.startsWith("-"))
-      .join(" ")
+    const { selectFrontendGuidance, renderFrontendResult, parseAdapter } = await import(
+      "./frontend-guidance.ts"
+    )
+    const input = frontendCommandInput(argv.slice(1), parseAdapter)
     console.log(
-      renderFrontendResult({
-        adapter,
-        symptom: symptom.length > 0 ? symptom : undefined,
-      }),
+      input.json
+        ? JSON.stringify(selectFrontendGuidance(input), null, 2)
+        : renderFrontendResult(input),
     )
     return
   }

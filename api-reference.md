@@ -919,7 +919,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **default** _(const)_ - `default: { port: number; fetch: (request: Request) => Promise<Response>; }`
   Worker/edge + local entry. `export default { fetch }` is the universal server shape: Cloudflare / Vercel edge / Deno deploy use `fetch` (and ignore `port`); `bun run mcp-http.ts` auto-serves it on `port` (PORT env, default 8787) - Bun serves a module's default-exported server, so NO manual `Bun.ser…
 - **docsTools** _(function)_ - `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeEntry[] | undefined>) => McpTool[]`
-  Build `nifra_docs` + `nifra_example` + `nifra_types` over injected corpus loaders.
+  Build the read-only docs, examples, types, learning, and frontend tools over injected loaders.
 - **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool`
   The widget-backed tool. `loadExamples` is injected (disk on the CLI, cached fetch on the edge).
 - **examplesWidget** _(const)_ - `examplesWidget: import("@nifrajs/mcp").McpWidget`

@@ -65,6 +65,7 @@ const GATES: Readonly<Record<string, Gate>> = {
   "check:site": { redPath: "packages/web/test/server-zone-guard.test.ts" },
   "check:corpus": { untested: COMPOSITE },
   "check:public-manifest": { redPath: "scripts/gen-public-product-manifest.test.ts" },
+  "check:security-invariants": { redPath: "scripts/check-security-invariants.test.ts" },
   "check:plugin": { redPath: "scripts/check-plugin-manifest.test.ts" },
   "check:openai-plugin": { redPath: "scripts/check-openai-plugin.test.ts" },
   verify: { redPath: "packages/cli/test/check.test.ts" },

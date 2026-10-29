@@ -65,5 +65,62 @@
       "internal/invariants/test/stored-responses.test.ts",
       "internal/invariants/test/identity-epoch.test.ts"
     ]
+  },
+  "core-capabilities": {
+    "files": [
+      "packages/core/src/capabilities.ts",
+      "packages/core/src/internal/capability-runtime.ts"
+    ],
+    "tests": [
+      "packages/core/test/capabilities.test.ts",
+      "packages/core/test/capability-execution.test-d.ts"
+    ]
+  },
+  "core-idempotency": {
+    "files": [
+      "packages/core/src/idempotency.ts",
+      "packages/core/src/idempotency-plugin.ts",
+      "packages/core/src/server/idempotency-lane.ts"
+    ],
+    "tests": [
+      "packages/core/test/idempotency-gate.test.ts",
+      "packages/core/test/idempotency-replay-auth.test.ts"
+    ]
+  },
+  "core-ledger": {
+    "files": ["packages/core/src/ledger.ts"],
+    "tests": ["packages/core/test/ledger.test.ts"]
+  },
+  "core-durable-execution": {
+    "files": [
+      "packages/core/src/durable-execution.ts",
+      "packages/core/src/durable-approval.ts",
+      "packages/core/src/durable-saga.ts",
+      "packages/core/src/durable-effect.ts"
+    ],
+    "tests": ["packages/core/test/durable-execution.test.ts", "packages/core/test/recovery.test.ts"]
+  },
+  "core-body-boundary": {
+    "files": [
+      "packages/core/src/server/body-parser.ts",
+      "packages/core/src/server/body-lane.ts",
+      "packages/core/src/server/multipart.ts"
+    ],
+    "tests": [
+      "packages/core/test/body-parser.test.ts",
+      "packages/middleware/test/body-limit.test.ts",
+      "packages/core/test/proto-poisoning.test.ts"
+    ]
+  },
+  "web-server-boundary": {
+    "files": [
+      "packages/web/src/internal/server-boundary.ts",
+      "packages/web/src/plugins/vite-leak-guard.ts",
+      "packages/web/src/internal/secret-scan.ts"
+    ],
+    "tests": [
+      "packages/web/test/leak-matrix.test.ts",
+      "packages/web/test/build-server-only-marker.test.ts"
+    ]
   }
 }
