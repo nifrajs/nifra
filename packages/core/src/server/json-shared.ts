@@ -1,7 +1,7 @@
 /**
  * What core's JSON walks share besides the writer: the `Date` hooks the response contract reads, the
- * `__proto__`-safe field setter, and the plain-record tests canonical JSON uses. Apart from
- * `json-text.ts` so the Node adapter's generated copy of that module holds only the writer.
+ * `__proto__`-safe field setter. Apart from `json-text.ts` so the Node adapter's generated copy of that
+ * module holds only the writer.
  */
 
 export const DATE_TO_JSON = Date.prototype.toJSON
@@ -24,15 +24,3 @@ export function define(out: Record<string, unknown>, key: string, value: unknown
     Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
   else out[key] = value
 }
-
-// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the member is optional, so an engine without JSON.rawJSON leaves it undefined.
-export const isRawJson = (JSON as JSON & { readonly isRawJSON?: (value: unknown) => boolean })
-  .isRawJSON
-
-/**
- * Whether `proto` is a plain record's prototype: `Object.prototype`, `null`, or any prototype whose own
- * prototype is null, which admits another realm's plain object. A boxed primitive's or a class's is
- * not. A `JSON.rawJSON` value's is `null` too, so a caller tells one apart first.
- */
-export const isPlainPrototype = (proto: unknown): boolean =>
-  proto === null || proto === Object.prototype || Object.getPrototypeOf(proto) === null

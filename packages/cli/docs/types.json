@@ -18136,6 +18136,13 @@
     "signature": "export declare function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array>;"
   },
   {
+    "name": "bytesToHex",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function bytesToHex(bytes: Uint8Array): string;",
+    "doc": "/** Lowercase hex, two digits per byte. */"
+  },
+  {
     "name": "cache",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -18188,6 +18195,13 @@
     "name": "canonicalJson",
     "kind": "function",
     "package": "@nifrajs/core",
+    "signature": "export declare function canonicalJson(value: unknown): string;",
+    "doc": "/** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */"
+  },
+  {
+    "name": "canonicalJson",
+    "kind": "function",
+    "package": "@nifrajs/utils",
     "signature": "export declare function canonicalJson(value: unknown): string;",
     "doc": "/** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */"
   },
@@ -18684,6 +18698,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function computed<T>(fn: () => T): Computed<T>;",
     "doc": "/**\n * Derived value, cached into a signal and computed on first read. While an effect (or another\n * computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next\n * input change stops it instead of recomputing, so a dropped computed costs nothing; reading it\n * again starts it afresh. `dispose()` stops it at once.\n */"
+  },
+  {
+    "name": "concatBytes",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function concatBytes(chunks: readonly Uint8Array[], total: number): Uint8Array;",
+    "doc": "/** Concatenate chunks into an output array with the supplied total byte length. */"
   },
   {
     "name": "concatSourceMaps",
@@ -20226,6 +20247,13 @@
     "doc": "/** The thrown error core's `unhandled request error` log line describes, rebuilt for a Diagnostic. */"
   },
   {
+    "name": "escapeRegExp",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function escapeRegExp(value: string): string;",
+    "doc": "/** Escape every RegExp metacharacter so `value` matches literally inside a pattern. */"
+  },
+  {
     "name": "etag",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -21239,6 +21267,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function isProcessAlive(pid: number): boolean;",
     "doc": "/** Whether a process with `pid` exists (EPERM means it exists but is not ours). */"
+  },
+  {
+    "name": "isRecord",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function isRecord(value: unknown): value is Record<string, unknown>;",
+    "doc": "/** A non-null, non-array object; its prototype is not restricted. */"
   },
   {
     "name": "isRegistrableMethod",
@@ -24442,8 +24477,15 @@
     "name": "sha256Hex",
     "kind": "function",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare function sha256Hex(bytes: Uint8Array): Promise<string>;",
-    "doc": "/** SHA-256 of `bytes` as lowercase hex. Collision-resistant so a digest cannot be forged from content. */"
+    "signature": "export declare function sha256Hex(input: string | Uint8Array): Promise<string>;",
+    "doc": "/** SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. */"
+  },
+  {
+    "name": "sha256Hex",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function sha256Hex(input: string | Uint8Array): Promise<string>;",
+    "doc": "/** SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. */"
   },
   {
     "name": "sha256HexOf",

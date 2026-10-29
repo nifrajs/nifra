@@ -197,7 +197,8 @@ async function importKey(
     ])
   }
   if (!validateJwkForAlg(key, alg, kid)) throw jwtError("JWK is not usable for this token")
-  const importJwk = crypto.subtle.importKey as unknown as (
+  const unknownImportKey: unknown = crypto.subtle.importKey
+  const importJwk = unknownImportKey as (
     format: "jwk",
     keyData: JwkKey,
     algorithm: unknown,
@@ -280,8 +281,8 @@ export async function verifyJwt<C extends JwtClaims = JwtClaims>(
   if (headerRaw.crit !== undefined) throw jwtError("crit headers are not supported")
   if (!isObject(claimsRaw)) throw jwtError("invalid claims")
 
-  const header = headerRaw as unknown as JwtHeader
-  const claims = claimsRaw as unknown as C
+  const header = headerRaw as JwtHeader
+  const claims = claimsRaw as C
   const alg = verifyAlgorithm(header.alg, allowed)
 
   const resolved =

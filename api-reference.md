@@ -1458,8 +1458,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Parse a declarative run plan. Rejects closures, unknown keys, and structural errors.
 - **runTrace** _(function)_ - `runTrace: (source: RunPlan | unknown, options: RunTraceOptions) => Promise<RunTraceResult>`
   Run a plan and return its content-free evidence stream plus a deterministic terminal digest.
-- **sha256Hex** _(function)_ - `sha256Hex: (bytes: Uint8Array) => Promise<string>`
-  SHA-256 of `bytes` as lowercase hex. Collision-resistant so a digest cannot be forged from content.
+- **sha256Hex** _(function)_ - `sha256Hex: (input: string | Uint8Array) => Promise<string>`
+  SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex.
 - **sha256HexOf** _(function)_ - `sha256HexOf: (text: string) => Promise<string>`
   SHA-256 hex of a UTF-8 string.
 - **stepVersion** _(function)_ - `stepVersion: (step: CatalogStep) => number`
@@ -5223,6 +5223,50 @@ _No named exports (side-effect entrypoint)._
   Validate uploaded bytes/Blob: size cap + magic-byte type sniff against an optional allow-list.
 - **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>`
   Verify a URL produced by {@link signDownloadUrl}: signature (constant-time) + not expired.
+
+## @nifrajs/utils
+
+### `@nifrajs/utils`
+
+- **bytesToHex** _(function)_ - `bytesToHex: (bytes: Uint8Array) => string`
+  Lowercase hex, two digits per byte.
+- **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string`
+  The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry.
+- **concatBytes** _(function)_ - `concatBytes: (chunks: readonly Uint8Array[], total: number) => Uint8Array`
+  Concatenate chunks into an output array with the supplied total byte length.
+- **escapeRegExp** _(function)_ - `escapeRegExp: (value: string) => string`
+  Escape every RegExp metacharacter so `value` matches literally inside a pattern.
+- **isRecord** _(function)_ - `isRecord: (value: unknown) => value is Record<string, unknown>`
+  A non-null, non-array object; its prototype is not restricted.
+- **sha256Hex** _(function)_ - `sha256Hex: (input: string | Uint8Array) => Promise<string>`
+  SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex.
+
+### `@nifrajs/utils/bytes`
+
+- **concatBytes** _(function)_ - `concatBytes: (chunks: readonly Uint8Array[], total: number) => Uint8Array`
+  Concatenate chunks into an output array with the supplied total byte length.
+
+### `@nifrajs/utils/canonical-json`
+
+- **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string`
+  The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry.
+
+### `@nifrajs/utils/escape-regexp`
+
+- **escapeRegExp** _(function)_ - `escapeRegExp: (value: string) => string`
+  Escape every RegExp metacharacter so `value` matches literally inside a pattern.
+
+### `@nifrajs/utils/hash`
+
+- **bytesToHex** _(function)_ - `bytesToHex: (bytes: Uint8Array) => string`
+  Lowercase hex, two digits per byte.
+- **sha256Hex** _(function)_ - `sha256Hex: (input: string | Uint8Array) => Promise<string>`
+  SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex.
+
+### `@nifrajs/utils/record`
+
+- **isRecord** _(function)_ - `isRecord: (value: unknown) => value is Record<string, unknown>`
+  A non-null, non-array object; its prototype is not restricted.
 
 ## @nifrajs/web
 

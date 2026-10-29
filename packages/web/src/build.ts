@@ -550,7 +550,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     }
   })()
   const cwd = process.cwd()
-  const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
+  const clientMeta = (result as { metafile?: BunMetafile }).metafile
   if (!result.success) {
     // A refused file can be what broke the build (a backend module importing a server-only built-in),
     // so the refusal is the error to show, not the bundler's symptom.
@@ -1250,7 +1250,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     ),
   )
   const serverGraph = withEmittedImports(
-    fromBunMetafile((result as unknown as { metafile?: BunMetafile }).metafile),
+    fromBunMetafile((result as { metafile?: BunMetafile }).metafile),
     emitted,
   )
   const appRoot = resolvePath(options.root ?? dirname(routesDir))

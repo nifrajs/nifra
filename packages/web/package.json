@@ -397,6 +397,7 @@
   "dependencies": {
     "@nifrajs/core": "workspace:*",
     "@nifrajs/island-trigger": "workspace:*",
+    "@nifrajs/utils": "workspace:*",
     "parse5": "8.0.1"
   },
   "peerDependencies": {

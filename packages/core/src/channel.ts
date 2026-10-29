@@ -246,7 +246,7 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
       subscription.seed(replay)
       members.add(subscription)
       subscription.attachSignal(subscriptionOptions.signal)
-      return subscription as unknown as ChannelSubscription<Message>
+      return subscription as ChannelSubscription<Message>
     },
     publish<Name extends string, Message>(
       channel: ChannelContract<Name, Message>,
@@ -265,12 +265,12 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
       }
       if (historySize > 0) {
         const channelHistory = history.get(channel.name) ?? []
-        channelHistory.push(event as unknown as ChannelEvent<unknown>)
+        channelHistory.push(event as ChannelEvent<unknown>)
         if (channelHistory.length > historySize) channelHistory.shift()
         history.set(channel.name, channelHistory)
       }
       for (const subscriber of subscribers.get(channel.name) ?? []) {
-        subscriber.push(event as unknown as ChannelEvent<unknown>)
+        subscriber.push(event as ChannelEvent<unknown>)
       }
       return event
     },

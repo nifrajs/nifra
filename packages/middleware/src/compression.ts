@@ -157,7 +157,7 @@ async function compressRawBody(
   body: ReadableStream<Uint8Array>,
   threshold: number,
 ): Promise<Response> {
-  const reader = body.getReader() as unknown as RawReader
+  const reader = body.getReader() as RawReader
   const buffered: Uint8Array[] = []
   let total = 0
   try {

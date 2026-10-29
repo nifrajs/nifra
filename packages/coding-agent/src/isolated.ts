@@ -162,7 +162,7 @@ export class IsolatedExtensionWorker {
         abort.abort()
         rejectResult(new Error(`isolated extension: tool ${name} timed out`))
       }, this.options.timeoutMs)
-      ;(timer as unknown as { unref?: () => void }).unref?.()
+      ;(timer as { unref?: () => void }).unref?.()
       this.pending.set(id, { resolve: resolveResult, reject: rejectResult, timer, abort })
     })
     void this.sendInvoke(id, name, input, abort.signal).catch((error: unknown) => {

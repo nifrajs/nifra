@@ -105,7 +105,8 @@ export function notFound<Env = unknown>(handler: NotFoundHandler<Env>): Identity
     })
   }
   const apply = <S extends AnyServer>(app: S): S => {
-    const host = app as unknown as NotFoundInstallable
+    const hostInput: unknown = app
+    const host = hostInput as NotFoundInstallable
     if (host.notFoundLane !== undefined) {
       throw new TypeError("notFound() is already applied to this server")
     }

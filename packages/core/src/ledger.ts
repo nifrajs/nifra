@@ -401,15 +401,16 @@ export async function computeEffectDigest(
         `effect ledger: digest key must be at least ${MIN_DIGEST_KEY_BYTES} bytes`,
       )
     }
+    const rawKey: unknown = key
     cryptoKey = await crypto.subtle.importKey(
       "raw",
-      key as unknown as ArrayBuffer,
+      rawKey as ArrayBuffer,
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign"],
     )
   } else {
-    const algorithm = key.algorithm as unknown as {
+    const algorithm = key.algorithm as {
       readonly name?: unknown
       readonly hash?: { readonly name?: unknown }
       readonly length?: unknown
@@ -427,9 +428,8 @@ export async function computeEffectDigest(
     }
     cryptoKey = key
   }
-  const mac = new Uint8Array(
-    await crypto.subtle.sign("HMAC", cryptoKey, payload as unknown as ArrayBuffer),
-  )
+  const rawPayload: unknown = payload
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, rawPayload as ArrayBuffer))
   return bytesToHex(mac)
 }
 
@@ -437,7 +437,7 @@ const EFFECT_LEDGER = Symbol("nifra.effect.ledger")
 
 /** Framework wiring: attach a per-request ledger to a handler context. Not for application code. */
 export function attachEffectLedger(context: object, ledger: RequestLedger): void {
-  ;(context as Record<PropertyKey, unknown>)[EFFECT_LEDGER as unknown as string] = ledger
+  ;(context as typeof context & { [EFFECT_LEDGER]?: unknown })[EFFECT_LEDGER] = ledger
 }
 
 /** The request's effect ledger, when the server enabled one for this route. Read-only access. */

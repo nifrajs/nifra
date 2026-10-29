@@ -402,7 +402,7 @@ export function authed<A extends BetterAuthLike, const RequireTenant extends boo
         if (mapped.kind === "forbidden") return rejected("forbidden")
         return authenticated(mapped.principal)
       },
-    }) as unknown as WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>>
+    }) as WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>>
   return withRouteAssurance(plugin, {
     id: NIFRA_ASSURANCE.AUTHENTICATED,
     source: "better-auth",

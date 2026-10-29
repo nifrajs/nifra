@@ -292,6 +292,8 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           : entry.dataTick,
       refresh: () => invalidateEntry(entry),
     }
+    // Assigned just below, once the closures over `entry` exist.
+    const unset: unknown = undefined
     const entry: Entry = {
       key,
       fn,
@@ -309,9 +311,9 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       subscribers: 0,
       gcAt: undefined,
       listeners: new Set(),
-      setState: undefined as unknown as Entry["setState"],
-      run: undefined as unknown as Entry["run"],
-      handle: undefined as unknown as QueryHandle,
+      setState: unset as Entry["setState"],
+      run: unset as Entry["run"],
+      handle: unset as Entry["handle"],
     }
     const emit = (): void => {
       // Iterate the live set - no per-emit copy (the common case is 0-1 subscribers). Contract: a

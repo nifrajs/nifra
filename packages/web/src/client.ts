@@ -26,7 +26,7 @@ import { type ClientRouter, redirectOf } from "./router.ts"
 /** Read the nonce carried by the current server-rendered document, if any. */
 export function currentDocumentNonce(): string | undefined {
   if (typeof document === "undefined") return undefined
-  const documentLike = document as unknown as {
+  const documentLike = document as {
     querySelector?: (selector: string) => Element | null
   }
   const script = documentLike.querySelector?.("script[nonce]")

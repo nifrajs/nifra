@@ -10,6 +10,8 @@
 import type { TrustedHtml } from "@nifrajs/web"
 import { defineComponent, h } from "vue"
 
+const stringConstructor: unknown = String
+
 /** Render trusted HTML into a wrapper element. `inheritAttrs: false` + manual attr spread so passthrough
  * (`class`, `id`, `style`, …) lands on the wrapper exactly once. */
 export const Content = defineComponent({
@@ -17,7 +19,7 @@ export const Content = defineComponent({
   inheritAttrs: false,
   props: {
     /** Trusted, pre-rendered HTML (e.g. `entry.html`). */
-    html: { type: String as unknown as () => TrustedHtml, required: true },
+    html: { type: stringConstructor as () => TrustedHtml, required: true },
     /** Wrapper element (default `"div"`). */
     as: { type: String, default: "div" },
   },

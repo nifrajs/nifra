@@ -121,7 +121,7 @@ type DeferredResponder = (body: string, status: number, headers: Record<string, 
 let deferredResponder: DeferredResponder | undefined
 function deferredResponderFor(): DeferredResponder | undefined {
   if (deferredResponder === undefined) {
-    deferredResponder = (globalThis as unknown as Record<symbol, DeferredResponder | undefined>)[
+    deferredResponder = (globalThis as Record<symbol, DeferredResponder | undefined>)[
       DEFERRED_RESPONDER_KEY
     ]
   }

@@ -76,6 +76,6 @@ export function refresh(
   // `$$refresh`'s published signature is a discriminated tuple over every bundler mode it supports, so
   // the "esm" arm cannot be selected by a cast on the hot object alone. The mode string and the shape
   // above are what pin it; the call itself is what has to be re-typed.
-  const esmRefresh = $$refresh as unknown as (mode: "esm", hot: SolidHot, registry: unknown) => void
+  const esmRefresh = $$refresh as (mode: "esm", hot: SolidHot, registry: unknown) => void
   esmRefresh("esm", hot, registry)
 }

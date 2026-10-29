@@ -59,7 +59,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/utils": "workspace:*"
   },
   "repository": {
     "type": "git",

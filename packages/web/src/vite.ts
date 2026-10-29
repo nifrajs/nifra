@@ -265,7 +265,7 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
     headers,
   }
   if (body !== undefined) init.body = body
-  return new Request(url, init as unknown as ConstructorParameters<typeof Request>[1])
+  return new Request(url, init as ConstructorParameters<typeof Request>[1])
 }
 
 /**

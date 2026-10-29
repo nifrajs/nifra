@@ -28,13 +28,14 @@ export type InferOutput<S extends StandardSchemaV1> = NonNullable<S["~standard"]
 export function envSchema<Output>(
   validate: (raw: string | undefined) => StandardResult<Output>,
 ): StandardSchemaV1<Output> {
+  const phantomTypes: unknown = undefined
   return {
     "~standard": {
       version: 1,
       vendor: "nifra-env",
       validate: (value) => validate(value as string | undefined),
       // Phantom: carries the output type for InferOutput; no runtime value.
-      types: undefined as unknown as { readonly output: Output },
+      types: phantomTypes as { readonly output: Output },
     },
   }
 }

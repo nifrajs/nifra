@@ -28,6 +28,7 @@ import {
   toRunStudioView,
   virtualizeEvidenceRows,
 } from "@nifrajs/agent-app"
+import { isRecord } from "@nifrajs/utils/record"
 
 const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
 const endpoint = params.get("rpc") ?? ""
@@ -662,10 +663,6 @@ async function uiGraph(method: "ui.preview" | "ui.reload"): Promise<void> {
   const outcome = await client.command<Record<string, unknown>>(method, { manifests: [] })
   addTimeline(outcome.ok ? `${method} · ok` : `${method} · error ${outcome.status}`)
   if (outcome.ok) await refreshUi()
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 ui.composer.addEventListener("submit", (event) => {

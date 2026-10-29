@@ -1161,7 +1161,7 @@ export function withISR(
     )
     return res
   }
-  if ((app as unknown as Record<symbol, unknown>)[DOCUMENT_POLICY] === "nonce") {
+  if ((app as ISRApp & { [DOCUMENT_POLICY]?: unknown })[DOCUMENT_POLICY] === "nonce") {
     console.warn(
       "[nifra/web] withISR wraps an app whose every document carries a CSP nonce. Such documents are " +
         "`private, no-store`, so this cache will never store a page. Use " +

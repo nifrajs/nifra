@@ -17,11 +17,14 @@ const FORBIDDEN = [
 const IMPORT_RE = /\b(?:from|import|require)\s*(?:\(\s*)?["']([^"']+)["']/g
 
 /**
- * The Agent App SDK is the presentation-safe public seam: it may depend on the protocol contract
- * and nothing else. A backend, provider, storage, model, or UI-framework edge here would let payload
- * content or a private engine cross into browser-facing code, so any such specifier fails the gate.
+ * The Agent App SDK is the presentation-safe public seam: it may depend on the protocol contract and
+ * the shared record predicate. A backend, provider, storage, model, or UI-framework edge here would
+ * let payload content or a private engine cross into browser-facing code, so any other specifier
+ * fails the gate.
  */
 const AGENT_APP_ALLOWED_INTERNAL = new Set(["@nifrajs/agent-protocol"])
+const AGENT_APP_ALLOWED_IMPORTS = new Set(["@nifrajs/utils/record"])
+const AGENT_APP_ALLOWED_DEPENDENCIES = new Set(["@nifrajs/utils"])
 const AGENT_APP_FORBIDDEN_BARE = [
   "react",
   "react-dom",
@@ -33,11 +36,17 @@ const AGENT_APP_FORBIDDEN_BARE = [
 ] as const
 
 function isAgentAppForbidden(specifier: string): boolean {
-  if (specifier.startsWith("@nifrajs/"))
-    return !AGENT_APP_ALLOWED_INTERNAL.has(specifier.split("/").slice(0, 2).join("/"))
+  if (specifier.startsWith("@nifrajs/")) {
+    const packageName = specifier.split("/").slice(0, 2).join("/")
+    return !AGENT_APP_ALLOWED_INTERNAL.has(packageName) && !AGENT_APP_ALLOWED_IMPORTS.has(specifier)
+  }
   return AGENT_APP_FORBIDDEN_BARE.some(
     (name) => specifier === name || specifier.startsWith(`${name}/`),
   )
+}
+
+function isAgentAppDependencyForbidden(specifier: string): boolean {
+  return !AGENT_APP_ALLOWED_DEPENDENCIES.has(specifier) && isAgentAppForbidden(specifier)
 }
 
 /**
@@ -102,7 +111,9 @@ async function findAgentAppFailures(root: string): Promise<readonly string[]> {
     const source = await Bun.file(path).text()
     for (const match of source.matchAll(IMPORT_RE)) {
       if (isAgentAppForbidden(match[1]!))
-        failures.push(`${path}: agent-app may only import @nifrajs/agent-protocol, saw ${match[1]}`)
+        failures.push(
+          `${path}: agent-app may only import @nifrajs/agent-protocol or @nifrajs/utils/record, saw ${match[1]}`,
+        )
     }
   }
   const manifestPath = join(packageRoot, "package.json")
@@ -113,7 +124,7 @@ async function findAgentAppFailures(root: string): Promise<readonly string[]> {
       if (dependencies === null || typeof dependencies !== "object" || Array.isArray(dependencies))
         continue
       for (const dependency of Object.keys(dependencies))
-        if (isAgentAppForbidden(dependency))
+        if (isAgentAppDependencyForbidden(dependency))
           failures.push(`${manifestPath}: agent-app declares forbidden dependency ${dependency}`)
     }
   }

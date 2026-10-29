@@ -119,7 +119,7 @@ export function createWebSocketHub<Env = unknown>(
           : { maxPayloadBytes: outcome.maxPayloadBytes }),
       })
       // `webSocket` is a Workers-only `ResponseInit` field, and 101 is only valid on Workers.
-      return new Response(null, { status: 101, webSocket: pair[0] } as unknown as ResponseInit)
+      return new Response(null, { status: 101, webSocket: pair[0] } as ResponseInit)
     }
   }
 }

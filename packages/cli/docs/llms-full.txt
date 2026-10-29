@@ -20023,6 +20023,16 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
 
+## @nifrajs/utils
+
+Runtime-neutral utility functions shared by Nifra packages. The package has no runtime dependencies.
+
+```ts
+import { isRecord, sha256Hex } from "@nifrajs/utils"
+```
+
+See the [package LLM guide](./LLM.md) and the [full repository LLM context](../../llms-full.txt).
+
 ## @nifrajs/web
 
 Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
@@ -20687,6 +20697,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/uploads
 
 `ImagePixelLimitError`, `ImageReencoder`, `SignDownloadUrlOptions`, `StripImageMetadataOptions`, `UploadResult`, `ValidateUploadOptions`, `signDownloadUrl`, `stripImageMetadata`, `validateUpload`, `verifyDownloadUrl`
+
+## @nifrajs/utils
+
+`bytesToHex`, `canonicalJson`, `concatBytes`, `escapeRegExp`, `isRecord`, `sha256Hex`
 
 ## @nifrajs/web
 

@@ -8,6 +8,8 @@
  * modules into one chunk per locale, so a page downloads its own locale's copy and not every other
  * one; the server keeps every locale. Tables read the same either way.
  */
+
+import { isRecord } from "@nifrajs/utils/record"
 import { formatMessage } from "./format.ts"
 import type { Locales } from "./locales.ts"
 
@@ -149,8 +151,6 @@ const realm = (): CopyRealm => {
   return created
 }
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
 // Another copy of this module in the realm may be an older one, with a different shape: then this one
 // keeps its own.
 const isRealm = (value: unknown): value is CopyRealm =>

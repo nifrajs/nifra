@@ -56,6 +56,7 @@
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path"
+import { escapeRegExp } from "@nifrajs/utils/escape-regexp"
 import type { BunPlugin } from "bun"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { isRecord } from "./internal/record.ts"
@@ -507,8 +508,6 @@ export function planSingleCopy(options: SingleCopyOptions = {}): SingleCopyPlan 
   skipped.sort((a, b) => codeUnitOrder(a.from, b.from))
   return { root, declared, redirects, skipped }
 }
-
-const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /**
  * The module a foreign file should become: the same relative file inside the winning copy.

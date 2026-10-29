@@ -39,7 +39,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@nifrajs/agent-protocol": "workspace:*"
+    "@nifrajs/agent-protocol": "workspace:*",
+    "@nifrajs/utils": "workspace:*"
   },
   "repository": {
     "type": "git",

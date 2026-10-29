@@ -1786,12 +1786,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     HookOutput | StatusResponseOf<Awaited<ReturnType<H>>>
   > {
     this.assertConfigurable("derive()")
-    this.derives.push(fn as unknown as RawDerive)
+    this.derives.push(fn as H & RawDerive)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "derive")
       tagHook(fn, "derive", this)
     }
-    return this as unknown as Server<
+    return this as Server<
       R,
       Ctx & ContextExtensionOf<ReturnType<H>>,
       HookOutput | StatusResponseOf<Awaited<ReturnType<H>>>
@@ -1832,12 +1832,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (stage.mode !== undefined && stage.mode !== "sync" && stage.mode !== "async") {
       throw new TypeError('authenticate() stage mode must be "sync" or "async"')
     }
-    this.authStages.push(stage as unknown as RawAuthStage)
+    this.authStages.push(stage as RawAuthStage)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "authenticate")
       tagHook(stage, "authenticate", this)
     }
-    return this as unknown as Server<R, Ctx & { readonly principal: Principal }, HookOutput>
+    return this as Server<R, Ctx & { readonly principal: Principal }, HookOutput>
   }
 
   decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>, HookOutput> {
@@ -1845,7 +1845,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.decorations[key] = value
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "decorate")
-    return this as unknown as Server<R, Ctx & Record<K, V>, HookOutput>
+    return this as Server<R, Ctx & Record<K, V>, HookOutput>
   }
 
   /**
@@ -1880,12 +1880,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (!LAST_BEFORE_HANDLE.has(fn)) {
       while (at > 0 && LAST_BEFORE_HANDLE.has(hooks[at - 1]!)) at--
     }
-    hooks.splice(at, 0, fn as unknown as RawBeforeHandle)
+    hooks.splice(at, 0, fn as H & RawBeforeHandle)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "beforeHandle")
       tagHook(fn, "beforeHandle", this)
     }
-    return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
+    return this as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
   /**
@@ -1900,12 +1900,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     H extends (context: Context & Ctx, next: () => MaybePromise<unknown>) => MaybePromise<unknown>,
   >(fn: H): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("around()")
-    this.aroundHooks.push(fn as unknown as RawAround)
+    this.aroundHooks.push(fn as H & RawAround)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "around")
       tagHook(fn, "around", this)
     }
-    return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
+    return this as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
   /**
@@ -1951,12 +1951,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     fn: H,
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("afterHandle()")
-    this.afterHandleHooks.push(fn as unknown as RawAfterHandle)
+    this.afterHandleHooks.push(fn as H & RawAfterHandle)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size, "afterHandle")
       tagHook(fn, "afterHandle", this)
     }
-    return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
+    return this as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
   /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500, or 503
@@ -1967,12 +1967,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     fn: H,
   ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("onError()")
-    this.onErrorHooks.push(fn as unknown as RawErrorHandler)
+    this.onErrorHooks.push(fn as H & RawErrorHandler)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       recordScopedHook(this, this.catalog.size + this.wsRoutes.length, "onError")
       tagHook(fn, "onError", this)
     }
-    return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
+    return this as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
   /** Transform every outgoing response - success, error, 404, 405, short-circuit. Global. */
@@ -2025,9 +2025,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * hook owns part of the header state - into a hook that runs in the right order. */
   private addStaticResponseHeaders(record: Record<string, string>): this {
     if (this.onResponseHooks.length > 0) {
-      const observerHeaders = (
-        this as unknown as Pick<ResponseObserverMethods, "onResponseHeaders">
-      ).onResponseHeaders
+      const observerHeaders = (this as this & Pick<ResponseObserverMethods, "onResponseHeaders">)
+        .onResponseHeaders
       if (observerHeaders !== undefined) {
         observerHeaders.call(this, (headers) => {
           for (const name of Object.keys(record)) {
@@ -2073,7 +2072,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   private responseObserverMethods(): ResponseObserverMethods {
-    const methods = this as unknown as Partial<ResponseObserverMethods>
+    const methods = this as Partial<ResponseObserverMethods>
     if (
       typeof methods.onResponseHeaders !== "function" ||
       typeof methods.onResponseBody !== "function" ||
@@ -2206,7 +2205,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     this.globalAssurance.push(...evidence.filter((item) => item.scope === "global"))
     this.activeAssurance.push(...evidence.filter((item) => item.scope === "subsequent"))
-    const responseObserver = (arg as unknown as Record<symbol, unknown>)[INSTALL_RESPONSE_OBSERVER]
+    const responseObserver = (arg as Record<symbol, unknown>)[INSTALL_RESPONSE_OBSERVER]
     if (responseObserver !== undefined) {
       if (
         typeof responseObserver !== "object" ||
@@ -2224,7 +2223,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         tagHook(arg.onRequest, "onRequest", this)
       this.onNodeRequestHooks.push(arg.onNodeRequest)
       if (arg.onNodeRequest === undefined) this.nodeRequestHooksComplete = false
-      if (!(arg as unknown as Record<symbol, unknown>)[BUN_NATIVE_REQUEST_SAFE]) {
+      if (!(arg as Record<symbol, unknown>)[BUN_NATIVE_REQUEST_SAFE]) {
         this.bunNativeRequestHooksSafe = false
       }
     } else if (arg.onNodeRequest !== undefined) {
@@ -2335,7 +2334,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       schema.body ? "POST" : "GET",
       path,
       schema,
-      handler as unknown as ErasedHandler,
+      handler as ErasedHandler,
     ) as Server<
       AddRoute<R, SseMethodOf<S>, Path, RouteInfoFor<Path, S, Response, HookOutput>>,
       Ctx,
@@ -2511,7 +2510,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (lastRoute) {
       ;(lastRoute as { tool?: RouteDescriptor["tool"] }).tool = plan.descriptor
     }
-    return this as unknown as Server<Registry, Ctx, HookOutput>
+    return this as Server<Registry, Ctx, HookOutput>
   }
 
   /**
@@ -2656,7 +2655,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.register(method, path, schema, rawHandler)
     // The accumulated registry type is compile-time only; the same instance
     // carries every route, so the public methods re-type `this` per call.
-    return this as unknown as Server<Registry, Ctx, HookOutput>
+    return this as Server<Registry, Ctx, HookOutput>
   }
 
   /**
@@ -2802,7 +2801,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // body-only runner also feeds the Web wrapper; the lifecycle lanes build their own Web closure.
     const fusedBodyRunner = fusedBody
       ? this.buildFusedBodyRunner(
-          handler as unknown as InternalHandler,
+          handler as InternalHandler,
           schema?.body as StandardSchemaV1,
           hasDecorations ? routeDecorations : undefined,
           bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -2818,14 +2817,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const fusedWeb =
       bare && this.aroundHooks.length === 0
         ? this.buildFusedWeb(
-            handler as unknown as InternalHandler,
+            handler as InternalHandler,
             hasDecorations ? routeDecorations : undefined,
             isContextlessNoArgArrow(handler),
             bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
         : fusedQuery
           ? this.buildFusedQueryWeb(
-              handler as unknown as InternalHandler,
+              handler as InternalHandler,
               hasDecorations ? routeDecorations : undefined,
               schema?.query as StandardSchemaV1,
               bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -2842,7 +2841,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               : undefined
     const program = compileRouteProgram({
       schema,
-      handler: handler as unknown as InternalHandler,
+      handler: handler as InternalHandler,
       derives: this.derives,
       authStages: compiled.authStages,
       beforeHandle,
@@ -2866,7 +2865,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       fusedLane: lanes.fusedLane,
     })
     const registeredEntry: RouteEntry = {
-      handler: handler as unknown as InternalHandler,
+      handler: handler as InternalHandler,
       schema,
       bodyLimit,
       idempotent,
@@ -3097,7 +3096,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         "merge() inside a group cannot prefix compiled routes - merge on the parent",
       )
     }
-    const source = other as unknown as Server<Registry, EmptyContext>
+    const source = other as Server<Registry, EmptyContext>
     if (source.wsRoutes.length > 0 || source.fetchMounts.length > 0) {
       throw new RouteConfigError(
         "INVALID_PATH",
@@ -3115,7 +3114,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.adopt(source, undefined, 0)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       noteMergedRoutes(this, source.catalog.size)
-    return this as unknown as Server<R & R2, Ctx, HookOutput>
+    return this as Server<R & R2, Ctx, HookOutput>
   }
 
   /**
@@ -3168,8 +3167,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     scope.routePrefix = fullPrefix
     scope.inheritedStatics = { ...this.inheritedStatics, ...this.staticResponseHeaders?.record }
     for (const key of GROUP_CHAIN) (scope[key] as unknown[]).push(...this[key])
-    for (const key of SERVER_RUNTIMES)
-      (scope as unknown as Record<string, unknown>)[key] = this[key]
+    const dynamicScope: unknown = scope
+    const mutableScope = dynamicScope as Record<string, unknown>
+    for (const key of SERVER_RUNTIMES) mutableScope[key] = this[key]
     Object.assign(scope.decorations, this.decorations)
     // A plugin already applied here is already in effect for the group (its chain was copied above
     // and its request hooks are app-wide), so re-applying it would run it twice per request. The
@@ -3209,7 +3209,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       sealHookAudit(scope, scope.catalog.size, scope.wsRoutes.length, this.logger)
     this.adopt(scope, fullPrefix, this.globalAssurance.length)
-    return this as unknown as Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput>
+    return this as Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput>
   }
 
   /**
@@ -3253,7 +3253,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // runtime object supplies the generic execution machinery. If the parent already has a runtime,
     // either implementation can execute every resolved entry because route-specific options were
     // pinned during registration.
-    const runtimes = this as unknown as Record<string, unknown>
+    const runtimes = this as Record<string, unknown>
     for (const key of SERVER_RUNTIMES) runtimes[key] ??= source[key]
     // Which requests a scoped hook sees: under the prefix for a group; for a merged server with
     // routes, a snapshot of exactly the routes MERGED (not whatever its own catalog grows into later).
@@ -3626,7 +3626,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const mount =
       this.firstMountUnder(parts.pathname, true) ?? this.firstMountUnder(parts.pathname, false)
     if (mount === undefined || mount.fallbackOn404 || mount.authStages.length > 0) return undefined
-    const candidate = (mount.handler as unknown as Record<symbol, unknown>)[NODE_NATIVE_MOUNT]
+    const candidate = (mount.handler as typeof mount.handler & { [NODE_NATIVE_MOUNT]?: unknown })[
+      NODE_NATIVE_MOUNT
+    ]
     return typeof candidate === "function"
       ? {
           handler: candidate as NativeMountHandler,
@@ -4479,7 +4481,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * cached wrapper.
    */
   private nodeRequestContextOf(source: RequestSource): NodeRequestContext {
-    if (source.header !== undefined) return source as unknown as NodeRequestContext
+    if (source.header !== undefined) return source as NodeRequestContext
     let context = this.nodeContexts.get(source as object)
     if (context === undefined) {
       const request = requestOf(source)
@@ -4905,7 +4907,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): MaybePromise<T> {
     let result: unknown
     try {
-      result = (entry.handler as unknown as ContextlessHandler)()
+      result = (entry.handler as ContextlessHandler)()
     } catch (err) {
       return this.contextlessBareError(
         err,
@@ -5047,7 +5049,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (contextless && decorations === undefined) {
       // `() => ...` can't observe the context - skip allocating one entirely (errors still build
       // one for the structured log, exactly like runContextlessBare).
-      const contextlessHandler = handler as unknown as ContextlessHandler
+      const contextlessHandler = handler as ContextlessHandler
       const fail = (
         err: unknown,
         source: RequestSource,
@@ -6615,7 +6617,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (result.issues !== undefined) {
       const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
       if (hook) {
-        const recovery = hook(result.issues, ctx as unknown as Context, "body")
+        const recovery = hook(result.issues, ctx as RawContext & Context, "body")
         if (recovery instanceof Promise) {
           return recovery.then((rec) =>
             this.handleValidationErrorRecovery(
@@ -6693,7 +6695,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (result.issues !== undefined) {
       const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
       if (hook) {
-        const recovery = hook(result.issues, ctx as unknown as Context, "query")
+        const recovery = hook(result.issues, ctx as RawContext & Context, "query")
         if (recovery instanceof Promise) {
           return recovery.then((rec) =>
             this.handleValidationErrorRecovery(
@@ -7085,9 +7087,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
     if (hook === undefined) return plainValidationError(result.issues)
     const assign = (value: unknown): void => {
-      ;(ctx as unknown as Record<ProgramValidationKind, unknown>)[kind] = value
+      ;(ctx as Record<ProgramValidationKind, unknown>)[kind] = value
     }
-    const attempted = hook(result.issues, ctx as unknown as Context, kind)
+    const attempted = hook(result.issues, ctx as RawContext & Context, kind)
     if (attempted instanceof Promise) {
       return attempted.then((recovery) =>
         this.finishLifecycleValidationRecovery(entry, kind, result.issues!, recovery, assign),
@@ -7559,7 +7561,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Bun names the socket peer of a request when its server is asked. A request served from the
     // native table carries this one platform, which asks only when a handler reads `c.clientIp`.
     const socketPeer = (request: RequestSource): string | undefined =>
-      (running as unknown as BunPeerServer).requestIP(request as Request)?.address
+      (running as typeof running & BunPeerServer).requestIP(request as Request)?.address
     // A `clientIp` trust declaration resolves here too, from the request's headers, when a handler reads
     // the address; only a declaration of zero hops names the socket peer.
     const trust = this.clientIpTrust
@@ -7608,37 +7610,39 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     const sockets = new Set<{ close(code?: number): void }>()
     this.bunSockets = sockets
-    const running = (wsHandlers === undefined
-      ? Bun.serve({
-          ...listening,
-          ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-          fetch: before(fallback),
-        })
-      : Bun.serve<BunWsData>({
-          ...listening,
-          ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-          fetch: before((req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout)),
-          // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
-          // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
-          // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.
-          websocket: {
-            // Cap inbound frames so a huge message can't be buffered/JSON-parsed into memory; the runtime
-            // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes). One
-            // limit per listener: the largest cap among this app and the apps mounted on it.
-            maxPayloadLength: wsHandlers.maxPayloadLength,
-            open: (ws) => {
-              sockets.add(ws)
-              wsHandlers.open(ws)
-              // An upgrade accepted while `stop()` drains gets the close the earlier sockets got.
-              if (this.bunServer !== running) ws.close(1001)
+    const running = (
+      wsHandlers === undefined
+        ? Bun.serve({
+            ...listening,
+            ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
+            fetch: before(fallback),
+          })
+        : Bun.serve<BunWsData>({
+            ...listening,
+            ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
+            fetch: before((req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout)),
+            // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
+            // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
+            // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.
+            websocket: {
+              // Cap inbound frames so a huge message can't be buffered/JSON-parsed into memory; the runtime
+              // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes). One
+              // limit per listener: the largest cap among this app and the apps mounted on it.
+              maxPayloadLength: wsHandlers.maxPayloadLength,
+              open: (ws) => {
+                sockets.add(ws)
+                wsHandlers.open(ws)
+                // An upgrade accepted while `stop()` drains gets the close the earlier sockets got.
+                if (this.bunServer !== running) ws.close(1001)
+              },
+              message: (ws, message) => wsHandlers.message(ws, message),
+              close: (ws, code, reason) => {
+                sockets.delete(ws)
+                wsHandlers.close(ws, code, reason)
+              },
             },
-            message: (ws, message) => wsHandlers.message(ws, message),
-            close: (ws, code, reason) => {
-              sockets.delete(ws)
-              wsHandlers.close(ws, code, reason)
-            },
-          },
-        })) as unknown as RunningServer
+          })
+    ) as RunningServer
     this.bunServer = running
     // Bind `app.publish` to Bun's native broadcast now that the server handle exists. Guarded on the
     // method's presence so a runtime whose handle lacks it simply keeps the registry path. Cleared
@@ -7733,5 +7737,5 @@ export function server<Env = unknown>(
   // `Env` is a phantom type-level marker: the runtime `env` arrives via `app.fetch(req, { env })` at
   // request time, not stored on the builder - so seed the context type with a cast (as `derive`/
   // `decorate` do for their `Ctx` extensions).
-  return new Server(options) as unknown as Server<EmptyRegistry, { readonly env: Env }>
+  return new Server(options) as Server<EmptyRegistry, { readonly env: Env }>
 }

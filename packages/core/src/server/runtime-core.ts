@@ -200,7 +200,7 @@ export function status(
  * lazily-built one (the Node adapter). A real `Request` IS a `RequestSource`, so no wrapper is allocated
  * on the Web hot path. */
 export function requestOf(source: RequestSource): Request {
-  return source.request ?? (source as unknown as Request)
+  return source.request ?? (source as Request)
 }
 
 // On Deno, reading `headers` builds the request's whole header list: ~4% of a bare route's

@@ -20,6 +20,7 @@ import {
   type ToolError,
   type ToolEvidence,
 } from "@nifrajs/core/tool-contract"
+import { isRecord } from "@nifrajs/utils/record"
 
 const MAX_ID_LENGTH = 128
 const MAX_PATH_LENGTH = 256
@@ -397,7 +398,7 @@ export async function registerWebMcpTools(
     existing.add(name)
     try {
       await context.registerTool(
-        toWebMcpTool(capability as unknown as AgentCapability<unknown, unknown, unknown>, options),
+        toWebMcpTool(capability as AgentCapability<unknown, unknown, unknown>, options),
       )
       registered.push(name)
     } catch (error) {
@@ -857,7 +858,7 @@ export async function runAgentSurfaceConformance(
     if (names.has(capability.tool.name))
       throw new Error(`agent surface conformance: duplicate ${capability.tool.name}`)
     names.add(capability.tool.name)
-    const tool = toWebMcpTool(capability as unknown as AgentCapability<unknown, unknown, unknown>)
+    const tool = toWebMcpTool(capability as AgentCapability<unknown, unknown, unknown>)
     if (tool.name !== capability.tool.name || typeof tool.execute !== "function")
       throw new Error(`agent surface conformance: invalid descriptor ${capability.tool.name}`)
   }
@@ -880,7 +881,7 @@ export async function runAgentSurfaceConformance(
       if (capability === undefined)
         throw new Error(`agent surface conformance: unknown case ${testCase.capability.tool.name}`)
       const result = await toWebMcpTool(
-        capability as unknown as AgentCapability<unknown, unknown, unknown>,
+        capability as AgentCapability<unknown, unknown, unknown>,
         options.registration,
       ).execute(testCase.input)
       await testCase.assert?.(result)
@@ -980,10 +981,6 @@ function decodePointer(path: string): readonly string[] {
   if (segments.some((segment) => FORBIDDEN_PATH_SEGMENTS.has(segment)))
     throw new TypeError("agent surface: prototype path is forbidden")
   return Object.freeze(segments)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function applyPredictionPatch<State>(

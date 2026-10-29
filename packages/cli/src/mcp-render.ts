@@ -57,7 +57,7 @@ async function buildWebApp(cwd: string): Promise<{ app: AppLike } | { error: str
       manifest: discoverRoutes(app.routesDir),
       clientEntry: "/_nifra-render-only.js", // placeholder; SSR HTML does not need the built client
       ...frameworkWebAppOptions(app.framework, app.backend),
-    }) as unknown as AppLike
+    }) as AppLike
     return { app: webApp }
   } catch (err) {
     return { error: errString(err) }

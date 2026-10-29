@@ -8,7 +8,7 @@
  * Each copy records its module URL in a process-wide list. The query is dropped, so a dev server that
  * re-evaluates this same file (HMR, `--hot`) is one copy, not two.
  */
-const registry = globalThis as unknown as Record<symbol, string[] | undefined>
+const registry = globalThis as Record<symbol, string[] | undefined>
 const COPIES = Symbol.for("nifra.core.copies")
 const VERSIONS = Symbol.for("nifra.core.copy-versions")
 registry[COPIES] ??= []

@@ -65,6 +65,7 @@ const LIBRARY_PACKAGE_DIRS = [
   "web-preact",
   "web-vanilla",
   "island-trigger",
+  "utils",
   "graphql",
   "a2a",
   "ag-ui",

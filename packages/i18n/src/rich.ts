@@ -53,7 +53,7 @@ interface Frame<R> {
 }
 
 const TAG = new RegExp(TAG_SOURCE, "y")
-const EMPTY: Readonly<Record<string, unknown>> = {}
+const EMPTY: Readonly<Record<string, never>> = {}
 
 const handlerOf = <R>(
   tags: RichTags<R>,
@@ -99,7 +99,8 @@ function source<R>(text: string, stack: Frame<R>[], tags: RichTags<R>): void {
     pushText(top(stack).chunks, text.slice(start, lt))
     start = end
     from = end
-    const [marker, close, name, self] = match as unknown as [string, string, string, string]
+    const matchTuple: unknown = match
+    const [marker, close, name, self] = matchTuple as [string, string, string, string]
     if (close === "/") {
       const frame = top(stack)
       if (self === "" && stack.length > 1 && frame.name === name) {

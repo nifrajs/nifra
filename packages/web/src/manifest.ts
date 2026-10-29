@@ -859,8 +859,14 @@ export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
 
 const routeError = (message: string): Error => new Error(`[nifra/web] ${message}`)
 
+/** A route half's exports as a name-to-value record, to read them by the names an export can take. */
+function exportsOf(half: object): Readonly<Record<string, unknown>> {
+  return half as Readonly<Record<string, unknown>>
+}
+
 /** The frontend export names a backend-only name was found under, for the move-it message. */
-function assertFrontendHalf(file: string, front: Readonly<Record<string, unknown>>): void {
+function assertFrontendHalf(file: string, half: object): void {
+  const front = exportsOf(half)
   for (const name of Object.keys(front)) {
     if (BACKEND_ROUTE_EXPORTS.has(name)) {
       throw routeError(
@@ -921,7 +927,7 @@ export function mergeRouteHalves(
 ): RouteModule {
   const cached = mergedHalves.get(front)
   if (cached !== undefined && cached.back === back) return cached.module
-  assertFrontendHalf(file, front as unknown as Readonly<Record<string, unknown>>)
+  assertFrontendHalf(file, front)
   const shared = front.boundaries?.find((boundary) => boundary.mode === "shared")
   if (shared !== undefined && back?.shellLoader === undefined) {
     throw routeError(
@@ -1354,12 +1360,7 @@ export function buildManifest(
       backend,
       load: () =>
         Promise.all([loadFront(), loadBack()]).then(([front, back]) =>
-          mergeRouteHalves(
-            file,
-            front,
-            backend,
-            back as unknown as Readonly<Record<string, unknown>>,
-          ),
+          mergeRouteHalves(file, front, backend, exportsOf(back)),
         ),
     }
   }
@@ -1570,7 +1571,7 @@ export function buildManifest(
       file: backend,
       load: () =>
         loadBack().then((module) => {
-          const back = module as unknown as Readonly<Record<string, unknown>>
+          const back = exportsOf(module)
           // Without a frontend layout there is no layout data to load: middleware is all it may hold.
           if (layout === undefined) {
             for (const name of Object.keys(back)) {

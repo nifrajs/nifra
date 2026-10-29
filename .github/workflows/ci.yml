@@ -279,6 +279,7 @@ jobs:
         # Their dist must exist for Deno's resolver; the live and partial prerendering tests import them.
         # Middleware's build reads @nifrajs/schema's types, and schema's read @nifrajs/uploads'.
         run: >-
+          bun run --filter '@nifrajs/utils' build &&
           bun run --filter '@nifrajs/core' build &&
           bun run --filter '@nifrajs/uploads' build &&
           bun run --filter '@nifrajs/schema' --filter '@nifrajs/web' --filter '@nifrajs/middleware' build
@@ -363,7 +364,7 @@ jobs:
         # Schema's build resolves @nifrajs/core/* through its published-style dist declarations. Keep
         # these explicit and sequential: one multi-filter invocation may start the builds in parallel,
         # which makes a clean CI checkout fail before core has emitted its subpath .d.ts files.
-        run: bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/schema' build
+        run: bun run --filter '@nifrajs/utils' build && bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/schema' build
 
       - name: Run the real workerd contract laboratory
         run: bun run check:workerd
