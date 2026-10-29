@@ -3192,7 +3192,12 @@ finish.
 // React / Preact: hooks with a promise-returning mutation.
 // The mutation function receives a context with a shared AbortSignal as its second argument.
 const saveProfile = async (profile, { signal }) => {
-  const response = await fetch("/api/profile", { method: "PUT", body: JSON.stringify(profile), signal })
+  const response = await fetch("/api/profile", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(profile),
+    signal,
+  })
   if (!response.ok) throw new Error("Profile save failed")
   return response
 }

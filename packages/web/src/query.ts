@@ -1038,6 +1038,7 @@ export function createMutation<TData, TVariables>(
   const listeners = new Set<() => void>()
   const active = new Set<MutationFlight>()
   let stopIdentityWatch: (() => void) | undefined
+  let identityEpoch = documentEpoch()
   const emit = (): void => {
     for (const l of listeners) l()
   }
@@ -1056,6 +1057,7 @@ export function createMutation<TData, TVariables>(
     stopIdentityWatch = onIdentityChange(cancel)
   }
   const cancel = (): void => {
+    identityEpoch = documentEpoch()
     const pending = [...active]
     active.clear()
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The idle mutation state carries no generic data or variables, only undefined payloads.
@@ -1084,12 +1086,22 @@ export function createMutation<TData, TVariables>(
     },
     cancel,
     mutate: async (variables) => {
+      const currentEpoch = documentEpoch()
+      if (currentEpoch !== identityEpoch) cancel()
       const mine = ++latest
+      const mutationEpoch = identityEpoch
       const controller = new AbortController()
       const context: MutationContext = { signal: controller.signal }
       const flight: MutationFlight = { controller, stop: () => {} }
       active.add(flight)
-      const wasCancelled = (): boolean => controller.signal.aborted
+      const wasCancelled = (): boolean => {
+        if (controller.signal.aborted) return true
+        if (documentEpoch() !== mutationEpoch) {
+          cancel()
+          return true
+        }
+        return false
+      }
       const cancelled = new Promise<never>((_, reject) => {
         flight.stop = reject
       })

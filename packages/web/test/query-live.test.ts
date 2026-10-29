@@ -325,6 +325,79 @@ const withEpoch = async (
     else Object.defineProperty(globalThis, "document", described)
   }
 }
+
+test("a cookie identity epoch change cancels a pending mutation before it publishes", async () => {
+  await withEpoch(async (rotate) => {
+    let resolveMutation!: (value: string) => void
+    let signal: AbortSignal | undefined
+    const callbacks: string[] = []
+    const mutation = createMutation<string, undefined>(
+      (_variables, context) => {
+        signal = context.signal
+        return new Promise((resolve) => {
+          resolveMutation = resolve
+        })
+      },
+      {
+        onSuccess: () => callbacks.push("success"),
+        onError: () => callbacks.push("error"),
+        onSettled: () => callbacks.push("settled"),
+      },
+    )
+
+    const pending = mutation.mutate(undefined)
+    await rotate("two")
+    resolveMutation("previous visitor")
+
+    await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    expect(signal?.aborted).toBe(true)
+    expect(mutation.snapshot().status).toBe("idle")
+    expect(callbacks).toEqual([])
+  })
+})
+
+test("starting a mutation after an identity epoch change preserves its fresh state", async () => {
+  await withEpoch(async (rotate) => {
+    let resolveOld!: (value: string) => void
+    let resolveFresh!: (value: string) => void
+    let oldSignal: AbortSignal | undefined
+    const callbacks: string[] = []
+    const mutation = createMutation<string, string>(
+      (variables, context) => {
+        if (variables === "old") {
+          oldSignal = context.signal
+          return new Promise((resolve) => {
+            resolveOld = resolve
+          })
+        }
+        return new Promise((resolve) => {
+          resolveFresh = resolve
+        })
+      },
+      { onSuccess: (_data, variables) => callbacks.push(variables) },
+    )
+
+    const oldPending = mutation.mutate("old")
+    await rotate("two")
+    const freshPending = mutation.mutate("fresh")
+
+    expect(oldSignal?.aborted).toBe(true)
+    expect(mutation.snapshot()).toMatchObject({ status: "pending", variables: "fresh" })
+    resolveOld("stale result")
+    await expect(oldPending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    expect(mutation.snapshot()).toMatchObject({ status: "pending", variables: "fresh" })
+
+    resolveFresh("fresh result")
+    await expect(freshPending).resolves.toBe("fresh result")
+    expect(mutation.snapshot()).toMatchObject({
+      status: "success",
+      data: "fresh result",
+      variables: "fresh",
+    })
+    expect(callbacks).toEqual(["fresh"])
+  })
+})
+
 const firstPage = { initialPageParam: 0, getNextPageParam: () => undefined }
 
 test("a new identity epoch drops a client's data on its next read, and mounted queries refetch after it", async () => {
