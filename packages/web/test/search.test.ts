@@ -67,6 +67,16 @@ test("parseSearch drops prototype-polluting keys, at the top level and nested", 
   expect(({} as Record<string, unknown>).x).toBeUndefined()
 })
 
+test("parseSearch drops a forbidden key however it is spelled, and it costs no key slot", () => {
+  const hostile = "?%5F%5Fproto%5F%5F=1&__%70roto__=2&constr%75ctor=3&%70rototype=4&a=5&b=6"
+  const parsed = parseSearch(hostile, undefined, { ...DEFAULT_SEARCH_LIMITS, maxKeys: 2 })
+  expect(parsed).toEqual({ a: 5, b: 6 })
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype)
+  expect(Object.keys(parsed)).toEqual(["a", "b"])
+  // A forbidden key repeated after a kept one does not join its group.
+  expect(parseSearch("?a=1&__proto__=2&a=3")).toEqual({ a: [1, 3] })
+})
+
 test("parseSearch keeps an over-deep value as its raw string instead of building the graph", () => {
   const shallow: SearchLimits = { maxLength: 4096, maxKeys: 64, maxDepth: 1 }
   const raw = '{"a":{"b":1}}'

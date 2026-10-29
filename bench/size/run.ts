@@ -230,6 +230,11 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifr
 
 // Each ceiling is the measured gzip size rounded up to the next 0.1 KB, tight enough that a newly
 // reachable optional subsystem fails CI. A commit that raises one states the measured cost.
+// The direct synchronous Web path for schema-free routes with one derive and one before (and at
+// most one after) improved Bun 1.4.4 app.fetch medians from 481.3 to 470.3 ns/op (-2.3%) and from
+// 503.4 to 486.9 ns/op (-3.3%). A/B used 9 fresh processes, 7 rounds of 120,000 requests, 20,000
+// warmups, rotated arms, and control B/A of +1.5% and +0.3%. The bare gzip bundle grew 39,698 ->
+// 39,861 B; the crossed caps below advance only to the next 0.1 KiB step that fits.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // onRequest + onError hook boundaries and the QUERY method: bare 36,411 -> 36,668 B, mcp 36,694 ->
   // 36,934, sse 37,287 -> 37,535 (+214 / +29 / +14 B on bare, Bun 1.4.3).
@@ -314,7 +319,21 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The idle-timeout control and listen()'s `static` merged with the Date writer: bare 39,297 B,
   // idempotency 44,079, effect-ledger 41,333, sse 40,173, mcp 39,570, valibot 40,301, typebox-t
   // 68,108, typebox-form 73,080 (Bun 1.4.4); each cap takes the next 0.1 KiB step that fits.
-  "nifra-bare": 38.4,
+  // Fused lanes for any mix of derive, before and after hooks, each single-hook phase a straight-line
+  // closure: bare 38,849 -> 39,337 B, idempotency 43,682 -> 44,163, effect-ledger 40,881 -> 41,350, sse
+  // 39,701 -> 40,189, mcp 39,111 -> 39,589, valibot 39,836 -> 40,313, typebox-t 67,692 -> 68,128,
+  // typebox-form 72,656 -> 73,081 (Bun 1.4.4). Only the bare and idempotency caps are crossed, by one
+  // 0.1 KiB step each.
+  // The several-hook stages loop over synchronous hooks, each route holds its own copy of the hook
+  // arrays, and a thrown answer whose body cannot render ends as a 500: bare 39,337 -> 39,400 B,
+  // idempotency 44,163 -> 44,244, effect-ledger 41,350 -> 41,428, sse 40,189 -> 40,266, mcp 39,589 ->
+  // 39,667, valibot 40,313 -> 40,391, typebox-t 68,128 -> 68,212 (Bun 1.4.4). The six caps below the
+  // bare row take the next 0.1 KiB step.
+  // The fused stage chain built once per hook set and shared by the routes that register the same
+  // hooks: bare 39,400 -> 39,436 B, idempotency 44,244 -> 44,289, effect-ledger 41,428 -> 41,501, sse
+  // 40,266 -> 40,312, mcp 39,667 -> 39,707, valibot 40,391 -> 40,443, typebox-t 68,212 -> 68,311,
+  // typebox-form to 73,258 (Bun 1.4.4). The caps crossed take the next 0.1 KiB step.
+  "nifra-bare": 39.0,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -338,18 +357,18 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A request's t.date() strings handed on as Dates by a schema-directed decoder, and date-time and
   // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
   // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
-  "nifra-idempotency": 43.1,
-  "nifra-effect-ledger": 40.4,
-  "nifra-mcp": 38.7,
+  "nifra-idempotency": 43.8,
+  "nifra-effect-ledger": 41.0,
+  "nifra-mcp": 39.3,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 39.3,
-  "nifra-valibot": 39.4,
-  "nifra-typebox-t": 66.6,
+  "nifra-sse": 39.8,
+  "nifra-valibot": 40.0,
+  "nifra-typebox-t": 67.2,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only
   // this cap is crossed.
-  "nifra-typebox-form": 71.5,
+  "nifra-typebox-form": 72.0,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

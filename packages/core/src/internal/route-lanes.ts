@@ -17,16 +17,8 @@ export interface RouteLaneSelection {
   readonly fusedBody: boolean
   readonly lane: RouteExecutionLane
   readonly lifecycleLane: LifecycleExecutionLane
-  readonly lifecycleHookLane: "derive-before" | "derive-before-after" | undefined
-  readonly fusedLane:
-    | "bare"
-    | "body"
-    | "query"
-    | "derive-before"
-    | "derive-before-after"
-    | "body-derive-before"
-    | "body-derive-before-after"
-    | undefined
+  readonly lifecycleHookLane: "hooks" | undefined
+  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
 }
 
 export function selectRouteLanes(options: {
@@ -153,14 +145,12 @@ export function selectRouteLanes(options: {
           ? "query"
           : "hooks"
 
-  // The realistic middleware shape is commonly exactly one synchronous-or-async derive followed by
-  // one before hook. Keep the generic runner for every route that can observe decorations, after hooks,
-  // error hooks, or response contracts; this lane only removes the two per-request hook-loop dispatches
-  // and preserves the same async continuations and error handling. A params, headers, or cookies schema
-  // routes back to the generic lane because the fused builder has no validation step for them
-  // baked in - adding them would be more code than it saves. A `body` schema is the same story
-  // because the fused derive-before / derive-before-after builders don't parse the body: routes with a
-  // body schema are routed to the `body-derive-before` / `body-derive-before-after` lane below.
+  // A route whose only lifecycle steps are derive, before and after hooks (any number of each, at least
+  // one) runs them in one fused closure chain. Anything that can observe decorations, error hooks,
+  // around hooks or a response contract keeps the generic runner. A params, headers or cookies schema
+  // routes back to the generic lane because the fused builder has no validation step for them, and a
+  // `body` schema is the `body-hooks` lane below because this one does not parse the body.
+  const hookCount = derives + beforeHandle + afterHandle
   const lifecycleHookLane =
     lane === "lifecycle" &&
     !authBeforeValidation &&
@@ -172,20 +162,14 @@ export function selectRouteLanes(options: {
     !defaultOnValidationError &&
     plain &&
     schema?.body === undefined &&
-    derives === 1 &&
-    beforeHandle === 1 &&
-    afterHandle <= 1 &&
+    hookCount > 0 &&
     onError === 0 &&
     around === 0
-      ? afterHandle === 0
-        ? "derive-before"
-        : "derive-before-after"
+      ? "hooks"
       : undefined
 
-  // Body + lifecycle hooks in a closed shape: a body schema plus the same 1-derive + 1-before +
-  // 0-or-1-after + 0-onError shape, with no other body/query/path conflict. The fused closure runs
-  // parse → validate → derive → before → handler → after → respond in one function frame, the same
-  // win `fusedBody` already gives for the no-hooks body shape.
+  // The same hooks around a body schema: the fused closure runs parse, validate, derive, before,
+  // handler and after in one function frame, the win `fusedBody` already gives the no-hooks shape.
   const fusedBodyLifecycle =
     lane === "lifecycle" &&
     !authBeforeValidation &&
@@ -198,9 +182,7 @@ export function selectRouteLanes(options: {
     !hasDecorations &&
     !hasIdempotency &&
     !hasLedger &&
-    derives === 1 &&
-    beforeHandle === 1 &&
-    afterHandle <= 1 &&
+    hookCount > 0 &&
     onError === 0 &&
     around === 0
 
@@ -220,13 +202,7 @@ export function selectRouteLanes(options: {
             ? "body"
             : bare
               ? "bare"
-              : lifecycleHookLane !== undefined
-                ? (lifecycleHookLane as "derive-before" | "derive-before-after")
-                : fusedBodyLifecycle
-                  ? afterHandle === 0
-                    ? "body-derive-before"
-                    : "body-derive-before-after"
-                  : undefined
+              : (lifecycleHookLane ?? (fusedBodyLifecycle ? "body-hooks" : undefined))
         : undefined,
   }
 }

@@ -88,6 +88,7 @@ import {
   tagLayoutError,
   withDuplicateInstanceHint,
 } from "./render-document.ts"
+import { searchOfRequest } from "./request-search.ts"
 import { originFor, urlPartsFor } from "./request-url.ts"
 import {
   ACTION_SCOPE,
@@ -988,18 +989,22 @@ export function createPageRequestExecutor<Env = unknown>(
     return answer === false
   }
 
-  const loaderSearch = (searchSchema: RouteModule["searchSchema"], request: Request) =>
-    searchOf(searchSchema, urlPartsFor(request).search)
+  // A query is parsed and validated once per request; with none there is nothing to share, and the
+  // plain calls cost less than a memo.
+  const loaderSearch = (searchSchema: RouteModule["searchSchema"], request: Request) => {
+    const raw = urlPartsFor(request).search
+    return raw === "" ? searchOf(searchSchema, raw) : searchOfRequest(request, [searchSchema], raw)
+  }
 
   const searchChainOf = (
     layoutMods: LoadedLayoutModules,
     mod: RouteModule,
     request: Request,
-  ): Record<string, unknown> =>
-    searchOfChain(
-      [...layoutMods.map((m) => m.searchSchema), mod.searchSchema],
-      urlPartsFor(request).search,
-    )
+  ): Record<string, unknown> => {
+    const raw = urlPartsFor(request).search
+    const schemas = [...layoutMods.map((m) => m.searchSchema), mod.searchSchema]
+    return raw === "" ? searchOfChain(schemas, raw) : searchOfRequest(request, schemas, raw)
+  }
 
   // `ssr = false`: the slot holds `HydrateFallback`, which the browser hydrates before the page.
   const serverLeafOf = (route: RouteEntry, mod: RouteModule): unknown => {

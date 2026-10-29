@@ -140,15 +140,7 @@ export function compileRouteExecutionPlan(options: {
   readonly hasLedger: boolean
   readonly fusedWeb: FusedWebRunner | undefined
   readonly fusedBody: FusedBodyRunner | undefined
-  readonly fusedLane:
-    | "bare"
-    | "body"
-    | "query"
-    | "derive-before"
-    | "derive-before-after"
-    | "body-derive-before"
-    | "body-derive-before-after"
-    | undefined
+  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
 }): RouteExecutionPlan {
   const { lane, contextless, hasAround, hasLedger, fusedWeb, fusedBody, fusedLane } = options
 
@@ -289,15 +281,7 @@ export interface RouteExecutionPlan {
   /** Which builder produced {@link fusedWeb} - a merge rebinds the closure to the executing server
    * and must rebuild it with the SAME semantics (a query-fused route rebuilt as bare would skip its
    * validation). `undefined` iff `fusedWeb` is. */
-  readonly fusedLane:
-    | "bare"
-    | "body"
-    | "query"
-    | "derive-before"
-    | "derive-before-after"
-    | "body-derive-before"
-    | "body-derive-before-after"
-    | undefined
+  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
 }
 
 export interface RouteEntry {
@@ -337,8 +321,8 @@ export interface RouteEntry {
   readonly beforeHandle: ReadonlyArray<RawBeforeHandle>
   readonly afterHandle: ReadonlyArray<RawAfterHandle>
   readonly onError: ReadonlyArray<RawErrorHandler>
-  /** Registration-specialized hook shape for the common derive + before middleware route. */
-  readonly lifecycleHookLane: "derive-before" | "derive-before-after" | undefined
+  /** Registration-specialized hook shape: a route whose only lifecycle steps are derive, before and after hooks. */
+  readonly lifecycleHookLane: "hooks" | undefined
   /** Wraps the matched route lifecycle. Empty for the common no-around path. */
   readonly around: ReadonlyArray<RawAround>
   /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */
