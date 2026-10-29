@@ -77,6 +77,28 @@ test("on the server useQuery renders idle, refetch rejects and the client is a n
   expect(() => useQueryClient().invalidateQueries(["preact"])).not.toThrow()
 })
 
+test("infinite queries without a provider use idle state and reject client actions on the server", async () => {
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  Object.defineProperty(globalThis, "window", { value: undefined, configurable: true })
+  let result: UseInfiniteQueryResult<number, number> | undefined
+  const Probe = () => {
+    result = useInfiniteQuery(["preact", "server-pages"], async (page) => page, {
+      initialPageParam: 0,
+      getNextPageParam: () => undefined,
+    })
+    return null
+  }
+  try {
+    renderToString(h(Probe, null))
+    expect(result?.isPending).toBe(true)
+    expect(result?.hasPreviousPage).toBe(false)
+    await expect(result?.refetch()).rejects.toThrow("no query client")
+  } finally {
+    if (beforeWindow) Object.defineProperty(globalThis, "window", beforeWindow)
+    else Reflect.deleteProperty(globalThis, "window")
+  }
+})
+
 test("infinite query reads hydrated pages through a request-scoped provider", () => {
   const client = createQueryClient({ now: () => 2 })
   const state: DehydratedState = {
@@ -147,6 +169,40 @@ test("HydrationBoundary hydrates only when its client or state reference changes
   }
 })
 
+test("infinite queries fetch on mount and expose previous-page state", async () => {
+  const browser = new GlobalWindow({ url: "http://query.test/" })
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const beforeDocument = Object.getOwnPropertyDescriptor(globalThis, "document")
+  Reflect.set(globalThis, "window", browser)
+  Reflect.set(globalThis, "document", browser.document)
+
+  const client = createQueryClient({ now: () => 0 })
+  let result: UseInfiniteQueryResult<number, number> | undefined
+  const Probe = () => {
+    result = useInfiniteQuery(["preact", "mounted-pages"], async (page) => page, {
+      initialPageParam: 0,
+      getNextPageParam: (_last, pages) => (pages.length < 2 ? 1 : undefined),
+    })
+    return null
+  }
+  const container = browser.document.createElement("div")
+
+  try {
+    act(() => render(h(QueryClientProvider, { client }, h(Probe, null)), container))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(result?.data?.pages).toEqual([0])
+    expect(result?.hasNextPage).toBe(true)
+    expect(result?.hasPreviousPage).toBe(false)
+  } finally {
+    act(() => render(null, container))
+    if (beforeWindow) Object.defineProperty(globalThis, "window", beforeWindow)
+    else Reflect.deleteProperty(globalThis, "window")
+    if (beforeDocument) Object.defineProperty(globalThis, "document", beforeDocument)
+    else Reflect.deleteProperty(globalThis, "document")
+    browser.happyDOM.abort()
+  }
+})
+
 test("mutation binding exposes promise and fire-and-forget forms", async () => {
   let result: UseMutationResult<number, number> | undefined
   const Probe = () => {
@@ -157,4 +213,15 @@ test("mutation binding exposes promise and fire-and-forget forms", async () => {
   expect(result?.isIdle).toBe(true)
   await expect(result?.mutateAsync(21)).resolves.toBe(42)
   expect(() => result?.mutate(1)).not.toThrow()
+
+  let failed: UseMutationResult<number, number> | undefined
+  const FailureProbe = () => {
+    failed = useMutation(async () => {
+      throw new Error("expected failure")
+    })
+    return null
+  }
+  renderToString(h(FailureProbe, null))
+  failed?.mutate(1)
+  await new Promise((resolve) => setTimeout(resolve, 0))
 })

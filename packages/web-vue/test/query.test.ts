@@ -108,13 +108,52 @@ test("on the server the state stays idle, refetch rejects and the client is a no
   expect(() => useQueryClient().invalidateQueries(["vue"])).not.toThrow()
 })
 
+test("infinite queries without a provider expose idle state and reject client actions", async () => {
+  const { value: query, stop } = inScope(() =>
+    useInfiniteQuery(["vue", "server-pages"], async (page: number) => page, {
+      initialPageParam: 0,
+      getNextPageParam: () => undefined,
+    }),
+  )
+  expect(query.state.value.status).toBe("pending")
+  expect(query.isPending.value).toBe(true)
+  expect(query.isError.value).toBe(false)
+  expect(query.isSuccess.value).toBe(false)
+  expect(query.hasNextPage.value).toBe(false)
+  expect(query.hasPreviousPage.value).toBe(false)
+  await expect(query.fetchNextPage()).rejects.toThrow("no query client")
+  stop()
+})
+
+test("provideQueryClient requires component setup", () => {
+  expect(() => provideQueryClient(createQueryClient({ now: () => 0 }))).toThrow(
+    "must run during component setup",
+  )
+})
+
 test("Vue mutation state follows the effect scope and async calls resolve", async () => {
   const { value: mutation, stop } = asBrowser(() =>
     inScope(() => useMutation(async (value: number) => value * 2)),
   )
   expect(mutation.isIdle.value).toBe(true)
-  await expect(mutation.mutateAsync(21)).resolves.toBe(42)
+  const pending = mutation.mutateAsync(21)
+  expect(mutation.isPending.value).toBe(true)
+  await expect(pending).resolves.toBe(42)
+  expect(mutation.isSuccess.value).toBe(true)
+  expect(mutation.isError.value).toBe(false)
   expect(mutation.state.value).toMatchObject({ status: "success", data: 42, variables: 21 })
+  stop()
+})
+
+test("Vue fire-and-forget mutation contains rejected work", async () => {
+  const { value: mutation, stop } = inScope(() =>
+    useMutation(async () => {
+      throw new Error("expected failure")
+    }),
+  )
+  mutation.mutate(1)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(mutation.isError.value).toBe(true)
   stop()
 })
 

@@ -68,13 +68,36 @@ test("in a browser the accessor follows the cache entry until its owner is dispo
 })
 
 test("on the server the accessor stays idle, refetch rejects and the client is a no-op", async () => {
-  await createRoot(async (dispose) => {
-    const query = createQuery(["solid", "server"], async () => 1)
-    expect(query.state().status).toBe("pending")
-    await expect(query.refetch()).rejects.toThrow("no query client")
-    dispose()
-  })
-  expect(() => useQueryClient().invalidateQueries(["solid"])).not.toThrow()
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  Object.defineProperty(globalThis, "window", { value: undefined, configurable: true })
+  try {
+    await createRoot(async (dispose) => {
+      const query = createQuery(["solid", "server"], async () => 1)
+      expect(query.state().status).toBe("pending")
+      await expect(query.refetch()).rejects.toThrow("no query client")
+
+      const infinite = createInfiniteQuery(
+        ["solid", "server-pages"],
+        async (page: number) => page,
+        {
+          initialPageParam: 0,
+          getNextPageParam: () => undefined,
+        },
+      )
+      expect(infinite.state().status).toBe("pending")
+      expect(infinite.isPending()).toBe(true)
+      expect(infinite.isError()).toBe(false)
+      expect(infinite.isSuccess()).toBe(false)
+      expect(infinite.hasNextPage()).toBe(false)
+      expect(infinite.hasPreviousPage()).toBe(false)
+      await expect(infinite.fetchNextPage()).rejects.toThrow("no query client")
+      dispose()
+    })
+    expect(() => useQueryClient().invalidateQueries(["solid"])).not.toThrow()
+  } finally {
+    if (beforeWindow) Object.defineProperty(globalThis, "window", beforeWindow)
+    else Reflect.deleteProperty(globalThis, "window")
+  }
 })
 
 test("Solid mutation state uses accessors and cancels old identity work", async () => {
@@ -85,9 +108,29 @@ test("Solid mutation state uses accessors and cancels old identity work", async 
     mutation = createMutation(async (value: number) => value * 2)
   })
   expect(mutation.isIdle()).toBe(true)
-  await expect(mutation.mutateAsync(21)).resolves.toBe(42)
+  const pending = mutation.mutateAsync(21)
+  expect(mutation.isPending()).toBe(true)
+  await expect(pending).resolves.toBe(42)
+  expect(mutation.isSuccess()).toBe(true)
+  expect(mutation.isError()).toBe(false)
   expect(mutation.state()).toMatchObject({ status: "success", data: 42, variables: 21 })
   dispose()
+
+  let failed!: ReturnType<typeof createMutation<number, number>>
+  let disposeFailed = (): void => {}
+  createRoot((stop) => {
+    disposeFailed = stop
+    failed = createMutation(async () => {
+      throw new Error("expected failure")
+    })
+  })
+  try {
+    failed.mutate(1)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(failed.isError()).toBe(true)
+  } finally {
+    disposeFailed()
+  }
 
   const before = Object.getOwnPropertyDescriptor(globalThis, "window")
   Reflect.set(globalThis, "window", globalThis)
@@ -125,8 +168,12 @@ test("Solid infinite query exposes reactive pagination controls", async () => {
       }),
     )
   })
+  expect(query.isPending()).toBe(true)
+  expect(query.isError()).toBe(false)
   await query.refetch()
   expect(query.state().data?.pages).toEqual([0])
+  expect(query.isSuccess()).toBe(true)
+  expect(query.hasPreviousPage()).toBe(false)
   await query.fetchNextPage()
   expect(query.state().data?.pages).toEqual([0, 1])
   expect(query.hasNextPage()).toBe(false)

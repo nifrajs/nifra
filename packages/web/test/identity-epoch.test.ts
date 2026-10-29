@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
-import { documentEpoch, epochOf } from "../src/identity.ts"
+import { documentEpoch, epochOf, identityChanged, onIdentityChange } from "../src/identity.ts"
 import {
   buildManifest,
   createWebApp,
@@ -10,6 +10,13 @@ import { identityEpochHook } from "../src/internal/identity-epoch.ts"
 
 const EPOCH = /^__Host-nifra-epoch=[0-9a-f]{32}; Path=\/; SameSite=Lax; Secure/
 const LOCAL_EPOCH = /^nifra-epoch=[0-9a-f]{32}; Path=\/; SameSite=Lax$/
+const IDENTITY_CHANNEL_SLOT = Symbol.for("nifra.identity.channel")
+const IDENTITY_LISTENERS_SLOT = Symbol.for("nifra.identity.listeners")
+
+function restoreGlobal(key: PropertyKey, descriptor: PropertyDescriptor | undefined): void {
+  if (descriptor === undefined) Reflect.deleteProperty(globalThis, key)
+  else Object.defineProperty(globalThis, key, descriptor)
+}
 
 // Runs the hook over one response's `Set-Cookie` lines; returns the epoch cookie it added, if any.
 const run = (
@@ -67,6 +74,145 @@ test("documentEpoch reads the cookies once per synchronous run", async () => {
   } finally {
     if (described === undefined) Reflect.deleteProperty(globalThis, "document")
     else Object.defineProperty(globalThis, "document", described)
+  }
+})
+
+test("identityChanged runs every observer and defers observer failures", () => {
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const beforeChannel = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_CHANNEL_SLOT)
+  const beforeListeners = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_LISTENERS_SLOT)
+  const beforeQueueMicrotask = Object.getOwnPropertyDescriptor(globalThis, "queueMicrotask")
+  const queued: Array<() => void> = []
+  const seen: string[] = []
+
+  try {
+    Object.defineProperty(globalThis, "window", { value: undefined, configurable: true })
+    Reflect.deleteProperty(globalThis, IDENTITY_CHANNEL_SLOT)
+    Object.defineProperty(globalThis, IDENTITY_LISTENERS_SLOT, {
+      value: new Set<() => void>(),
+      configurable: true,
+      writable: true,
+    })
+    Object.defineProperty(globalThis, "queueMicrotask", {
+      value: (callback: () => void) => queued.push(callback),
+      configurable: true,
+      writable: true,
+    })
+
+    const stopBroken = onIdentityChange(() => {
+      seen.push("broken")
+      throw new Error("observer failed")
+    })
+    const stopHealthy = onIdentityChange(() => seen.push("healthy"))
+    identityChanged()
+
+    expect(seen).toEqual(["broken", "healthy"])
+    expect(queued).toHaveLength(1)
+    expect(() => queued[0]?.()).toThrow(AggregateError)
+    stopBroken()
+    stopHealthy()
+  } finally {
+    restoreGlobal("window", beforeWindow)
+    restoreGlobal(IDENTITY_CHANNEL_SLOT, beforeChannel)
+    restoreGlobal(IDENTITY_LISTENERS_SLOT, beforeListeners)
+    restoreGlobal("queueMicrotask", beforeQueueMicrotask)
+  }
+})
+
+test("identityChannel accepts only its fixed message and keeps same-tab updates", () => {
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const beforeBroadcastChannel = Object.getOwnPropertyDescriptor(globalThis, "BroadcastChannel")
+  const beforeChannel = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_CHANNEL_SLOT)
+  const beforeListeners = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_LISTENERS_SLOT)
+  const seen: string[] = []
+  let message: ((event: { data: unknown }) => void) | undefined
+  let unrefs = 0
+  const posted: unknown[] = []
+
+  class FakeBroadcastChannel {
+    addEventListener(_type: string, listener: (event: { data: unknown }) => void): void {
+      message = listener
+    }
+    unref(): void {
+      unrefs++
+    }
+    postMessage(value: unknown): void {
+      posted.push(value)
+    }
+    close(): void {}
+  }
+
+  try {
+    Object.defineProperty(globalThis, "window", { value: {}, configurable: true })
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+      value: FakeBroadcastChannel as unknown as typeof BroadcastChannel,
+      configurable: true,
+      writable: true,
+    })
+    Reflect.deleteProperty(globalThis, IDENTITY_CHANNEL_SLOT)
+    Object.defineProperty(globalThis, IDENTITY_LISTENERS_SLOT, {
+      value: new Set<() => void>(),
+      configurable: true,
+      writable: true,
+    })
+
+    const stop = onIdentityChange(() => seen.push("changed"))
+    message?.({ data: "untrusted" })
+    expect(seen).toEqual([])
+    message?.({ data: "changed" })
+    expect(seen).toEqual(["changed"])
+    identityChanged()
+    expect(seen).toEqual(["changed", "changed"])
+    expect(unrefs).toBe(1)
+    expect(posted).toEqual(["changed"])
+    stop()
+  } finally {
+    restoreGlobal("window", beforeWindow)
+    restoreGlobal("BroadcastChannel", beforeBroadcastChannel)
+    restoreGlobal(IDENTITY_CHANNEL_SLOT, beforeChannel)
+    restoreGlobal(IDENTITY_LISTENERS_SLOT, beforeListeners)
+  }
+})
+
+test("identityChannel closes a partially initialized channel and falls back safely", () => {
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const beforeBroadcastChannel = Object.getOwnPropertyDescriptor(globalThis, "BroadcastChannel")
+  const beforeChannel = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_CHANNEL_SLOT)
+  const beforeListeners = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_LISTENERS_SLOT)
+  let closeCalls = 0
+
+  class BlockedBroadcastChannel {
+    addEventListener(): void {
+      throw new Error("channel blocked")
+    }
+    close(): void {
+      closeCalls++
+      throw new Error("close blocked")
+    }
+  }
+
+  try {
+    Object.defineProperty(globalThis, "window", { value: {}, configurable: true })
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+      value: BlockedBroadcastChannel as unknown as typeof BroadcastChannel,
+      configurable: true,
+      writable: true,
+    })
+    Reflect.deleteProperty(globalThis, IDENTITY_CHANNEL_SLOT)
+    Object.defineProperty(globalThis, IDENTITY_LISTENERS_SLOT, {
+      value: new Set<() => void>(),
+      configurable: true,
+      writable: true,
+    })
+
+    const stop = onIdentityChange(() => {})
+    expect(closeCalls).toBe(1)
+    stop()
+  } finally {
+    restoreGlobal("window", beforeWindow)
+    restoreGlobal("BroadcastChannel", beforeBroadcastChannel)
+    restoreGlobal(IDENTITY_CHANNEL_SLOT, beforeChannel)
+    restoreGlobal(IDENTITY_LISTENERS_SLOT, beforeListeners)
   }
 })
 

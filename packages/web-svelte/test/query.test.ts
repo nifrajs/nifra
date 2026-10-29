@@ -80,12 +80,34 @@ test("on the server the store stays idle, refetch rejects and the client is a no
   expect(() => useQueryClient().invalidateQueries(["svelte"])).not.toThrow()
 })
 
+test("infinite queries without a provider expose idle state and reject client actions", async () => {
+  const store = useInfiniteQuery(["svelte", "server-pages"], async (page: number) => page, {
+    initialPageParam: 0,
+    getNextPageParam: () => undefined,
+  })
+  expect(get(store).status).toBe("pending")
+  expect(get(store).hasNextPage).toBe(false)
+  expect(get(store).hasPreviousPage).toBe(false)
+  await expect(store.fetchNextPage()).rejects.toThrow("no query client")
+})
+
 test("Svelte mutation store exposes async controls and observable state", async () => {
   const mutation = useMutation(async (value: number) => value * 2)
   const stop = mutation.subscribe(() => {})
   expect(get(mutation).status).toBe("idle")
   await expect(mutation.mutateAsync(21)).resolves.toBe(42)
   expect(get(mutation)).toMatchObject({ status: "success", data: 42, variables: 21 })
+  stop()
+})
+
+test("Svelte fire-and-forget mutation contains rejected work", async () => {
+  const mutation = useMutation(async () => {
+    throw new Error("expected failure")
+  })
+  const stop = mutation.subscribe(() => {})
+  mutation.mutate(undefined)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(get(mutation).status).toBe("error")
   stop()
 })
 
