@@ -19,6 +19,7 @@
  */
 
 import type { Framework } from "./scaffold.ts"
+import { rankBySymptom, symptomQuery } from "./symptom-search.ts"
 
 /** An adapter an entry applies to, or `all` for a seam issue that is adapter-independent. */
 export type GuidanceAdapter = Framework | "all"
@@ -518,9 +519,6 @@ function score(entry: GuidanceEntry, words: readonly string[]): number {
   return hits
 }
 
-/** Longest symptom text scored; the MCP schema advertises the same cap, this enforces it. */
-const MAX_SYMPTOM_LENGTH = 256
-
 /** Select the entries rendered by the CLI and MCP heads; also the stable JSON shape for agents (no rendered prose). */
 export function selectFrontendGuidance(args: {
   adapter?: string | undefined
@@ -529,21 +527,11 @@ export function selectFrontendGuidance(args: {
 }): FrontendGuidanceResult {
   const adapter = parseAdapter(args.adapter)
   const scoped = scopedEntries(adapter)
-  const query = args.symptom?.trim().slice(0, MAX_SYMPTOM_LENGTH)
-  if (query === undefined || query.length === 0) {
+  const query = symptomQuery(args.symptom)
+  if (query === undefined) {
     return { schemaVersion: 1, adapter, matched: true, entries: scoped }
   }
-  const words = query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 1)
-  const limit = Math.min(Math.max(args.limit ?? 3, 1), 5)
-  const entries = scoped
-    .map((entry) => ({ entry, s: score(entry, words) }))
-    .filter((r) => r.s > 0)
-    .sort((a, b) => b.s - a.s)
-    .slice(0, limit)
-    .map((r) => r.entry)
+  const entries = rankBySymptom(scoped, query, args.limit, score)
   return { schemaVersion: 1, adapter, symptom: query, matched: entries.length > 0, entries }
 }
 
