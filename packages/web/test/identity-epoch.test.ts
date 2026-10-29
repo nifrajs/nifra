@@ -145,7 +145,7 @@ test("identityChannel accepts only its fixed message and keeps same-tab updates"
   try {
     Object.defineProperty(globalThis, "window", { value: {}, configurable: true })
     Object.defineProperty(globalThis, "BroadcastChannel", {
-      value: FakeBroadcastChannel as unknown as typeof BroadcastChannel,
+      value: FakeBroadcastChannel,
       configurable: true,
       writable: true,
     })
@@ -194,7 +194,7 @@ test("identityChannel closes a partially initialized channel and falls back safe
   try {
     Object.defineProperty(globalThis, "window", { value: {}, configurable: true })
     Object.defineProperty(globalThis, "BroadcastChannel", {
-      value: BlockedBroadcastChannel as unknown as typeof BroadcastChannel,
+      value: BlockedBroadcastChannel,
       configurable: true,
       writable: true,
     })
