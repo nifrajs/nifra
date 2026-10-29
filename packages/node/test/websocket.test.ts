@@ -201,6 +201,15 @@ describe("@nifrajs/node WebSockets", () => {
     expect(await rawUpgradeStatus(running.port, "/rooms/%2e%2e/echo")).toBe(101)
   })
 
+  test("with normalizeTarget unset, an upgrade resolves dot segments and its HTTP fallback does too", async () => {
+    const app = makeApp().get("/admin", () => ({ where: "admin" }))
+    running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+    // The handshake path: a `Request` the platform parser resolved, so the ws route matches.
+    expect(await rawUpgradeStatus(running.port, "/rooms/../echo")).toBe(101)
+    // An upgrade for a path with no ws route falls through to HTTP on the same parsed `Request`.
+    expect(await rawUpgradeStatus(running.port, "/public/../admin")).toBe(200)
+  })
+
   test("guarded: accepts with token, threading data to ws.data", async () => {
     running = await serve(makeApp(), { hostname: "127.0.0.1", port: 0 })
     expect(await rt(`ws://127.0.0.1:${running.port}/guarded?token=secret`, [], 1)).toEqual([

@@ -16,7 +16,11 @@ import {
 } from "../../core/test/request-target-matrix.ts"
 
 test("a target with dot segments or a backslash routes the path it resolves to", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  const running = await serve(requestTargetApp(server()), {
+    port: 0,
+    hostname: "127.0.0.1",
+    normalizeTarget: true,
+  })
   try {
     assert.deepEqual(await requestTargetMismatches(running.port), [])
     assert.deepEqual(await requestTargetMismatches(running.port, true), [])
@@ -31,7 +35,7 @@ test("a handshake target with dot segments upgrades on the path it resolves to",
   const app = server()
     .use(websocket())
     .ws("/echo", { message: (ws, data) => ws.send(data) })
-  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1", normalizeTarget: true })
   try {
     assert.equal(await rawUpgradeStatus(running.port, "/rooms/../echo"), 101)
     assert.equal(await rawUpgradeStatus(running.port, "/rooms/%2e%2e/echo"), 101)

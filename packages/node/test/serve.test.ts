@@ -100,9 +100,55 @@ test("serves GET (JSON) + POST (body), resolves the bound port", async () => {
   expect(await echoed.json()).toEqual({ hi: "there" })
 })
 
-test("a target with dot segments or a backslash routes the path it resolves to", async () => {
-  running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+test("normalizeTarget routes a target with dot segments or a backslash on the path it resolves to", async () => {
+  running = await serve(requestTargetApp(server()), {
+    port: 0,
+    hostname: "127.0.0.1",
+    normalizeTarget: true,
+  })
   expect(await requestTargetMismatches(running.port)).toEqual([])
+})
+
+test("dot segments are routed as sent unless normalizeTarget is set", async () => {
+  const app = server()
+    .get("/admin", () => ({ where: "admin" }))
+    .get("/public/:name", (c) => ({ where: "public", name: c.params.name }))
+  const statusOf = (port: number, target: string): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1", () =>
+        socket.write(`GET ${target} HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n`),
+      )
+      let text = ""
+      socket.on("data", (chunk) => {
+        text += chunk
+      })
+      socket.on("error", reject)
+      socket.on("close", () => resolve(Number(text.slice(9, 12))))
+    })
+  running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  expect(await statusOf(running.port, "/public/../admin")).toBe(404)
+  await running.stop()
+  running = await serve(app, { port: 0, hostname: "127.0.0.1", normalizeTarget: true })
+  expect(await statusOf(running.port, "/public/../admin")).toBe(200)
+})
+
+test("a request handed over as a Web Request is resolved by the platform whatever normalizeTarget says", async () => {
+  const app = server()
+    .get("/admin", () => ({ where: "admin" }))
+    .get("/public/:name", (c) => ({ where: "public", name: c.params.name }))
+  running = await serve(app, { port: 0, hostname: "127.0.0.1", static: () => undefined })
+  const res = await new Promise<number>((resolve, reject) => {
+    const socket = connect(running!.port, "127.0.0.1", () =>
+      socket.write("GET /public/../admin HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n"),
+    )
+    let text = ""
+    socket.on("data", (chunk) => {
+      text += chunk
+    })
+    socket.on("error", reject)
+    socket.on("close", () => resolve(Number(text.slice(9, 12))))
+  })
+  expect(res).toBe(200)
 })
 
 test("Node adapter runs the dedicated auth stage before body validation", async () => {
