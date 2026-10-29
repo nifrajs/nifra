@@ -26,9 +26,12 @@ function CreateUser() {
 }`
 
 const FRAMEWORK_BINDINGS = `// React / Preact: hooks with a promise-returning mutation.
-// The mutation function receives a shared AbortSignal as its second argument.
-const saveProfile = (profile, { signal }) =>
-  fetch("/api/profile", { method: "PUT", body: JSON.stringify(profile), signal })
+// The mutation function receives a context with a shared AbortSignal as its second argument.
+const saveProfile = async (profile, { signal }) => {
+  const response = await fetch("/api/profile", { method: "PUT", body: JSON.stringify(profile), signal })
+  if (!response.ok) throw new Error("Profile save failed")
+  return response
+}
 const save = useMutation(saveProfile)
 await save.mutateAsync(profile)
 
@@ -86,9 +89,11 @@ export default function Query() {
         Each mutation has <code>mutate</code>, <code>mutateAsync</code>, <code>reset</code>, and
         <code>cancel</code>; each paged query exposes next/previous-page controls and page-availability
         state. Mutations remain client state bindings: the server action or endpoint still enforces
-        authorization. Mutation functions and callbacks receive a shared <code>signal</code> in their
-        second argument. Pass it to <code>fetch</code> and check it before side effects after an
-        <code>await</code>. <code>cancel</code> aborts that signal, rejects the local promise, and
+        authorization. Mutation functions receive a shared context with a <code>signal</code> as
+        their second argument. <code>onMutate</code> receives that context second;
+        <code>onSuccess</code> and <code>onError</code> receive it third; and <code>onSettled</code>
+        receives it fourth. Pass <code>context.signal</code> to <code>fetch</code> and check it before
+        side effects after an <code>await</code>. <code>cancel</code> aborts that signal, rejects the local promise, and
         discards local results; the request or server action only stops if it honors the signal, and accepted server work may
         finish.
       </p>

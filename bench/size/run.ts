@@ -405,7 +405,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // previous visitor's page fails: 21,218 -> 21,579 B (Bun 1.4.4). That codec's Date copy taking only
   // what the engine tags a plain object, and lists: 21,579 -> 21,668 B (Bun 1.4.4). A route data request's
   // headers built by one function the live client shares: 21,699 -> 21,712 B (Bun 1.4.4).
-  "nifra-web-client": 21.3,
+  // Cross-adapter queries add identity-aware mutation cancellation and filtered dehydration:
+  // 21,712 -> 22,088 B gzip (Bun 1.4.4); cap at the next 0.1 KiB boundary.
+  "nifra-web-client": 21.6,
   "nifra-i18n": 4.3,
 }
 

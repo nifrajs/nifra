@@ -3180,17 +3180,22 @@ and Solid exposes `createMutation` and `createInfiniteQuery` accessors.
 Each mutation has `mutate`, `mutateAsync`, `reset`, and
 `cancel`; each paged query exposes next/previous-page controls and page-availability
 state. Mutations remain client state bindings: the server action or endpoint still enforces
-authorization. Mutation functions and callbacks receive a shared `signal` in their
-second argument. Pass it to `fetch` and check it before side effects after an
-`await`. `cancel` aborts that signal, rejects the local promise, and
+authorization. Mutation functions receive a shared context with a `signal` as
+their second argument. `onMutate` receives that context second;
+`onSuccess` and `onError` receive it third; and `onSettled`
+receives it fourth. Pass `context.signal` to `fetch` and check it before
+side effects after an `await`. `cancel` aborts that signal, rejects the local promise, and
 discards local results; the request or server action only stops if it honors the signal, and accepted server work may
 finish.
 
 ```ts
 // React / Preact: hooks with a promise-returning mutation.
-// The mutation function receives a shared AbortSignal as its second argument.
-const saveProfile = (profile, { signal }) =>
-  fetch("/api/profile", { method: "PUT", body: JSON.stringify(profile), signal })
+// The mutation function receives a context with a shared AbortSignal as its second argument.
+const saveProfile = async (profile, { signal }) => {
+  const response = await fetch("/api/profile", { method: "PUT", body: JSON.stringify(profile), signal })
+  if (!response.ok) throw new Error("Profile save failed")
+  return response
+}
 const save = useMutation(saveProfile)
 await save.mutateAsync(profile)
 

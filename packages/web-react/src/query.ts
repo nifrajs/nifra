@@ -168,11 +168,13 @@ export interface UseMutationResult<TData, TVariables> extends MutationState<TDat
   readonly mutateAsync: (variables: TVariables) => Promise<TData>
   /** Reset back to idle. */
   readonly reset: () => void
+  /** Cancel pending mutation work. */
+  readonly cancel: () => void
 }
 
 /**
  * A mutation hook (create/update/delete). Returns `{ mutate, mutateAsync, data, error, variables, isIdle,
- * isPending, isError, isSuccess, reset }`. Invalidate affected queries from `onSuccess` via
+ * isPending, isError, isSuccess, reset, cancel }`. Invalidate affected queries from `onSuccess` via
  * `useQueryClient().invalidateQueries(...)`. The handle is stable across renders; the latest `fn`/
  * callbacks re-bind each render.
  */
@@ -196,6 +198,7 @@ export function useMutation<TData, TVariables = void>(
     },
     mutateAsync: handle.mutate,
     reset: handle.reset,
+    cancel: handle.cancel,
   }
 }
 

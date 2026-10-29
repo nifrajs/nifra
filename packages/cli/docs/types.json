@@ -17070,7 +17070,7 @@
     "name": "UseMutationResult",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface UseMutationResult<TData, TVariables> extends MutationState<TData, TVariables> {\n    readonly isIdle: boolean;\n    readonly isPending: boolean;\n    readonly isError: boolean;\n    readonly isSuccess: boolean;\n    /** Fire-and-forget: runs the mutation and swallows rejection (read `error`/`isError` for failures). */\n    readonly mutate: (variables: TVariables) => void;\n    /** Run the mutation and return the promise (rejects on failure) - for `await`. */\n    readonly mutateAsync: (variables: TVariables) => Promise<TData>;\n    /** Reset back to idle. */\n    readonly reset: () => void;\n}",
+    "signature": "export interface UseMutationResult<TData, TVariables> extends MutationState<TData, TVariables> {\n    readonly isIdle: boolean;\n    readonly isPending: boolean;\n    readonly isError: boolean;\n    readonly isSuccess: boolean;\n    /** Fire-and-forget: runs the mutation and swallows rejection (read `error`/`isError` for failures). */\n    readonly mutate: (variables: TVariables) => void;\n    /** Run the mutation and return the promise (rejects on failure) - for `await`. */\n    readonly mutateAsync: (variables: TVariables) => Promise<TData>;\n    /** Reset back to idle. */\n    readonly reset: () => void;\n    /** Cancel pending mutation work. */\n    readonly cancel: () => void;\n}",
     "doc": "/** A mutation's reactive state + imperative controls (the TanStack `useMutation` shape). */"
   },
   {
@@ -25829,7 +25829,7 @@
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function useMutation<TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>): UseMutationResult<TData, TVariables>;",
-    "doc": "/**\n * A mutation hook (create/update/delete). Returns `{ mutate, mutateAsync, data, error, variables, isIdle,\n * isPending, isError, isSuccess, reset }`. Invalidate affected queries from `onSuccess` via\n * `useQueryClient().invalidateQueries(...)`. The handle is stable across renders; the latest `fn`/\n * callbacks re-bind each render.\n */"
+    "doc": "/**\n * A mutation hook (create/update/delete). Returns `{ mutate, mutateAsync, data, error, variables, isIdle,\n * isPending, isError, isSuccess, reset, cancel }`. Invalidate affected queries from `onSuccess` via\n * `useQueryClient().invalidateQueries(...)`. The handle is stable across renders; the latest `fn`/\n * callbacks re-bind each render.\n */"
   },
   {
     "name": "useMutation",
