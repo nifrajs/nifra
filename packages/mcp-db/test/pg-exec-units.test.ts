@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  fetchThroughCursor,
   inReadOnlyTransaction,
   type PgConnection,
   type PostgresClient,
@@ -139,6 +140,10 @@ describe("planReads", () => {
     expect(planReads(scan({ Filter: "(t.*)" })).columns.map((c) => c.column)).toEqual(["*"])
   })
 
+  test("a quoted dot is a name, not the dot", () => {
+    expect(planReads(scan({ Filter: '(t "." a)' })).columns).toEqual([])
+  })
+
   describe("outputs under a projecting parent", () => {
     const under = (output: string[]) =>
       planReads({
@@ -181,5 +186,47 @@ describe("planReads", () => {
       const reads = under(["x.a", "t.b"])
       expect(reads.outputs).toEqual([])
     })
+
+    test("a parameter is no qualifier, even for an alias spelled like it", () => {
+      const reads = planReads({
+        "Node Type": "Aggregate",
+        Plans: [scan({ Alias: "$1", Output: ["$1.a"] })],
+      })
+      expect(reads.outputs).toEqual([])
+      expect(reads.columns).toEqual([])
+    })
+
+    test("an item that lexes to nothing is no column list", () => {
+      expect(under([""]).outputs).toEqual([])
+    })
+
+    test("a star after the dot is read as an expression, not listed", () => {
+      const reads = under(["t.*"])
+      expect(reads.outputs).toEqual([])
+      expect(reads.columns.map((c) => c.column)).toEqual(["*"])
+    })
+  })
+})
+
+describe("fetchThroughCursor", () => {
+  const answer = (found: unknown[]) =>
+    Object.assign(Promise.resolve(found), { values: async () => found })
+
+  const read = (first: unknown) => {
+    const connection = Object.assign(
+      (strings: TemplateStringsArray) =>
+        answer(strings[0]?.startsWith("EXPLAIN") ? [{ "QUERY PLAN": [] }] : []),
+      { unsafe: () => answer([[first, "v"]]), release: () => {} },
+    ) as unknown as PgConnection
+    return fetchThroughCursor(connection, "SELECT 1", { maxRows: 5, scope: async () => undefined })
+  }
+
+  test("names the strings of the JSON array in the first column", async () => {
+    expect(await read('["a",1,"b"]')).toEqual({ columns: ["a", "b"], rows: [["v"]] })
+  })
+
+  test("a document that is not an array names no columns", async () => {
+    expect(await read('{"a":1}')).toEqual({ columns: [], rows: [["v"]] })
+    expect(await read("null")).toEqual({ columns: [], rows: [["v"]] })
   })
 })

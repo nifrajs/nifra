@@ -172,7 +172,7 @@ describe("authUrl and the base path", () => {
 
 describe("Auth.js environment defaults", () => {
   test("AUTH_TRUST_HOST in a binding lets a production host through", async () => {
-    const untrusted: AuthJSConfig = { providers: [github], secret: SECRET, logger: config.logger }
+    const { trustHost: _trusted, ...untrusted } = config
     const trusted = await getSession(sessionRequest(), untrusted, {
       env: { NODE_ENV: "production", AUTH_TRUST_HOST: "true" },
     })
@@ -356,7 +356,7 @@ describe("guards", () => {
 
 describe("getSession", () => {
   test("a host Auth.js does not trust reads as no session", async () => {
-    const untrusted: AuthJSConfig = { providers: [github], secret: SECRET, logger: config.logger }
+    const { trustHost: _trusted, ...untrusted } = config
     expect(
       await getSession(sessionRequest(), untrusted, { env: { NODE_ENV: "production" } }),
     ).toBeNull()

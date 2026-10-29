@@ -757,5 +757,21 @@
       "from": "cachePut(pagePath, reloaded)",
       "reason": "Cache entries are only marked stale and their keys only pick which fetchers invalidate() refreshes; a fetcher's own load already caches the path it shows."
     }
+  ],
+  "packages/mcp-db/src/internal/pg-exec.ts": [
+    {
+      "op": "binary <-><=",
+      "fn": "planReads",
+      "code": "for (let i = 0; i + 2 < tokens.length; i++) {",
+      "from": "<",
+      "reason": "The extra iteration reads tokens[i + 2] past the end, which the `column === undefined` check on the next lines skips, so it changes nothing."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "planReads",
+      "code": "for (let i = 0; i + 2 < tokens.length; i++) {",
+      "from": "+",
+      "reason": "The loop only runs further past the end, where every iteration meets an undefined token and skips: `qualifier` or `dot` or `column` is undefined."
+    }
   ]
 }
