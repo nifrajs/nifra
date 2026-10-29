@@ -339,9 +339,15 @@ test("a cookie identity epoch change cancels a pending mutation before it publis
         })
       },
       {
-        onSuccess: () => callbacks.push("success"),
-        onError: () => callbacks.push("error"),
-        onSettled: () => callbacks.push("settled"),
+        onSuccess: () => {
+          callbacks.push("success")
+        },
+        onError: () => {
+          callbacks.push("error")
+        },
+        onSettled: () => {
+          callbacks.push("settled")
+        },
       },
     )
 
@@ -374,7 +380,11 @@ test("starting a mutation after an identity epoch change preserves its fresh sta
           resolveFresh = resolve
         })
       },
-      { onSuccess: (_data, variables) => callbacks.push(variables) },
+      {
+        onSuccess: (_data, variables) => {
+          callbacks.push(variables)
+        },
+      },
     )
 
     const oldPending = mutation.mutate("old")

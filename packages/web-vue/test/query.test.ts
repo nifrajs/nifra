@@ -125,12 +125,6 @@ test("infinite queries without a provider expose idle state and reject client ac
   stop()
 })
 
-test("provideQueryClient requires component setup", () => {
-  expect(() => provideQueryClient(createQueryClient({ now: () => 0 }))).toThrow(
-    "must run during component setup",
-  )
-})
-
 test("Vue mutation state follows the effect scope and async calls resolve", async () => {
   const { value: mutation, stop } = asBrowser(() =>
     inScope(() => useMutation(async (value: number) => value * 2)),

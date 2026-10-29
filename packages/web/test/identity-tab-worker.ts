@@ -17,6 +17,8 @@ probe.onmessage = () => {
 }
 
 self.onmessage = (event: MessageEvent) => {
+  // Worker messages have an empty origin in Bun; when present, allow only the worker's own origin.
+  if (event.origin !== "" && event.origin !== self.location.origin) return
   if (event.data === "report")
     postMessage({ profile: client.getQueryData(["profile"]) ?? null, heard })
   else if (event.data === "change") identityChanged()

@@ -223,7 +223,7 @@ test("provideQueryClient seeds a snapshot only when it is given one, and only in
   const hydrate = spyOn(client, "hydrate")
   const state: DehydratedState = { queries: [], infiniteQueries: [] }
   try {
-    mount(
+    const withoutState = mount(
       defineComponent({
         setup() {
           provideQueryClient(client)
@@ -231,8 +231,9 @@ test("provideQueryClient seeds a snapshot only when it is given one, and only in
         },
       }),
     )
+    withoutState.unmount()
     expect(hydrate).not.toHaveBeenCalled()
-    mount(
+    const withState = mount(
       defineComponent({
         setup() {
           provideQueryClient(client, state)
@@ -240,6 +241,7 @@ test("provideQueryClient seeds a snapshot only when it is given one, and only in
         },
       }),
     )
+    withState.unmount()
     expect(hydrate).toHaveBeenCalledTimes(1)
     expect(hydrate).toHaveBeenCalledWith(state)
     expect(() => provideQueryClient(client)).toThrow("must run during component setup")
