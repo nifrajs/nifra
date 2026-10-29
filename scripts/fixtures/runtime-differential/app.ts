@@ -73,11 +73,15 @@ function encodePath(path: string): string | undefined {
 
 export function createDifferentialApp(options: DifferentialAppOptions = {}) {
   const staticFiles = options.staticFiles
-  const app = server({
+  const serverOptions = {
     logger: silentLogger,
     maxBodyBytes: MAX_BODY_BYTES,
-    ...(options.validateHost === undefined ? {} : { validateHost: options.validateHost }),
-  })
+  }
+  const app = (
+    options.validateHost === undefined
+      ? server(serverOptions)
+      : server({ ...serverOptions, validateHost: options.validateHost })
+  )
     .use(websocket())
     .use(responseContract("enforce", { extra: "strip" }))
     .use(responseObserver())
