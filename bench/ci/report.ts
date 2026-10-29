@@ -3,7 +3,7 @@
  * facts beside them, and the summary computed from them. The raw rounds are what the artifact keeps;
  * every percentage is recomputed from them, so a later regression gate can re-pool old reports.
  */
-import { type Matrix, type Measure, pooledRatios, type RoundCell } from "../rounds.ts"
+import { type Matrix, type Measure, median, pooledRatios, type RoundCell } from "../rounds.ts"
 import type { CoreSplit } from "./host.ts"
 import { type MedianInterval, medianInterval } from "./stats.ts"
 
@@ -192,6 +192,8 @@ export type Verdict = "ok" | "noisy" | "too few rounds"
 
 export interface RowSummary {
   readonly row: string
+  /** Median req/s over every round of every run; load on a shared runner moves it between jobs. */
+  readonly rps: number | undefined
   /** `undefined` throughout a workload without a ceiling row. */
   readonly ofCeiling: MedianInterval | undefined
   /** nifra's req/s over this row's, round by round; `undefined` on nifra's own row. */
@@ -261,7 +263,16 @@ export function summarize(
       let verdict: Verdict = "ok"
       if (needed.some((i) => i === undefined)) verdict = "too few rounds"
       else if (needed.some((i) => i !== undefined && widthPts(i) > maxCiWidthPts)) verdict = "noisy"
-      return { row, ofCeiling, nifraOver, verdict }
+      const rps = runs.flatMap(
+        (run) => run.results[runtime]?.[row]?.[workload]?.rounds.map((m) => m.rps) ?? [],
+      )
+      return {
+        row,
+        rps: rps.length === 0 ? undefined : median(rps),
+        ofCeiling,
+        nifraOver,
+        verdict,
+      }
     })
     // Without a ceiling the rows keep the run's order: nifra's row, then its rivals.
     if (ceiling !== undefined) {

@@ -57,8 +57,8 @@ describe("summary.ts", () => {
   test("renders ssr rows after http's and lists every job that left no report", () => {
     const { code, out } = summary()
     expect(code).toBe(0)
-    expect(out).toContain("| http | node | GET / | 95 (95-95) | - | 0 |")
-    expect(out).toContain("| ssr | node | Vue | - | 300% (300-300) vs nuxt | 0 |")
+    expect(out).toContain("| http | node | GET / | 95 | 95 (95-95) | - | - | 0 |")
+    expect(out).toContain("| ssr | node | Vue | 300 | - | 100 | 300% (300-300) vs nuxt | 0 |")
     expect(out.indexOf("### http - node")).toBeLessThan(out.indexOf("### ssr - node"))
     expect(out).toContain(
       "No report from: http-bun, http-deno, realworld-bun, realworld-node, realworld-deno, ssr-bun (",

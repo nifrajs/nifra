@@ -164,15 +164,15 @@ describe("render", () => {
       "3 runs x 4 rounds - Test CPU - 4 CPUs on 2 cores, servers on 0,1 and oha on 2,3",
     )
     expect(md).toContain("CPU steal up to 0.1%")
-    expect(md).toContain("| **nifra** | **98 (97-99)** | - | ok |")
-    expect(md).toContain("| elysia | 96 (95-97) | 102% (102-102) | ok |")
-    expect(md).toMatch(/\| hono \| \d+ \(\d+-\d+\) \| \d+% \(\d+-\d+\) \| noisy \|/)
+    expect(md).toContain("| **nifra** | **98** | **98 (97-99)** | - | ok |")
+    expect(md).toContain("| elysia | 96 | 96 (95-97) | 102% (102-102) | ok |")
+    expect(md).toMatch(/\| hono \| [\d,]+ \| \d+ \(\d+-\d+\) \| \d+% \(\d+-\d+\) \| noisy \|/)
     expect(md).toContain("1 row(s) still noisy after 3 of at most 5 runs")
   })
 
   test("the headline compares nifra with the runtime's rival", () => {
     expect(renderHeadline([report(runs)])).toContain(
-      `| http | bun | ${GET} | 98 (97-99) | 102% (102-102) vs elysia | 1 |`,
+      `| http | bun | ${GET} | 98 | 98 (97-99) | 96 | 102% (102-102) vs elysia | 1 |`,
     )
   })
 
@@ -226,22 +226,24 @@ describe("ssr reports", () => {
       rival: "next (dynamic)",
     })
     expect(line.roles?.node?.[PREACT_A]).toEqual({ nifra: "nifra+preact (node)" })
-    expect(line.ceilings.node?.[REACT_A]).toBeUndefined()
+    // bench:ssr divides every row by the table's baseline, so that row is the ceiling.
+    expect(line.ceilings.node?.[REACT_A]).toBe("next (dynamic)")
     expect(() => parseRunOutput({ ...line, roles: { node: { [REACT_A]: { nifra: 1 } } } })).toThrow(
       `run.roles.node.${REACT_A}.nifra`,
     )
   })
 
-  test("a table without a ceiling compares nifra with each rival, nifra's row first", () => {
+  test("a table's baseline is its ceiling, so % of ceiling is bench:ssr's ratio", () => {
     const runs = [1, 2, 3].map(() => ssrRun("node", shares))
     const w = summarize(runs, "node", 10).find((s) => s.workload === REACT_A)
-    expect(w?.ceiling).toBeUndefined()
+    expect(w?.ceiling).toBe("next (dynamic)")
     expect(w?.nifra).toBe("nifra+react (node)")
     expect(w?.rival).toBe("next (dynamic)")
-    expect(w?.rows.map((r) => r.row)).toEqual(["nifra+react (node)", "next (dynamic)", "remix"])
-    expect(w?.rows.every((r) => r.ofCeiling === undefined && r.verdict === "ok")).toBe(true)
-    expect(w?.rows[1]?.nifraOver?.median).toBeCloseTo(10, 6)
-    expect(w?.rows[2]?.nifraOver?.n).toBe(12)
+    expect(w?.rows.map((r) => r.row)).toEqual(["nifra+react (node)", "remix", "next (dynamic)"])
+    expect(w?.rows.every((r) => r.verdict === "ok")).toBe(true)
+    expect(w?.rows[0]?.ofCeiling?.median).toBeCloseTo(10, 6)
+    expect(w?.rows[1]?.nifraOver?.median).toBeCloseTo(5, 6)
+    expect(w?.rows[1]?.nifraOver?.n).toBe(12)
   })
 
   test("nifra's ISR row is compared with the rival's ISR row, under the static host ceiling", () => {
@@ -263,14 +265,14 @@ describe("ssr reports", () => {
     expect([w?.ceiling, w?.rival]).toEqual(["preact-ssr", undefined])
     expect(w?.rows.find((row) => row.row === "nifra+preact")?.ofCeiling?.median).toBeCloseTo(0.8, 6)
     const headline = renderHeadline([r])
-    expect(headline).toContain(`| ssr | bun | ${PREACT_A} | 80 (80-80) | - | 0 |`)
+    expect(headline).toContain(`| ssr | bun | ${PREACT_A} | 1,005 | 80 (80-80) | - | - | 0 |`)
     expect(headline).toContain(
-      `| ssr | bun | ${REACT_A} | - | 1000% (1000-1000) vs next (dynamic) | 0 |`,
+      `| ssr | bun | ${REACT_A} | 1,005 | 1000 (1000-1000) | 101 | 1000% (1000-1000) vs next (dynamic) | 0 |`,
     )
     expect(unsettledRows(summarize(runs, "bun", 10))).toBe(0)
   })
 
-  test("a section says which runtime nifra ran on and marks a table without a ceiling", () => {
+  test("a section says which runtime nifra ran on and marks a table without a rival", () => {
     const md = renderSection(
       ssrReport(
         "node",
@@ -279,9 +281,9 @@ describe("ssr reports", () => {
     )
     expect(md).toContain("### ssr - node")
     expect(md).toContain("nifra runs on node; the rival apps run on node in both ssr jobs")
-    expect(md).toContain(`**${REACT_A}** (ceiling: none)`)
-    expect(md).toContain("| **nifra+react (node)** | - | - | ok |")
-    expect(md).toContain("| next (dynamic) | - | 1000% (1000-1000) | ok |")
+    expect(md).toContain(`**${REACT_A}** (ceiling: next (dynamic))`)
+    expect(md).toContain("| **nifra+react (node)** | **1,005** | **1000 (1000-1000)** | - | ok |")
+    expect(md).toContain("| remix | 201 | 200 (200-200) | 500% (500-500) | ok |")
   })
 
   test("an ssr report survives the summary job's round trip; ssr has no deno job", () => {
