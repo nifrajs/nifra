@@ -27,7 +27,8 @@ export function selectRouteLanes(options: {
   readonly hasIdempotency: boolean
   readonly hasLedger: boolean
   readonly hasResponseContract: boolean
-  readonly hasDecorations: boolean
+  /** False when a decoration cannot be merged into the context, which keeps the fused hook lanes off. */
+  readonly decorationsAssignable?: boolean
   readonly derives: number
   readonly beforeHandle: number
   readonly afterHandle: number
@@ -40,7 +41,7 @@ export function selectRouteLanes(options: {
     hasIdempotency,
     hasLedger,
     hasResponseContract,
-    hasDecorations,
+    decorationsAssignable = true,
     derives,
     beforeHandle,
     afterHandle,
@@ -146,8 +147,9 @@ export function selectRouteLanes(options: {
           : "hooks"
 
   // A route whose only lifecycle steps are derive, before and after hooks (any number of each, at least
-  // one) runs them in one fused closure chain. Anything that can observe decorations, error hooks,
-  // around hooks or a response contract keeps the generic runner. A params, headers or cookies schema
+  // one) runs them in one fused closure chain, with the route's decorations and error hooks. Anything
+  // that can observe around hooks, a response contract or a validation-error recovery keeps the
+  // generic runner. A params, headers or cookies schema
   // routes back to the generic lane because the fused builder has no validation step for them, and a
   // `body` schema is the `body-hooks` lane below because this one does not parse the body.
   const hookCount = derives + beforeHandle + afterHandle
@@ -155,7 +157,7 @@ export function selectRouteLanes(options: {
     lane === "lifecycle" &&
     !authBeforeValidation &&
     !hasResponseContract &&
-    !hasDecorations &&
+    decorationsAssignable &&
     !hasIdempotency &&
     !hasLedger &&
     schema?.onValidationError === undefined &&
@@ -163,7 +165,6 @@ export function selectRouteLanes(options: {
     plain &&
     schema?.body === undefined &&
     hookCount > 0 &&
-    onError === 0 &&
     around === 0
       ? "hooks"
       : undefined
@@ -179,11 +180,10 @@ export function selectRouteLanes(options: {
     schema?.onValidationError === undefined &&
     !defaultOnValidationError &&
     !hasResponseContract &&
-    !hasDecorations &&
+    decorationsAssignable &&
     !hasIdempotency &&
     !hasLedger &&
     hookCount > 0 &&
-    onError === 0 &&
     around === 0
 
   return {
