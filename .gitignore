@@ -105,4 +105,3 @@ dv-*/
 /.mutation/
 packages/deno/test/.tmp-*/
 packages/cli/test/.db-tool-*/
-packages/cli/test/.typecheck-coverage-*/
