@@ -55,7 +55,7 @@ export {
   registerBlocker,
   resolveNavigate,
 } from "./navigation.ts"
-export { createMutation, createQueryClient } from "./query.ts"
+export { createMutation, createQueryClient, MutationCancelledError } from "./query.ts"
 export { localeOfProps } from "./render-seam.ts"
 export { createClientRouter, createMatcher } from "./router.ts"
 // Same reason, for the ADAPTER packages (`@nifrajs/web-react` and friends). Every one of them reaches

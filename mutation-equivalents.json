@@ -661,6 +661,15 @@
       "reason": "With no calls the lookup returns no rows, so the loop ends in the same undefined."
     }
   ],
+  "packages/web/src/identity.ts": [
+    {
+      "op": "condition->false",
+      "fn": "identityChannel",
+      "code": "if (typeof BroadcastChannel === \"undefined\") return undefined",
+      "from": "typeof BroadcastChannel === \"undefined\"",
+      "reason": "Without a BroadcastChannel the constructor throws a ReferenceError, which the try block below catches and answers with no channel, as the check does."
+    }
+  ],
   "packages/web/src/internal/identity-epoch.ts": [
     {
       "op": "condition->true",
@@ -733,6 +742,86 @@
       "code": "if (value === old) kept++",
       "from": "kept++",
       "reason": "Only whether kept is zero is read, and kept-- leaves it non-zero exactly when kept++ does."
+    }
+  ],
+  "packages/web/src/query.ts": [
+    {
+      "op": "condition->false",
+      "fn": "sweepEntries",
+      "code": "if (e.subscribers !== 0 || e.gcAt === undefined) continue",
+      "from": "e.subscribers !== 0 || e.gcAt === undefined",
+      "reason": "A subscribed entry has no GC time (subscribing clears it), so the guard and the single `gcAt` test below it agree on every entry."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "sweepEntries",
+      "code": "if (e.subscribers !== 0 || e.gcAt === undefined) continue",
+      "from": "||",
+      "reason": "A subscribed entry has no GC time (subscribing clears it), so the guard and the single `gcAt` test below it agree on every entry."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "sweepEntries",
+      "code": "else if (e.gcAt < next) next = e.gcAt",
+      "from": "<",
+      "reason": "Two entries due at the same instant give the same earliest time whichever is kept."
+    },
+    {
+      "op": "condition->false",
+      "fn": "sweepEntries",
+      "code": "if (entries.size <= max) return next",
+      "from": "entries.size <= max",
+      "reason": "The cap loop below opens with the same size test and stops at once, so returning early only skips a no-op walk."
+    },
+    {
+      "op": "binary <=-><",
+      "fn": "sweepEntries",
+      "code": "if (entries.size <= max) return next",
+      "from": "<=",
+      "reason": "The cap loop below opens with the same size test and stops at once, so returning early only skips a no-op walk."
+    },
+    {
+      "op": "condition->false",
+      "fn": "watchIdentity",
+      "code": "if (stopIdentityWatch !== undefined) return",
+      "from": "stopIdentityWatch !== undefined",
+      "reason": "Registering the same cancel function again adds nothing to the listener set, and removing it once removes it for every call."
+    },
+    {
+      "op": "condition->true",
+      "fn": "mutate",
+      "code": "if (cbs.onError !== undefined)",
+      "from": "cbs.onError !== undefined",
+      "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "condition->true",
+      "fn": "mutate",
+      "code": "if (cbs.onSettled !== undefined)",
+      "from": "cbs.onSettled !== undefined",
+      "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "condition->true",
+      "fn": "mutate",
+      "code": "if (cbs.onSuccess !== undefined)",
+      "from": "cbs.onSuccess !== undefined",
+      "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "condition->true",
+      "fn": "mutate",
+      "code": "if (cbs.onSettled !== undefined)",
+      "from": "cbs.onSettled !== undefined",
+      "nth": 1,
+      "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "return undefined",
+      "fn": "wasCancelled",
+      "code": "return false",
+      "from": "return false",
+      "reason": "Every caller reads the result only in an `if`, where `undefined` and `false` take the same branch."
     }
   ],
   "packages/web/src/router.ts": [

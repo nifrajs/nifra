@@ -404,8 +404,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // again inside the call, a rotating epoch costing bounded loads, and `documentLoad` when a load over the
   // previous visitor's page fails: 21,218 -> 21,579 B (Bun 1.4.4). That codec's Date copy taking only
   // what the engine tags a plain object, and lists: 21,579 -> 21,668 B (Bun 1.4.4). A route data request's
-  // headers built by one function the live client shares: 21,699 -> 21,712 B (Bun 1.4.4).
-  "nifra-web-client": 21.3,
+  // headers built by one function the live client shares: 21,699 -> 21,712 B (Bun 1.4.4). A mutation
+  // that an identity change cancels in every tab, handing its function and callbacks an abort signal,
+  // and `dehydrate` taking a filter: 21,712 -> 22,087 B (Bun 1.4.4).
+  "nifra-web-client": 21.6,
   "nifra-i18n": 4.3,
 }
 

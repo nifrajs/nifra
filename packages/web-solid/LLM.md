@@ -19,17 +19,17 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => JSX.Element` · from `@nifrajs/web-solid/ppr`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => JSX.Element` · from `@nifrajs/web-solid/i18n`
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => JSX.Element` · from `@nifrajs/web-solid/image`
+- **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly state?: DehydratedState; readonly children?: JSX.Element; }) => JSX.E…` · from `@nifrajs/web-solid/query`
 - **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: { readonly state: ComponentState; readonly component: Handle<Input, Props, View>; readonly ins…` · from `@nifrajs/web-solid/server-components/outlet`
 - **createFetcher** _(function)_ - `createFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-solid/fetcher`
+- **createInfiniteQuery** _(function)_ - `createInfiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: CreateInfiniteQueryOptions<T, P>) => CreateInfiniteQue…` · from `@nifrajs/web-solid/query`
+- **createMutation** _(function)_ - `createMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCal…` · from `@nifrajs/web-solid/query`
 - **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => CreateQueryResult<T>` · from `@nifrajs/web-solid/query`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-solid/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-solid/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-solid/client`
-- **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void` · from `@nifrajs/web-solid/keep-alive`
-- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void` · from `@nifrajs/web-solid/keep-alive`
-- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-solid/i18n`
 
-_…and 36 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
+_…and 42 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 

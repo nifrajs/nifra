@@ -4,7 +4,7 @@ import { CodeBlock } from "../../shared/highlight"
 export const meta = docsMeta(
   "/docs/query",
   "Nifra - Query cache",
-  "Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.",
+  "Nifra's cross-framework keyed query cache: reactive queries, mutations, infinite lists, and SSR hydration.",
 )
 
 const USE_QUERY = `import { useQuery, useQueryClient } from "@nifrajs/web-react/query"
@@ -25,6 +25,47 @@ function CreateUser() {
   return <button onClick={() => qc.invalidateQueries(["user"])}>Refresh</button>
 }`
 
+const FRAMEWORK_BINDINGS = `// React / Preact: hooks with a promise-returning mutation.
+// The mutation function receives a context with a shared AbortSignal as its second argument.
+const saveProfile = async (profile, { signal }) => {
+  const response = await fetch("/api/profile", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(profile),
+    signal,
+  })
+  if (!response.ok) throw new Error("Profile save failed")
+  return response
+}
+const save = useMutation(saveProfile)
+await save.mutateAsync(profile)
+
+// Vue: state is a ref; read it with .value.
+const save = useMutation(saveProfile)
+await save.mutateAsync(profile)
+save.state.value.status
+
+// Svelte: mutation and infinite-query bindings are readable stores.
+const save = useMutation(saveProfile)
+await save.mutateAsync(profile)
+// In markup, read $save.status.
+
+// Solid: state is exposed through accessors.
+const save = createMutation(saveProfile)
+await save.mutateAsync(profile)
+save.state().status`
+
+const SSR_QUERY_CACHE = `// Create one QueryClient for this server request.
+const queryClient = createQueryClient({ now: () => Date.now() })
+await queryClient.prefetchQuery(["profile", user.id], loadProfile)
+const queryState = queryClient.dehydrate({
+  // Nothing is sent unless this returns true: name what is safe for the visitor to read.
+  shouldDehydrateQuery: ({ key }) => Array.isArray(key) && key[0] === "profile",
+})
+
+// Return queryState through the route's normal loader-data serializer.
+// On the client, seed the app's client before query components mount.`
+
 export default function Query() {
   return (
     <div className="prose">
@@ -40,10 +81,48 @@ export default function Query() {
         <code>createQuery(key, fn)</code> (Solid), each from the adapter&apos;s <code>/query</code>{" "}
         entry, subscribe a component to a cached, keyed query. Concurrent reads of the same key{" "}
         <b>dedup</b> into one in-flight fetch; results are cached with a <code>staleTime</code> (the
-        third argument&apos;s option), a background refetch, and bounded GC. React also has{" "}
-        <code>useMutation</code>, <code>useInfiniteQuery</code> and <code>HydrationBoundary</code>.
+        third argument&apos;s option), a background refetch, and bounded GC. The query cache also has
+        mutation and infinite-query bindings across the adapters, using each framework&apos;s reactive
+        model.
       </p>
       <CodeBlock code={USE_QUERY} />
+
+      <h2>Mutations and infinite queries</h2>
+      <p>
+        React and Preact expose <code>useMutation</code> and <code>useInfiniteQuery</code>. Vue
+        exposes composables whose reactive state is read from refs. Svelte returns readable stores,
+        and Solid exposes <code>createMutation</code> and <code>createInfiniteQuery</code> accessors.
+        Each mutation has <code>mutate</code>, <code>mutateAsync</code>, <code>reset</code>, and
+        <code>cancel</code>; each paged query exposes next/previous-page controls and page-availability
+        state. Mutations remain client state bindings: the server action or endpoint still enforces
+        authorization. Mutation functions receive a shared context with a <code>signal</code> as
+        their second argument. <code>onMutate</code> receives that context second;
+        <code>onSuccess</code> and <code>onError</code> receive it third; and <code>onSettled</code>
+        receives it fourth. Pass <code>context.signal</code> to <code>fetch</code> and check it before
+        side effects after an <code>await</code>. <code>cancel</code> aborts that signal, rejects the local promise, and
+        discards local results; the request or server action only stops if it honors the signal, and accepted server work may
+        finish.
+      </p>
+      <CodeBlock code={FRAMEWORK_BINDINGS} />
+
+      <h2>SSR cache hydration</h2>
+      <p>
+        Query-cache hydration is separate from hydrating server-rendered markup. Create a fresh query
+        client for each server request, prefetch the data, and pass its dehydrated state through Nifra
+        route data. React and Preact use <code>QueryClientProvider</code> with
+        <code>HydrationBoundary</code>; Solid accepts the state on <code>QueryClientProvider</code>;
+        Vue and Svelte call <code>provideQueryClient(client, state)</code> in the app root before child
+        queries initialize. The browser may keep one client for the app. Query state is cleared on
+        identity changes, and in-flight mutation results are discarded at that boundary.
+      </p>
+      <p>
+        Every value included by <code>dehydrate</code> is serialized to the browser and is visible to
+        that visitor, so <code>dehydrate</code> sends nothing by default. Pass
+        <code>shouldDehydrateQuery</code> to name the regular and infinite queries that are safe to
+        send; pass <code>() =&gt; true</code> only when every successful query in that client is
+        meant for the browser. Never include tokens or server-only fields.
+      </p>
+      <CodeBlock code={SSR_QUERY_CACHE} />
 
       <h2>Invalidation</h2>
       <p>
