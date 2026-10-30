@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, relative, resolve } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import ts from "typescript"
 import { scaffold } from "../src/cli.ts"
 import { FRAMEWORK_IDS } from "../src/scaffold/frameworks.ts"
@@ -73,9 +73,12 @@ async function diagnosticsOf(dir: string, framework: string): Promise<string[]> 
   const program = ts.createProgram(files, options)
   return ts
     .getPreEmitDiagnostics(program)
-    .filter(
-      (item) => item.file !== undefined && !relative(dir, item.file.fileName).startsWith(".."),
-    )
+    .filter((item) => {
+      if (item.file === undefined) return false
+      // Another drive (the repository's, on Windows) makes `relative` answer with an absolute path.
+      const inside = relative(dir, item.file.fileName)
+      return !inside.startsWith("..") && !isAbsolute(inside)
+    })
     .filter((item) => !UNINSTALLED.has(item.code))
     .map((item) => {
       const where = item.file?.getLineAndCharacterOfPosition(item.start ?? 0)
