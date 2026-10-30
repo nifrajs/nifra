@@ -184,14 +184,17 @@ export function createServerComponents(options: ServerComponentsOptions): Server
         )
       )
         throw new ServerComponentError("component_contract")
+      const normalizedCache = {
+        scope: "public" as const,
+        requestIndependent: true as const,
+        revalidate: cache.revalidate,
+      }
+      const normalizedTags = tags.filter((tag): tag is string => typeof tag === "string")
+      if (normalizedTags.length > 0)
+        Object.assign(normalizedCache, { tags: Object.freeze(normalizedTags) })
       normalizedOwner = {
         ...owner,
-        cache: Object.freeze({
-          scope: "public",
-          requestIndependent: true,
-          revalidate: cache.revalidate,
-          ...(tags.length === 0 ? {} : { tags: Object.freeze([...tags]) }),
-        }),
+        cache: Object.freeze(normalizedCache),
       }
     }
     owners.set(routeId, { owner: normalizedOwner, components })
