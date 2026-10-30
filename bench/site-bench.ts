@@ -137,6 +137,7 @@ export type LegacySiteBench = Omit<SiteBench, "httpMemory"> & {
 
 const HTTP_MEMORY_RUNTIMES = ["node", "bun", "deno"] as const
 
+// biome-ignore lint/plugin/noHelperCopy: Benchmark publishing validates persisted JSON locally; importing an unrelated package's internal guard would cross package boundaries.
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
