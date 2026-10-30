@@ -175,7 +175,6 @@ export function reactComponentClient(): ComponentClientAdapter {
     },
     update(root, _record, tree, current) {
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Only this adapter produces its prepared tree and native root; component records and public props are validated before native preparation.
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: This client stores roots created only by FlightRoot in its private per-instance map.
       ;(root as FlightRoot).publish(tree as ReactNode, current)
     },
     async updateProgressive(root, flight, current, signal) {

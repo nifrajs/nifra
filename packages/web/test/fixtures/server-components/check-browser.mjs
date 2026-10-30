@@ -261,28 +261,28 @@ for (const [name, engine] of Object.entries(engines)) {
     ])
     assert.equal(await progressive.locator("#revision").textContent(), "Revision 3")
     await progressive.close()
-if ((process.env.NIFRA_COMPONENT_ADAPTER ?? "vue") === "react") {
-  const progressiveUrl = new URL(process.env.NIFRA_COMPONENT_URL ?? "http://127.0.0.1:4422/")
-  progressiveUrl.searchParams.set("remove", "yes")
-  await page.goto(progressiveUrl.toString())
-  await page.waitForFunction(() => window.fixture?.ready)
-  await page.evaluate(() => {
-    window.flightRefreshSettled = false
-    window.flightRefresh = window.fixture.refresh("?revision=new&delay=flight&remove=yes").then(
-      (result) => {
-        window.flightRefreshSettled = true
-        return result
-      },
-    )
-  })
-  await page.locator("#slow-fallback").waitFor({ state: "visible", timeout: 10_000 })
-  assert.equal(await page.locator("#revision").textContent(), "Revision 4")
-  assert.equal(await page.locator("#slow-ready").count(), 0)
-  assert.equal(await page.evaluate(() => window.flightRefreshSettled), false)
-  await page.locator("#slow-ready").waitFor({ state: "visible" })
-  assert.equal(await page.evaluate(() => window.flightRefresh), true)
-  assert.equal(await page.evaluate(() => window.flightRefreshSettled), true)
-}
+    if ((process.env.NIFRA_COMPONENT_ADAPTER ?? "vue") === "react") {
+      const progressiveUrl = new URL(process.env.NIFRA_COMPONENT_URL ?? "http://127.0.0.1:4422/")
+      progressiveUrl.searchParams.set("remove", "yes")
+      await page.goto(progressiveUrl.toString())
+      await page.waitForFunction(() => window.fixture?.ready)
+      await page.evaluate(() => {
+        window.flightRefreshSettled = false
+        window.flightRefresh = window.fixture
+          .refresh("?revision=new&delay=flight&remove=yes")
+          .then((result) => {
+            window.flightRefreshSettled = true
+            return result
+          })
+      })
+      await page.locator("#slow-fallback").waitFor({ state: "visible", timeout: 10_000 })
+      assert.equal(await page.locator("#revision").textContent(), "Revision 4")
+      assert.equal(await page.locator("#slow-ready").count(), 0)
+      assert.equal(await page.evaluate(() => window.flightRefreshSettled), false)
+      await page.locator("#slow-ready").waitFor({ state: "visible" })
+      assert.equal(await page.evaluate(() => window.flightRefresh), true)
+      assert.equal(await page.evaluate(() => window.flightRefreshSettled), true)
+    }
     console.log(
       JSON.stringify({
         engine: name,
@@ -312,7 +312,9 @@ if ((process.env.NIFRA_COMPONENT_ADAPTER ?? "vue") === "react") {
           "auth-during-native-prepare",
           "navigation-during-native-prepare",
           "progressive-form",
-  ...(process.env.NIFRA_COMPONENT_ADAPTER === "react" ? ["react-progressive-suspense-commit"] : []),
+          ...(process.env.NIFRA_COMPONENT_ADAPTER === "react"
+            ? ["react-progressive-suspense-commit"]
+            : []),
           "dispose",
         ],
         status: "passed",
