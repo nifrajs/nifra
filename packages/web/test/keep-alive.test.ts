@@ -57,20 +57,20 @@ class FakeHistory {
 class FakeChannel {
   static open: FakeChannel[] = []
   readonly sent: unknown[] = []
-  readonly #listeners = new Set<() => void>()
+  readonly #listeners = new Set<(event: { data: unknown }) => void>()
   constructor(readonly name: string) {
     FakeChannel.open.push(this)
   }
-  addEventListener(_type: "message", listener: () => void): void {
+  addEventListener(_type: "message", listener: (event: { data: unknown }) => void): void {
     this.#listeners.add(listener)
   }
   postMessage(message: unknown): void {
     this.sent.push(message)
     for (const other of FakeChannel.open)
-      if (other !== this && other.name === this.name) other.receive()
+      if (other !== this && other.name === this.name) other.receive(message)
   }
-  receive(): void {
-    for (const listener of [...this.#listeners]) listener()
+  receive(data: unknown = "changed"): void {
+    for (const listener of [...this.#listeners]) listener({ data })
   }
   close(): void {}
 }
@@ -814,15 +814,36 @@ describe("keepAliveClient", () => {
     expect(published).toBe(3)
   })
 
-  test("a new epoch cookie after a navigation drops every kept page and tells the other tabs", () => {
-    fakeDocument.cookie = "theme=dark; nifra-epoch=a"
-    const { router, push, drops } = setup(state("list", "/list/1"))
-    push(state("list", "/list/2"))
-    fakeDocument.cookie = "theme=dark; nifra-epoch=b"
-    push(state("detail", "/detail"))
-    expect(router.snapshot().kept).toBeUndefined()
-    expect(drops.map(([reason]) => reason)).toEqual(["identity"])
-    expect(FakeChannel.open[0]?.sent).toEqual(["changed"])
+  test("a new epoch cookie after a navigation drops every kept page and tells the other tabs, not this tab's own listeners", () => {
+    const slot = Symbol.for("nifra.identity.channel")
+    const channelBefore = Object.getOwnPropertyDescriptor(globalThis, slot)
+    const windowBefore = Object.getOwnPropertyDescriptor(globalThis, "window")
+    Reflect.deleteProperty(globalThis, slot)
+    Object.defineProperty(globalThis, "window", { value: {}, configurable: true, writable: true })
+    try {
+      fakeDocument.cookie = "theme=dark; nifra-epoch=a"
+      const { router, push, drops } = setup(state("list", "/list/1"))
+      let heard = 0
+      onIdentityChange(() => {
+        heard++
+      })
+      push(state("list", "/list/2"))
+      fakeDocument.cookie = "theme=dark; nifra-epoch=b"
+      push(state("detail", "/detail"))
+      expect(router.snapshot().kept).toBeUndefined()
+      expect(drops.map(([reason]) => reason)).toEqual(["identity"])
+      expect(FakeChannel.open.flatMap((channel) => channel.sent)).toEqual(["changed"])
+      // The tab that noticed the epoch acted on it already: its listeners hear no echo of its own post.
+      expect(heard).toBe(0)
+    } finally {
+      for (const [name, before] of [
+        [slot, channelBefore],
+        ["window", windowBefore],
+      ] as const) {
+        if (before === undefined) Reflect.deleteProperty(globalThis, name)
+        else Object.defineProperty(globalThis, name, before)
+      }
+    }
   })
 
   test("a restore whose page was kept under another epoch renders fresh", async () => {
