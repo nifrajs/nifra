@@ -327,6 +327,7 @@ async function explore<C>(suite: Suite<C>): Promise<Explored> {
     const details = await fc.check(
       fc.asyncProperty(suite.arbitrary, async (testCase) => {
         const { violations } = await suite.run(testCase)
+        // nifra-expect NF-S002: violation signatures are public failure-group labels, not cryptographic signatures.
         return !violations.some((violation) => violation.signature === bucket.signature)
       }),
       {
@@ -357,6 +358,7 @@ async function explore<C>(suite: Suite<C>): Promise<Explored> {
       count: bucket.count,
       shrunk,
       violations: replayed.violations.filter(
+        // nifra-expect NF-S002: violation signatures are public failure-group labels, not cryptographic signatures.
         (violation) => violation.signature === bucket.signature,
       ),
       outcomes: replayed.summary(),

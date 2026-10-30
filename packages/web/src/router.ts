@@ -1819,6 +1819,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (
           loaded.serverComponents === undefined &&
           !holes &&
+          // nifra-expect NF-S002: token is an object identity marking the current prefetch generation, not a credential.
           inflight.get(path) === token &&
           epoch === documentEpoch()
         )
@@ -1826,6 +1827,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {
+        // nifra-expect NF-S002: token is an object identity marking the current prefetch generation, not a credential.
         if (inflight.get(path) === token) inflight.delete(path)
       }
     },

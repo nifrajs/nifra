@@ -144,7 +144,12 @@ function toBunError(err: unknown): ImageProcessingError {
  * structurally so `@nifrajs/image` has no dependency on sharp - pass your own `sharp` import. */
 export type SharpLike = (input: Uint8Array) => SharpInstance
 interface SharpInstance {
-  metadata(): Promise<{ width?: number; height?: number; format?: string; orientation?: number }>
+  metadata(): Promise<{
+    width?: number | undefined
+    height?: number | undefined
+    format?: string | undefined
+    orientation?: number | undefined
+  }>
   /** With no angle: turn the pixels upright by the EXIF orientation, which the output then drops. */
   rotate(): SharpInstance
   resize(options: { width: number; withoutEnlargement?: boolean }): SharpInstance

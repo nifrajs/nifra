@@ -74,3 +74,21 @@ describe("@nifrajs/web-vue/image", () => {
     )
   })
 })
+
+test("imported image infers dimensions and uses only prebuilt variants", async () => {
+  const src = {
+    src: "/assets/full.png",
+    width: 800,
+    height: 400,
+    variants: [
+      { src: "/assets/small.webp", width: 200, height: 100 },
+      { src: "/assets/large.webp", width: 400, height: 200 },
+    ],
+  }
+  const html = await render({ src, alt: "imported", width: 200 })
+  expect(html).toContain('width="200"')
+  expect(html).toContain('height="100"')
+  expect(html).toContain('src="/assets/small.webp"')
+  expect(html).toContain("/assets/small.webp 200w, /assets/large.webp 400w")
+  expect(html).not.toContain("[object object]")
+})

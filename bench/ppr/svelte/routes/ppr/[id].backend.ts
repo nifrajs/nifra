@@ -1,16 +1,8 @@
 import { t } from "@nifrajs/schema"
 import type { BoundaryRequestCtx } from "@nifrajs/web"
 import { defineShellLoader } from "@nifrajs/web/ppr"
-import {
-  cartSchema,
-  greetingSchema,
-  loadCart,
-  loadGreeting,
-  loadRecs,
-  productSchema,
-  readProduct,
-  recsSchema,
-} from "../../../shared/catalog.ts"
+import { loadCart, loadGreeting, loadRecs, readProduct } from "../../../backend/catalog.ts"
+import { cartSchema, greetingSchema, productSchema, recsSchema } from "../../../shared/catalog.ts"
 
 export const shellLoader = defineShellLoader(async ({ params }) => ({
   product: await readProduct(params.id ?? "0"),

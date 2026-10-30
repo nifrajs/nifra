@@ -18,7 +18,7 @@ import { compileShells } from "../../../src/internal/ppr/compile-shell.ts"
 import { createWebApp } from "../../../src/internal/web-app.ts"
 import { live } from "../../../src/live.ts"
 import { partialPrerendering } from "../../../src/ppr.ts"
-import { add } from "./refresh-app/lib/counts.ts"
+import { add } from "./refresh-app/lib/counts.backend.ts"
 
 declare global {
   interface Window {

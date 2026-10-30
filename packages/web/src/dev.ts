@@ -77,6 +77,7 @@ import {
   type UpgradableApp,
   upgradeOnBun,
 } from "./internal/dev-websocket.ts"
+import { pluginImageResponse } from "./internal/image-assets.ts"
 import { DEV_HMR_ENV, DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
 
 export type { DevAppHooks } from "./dev-session.ts"
@@ -373,6 +374,12 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
           hashedFiles: (path) => path.startsWith("/assets/"),
           cacheControl: ONE_DAY,
         })
+  const serveImages = serveStatic({
+    dir: resolve(root, ".nifra/image-assets"),
+    prefix: "/assets/",
+    fallthrough: true,
+    hashedFiles: () => true,
+  })
 
   writeDevFiles({ routesDir, clientModule, entryPath, htmlPath, live: options.live })
   // Importing the generated HTML is what hands it to Bun's bundler. A runtime-computed path is fine:
@@ -540,6 +547,12 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
         // serves extension-less files too (an ACME challenge token is the reason), so there is no
         // cheap prefilter to skip. Dev only - production serves `public/` from the CDN, and a caller
         // mounting this handler itself can pass `files` to answer a miss without touching the disk.
+        const image = pluginImageResponse(options.plugins ?? [], req)
+        if (image !== undefined) return image
+        if (/^\/assets\/_images\/[a-f0-9]{64}\.(png|jpg|webp|gif)$/.test(url.pathname)) {
+          const generated = await serveImages(req)
+          if (generated !== undefined) return generated
+        }
         const staticFile = await servePublic(req)
         if (staticFile !== undefined) return staticFile
         return session.track(req, () => renderApp(req, url))
