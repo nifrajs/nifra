@@ -533,10 +533,6 @@ interface ContractsCommandOutput {
   readonly present?: boolean
   readonly vacuous?: boolean
 }
-interface SyncCommandOutput {
-  readonly ok: true
-  readonly results: readonly unknown[]
-}
 interface SyncManifestCommandOutput {
   readonly ok: boolean
   readonly results: readonly SyncManifestResult[]
@@ -2031,25 +2027,6 @@ const syncManifestSpec: CommandSpec<SyncInput, SyncManifestCommandOutput> = {
   success: (out) => out.ok,
 }
 
-const syncRoutesSpec: CommandSpec<SyncInput, SyncCommandOutput> = {
-  name: "sync-routes",
-  summary: "Regenerate nifra-routes.d.ts so typed navigation follows route search schemas.",
-  input: SYNC_SCHEMA,
-  output: syncOutput(),
-  transports: ["cli", "mcp"],
-  stability: "stable",
-  argv: SYNC_ARGV,
-  async run(_value, ctx) {
-    const result = await (await import("./sync-routes.ts")).syncRouteTypes(ctx.cwd)
-    return { ok: true, results: result === null ? [] : [result] }
-  },
-  render: (out) => [
-    out.results.length === 0
-      ? "nifra sync-routes: no routes/ directory found. Run from your project root."
-      : `✓ checked ${out.results.length} route type output`,
-  ],
-}
-
 const proveSpec: CommandSpec<ProveInput, ProjectWorkGraphResult> = {
   name: "prove",
   summary:
@@ -2209,7 +2186,6 @@ export const commandSpecs = Object.freeze([
   diffSpec,
   contractsSpec,
   syncManifestSpec,
-  syncRoutesSpec,
   proveSpec,
   replaySpec,
   smokeSpec,

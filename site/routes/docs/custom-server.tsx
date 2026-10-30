@@ -343,7 +343,7 @@ export default function CustomServer() {
         reads what the app declares sets <code>NIFRA_REFLECT</code> to its own name first:{" "}
         <code>check</code>, <code>routes</code>, <code>context</code>, <code>openapi</code>,{" "}
         <code>contracts</code>, <code>capabilities</code>, <code>manifest</code>, <code>doctor</code>
-        , <code>diff</code>, <code>sync-routes</code>, <code>sync-manifest</code>, and{" "}
+        , <code>diff</code>, <code>sync-manifest</code>, and{" "}
         <code>assure</code> without <code>--bundle</code>, <code>--strict</code>,{" "}
         <code>--hydration</code>, <code>--interact</code> or <code>--out</code>. Commands that send the
         app requests, such as <code>smoke</code>, <code>prove</code>, <code>levels</code> and the{" "}

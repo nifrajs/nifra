@@ -18,6 +18,11 @@
  * projects the loader's value through that schema, so the schema is what the component receives.
  * `.nifra/types/register.d.ts` registers `backend/app.ts`'s `backend` with `@nifrajs/client`, so `api`
  * is typed without a route importing the backend.
+ *
+ * `.nifra/types/routes.d.ts` fills `RouteTable` (`@nifrajs/web`) with one `{ params, search }` entry per
+ * URL pattern. Params come from the compiled pattern, the same function the router matches with, and
+ * `Route.Params` reads the same patterns, so a link and the page it reaches cannot disagree. Every
+ * `+types` module references the table, so a program that imports any of them loads it.
  */
 import {
   type Dirent,
@@ -28,12 +33,14 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
-import { dirname, join, relative } from "node:path"
+import { basename, dirname, join, relative } from "node:path"
+import { compileRoutePattern } from "@nifrajs/core/pattern"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { jsStringLiteral } from "./internal/js-string.ts"
 import { toPosix } from "./internal/posix-path.ts"
 import {
   buildManifest,
+  filePathToRoutes,
   isMiddlewareFile,
   isRouteBackendFile,
   type LayoutEntry,
@@ -42,6 +49,9 @@ import {
 
 /** Where the generated types live, relative to the app root. */
 export const ROUTE_TYPES_DIR = ".nifra/types"
+
+/** The generated `RouteTable`, relative to the app root. */
+export const ROUTE_TABLE_FILE = `${ROUTE_TYPES_DIR}/routes.d.ts`
 
 const BACKEND_APP = "backend/app"
 const SCRIPT_EXTS = [".ts", ".tsx", ".js", ".jsx"] as const
@@ -82,27 +92,28 @@ function routeFiles(manifest: Manifest): readonly RouteFile[] {
   return [...files.values()].sort((a, b) => codeUnitOrder(a.file, b.file))
 }
 
-const PARAM = /^\[([A-Za-z_][A-Za-z0-9_]*)\]$/
-const OPTIONAL = /^\[\[([A-Za-z_][A-Za-z0-9_]*)\]\]$/
-const CATCH_ALL = /^\[\.\.\.([A-Za-z_][A-Za-z0-9_]*)\]$/
-// A `[name]` inside a part-literal segment such as `post-[id]` or `[lang]-feed.xml`.
-const EMBEDDED_PARAM = /\[([A-Za-z_][A-Za-z0-9_]*)\]/g
+/** The `{ readonly a: string; readonly b?: string }` type of a param list, or `Record<string, never>`. */
+function paramFields(names: readonly string[], optional: ReadonlySet<string> = new Set()): string {
+  if (names.length === 0) return "Record<string, never>"
+  return `{ ${names.map((name) => `readonly ${name}${optional.has(name) ? "?" : ""}: string`).join("; ")} }`
+}
 
-/** The params a route file's URL carries: its directories', plus its own name's for a page. */
+/**
+ * The params a route file's URL carries, read from the patterns the router matches. A page owns its own
+ * patterns; a layout or special page (`_layout`, `_404`) owns those of its directory, which is the part
+ * of the URL it wraps. A param some of the file's patterns lack (an optional segment) is optional.
+ */
 function paramsType(file: string, kind: Kind): string {
-  const segments = file.replace(/\.[^./]+$/, "").split("/")
-  const own =
-    kind === "page" && !segments.at(-1)?.startsWith("_") ? segments : segments.slice(0, -1)
-  const fields: string[] = []
-  for (const segment of own) {
-    const optional = OPTIONAL.exec(segment)
-    const name = optional?.[1] ?? PARAM.exec(segment)?.[1] ?? CATCH_ALL.exec(segment)?.[1]
-    if (name !== undefined) fields.push(`readonly ${name}${optional === null ? "" : "?"}: string`)
-    else
-      for (const embedded of segment.matchAll(EMBEDDED_PARAM))
-        fields.push(`readonly ${embedded[1]}: string`)
-  }
-  return fields.length === 0 ? "Record<string, never>" : `{ ${fields.join("; ")} }`
+  const own = kind === "page" && !basename(file).startsWith("_")
+  const dir = dirname(file)
+  const owner = own ? file : dir === "." ? "index.tsx" : `${dir}/index.tsx`
+  const lists = filePathToRoutes(owner).map(
+    (route) => compileRoutePattern(route.pattern).paramNames,
+  )
+  // The last pattern has every optional segment present, so its order is the order in the URL.
+  const names = lists.at(-1) ?? []
+  const optional = new Set(names.filter((name) => lists.some((list) => !list.includes(name))))
+  return paramFields(names, optional)
 }
 
 // A file name may hold a line terminator, which would end the `//` header comment it is quoted in.
@@ -128,6 +139,7 @@ function routeTypesModule(
   routesDir: string,
   label: string,
   register: string | undefined,
+  table: string,
 ): string {
   const dir = dirname(out)
   const backend = route.backend === undefined ? undefined : join(routesDir, route.backend)
@@ -138,6 +150,7 @@ function routeTypesModule(
   ]
   if (register !== undefined)
     lines.push(`/// <reference path="${toPosix(relative(dir, register))}" />`)
+  lines.push(`/// <reference path="${toPosix(relative(dir, table))}" />`)
   lines.push(
     'import type { OutputOf, RouteActionReturn, RouteLoaderArgs, RouteLoaderReturn, SearchSchemaOf } from "@nifrajs/client"',
   )
@@ -210,6 +223,37 @@ function registerModule(out: string, backendApp: string, label: string): string 
   ].join("\n")
 }
 
+/** `routes.d.ts`: one `RouteTable` entry per route pattern, `params` from the compiled pattern. */
+function routeTableModule(
+  manifest: Manifest,
+  out: string,
+  routesDir: string,
+  label: string,
+): string {
+  const dir = dirname(out)
+  const entries = [...manifest.routes]
+    .sort((a, b) => codeUnitOrder(a.pattern, b.pattern))
+    .map((route) => {
+      const params = paramFields(compileRoutePattern(route.pattern).paramNames)
+      // Only a script module's exports are visible to TypeScript; a .svelte/.vue/.mdx one is an ambient shim.
+      const search = /\.[jt]sx?$/.test(route.file)
+        ? `SearchOf<typeof import(${jsStringLiteral(specifier(dir, join(routesDir, route.file)))})>`
+        : "Record<string, unknown>"
+      return `    ${jsStringLiteral(route.pattern)}: { readonly params: ${params}; readonly search: ${search} }`
+    })
+  return [
+    `// Generated by nifra from ${commentSafe(label)}. Do not edit: \`nifra types\` rewrites it.`,
+    'import type { SearchOf } from "@nifrajs/web"',
+    "",
+    'declare module "@nifrajs/web" {',
+    "  interface RouteTable {",
+    ...entries,
+    "  }",
+    "}",
+    "",
+  ].join("\n")
+}
+
 /** Every generated types file for the app, by absolute path. */
 export function routeTypeFiles(options: RouteTypesOptions): ReadonlyMap<string, string> {
   const appRoot = options.appRoot
@@ -236,11 +280,16 @@ export function routeTypeFiles(options: RouteTypesOptions): ReadonlyMap<string, 
   // Discovery only: the importer is never called.
   const manifest = buildManifest(listed, () => () => Promise.reject(new Error("not loaded")))
   const routesRel = toPosix(relative(appRoot, routesDir))
+  const table = join(appRoot, ROUTE_TABLE_FILE)
+  files.set(table, routeTableModule(manifest, table, routesDir, `${routesRel}/`))
   for (const route of routeFiles(manifest)) {
     const dir = dirname(route.file)
     const name = route.file.slice(dir === "." ? 0 : dir.length + 1).replace(/\.[^.]+$/, "")
     const out = join(typesRoot, routesRel, dir === "." ? "" : dir, "+types", `${name}.d.ts`)
-    files.set(out, routeTypesModule(route, out, routesDir, `${routesRel}/${route.file}`, register))
+    files.set(
+      out,
+      routeTypesModule(route, out, routesDir, `${routesRel}/${route.file}`, register, table),
+    )
   }
   return files
 }

@@ -251,7 +251,9 @@ export default function Structure() {
         <code>loaderOutput</code> lets through. <code>nifra dev</code>, <code>nifra build</code>,{" "}
         <code>nifra check</code> and <code>nifra types</code> write these files under{" "}
         <code>.nifra/types</code>; the app's <code>tsconfig.json</code> resolves them with{" "}
-        <code>{'"rootDirs": [".", "./.nifra/types"]'}</code>.
+        <code>{'"rootDirs": [".", "./.nifra/types"]'}</code>. The same directory holds{" "}
+        <code>routes.d.ts</code>, one entry per URL pattern with its params and search output, and
+        every generated <code>./+types</code> module loads it.
       </p>
 
       <h2>What may import what</h2>

@@ -29,32 +29,44 @@ export interface NavigateOptions {
 }
 
 /**
- * The augmentable route -> search-type map for typed cross-route navigation. Empty by default (so an
- * object-form navigate to any path is allowed with a loose `search`). A build step (`nifra sync-routes`)
- * OR the app declares one entry per route path against its `searchSchema` output:
+ * Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the
+ * object a link to the route needs (`Record<string, never>` when the pattern has none), `search` the
+ * output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types`
+ * writes `.nifra/types/routes.d.ts`, which fills it from the route files:
  *
  * ```ts
  * declare module "@nifrajs/web" {
- *   interface RouteSearch {
- *     "/reports": { page: number; q: string }
+ *   interface RouteTable {
+ *     "/users/:id": { readonly params: { readonly id: string }; readonly search: { tab: string } }
  *   }
  * }
  * ```
  *
- * With that, `navigate({ to: "/reports", search: { page: 2 } })` type-checks `search` against
- * `/reports`'s schema, and a wrong shape is a compile error. See {@link NavigateTarget}.
+ * There is one key per pattern, so an optional segment (`[[lang]]`) is two keys with exact params each.
+ * With an empty table every `to` is accepted and `search` is loose.
  */
-// biome-ignore lint/suspicious/noEmptyInterface: augmentation target - empty by design, apps/codegen fill it.
-export interface RouteSearch {}
+// biome-ignore lint/suspicious/noEmptyInterface: augmentation target - empty by design, `nifra types` fills it.
+export interface RouteTable {}
+
+declare const hrefBrand: unique symbol
 
 /**
- * The `search` type for a navigate to `To`: the route's schema output when `To` is a mapped
- * {@link RouteSearch} key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is
- * always allowed). Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form
- * with a wrong shape - `navigate({ to: "/reports", search: { page: "x" } })` is a compile error.
+ * An in-app URL built from a route: a string at runtime, a branded string to the compiler, so a plain
+ * string or a template literal is not assignable to it. `Pattern` is the {@link RouteTable} key it was
+ * built for.
  */
-export type NavigateSearchOf<To extends string> = To extends keyof RouteSearch
-  ? RouteSearch[To]
+export type Href<Pattern extends string = string> = string & { readonly [hrefBrand]: Pattern }
+
+/**
+ * The `search` type for a navigate to `To`: the route's schema output when `To` is a {@link RouteTable}
+ * key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is always allowed).
+ * Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form with a wrong
+ * shape - `navigate({ to: "/reports", search: { page: "x" } })` is a compile error.
+ */
+export type NavigateSearchOf<To extends string> = To extends keyof RouteTable
+  ? RouteTable[To] extends { readonly search: infer Search }
+    ? Search
+    : Record<string, unknown>
   : Record<string, unknown>
 
 /** The runtime shape of an object-form navigate target (loose - the typed narrowing lives in

@@ -91,10 +91,8 @@ export {
 } from "./host-policy.ts"
 export {
   type GenerateClientEntryOptions,
-  type GenerateRouteSearchTypesOptions,
   type GenerateServerManifestOptions,
   generateClientEntry,
-  generateRouteSearchTypes,
   generateServerManifest,
   type LiveClientEntry,
 } from "./internal/codegen.ts"
@@ -223,13 +221,14 @@ export {
   type BrowserNavigate,
   closeBoundary,
   getBrowserNavigate,
+  type Href,
   IDLE_BLOCKER,
   type NavigateFunction,
   type NavigateOptions,
   type NavigateSearchOf,
   type NavigateTargetInput,
   type PrefetchMode,
-  type RouteSearch,
+  type RouteTable,
   registerBlocker,
   resolveNavigate,
   setBlockerController,

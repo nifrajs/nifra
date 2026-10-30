@@ -246,8 +246,9 @@ export function searchOfChain(
 /**
  * The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed
  * query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route
- * navigation: generated route types (`nifra sync-routes`) map each path to
- * `SearchOf<typeof import("./routes/<file>")>`, populating the augmentable `RouteSearch` interface.
+ * navigation: `nifra types` maps each route pattern to
+ * `SearchOf<typeof import("./routes/<file>")>` in `.nifra/types/routes.d.ts`, populating the augmentable
+ * `RouteTable` interface.
  */
 export type SearchOf<Module> = Module extends { searchSchema: infer S }
   ? S extends StandardSchemaV1

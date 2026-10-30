@@ -8,17 +8,20 @@ import { type NavigateFunction, useNavigate } from "../src/router.ts"
 // file's registration can't leak into another file's bridge-dependent test.
 afterEach(() => setBrowserNavigate(undefined))
 
-// Augment the route -> search map exactly as `nifra sync-routes` (generateRouteSearchTypes) would, so the
-// typed cross-route navigate can be asserted here. A path unused by the other tests, so the global-per-
+// Augment the route table exactly as `nifra types` (`.nifra/types/routes.d.ts`) does, so the typed
+// cross-route navigate can be asserted here. A pattern unused by the other tests, so the global-per-
 // compilation augmentation collides with nothing. This file's `@ts-expect-error` lines are verified by the
 // typecheck gate: if the wrong-shape call ever stopped being an error, tsc would fail on the unused marker.
 declare module "@nifrajs/web" {
-  interface RouteSearch {
-    "/typed-only": { readonly page: number }
+  interface RouteTable {
+    "/typed-only": {
+      readonly params: Record<string, never>
+      readonly search: { readonly page: number }
+    }
   }
 }
 
-test("navigate({ to, search }) is typed against the generated RouteSearch map", () => {
+test("navigate({ to, search }) is typed against the generated RouteTable", () => {
   const calls: Array<[string | number, unknown]> = []
   setBrowserNavigate((to, o) => calls.push([to, o]))
   let nav: NavigateFunction | undefined

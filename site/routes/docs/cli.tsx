@@ -348,12 +348,6 @@ export default function Cli() {
           </tr>
           <tr>
             <td>
-              <code>nifra sync-routes</code>
-            </td>
-            <td>Regenerate <code>nifra-routes.d.ts</code> so <code>navigate(&#123; to, search &#125;)</code> is typed by each route&apos;s search schema.</td>
-          </tr>
-          <tr>
-            <td>
               <code>nifra sync-manifest</code>
             </td>
             <td>Regenerate a committed <code>server-manifest.ts</code> from <code>routes/</code> without a full build.</td>

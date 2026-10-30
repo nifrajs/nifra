@@ -10,7 +10,6 @@ import {
   buildManifest,
   createWebApp,
   generateClientEntry,
-  generateRouteSearchTypes,
   generateServerManifest,
   notFound,
   type RenderAdapter,
@@ -389,31 +388,6 @@ test("generated server manifests compile under a strict consumer tsconfig", asyn
     await rm(root, { recursive: true, force: true })
   }
 }, { timeout: 30_000 })
-
-test("generateRouteSearchTypes augments RouteSearch for static routes only", () => {
-  const m = buildManifest(
-    ["index.tsx", "reports.tsx", "users/[id].tsx", "files/[...p].tsx"],
-    importer,
-  )
-  const code = generateRouteSearchTypes(m, {
-    resolve: (f) => `./routes/${f.replace(/\.tsx$/, "")}`,
-  })
-  expect(code).toContain('import type { SearchOf } from "@nifrajs/web"')
-  expect(code).toContain('declare module "@nifrajs/web" {')
-  expect(code).toContain("interface RouteSearch {")
-  // Static routes map their pattern -> the route module's search output type.
-  expect(code).toContain('"/": SearchOf<typeof import("./routes/index")>')
-  expect(code).toContain('"/reports": SearchOf<typeof import("./routes/reports")>')
-  // Dynamic routes (a :param or catch-all) are excluded - their pattern is not a concrete `to`.
-  expect(code).not.toContain("/users/:id")
-  expect(code).not.toContain("/files/")
-})
-
-test("generateRouteSearchTypes targets a custom module when asked", () => {
-  const m = buildManifest(["index.tsx"], importer)
-  const code = generateRouteSearchTypes(m, { resolve: (f) => `./${f}`, module: "@my/router" })
-  expect(code).toContain('declare module "@my/router" {')
-})
 
 /**
  * Run the generated entry's initial-route choice - the real emitted lines, not a copy - for a URL and
