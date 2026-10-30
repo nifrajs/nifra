@@ -95,12 +95,12 @@ describe("href() types", () => {
     expect(typeErrors(["check.ts"])).toEqual([])
   }, 60_000)
 
-  test("navigate takes an Href or a history delta, and nothing else", () => {
+  test("navigate and redirect take an Href, and nothing else", () => {
     routes()
     write(
       "check.ts",
       lines(
-        'import type { NavigateFunction } from "@nifrajs/web"',
+        'import { href, type NavigateFunction, rawHref, redirect } from "@nifrajs/web"',
         'import type { Route } from "./.nifra/types/routes/+types/reports"',
         "export type Loaded = Route.Params",
         "declare const navigate: NavigateFunction",
@@ -117,6 +117,20 @@ describe("href() types", () => {
         'navigate({ to: "/users/:id", params: { id } })',
         "// @ts-expect-error a URL is not an Href",
         'navigate(new URL("https://example.com/"))',
+        'redirect(href({ to: "/users/:id", params: { id } }), { status: 308 })',
+        'redirect(rawHref("/llms.txt"))',
+        'redirect("https://example.com/ok", { external: true })',
+        'redirect(href({ to: "/" }), { external: true })',
+        "// @ts-expect-error redirect: a string literal",
+        'redirect("/users/7")',
+        "// @ts-expect-error redirect: a template literal",
+        `redirect(\`/users/\${id}\`)`,
+        "// @ts-expect-error redirect: a string variable",
+        "redirect(id)",
+        "// @ts-expect-error redirect: a string needs { external: true }",
+        'redirect("https://example.com/ok", { status: 301 })',
+        "// @ts-expect-error redirect: external is a literal, so an unchecked flag does not open the string form",
+        "redirect(id, { external: id === 'x' })",
       ),
     )
     expect(typeErrors(["check.ts"])).toEqual([])

@@ -19,6 +19,7 @@ import type {
   Blocker,
   BlockerFunction,
   BlockerState,
+  Href,
   NavigateFunction,
   NavigateOptions,
   PrefetchMode,
@@ -329,8 +330,9 @@ function isPlainLeftClick(event: MouseEvent, target: string | undefined): boolea
 /** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and
  * `prefetch`. */
 export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
-  /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */
-  readonly to: string
+  /** The destination: an `Href` from `href()` or `rawHref()`. Rendered as the `<a href>`, and a render throws
+   * unless it is a same-origin path; a link to another site is a plain `<a>`. */
+  readonly to: Href
   /** Replace the current history entry instead of pushing. */
   readonly replace?: boolean
   /** When the link warms its route ahead of a click - rendered as `data-nifra-prefetch`. Unset, the
@@ -359,7 +361,7 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
   }
   return createElement("a", {
     ...rest,
-    href: to,
+    href: rawHref(to),
     target,
     onClick: handleClick,
     ref,
@@ -448,19 +450,19 @@ function matchesPrefix(current: string, target: string): boolean {
 
 /** {@link Navigate} props: the destination `to` and whether to `replace` the history entry. */
 export interface NavigateProps {
-  readonly to: string
+  readonly to: Href
   readonly replace?: boolean
 }
 
 /**
  * Declaratively navigate on mount - the component analogue of `useNavigate` (e.g. a guard that renders
- * `<Navigate to="/login" replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders
+ * `<Navigate to={href({ to: "/login" })} replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders
  * `null`); the redirect happens once on the client after hydration.
  */
 export function Navigate({ to, replace }: NavigateProps): null {
   const navigate = useNavigate()
   useEffect(() => {
-    navigate(rawHref(to), { replace: replace === true })
+    navigate(to, { replace: replace === true })
   }, [navigate, to, replace])
   return null
 }

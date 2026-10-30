@@ -8,7 +8,7 @@
  *   bun examples/auth-react/server.ts        # http://localhost:3000
  */
 import { csrf } from "@nifrajs/auth"
-import { createWebApp, redirect } from "@nifrajs/web"
+import { createWebApp, rawHref, redirect } from "@nifrajs/web"
 import type { BuildManifest } from "@nifrajs/web/build"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { reactAdapter } from "@nifrajs/web-react"
@@ -43,18 +43,18 @@ app.use(csrf())
 app.post("/api/login", async (c) => {
   const form = await c.req.formData()
   const username = String(form.get("username") ?? "").trim()
-  if (username === "") return redirect("/login")
+  if (username === "") return redirect(rawHref("/login"))
   const session = await sessions.get(c)
   session.set("userId", username)
   sessions.regenerate(session)
   await sessions.commit(c, session)
-  return redirect("/")
+  return redirect(rawHref("/"))
 })
 
 // Logout: drop the server-side session + clear the cookie, then redirect to /login.
 app.post("/api/logout", async (c) => {
   await sessions.destroy(c, await sessions.get(c))
-  return redirect("/login")
+  return redirect(rawHref("/login"))
 })
 
 app.get("/assets/*", async (c) => {

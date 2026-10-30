@@ -39,7 +39,7 @@ export const i18n = urls`
 const GUARD = `// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...
 import { defineLocales } from "@nifrajs/i18n"
 import { defineI18nRouting } from "@nifrajs/i18n/routing"
-import { notFound, type RouteMiddleware, redirect } from "@nifrajs/web"
+import { notFound, type RouteMiddleware, rawHref, redirect } from "@nifrajs/web"
 
 const urls = defineI18nRouting(
   defineLocales({ default: "en", locales: { en: {}, hi: {}, gu: { draft: true } } }),
@@ -49,7 +49,7 @@ export const middleware: RouteMiddleware = (ctx) => {
   const { pathname, search } = new URL(ctx.request.url)
   const match = urls.matchSegment(ctx.params.lang, pathname + search)
   if (match.kind === "not-found") notFound()
-  if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+  if (match.kind === "redirect") return redirect(rawHref(match.location), { status: 308 })
   return undefined
 }`
 

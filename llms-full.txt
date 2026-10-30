@@ -560,12 +560,12 @@ before a nested `_404` there. Middleware higher in the tree runs first.
 
 ```ts
 // routes/account/_layout.backend.ts - runs before every page under /account
-import { type RouteMiddleware, redirect } from "@nifrajs/web"
+import { type RouteMiddleware, rawHref, redirect } from "@nifrajs/web"
 
 export const middleware: RouteMiddleware = ({ request, set }) => {
   set.headers["cache-control"] = "private, no-store"
   const signedIn = request.headers.get("cookie")?.includes("session=") ?? false
-  return signedIn ? undefined : redirect("/login")
+  return signedIn ? undefined : redirect(rawHref("/login"))
 }
 ```
 
@@ -710,10 +710,14 @@ Each param is encoded as one path segment, so a value such as `a/b` or
 param that is missing, empty, `.`, `..` or an unpaired surrogate throws a
 `TypeError` naming it. `navigate` takes only an `href` result,
 or a history delta such as `navigate(-1)`; a string or a template literal is a
-compile error. For a same-origin path built elsewhere - a CMS link, `/llms.txt` -
-`rawHref("/llms.txt")` checks it (one leading `/`, no backslash or
-control character) and returns the same type. A link to another site is a plain
-`<a href>`.
+compile error. So do React's `Link`, `NavLink` and `Navigate`
+(`<Link to={href({ to: "/pricing" })}>`) and the server's
+`redirect()`; `Link` and `NavLink` also throw at render when
+`to` is not a same-origin path, and `redirect` takes any string with
+`{ external: true }`. For a same-origin path built elsewhere - a CMS link,
+`/llms.txt` - `rawHref("/llms.txt")` checks it (one leading
+`/`, no backslash or control character) and returns the same type. A link to
+another site is a plain `<a href>`.
 
 ### Prefetching
 
@@ -743,7 +747,7 @@ around it (the nearest one wins), says when:
 </nav>
 
 // React's <Link> takes it as a prop.
-<Link to="/pricing" prefetch="render">Pricing</Link>
+<Link to={href({ to: "/pricing" })} prefetch="render">Pricing</Link>
 ```
 
 Warmed data is used by a click within 30 seconds; after that the click loads the route
@@ -6138,7 +6142,7 @@ permanent redirect - on full page loads, client navigations and form posts alike
 // routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...
 import { defineLocales } from "@nifrajs/i18n"
 import { defineI18nRouting } from "@nifrajs/i18n/routing"
-import { notFound, type RouteMiddleware, redirect } from "@nifrajs/web"
+import { notFound, type RouteMiddleware, rawHref, redirect } from "@nifrajs/web"
 
 const urls = defineI18nRouting(
   defineLocales({ default: "en", locales: { en: {}, hi: {}, gu: { draft: true } } }),
@@ -6148,7 +6152,7 @@ export const middleware: RouteMiddleware = (ctx) => {
   const { pathname, search } = new URL(ctx.request.url)
   const match = urls.matchSegment(ctx.params.lang, pathname + search)
   if (match.kind === "not-found") notFound()
-  if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+  if (match.kind === "redirect") return redirect(rawHref(match.location), { status: 308 })
   return undefined
 }
 ```
@@ -10359,7 +10363,7 @@ with `ctx.set.cookie()` / `ctx.set.deleteCookie()`.
 ```ts
 // routes/account.backend.ts - response headers and cookies, from a loader or an action.
 import { t } from "@nifrajs/schema"
-import { type LoaderContext, redirect } from "@nifrajs/web"
+import { type LoaderContext, rawHref, redirect } from "@nifrajs/web"
 
 declare function signIn(email: string, password: string): Promise<{ token: string } | null>
 
@@ -10379,7 +10383,7 @@ export async function action(ctx: LoaderContext) {
   if (session === null) return { error: "Wrong email or password" }
   // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.
   ctx.set.cookie("session", session.token, { maxAge: 60 * 60 * 24 * 7 })
-  throw redirect("/dashboard") // the cookie rides the redirect
+  throw redirect(rawHref("/dashboard")) // the cookie rides the redirect
 }
 ```
 
