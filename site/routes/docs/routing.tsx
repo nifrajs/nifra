@@ -453,8 +453,10 @@ export default function Routing() {
         (<code>{`<Link to={href({ to: "/pricing" })}>`}</code>) and the server's{" "}
         <code>redirect()</code>; when <code>to</code> is not a same-origin path,{" "}
         <code>Link</code> and <code>NavLink</code> render the anchor without an <code>href</code>,
-        log a <code>console.error</code> and leave the click alone, and <code>redirect</code> takes
-        any string with <code>{`{ external: true }`}</code>. For a same-origin path built elsewhere - a CMS link,{" "}
+        and <code>Navigate</code> and <code>setSearchParams</code> do not navigate; each logs a{" "}
+        <code>console.error</code> that names the call and never the value. <code>redirect</code>{" "}
+        takes an off-origin location with <code>{`{ external: true }`}</code>, which still refuses
+        one holding a line break. For a same-origin path built elsewhere - a CMS link,{" "}
         <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
         <code>/</code>, no backslash or control character) and returns the same type. A link to
         another site is a plain <code>&lt;a href&gt;</code>. A path that comes from outside is

@@ -65,7 +65,9 @@ test("I10: Link and NavLink given a forged Href render no href and log it, never
       errors.mockClear()
       expect(renderToStaticMarkup(createElement(NavLink, { to }, "x"))).not.toContain("href=")
       expect(errors).toHaveBeenCalledTimes(1)
-      expect(String(errors.mock.calls[0]?.[1])).toContain("same-origin")
+      const logged = errors.mock.calls.flat().join(" ")
+      expect(logged).toContain("same-origin")
+      if (value !== "") expect(logged).not.toContain(value)
     }
   } finally {
     errors.mockRestore()

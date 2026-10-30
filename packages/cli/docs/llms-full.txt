@@ -714,8 +714,10 @@ compile error. So do React's `Link`, `NavLink` and `Navigate`
 (`<Link to={href({ to: "/pricing" })}>`) and the server's
 `redirect()`; when `to` is not a same-origin path,
 `Link` and `NavLink` render the anchor without an `href`,
-log a `console.error` and leave the click alone, and `redirect` takes
-any string with `{ external: true }`. For a same-origin path built elsewhere - a CMS link,
+and `Navigate` and `setSearchParams` do not navigate; each logs a
+`console.error` that names the call and never the value. `redirect`
+takes an off-origin location with `{ external: true }`, which still refuses
+one holding a line break. For a same-origin path built elsewhere - a CMS link,
 `/llms.txt` - `rawHref("/llms.txt")` checks it (one leading
 `/`, no backslash or control character) and returns the same type. A link to
 another site is a plain `<a href>`. A path that comes from outside is

@@ -113,12 +113,15 @@ function splitPath(path: string): { readonly pathname: string; readonly search: 
 }
 
 /** `value` as an `Href`, or `undefined` after a `console.error` when it is not a same-origin path: a bad
- * destination costs its own link, never the render. */
+ * destination costs its own link, never the render. The message leaves the value out, since a CMS link
+ * can carry a token or personal data into the server log. */
 function checkedHref(value: string, where: string): Href | undefined {
   try {
     return rawHref(value)
-  } catch (error) {
-    console.error(`[nifra/web-react] ${where} ignored a destination it cannot use:`, error)
+  } catch {
+    console.error(
+      `[nifra/web-react] ${where} ignored its destination: it is not a same-origin path (one beginning with "/", not "//", with no backslash or control character).`,
+    )
     return undefined
   }
 }

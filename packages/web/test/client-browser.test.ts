@@ -91,7 +91,7 @@ class FakeElement {
   }
 
   hasAttribute(name: string): boolean {
-    return this.attrs.has(name)
+    return this.attrs.has(name) || (name === "href" && this.href !== "")
   }
 
   removeAttribute(name: string): void {
@@ -490,6 +490,18 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
   expect(navigated).toContain("/docs?q=1")
   expect(historyCalls.map(([kind]) => kind)).toEqual(["replace", "push"])
   expect(anchorTarget.scrolled).toBe(1)
+
+  // An anchor with no href attribute (a Link given a destination it cannot use) is not a link: its
+  // `href` property reads "", which would resolve to the page on screen.
+  const bare = new FakeElement("a")
+  const bareClick = fakeEvent(bare)
+  const navigatedBefore = navigated.length
+  document.emit("pointerover", fakeEvent(bare))
+  document.emit("click", bareClick)
+  await Bun.sleep(0)
+  expect(bareClick.defaultPrevented).toBe(false)
+  expect(navigated.length).toBe(navigatedBefore)
+  expect(prefetched).toEqual(["/docs?q=1", "/docs?q=1"])
 
   const navigate = getBrowserNavigate()
   navigate?.("/replace", { replace: true })

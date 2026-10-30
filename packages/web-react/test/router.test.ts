@@ -293,6 +293,7 @@ test("setSearchParams on a path that reads as another host logs and does not nav
     expect(() => set({ q: "2" })).not.toThrow()
     expect(calls).toEqual([])
     expect(errors).toHaveBeenCalledTimes(1)
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("evil.example")
   } finally {
     errors.mockRestore()
   }
