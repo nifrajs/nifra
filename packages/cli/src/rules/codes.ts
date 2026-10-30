@@ -55,6 +55,8 @@ export const RULE_CODES = Object.freeze({
   "NF-C054": "Route without a response schema in a published document",
   "NF-C055": "zod coerce.boolean() reads request text",
   "NF-C056": "serverFunctions namespace differs from its module's filename",
+  "NF-C057": "Internal link to a path no page serves",
+  "NF-C058": "Internal link written as a path string",
   "NF-D001": "Doctor check",
   "NF-D002": "Mixed nifra versions",
   "NF-D003": "Stale file: dependencies in bun.lock",

@@ -474,6 +474,19 @@ export default function Routing() {
         test that fails on a literal internal anchor.
       </p>
       <p>
+        <code>nifra check</code> finds the plain anchors in your app too, and reads the route table to
+        tell two cases apart. <code>NF-C057</code> (a warning) is a path that no page, no backend route
+        and no file in <code>public/</code> serves: the link is a 404, and the message names the
+        nearest page when it is a typo away. <code>NF-C058</code> (info) is a path that is a page
+        today; the message gives the <code>href()</code> call that replaces it. A template literal such
+        as <code>{"`/users/${id}`"}</code> is judged by its shape and never reported as dead, since the
+        route it builds may live outside the file routes. Links in <code>.tsx</code>, <code>.vue</code>{" "}
+        and <code>.svelte</code> files are read. Raise, lower or silence either code with{" "}
+        <code>rules</code> in <code>nifra.config</code>, or keep one link as written with{" "}
+        <code>rawHref()</code> or <code>{"// nifra-expect NF-C058: <reason>"}</code> above the
+        attribute. <code>.jsx</code> files and an <code>href</code> built by a function are not read.
+      </p>
+      <p>
         The table is a generated file, <code>.nifra/types/routes.d.ts</code>. A program in which no route
         imports a <code>./+types/...</code> module does not load it, and <code>to</code> then accepts no
         route at all, and <code>nifra check</code> warns. List <code>.nifra/types/routes.d.ts</code> under

@@ -294,6 +294,16 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: 'Pass the filename\'s namespace to `serverFunctions` (`serverFunctions("todos", todos)` for `todos.fn.ts`), or rename the file. A mount kept on purpose takes `// nifra-expect NF-C056: <reason>` above the call.',
     docs: "/docs/server-functions",
   },
+  "NF-C057": {
+    why: "An `<a href>` names a path that no page of the app, no backend route and no file in `public/` serves, so following it is a 404. Nothing fails at build time: a path string is invisible to the types, and a renamed or removed page leaves every link to it dead.",
+    fix: "Build the link with `href({ to, params })` (exported by `@nifrajs/web-<framework>/router`): `to` is a route of the app, so a route that does not exist is a compile error. A path some other server answers takes `rawHref(path)`; a link kept on purpose takes `// nifra-expect NF-C057: <reason>` above the attribute.",
+    docs: "/docs/routing",
+  },
+  "NF-C058": {
+    why: "An `<a href>` writes a page's path as a string. It works today, but renaming or removing the page leaves the link dead and nothing fails: `href()` checks a link against the app's routes, a path string is not checked.",
+    fix: "Build the link with `href({ to, params, search, hash })`, which `nifra check` and `tsc` hold to the app's routes. A path built elsewhere, such as a CMS link, takes `rawHref(path)`; a link kept on purpose takes `// nifra-expect NF-C058: <reason>` above the attribute. Silence the code for the project with `rules` in `nifra.config`.",
+    docs: "/docs/routing",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",

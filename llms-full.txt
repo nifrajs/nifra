@@ -751,6 +751,18 @@ left. A plain `<a href="/x">` is not an error, so search for
 an `<a href>`. This site, the examples and the starters are held to it by a
 test that fails on a literal internal anchor.
 
+`nifra check` finds the plain anchors in your app too, and reads the route table to
+tell two cases apart. `NF-C057` (a warning) is a path that no page, no backend route
+and no file in `public/` serves: the link is a 404, and the message names the
+nearest page when it is a typo away. `NF-C058` (info) is a path that is a page
+today; the message gives the `href()` call that replaces it. A template literal such
+as ``/users/${id}`` is judged by its shape and never reported as dead, since the
+route it builds may live outside the file routes. Links in `.tsx`, `.vue`
+and `.svelte` files are read. Raise, lower or silence either code with
+`rules` in `nifra.config`, or keep one link as written with
+`rawHref()` or `// nifra-expect NF-C058: <reason>` above the
+attribute. `.jsx` files and an `href` built by a function are not read.
+
 The table is a generated file, `.nifra/types/routes.d.ts`. A program in which no route
 imports a `./+types/...` module does not load it, and `to` then accepts no
 route at all, and `nifra check` warns. List `.nifra/types/routes.d.ts` under
