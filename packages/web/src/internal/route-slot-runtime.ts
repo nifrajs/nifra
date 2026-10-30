@@ -7,6 +7,7 @@ import {
   type ClientRouter,
   fetchRouteData,
   isRouteDataEnvelope,
+  RouteDataFetchError,
   type RouteMatch,
 } from "../router.ts"
 import { searchOfChain } from "../search.ts"
@@ -238,6 +239,17 @@ export async function withRouteSlotConcurrency<T>(
 
 function stableSlotError(error: unknown): RouteSlotLoadError {
   if (error instanceof RouteSlotLoadError) return error
+  if (error instanceof RouteDataFetchError) {
+    const code =
+      error.status === 401
+        ? "unauthorized"
+        : error.status === 403
+          ? "forbidden"
+          : error.status === 404
+            ? "not_found"
+            : "unavailable"
+    return new RouteSlotLoadError(code)
+  }
   const knownCodes = new Set([
     "unauthorized",
     "forbidden",

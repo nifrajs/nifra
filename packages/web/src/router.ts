@@ -139,6 +139,17 @@ export interface RouteDataEnvelope {
   readonly live?: unknown
 }
 
+/** A route-data request that failed before it produced an envelope. */
+export class RouteDataFetchError extends Error {
+  constructor(
+    readonly status: number,
+    path: string,
+  ) {
+    super(`[nifra/web] navigation data fetch failed (${status}): ${path}`)
+    this.name = "RouteDataFetchError"
+  }
+}
+
 /** Recognise the envelope without mistaking a plain loader object that happens to have a `data` key. */
 export function isRouteDataEnvelope(value: unknown): value is RouteDataEnvelope {
   return (
@@ -538,7 +549,7 @@ export const routeDataOf = async (
   if (Number.isInteger(status) && status >= 400 && status <= 599) {
     return { v: 1, data: null, status } satisfies RouteDataEnvelope
   }
-  if (!res.ok) throw new Error(`[nifra/web] navigation data fetch failed (${res.status}): ${path}`)
+  if (!res.ok) throw new RouteDataFetchError(res.status, path)
   return readResponseData(res, signal, read)
 }
 

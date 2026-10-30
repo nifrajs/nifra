@@ -132,6 +132,32 @@ describe("route-slot loading", () => {
     }
   })
 
+  test("maps a raw authorization response to a stable forbidden state", async () => {
+    const originalFetch = globalThis.fetch
+    let requests = 0
+    globalThis.fetch = Object.assign(
+      async (): Promise<Response> => {
+        requests++
+        return new Response(null, { status: 403 })
+      },
+      { preconnect: originalFetch.preconnect },
+    )
+    try {
+      const failure = await loadRouteSlot(
+        makeRuntime(),
+        "inspector",
+        "/dashboard",
+        "/users/7",
+        new AbortController().signal,
+      ).catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(RouteSlotLoadError)
+      expect(failure).toMatchObject({ code: "forbidden" })
+      expect(requests).toBe(1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test("caps simultaneous requests and bounds queued work", async () => {
     let release = (): void => {}
     const gate = new Promise<void>((resolve) => {
