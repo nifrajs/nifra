@@ -9,6 +9,7 @@
   "private": true,
   "devDependencies": {
     "@elysiajs/node": "^1.4.5",
+    "@hono/node-server": "2.1.5",
     "@fastify/http-proxy": "^11.6.5",
     "@nifrajs/client": "workspace:*",
     "@nifrajs/core": "workspace:*",

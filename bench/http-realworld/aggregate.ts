@@ -31,7 +31,7 @@ assuming the bare-route ratio generalizes to a real endpoint.
 
 The third workload (the \`*-body\` rows) adds ONE body-observing middleware to the same GET - an
 x-body-hash header over the final serialized body - via each framework's own idiomatic body tier:
-nifra's \`onResponseBody\`, Fastify's \`onSend\`, Elysia's \`mapResponse\`, Hono's drain-and-rebuild
+nifra's \`onResponseBody\`, Fastify's \`onSend\`, Elysia's \`mapResponse\`, Hono's buffer-and-rewrap
 middleware, Express's \`res.json\` wrap, and inline hashing for the raw ceilings. The delta against
 the plain GET row is what each framework charges middleware to SEE the response body.
 

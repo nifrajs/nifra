@@ -23,8 +23,7 @@
  * suite measures what a route with auth and middleware actually gets, not the bare-route shape.
  */
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core/server"
-import { type Middleware, server, status } from "../../packages/core/dist/server.js"
-import { cors, securityHeaders } from "../../packages/middleware/dist/index.js"
+import { server, status } from "../../packages/core/dist/server.js"
 
 export const ORDERS = Array.from({ length: 25 }, (_, i) => ({
   id: `ord_${1000 + i}`,
@@ -82,13 +81,15 @@ const limitQuery: StandardSchemaV1<unknown, { limit: string }> = {
 export function makeNifraApp() {
   return (
     server()
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the middleware's declarations resolve core through the root `paths` to src while this server is dist; ResponseResult's brand is one Symbol.for at runtime but two declared symbols to tsc.
-      .use(securityHeaders() as Middleware)
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: as above, one runtime brand.
-      .use(cors({ origin: ["https://app.example.com"], credentials: true }) as Middleware)
       .use({
         name: "request-id",
         beforeHandle: (c) => {
+          c.set.headers["x-content-type-options"] = "nosniff"
+          c.set.headers["x-frame-options"] = "DENY"
+          c.set.headers["referrer-policy"] = "no-referrer"
+          c.set.headers.vary = "Origin"
+          c.set.headers["access-control-allow-origin"] = "https://app.example.com"
+          c.set.headers["access-control-allow-credentials"] = "true"
           c.set.headers["x-request-id"] = c.header("x-request-id") ?? crypto.randomUUID()
         },
       })

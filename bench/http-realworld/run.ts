@@ -15,6 +15,8 @@
  *
  * A third workload adds ONE body-observing middleware to the same GET (the `*-body` targets), each
  * framework through its own idiomatic body tier - the cost a header-only comparison can't show.
+ * GET/POST samples use the one allowed fixture origin. Preflight and rejected-origin behavior are
+ * outside the timed workload; every target writes the same fixed CORS and security headers.
  *
  *   bun run bench/http-realworld/run.ts            # every section this build knows
  *   bun run bench/http-realworld/run.ts bun        # one section only (bun | node | deno)
@@ -61,11 +63,8 @@ const BASE_PORT = 3600
 const AUTH_HEADERS: Readonly<Record<string, string>> = {
   authorization: "Bearer abcdefghijklmnopqrstuvwxyz",
   cookie: "theme=dark",
-  // Real CORS middleware (nifra's included) gates Access-Control-Allow-* on the request actually
-  // carrying an Origin header - that's spec-correct, not nifra-specific. Every hand-rolled competitor
-  // target in this suite emits those headers unconditionally, so omitting Origin here would make
-  // nifra do LESS header work than everyone else and understate its own cost. Match what a real
-  // cross-origin browser request sends (the same origin every target's CORS allowlist expects).
+  // The timed workload uses one fixed, allowed origin. Every target writes the same CORS response
+  // headers for that request; preflight and rejected-origin policy behavior are outside this suite.
   origin: "https://app.example.com",
 }
 
@@ -94,7 +93,7 @@ const POST_ORDERS: Workload = {
 // Same GET, but served by the `*-body` targets: the realistic route PLUS one body-observing
 // middleware (an x-body-hash header over the final serialized body), each framework through its own
 // idiomatic mechanism - nifra's onResponseBody payload tier, Fastify's onSend, Elysia's mapResponse,
-// Hono's drain-and-rebuild, Express's res.json wrap, inline for the raw ceilings. This is the
+// Hono's buffer-and-rewrap, Express's res.json wrap, inline for the raw ceilings. This is the
 // workload header-only comparisons can't show: what a framework charges middleware to SEE the body.
 const GET_ORDERS_BODY: Workload = {
   name: "GET /api/orders (auth + middleware + body-hash)",
@@ -316,6 +315,136 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
   throw new Error(`server at ${base} did not become ready within ${timeoutMs}ms`)
 }
 
+function bodyHash(value: string | Uint8Array): string {
+  let hash = 5381
+  if (typeof value === "string") {
+    for (let i = 0; i < value.length; i++) hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0
+  } else {
+    for (let i = 0; i < value.length; i++) hash = ((hash << 5) + hash + value[i]!) | 0
+  }
+  return (hash >>> 0).toString(16)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+async function probeWorkload(base: string, workload: Workload): Promise<void> {
+  const headers = new Headers(workload.headers)
+  for (const [key, value] of Object.entries(workload.post?.headers ?? {})) {
+    headers.set(key, value)
+  }
+  const init: RequestInit = { method: workload.post === undefined ? "GET" : "POST", headers }
+  if (workload.post !== undefined) init.body = workload.post.body
+  const response = await fetch(`${base}${workload.path}`, init)
+  if (response.status !== 200) {
+    throw new Error(`${workload.name}: correctness probe returned HTTP ${response.status}`)
+  }
+  const responseBody = new Uint8Array(await response.arrayBuffer())
+  const text = new TextDecoder().decode(responseBody)
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    throw new Error(`${workload.name}: correctness probe returned non-JSON`)
+  }
+  if (!isRecord(body)) {
+    throw new Error(`${workload.name}: correctness probe returned a non-object payload`)
+  }
+  const value = body
+  if (workload === POST_ORDERS) {
+    if (
+      value.ok !== true ||
+      value.id !== "ord_new" ||
+      value.sku !== "SKU-1" ||
+      value.qty !== 2 ||
+      value.by !== "abcdefghijkl"
+    ) {
+      throw new Error(`${workload.name}: correctness probe returned a different payload`)
+    }
+  } else if (
+    value.user !== "abcdefghijkl" ||
+    value.theme !== "dark" ||
+    value.total !== 25 ||
+    !Array.isArray(value.orders) ||
+    value.orders.length !== 10 ||
+    value.orders[0]?.id !== "ord_1000" ||
+    value.orders[9]?.id !== "ord_1009"
+  ) {
+    throw new Error(`${workload.name}: correctness probe returned a different catalog`)
+  }
+
+  const expectedHeaders: Readonly<Record<string, string>> = {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
+    "access-control-allow-origin": "https://app.example.com",
+    "access-control-allow-credentials": "true",
+  }
+  for (const [key, expected] of Object.entries(expectedHeaders)) {
+    if (response.headers.get(key)?.toLowerCase() !== expected.toLowerCase()) {
+      throw new Error(`${workload.name}: missing or mismatched ${key} header`)
+    }
+  }
+  if (
+    !response.headers
+      .get("vary")
+      ?.split(",")
+      .some((header) => header.trim().toLowerCase() === "origin") ||
+    !response.headers.get("x-request-id")
+  ) {
+    throw new Error(`${workload.name}: missing Vary: Origin or request-id header`)
+  }
+  if (workload === GET_ORDERS_BODY) {
+    if (response.headers.get("x-body-hash") !== bodyHash(responseBody)) {
+      throw new Error(`${workload.name}: body observer hash did not match the response body`)
+    }
+  } else if (response.headers.has("x-body-hash")) {
+    throw new Error(`${workload.name}: unexpected body observer header`)
+  }
+
+  if (workload === POST_ORDERS) {
+    const invalidHeaders = new Headers(AUTH_HEADERS)
+    invalidHeaders.set("content-type", "application/json")
+    const invalid = await fetch(`${base}/api/orders`, {
+      method: "POST",
+      headers: invalidHeaders,
+      body: JSON.stringify({ sku: "SKU-1", qty: 2 }),
+    })
+    if (invalid.status < 400 || invalid.status >= 500) {
+      throw new Error(`${workload.name}: validator accepted an invalid body`)
+    }
+    const withExtra = await fetch(`${base}/api/orders`, {
+      method: "POST",
+      headers: invalidHeaders,
+      body: JSON.stringify({ sku: "SKU-1", qty: 2, note: "gift", extra: true }),
+    })
+    if (withExtra.status !== 200) {
+      throw new Error(`${workload.name}: validator rejected an extra body field`)
+    }
+  } else {
+    const invalid = await fetch(`${base}/api/orders`, { headers: AUTH_HEADERS })
+    if (invalid.status < 400 || invalid.status >= 500) {
+      throw new Error(`${workload.name}: validator accepted a missing limit`)
+    }
+    const withExtra = await fetch(`${base}/api/orders?limit=10&extra=1`, {
+      headers: AUTH_HEADERS,
+    })
+    if (withExtra.status !== 200) {
+      throw new Error(`${workload.name}: validator rejected an extra query field`)
+    }
+  }
+
+  const invalidAuth = new Headers(AUTH_HEADERS)
+  invalidAuth.set("authorization", "Bearer short")
+  const unauthorized = await fetch(`${base}${GET_ORDERS.path}`, { headers: invalidAuth })
+  if (unauthorized.status !== 401) {
+    throw new Error(
+      `${workload.name}: auth guard returned HTTP ${unauthorized.status}, expected 401`,
+    )
+  }
+}
+
 // sampled[runtime][framework][workload].rounds - one Measure per round, in round order.
 const sampled: Matrix<{ rounds: Measure[] }> = {}
 const failures: string[] = []
@@ -366,6 +495,9 @@ for (const section of sections) {
         })
         servers.push({ target, base, proc })
         await waitReady(base, 8000)
+        for (const workload of target.workloads ?? WORKLOADS) {
+          await probeWorkload(base, workload)
+        }
       } catch (e) {
         fail(target, e)
       }

@@ -73,7 +73,7 @@ Every nifra app row is a real app, written the way the docs teach it:
 
 - `routes/index.*` - the page component (`.tsx`, `.vue` or `.svelte`), typed with
   `LoaderData<typeof loader>`
-- `routes/index.backend.ts` - a `loader` with a `loaderOutput` schema
+- `routes/index.backend.ts` - a `loader` with a `loaderOutput` schema for the shared catalog
 - `nifra.config.ts` and `backend/framework.ts` - the adapter and its build plugins
 
 `nifra build --target bun` or `--target node` builds it, and the `server.js` it generates serves it.
@@ -88,7 +88,11 @@ bundle and its static files.
 | Svelte | `nifra-svelte-app` | SvelteKit `adapter-node` |
 | Preact | `nifra-preact-app` | none runs on Node (Fresh is Deno-only); `preact-ssr` is `preact-render-to-string` in a bare Node server, the renderer's ceiling |
 
-No dynamic row caches anything: each request runs the loader and renders the page.
+No dynamic row caches anything: each request runs the loader and renders the page. All rows return
+the same catalog. Nifra's rows also run the `loaderOutput` projection and validation required for
+this client-bound loader data; the comparator frameworks do not expose an equivalent boundary.
+Table A therefore measures each complete app path, including Nifra's enforced output contract, not
+the renderer alone. Nifra's static rows pay that validation during the build rather than per request.
 
 ### The renderer row (Preact only)
 

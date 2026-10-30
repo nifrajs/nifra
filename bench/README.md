@@ -28,6 +28,7 @@ bun run bench:http:update       # repeated matrix, medianed, writes BENCHMARKS.m
 bun run bench:http:update --full     # all 4 workloads instead of the default GET + POST pair
 bun run bench/http/route-count.ts --check  # fresh-process route-count matrix: core + network
 bun run bench:http:realworld    # realistic-shape matrix: auth + middleware route, all runtimes
+bun run bench:realworld          # compatibility alias for bench:http:realworld
 bun run bench:http:realworld:update  # repeated, medianed, writes BENCHMARKS-REALWORLD.md (git-ignored)
 bun run bench:memory               # fresh-process Node RSS/heap comparison, all peers native modules
 bun run bench:memory:update        # capture and update the local /benchmarks memory table
@@ -53,7 +54,9 @@ NIFRA_PERF_GATE=1 bun run bench:p99
 same-run ratios (nifra vs the field, % of the raw server) - not the absolute numbers.
 
 Workloads are identical across every framework (`bench/http/serve*.ts`): `GET /users/:id` (routing +
-path param) and `POST /users` (validated body), plus `GET /` and `GET /search` under `--full`. Each
+path param) and `POST /users` (validated body), plus `GET /` and `GET /search` under `--full`. The
+schema probes require the same fields and types; unknown query and body fields are accepted and
+ignored, matching Nifra's benchmark Standard Schema fixture. They run before measurement. Each
 server runs in its own subprocess. A runtime section boots all of them, then measures in interleaved
 rounds (`BENCH_ROUNDS`, default 4, odd counts round up): each round takes one count-bounded `oha`
 sample of every server, one at a time, so only the sampled server carries load. A row's % of the raw
@@ -65,14 +68,18 @@ the same parser-framing marker for Nifra; they do not mix Nifra's production ada
 the framework comparison.
 
 `bench:http:realworld` (`bench/http-realworld/`) runs the same GET/POST split on a route with what a
-real API route actually has - security headers, CORS, a request-id hook, bearer-token auth, a cookie
-read - which nifra compiles into its fused derive-and-before lane, so it measures a fused route carrying real middleware work.
+real API route actually has - fixed security and CORS response headers, a request-id hook,
+bearer-token auth, and a cookie read - which nifra compiles into its fused derive-and-before lane.
+The GET and POST validators require the same fields and types and ignore unknown fields, matching
+Nifra's benchmark Standard Schema fixture; the runner probes both behaviors before timing. Each
+target writes the same headers for the one allowed fixture origin; preflight and rejected-origin
+policy behavior are outside the timed workload.
 Its Bun runner preloads `dist-core-preload.ts` so workspace middleware shares the app's built core;
 otherwise Bun's source export condition loads a second core beside the explicit dist app imports.
 The preload is scoped to the local checkout; `BENCH_APP_DIR` keeps its own package resolution.
 A third workload adds one body-observing middleware (an `x-body-hash` over the final serialized
 body) through each framework's own idiomatic body tier (nifra `onResponseBody`, Fastify `onSend`,
-Elysia `mapResponse`, Hono drain-and-rebuild, Express `res.json` wrap, inline for the raw ceilings) -
+Elysia `mapResponse`, Hono buffer-and-rewrap, Express `res.json` wrap, inline for the raw ceilings) -
 the cost a header-only comparison can't show. Both HTTP matrices use count-bounded `oha` samples, and the realistic runner fails closed unless every request returns HTTP 200. Duration cutoffs can cancel in-flight POSTs and trigger Deno.serve slowdowns. Compare a framework's ratio across both suites to see
 its fast-path premium directly.
 

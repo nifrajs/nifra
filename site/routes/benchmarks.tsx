@@ -195,6 +195,12 @@ export default function Benchmarks() {
         the Node rows compare apples-to-apples. The headline multipliers below are Table A only:
         Nifra's Node app row vs each meta-framework.
       </p>
+      <p className="note">
+        The dynamic Table A apps return the same catalog through per-request loader work. Nifra&apos;s
+        rows also run the <code>loaderOutput</code> projection and validation required for this
+        client-bound data; the comparator frameworks have no equivalent output boundary. Table A
+        compares complete app paths, including this Nifra contract check, rather than renderers alone.
+      </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (
           <div className="mult-item" key={m.fw}>
@@ -294,6 +300,11 @@ export default function Benchmarks() {
             schema - into its fused derive-and-before lane, so these numbers carry real middleware
             work on a fused route, not a fallback path. The third column adds one body-observing
             middleware to the same GET.
+          </p>
+          <p className="note">
+            These rows time GET/POST requests from the allowed fixture origin. They do not time CORS
+            preflight or rejected-origin policy behavior. Every target writes the same fixed CORS
+            and security headers for that origin.
           </p>
           <div className="bench-grid">
             {HTTP_REALWORLD.map((table) => (
