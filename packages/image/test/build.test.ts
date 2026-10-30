@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import sharp from "sharp"
-import { sharpImageBackend } from "../src/backend.ts"
+import { type ImageBackend, sharpImageBackend } from "../src/backend.ts"
 import { createImageAssets } from "../src/build.ts"
 import { imageDimensions } from "../src/dimensions.ts"
 import { imageBunPlugin, imageVitePlugin } from "../src/plugins.ts"
@@ -97,7 +97,7 @@ describe("image build assets", () => {
     }
   })
 
-  test("APNG animation control rejects variants before running a codec, but keeps metadata imports", async () => {
+  test("APNG animation control keeps the original and generates no variants instead of flattening it", async () => {
     // acTL immediately after IHDR: the animation guard must inspect chunks, not the PNG extension.
     const chunk = new Uint8Array(20)
     new DataView(chunk.buffer).setUint32(0, 8)
@@ -109,10 +109,60 @@ describe("image build assets", () => {
       width: 100,
       height: 50,
     })
-    const backend = sharpImageBackend((bytes) => sharp(Buffer.from(bytes)))
-    await expect(
-      createImageAssets({ root, widths: [50], backend }).load("animated.png"),
-    ).rejects.toThrow(/animated image variants/)
+    let transforms = 0
+    const real = sharpImageBackend((bytes) => sharp(Buffer.from(bytes)))
+    const backend: ImageBackend = {
+      probe: (input) => real.probe(input),
+      transform: (input) => {
+        transforms++
+        return real.transform(input)
+      },
+    }
+    // One animated import must not fail a build that also resizes its still images.
+    const images = createImageAssets({ root, widths: [50], backend })
+    const animated = await images.load("animated.png")
+    expect(animated).toMatchObject({ width: 100, height: 50 })
+    expect(animated.variants).toBeUndefined()
+    expect(transforms).toBe(0)
+    expect(images.assets().map((asset) => asset.source)).toEqual([bytes])
+    expect((await images.load("hero.png")).variants).toHaveLength(1)
+    expect(transforms).toBe(1)
+  })
+
+  test("a rebuild reuses processed variants for unchanged bytes and drops what is no longer imported", async () => {
+    let transforms = 0
+    const real = sharpImageBackend((bytes) => sharp(Buffer.from(bytes)))
+    const backend: ImageBackend = {
+      probe: (input) => real.probe(input),
+      transform: (input) => {
+        transforms++
+        return real.transform(input)
+      },
+    }
+    const images = createImageAssets({ root, widths: [50], backend })
+    const first = await images.load("hero.png")
+    expect(transforms).toBe(1)
+    images.clear()
+    expect(images.assets()).toHaveLength(0)
+    expect(await images.load("hero.png")).toEqual(first)
+    expect(transforms).toBe(1)
+    expect(images.assets()).toHaveLength(2)
+    // A generation nothing imported in is not kept alive.
+    images.clear()
+    images.clear()
+    await images.load("hero.png")
+    expect(transforms).toBe(2)
+    writeFileSync(join(root, "hero.png"), new Uint8Array([...source, 0]))
+    images.clear()
+    await images.load("hero.png")
+    expect(transforms).toBe(3)
+  })
+
+  test("accepts an absolute http(s) CDN publicPath and keeps it in every emitted URL", async () => {
+    const images = createImageAssets({ root, publicPath: "https://cdn.example.com/static" })
+    expect((await images.load("hero.png")).src).toMatch(
+      /^https:\/\/cdn\.example\.com\/static\/_images\/[0-9a-f]{64}\.png$/,
+    )
   })
 
   test("refuses source escapes, symlink escapes, non-images and configured caps", async () => {
@@ -143,7 +193,21 @@ describe("image build assets", () => {
     }
     expect(() => createImageAssets({ quality: 101 })).toThrow(/quality/)
     expect(() => createImageAssets({ maxSourceBytes: 0 })).toThrow(/maxSourceBytes/)
-    for (const publicPath of ["//evil.test/", "assets", "/assets/../", "/x?y", "/x#y", "/%2e/"]) {
+    for (const publicPath of [
+      "//evil.test/",
+      "assets",
+      "/assets/../",
+      "/x?y",
+      "/x#y",
+      "/%2e/",
+      "ftp://cdn.example.com/",
+      "javascript:alert(1)",
+      "https://user:secret@cdn.example.com/",
+      "https://cdn.example.com/a?b",
+      "https://cdn.example.com/a#b",
+      "https://cdn.example.com/../x",
+      "https://cdn.example.com/a b/",
+    ]) {
       expect(() => createImageAssets({ publicPath })).toThrow(/publicPath/)
     }
   })
@@ -220,6 +284,18 @@ test("Vite dev middleware serves GET/HEAD and loads changed sources", async () =
     expect(headers.get("content-type")).toBe("image/png")
     expect(headers.get("cache-control")).toContain("immutable")
     expect(body).toEqual(method === "HEAD" ? undefined : source)
+  }
+  // Other requests fall through without being parsed: a scheme-relative target is not a valid URL.
+  for (const url of ["//", "/", "/assets/_images/missing.png", "/assets/%", undefined]) {
+    let fellThrough = false
+    serve(
+      url === undefined ? { method: "GET" } : { url, method: "GET" },
+      { setHeader() {}, end() {} },
+      () => {
+        fellThrough = true
+      },
+    )
+    expect(fellThrough, String(url)).toBe(true)
   }
   writeFileSync(join(root, "hero.png"), new Uint8Array([...source, 0]))
   expect(await plugin.load.call(context, join(root, "hero.png?image"))).not.toBe(first)

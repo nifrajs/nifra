@@ -195,8 +195,8 @@ export default function Images() {
         original bytes under <code>/assets/_images/</code> with content-hashed names, registers them in
         the build manifest, and serves them in development. Static builds deploy these files too;
         no image endpoint is needed. For standalone bundler use, emit the plugin's
-        <code>nifraStaticAssets()</code> files yourself. A custom <code>publicPath</code> must match your
-        client build's asset prefix.
+        <code>nifraStaticAssets()</code> files yourself. A custom <code>publicPath</code> (a root-relative prefix
+        or an absolute http(s) URL) must match your client build's asset prefix; a mismatch fails the build.
       </p>
       <h2>Build-time responsive variants</h2>
       <p>

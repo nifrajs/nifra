@@ -5911,8 +5911,8 @@ plugins when adding these. Metadata-only imports need no native dependency. Nifr
 original bytes under `/assets/_images/` with content-hashed names, registers them in
 the build manifest, and serves them in development. Static builds deploy these files too;
 no image endpoint is needed. For standalone bundler use, emit the plugin's
-`nifraStaticAssets()` files yourself. A custom `publicPath` must match your
-client build's asset prefix.
+`nifraStaticAssets()` files yourself. A custom `publicPath` (a root-relative prefix
+or an absolute http(s) URL) must match your client build's asset prefix; a mismatch fails the build.
 
 ### Build-time responsive variants
 

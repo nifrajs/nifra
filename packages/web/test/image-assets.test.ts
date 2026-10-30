@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   emitPluginImages,
+  isImageAssetUrl,
   pluginImageAssets,
   pluginImageResponse,
 } from "../src/internal/image-assets.ts"
@@ -114,4 +115,97 @@ test("existing image files are validated through their descriptor without being 
   expect(readFileSync(join(dir, fileName))).toEqual(Buffer.from([3, 2, 1]))
   fs.writeFileSync(join(dir, fileName), new Uint8Array(10))
   expect(() => emitPluginImages([plugin], dir)).toThrow(/invalid/)
+})
+
+test("a plugin built for another publicPath is refused instead of emitting 404ing URLs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-image-prefix-"))
+  dirs.push(dir)
+  const rooted = { nifraStaticAssets: () => [asset], nifraPublicPath: "/static/" }
+  expect(() => emitPluginImages([rooted], dir)).toThrow(/publicPath/)
+  expect(() => emitPluginImages([rooted], dir, "/other/")).toThrow(/publicPath/)
+  expect(emitPluginImages([rooted], dir, "/static")).toEqual([`/static/${fileName}`])
+  expect(
+    emitPluginImages(
+      [{ nifraStaticAssets: () => [asset], nifraPublicPath: "https://cdn.example.com/a/" }],
+      dir,
+      "https://cdn.example.com/a/",
+    ),
+  ).toEqual([`https://cdn.example.com/a/${fileName}`])
+  // A plugin that declares nothing is trusted to have used the build's prefix.
+  expect(emitPluginImages([plugin], dir, "/static/")).toEqual([`/static/${fileName}`])
+})
+
+test("one plugin listed for both client and server contributes its assets once", () => {
+  const big = new Uint8Array(4096).fill(7)
+  const name = `_images/${createHash("sha256").update(big).digest("hex")}.png`
+  const shared = { nifraStaticAssets: () => [{ fileName: name, source: big }] }
+  const other = { nifraStaticAssets: () => [{ fileName: name, source: big.slice() }] }
+  expect(pluginImageAssets([shared, shared, other]).map((file) => file.fileName)).toEqual([name])
+  const changed = { nifraStaticAssets: () => [{ fileName: name, source: big.slice().fill(8) }] }
+  expect(() => pluginImageAssets([shared, changed])).toThrow(/conflicting/)
+})
+
+test("files already emitted in this build are not validated and written again", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-image-once-"))
+  dirs.push(dir)
+  const emitted = new Set<string>()
+  expect(emitPluginImages([plugin], dir, "/assets/", emitted)).toEqual([`/assets/${fileName}`])
+  expect(emitted).toEqual(new Set([fileName]))
+  rmSync(join(dir, fileName))
+  expect(emitPluginImages([plugin], dir, "/assets/", emitted)).toEqual([`/assets/${fileName}`])
+  expect(fs.existsSync(join(dir, fileName))).toBe(false)
+  expect(emitPluginImages([plugin], dir, "/assets/")).toEqual([`/assets/${fileName}`])
+  expect(fs.existsSync(join(dir, fileName))).toBe(true)
+})
+
+test("image assets are recognised by URL so they can be kept out of bundle size reports", () => {
+  const hash = "a".repeat(64)
+  for (const ext of ["png", "jpg", "webp", "gif"])
+    expect(isImageAssetUrl(`/assets/_images/${hash}.${ext}`)).toBe(true)
+  for (const url of ["/assets/app-123.js", `/assets/_images/${hash}.svg`, "/assets/_images/x.png"])
+    expect(isImageAssetUrl(url)).toBe(false)
+})
+
+test("a damaged emitted file names its path so it can be deleted", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-image-damaged-"))
+  dirs.push(dir)
+  emitPluginImages([plugin], dir)
+  fs.writeFileSync(join(dir, fileName), source.subarray(0, 1))
+  expect(() => emitPluginImages([plugin], dir)).toThrow(/delete/)
+  expect(fs.readdirSync(join(dir, "_images"))).toHaveLength(1)
+})
+
+test("losing the publication race to an identical writer is accepted, to a different one refused", () => {
+  const lose = (race: (target: string) => void) =>
+    spyOn(fs, "linkSync").mockImplementation((_from, target) => {
+      race(String(target))
+      throw Object.assign(new Error("exists"), { code: "EEXIST" })
+    })
+  const dir = mkdtempSync(join(tmpdir(), "nifra-image-race-win-"))
+  const other = mkdtempSync(join(tmpdir(), "nifra-image-race-lose-"))
+  const vanished = mkdtempSync(join(tmpdir(), "nifra-image-race-gone-"))
+  dirs.push(dir, other, vanished)
+  let spy = lose((target) => fs.writeFileSync(target, source))
+  try {
+    emitPluginImages([plugin], dir)
+  } finally {
+    spy.mockRestore()
+  }
+  expect(readFileSync(join(dir, fileName))).toEqual(Buffer.from(source))
+  spy = lose((target) => fs.writeFileSync(target, new Uint8Array([9, 9, 9])))
+  try {
+    expect(() => emitPluginImages([plugin], other)).toThrow(/invalid existing image output/)
+  } finally {
+    spy.mockRestore()
+  }
+  spy = lose(() => {})
+  try {
+    expect(() => emitPluginImages([plugin], vanished)).toThrow(/invalid or conflicting/)
+  } finally {
+    spy.mockRestore()
+  }
+  for (const root of [dir, other, vanished])
+    expect(fs.readdirSync(join(root, "_images")).filter((name) => name.endsWith(".tmp"))).toEqual(
+      [],
+    )
 })

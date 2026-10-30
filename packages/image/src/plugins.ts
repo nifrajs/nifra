@@ -12,6 +12,8 @@ import { cacheImageAsset } from "./internal/image-file.ts"
 export interface ImageAssetPlugin {
   /** Nifra emits these content-hashed files with the bundle, never into the application's sources. */
   nifraStaticAssets(): readonly ImageBuildAsset[]
+  /** The URL prefix baked into the imports; a build with another publicPath refuses the plugin. */
+  readonly nifraPublicPath?: string
 }
 
 interface ImageBunBuild {
@@ -31,6 +33,10 @@ export interface ImageBunPlugin extends ImageAssetPlugin {
   setup(build: ImageBunBuild): void
 }
 
+const assetPrefix = (options: ImageBuildOptions): string => {
+  const publicPath = options.publicPath ?? "/assets/"
+  return publicPath.endsWith("/") ? publicPath : `${publicPath}/`
+}
 const IMAGE_IMPORT = /\.(?:png|jpe?g|webp|gif)\?image(?:&|$)/i
 const matches = (id: string): boolean => IMAGE_IMPORT.test(id)
 const sourceFile = (id: string): string => {
@@ -69,6 +75,7 @@ export function imageBunPlugin(options: ImageBuildOptions = {}): ImageBunPlugin 
   const published = new Set<string>()
   return {
     name: "nifra-image",
+    nifraPublicPath: assetPrefix(options),
     nifraStaticAssets: () => images.assets(),
     setup(build) {
       images.clear()
@@ -113,11 +120,11 @@ export interface ImageVitePlugin extends ImageAssetPlugin {
 /** Use in vitePlugins for both development and production; the dev middleware serves hashed bytes. */
 export function imageVitePlugin(options: ImageBuildOptions = {}): ImageVitePlugin {
   const images = createImageAssets(options)
-  const publicPath = options.publicPath ?? "/assets/"
-  const prefix = publicPath.endsWith("/") ? publicPath : `${publicPath}/`
+  const prefix = assetPrefix(options)
   return {
     name: "nifra-image",
     enforce: "pre",
+    nifraPublicPath: prefix,
     nifraStaticAssets: () => images.assets(),
     configResolved() {
       images.clear()
@@ -134,8 +141,15 @@ export function imageVitePlugin(options: ImageBuildOptions = {}): ImageVitePlugi
           next()
           return
         }
-        const path = new URL(req.url ?? "/", "http://nifra.local").pathname
-        const asset = images.assets().find((file) => `${prefix}${file.fileName}` === path)
+        // Only a request under the image prefix is parsed: a target such as `//` is not a URL.
+        const target = req.url ?? "/"
+        const path = target.startsWith(prefix)
+          ? new URL(target, "http://nifra.local").pathname
+          : undefined
+        const asset =
+          path === undefined
+            ? undefined
+            : images.assets().find((file) => `${prefix}${file.fileName}` === path)
         if (asset === undefined) {
           next()
           return

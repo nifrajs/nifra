@@ -59,6 +59,10 @@ for (const pipeline of ["bun", "vite"] as const) {
     )
     const images = result.client.assets.filter((path) => path.startsWith("/assets/_images/"))
     expect(images.length).toBeGreaterThanOrEqual(3)
+    // The size report is about code: image bytes are neither read for it nor added to its totals.
+    expect(result.size.chunks.some((chunk) => /\.(?:png|jpg|webp|gif)$/.test(chunk.name))).toBe(
+      false,
+    )
     for (const path of images) expect(existsSync(join(outDir, path))).toBe(true)
     expect(JSON.parse(readFileSync(join(outDir, "assets/manifest.json"), "utf8")).assets).toEqual(
       result.client.assets,

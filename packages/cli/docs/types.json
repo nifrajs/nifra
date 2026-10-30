@@ -7448,7 +7448,7 @@
     "name": "ImageAssetPlugin",
     "kind": "interface",
     "package": "@nifrajs/image",
-    "signature": "export interface ImageAssetPlugin {\n    /** Nifra emits these content-hashed files with the bundle, never into the application's sources. */\n    nifraStaticAssets(): readonly ImageBuildAsset[];\n}"
+    "signature": "export interface ImageAssetPlugin {\n    /** Nifra emits these content-hashed files with the bundle, never into the application's sources. */\n    nifraStaticAssets(): readonly ImageBuildAsset[];\n    /** The URL prefix baked into the imports; a build with another publicPath refuses the plugin. */\n    readonly nifraPublicPath?: string;\n}"
   },
   {
     "name": "ImageAssets",
@@ -7474,7 +7474,7 @@
     "name": "ImageBuildOptions",
     "kind": "interface",
     "package": "@nifrajs/image",
-    "signature": "export interface ImageBuildOptions {\n    /** Only local files beneath this directory may be imported (symlinks are resolved). */\n    readonly root?: string;\n    /** Match the client build's publicPath. Default `/assets/`. */\n    readonly publicPath?: string;\n    /** Omit for codec-free metadata imports. Requested widths are clamped to the source width. */\n    readonly widths?: readonly number[];\n    /** Required when widths are requested; inject sharp, Bun.Image, or a WASM backend explicitly. */\n    readonly backend?: ImageBackend;\n    readonly format?: OutputFormat;\n    readonly quality?: number;\n    readonly maxSourceBytes?: number;\n    readonly maxSourcePixels?: number;\n}"
+    "signature": "export interface ImageBuildOptions {\n    /** Only local files beneath this directory may be imported (symlinks are resolved). */\n    readonly root?: string;\n    /** Match the client build's publicPath: a root-relative prefix or an absolute http(s) CDN URL.\n     * Default `/assets/`. */\n    readonly publicPath?: string;\n    /** Omit for codec-free metadata imports. Requested widths are clamped to the source width. */\n    readonly widths?: readonly number[];\n    /** Required when widths are requested; inject sharp, Bun.Image, or a WASM backend explicitly. */\n    readonly backend?: ImageBackend;\n    readonly format?: OutputFormat;\n    readonly quality?: number;\n    readonly maxSourceBytes?: number;\n    readonly maxSourcePixels?: number;\n}"
   },
   {
     "name": "ImageBunPlugin",

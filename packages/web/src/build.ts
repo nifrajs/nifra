@@ -70,7 +70,7 @@ import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
 import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
-import { emitPluginImages } from "./internal/image-assets.ts"
+import { emitPluginImages, isImageAssetUrl } from "./internal/image-assets.ts"
 import { adapterRefusal } from "./internal/node-adapter.ts"
 import { nodeHandlerSource } from "./internal/node-handler-source.ts"
 import { assertIdentityParity } from "./internal/parity.ts"
@@ -2004,10 +2004,13 @@ export async function buildTargetWith(
   }
 
   // Server-only imports and lazy prerender modules can discover images after the client build.
+  const emittedImages = new Set<string>()
   const collectImages = (): boolean => {
     const images = emitPluginImages(
       [...(options.clientPlugins ?? []), ...(options.serverPlugins ?? [])],
       assetsDir,
+      "/assets/",
+      emittedImages,
     )
     const assets = [...new Set([...client.assets, ...images])]
     if (assets.length === client.assets.length) return false
@@ -2060,9 +2063,7 @@ export async function buildTargetWith(
     }
     collectImages()
     rmSync(workDir, { recursive: true, force: true })
-    const size = aggregateSizeReport(
-      await measureOutputs(client.assets.map((u) => assetUrlToPath(u, assetsDir))),
-    )
+    const size = aggregateSizeReport(await measureOutputs(codeAssetPaths(client.assets, assetsDir)))
     return {
       target,
       outDir,
@@ -2210,7 +2211,7 @@ export async function buildTargetWith(
   rmSync(workDir, { recursive: true, force: true })
 
   // Size report over the client assets + the server bundle (its parse cost matters on the edge).
-  const clientPaths = client.assets.map((u) => assetUrlToPath(u, assetsDir))
+  const clientPaths = codeAssetPaths(client.assets, assetsDir)
   const serverPath = `${outDir}/${targetPlan.outputFile}`
   const size = aggregateSizeReport(await measureOutputs([...clientPaths, serverPath]))
   return { target, outDir, client, run: targetPlan.run, size }
@@ -2220,3 +2221,7 @@ export async function buildTargetWith(
  * `publicPath` prefix is always `/assets/` for these builds, so strip it and rejoin. */
 const assetUrlToPath = (url: string, assetsDir: string): string =>
   `${assetsDir}/${url.slice("/assets/".length)}`
+
+/** The client assets a size report covers: code and styles, not the media image plugins emit. */
+const codeAssetPaths = (urls: readonly string[], assetsDir: string): string[] =>
+  urls.filter((url) => !isImageAssetUrl(url)).map((url) => assetUrlToPath(url, assetsDir))

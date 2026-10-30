@@ -1,16 +1,18 @@
 /** Node-compatible, build-only image processing. Never imported by the browser-safe entry. */
 import { createHash } from "node:crypto"
-import { open, realpath } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import type { ImageBackend, OutputFormat } from "./backend.ts"
 import { imageBuildMetadata } from "./build-metadata.ts"
 import { imageDimensions } from "./dimensions.ts"
+import { openPinned } from "./internal/image-file.ts"
 import type { StaticImageData, StaticImageVariant } from "./static.ts"
 
 export interface ImageBuildOptions {
   /** Only local files beneath this directory may be imported (symlinks are resolved). */
   readonly root?: string
-  /** Match the client build's publicPath. Default `/assets/`. */
+  /** Match the client build's publicPath: a root-relative prefix or an absolute http(s) CDN URL.
+   * Default `/assets/`. */
   readonly publicPath?: string
   /** Omit for codec-free metadata imports. Requested widths are clamped to the source width. */
   readonly widths?: readonly number[]
@@ -41,14 +43,31 @@ const positiveInteger = (value: number, name: string): number => {
     throw fail(`${name} must be a positive safe integer`)
   return value
 }
+/** A root-relative prefix, or an absolute http(s) URL for a CDN. Never protocol-relative. */
+function validPublicPath(publicPath: string): boolean {
+  if (/[\\?#\s]/.test(publicPath)) return false
+  if (publicPath.split("/").some((part) => part === "." || part === ".." || part.includes("%")))
+    return false
+  if (publicPath.startsWith("/")) return !publicPath.startsWith("//")
+  try {
+    const url = new URL(publicPath)
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      url.host !== "" &&
+      url.username === "" &&
+      url.password === ""
+    )
+  } catch {
+    return false
+  }
+}
 const digest = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex")
 
 /** Read at most the configured cap, including when a source grows after stat(). */
 async function boundedRead(file: string, limit: number): Promise<Uint8Array> {
-  const handle = await open(file, "r")
+  const handle = await openPinned(file)
   try {
     const stat = await handle.stat()
-    if (!stat.isFile()) throw fail("image source must be a regular file")
     if (stat.size > limit) throw fail("image source exceeds maxSourceBytes")
     const chunks: Uint8Array[] = []
     let total = 0
@@ -81,13 +100,10 @@ interface PreparedImage {
 export function createImageAssets(options: ImageBuildOptions = {}): ImageAssets {
   const root = resolve(options.root ?? process.cwd())
   const publicPath = options.publicPath ?? "/assets/"
-  if (
-    !publicPath.startsWith("/") ||
-    publicPath.startsWith("//") ||
-    /[\\?#\s]/.test(publicPath) ||
-    publicPath.split("/").some((part) => part === "." || part === ".." || part.includes("%"))
-  ) {
-    throw fail("publicPath must be a root-relative asset prefix without query, hash or traversal")
+  if (!validPublicPath(publicPath)) {
+    throw fail(
+      "publicPath must be a root-relative or absolute http(s) asset prefix without credentials, query, hash or traversal",
+    )
   }
   const prefix = publicPath.endsWith("/") ? publicPath : `${publicPath}/`
   const maxBytes = positiveInteger(options.maxSourceBytes ?? 16 * 1024 * 1024, "maxSourceBytes")
@@ -106,8 +122,11 @@ export function createImageAssets(options: ImageBuildOptions = {}): ImageAssets 
     throw fail("responsive widths require an explicit image backend")
   const entries = new Map<
     string,
-    { hash: string; result: Promise<PreparedImage>; files?: readonly ImageBuildAsset[] }
+    { hash: string; result: Promise<PreparedImage>; prepared?: PreparedImage }
   >()
+  // What the previous module graph produced, by content hash: a client build followed by a server
+  // build imports the same images, and transcoding them again is the slowest step of the build.
+  let previous = new Map<string, PreparedImage>()
 
   const prepare = async (bytes: Uint8Array): Promise<PreparedImage> => {
     const { info, animated } = imageBuildMetadata(bytes)
@@ -128,10 +147,11 @@ export function createImageAssets(options: ImageBuildOptions = {}): ImageAssets 
     }
     const src = add(bytes, info.format)
     const variants: StaticImageVariant[] = []
-    const widths = [...new Set(requested.map((width) => Math.min(width, info.width)))]
+    // A resize would flatten an animation to one frame, so an animated source stays as the original.
+    const widths = animated
+      ? []
+      : [...new Set(requested.map((width) => Math.min(width, info.width)))]
     if (widths.length > 0) {
-      if (animated)
-        throw fail("animated image variants are not supported; use a metadata-only import")
       const backend = options.backend
       if (backend === undefined) throw fail("responsive widths require an explicit image backend")
       for (const width of widths) {
@@ -171,6 +191,9 @@ export function createImageAssets(options: ImageBuildOptions = {}): ImageAssets 
 
   return {
     clear() {
+      previous = new Map()
+      for (const entry of entries.values())
+        if (entry.prepared !== undefined) previous.set(entry.hash, entry.prepared)
       entries.clear()
     },
     async load(file) {
@@ -183,17 +206,18 @@ export function createImageAssets(options: ImageBuildOptions = {}): ImageAssets 
       const hash = digest(bytes)
       let entry = entries.get(path)
       if (entry === undefined || entry.hash !== hash) {
-        entry = { hash, result: prepare(bytes) }
+        const reused = previous.get(hash)
+        entry = { hash, result: reused === undefined ? prepare(bytes) : Promise.resolve(reused) }
         entries.set(path, entry)
       }
       const result = await entry.result
-      entry.files = result.files
+      entry.prepared = result
       return result.data
     },
     assets() {
       const files = new Map<string, ImageBuildAsset>()
       for (const entry of entries.values())
-        for (const file of entry.files ?? []) files.set(file.fileName, file)
+        for (const file of entry.prepared?.files ?? []) files.set(file.fileName, file)
       return [...files.values()].sort((a, b) =>
         a.fileName < b.fileName ? -1 : a.fileName > b.fileName ? 1 : 0,
       )
