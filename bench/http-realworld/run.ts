@@ -29,6 +29,7 @@
  * gap between a local build and the tarball actually shipped.
  */
 import { loadavg } from "node:os"
+import { isRecord } from "../is-record.ts"
 import { cpuListFromEnv, pinned } from "../pinning.ts"
 import {
   type Matrix,
@@ -323,10 +324,6 @@ function bodyHash(value: string | Uint8Array): string {
     for (let i = 0; i < value.length; i++) hash = ((hash << 5) + hash + value[i]!) | 0
   }
   return (hash >>> 0).toString(16)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 async function probeWorkload(base: string, workload: Workload): Promise<void> {

@@ -196,10 +196,11 @@ export default function Benchmarks() {
         Nifra's Node app row vs each meta-framework.
       </p>
       <p className="note">
-        The dynamic Table A apps return the same catalog through per-request loader work. Nifra&apos;s
-        rows also run the <code>loaderOutput</code> projection and validation required for this
-        client-bound data; the comparator frameworks have no equivalent output boundary. Table A
-        compares complete app paths, including this Nifra contract check, rather than renderers alone.
+        The dynamic Table A apps return the same catalog through per-request loader work.
+        Nifra&apos;s rows also run the <code>loaderOutput</code> projection and validation required
+        for this client-bound data; the comparator frameworks have no equivalent output boundary.
+        Table A compares complete app paths, including this Nifra contract check, rather than
+        renderers alone.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (

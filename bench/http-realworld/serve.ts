@@ -71,10 +71,7 @@ if (framework === "nifra") {
   makeNifraApp()
     .use(responseObserver())
     .onResponseBody((body, headers) => {
-      headers.set(
-        "x-body-hash",
-        hash(body),
-      )
+      headers.set("x-body-hash", hash(body))
       return undefined
     })
     .listen(port)

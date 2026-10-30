@@ -185,10 +185,7 @@ if (framework === "nifra" || framework === "nifra-body") {
     app
       .use(responseObserver())
       .onResponseBody((body: string | Uint8Array, headers: { set(n: string, v: string): void }) => {
-        headers.set(
-          "x-body-hash",
-          hash(body),
-        )
+        headers.set("x-body-hash", hash(body))
         return undefined
       })
   }
