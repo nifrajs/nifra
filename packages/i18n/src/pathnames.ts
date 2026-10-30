@@ -46,7 +46,7 @@ function normalizedSegments(segments: readonly string[]): string[] | undefined {
 
 const pathnameOf = (segments: readonly string[]): string => `/${segments.join("/")}`
 
-function configuredSegments(pathname: string): readonly string[] {
+function configuredSegments(pathname: unknown): readonly string[] {
   if (
     typeof pathname !== "string" ||
     !pathname.startsWith("/") ||
@@ -73,9 +73,9 @@ export function compilePathnames<K extends string>(locales: Locales<K>, config?:
   if (config === undefined) return undefined
   const canonical = new Map<string, Entry<K>>()
   const publicByLocale = new Map<K, Map<string, Entry<K>>>()
-  const declared = new Set<string>(locales.all)
+  const declared = new Map<string, K>(locales.all.map((locale) => [locale, locale]))
   const prefixes = new Set(locales.served.map((key) => key.toLowerCase()))
-  const validate = (pathname: string): readonly string[] => {
+  const validate = (pathname: unknown): readonly string[] => {
     const segments = configuredSegments(pathname)
     if (segments[0] !== undefined && prefixes.has(decodeURIComponent(segments[0]).toLowerCase())) {
       throw new Error(
@@ -95,13 +95,14 @@ export function compilePathnames<K extends string>(locales: Locales<K>, config?:
     }
     const translations = new Map<K, readonly string[]>()
     for (const [locale, value] of Object.entries(values)) {
-      if (!declared.has(locale)) {
+      const localeKey = declared.get(locale)
+      if (localeKey === undefined) {
         throw new Error(
           `pathnames: unknown locale ${JSON.stringify(locale)} for ${JSON.stringify(key)}`,
         )
       }
       // An optional property explicitly set to undefined is still a missing translation.
-      if (value !== undefined) translations.set(locale as K, validate(value as string))
+      if (value !== undefined) translations.set(localeKey, validate(value))
     }
     canonical.set(normalized, {
       key: key === "/" ? "/" : key.replace(/\/$/, ""),

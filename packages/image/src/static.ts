@@ -37,10 +37,9 @@ export function staticImageSources(
   const unique = [...new Map(selected.map((variant) => [variant.width, variant])).values()].sort(
     (a, b) => a.width - b.width,
   )
-  return {
-    src: nearest(width).src,
-    ...(unique.length > 0
-      ? { srcSet: unique.map((variant) => `${variant.src} ${variant.width}w`).join(", ") }
-      : {}),
+  const sources: { src: string; srcSet?: string } = { src: nearest(width).src }
+  if (unique.length > 0) {
+    sources.srcSet = unique.map((variant) => `${variant.src} ${variant.width}w`).join(", ")
   }
+  return sources
 }

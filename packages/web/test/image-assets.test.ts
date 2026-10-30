@@ -1,5 +1,6 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { createHash } from "node:crypto"
+import * as fs from "node:fs"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -66,4 +67,51 @@ test("unregistered files, other plugins and non-read requests fall through", () 
       new Request(`http://localhost/assets/${fileName}`, { method: "POST" }),
     ),
   ).toBeUndefined()
+})
+
+for (const target of ["file", "directory"] as const) {
+  test(`image output refuses a ${target} swapped to a symlink during validation`, () => {
+    const dir = fs.realpathSync(mkdtempSync(join(tmpdir(), "nifra-image-race-")))
+    const outside = fs.realpathSync(mkdtempSync(join(tmpdir(), "nifra-image-outside-")))
+    dirs.push(dir, outside)
+    emitPluginImages([plugin], dir)
+    const leaf = fileName.slice("_images/".length)
+    fs.writeFileSync(join(outside, leaf), source)
+    const checked = target === "file" ? join(dir, fileName) : join(dir, "_images")
+    const original = fs.lstatSync
+    let swapped = false
+    const intercepted = (path: fs.PathLike, options?: fs.StatSyncOptions) => {
+      const result = original(path, options)
+      if (String(path) === checked && !swapped) {
+        swapped = true
+        fs.renameSync(checked, `${checked}.held`)
+        fs.symlinkSync(
+          target === "file" ? join(outside, leaf) : outside,
+          checked,
+          target === "file" ? "file" : "dir",
+        )
+      }
+      return result
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: forwards both arguments and the original result unchanged, preserving Node's bigint/throwIfNoEntry overloads.
+    const held = spyOn(fs, "lstatSync").mockImplementation(intercepted as typeof fs.lstatSync)
+    try {
+      expect(() => emitPluginImages([plugin], dir)).toThrow()
+      expect(swapped).toBe(true)
+      expect(readFileSync(join(outside, leaf))).toEqual(Buffer.from(source))
+    } finally {
+      held.mockRestore()
+    }
+  })
+}
+
+test("existing image files are validated through their descriptor without being overwritten", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nifra-image-corrupt-"))
+  dirs.push(dir)
+  emitPluginImages([plugin], dir)
+  fs.writeFileSync(join(dir, fileName), new Uint8Array([3, 2, 1]))
+  expect(() => emitPluginImages([plugin], dir)).toThrow(/invalid/)
+  expect(readFileSync(join(dir, fileName))).toEqual(Buffer.from([3, 2, 1]))
+  fs.writeFileSync(join(dir, fileName), new Uint8Array(10))
+  expect(() => emitPluginImages([plugin], dir)).toThrow(/invalid/)
 })

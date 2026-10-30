@@ -58,9 +58,17 @@ describe("static images", () => {
     )
   })
   test("an explicit loader overrides the static variants", () => {
-    expect(resolveImage({ src: image, alt: "", width: 300 }, cloudflareLoader()).src).toBe(
-      "/cdn-cgi/image/format=auto,width=300/assets/hero.png",
+    const result = resolveImage(
+      { src: image, alt: "", height: 200, widths: [600, 300], quality: 70 },
+      cloudflareLoader(),
     )
+    expect(result).toMatchObject({
+      src: "/cdn-cgi/image/format=auto,width=300,quality=70/assets/hero.png",
+      width: 300,
+      height: 200,
+      srcSet:
+        "/cdn-cgi/image/format=auto,width=300,quality=70/assets/hero.png 300w, /cdn-cgi/image/format=auto,width=600,quality=70/assets/hero.png 600w",
+    })
   })
   test("requested static widths pick real available variants and never upscale", () => {
     const result = resolveImage({ src: image, alt: "", widths: [400, 2000, 500] })
@@ -69,11 +77,43 @@ describe("static images", () => {
       /positive finite/,
     )
   })
-  test("invalid metadata cannot bypass the dimension guard", () => {
-    expect(() => resolveImage({ src: { src: "/x", width: 0, height: 20 }, alt: "" })).toThrow(
-      /intrinsic dimensions/,
+  test("invalid metadata cannot bypass the dimension guard even with explicit dimensions", () => {
+    for (const dimension of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      for (const invalid of [
+        { ...image, width: dimension },
+        { ...image, height: dimension },
+      ]) {
+        expect(() => resolveImage({ src: invalid, width: 100, height: 100, alt: "" })).toThrow(
+          /intrinsic dimensions/,
+        )
+      }
+      expect(() => resolveImage({ src: image, width: dimension, alt: "" })).toThrow(/CLS/)
+      expect(() => resolveImage({ src: image, height: dimension, alt: "" })).toThrow(/CLS/)
+    }
+    expect(() => {
+      // @ts-expect-error A JavaScript caller may pass null metadata; reject it before reading intrinsic dimensions.
+      return resolveImage({ src: null, alt: "" })
+    }).toThrow(/intrinsic dimensions/)
+  })
+  test("invalid variant dimensions are rejected before emitting a srcSet", () => {
+    for (const dimension of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      for (const variant of [
+        { src: "/bad.webp", width: dimension, height: 20 },
+        { src: "/bad.webp", width: 20, height: dimension },
+      ]) {
+        expect(() => resolveImage({ src: { ...image, variants: [variant] }, alt: "" })).toThrow(
+          /variants require positive dimensions/,
+        )
+      }
+    }
+  })
+  test("empty requested widths omit srcSet but retain the nearest real fallback", () => {
+    const result = resolveImage({ src: image, alt: "", width: 500, widths: [] })
+    expect(result.src).toBe("/assets/hero-640.webp")
+    expect(result).not.toHaveProperty("srcSet")
+    expect(resolveImage({ src: { ...image, variants: [] }, alt: "", width: 300 }).src).toBe(
+      image.src,
     )
-    expect(() => resolveImage({ src: image, width: 0, alt: "" })).toThrow(/CLS/)
   })
 })
 

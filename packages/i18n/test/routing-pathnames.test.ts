@@ -199,6 +199,7 @@ describe("static translated pathnames", () => {
     expect(defineI18nRouting(locales, { pathnames: frozen }).staticPathnames()).toEqual(
       r.staticPathnames(),
     )
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately bypass readonly to verify mutating the returned list cannot change the compiled routing table.
     const list = r.staticPathnames() as string[]
     list.length = 0
     expect(r.staticPathnames()).toHaveLength(4)
@@ -265,8 +266,10 @@ describe("pathname configuration safety", () => {
       defineI18nRouting<string>(locales, { pathnames: { "/about": { es: "/acerca" } } }),
     ).toThrow(/unknown locale/)
     for (const value of [null, [], "wrong", 123]) {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: malformed JS configuration deliberately bypasses the TS contract to exercise construction-time validation.
       expect(() => router({ pathnames: { "/about": value } as never })).toThrow(/pathnames/)
     }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a numeric translation deliberately bypasses the TS contract to test runtime rejection.
     expect(() => router({ pathnames: { "/about": { fr: 123 } } as never })).toThrow(/pathnames/)
   })
 

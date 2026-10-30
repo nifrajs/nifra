@@ -50,8 +50,9 @@ for (const pipeline of ["bun", "vite"] as const) {
         clientModule: join(root, "frontend/client.ts"),
         adapterImport: join(root, "backend/adapter.ts"),
         publicDir: false,
-        // The target API carries either bundler's plugins through this structural boundary.
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: buildTargetWith forwards plugins unchanged to the selected matching bundler; its shared options use BunPlugin even for Vite hooks.
         clientPlugins: [clientPlugin] as BunPlugin[],
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: serverPlugin is created for the same pipeline passed to buildTargetWith; Vite consumes its own hooks, not Bun.setup.
         serverPlugins: [serverPlugin] as BunPlugin[],
       },
       pipeline === "bun" ? bunBundler : viteBundler,

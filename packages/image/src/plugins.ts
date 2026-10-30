@@ -1,6 +1,5 @@
 /** Build-only `?image` imports for Bun and Vite. Both consume the same Node-compatible processor. */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   createImageAssets,
@@ -8,6 +7,7 @@ import {
   type ImageBuildAsset,
   type ImageBuildOptions,
 } from "./build.ts"
+import { cacheImageAsset } from "./internal/image-file.ts"
 
 export interface ImageAssetPlugin {
   /** Nifra emits these content-hashed files with the bundle, never into the application's sources. */
@@ -50,13 +50,7 @@ async function moduleSource(
       process.env.NIFRA_DEV_ROOT ?? options.root ?? process.cwd(),
       ".nifra/image-assets",
     )
-    for (const asset of images.assets()) {
-      const path = join(cache, asset.fileName)
-      if (!existsSync(path)) {
-        mkdirSync(dirname(path), { recursive: true })
-        writeFileSync(path, asset.source)
-      }
-    }
+    for (const asset of images.assets()) cacheImageAsset(cache, asset)
   }
   return `export default ${JSON.stringify(data)}\n`
 }

@@ -159,15 +159,14 @@ export function createImageAssets(options: ImageBuildOptions = {}): ImageAssets 
         })
       }
     }
-    return {
-      data: {
-        src,
-        width: info.width,
-        height: info.height,
-        ...(variants.length > 0 ? { variants } : {}),
-      },
-      files,
-    }
+    const data: {
+      src: string
+      width: number
+      height: number
+      variants?: readonly StaticImageVariant[]
+    } = { src, width: info.width, height: info.height }
+    if (variants.length > 0) data.variants = variants
+    return { data, files }
   }
 
   return {

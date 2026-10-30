@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { BunPlugin } from "bun"
 import { buildTarget, buildTargetWith, bunBundler, generateServerEntry } from "../src/build.ts"
-import type { BuildTarget, Bundler } from "../src/build-plan.ts"
+import type { Bundler } from "../src/build-plan.ts"
 import { buildTargetVite } from "../src/build-vite.ts"
 
 let root: string
@@ -93,8 +93,10 @@ const options = () => ({
 
 for (const pipeline of ["bun", "vite"] as const) {
   test(`ordinary Vercel Node (${pipeline}) emits a Node-runnable SSR + API function`, async () => {
-    const plugins =
-      pipeline === "bun" ? [sourcePlugin] : ([viteSourcePlugin] as unknown as BunPlugin[])
+    const pipelinePlugins: readonly { name: string }[] =
+      pipeline === "bun" ? [sourcePlugin] : [viteSourcePlugin]
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the shared options are Bun-typed but forward plugins unchanged; the selected build below consumes only the matching pipeline's hooks.
+    const plugins = pipelinePlugins as readonly BunPlugin[]
     const build = pipeline === "bun" ? buildTarget : buildTargetVite
     const result = await build("vercel", {
       ...options(),
@@ -201,7 +203,8 @@ test("invalid Vercel runtime settings leave output and work directories untouche
       },
     }
     await expect(
-      buildTargetWith(target, { ...options(), vercelRuntime: runtime as "node" }, bundler),
+      // @ts-expect-error Deliberately invalid runtime strings must fail before any build or directory mutation.
+      buildTargetWith(target, { ...options(), vercelRuntime: runtime }, bundler),
     ).rejects.toThrow("vercelRuntime")
     expect(builds).toBe(0)
     expect(readFileSync(join(root, ".vercel/output/keep"), "utf8")).toBe("last deploy")
@@ -210,7 +213,7 @@ test("invalid Vercel runtime settings leave output and work directories untouche
 })
 
 test("Edge remains the Vercel default; Node entry exports a handler without serve/listen", () => {
-  const base = { target: "vercel" as BuildTarget, adapterImport: "./framework.ts" }
+  const base = { target: "vercel", adapterImport: "./framework.ts" } as const
   const edge = generateServerEntry(base)
   expect(generateServerEntry({ ...base, vercelRuntime: "edge" })).toBe(edge)
   expect(edge).toContain('export const config = { runtime: "edge" }')
@@ -226,8 +229,10 @@ for (const pipeline of ["bun", "vite"] as const) {
       "backend/app.ts",
       'import { server } from "@nifrajs/core/server"; export const backend = server().get("/api/health", () => ({ ok: true }))',
     )
-    const plugins =
-      pipeline === "bun" ? [sourcePlugin] : ([viteSourcePlugin] as unknown as BunPlugin[])
+    const pipelinePlugins: readonly { name: string }[] =
+      pipeline === "bun" ? [sourcePlugin] : [viteSourcePlugin]
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the shared options are Bun-typed but forward plugins unchanged; the selected build below consumes only the matching pipeline's hooks.
+    const plugins = pipelinePlugins as readonly BunPlugin[]
     const build = pipeline === "bun" ? buildTarget : buildTargetVite
     await build("vercel", { ...options(), clientPlugins: plugins, serverPlugins: plugins })
     const out = join(root, ".vercel/output")

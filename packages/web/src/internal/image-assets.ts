@@ -1,6 +1,17 @@
 /** Build-only structural image-plugin hook; @nifrajs/web does not depend on an image codec/package. */
 import { createHash } from "node:crypto"
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  constants as FS,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readlinkSync,
+  readSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs"
 import { join } from "node:path"
 import { codeUnitOrder } from "./code-unit-order.ts"
 
@@ -48,6 +59,53 @@ export function pluginImageAssets(plugins: readonly unknown[] = []): readonly Im
   return [...files.values()].sort((a, b) => codeUnitOrder(a.fileName, b.fileName))
 }
 
+/** Validate and use the same descriptor; pathname swaps cannot redirect a read or overwrite. */
+function writeAssetFile(path: string, file: ImageAsset): void {
+  const noFollow = process.platform === "darwin" ? 0x20000000 : FS.O_NOFOLLOW
+  let descriptor: number
+  let fresh = false
+  try {
+    descriptor = openSync(path, FS.O_CREAT | FS.O_EXCL | FS.O_WRONLY | noFollow, 0o644)
+    fresh = true
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error
+    descriptor = openSync(path, FS.O_RDONLY | FS.O_NONBLOCK | noFollow)
+  }
+  try {
+    const held = fstatSync(descriptor, { bigint: true })
+    const current = lstatSync(path, { bigint: true })
+    if (
+      !held.isFile() ||
+      !current.isFile() ||
+      held.ino !== current.ino ||
+      held.dev !== current.dev ||
+      realpathSync(path) !== path
+    )
+      throw invalid()
+    if (process.platform === "linux" && readlinkSync(`/proc/self/fd/${descriptor}`) !== path)
+      throw invalid()
+    if (fresh) writeFileSync(descriptor, file.source)
+    else {
+      if (held.size !== BigInt(file.source.byteLength)) throw invalid()
+      const contents = new Uint8Array(file.source.byteLength + 1)
+      let total = 0
+      let read: number
+      do {
+        read = readSync(descriptor, contents, total, contents.length - total, null)
+        total += read
+      } while (read > 0 && total < contents.length)
+      if (
+        total !== file.source.byteLength ||
+        createHash("sha256").update(contents.subarray(0, total)).digest("hex") !==
+          assetName.exec(file.fileName)?.[1]
+      )
+        throw invalid()
+    }
+  } finally {
+    closeSync(descriptor)
+  }
+}
+
 /** Validate every output before writing, and never follow an existing output symlink. */
 export function emitPluginImages(
   plugins: readonly unknown[],
@@ -61,20 +119,11 @@ export function emitPluginImages(
   }
   if (files.length > 0) {
     mkdirSync(outDir, { recursive: true })
-    const dir = join(outDir, "_images")
-    if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) throw invalid()
+    const root = realpathSync(outDir)
+    const dir = join(root, "_images")
     mkdirSync(dir, { recursive: true })
-  }
-  for (const file of files) {
-    const path = join(outDir, file.fileName)
-    if (existsSync(path)) {
-      if (
-        lstatSync(path).isSymbolicLink() ||
-        createHash("sha256").update(readFileSync(path)).digest("hex") !==
-          assetName.exec(file.fileName)?.[1]
-      )
-        throw invalid()
-    } else writeFileSync(path, file.source, { flag: "wx" })
+    if (!lstatSync(dir).isDirectory()) throw invalid()
+    for (const file of files) writeAssetFile(join(root, file.fileName), file)
   }
   const prefix = publicPath.endsWith("/") ? publicPath : `${publicPath}/`
   return files.map((file) => `${prefix}${file.fileName}`)
