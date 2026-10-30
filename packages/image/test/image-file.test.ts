@@ -90,7 +90,8 @@ test("a failed publication leaves neither the final name nor a temporary file", 
 
 test("openPinned opens a regular file and refuses links, directories and swapped-in files", async () => {
   // Callers pass a canonical path (the root check resolves it); a link in any component is refused.
-  const dir = realpathSync(root())
+  // openPinned compares against fs/promises realpath, which expands the Windows 8.3 names that JS realpathSync keeps.
+  const dir = realpathSync.native(root())
   const file = join(dir, "pic.png")
   writeFileSync(file, source)
   const handle = await openPinned(file)
