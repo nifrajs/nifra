@@ -77,12 +77,12 @@ app.post("/api/login", async (c) => {
   session.set("userId", String(username))
   sessions.regenerate(session)                           // rotate the id on login (fixation defense)
   await sessions.commit(c, session)
-  return redirect("/")                                   // the Set-Cookie rides the redirect
+  return redirect(rawHref("/"))                          // the Set-Cookie rides the redirect
 })
 
 app.post("/api/logout", async (c) => {
   await sessions.destroy(c, await sessions.get(c))
-  return redirect("/login")
+  return redirect(rawHref("/login"))
 })`
 
 const GUARD = `// routes/account.backend.ts - a protected route's loader reads the session and redirects when absent.

@@ -314,7 +314,8 @@ Usage:
                                          React server component for the hole.
   nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
                                          params, the data its output schemas let through, and api typed
-                                         by backend/app.ts. dev, build and check refresh them too;
+                                         by backend/app.ts, plus routes.d.ts, the table href() checks
+                                         links against. dev, build and check refresh them too;
                                          --check fails when one is stale.
   nifra schemas [--write] [--check] [--json]
                                          Draft loaderOutput/actionOutput from each loader's and

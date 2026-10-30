@@ -148,14 +148,14 @@ curl -X POST https://example.com/__nifra/revalidate \\
   -d '{ "paths": ["/products/42"], "tags": ["catalog"] }'
 # → { "revalidated": ["/products/42"], "revalidatedTags": ["catalog"], "cdn": "accepted" }`
 
-const DRAFT = `// doc-check: skip - fragment spanning three files: your \`app\`, \`env\`, \`redirect\`, and route \`slug\`.
+const DRAFT = `// doc-check: skip - fragment spanning three files: your \`app\`, \`env\`, and route \`slug\`.
 // 1. Mount the preview entry point your CMS links to. It checks the token in CONSTANT TIME,
 //    sets the signed HttpOnly cookie, and refuses an off-site ?to= (an open redirect otherwise).
-import { previewEndpoint, disableDraft } from "@nifrajs/web"
+import { previewEndpoint, disableDraft, redirect, rawHref } from "@nifrajs/web"
 
 const preview = previewEndpoint({ secret: env.PREVIEW_TOKEN, draftSecret: env.DRAFT_SECRET })
 app.get("/api/preview", (c) => preview(c.req)) // ?token=…&to=/posts/hello
-app.get("/api/preview/exit", (c) => (disableDraft(c), redirect("/")))
+app.get("/api/preview/exit", (c) => (disableDraft(c), redirect(rawHref("/"))))
 // Gating it yourself instead? Use enableDraft(c, env.DRAFT_SECRET) AFTER your own check - and
 // compare the token in constant time, since === leaks it one character at a time.
 

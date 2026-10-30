@@ -2522,14 +2522,14 @@ cache. Pass the same `draftSecret` to `createWebApp` and
 `withISR`; a forged or tampered cookie fails the constant-time signature check.
 
 ```ts
-// doc-check: skip - fragment spanning three files: your `app`, `env`, `redirect`, and route `slug`.
+// doc-check: skip - fragment spanning three files: your `app`, `env`, and route `slug`.
 // 1. Mount the preview entry point your CMS links to. It checks the token in CONSTANT TIME,
 //    sets the signed HttpOnly cookie, and refuses an off-site ?to= (an open redirect otherwise).
-import { previewEndpoint, disableDraft } from "@nifrajs/web"
+import { previewEndpoint, disableDraft, redirect, rawHref } from "@nifrajs/web"
 
 const preview = previewEndpoint({ secret: env.PREVIEW_TOKEN, draftSecret: env.DRAFT_SECRET })
 app.get("/api/preview", (c) => preview(c.req)) // ?token=…&to=/posts/hello
-app.get("/api/preview/exit", (c) => (disableDraft(c), redirect("/")))
+app.get("/api/preview/exit", (c) => (disableDraft(c), redirect(rawHref("/"))))
 // Gating it yourself instead? Use enableDraft(c, env.DRAFT_SECRET) AFTER your own check - and
 // compare the token in constant time, since === leaks it one character at a time.
 
@@ -5688,12 +5688,12 @@ app.post("/api/login", async (c) => {
   session.set("userId", String(username))
   sessions.regenerate(session)                           // rotate the id on login (fixation defense)
   await sessions.commit(c, session)
-  return redirect("/")                                   // the Set-Cookie rides the redirect
+  return redirect(rawHref("/"))                          // the Set-Cookie rides the redirect
 })
 
 app.post("/api/logout", async (c) => {
   await sessions.destroy(c, await sessions.get(c))
-  return redirect("/login")
+  return redirect(rawHref("/login"))
 })
 ```
 
@@ -20261,7 +20261,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/ts-plugin
 
-A TypeScript language-service plugin for [nifra](https://github.com/nifrajs/nifra). It adds go-to-definition on route-path string literals: put your cursor on `"/orders"` in `navigate({ to: "/orders" })`, `<Link to="/orders">`, or `href="/orders"`, and jump straight to the `routes/` file that serves it.
+A TypeScript language-service plugin for [nifra](https://github.com/nifrajs/nifra). It adds go-to-definition on route-path string literals: put your cursor on `"/orders"` in `href({ to: "/orders" })`, `rawHref("/orders")`, or `<a href="/orders">`, and jump straight to the `routes/` file that serves it. A route-table pattern such as `"/users/:id"` resolves to its file too.
 
 The routing rules are nifra's own - it discovers routes with `@nifrajs/web` and matches them with `@nifrajs/core`'s pattern matcher - so a path resolves to exactly the file it would serve at runtime, dynamic segments included (`/users/42` → `routes/users/[id].tsx`).
 

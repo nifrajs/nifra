@@ -1781,7 +1781,7 @@ const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
 const typesSpec: CommandSpec<TypesInput, RouteTypesReport> = {
   name: "types",
   summary:
-    "Generate each route's `./+types` module (params, schema-typed data, typed `api`); `--check` fails when one is stale.",
+    "Generate each route's `./+types` module (params, schema-typed data, typed `api`) and `.nifra/types/routes.d.ts`, the route table `href()` checks links against; `--check` fails when one is stale.",
   input: TYPES_SCHEMA,
   output: output({
     type: "object",
