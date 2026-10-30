@@ -199,7 +199,7 @@ function judge(routes: PageRoutes, written: string): Verdict | undefined {
   const path = cut < 0 ? written : written.slice(0, cut)
   const rest = cut < 0 ? "" : written.slice(cut)
   const dynamic = path.includes(ANCHOR_HOLE)
-  const found = routes.match(dynamic ? path.replaceAll(ANCHOR_HOLE, "x") : path)
+  const found = routes.match(path)
   const shown = spell(written)
   if (found !== undefined) {
     const hash = rest.includes("#") ? rest.slice(rest.indexOf("#") + 1) : undefined

@@ -1024,13 +1024,6 @@
       "reason": "discoverRoutes on a folder that does not exist throws or finds nothing, and both end in the same undefined."
     },
     {
-      "op": "condition->true",
-      "fn": "judge",
-      "code": "const found = routes.match(dynamic ? path.replaceAll(ANCHOR_HOLE, \"x\") : path)",
-      "from": "dynamic",
-      "reason": "The replacement has nothing to replace in a path without a hole."
-    },
-    {
       "op": "binary +->-",
       "fn": "commentAt",
       "code": "if (text.startsWith(\">\", body)) return { start, bodyEnd: body, end: body + 1 }",
@@ -1086,13 +1079,6 @@
       "code": "const rest = cut < 0 ? \"\" : written.slice(cut)",
       "from": "cut < 0",
       "reason": "With no ? or #, written.slice(-1) is the path's last character, which is neither of them."
-    },
-    {
-      "op": "condition->false",
-      "fn": "judge",
-      "code": "const found = routes.match(dynamic ? path.replaceAll(ANCHOR_HOLE, \"x\") : path)",
-      "from": "dynamic",
-      "reason": "A hole and the x standing for it fill the same params; they differ only against a literal that ends in x."
     },
     {
       "op": "binary +->-",

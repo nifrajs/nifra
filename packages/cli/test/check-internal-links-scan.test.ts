@@ -97,11 +97,21 @@ test("a short path is not a typo of a long page, whatever the page set", async (
   for (const finding of found) expect(finding.message).not.toContain("Did you mean")
 })
 
-test("two pages equally close to a typo: the first one found is named", async () => {
-  app("ab.tsx", "ac.tsx")
+// The route groups put "/ac" first in the order the files are listed and "/ab" first in code-unit order
+// of the patterns, so this fails if the patterns are not sorted.
+test("two pages equally close to a typo: the first in code-unit order is named", async () => {
+  app("(a)/ac.tsx", "(z)/ab.tsx")
   layout(['<a href="/ad">x</a>'])
   const [only] = await scan()
   expect(only?.message).toContain("Did you mean /ab?")
+})
+
+test("a link with a hole in it is judged against the dynamic page, not a literal page named x", async () => {
+  app("x.tsx", "[slug].tsx")
+  layout(["<a href={`/${s}`}>x</a>"])
+  const [only] = await scan()
+  expect(only?.code).toBe("NF-C058")
+  expect(only?.message).toContain('Build it with `href({ to: "/:slug", params: { slug: … } })`')
 })
 
 test("the suggested href() call carries the page's params, query and hash", async () => {
