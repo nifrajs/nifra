@@ -126,7 +126,7 @@ function isRouteModulesRecord(
   value: unknown,
 ): value is Readonly<Record<string, readonly unknown[]>> {
   const entries = ownDataEntries(value)
-  return entries !== undefined && entries.every(([, modules]) => Array.isArray(modules))
+  return entries?.every(([, modules]) => Array.isArray(modules)) ?? false
 }
 
 function isStandardSchema(value: unknown): value is StandardSchemaV1 {
@@ -153,7 +153,7 @@ function isSearchSchemaRecord(
   value: unknown,
 ): value is Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>> {
   const entries = ownDataEntries(value)
-  return entries !== undefined && entries.every(([, schemas]) => isSearchSchemaArray(schemas))
+  return entries?.every(([, schemas]) => isSearchSchemaArray(schemas)) ?? false
 }
 
 function isMatchChain(value: unknown): value is MatchChain {
@@ -170,7 +170,7 @@ function isMatchChain(value: unknown): value is MatchChain {
 
 function isMatchChainRecord(value: unknown): value is Readonly<Record<string, MatchChain>> {
   const entries = ownDataEntries(value)
-  return entries !== undefined && entries.every(([, chain]) => isMatchChain(chain))
+  return entries?.every(([, chain]) => isMatchChain(chain)) ?? false
 }
 
 export function getRouteSlotRuntime(): RouteSlotRuntime | undefined {
@@ -289,41 +289,23 @@ export async function loadRouteSlot(
     await runtime.router.loadModule(target.routeId, targetPath)
     if (signal.aborted) throw signal.reason
     const response = await fetchRouteData(targetPath, target, signal)
-    if (!isRouteDataEnvelope(response)) {
-      const chain = runtime.routes[target.routeId]
-      if (chain === undefined)
-        throw new Error("[nifra/web] route-slot component chain is unavailable")
-      return {
-        routeId: target.routeId,
-        path: targetPath,
-        parentPath: stripRouteSlots(parentPath),
-        params: target.params,
-        search: searchOfChain(
-          runtime.searchSchemas?.[target.routeId] ?? [],
-          new URL(targetPath, "https://nifra.invalid").search,
-        ),
-        data: response,
-        ...(runtime.matchChains?.[target.routeId] === undefined
-          ? undefined
-          : { matchChain: runtime.matchChains?.[target.routeId] }),
-        chain,
-      }
-    }
-    if (response.status !== undefined) {
+    const envelope = isRouteDataEnvelope(response) ? response : undefined
+    if (envelope?.status !== undefined) {
       const code =
-        response.status === 401
+        envelope.status === 401
           ? "unauthorized"
-          : response.status === 403
+          : envelope.status === 403
             ? "forbidden"
-            : response.status === 404
+            : envelope.status === 404
               ? "not_found"
               : "unavailable"
       throw new RouteSlotLoadError(code)
     }
-    const components = runtime.routes[target.routeId]
-    if (components === undefined)
+    const chain = runtime.routes[target.routeId]
+    if (chain === undefined)
       throw new Error("[nifra/web] route-slot component chain is unavailable")
-    return {
+    const matchChain = runtime.matchChains?.[target.routeId]
+    const common = {
       routeId: target.routeId,
       path: targetPath,
       parentPath: stripRouteSlots(parentPath),
@@ -332,17 +314,20 @@ export async function loadRouteSlot(
         runtime.searchSchemas?.[target.routeId] ?? [],
         new URL(targetPath, "https://nifra.invalid").search,
       ),
-      data: response.data,
-      ...(response.serverComponents === undefined
+      ...(matchChain === undefined ? undefined : { matchChain }),
+    }
+
+    if (envelope === undefined) return { ...common, data: response, chain }
+    return {
+      ...common,
+      data: envelope.data,
+      ...(envelope.serverComponents === undefined
         ? undefined
-        : { serverComponents: response.serverComponents }),
-      ...(response.layoutData === undefined ? undefined : { layoutData: response.layoutData }),
-      ...(response.boundaries === undefined ? undefined : { boundaries: response.boundaries }),
-      ...(response.live === undefined ? undefined : { live: response.live }),
-      ...(runtime.matchChains?.[target.routeId] === undefined
-        ? undefined
-        : { matchChain: runtime.matchChains?.[target.routeId] }),
-      chain: components,
+        : { serverComponents: envelope.serverComponents }),
+      ...(envelope.layoutData === undefined ? undefined : { layoutData: envelope.layoutData }),
+      ...(envelope.boundaries === undefined ? undefined : { boundaries: envelope.boundaries }),
+      ...(envelope.live === undefined ? undefined : { live: envelope.live }),
+      chain,
     }
   }).catch((error: unknown) => {
     if (signal.aborted) throw error
