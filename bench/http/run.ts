@@ -54,20 +54,34 @@ interface Workload {
    *  subsequent run against ANY server in the section until the workload changed).
    *  Count-bounded runs end cleanly and the pathology never triggers. */
   readonly requests: number
+  /** Exact valid response the runner checks before collecting throughput samples. */
+  readonly expected: unknown
   readonly post?: { readonly headers: Readonly<Record<string, string>>; readonly body: string }
 }
 
-const GET_ROOT: Workload = { name: "GET /", path: "/", requests: 150_000 }
-const GET_USER: Workload = { name: "GET /users/:id", path: "/users/123", requests: 150_000 }
+const GET_ROOT: Workload = {
+  name: "GET /",
+  path: "/",
+  requests: 150_000,
+  expected: { hello: "world" },
+}
+const GET_USER: Workload = {
+  name: "GET /users/:id",
+  path: "/users/123",
+  requests: 150_000,
+  expected: { id: "123" },
+}
 const GET_SEARCH: Workload = {
   name: "GET /search?query",
   path: "/search?q=ada&limit=10",
   requests: 120_000,
+  expected: { q: "ada", limit: "10" },
 }
 const POST_USERS: Workload = {
   name: "POST /users",
   path: "/users",
   requests: 100_000,
+  expected: { id: "1", name: "Ada" },
   post: {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "Ada", age: 36 }),
@@ -122,6 +136,25 @@ const denoTarget = (framework: string): Target => ({
     String(port),
   ],
 })
+// Keep Fastify's Node HTTP server code identical under Bun and Deno; these rows measure each
+// runtime's node:http compatibility path, not its native Fetch server.
+const fastifyCompatTarget = (runtime: "bun" | "deno"): Target => ({
+  framework: "fastify",
+  spawn: (port) =>
+    runtime === "bun"
+      ? ["bun", "bench/http/serve-node.ts", "fastify", String(port)]
+      : [
+          "deno",
+          "run",
+          "--allow-net",
+          "--allow-env",
+          "--allow-read",
+          "--no-check",
+          "bench/http/serve-node.ts",
+          "fastify",
+          String(port),
+        ],
+})
 
 // nifra on Node: real Node can't resolve the @nifrajs/* workspace packages (Bun resolves
 // them via tsconfig paths, which Node ignores), so bundle the app for Node first - which
@@ -149,6 +182,7 @@ const SECTIONS: readonly Section[] = [
       bunTarget("nifra"),
       bunTarget("elysia"),
       bunTarget("hono"),
+      fastifyCompatTarget("bun"),
       { ...bunTarget("bun-native"), isCeiling: true },
     ],
   },
@@ -169,6 +203,7 @@ const SECTIONS: readonly Section[] = [
       denoTarget("nifra"),
       denoTarget("hono"),
       denoTarget("elysia"),
+      fastifyCompatTarget("deno"),
       { ...denoTarget("deno-raw"), isCeiling: true },
     ],
   },
@@ -270,13 +305,64 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
   throw new Error(`server at ${base} did not become ready within ${timeoutMs}ms`)
 }
 
+async function probeWorkload(base: string, workload: Workload): Promise<void> {
+  const init: RequestInit = { method: workload.post === undefined ? "GET" : "POST" }
+  if (workload.post !== undefined) {
+    init.headers = workload.post.headers
+    init.body = workload.post.body
+  }
+  const response = await fetch(`${base}${workload.path}`, init)
+  if (response.status !== 200) {
+    throw new Error(`${workload.name}: correctness probe returned HTTP ${response.status}`)
+  }
+  const actual: unknown = await response.json()
+  if (JSON.stringify(actual) !== JSON.stringify(workload.expected)) {
+    throw new Error(`${workload.name}: correctness probe returned a different JSON response`)
+  }
+  if (workload === POST_USERS) {
+    const invalid = await fetch(`${base}/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Ada" }),
+    })
+    if (invalid.status < 400 || invalid.status >= 500) {
+      throw new Error(`${workload.name}: validator accepted an invalid body`)
+    }
+    const wrongType = await fetch(`${base}/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Ada", age: "36" }),
+    })
+    if (wrongType.status < 400 || wrongType.status >= 500) {
+      throw new Error(`${workload.name}: validator accepted a string for numeric age`)
+    }
+    const withExtra = await fetch(`${base}/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Ada", age: 36, extra: true }),
+    })
+    if (withExtra.status !== 200) {
+      throw new Error(`${workload.name}: validator rejected an extra body field`)
+    }
+  } else if (workload === GET_SEARCH) {
+    const invalid = await fetch(`${base}/search?q=ada`)
+    if (invalid.status < 400 || invalid.status >= 500) {
+      throw new Error(`${workload.name}: validator accepted an incomplete query`)
+    }
+    const withExtra = await fetch(`${base}/search?q=ada&limit=10&extra=1`)
+    if (withExtra.status !== 200) {
+      throw new Error(`${workload.name}: validator rejected an extra query field`)
+    }
+  }
+}
+
 // sampled[runtime][framework][workload].rounds - one Measure per round, in round order.
 const sampled: Matrix<{ rounds: Measure[] }> = {}
 const failures: string[] = []
 
 const argv = process.argv.slice(2)
 // `--json` emits one machine-readable line (consumed by aggregate.ts to median across runs); the
-// optional positional filters to one runtime section (`bun` | `node`).
+// optional positional filters to one runtime section (`bun` | `node` | `deno`).
 const jsonMode = argv.includes("--json")
 const onlyRuntime = argv.find((a) => !a.startsWith("--"))
 const sections = onlyRuntime ? SECTIONS.filter((s) => s.runtime === onlyRuntime) : SECTIONS
@@ -321,6 +407,7 @@ for (const section of sections) {
         })
         servers.push({ target, base, proc })
         await waitReady(base, 8000)
+        for (const workload of WORKLOADS) await probeWorkload(base, workload)
       } catch (e) {
         fail(target, e)
       }

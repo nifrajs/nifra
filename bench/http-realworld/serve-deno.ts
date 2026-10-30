@@ -4,7 +4,7 @@
  *
  * The `*-body` variants add ONE body-observing middleware (an `x-body-hash` header over the final
  * serialized body) via each framework's own idiomatic mechanism - nifra's `onResponseBody` payload
- * tier, Elysia's `mapResponse`, Hono's drain-and-rebuild middleware shape, and inline for the raw
+ * tier, Elysia's `mapResponse`, Hono's buffer-and-rewrap middleware shape, and inline for the raw
  * ceiling.
  *
  * Core's VALUE import points at the built `dist/` output: Deno's npm condition set has no "bun"
@@ -18,8 +18,6 @@
  */
 import { Hono } from "hono"
 import { getCookie } from "hono/cookie"
-import { cors } from "hono/cors"
-import { secureHeaders } from "hono/secure-headers"
 import { validator } from "hono/validator"
 import { server, status } from "../../packages/core/dist/index.js"
 import { responseObserver } from "../../packages/core/dist/response-observer.js"
@@ -42,9 +40,13 @@ if (!Number.isInteger(port)) {
 // djb2 over the serialized body - the body-observing middleware's "work" in the body-hash workload.
 // Deliberately cheap: the workload prices each framework's body-middleware TIER (how the bytes reach
 // the hook), not the hash itself.
-function hash(s: string): string {
+function hash(body: string | Uint8Array): string {
   let h = 5381
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  if (typeof body === "string") {
+    for (let i = 0; i < body.length; i++) h = ((h << 5) + h + body.charCodeAt(i)) | 0
+  } else {
+    for (let i = 0; i < body.length; i++) h = ((h << 5) + h + body[i]!) | 0
+  }
   return (h >>> 0).toString(16)
 }
 
@@ -147,9 +149,14 @@ function pathnameOf(url: string): string {
 if (framework === "nifra" || framework === "nifra-body") {
   const app = server()
     .use({
-      name: "sec",
+      name: "request-id",
       beforeHandle: (c) => {
-        for (const [k, v] of Object.entries(SEC)) c.set.headers[k] = v
+        c.set.headers["x-content-type-options"] = "nosniff"
+        c.set.headers["x-frame-options"] = "DENY"
+        c.set.headers["referrer-policy"] = "no-referrer"
+        c.set.headers.vary = "Origin"
+        c.set.headers["access-control-allow-origin"] = "https://app.example.com"
+        c.set.headers["access-control-allow-credentials"] = "true"
         c.set.headers["x-request-id"] = c.req.headers.get("x-request-id") ?? crypto.randomUUID()
       },
     })
@@ -178,19 +185,20 @@ if (framework === "nifra" || framework === "nifra-body") {
     app
       .use(responseObserver())
       .onResponseBody((body: string | Uint8Array, headers: { set(n: string, v: string): void }) => {
-        headers.set(
-          "x-body-hash",
-          hash(typeof body === "string" ? body : new TextDecoder().decode(body)),
-        )
+        headers.set("x-body-hash", hash(body))
         return undefined
       })
   }
   serveFetch(app.fetch.bind(app), port)
 } else if (framework === "hono") {
   const app = new Hono<{ Variables: { userId: string; theme: string } }>()
-  app.use("*", secureHeaders())
-  app.use("*", cors({ origin: "https://app.example.com", credentials: true }))
   app.use("*", async (c, next) => {
+    c.header("x-content-type-options", "nosniff")
+    c.header("x-frame-options", "DENY")
+    c.header("referrer-policy", "no-referrer")
+    c.header("vary", "Origin")
+    c.header("access-control-allow-origin", "https://app.example.com")
+    c.header("access-control-allow-credentials", "true")
     c.header("x-request-id", c.req.header("x-request-id") ?? crypto.randomUUID())
     const auth = c.req.header("authorization")
     if (auth === undefined || !auth.startsWith("Bearer ") || auth.length < 24) {
@@ -229,18 +237,28 @@ if (framework === "nifra" || framework === "nifra-body") {
   serveFetch(app.fetch.bind(app), port)
 } else if (framework === "hono-body") {
   const app = new Hono<{ Variables: { userId: string; theme: string } }>()
-  // Hono's body-observing idiom (its etag middleware's shape): run after the handler, drain the
-  // built Response, rebuild it with the annotation. Registered first so it wraps outermost.
+  // Hono's body-observing idiom: buffer the final Response, hash its text, and rewrap the same
+  // bytes with the annotation. Registered first so it wraps outermost.
   app.use("*", async (c, next) => {
     await next()
-    const body = await c.res.text()
-    const annotated = new Response(body, { status: c.res.status, headers: c.res.headers })
-    annotated.headers.set("x-body-hash", hash(body))
+    const response = c.res
+    const body = new Uint8Array(await response.arrayBuffer())
+    const bodyHash = hash(body)
+    const annotated = new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    })
+    annotated.headers.set("x-body-hash", bodyHash)
     c.res = annotated
   })
-  app.use("*", secureHeaders())
-  app.use("*", cors({ origin: "https://app.example.com", credentials: true }))
   app.use("*", async (c, next) => {
+    c.header("x-content-type-options", "nosniff")
+    c.header("x-frame-options", "DENY")
+    c.header("referrer-policy", "no-referrer")
+    c.header("vary", "Origin")
+    c.header("access-control-allow-origin", "https://app.example.com")
+    c.header("access-control-allow-credentials", "true")
     c.header("x-request-id", c.req.header("x-request-id") ?? crypto.randomUUID())
     const auth = c.req.header("authorization")
     if (auth === undefined || !auth.startsWith("Bearer ") || auth.length < 24) {
