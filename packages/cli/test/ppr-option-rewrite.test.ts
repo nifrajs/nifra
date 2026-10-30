@@ -144,10 +144,27 @@ export const b = createWebApp({ ppr: setup })
     expect(result.manual).toEqual([{ line: 5, reason: MOVED }])
   })
 
-  test("only text that mentions both words is parsed", () => {
+  test("options spread into the call are the user's to move, whichever side the spread is on", () => {
+    const source = `import { createWebApp } from "@nifrajs/web"
+
+export const a = createWebApp({ ...defaults, experimental: { ppr: setup } })
+export const b = createWebApp({ experimental: { ppr: setup }, ...defaults })
+`
+    const result = rewrite(source)
+    expect(result.text).toBe(source)
+    expect(result.count).toBe(0)
+    expect(result.manual).toEqual([
+      { line: 3, reason: MOVED },
+      { line: 4, reason: MOVED },
+    ])
+  })
+
+  test("only text that mentions experimental and createWebApp is parsed, with or without ppr", () => {
     const pprOption = getSourceRewrite("ppr-option")
     expect(pprOption?.mentions("export const ppr = 1")).toBe(false)
     expect(pprOption?.mentions("const experimental = true")).toBe(false)
-    expect(pprOption?.mentions("experimental: { ppr }")).toBe(true)
+    expect(pprOption?.mentions("createWebApp({ ppr })")).toBe(false)
+    expect(pprOption?.mentions("createWebApp({ experimental: flags })")).toBe(true)
+    expect(pprOption?.mentions("createWebApp({ experimental: { ppr } })")).toBe(true)
   })
 })

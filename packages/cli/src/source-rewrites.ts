@@ -497,6 +497,7 @@ function rewritePprOption(ts: typeof TS, file: string, text: string): RewriteRes
   const move = (options: TS.ObjectLiteralExpression): void => {
     const experimental = property(options, "experimental")
     if (experimental === undefined) return
+    const spread = options.properties.some((p) => ts.isSpreadAssignment(p))
     const inner = ts.isPropertyAssignment(experimental) ? experimental.initializer : undefined
     const moved = inner !== undefined && ts.isObjectLiteralExpression(inner) ? inner : undefined
     const only = moved?.properties.length === 1 ? moved.properties[0] : undefined
@@ -504,7 +505,8 @@ function rewritePprOption(ts: typeof TS, file: string, text: string): RewriteRes
       moved === undefined ||
       only === undefined ||
       nameOf(only) !== "ppr" ||
-      property(options, "ppr") !== undefined
+      property(options, "ppr") !== undefined ||
+      spread
     ) {
       manual.push({
         line: lineOf(experimental),
@@ -566,7 +568,7 @@ function rewritePprOption(ts: typeof TS, file: string, text: string): RewriteRes
 const PPR_OPTION: SourceRewrite = {
   id: "ppr-option",
   description: "createWebApp({ experimental: { ppr } }) → createWebApp({ ppr })",
-  mentions: (text) => /\bexperimental\b/.test(text) && /\bppr\b/.test(text),
+  mentions: (text) => /\bexperimental\b/.test(text) && /\bcreateWebApp\b/.test(text),
   rewrite: rewritePprOption,
 }
 

@@ -556,7 +556,7 @@ describe("PPR app configuration", () => {
         nonce: () => "n",
         ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
       }),
-    ).toThrow("ppr needs `csp: createCspPolicy(...)`, not `nonce`")
+    ).toThrow("ppr cannot use `nonce`")
   })
 
   test("the experimental key partial prerendering used to live under is refused, naming ppr", () => {

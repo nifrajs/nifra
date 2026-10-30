@@ -132,7 +132,8 @@ export interface CreateWebAppOptions<Env = unknown> {
   /**
    * Partial prerendering, from `partialPrerendering()` in `@nifrajs/web/ppr`. A route whose backend
    * half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary
-   * as it settles. Needs `csp` (hashes), not `nonce`.
+   * as it settles. `csp` (hashes) is optional; `nonce` is refused, since a per-request nonce would
+   * make every shell unique.
    */
   readonly ppr?: PprSetup
   /**

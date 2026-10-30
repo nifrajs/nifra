@@ -65,7 +65,7 @@ export function createPprIntegration(
   const { perRequestNonce, ...app } = environment
   if (perRequestNonce) {
     throw new TypeError(
-      "[nifra/web] ppr needs `csp: createCspPolicy(...)`, not `nonce`: a per-request nonce would make every shell unique",
+      "[nifra/web] ppr cannot use `nonce`: a per-request nonce would make every shell unique. Use `csp: createCspPolicy(...)`, or no policy",
     )
   }
   const deployment = shellDeployment(app.deployment, shellChecks, sharing.deployment)
