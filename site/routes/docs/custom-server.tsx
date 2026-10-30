@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/custom-server",
@@ -395,7 +396,7 @@ export default function CustomServer() {
       <p>
         Packages duplicated the same way are reported as one finding with one combined{" "}
         <code>singleCopy</code> list. The preload this needs, and the version-skew case it cannot
-        cover, are in <a href="/docs/troubleshooting">Troubleshooting</a>.
+        cover, are in <a href={href({ to: "/docs/troubleshooting" })}>Troubleshooting</a>.
       </p>
     </div>
   )

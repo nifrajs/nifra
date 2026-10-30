@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/auth",
@@ -232,7 +233,7 @@ export default function Auth() {
         <code>identity</code> names the data keys that say who the visitor is: the user id, and any
         key that changes what a page may show, such as an organization or a role. The cookie's tag,
         in either mode, then changes only when one of them does, so{" "}
-        <a href="/docs/keep-alive#sign-in">keep-alive</a> keeps the pages it holds across a commit
+        <a href={href({ to: "/docs/keep-alive", hash: "sign-in" })}>keep-alive</a> keeps the pages it holds across a commit
         that writes a cart or a preference. Unset, every key counts. A key left out that decides what
         a page shows lets the next visitor of a browser see the pages kept for the previous one.
       </p>
@@ -256,7 +257,7 @@ export default function Auth() {
         <code>requireUser</code>. It is plain data, not
         a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes. To guard
         every page under a directory, run the same check in the <code>middleware</code> export of that
-        directory's <code>_layout.backend.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.
+        directory's <code>_layout.backend.ts</code> - see <a href={href({ to: "/docs/routing", hash: "middleware" })}>Route middleware</a>.
       </p>
       <CodeBlock code={GUARD} />
       <p>
@@ -330,7 +331,7 @@ export default function Auth() {
         the build with the import chain that reached it, so a secret cannot ride into the browser
         bundle. A page that needs the user reads it from its loader data, which{" "}
         <code>loaderOutput</code> narrows to the fields it declares - see{" "}
-        <a href="/docs/structure">Project structure</a>.
+        <a href={href({ to: "/docs/structure" })}>Project structure</a>.
       </p>
 
       <h2>CSRF</h2>

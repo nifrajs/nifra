@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/routing",
@@ -116,6 +117,24 @@ export async function loader({ search, api }: Route.LoaderArgs) {
   const res = await api.reports.list(search).get() // search.page is a number
   return { rows: res.ok ? res.data : [] }
 }`
+
+const LINKS = `// doc-check: skip - routes of your own app; one line per call, before and after.
+import { href, rawHref } from "@nifrajs/web-react/router"
+
+navigate(\`/users/\${id}?tab=posts\`)
+navigate(href({ to: "/users/:id", params: { id }, search: { tab: "posts" } }))
+
+<a href="/pricing">Pricing</a>
+<a href={href({ to: "/pricing" })}>Pricing</a>
+
+<Link to="/docs#install">Install</Link>
+<Link to={href({ to: "/docs", hash: "install" })}>Install</Link>
+
+throw redirect("/login")
+throw redirect(href({ to: "/login" }))
+
+navigate(cmsLink) // a same-origin path built elsewhere
+navigate(rawHref(cmsLink))`
 
 const BLOCKER = `// routes/posts/[id]/edit.tsx - don't lose a half-finished edit to a stray click.
 import { useState } from "react"
@@ -250,7 +269,7 @@ export default function Routing() {
         <li>
           <code>x.backend.ts</code> beside a page or layout is its server half: <code>loader</code>,{" "}
           <code>action</code>, their output schemas, and the other server-only exports. It never
-          reaches the browser - see <a href="/docs/structure">Project structure</a>.
+          reaches the browser - see <a href={href({ to: "/docs/structure" })}>Project structure</a>.
         </li>
         <li>
           <code>_404.tsx</code> renders unmatched paths, and whatever a loader answers with{" "}
@@ -325,7 +344,7 @@ export default function Routing() {
         Each page default-exports a component; an optional <code>meta</code> export drives{" "}
         <code>&lt;head&gt;</code> (applied on SSR and on client navigation). Its data comes from a{" "}
         <code>loader</code> in its <code>.backend.ts</code> half - see{" "}
-        <a href="/docs/data">Loaders &amp; actions</a>.
+        <a href={href({ to: "/docs/data" })}>Loaders &amp; actions</a>.
       </p>
       <p>
         A layout's <code>meta</code> receives its own loader's data as <code>data</code>, the value its
@@ -438,6 +457,28 @@ export default function Routing() {
         <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
         <code>/</code>, no backslash or control character) and returns the same type. A link to
         another site is a plain <code>&lt;a href&gt;</code>.
+      </p>
+
+      <h2 id="typed-links">Moving existing links to href()</h2>
+      <p>
+        A link written as a string is not checked: <code>{`navigate("/pricng")`}</code> and{" "}
+        <code>{`<a href="/pricng">`}</code> compile and then 404. Moving one is mechanical.
+      </p>
+      <CodeBlock code={LINKS} lang="tsx" />
+      <p>
+        A leftover <code>navigate("/x")</code>, <code>{`<Link to="/x">`}</code> or{" "}
+        <code>redirect("/x")</code> is a compile error at the call, so <code>tsc</code> lists what is
+        left. A plain <code>{`<a href="/x">`}</code> is not an error, so search for{" "}
+        <code>{`href="/`}</code> and <code>{"href={`/"}</code> too; a link that opens another site stays
+        an <code>&lt;a href&gt;</code>. This site, the examples and the starters are held to it by a
+        test that fails on a literal internal anchor.
+      </p>
+      <p>
+        The table is a generated file, <code>.nifra/types/routes.d.ts</code>. A program in which no route
+        imports a <code>./+types/...</code> module does not load it, and <code>to</code> then accepts no
+        route at all, and <code>nifra check</code> warns. List <code>.nifra/types/routes.d.ts</code> under
+        the tsconfig <code>files</code>: the <code>**</code> globs skip a dot directory, and a{" "}
+        <code>files</code> entry is not filtered by <code>exclude</code>.
       </p>
 
       <h2>Prefetching</h2>

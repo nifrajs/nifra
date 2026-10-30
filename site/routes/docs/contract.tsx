@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/contract",
@@ -410,7 +411,7 @@ export default function Contract() {
         <code>revalidate</code>. A <code>loader</code> runs on <strong>GET</strong> and feeds{" "}
         <code>props.data</code>; an <code>action</code> runs on <strong>POST</strong> and feeds{" "}
         <code>props.actionData</code>. A server-only export in the page file is a build error - see{" "}
-        <a href="/docs/structure">Project structure</a>.
+        <a href={href({ to: "/docs/structure" })}>Project structure</a>.
       </p>
       <CodeBlock code={SIGNATURES} />
       <blockquote>
@@ -635,7 +636,7 @@ export default function Contract() {
 
       <h2>Optional server components</h2>
       <p>
-        The optional <a href="/docs/server-components">server-components pipeline</a> supports
+        The optional <a href={href({ to: "/docs/server-components" })}>server-components pipeline</a> supports
         React, Preact, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
         in <code>*.component.server.ts(x)</code>, register owner instances and export a named
         <code>componentPipeline</code> configuration. React uses native RSC/Flight; the other four
@@ -707,8 +708,8 @@ export default function Contract() {
       </p>
 
       <p>
-        See <a href="/docs/rendering">SSG &amp; ISR</a> for prerendering, <a href="/docs/dev">Dev &amp; HMR</a> for the
-        two dev loops and the <code>--port</code> flag, and <a href="/docs/data">Loaders &amp; actions</a> for the
+        See <a href={href({ to: "/docs/rendering" })}>SSG &amp; ISR</a> for prerendering, <a href={href({ to: "/docs/dev" })}>Dev &amp; HMR</a> for the
+        two dev loops and the <code>--port</code> flag, and <a href={href({ to: "/docs/data" })}>Loaders &amp; actions</a> for the
         data layer in depth.
       </p>
     </div>

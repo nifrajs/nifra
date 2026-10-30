@@ -200,9 +200,9 @@ function writeServerManifests(): void {
   }
 }
 
-/** Bring each example app's generated route types up to date, so its `./+types` imports resolve. */
+/** Bring the docs site's and each example app's generated route types up to date, so `href()` and its `./+types` imports resolve. */
 function writeExampleRouteTypes(): void {
-  for (const config of exampleTypecheckConfigs()) {
+  for (const config of ["site/tsconfig.json", ...exampleTypecheckConfigs()]) {
     const appRoot = join(ROOT, dirname(config))
     if (existsSync(join(appRoot, "routes"))) writeRouteTypes({ appRoot })
   }

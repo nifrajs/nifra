@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/deployment",
@@ -162,7 +163,7 @@ export default function Deployment() {
       <p>
         <code>nifra build --target static</code> also builds a site with no server: the prerendered
         pages, the client bundle and <code>public/</code>, for any static host. See{" "}
-        <a href="/docs/rendering">SSG &amp; ISR</a>.
+        <a href={href({ to: "/docs/rendering" })}>SSG &amp; ISR</a>.
       </p>
       <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
@@ -258,7 +259,7 @@ export default function Deployment() {
       <h2>Bun (its home)</h2>
       <p>
         <code>app.listen(3000)</code> - the native Bun server. Bun is the runtime where Nifra measures
-        fastest (see <a href="/benchmarks">benchmarks</a>).
+        fastest (see <a href={href({ to: "/benchmarks" })}>benchmarks</a>).
       </p>
       <p>
         <strong>Every core:</strong> Bun is single-threaded per process - for multi-core boxes,
@@ -268,8 +269,8 @@ export default function Deployment() {
         lines - see <code>examples/cluster.ts</code>. Anything shared across workers (rate limits,
         sessions, pub/sub) needs a shared store, as in any multi-instance deploy. So do an ISR page
         store (signed with one <code>storeSecret</code> in every process - see{" "}
-        <a href="/docs/rendering">SSG &amp; ISR</a>) and{" "}
-        <a href="/docs/live">live refresh</a> (one Redis Streams bus for every process).
+        <a href={href({ to: "/docs/rendering" })}>SSG &amp; ISR</a>) and{" "}
+        <a href={href({ to: "/docs/live" })}>live refresh</a> (one Redis Streams bus for every process).
       </p>
 
       <h2>Node &amp; Deno</h2>

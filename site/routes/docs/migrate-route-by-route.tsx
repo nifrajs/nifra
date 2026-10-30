@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/migrate-route-by-route",
@@ -58,7 +59,7 @@ export default function MigrateRouteByRoute() {
         A mounted fetch handler carries HTTP only. A WebSocket upgrade under the mount reaches it as
         an ordinary request and never becomes a socket, so keep the legacy app&apos;s sockets on its own
         server until they move to <code>app.ws()</code> routes (see{" "}
-        <a href="/docs/websockets#composed">WebSockets in a composed app</a>).
+        <a href={href({ to: "/docs/websockets", hash: "composed" })}>WebSockets in a composed app</a>).
       </p>
       <CodeBlock code={HONO} lang="ts" />
 

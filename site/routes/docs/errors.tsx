@@ -1,6 +1,7 @@
 import { catalogFixPrompts } from "@nifrajs/web/diagnostic-prompt"
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/errors",
@@ -175,7 +176,7 @@ export default function Errors() {
         <code>Date.now()</code>, <code>Math.random()</code>, locale formatting, reads of{" "}
         <code>window</code> or <code>localStorage</code>, invalid HTML nesting. With happy-dom
         installed in the project, <code>nifra_hydrate</code> reproduces it with a stable diagnostic.
-        See <a href="/docs/hydration">hydration</a>.
+        See <a href={href({ to: "/docs/hydration" })}>hydration</a>.
       </p>
       <FixPrompts code="NIFRA_HYDRATION_MISMATCH" />
 
@@ -258,7 +259,7 @@ export default function Errors() {
         carries the session, or in <code>keepAlive.ignoreCookies</code> if it does not. When the
         session is a token in client storage, call <code>identityChanged()</code> from{" "}
         <code>@nifrajs/web/client</code> at sign-in and sign-out. See{" "}
-        <a href="/docs/keep-alive#sign-in">keep-alive and sign-in</a>.
+        <a href={href({ to: "/docs/keep-alive", hash: "sign-in" })}>keep-alive and sign-in</a>.
       </p>
 
       <FixPrompts code="NIFRA_KEEPALIVE_IDENTITY_COOKIE" />

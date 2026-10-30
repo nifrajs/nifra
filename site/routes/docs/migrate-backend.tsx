@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/migrate-backend",
@@ -121,8 +122,8 @@ export default function MigrateBackend() {
         </li>
       </ul>
       <p>
-        Then connect a database (<a href="/docs/database">Database</a>) and, if you're going
-        full-stack, see <a href="/docs/migrate-frontend">Migrating a meta-framework</a>.
+        Then connect a database (<a href={href({ to: "/docs/database" })}>Database</a>) and, if you're going
+        full-stack, see <a href={href({ to: "/docs/migrate-frontend" })}>Migrating a meta-framework</a>.
       </p>
     </div>
   )

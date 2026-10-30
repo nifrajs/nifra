@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/runtime-differences",
@@ -208,7 +209,7 @@ export default function RuntimeDifferences() {
       <p>
         The browser side has the same property: the behavior belongs to React or the
         browser, and Nifra only sits on top of it. Those entries live in the{" "}
-        <a href="/docs/frontend-guidance">frontend gotchas</a> catalog (<code>nifra frontend</code>),
+        <a href={href({ to: "/docs/frontend-guidance" })}>frontend gotchas</a> catalog (<code>nifra frontend</code>),
         next to the per-framework reactivity cases:
       </p>
       <ul>

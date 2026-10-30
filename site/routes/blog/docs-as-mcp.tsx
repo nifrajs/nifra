@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { CodeBlock } from "../../shared/highlight"
 import { postMeta } from "../../shared/meta"
 
@@ -142,8 +143,9 @@ export default function DocsAsMcp() {
         Add <code>https://mcp.nifra.dev</code> to your MCP client and ask it something specific
         about Nifra - then scaffold an app with <code>bun create nifra</code> and watch the
         verification loop run. Setup for each client is on the{" "}
-        <a href="/docs/agents">agents page</a>. If you maintain a framework and want to compare
-        notes on any of this, the <a href="https://github.com/nifrajs/nifra">repo</a> is open.
+        <a href={href({ to: "/docs/agents" })}>agents page</a>. If you maintain a framework and want
+        to compare notes on any of this, the <a href="https://github.com/nifrajs/nifra">repo</a> is
+        open.
       </p>
     </article>
   )

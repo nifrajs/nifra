@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/testing",
@@ -154,7 +155,7 @@ export default function ContractTesting() {
         strict schema (<code>@nifrajs/schema</code>&rsquo;s <code>t.object</code>) reports them and the
         test fails, while a stripping one (Zod, Valibot) accepts them silently. To catch extras
         regardless, or to stop them reaching the wire in production, use{" "}
-        <a href="/docs/security">
+        <a href={href({ to: "/docs/security" })}>
           <code>responseContract</code>
         </a>
         .
