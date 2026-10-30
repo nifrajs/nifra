@@ -456,7 +456,10 @@ export default function Routing() {
         <code>{`{ external: true }`}</code>. For a same-origin path built elsewhere - a CMS link,{" "}
         <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
         <code>/</code>, no backslash or control character) and returns the same type. A link to
-        another site is a plain <code>&lt;a href&gt;</code>.
+        another site is a plain <code>&lt;a href&gt;</code>. A path that comes from outside is
+        checked where it is read: <code>rawHref</code> throws a <code>TypeError</code> for one that is
+        not same-origin, so catch it at that call when a field cannot be trusted, and the page never
+        reaches <code>Link</code> with a value it would refuse.
       </p>
 
       <h2 id="typed-links">Moving existing links to href()</h2>
@@ -484,7 +487,12 @@ export default function Routing() {
         and <code>.svelte</code> files are read. Raise, lower or silence either code with{" "}
         <code>rules</code> in <code>nifra.config</code>, or keep one link as written with{" "}
         <code>rawHref()</code> or <code>{"// nifra-expect NF-C058: <reason>"}</code> above the
-        attribute. <code>.jsx</code> files and an <code>href</code> built by a function are not read.
+        attribute (<code>{"<!-- nifra-expect NF-C058: <reason> -->"}</code> above the anchor in a{" "}
+        <code>.vue</code> or <code>.svelte</code> template). A backend mounted under{" "}
+        <code>apiPrefix</code> counts as serving its paths, read from <code>backend/framework.ts</code>{" "}
+        or <code>nifra.config.ts</code>; when either holds a value <code>check</code> cannot read, no
+        link is reported dead. <code>.jsx</code> files and an <code>href</code> built by a function are
+        not read.
       </p>
       <p>
         The table is a generated file, <code>.nifra/types/routes.d.ts</code>. A program in which no route

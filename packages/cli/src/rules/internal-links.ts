@@ -255,6 +255,28 @@ function report(
   })
 }
 
+interface HtmlComment {
+  readonly start: number
+  /** Where the text after `<!--` stops: before the closing delimiter. */
+  readonly bodyEnd: number
+  readonly end: number
+}
+
+// A comment ends at `-->` or `--!>`.
+const COMMENT_END = /--!?>/g
+
+/** The comment opened at `start`, which HTML ends at `-->` or `--!>`; `<!-->` and `<!--->` are empty. */
+function commentAt(text: string, start: number): HtmlComment {
+  const body = start + 4
+  if (text.startsWith(">", body)) return { start, bodyEnd: body, end: body + 1 }
+  if (text.startsWith("->", body)) return { start, bodyEnd: body, end: body + 2 }
+  COMMENT_END.lastIndex = body
+  const close = COMMENT_END.exec(text)
+  return close === null
+    ? { start, bodyEnd: text.length, end: text.length }
+    : { start, bodyEnd: close.index, end: close.index + close[0].length }
+}
+
 /** The end of a markup tag or `{expression}`, ignoring `>`/braces inside quoted values. */
 function markupEnd(text: string, start: number, expression = false): number {
   let quote: string | undefined
@@ -284,14 +306,13 @@ function templateHrefs(
   readonly expectationLines: readonly string[]
 } {
   const hrefs: Array<{ at: number; tagAt: number; value: string }> = []
-  const comments: Array<{ start: number; end: number }> = []
+  const comments: HtmlComment[] = []
   let templateDepth = 0
   for (let at = 0; at < text.length; ) {
     if (text.startsWith("<!--", at)) {
-      const close = text.indexOf("-->", at + 4)
-      const end = close < 0 ? text.length : close + 3
-      comments.push({ start: at, end })
-      at = end
+      const comment = commentAt(text, at)
+      comments.push(comment)
+      at = comment.end
       continue
     }
     if (text[at] === "{" && (!vue || text.startsWith("{{", at))) {
@@ -349,8 +370,7 @@ function templateHrefs(
   for (const comment of comments) {
     expectations += code(text.slice(previous, comment.start))
     expectations += text
-      .slice(comment.start + 4, comment.end)
-      .replace(/-->$/, "")
+      .slice(comment.start + 4, comment.bodyEnd)
       .split("\n")
       .map((line) => `// ${line}`)
       .join("\n")
@@ -358,6 +378,22 @@ function templateHrefs(
   }
   expectations += code(text.slice(previous))
   return { hrefs, expectationLines: expectations.split("\n") }
+}
+
+/** The 1-based line of an offset in `text`: a search over the line starts, so a file with thousands of links is not re-split for each. */
+function lineLookup(text: string): (offset: number) => number {
+  const starts = [0]
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) starts.push(at + 1)
+  return (offset) => {
+    let low = 0
+    let high = starts.length - 1
+    while (low < high) {
+      const mid = (low + high + 1) >> 1
+      if ((starts[mid] ?? 0) <= offset) low = mid
+      else high = mid - 1
+    }
+    return low + 1
+  }
 }
 
 async function templateFindings(
@@ -376,13 +412,14 @@ async function templateFindings(
     const text = readFileSync(join(ctx.root, file), "utf8")
     if (!text.includes("href")) continue
     const { hrefs, expectationLines } = templateHrefs(text, file.endsWith(".vue"))
+    const lineOf = lineLookup(text)
     for (const { at, tagAt, value } of hrefs) {
       if (!value.startsWith("/") || value.startsWith("//")) continue
       // A Svelte `{expression}` inside the value is a hole.
       const verdict = judge(routes, value.replace(/\$?\{[^}]*\}/g, ANCHOR_HOLE))
       if (verdict?.kind !== kind) continue
-      const line = text.slice(0, at).split("\n").length
-      const tagLine = text.slice(0, tagAt).split("\n").length
+      const line = lineOf(at)
+      const tagLine = lineOf(tagAt)
       if (
         commentBlockExpectation(expectationLines, tagLine, [code, "internal-link"]) !== undefined ||
         commentBlockExpectation(expectationLines, line, [code, "internal-link"]) !== undefined

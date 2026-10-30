@@ -44,6 +44,13 @@ test("filePathToPattern rejects invalid/unsupported params", () => {
   expect(() => filePathToPattern("blog/[...all]/edit.tsx")).toThrow(/must be the last segment/)
 })
 
+test("filePathToPattern rejects a file name no request path can reach", () => {
+  // `#` starts a fragment and `?` a query, so a browser never sends either in a path.
+  expect(() => filePathToPattern("a#b.tsx")).toThrow(/no URL reaches this route/)
+  expect(() => filePathToPattern("docs/what?.tsx")).toThrow(/no URL reaches this route/)
+  expect(() => filePathToPattern("a#b/index.tsx")).toThrow(/"a#b"/)
+})
+
 test("filePathToPatterns: optional [[x]] expands to with-and-without patterns", () => {
   // A single optional segment → two patterns; the canonical filePathToPattern is the all-present form.
   expect(filePathToPatterns("[[lang]]/about.tsx")).toEqual(["/about", "/:lang/about"])

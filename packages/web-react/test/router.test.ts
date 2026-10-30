@@ -283,6 +283,15 @@ test("setSearchParams navigates with the new query - record/string/URLSearchPara
   expect(calls).toEqual(["/s?q=new", "/s?q=raw&p=2", "/s?a=1", "/s?q=up", "/s?tags=a&tags=b", "/s"])
 })
 
+test("setSearchParams on a path that reads as another host throws instead of navigating", () => {
+  const calls: unknown[] = []
+  setBrowserNavigate((to) => calls.push(to))
+  // `//host/x` is a protocol-relative reference: handed to the browser it leaves the origin.
+  const set = captureSetSearchParams("//evil.example/x?q=1")
+  expect(() => set({ q: "2" })).toThrow(TypeError)
+  expect(calls).toEqual([])
+})
+
 // A minimal MouseEvent stand-in for driving Link's click handler without a DOM. `preventDefault`
 // flips `defaultPrevented` so the handler's guard behaves like a real event.
 interface MockClick {

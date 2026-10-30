@@ -432,3 +432,24 @@ ${ext === "vue" ? "</template>" : "</nav>"}
   expect(warning?.evidence?.join("\n")).toContain("<!-- nifra-expect NF-C057: <reason> -->")
   expect(warning?.evidence?.join("\n")).not.toContain("// nifra-expect")
 })
+
+test("an HTML comment ends at --> or --!>, and <!--> and <!---> are empty comments", async () => {
+  pages()
+  writeAppFile(
+    root,
+    "routes/links.vue",
+    `<template>
+<!-- nifra-expect NF-C057: closed by a bang --!>
+<a href="/kept">kept</a>
+<!-->
+<a href="/after-empty">warn</a>
+<!--->
+<a href="/after-dash">warn</a>
+</template>
+`,
+  )
+  expect(await findings("NF-C057")).toEqual([
+    "NF-C057 routes/links.vue:5 warning",
+    "NF-C057 routes/links.vue:7 warning",
+  ])
+})

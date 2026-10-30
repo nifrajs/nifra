@@ -717,7 +717,10 @@ compile error. So do React's `Link`, `NavLink` and `Navigate`
 `{ external: true }`. For a same-origin path built elsewhere - a CMS link,
 `/llms.txt` - `rawHref("/llms.txt")` checks it (one leading
 `/`, no backslash or control character) and returns the same type. A link to
-another site is a plain `<a href>`.
+another site is a plain `<a href>`. A path that comes from outside is
+checked where it is read: `rawHref` throws a `TypeError` for one that is
+not same-origin, so catch it at that call when a field cannot be trusted, and the page never
+reaches `Link` with a value it would refuse.
 
 ### Moving existing links to href()
 
@@ -761,7 +764,12 @@ route it builds may live outside the file routes. Links in `.tsx`, `.vue`
 and `.svelte` files are read. Raise, lower or silence either code with
 `rules` in `nifra.config`, or keep one link as written with
 `rawHref()` or `// nifra-expect NF-C058: <reason>` above the
-attribute. `.jsx` files and an `href` built by a function are not read.
+attribute (`<!-- nifra-expect NF-C058: <reason> -->` above the anchor in a
+`.vue` or `.svelte` template). A backend mounted under
+`apiPrefix` counts as serving its paths, read from `backend/framework.ts`
+or `nifra.config.ts`; when either holds a value `check` cannot read, no
+link is reported dead. `.jsx` files and an `href` built by a function are
+not read.
 
 The table is a generated file, `.nifra/types/routes.d.ts`. A program in which no route
 imports a `./+types/...` module does not load it, and `to` then accepts no
