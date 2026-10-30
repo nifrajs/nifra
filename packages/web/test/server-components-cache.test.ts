@@ -17,15 +17,28 @@ import {
 
 type Counts = { page: number; component: number; render: number }
 
-function ownerApp(build: string, deployment: string, counts: Counts) {
+function ownerApp(build: string, deployment: string, counts: Counts, requestScoped = false) {
   const component = defineServerComponent(
     {
       input: t.object({}),
       props: t.object({ value: t.string() }),
       authorize() {},
-      load() {
+      load(ctx) {
         counts.component += 1
-        return { value: "public" }
+        const authorization = ctx.request.headers.get("authorization")
+        const cookie = ctx.request.headers.get("cookie")
+        const value = !requestScoped
+          ? "public"
+          : authorization === "Bearer scope-a"
+            ? "scope-a"
+            : authorization === "Bearer scope-b"
+              ? "scope-b"
+              : cookie === "session=user-a"
+                ? "user-a"
+                : cookie === "session=user-b"
+                  ? "user-b"
+                  : "public"
+        return { value }
       },
       view: ({ props }) => props.value,
     },
@@ -37,9 +50,12 @@ function ownerApp(build: string, deployment: string, counts: Counts) {
     adapter: {
       name: "vue",
       version: 1,
-      render() {
+      render(_view, props) {
         counts.render += 1
-        return { html: "<p>public</p>" }
+        const value =
+          typeof props === "object" && props !== null ? Reflect.get(props, "value") : undefined
+        const label = typeof value === "string" ? value : "invalid"
+        return { html: `<p>${label}</p>` }
       },
     },
     owners: {
@@ -233,6 +249,44 @@ test("owner cache rejects credentialed and component-refresh requests and direct
   expect(direct.headers.get("x-nifra-owner-cacheable")).toBeNull()
   expect(direct.headers.get("x-nifra-isr-revalidate")).toBeNull()
   await direct.arrayBuffer()
+})
+
+test("authenticated users and scopes never cross a public owner cache entry", async () => {
+  const counts: Counts = { page: 0, component: 0, render: 0 }
+  const { app } = ownerApp("build_identity", "deploy_identity", counts, true)
+  const store = new MemoryCacheStore()
+  const isr = withISR(app, { store, revalidate: 60, now: () => 0 })
+  const url = "https://fixture.test/owner"
+
+  const anonymous = await isr(new Request(url))
+  expect(anonymous.headers.get("x-nifra-isr")).toBe("miss")
+  expect(await anonymous.text()).toContain("\\u003cp\\u003epublic\\u003c/p\\u003e")
+
+  const identities = [
+    { headers: { cookie: "session=user-a" }, value: "user-a" },
+    { headers: { cookie: "session=user-b" }, value: "user-b" },
+    { headers: { authorization: "Bearer scope-a" }, value: "scope-a" },
+    { headers: { authorization: "Bearer scope-b" }, value: "scope-b" },
+  ] as const
+  for (const identity of identities) {
+    const response = await isr(new Request(url, { headers: identity.headers }))
+    expect(response.headers.get("x-nifra-isr")).toBeNull()
+    expect(response.headers.get("cache-control")).toBe("private, no-store")
+    const body = await response.text()
+    expect(body).toContain(`\\u003cp\\u003e${identity.value}\\u003c/p\\u003e`)
+    for (const other of identities) {
+      if (other.value !== identity.value)
+        expect(body).not.toContain(`\\u003cp\\u003e${other.value}\\u003c/p\\u003e`)
+    }
+  }
+
+  const anonymousAgain = await isr(new Request(url))
+  expect(anonymousAgain.headers.get("x-nifra-isr")).toBe("hit")
+  const publicBody = await anonymousAgain.text()
+  expect(publicBody).toContain("\\u003cp\\u003epublic\\u003c/p\\u003e")
+  for (const identity of identities)
+    expect(publicBody).not.toContain(`\\u003cp\\u003e${identity.value}\\u003c/p\\u003e`)
+  expect(counts).toEqual({ page: 5, component: 5, render: 5 })
 })
 
 test("public owner caching requires deployment identity and a static anonymous scope", () => {
