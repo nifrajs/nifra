@@ -2716,6 +2716,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **CompiledRoutePattern** _(interface)_ - `interface CompiledRoutePattern`
   Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
+- **FilledRoutePath** _(type)_ - `type FilledRoutePath = | { readonly ok: true; readonly path: string } | { readonly ok: false; readonly missing: readonly string[]; readonly invalid: readonly string[] }`
 - **MixedPart** _(type)_ - `type MixedPart = | { readonly t: "lit"; readonly v: string } | { readonly t: "param"; readonly name: string; readonly c?: ParamConstraint | undefined }`
   One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. A parameter written with a constraint (`:id{[0-9]+}`) carries it as `c`; a segment that is one constrained parameter and nothing else is a `mixed` segment with that single part.
 - **MixedSegmentShape** _(type)_ - `type MixedSegmentShape = readonly string[]`
@@ -2724,6 +2725,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What a constrained parameter accepts, parsed from the `{...}` after its name.
 - **RoutePatternMatch** _(type)_ - `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
 - **RoutePatternSegment** _(type)_ - `type RoutePatternSegment`
+- **browserPathSegment** _(function)_ - `browserPathSegment: (value: string) => string`
+  `value` as a browser spells it in a request URL: {@link encodePathSegment} with `; [ ] |` left as written. Used for one thing, registering a public file under the spelling its page links request; it differs from the canonical form on those four characters only.
 - **compareMixedPartsSpecificity** _(function)_ - `compareMixedPartsSpecificity: (left: readonly MixedPart[], right: readonly MixedPart[]) => number`
   Total ordering for mixed segment shapes, shared by the trie and regex-based routers.
 - **compareRoutePatternSpecificity** _(function)_ - `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
@@ -2732,10 +2735,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **constrainedParts** _(function)_ - `constrainedParts: (parts: readonly MixedPart[]) => readonly MixedPart[] | undefined`
   The parts of a mixed segment when at least one of its parameters has a constraint, else `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.
+- **decodePathSegment** _(function)_ - `decodePathSegment: (raw: string) => string | undefined`
+  `raw` with its percent-escapes decoded, or `undefined` when one is malformed. The inverse of {@link encodePathSegment} and of {@link browserPathSegment}; a segment in any other spelling decodes too. What a malformed escape means is the caller's policy.
 - **decodeRouteParams** _(function)_ - `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
   Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
+- **encodePathSegment** _(function)_ - `encodePathSegment: (value: string) => string`
+  `value` as one path segment. Left as written: letters, digits, the at sign and `- . _ ~ ! $ & ' ( ) * + , : =`. Everything else is percent-encoded, UTF-8 and upper-case hex, including `; [ ] | / ? # % \`.
 - **expandOptionalParams** _(function)_ - `expandOptionalParams: (pattern: string) => readonly string[]`
   The concrete patterns an optional-parameter pattern stands for, shortest first.
+- **fillRoutePath** _(function)_ - `fillRoutePath: (pattern: string | CompiledRoutePattern, params: Readonly<Record<string, string | undefined>>) => FilledRoutePath`
+  The path `pattern` names for `params`, every value spelled by {@link encodePathSegment}. A wildcard value is split on `/` and each part encoded, empty parts dropped; a `.` or `..` part is invalid, as a whole-segment value is. Nothing is thrown for a bad value: the caller decides what a missing or i…
 - **matchMixedSegment** _(function)_ - `matchMixedSegment: (shape: MixedSegmentShape, segment: string, out: string[], checked?: readonly MixedPart[]) => boolean`
   Match ONE path segment against a mixed shape, in a single left-to-right pass.
 - **matchRoutePattern** _(function)_ - `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`

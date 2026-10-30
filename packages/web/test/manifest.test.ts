@@ -4,7 +4,6 @@ import {
   enumerateStaticRoutes,
   filePathToPattern,
   filePathToPatterns,
-  fillRoutePattern,
   type RouteEntry,
   type RouteModule,
 } from "../src/manifest.ts"
@@ -207,7 +206,7 @@ test("a route's load() resolves its module", async () => {
   expect((await first.load()).default).toBe("index.tsx")
 })
 
-// --- SSG enumeration (fillRoutePattern + enumerateStaticRoutes) -------------------------------------
+// --- SSG enumeration (enumerateStaticRoutes) ---------------------------------------------------------
 function rt(pattern: string, mod: Partial<RouteModule>): RouteEntry {
   return {
     id: pattern,
@@ -218,21 +217,21 @@ function rt(pattern: string, mod: Partial<RouteModule>): RouteEntry {
   }
 }
 
-test("fillRoutePattern substitutes params; reports missing ones", () => {
-  expect(fillRoutePattern("/users/:id", { id: "7" })).toEqual({ path: "/users/7", missing: [] })
-  expect(fillRoutePattern("/blog/:year/:slug", { year: "2026", slug: "hi" })).toEqual({
-    path: "/blog/2026/hi",
-    missing: [],
-  })
-  expect(fillRoutePattern("/blog/:slug", { slug: "../../escape hatch" })).toEqual({
-    path: "/blog/..%2F..%2Fescape%20hatch",
-    missing: [],
-  })
-  expect(fillRoutePattern("/blog/:slug", { slug: ".." })).toEqual({
-    path: "/blog/%2E%2E",
-    missing: [],
-  })
-  expect(fillRoutePattern("/users/:id", {})).toEqual({ path: "/users/:id", missing: ["id"] })
+test("enumerateStaticRoutes spells params with the shared codec and drops what no path can carry", async () => {
+  const { paths } = await enumerateStaticRoutes([
+    rt("/blog/:slug", {
+      getStaticPaths: async () => ({
+        paths: [
+          { params: { slug: "a+b,c;d" } },
+          { params: { slug: "../../escape hatch" } },
+          { params: { slug: ".." } },
+          { params: { slug: "" } },
+          { params: {} },
+        ],
+      }),
+    }),
+  ])
+  expect(paths).toEqual(["/blog/a+b,c%3Bd", "/blog/..%2F..%2Fescape%20hatch"])
 })
 
 test("enumerateStaticRoutes: static opt-ins + dynamic getStaticPaths, skips the rest", async () => {

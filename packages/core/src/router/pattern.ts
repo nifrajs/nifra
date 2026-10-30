@@ -1,4 +1,7 @@
 import { RouteConfigError } from "../errors.ts"
+import { decodePathSegment, encodePathSegment } from "./path-codec.ts"
+
+export { browserPathSegment, decodePathSegment, encodePathSegment } from "./path-codec.ts"
 
 const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const RESERVED_PARAM_NAMES = new Set(["__proto__", "constructor", "prototype"])
@@ -639,14 +642,85 @@ export function decodeRouteParams(raw: Record<string, string>): Record<string, s
   for (const key in raw) {
     const value = raw[key]!
     if (!value.includes("%")) continue
-    try {
-      out ??= { ...raw }
-      out[key] = decodeURIComponent(value)
-    } catch {
-      return null
-    }
+    const decoded = decodePathSegment(value)
+    if (decoded === undefined) return null
+    out ??= { ...raw }
+    out[key] = decoded
   }
   return out ?? raw
+}
+
+export type FilledRoutePath =
+  | { readonly ok: true; readonly path: string }
+  | {
+      readonly ok: false
+      /** Params the pattern names that `params` leaves out or holds as the empty string. */
+      readonly missing: readonly string[]
+      /** Params whose value no path segment can carry (see {@link encodePathSegment}). */
+      readonly invalid: readonly string[]
+    }
+
+/**
+ * The path `pattern` names for `params`, every value spelled by {@link encodePathSegment}. A wildcard
+ * value is split on `/` and each part encoded, empty parts dropped; a `.` or `..` part is invalid, as
+ * a whole-segment value is. Nothing is thrown for a bad value: the caller decides what a missing or
+ * invalid param means. A param's constraint (`:id{[0-9]+}`) is not checked here.
+ */
+export function fillRoutePath(
+  pattern: string | CompiledRoutePattern,
+  params: Readonly<Record<string, string | undefined>>,
+): FilledRoutePath {
+  const compiled = typeof pattern === "string" ? compileRoutePattern(pattern) : pattern
+  const missing: string[] = []
+  const invalid: string[] = []
+  const note = (list: string[], name: string): void => {
+    if (!list.includes(name)) list.push(name)
+  }
+  const take = (name: string): string | undefined => {
+    const value = Object.hasOwn(params, name) ? params[name] : undefined
+    if (typeof value === "string" && value !== "") return value
+    note(missing, name)
+    return undefined
+  }
+  const encode = (name: string, value: string): string => {
+    try {
+      return encodePathSegment(value)
+    } catch {
+      note(invalid, name)
+      return ""
+    }
+  }
+  const parts: string[] = []
+  for (const segment of compiled.segments) {
+    if (segment.kind === "static") {
+      parts.push(segment.value)
+    } else if (segment.kind === "param") {
+      const value = take(segment.name)
+      parts.push(value === undefined ? "" : encode(segment.name, value))
+    } else if (segment.kind === "wildcard") {
+      const value = take(segment.name)
+      const pieces: string[] = []
+      if (value !== undefined) {
+        for (const piece of value.split("/"))
+          if (piece !== "") pieces.push(encode(segment.name, piece))
+        if (pieces.length === 0) note(missing, segment.name)
+      }
+      parts.push(pieces.join("/"))
+    } else {
+      let text = ""
+      for (const part of segment.parts) {
+        if (part.t === "lit") text += part.v
+        else {
+          const value = take(part.name)
+          if (value !== undefined) text += encode(part.name, value)
+        }
+      }
+      parts.push(text)
+    }
+  }
+  return missing.length > 0 || invalid.length > 0
+    ? { ok: false, missing, invalid }
+    : { ok: true, path: `/${parts.join("/")}` }
 }
 
 /** Match one compiled pattern and return decoded captures. The caller decides cross-pattern order. */

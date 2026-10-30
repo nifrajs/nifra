@@ -6488,6 +6488,12 @@
     "doc": "/**\n * The stat fields that tell one version of a file from another on one host: node:fs `Stats` as it is,\n * or Deno's `FileInfo` with its dates as epoch milliseconds and a field it lacks as `NaN`.\n */"
   },
   {
+    "name": "FilledRoutePath",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type FilledRoutePath = {\n    readonly ok: true;\n    readonly path: string;\n} | {\n    readonly ok: false;\n    /** Params the pattern names that `params` leaves out or holds as the empty string. */\n    readonly missing: readonly string[];\n    /** Params whose value no path segment can carry (see {@link encodePathSegment}). */\n    readonly invalid: readonly string[];\n};"
+  },
+  {
     "name": "FixOption",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -18106,6 +18112,13 @@
     "doc": "/**\n * Why a classified file may not ship to a browser, or `undefined` when it may. A `drizzle-orm` driver\n * entry is recognized by the import as written (`specifier`) or by the file's path in the package.\n */"
   },
   {
+    "name": "browserPathSegment",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function browserPathSegment(value: string): string;",
+    "doc": "/**\n * `value` as a browser spells it in a request URL: {@link encodePathSegment} with `; [ ] |` left as\n * written. Used for one thing, registering a public file under the spelling its page links request;\n * it differs from the canonical form on those four characters only.\n */"
+  },
+  {
     "name": "buildAssetPaths",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -19689,6 +19702,13 @@
     "doc": "/** Decode a cursor back to its value. Returns `undefined` for a null/empty/malformed cursor - treat that\n * as \"start from the beginning\" rather than erroring on a client-supplied string. */"
   },
   {
+    "name": "decodePathSegment",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function decodePathSegment(raw: string): string | undefined;",
+    "doc": "/**\n * `raw` with its percent-escapes decoded, or `undefined` when one is malformed. The inverse of\n * {@link encodePathSegment} and of {@link browserPathSegment}; a segment in any other spelling decodes\n * too. What a malformed escape means is the caller's policy.\n */"
+  },
+  {
     "name": "decodeRouteParams",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -20305,6 +20325,13 @@
     "doc": "/** Encode any JSON-serializable value (e.g. the last row's sort key) into an opaque cursor string. */"
   },
   {
+    "name": "encodePathSegment",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function encodePathSegment(value: string): string;",
+    "doc": "/**\n * `value` as one path segment. Left as written: letters, digits, the at sign and `- . _ ~ ! $ & ' ( ) * + , : =`.\n * Everything else is percent-encoded, UTF-8 and upper-case hex, including `; [ ] | / ? # % \\`.\n *\n * Throws a `RangeError` for a value that no segment can carry: exactly `.` or `..` (a URL parser reads\n * `%2E` and `%2E%2E` as dot segments too) and a lone surrogate (substituting U+FFFD would map distinct\n * values to one URL). The empty string is returned as is; a caller that cannot use it checks for it.\n */"
+  },
+  {
     "name": "encodeTransportFrame",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -20540,6 +20567,13 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function filePathToPatterns(file: string): string[];"
+  },
+  {
+    "name": "fillRoutePath",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function fillRoutePath(pattern: string | CompiledRoutePattern, params: Readonly<Record<string, string | undefined>>): FilledRoutePath;",
+    "doc": "/**\n * The path `pattern` names for `params`, every value spelled by {@link encodePathSegment}. A wildcard\n * value is split on `/` and each part encoded, empty parts dropped; a `.` or `..` part is invalid, as\n * a whole-segment value is. Nothing is thrown for a bad value: the caller decides what a missing or\n * invalid param means. A param's constraint (`:id{[0-9]+}`) is not checked here.\n */"
   },
   {
     "name": "filterDevToolsEvents",

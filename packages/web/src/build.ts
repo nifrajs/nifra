@@ -75,7 +75,7 @@ import {
   servablePrerenderedPages,
 } from "./internal/prerendered-pages.ts"
 import { privateEnvCheck } from "./internal/private-env.ts"
-import { publicUrlPath } from "./internal/public-url.ts"
+import { publicUrlPaths } from "./internal/public-url.ts"
 import {
   assertNoSecrets,
   buildEnvironment,
@@ -388,7 +388,7 @@ export async function copyPublicDir(from: string, to: string): Promise<string[]>
     const target = join(to, rel)
     await mkdir(join(target, ".."), { recursive: true })
     await cp(candidateReal, target)
-    copied.push(publicUrlPath(rel))
+    copied.push(...publicUrlPaths(rel))
   }
   return copied.sort()
 }

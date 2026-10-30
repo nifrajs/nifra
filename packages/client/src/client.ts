@@ -15,6 +15,7 @@ import {
   NIFRA_BACKEND_WS_RUNTIME,
   recordResidentBodies,
 } from "@nifrajs/core/mount"
+import { encodePathSegment } from "@nifrajs/core/pattern"
 import type { Platform } from "@nifrajs/core/server"
 import {
   assertTransportTextBounded,
@@ -499,15 +500,14 @@ function createProxy(
 }
 
 /**
- * A path segment, percent-encoded. A value with an unpaired surrogate has no UTF-8 spelling and
- * `encodeURIComponent` throws on it; it becomes a `..` segment instead, which every call refuses as
- * `invalid_path` before anything is sent, so the call still resolves to a Result.
+ * A path segment, spelled as the router and a browser spell it, so `$query` stays reachable by calling
+ * its parent. A value no segment can carry (an unpaired surrogate, `.` or `..`) becomes a `..`
+ * segment instead, which every call refuses as `invalid_path` before anything is sent, so the call
+ * still resolves to a Result.
  */
 function encodeSegment(value: string): string {
   try {
-    // `$` is a legal path character and the router matches static segments literally, so it stays
-    // as written: a segment spelled `$query` must still be reachable by calling its parent.
-    return encodeURIComponent(value).replaceAll("%24", "$")
+    return encodePathSegment(value)
   } catch {
     return ".."
   }

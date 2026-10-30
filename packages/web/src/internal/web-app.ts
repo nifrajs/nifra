@@ -42,7 +42,6 @@ import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./
 import { PPR_SERVER, PPR_SETUP, type PprSetup } from "./ppr/contract.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
 import type { RevalidateResult } from "./render-document.ts"
-import { requestPattern } from "./route-path.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 
@@ -720,7 +719,7 @@ export function createWebApp<Env = unknown>(
       : servePrerenderedPages(options.prerenderedPages, options.draftSecret)
   let ownsRootCatchAll = false
   for (const route of manifest.routes) {
-    const pattern = requestPattern(route.pattern)
+    const pattern = route.pattern
     if (pattern.startsWith("/*")) ownsRootCatchAll = true
     const render = pageExecutor.get(route)
     app.register(
