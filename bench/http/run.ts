@@ -136,6 +136,25 @@ const denoTarget = (framework: string): Target => ({
     String(port),
   ],
 })
+// Keep Fastify's Node HTTP server code identical under Bun and Deno; these rows measure each
+// runtime's node:http compatibility path, not its native Fetch server.
+const fastifyCompatTarget = (runtime: "bun" | "deno"): Target => ({
+  framework: "fastify",
+  spawn: (port) =>
+    runtime === "bun"
+      ? ["bun", "bench/http/serve-node.ts", "fastify", String(port)]
+      : [
+          "deno",
+          "run",
+          "--allow-net",
+          "--allow-env",
+          "--allow-read",
+          "--no-check",
+          "bench/http/serve-node.ts",
+          "fastify",
+          String(port),
+        ],
+})
 
 // nifra on Node: real Node can't resolve the @nifrajs/* workspace packages (Bun resolves
 // them via tsconfig paths, which Node ignores), so bundle the app for Node first - which
@@ -163,6 +182,7 @@ const SECTIONS: readonly Section[] = [
       bunTarget("nifra"),
       bunTarget("elysia"),
       bunTarget("hono"),
+      fastifyCompatTarget("bun"),
       { ...bunTarget("bun-native"), isCeiling: true },
     ],
   },
@@ -183,6 +203,7 @@ const SECTIONS: readonly Section[] = [
       denoTarget("nifra"),
       denoTarget("hono"),
       denoTarget("elysia"),
+      fastifyCompatTarget("deno"),
       { ...denoTarget("deno-raw"), isCeiling: true },
     ],
   },
@@ -333,7 +354,7 @@ const failures: string[] = []
 
 const argv = process.argv.slice(2)
 // `--json` emits one machine-readable line (consumed by aggregate.ts to median across runs); the
-// optional positional filters to one runtime section (`bun` | `node`).
+// optional positional filters to one runtime section (`bun` | `node` | `deno`).
 const jsonMode = argv.includes("--json")
 const onlyRuntime = argv.find((a) => !a.startsWith("--"))
 const sections = onlyRuntime ? SECTIONS.filter((s) => s.runtime === onlyRuntime) : SECTIONS

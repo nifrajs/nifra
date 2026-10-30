@@ -264,6 +264,11 @@ export default function Benchmarks() {
         that runtime. Rows are ordered by the geometric mean of the workloads, so no single column
         decides the ranking.
       </p>
+      <p className="note">
+        Fastify on Bun and Deno uses each runtime's <code>node:http</code> compatibility and the
+        same Fastify server implementation as Node; those rows do not use native Bun or Deno HTTP
+        ingress.
+      </p>
       <div className="caveat">
         <b>{denoHeading}</b> Deno hands an app the request target exactly as the client sent it,
         joined to the <code>Host</code> header as received. So on Deno, Nifra rejects a malformed{" "}

@@ -77,9 +77,9 @@ const WORKLOADS: readonly string[] = [
   BODY_WORKLOAD,
 ]
 const FRAMEWORKS: Record<string, readonly string[]> = {
-  bun: ["nifra", "elysia", "hono", "bun-native"],
+  bun: ["nifra", "elysia", "hono", "fastify", "bun-native"],
   node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
-  deno: ["nifra", "hono", "elysia", "deno-raw"],
+  deno: ["nifra", "hono", "elysia", "fastify", "deno-raw"],
 }
 const CEILING: Record<string, string> = {
   bun: "bun-native",

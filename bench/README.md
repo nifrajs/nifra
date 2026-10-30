@@ -67,6 +67,9 @@ The Deno rows use the shared direct `Deno.serve` ingress in `bench/http/deno-ing
 the same parser-framing marker for Nifra; they do not mix Nifra's production adapter overhead into
 the framework comparison.
 
+Fastify also runs on Bun and Deno through each runtime's `node:http` compatibility, reusing the same
+`serve-node.ts` implementation as Node. Those rows measure the compatibility path, not native
+`Bun.serve` or `Deno.serve` ingress.
 `bench:http:realworld` (`bench/http-realworld/`) runs the same GET/POST split on a route with what a
 real API route actually has - fixed security and CORS response headers, a request-id hook,
 bearer-token auth, and a cookie read - which nifra compiles into its fused derive-and-before lane.

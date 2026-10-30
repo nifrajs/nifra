@@ -144,6 +144,25 @@ const denoTarget = (framework: string): Target => ({
     String(port),
   ],
 })
+// Keep Fastify's Node HTTP server code identical under Bun and Deno; these rows include each
+// runtime's node:http compatibility path, including the matching body-observer variant.
+const fastifyCompatTarget = (runtime: "bun" | "deno", framework: string): Target => ({
+  framework,
+  spawn: (port) =>
+    runtime === "bun"
+      ? ["bun", `${APP_DIR}/serve-node.ts`, framework, String(port)]
+      : [
+          "deno",
+          "run",
+          "--allow-net",
+          "--allow-env",
+          "--allow-read",
+          "--no-check",
+          `${APP_DIR}/serve-node.ts`,
+          framework,
+          String(port),
+        ],
+})
 
 // Built from APP_DIR so the bundle inlines whichever `@nifrajs/*` that directory resolves - the
 // workspace by default, the installed tarballs under the published tree. The Node arm is bundled, so
@@ -180,10 +199,12 @@ const SECTIONS: readonly Section[] = [
       bunTarget("nifra"),
       bunTarget("elysia"),
       bunTarget("hono"),
+      fastifyCompatTarget("bun", "fastify"),
       { ...bunTarget("bun-native"), isCeiling: true },
       bodyTarget(bunTarget("nifra-body")),
       bodyTarget(bunTarget("elysia-body")),
       bodyTarget(bunTarget("hono-body")),
+      bodyTarget(fastifyCompatTarget("bun", "fastify-body")),
       { ...bodyTarget(bunTarget("bun-native-body")), isCeiling: true },
     ],
   },
@@ -210,10 +231,12 @@ const SECTIONS: readonly Section[] = [
       denoTarget("nifra"),
       denoTarget("hono"),
       denoTarget("elysia"),
+      fastifyCompatTarget("deno", "fastify"),
       { ...denoTarget("deno-raw"), isCeiling: true },
       bodyTarget(denoTarget("nifra-body")),
       bodyTarget(denoTarget("hono-body")),
       bodyTarget(denoTarget("elysia-body")),
+      bodyTarget(fastifyCompatTarget("deno", "fastify-body")),
       { ...bodyTarget(denoTarget("deno-raw-body")), isCeiling: true },
     ],
   },
