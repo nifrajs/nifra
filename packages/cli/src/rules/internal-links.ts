@@ -4,6 +4,7 @@ import { Glob } from "bun"
 import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { IGNORED, stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { ANCHOR_HOLE } from "../internal/source-facts.ts"
 import { buildRouteTable } from "../introspect.ts"
 import { commentBlockExpectation } from "./comment-markers.ts"
@@ -146,7 +147,9 @@ async function loadPageRoutes(ctx: RuleContext): Promise<PageRoutes | undefined>
     // Without a configured mount, preserve the scan's allowance for independently served backends.
     .filter((route) => mount?.prefix === undefined || route.autoMounted)
     .flatMap((route) => compile(route.path))
-  const staticPatterns = patterns.filter((pattern) => !/[:*]/.test(pattern))
+  // Code-unit order, so which of two equally close pages a diagnostic names does not depend on the
+  // directory order of the machine that ran the check.
+  const staticPatterns = patterns.filter((pattern) => !/[:*]/.test(pattern)).sort(codeUnitOrder)
   return {
     backendUnknown: mount === undefined || ctx.project.sourceFindings.routePaths.length > 0,
     match(path) {
@@ -196,7 +199,7 @@ function judge(routes: PageRoutes, written: string): Verdict | undefined {
   const path = cut < 0 ? written : written.slice(0, cut)
   const rest = cut < 0 ? "" : written.slice(cut)
   const dynamic = path.includes(ANCHOR_HOLE)
-  const found = routes.match(dynamic ? path.replaceAll(ANCHOR_HOLE, "x") : path)
+  const found = routes.match(path)
   const shown = spell(written)
   if (found !== undefined) {
     const hash = rest.includes("#") ? rest.slice(rest.indexOf("#") + 1) : undefined
