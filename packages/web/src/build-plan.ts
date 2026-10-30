@@ -61,6 +61,20 @@ export interface ServerBuild {
 export const BUILD_TARGETS = ["bun", "node", "deno", "cloudflare", "vercel", "static"] as const
 export type BuildTarget = (typeof BUILD_TARGETS)[number]
 
+/** Ordinary Vercel SSR uses Edge unless Node is explicitly selected. */
+export type VercelRuntime = "edge" | "node"
+
+/** Validate before any deploy directory is cleared, including untyped config/API callers. */
+export function validateVercelRuntime(target: BuildTarget, runtime: unknown): void {
+  if (runtime === undefined) return
+  if (runtime !== "edge" && runtime !== "node") {
+    throw new Error('[nifra/web] vercelRuntime must be "edge" or "node"')
+  }
+  if (target !== "vercel") {
+    throw new Error('[nifra/web] vercelRuntime is only supported for target "vercel"')
+  }
+}
+
 /** A type guard narrowing an arbitrary string to a {@link BuildTarget}. */
 export function isBuildTarget(value: string): value is BuildTarget {
   return (BUILD_TARGETS as readonly string[]).includes(value)
@@ -119,7 +133,12 @@ const finalPathSegment = (path: string): string => {
  * means Bun and Vite strategies share the same output filename, server target, and hand-off text;
  * the filesystem emitter only has to execute the plan.
  */
-export function planBuildTarget(target: BuildTarget, outDir: string): BuildTargetPlan {
+export function planBuildTarget(
+  target: BuildTarget,
+  outDir: string,
+  vercelRuntime?: VercelRuntime,
+): BuildTargetPlan {
+  validateVercelRuntime(target, vercelRuntime)
   if (target === "static") {
     return {
       target,
@@ -144,7 +163,7 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
     return {
       target,
       kind: "server",
-      serverTarget: "browser",
+      serverTarget: vercelRuntime === "node" ? "node" : "browser",
       // Vercel's Build Output API: `vercel deploy --prebuilt` uploads this tree as it is.
       outputFile: "functions/index.func/index.js",
       staticDir: "static",

@@ -21,6 +21,7 @@
         "@nifrajs/pi": "workspace:*",
         "@nifrajs/testing": "workspace:*",
         "@nifrajs/web": "workspace:*",
+        "@nifrajs/web-vanilla": "workspace:*",
         "@types/bun": "^1.4.4",
         "@types/express": "^5.0.6",
         "@upstash/context7-mcp": "4.4.4",
@@ -474,6 +475,9 @@
     "packages/image": {
       "name": "@nifrajs/image",
       "version": "5.9.0",
+      "devDependencies": {
+        "sharp": "0.35.5",
+      },
     },
     "packages/island-trigger": {
       "name": "@nifrajs/island-trigger",
@@ -693,6 +697,8 @@
         "@babel/plugin-syntax-jsx": "^7.29.7",
         "@babel/plugin-syntax-typescript": "^7.29.7",
         "@nifrajs/client": "workspace:*",
+        "@nifrajs/i18n": "workspace:*",
+        "@nifrajs/image": "workspace:*",
         "@nifrajs/schema": "workspace:*",
         "@nifrajs/test-utils": "workspace:*",
         "@nifrajs/web-react": "workspace:*",

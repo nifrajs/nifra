@@ -5,7 +5,7 @@ import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts
 import { type CachedResponse, type CacheStore, withISR } from "../src/isr.ts"
 import { checkShellCanaries, partialPrerendering } from "../src/ppr.ts"
 import { DATA_HEADER, HOLE_FILL_HEADER, KEEP_HOLES_HEADER, PREFETCH_HEADER } from "../src/router.ts"
-import { nextSlowAbort, probe, releaseHeld } from "./fixtures/ppr/app/lib/probe.ts"
+import { nextSlowAbort, probe, releaseHeld } from "./fixtures/ppr/app/lib/probe.backend.ts"
 import { DRAFT_SECRET, type PprApp, startPprApp } from "./fixtures/ppr/app/server.ts"
 
 let app: PprApp

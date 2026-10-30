@@ -4,7 +4,7 @@ import { CodeBlock } from "../../shared/highlight"
 export const meta = docsMeta(
   "/docs/deployment",
   "Nifra - Deployment",
-  "One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.",
+  "One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge or Node.",
 )
 
 const SCAFFOLD = `# Scaffold a site for one deploy target (bun is the default):
@@ -148,7 +148,7 @@ export default function Deployment() {
             </td>
           </tr>
           <tr>
-            <td>Vercel Edge</td>
+            <td>Vercel (Edge by default; Node opt-in)</td>
             <td>
               <code>.vercel/output/</code>
             </td>
@@ -167,6 +167,39 @@ export default function Deployment() {
       <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
         Cloudflare and Vercel the platform serves it.
+      </p>
+      <h3 id="vercel-node">Vercel: Edge or Node.js</h3>
+      <p>
+        Ordinary SSR keeps the existing Edge output for <code>nifra build --target vercel</code>.
+        For Node built-ins and Node-compatible server libraries, keep the target and opt into Node
+        in <code>nifra.config.ts</code> (there is no separate runtime CLI flag):
+      </p>
+      <CodeBlock code={`// nifra.config.ts (alongside your adapter/clientModule exports)
+export const target = "vercel"
+export const vercelRuntime = "node" // "edge" or omitted preserves the Edge function
+
+// Build and deploy from the project root:
+// bunx nifra build             # or: bunx nifra build --target vercel
+// vercel deploy --prebuilt`} />
+      <p>
+        Both Bun and Vite production pipelines emit Build Output API v3 at{" "}
+        <code>.vercel/output</code>: <code>static/</code> holds the client chunks and public files;
+        <code>functions/index.func/</code> holds the SSR function. Node mode declares{" "}
+        <code>nodejs22.x</code> and exports an HTTP handler without listening at import. It serves
+        pages and the backend mounted with <code>apiPrefix</code>. Programmatic builds use{" "}
+        <code>{`buildTarget("vercel", { ...options, vercelRuntime: "node" })`}</code>, or the same
+        option on <code>buildTargetVite</code>. A different target or an unsupported runtime is
+        refused before clearing the previous build; remove the selector when switching targets.
+      </p>
+      <p>
+        This is serverless Node, not the self-hosted <code>node</code> target: no Bun APIs, listening
+        sockets, persistent in-process jobs or WebSocket server. Execution duration, streaming and
+        filesystem availability remain subject to Vercel limits; native dependencies must be
+        deploy-compatible. <code>selfHost</code> does not start a server here. Builds still require
+        Bun. Static files are served first by Vercel, so host policy in the function cannot protect
+        CDN files. The component pipeline retains its existing Vercel Node output and does not take
+        this ordinary-SSR selector. The generated handler is tested locally under Node; this is not
+        a claim of a live Vercel deployment test.
       </p>
       <p>
         The Bun, Node and Deno entries pass the socket peer as <code>c.clientIp</code>. Cloudflare
@@ -364,8 +397,9 @@ export default function Deployment() {
       <CodeBlock code={CF} />
       <p>
         Deploy: <code>wrangler pages deploy dist</code> (Pages) or <code>wrangler deploy</code>{" "}
-        (Workers). The <code>vercel</code> target emits the same edge bundle as a Build Output API
-        function under <code>.vercel/output</code>.
+        (Workers). The <code>vercel</code> target defaults to an Edge Build Output API function
+        under <code>.vercel/output</code>; <a href="#vercel-node">opt into Node.js</a> for
+        Node-compatible server dependencies.
       </p>
     </div>
   )

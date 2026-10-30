@@ -2375,7 +2375,7 @@
     "name": "BuildTargetOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildTargetOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated, so the\n     * build refuses one that is a filesystem root or is or contains the routes directory, the public\n     * directory, an absolute entry module, or the working directory. */\n    readonly outDir: string;\n    /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the\n     * server bundle, cleaned up after. Absolute path. Checked the same way as `outDir`. */\n    readonly workDir: string;\n    /** The adapter's client runtime module (exports `mountRouter`), e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `adapter`. */\n    readonly adapterImport: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */\n    readonly backendImport?: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `use` (app-level middleware\n     * applied before page routes are declared), or `undefined`. Must resolve to the same edge-safe\n     * module as `adapterImport`. */\n    readonly useImport?: string;\n    /** `createWebApp` options the server entry imports by name (`apiPrefix`, `mounts`, `csp`, ...), each\n     * mapped to the specifier (resolvable from `workDir`) of the same edge-safe module as `adapterImport`. */\n    readonly optionImports?: ServerEntryOptionImports;\n    /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest - so the\n     * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same\n     * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known\n     * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never\n     * hydrate. Required for `target: \"static\"` (SSG drives `app.fetch`). For `bun` and `node` it is\n     * optional: given, the opted-in routes are prerendered into `_prerendered/` and the server answers\n     * them from their file; the other targets ignore it. */\n    readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>;\n    /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */\n    readonly clientPlugins?: readonly BunPlugin[];\n    /** Server-build plugins (e.g. the SSR variants). */\n    readonly serverPlugins?: readonly BunPlugin[];\n    /** Extra Bun.build resolve conditions for the CLIENT build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements layered onto both builds. */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Project-root static directory copied to deploy root. `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Prefix of environment variables allowed into the client bundle (default `\"PUBLIC_\"`). */\n    readonly publicEnvPrefix?: string;\n    /** Reviewed false positives of the secret scan over the bundle, `public/` and prerendered pages. */\n    readonly secretExemptions?: readonly SecretExemption[];\n    /**\n     * Vite-only CSS output policy. `false` emits one aggregate stylesheet. The native Bun build does not\n     * support this switch and fails closed if it is supplied instead of silently ignoring it.\n     */\n    readonly cssCodeSplit?: boolean;\n    /**\n     * Activation policy for framework-owned SSR stylesheet links. Defaults to `\"blocking\"`; `\"deferred\"`\n     * fetches with `media=\"print\"` and promotes before hydration. With Vite, pair it with\n     * `cssCodeSplit: false`; the native Bun build supports the activation policy but keeps its existing\n     * CSS output strategy.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** Document `<title>` for the generated server entry. */\n    readonly title?: string;\n    /** Trust the edge platform's client-address header for `c.clientIp` (`cloudflare`, `vercel`). Off by\n     * default, leaving an edge app with no caller address. See {@link ServerEntryClientIp}. */\n    readonly clientIp?: ServerEntryClientIp;\n    /** How a `bun`, `node` or `deno` server stops and keeps idle connections. See\n     * {@link ServerEntrySelfHost}. */\n    readonly selfHost?: ServerEntrySelfHost;\n    /** The client entry for a server built with `optionImports.live`: that runtime's `clientEntry`. */\n    readonly live?: LiveClientEntry | undefined;\n}"
+    "signature": "export interface BuildTargetOptions {\n    /** Vercel-only: opt into Node.js 22 serverless SSR instead of the default Edge function. */\n    readonly vercelRuntime?: VercelRuntime;\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated, so the\n     * build refuses one that is a filesystem root or is or contains the routes directory, the public\n     * directory, an absolute entry module, or the working directory. */\n    readonly outDir: string;\n    /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the\n     * server bundle, cleaned up after. Absolute path. Checked the same way as `outDir`. */\n    readonly workDir: string;\n    /** The adapter's client runtime module (exports `mountRouter`), e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `adapter`. */\n    readonly adapterImport: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */\n    readonly backendImport?: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `use` (app-level middleware\n     * applied before page routes are declared), or `undefined`. Must resolve to the same edge-safe\n     * module as `adapterImport`. */\n    readonly useImport?: string;\n    /** `createWebApp` options the server entry imports by name (`apiPrefix`, `mounts`, `csp`, ...), each\n     * mapped to the specifier (resolvable from `workDir`) of the same edge-safe module as `adapterImport`. */\n    readonly optionImports?: ServerEntryOptionImports;\n    /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest - so the\n     * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same\n     * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known\n     * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never\n     * hydrate. Required for `target: \"static\"` (SSG drives `app.fetch`). For `bun` and `node` it is\n     * optional: given, the opted-in routes are prerendered into `_prerendered/` and the server answers\n     * them from their file; the other targets ignore it. */\n    readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>;\n    /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */\n    readonly clientPlugins?: readonly BunPlugin[];\n    /** Server-build plugins (e.g. the SSR variants). */\n    readonly serverPlugins?: readonly BunPlugin[];\n    /** Extra Bun.build resolve conditions for the CLIENT build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements layered onto both builds. */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Project-root static directory copied to deploy root. `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Prefix of environment variables allowed into the client bundle (default `\"PUBLIC_\"`). */\n    readonly publicEnvPrefix?: string;\n    /** Reviewed false positives of the secret scan over the bundle, `public/` and prerendered pages. */\n    readonly secretExemptions?: readonly SecretExemption[];\n    /**\n     * Vite-only CSS output policy. `false` emits one aggregate stylesheet. The native Bun build does not\n     * support this switch and fails closed if it is supplied instead of silently ignoring it.\n     */\n    readonly cssCodeSplit?: boolean;\n    /**\n     * Activation policy for framework-owned SSR stylesheet links. Defaults to `\"blocking\"`; `\"deferred\"`\n     * fetches with `media=\"print\"` and promotes before hydration. With Vite, pair it with\n     * `cssCodeSplit: false`; the native Bun build supports the activation policy but keeps its existing\n     * CSS output strategy.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** Document `<title>` for the generated server entry. */\n    readonly title?: string;\n    /** Trust the edge platform's client-address header for `c.clientIp` (`cloudflare`, `vercel`). Off by\n     * default, leaving an edge app with no caller address. See {@link ServerEntryClientIp}. */\n    readonly clientIp?: ServerEntryClientIp;\n    /** How a `bun`, `node` or `deno` server stops and keeps idle connections. See\n     * {@link ServerEntrySelfHost}. */\n    readonly selfHost?: ServerEntrySelfHost;\n    /** The client entry for a server built with `optionImports.live`: that runtime's `clientEntry`. */\n    readonly live?: LiveClientEntry | undefined;\n}"
   },
   {
     "name": "BuildTargetPlan",
@@ -7182,7 +7182,7 @@
     "name": "I18nRoutingOptions",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface I18nRoutingOptions<K extends string = string> {\n    /** Prefix the default locale too (`/en/about` instead of `/about`). Default `false`. */\n    readonly prefixDefaultLocale?: boolean;\n    /**\n     * The locales a page exists in, by its pathname without the locale prefix, query or hash\n     * (`/learn/x`); `undefined` for every served locale. It must be pure: every page of one cluster\n     * has to answer the same set, or the alternates stop being reciprocal. A draft locale it names is\n     * left out; a key the registry does not declare throws.\n     *\n     * ```ts\n     * pageLocales: (pathname) => (pathname.startsWith(\"/learn/\") ? [\"en\", \"hi\"] : undefined)\n     * ```\n     */\n    readonly pageLocales?: (pathname: string) => readonly K[] | undefined;\n}"
+    "signature": "export interface I18nRoutingOptions<K extends string = string> {\n    /** Prefix the default locale too (`/en/about` instead of `/about`). Default `false`. */\n    readonly prefixDefaultLocale?: boolean;\n    /** Explicit static, unprefixed canonical path → locale path mappings. Missing translations keep\n     * the canonical pathname; availability still comes from `pageLocales`. No filesystem aliases,\n     * dynamic slug translation or domain routing are created. Unicode is emitted percent-encoded. */\n    readonly pathnames?: Readonly<Record<string, Partial<Record<K, string | undefined>>>>;\n    /**\n     * The locales a page exists in, by its canonical pathname without the locale prefix, query or hash\n     * (`/learn/x`, the declared key for a mapped page); `undefined` for every served locale. It must be\n     * pure: every page of one cluster has to answer the same set, or alternates stop being reciprocal.\n     * A draft locale it names is left out; a key the registry does not declare throws.\n     *\n     * ```ts\n     * pageLocales: (pathname) => (pathname.startsWith(\"/learn/\") ? [\"en\", \"hi\"] : undefined)\n     * ```\n     */\n    readonly pageLocales?: (pathname: string) => readonly K[] | undefined;\n}"
   },
   {
     "name": "IDEMPOTENT_REPLAY_HEADER",
@@ -7421,28 +7421,40 @@
     "name": "Image",
     "kind": "function",
     "package": "@nifrajs/web-preact",
-    "signature": "export declare function Image(props: ImageComponentProps): VNode;",
-    "doc": "/**\n * Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space);\n * `priority` marks the LCP image (`eager` + `fetchpriority=\"high\"`). Extra DOM props pass through.\n */"
+    "signature": "export declare function Image(props: ImageComponentProps | StaticImageComponentProps): VNode;",
+    "doc": "/**\n * Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them;\n * `priority` marks the LCP image (`eager` + `fetchpriority=\"high\"`). Extra DOM props pass through.\n */"
   },
   {
     "name": "Image",
     "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function Image(props: ImageComponentProps): ReactElement;",
-    "doc": "/**\n * Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space);\n * `priority` marks the LCP image (`eager` + `fetchpriority=\"high\"`). Extra DOM props pass through.\n */"
+    "signature": "export declare function Image(props: ImageComponentProps | StaticImageComponentProps): ReactElement;",
+    "doc": "/**\n * Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them;\n * `priority` marks the LCP image (`eager` + `fetchpriority=\"high\"`). Extra DOM props pass through.\n */"
   },
   {
     "name": "Image",
     "kind": "function",
     "package": "@nifrajs/web-solid",
-    "signature": "export declare function Image(props: ImageComponentProps): JSX.Element;",
-    "doc": "/**\n * Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space);\n * `priority` marks the LCP image (`eager` + `fetchpriority=\"high\"`). Extra DOM props pass through.\n */"
+    "signature": "export declare function Image(props: ImageComponentProps | StaticImageComponentProps): JSX.Element;",
+    "doc": "/**\n * Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them;\n * `priority` marks the LCP image (`eager` + `fetchpriority=\"high\"`). Extra DOM props pass through.\n */"
   },
   {
     "name": "Image",
     "kind": "const",
     "package": "@nifrajs/web-vue",
-    "signature": "export declare const Image: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    src: {\n        type: StringConstructor;\n        required: true;\n    };\n    width: {\n        type: NumberConstructor;\n        required: true;\n    };\n    height: {\n        type: NumberConstructor;\n        required: true;\n    };\n    alt: {\n        type: StringConstructor;\n        required: true;\n    };\n    sizes: {\n        type: StringConstructor;\n        required: false;\n        default: undefined;\n    };\n    widths: {\n        type: PropType<readonly number[]>;\n        required: false;\n        default: undefined;\n    };\n    quality: {\n        type: NumberConstructor;\n        required: false;\n        default: undefined;\n    };\n    loading: {\n        type: PropType<\"lazy\" | \"eager\">;\n        required: false;\n        default: undefined;\n    };\n    priority: {\n        type: BooleanConstructor;\n        required: false;\n        default: undefined;\n    };\n    loader: {\n        type: PropType<ImageLoader>;\n        required: false;\n        default: undefined;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    src: {\n        type: StringConstructor;\n        required: true;\n    };\n    width: {\n        type: NumberConstructor;\n        required: true;\n    };\n    height: {\n        type: NumberConstructor;\n        required: true;\n    };\n    alt: {\n        type: StringConstructor;\n        required: true;\n    };\n    sizes: {\n        type: StringConstructor;\n        required: false;\n        default: undefined;\n    };\n    widths: {\n        type: PropType<readonly number[]>;\n        required: false;\n        default: undefined;\n    };\n    quality: {\n        type: NumberConstructor;\n        required: false;\n        default: undefined;\n    };\n    loading: {\n        type: PropType<\"lazy\" | \"eager\">;\n        required: false;\n        default: undefined;\n    };\n    priority: {\n        type: BooleanConstructor;\n        required: false;\n        default: undefined;\n    };\n    loader: {\n        type: PropType<ImageLoader>;\n        required: false;\n        default: undefined;\n    };\n}>> & Readonly<{}>, {\n    sizes: string;\n    widths: readonly number[];\n    quality: number;\n    loading: \"lazy\" | \"eager\";\n    priority: boolean;\n    loader: ImageLoader;\n}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;"
+    "signature": "export declare const Image: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    src: {\n        type: PropType<string | StaticImageData>;\n        required: true;\n    };\n    width: {\n        type: NumberConstructor;\n        required: false;\n        default: undefined;\n    };\n    height: {\n        type: NumberConstructor;\n        required: false;\n        default: undefined;\n    };\n    alt: {\n        type: StringConstructor;\n        required: true;\n    };\n    sizes: {\n        type: StringConstructor;\n        required: false;\n        default: undefined;\n    };\n    widths: {\n        type: PropType<readonly number[]>;\n        required: false;\n        default: undefined;\n    };\n    quality: {\n        type: NumberConstructor;\n        required: false;\n        default: undefined;\n    };\n    loading: {\n        type: PropType<\"lazy\" | \"eager\">;\n        required: false;\n        default: undefined;\n    };\n    priority: {\n        type: BooleanConstructor;\n        required: false;\n        default: undefined;\n    };\n    loader: {\n        type: PropType<ImageLoader>;\n        required: false;\n        default: undefined;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    src: {\n        type: PropType<string | StaticImageData>;\n        required: true;\n    };\n    width: {\n        type: NumberConstructor;\n        required: false;\n        default: undefined;\n    };\n    height: {\n        type: NumberConstructor;\n        required: false;\n        default: undefined;\n    };\n    alt: {\n        type: StringConstructor;\n        required: true;\n    };\n    sizes: {\n        type: StringConstructor;\n        required: false;\n        default: undefined;\n    };\n    widths: {\n        type: PropType<readonly number[]>;\n        required: false;\n        default: undefined;\n    };\n    quality: {\n        type: NumberConstructor;\n        required: false;\n        default: undefined;\n    };\n    loading: {\n        type: PropType<\"lazy\" | \"eager\">;\n        required: false;\n        default: undefined;\n    };\n    priority: {\n        type: BooleanConstructor;\n        required: false;\n        default: undefined;\n    };\n    loader: {\n        type: PropType<ImageLoader>;\n        required: false;\n        default: undefined;\n    };\n}>> & Readonly<{}>, {\n    width: number;\n    height: number;\n    sizes: string;\n    widths: readonly number[];\n    quality: number;\n    loading: \"lazy\" | \"eager\";\n    priority: boolean;\n    loader: ImageLoader;\n}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;"
+  },
+  {
+    "name": "ImageAssetPlugin",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface ImageAssetPlugin {\n    /** Nifra emits these content-hashed files with the bundle, never into the application's sources. */\n    nifraStaticAssets(): readonly ImageBuildAsset[];\n}"
+  },
+  {
+    "name": "ImageAssets",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface ImageAssets {\n    /** Start a new module graph without retaining images from an earlier build. */\n    clear(): void;\n    load(file: string): Promise<StaticImageData>;\n    assets(): readonly ImageBuildAsset[];\n}"
   },
   {
     "name": "ImageBackend",
@@ -7450,6 +7462,26 @@
     "package": "@nifrajs/image",
     "signature": "export interface ImageBackend {\n    /** Cheap, header-only metadata read. Throws {@link ImageProcessingError} (`decode` / `too_large`). */\n    probe(bytes: Uint8Array): Promise<ImageProbe>;\n    /** Decode → resize to `input.width` (aspect-preserving) → encode to `input.format`. */\n    transform(input: ResizeInput): Promise<ResizeOutput>;\n}",
     "doc": "/**\n * The codec seam. The handler owns all request-level security (validation, SSRF, byte/pixel caps,\n * concurrency, caching); a backend only decodes/resizes/encodes. Backends MUST translate codec failures\n * into {@link ImageProcessingError} so the handler can map them to stable HTTP statuses.\n */"
+  },
+  {
+    "name": "ImageBuildAsset",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface ImageBuildAsset {\n    readonly fileName: string;\n    readonly source: Uint8Array;\n}",
+    "doc": "/** The structural asset hook consumed by Nifra's build pipelines. Paths are relative to /assets/. */"
+  },
+  {
+    "name": "ImageBuildOptions",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface ImageBuildOptions {\n    /** Only local files beneath this directory may be imported (symlinks are resolved). */\n    readonly root?: string;\n    /** Match the client build's publicPath. Default `/assets/`. */\n    readonly publicPath?: string;\n    /** Omit for codec-free metadata imports. Requested widths are clamped to the source width. */\n    readonly widths?: readonly number[];\n    /** Required when widths are requested; inject sharp, Bun.Image, or a WASM backend explicitly. */\n    readonly backend?: ImageBackend;\n    readonly format?: OutputFormat;\n    readonly quality?: number;\n    readonly maxSourceBytes?: number;\n    readonly maxSourcePixels?: number;\n}"
+  },
+  {
+    "name": "ImageBunPlugin",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface ImageBunPlugin extends ImageAssetPlugin {\n    readonly name: string;\n    setup(build: ImageBunBuild): void;\n}",
+    "doc": "/** Structural Bun hooks keep the shared plugin entry usable without Bun's ambient types. */"
   },
   {
     "name": "ImageComponentProps",
@@ -7495,6 +7527,12 @@
     "signature": "export interface ImageInfo {\n    readonly width: number;\n    readonly height: number;\n    readonly format: ImageFormat;\n}"
   },
   {
+    "name": "ImageInputProps",
+    "kind": "type",
+    "package": "@nifrajs/image",
+    "signature": "export type ImageInputProps = ImageProps | StaticImageProps;"
+  },
+  {
     "name": "ImageLoader",
     "kind": "type",
     "package": "@nifrajs/image",
@@ -7507,6 +7545,12 @@
     "package": "@nifrajs/uploads",
     "signature": "export declare class ImagePixelLimitError extends Error {\n    readonly width: number;\n    readonly height: number;\n    readonly maxPixels: number;\n    constructor(width: number, height: number, maxPixels: number);\n}",
     "doc": "/** Thrown before decoding a source larger than `maxPixels`; answer it with a `413`. */"
+  },
+  {
+    "name": "ImagePresentationProps",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface ImagePresentationProps {\n    /** Alt text - **required** for accessibility (use `alt=\"\"` for decorative images). */\n    readonly alt: string;\n    /** `sizes` attribute for responsive selection (e.g. `\"(max-width: 600px) 100vw, 600px\"`). */\n    readonly sizes?: string;\n    /** Widths to generate `srcSet` entries for. Default: `[width, width*2]` (1×/2× retina). */\n    readonly widths?: readonly number[];\n    /** Quality passed to the loader. */\n    readonly quality?: number;\n    /** `lazy` (default) or `eager`. `priority` overrides this to eager. */\n    readonly loading?: \"lazy\" | \"eager\";\n    /** Mark the LCP image: `loading=\"eager\"` + `fetchpriority=\"high\"`. */\n    readonly priority?: boolean;\n}"
   },
   {
     "name": "ImageProbe",
@@ -7526,7 +7570,8 @@
     "name": "ImageProps",
     "kind": "interface",
     "package": "@nifrajs/image",
-    "signature": "export interface ImageProps {\n    readonly src: string;\n    /** Intrinsic width (px) - **required**, reserves layout space (no CLS). */\n    readonly width: number;\n    /** Intrinsic height (px) - **required** (no CLS). */\n    readonly height: number;\n    /** Alt text - **required** for accessibility (use `alt=\"\"` for decorative images). */\n    readonly alt: string;\n    /** `sizes` attribute for responsive selection (e.g. `\"(max-width: 600px) 100vw, 600px\"`). */\n    readonly sizes?: string;\n    /** Widths to generate `srcSet` entries for. Default: `[width, width*2]` (1×/2× retina). */\n    readonly widths?: readonly number[];\n    /** Quality passed to the loader. */\n    readonly quality?: number;\n    /** `lazy` (default) or `eager`. `priority` overrides this to eager. */\n    readonly loading?: \"lazy\" | \"eager\";\n    /** Mark the LCP image: `loading=\"eager\"` + `fetchpriority=\"high\"`. */\n    readonly priority?: boolean;\n}"
+    "signature": "export interface ImageProps extends ImagePresentationProps {\n    readonly src: string;\n    readonly width: number;\n    readonly height: number;\n}",
+    "doc": "/** String URLs retain the original, extendable props contract. */"
   },
   {
     "name": "ImageReencoder",
@@ -7534,6 +7579,13 @@
     "package": "@nifrajs/uploads",
     "signature": "export interface ImageReencoder {\n    probe(bytes: Uint8Array): Promise<{\n        readonly width: number;\n        readonly height: number;\n        readonly format: string;\n    }>;\n    transform(input: {\n        readonly bytes: Uint8Array;\n        readonly width: number;\n        readonly quality: number;\n        readonly format: StripFormat;\n    }): Promise<{\n        readonly bytes: Uint8Array;\n    }>;\n}",
     "doc": "/** The slice of `@nifrajs/image`'s `ImageBackend` this needs - `probe` for dims/format, `transform` to re-encode. */"
+  },
+  {
+    "name": "ImageVitePlugin",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface ImageVitePlugin extends ImageAssetPlugin {\n    readonly name: string;\n    readonly enforce: \"pre\";\n    configResolved(): void;\n    load(this: ImageLoadContext, id: string): Promise<string | undefined>;\n    configureServer(server: ImageDevServer): void;\n}",
+    "doc": "/** Structural Vite plugin type: the image package does not depend on Vite at runtime. */"
   },
   {
     "name": "ImpactReport",
@@ -8876,7 +8928,7 @@
     "name": "LocalizedRouter",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface LocalizedRouter<K extends string = string> {\n    /** The registry this router reads. */\n    readonly locales: Locales<K>;\n    /** Prefix `path` with `locale` (`/about` → `/fr/about`), unless it is the unprefixed default.\n     * The query and trailing slash ride along, the hash too; an already-prefixed path is re-prefixed.\n     * A locale that is not served throws. */\n    localizePathname(path: string, locale: K, options?: LocalizeOptions): string;\n    /** Strip a served locale prefix (`/fr/about` → `{ locale: \"fr\", pathname: \"/about\" }`). Anything\n     * else - `/frank`, a draft's prefix - returns `{ locale: undefined }` with the path unchanged. */\n    unlocalizePathname(path: string): UnlocalizedPath<K>;\n    /** The served locale a path's first segment names, or `undefined` when unprefixed. */\n    getPathLocale(path: string): K | undefined;\n    /** The locale a path is in: its prefix, or the default for an unprefixed path. */\n    localeOf(path: string): K;\n    /** The served locales the page at `path` exists in (any prefix, or none), in registry order: what\n     * `pageLocales` says, or every served locale. Also a prerender's static paths. */\n    localesOf(path: string): readonly K[];\n    /** The page's canonical URL and its `hreflang` alternates, one per locale the page exists in\n     * (`pageLocales`, unless `options.locales` names them). `path` may carry any served prefix or none\n     * (it decides the canonical's locale); its query is kept and its hash dropped. A page in one locale\n     * only, or in none, has no alternates. */\n    alternates(path: string, options?: AlternatesOptions<K>): Alternates;\n    /**\n     * Check the value of a `[lang]` / `[[lang]]` route segment that is the path's first segment.\n     * `pathname` is the request's path (query allowed), used to build a redirect. A page that does not\n     * exist in the locale (`pageLocales`) is not found.\n     *\n     * ```ts\n     * // routes/[lang]/_layout.backend.ts\n     * import { notFound, type RouteMiddleware, redirect } from \"@nifrajs/web\"\n     * import { urls } from \"../../shared/i18n\"\n     *\n     * export const middleware: RouteMiddleware = (ctx) => {\n     *   const { pathname, search } = new URL(ctx.request.url)\n     *   const match = urls.matchSegment(ctx.params.lang, pathname + search)\n     *   if (match.kind === \"not-found\") notFound()\n     *   if (match.kind === \"redirect\") return redirect(match.location, { status: 308 })\n     * }\n     * ```\n     */\n    matchSegment(value: string | undefined, pathname: string): SegmentMatch<K>;\n}"
+    "signature": "export interface LocalizedRouter<K extends string = string> {\n    /** The registry this router reads. */\n    readonly locales: Locales<K>;\n    /** Prefix `path` with `locale` (`/about` → `/fr/about`), unless it is the unprefixed default.\n     * The query and trailing slash ride along, the hash too; an already-localized path is translated\n     * through its canonical mapping. A locale that is not served throws. */\n    localizePathname(path: string, locale: K, options?: LocalizeOptions): string;\n    /** Strip a served locale prefix and resolve a translated static pathname to its canonical path.\n     * Unmapped paths keep their spelling; unknown and draft prefixes remain ordinary segments. */\n    unlocalizePathname(path: string): UnlocalizedPath<K>;\n    /** The served locale a path's first segment names, or `undefined` when unprefixed. */\n    getPathLocale(path: string): K | undefined;\n    /** The locale a path is in: its prefix, or the default for an unprefixed path. */\n    localeOf(path: string): K;\n    /** The served locales the page at `path` exists in (any prefix, or none), in registry order: what\n     * `pageLocales` says, or every served locale. The callback sees the canonical mapping key. */\n    localesOf(path: string): readonly K[];\n    /** Mapped public paths only, in mapping declaration then served registry order, filtered by\n     * `pageLocales`. Unmapped filesystem routes are not enumerated. No query, hash or trailing slash. */\n    staticPathnames(): readonly string[];\n    /** The page's canonical URL and its `hreflang` alternates, one per locale the page exists in\n     * (`pageLocales`, unless `options.locales` names them). `path` may carry any served prefix or none\n     * (it decides the canonical's locale); its query is kept and its hash dropped. A page in one locale\n     * only, or in none, has no alternates. */\n    alternates(path: string, options?: AlternatesOptions<K>): Alternates;\n    /**\n     * Check the value of a `[lang]` / `[[lang]]` route segment that is the path's first segment.\n     * `pathname` is the request's path (query allowed), used to build a redirect. A page that does not\n     * exist in the locale (`pageLocales`) is not found.\n     *\n     * ```ts\n     * // routes/[lang]/_layout.backend.ts\n     * import { notFound, type RouteMiddleware, redirect } from \"@nifrajs/web\"\n     * import { urls } from \"../../shared/i18n\"\n     *\n     * export const middleware: RouteMiddleware = (ctx) => {\n     *   const { pathname, search } = new URL(ctx.request.url)\n     *   const match = urls.matchSegment(ctx.params.lang, pathname + search)\n     *   if (match.kind === \"not-found\") notFound()\n     *   if (match.kind === \"redirect\") return redirect(match.location, { status: 308 })\n     * }\n     * ```\n     */\n    matchSegment(value: string | undefined, pathname: string): SegmentMatch<K>;\n}"
   },
   {
     "name": "Location",
@@ -14883,7 +14935,7 @@
     "name": "SegmentMatch",
     "kind": "type",
     "package": "@nifrajs/i18n",
-    "signature": "export type SegmentMatch<K extends string = string> = {\n    readonly kind: \"ok\";\n    readonly locale: K;\n}\n/** Not a served locale (unknown, or a draft): answer 404. */\n | {\n    readonly kind: \"not-found\";\n}\n/** A served locale under a non-canonical URL - the default's prefix when the default is served\n * unprefixed, or the wrong case. `location` is the canonical path, query kept. */\n | {\n    readonly kind: \"redirect\";\n    readonly location: string;\n};",
+    "signature": "export type SegmentMatch<K extends string = string> = {\n    readonly kind: \"ok\";\n    readonly locale: K;\n}\n/** Not a served locale (unknown, or a draft): answer 404. */\n | {\n    readonly kind: \"not-found\";\n}\n/** A served locale under a non-canonical URL - the default's prefix when the default is served\n * unprefixed, the wrong case, or a mapped page's canonical source spelling instead of its translated\n * spelling. `location` is the canonical localized path, query kept and hash dropped. */\n | {\n    readonly kind: \"redirect\";\n    readonly location: string;\n};",
     "doc": "/** What a `[lang]` segment value means for the request. */"
   },
   {
@@ -15911,6 +15963,50 @@
     "package": "@nifrajs/core",
     "signature": "export interface StaticFileAccess {\n    /** The real path the file was opened at: what tags and types it. */\n    readonly path: string;\n    readonly version: FileVersion;\n    /** Read the whole file, up to {@link CONTENT_SNAPSHOT_MAX} bytes, through the open descriptor. */\n    readonly readWhole: () => Promise<Uint8Array>;\n    /** Stat the open descriptor again. */\n    readonly restat: () => Promise<FileVersion>;\n    readonly tags: ContentTags;\n    /** `@nifrajs/core/range`'s parser, passed in so this module imports nothing. */\n    readonly parseRange: (value: string, size: number) => {\n        readonly kind: \"none\" | \"unsatisfiable\";\n    } | {\n        readonly kind: \"satisfiable\";\n        readonly ranges: readonly {\n            readonly start: number;\n            readonly end: number;\n        }[];\n    };\n}",
     "doc": "/** How a reader reaches the opened, pinned file for {@link planStatic}. */"
+  },
+  {
+    "name": "StaticImageComponentProps",
+    "kind": "type",
+    "package": "@nifrajs/web-preact",
+    "signature": "export type StaticImageComponentProps = StaticImageProps & Omit<ImageComponentProps, \"src\" | \"width\" | \"height\">;"
+  },
+  {
+    "name": "StaticImageComponentProps",
+    "kind": "type",
+    "package": "@nifrajs/web-react",
+    "signature": "export type StaticImageComponentProps = StaticImageProps & Omit<ImageComponentProps, \"src\" | \"width\" | \"height\">;"
+  },
+  {
+    "name": "StaticImageComponentProps",
+    "kind": "type",
+    "package": "@nifrajs/web-solid",
+    "signature": "export type StaticImageComponentProps = StaticImageProps & Omit<ImageComponentProps, \"src\" | \"width\" | \"height\">;"
+  },
+  {
+    "name": "StaticImageComponentProps",
+    "kind": "type",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export type StaticImageComponentProps = StaticImageProps &\n  Omit<ImageComponentProps, \"src\" | \"width\" | \"height\">"
+  },
+  {
+    "name": "StaticImageData",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface StaticImageData {\n    readonly src: string;\n    readonly width: number;\n    readonly height: number;\n    readonly variants?: readonly StaticImageVariant[];\n}",
+    "doc": "/** Intrinsic display dimensions (including EXIF orientation), plus optional prebuilt variants. */"
+  },
+  {
+    "name": "StaticImageProps",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface StaticImageProps extends ImagePresentationProps {\n    readonly src: StaticImageData;\n    readonly width?: number;\n    readonly height?: number;\n}"
+  },
+  {
+    "name": "StaticImageVariant",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface StaticImageVariant {\n    readonly src: string;\n    readonly width: number;\n    readonly height: number;\n}",
+    "doc": "/** Browser-safe output of an `?image` import. No filesystem or codec enters the client. */"
   },
   {
     "name": "StaticMatch",
@@ -16968,8 +17064,8 @@
     "name": "UnlocalizedPath",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface UnlocalizedPath<K extends string = string> {\n    /** The served locale the leading segment named, or `undefined` for an unprefixed path. */\n    readonly locale: K | undefined;\n    /** The path without the locale segment, always starting with `/`. */\n    readonly pathname: string;\n}",
-    "doc": "/** A pathname with its locale prefix removed (or not, when it carries none). */"
+    "signature": "export interface UnlocalizedPath<K extends string = string> {\n    /** The served locale the leading segment named, or `undefined` for an unprefixed path. */\n    readonly locale: K | undefined;\n    /** The canonical unprefixed path, always starting with `/`; mapped Unicode is URL-encoded. */\n    readonly pathname: string;\n}",
+    "doc": "/** A canonical pathname with its locale prefix removed (or not, when it carries none). */"
   },
   {
     "name": "UnsafeScriptDescriptor",
@@ -17164,6 +17260,13 @@
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type VercelOptions = ({\n    /** `invalidateByTag` from `@vercel/functions`: inside a Vercel Function, no token needed. */\n    readonly invalidateByTag: TagPurge;\n    /** `dangerouslyDeleteByTag` from `@vercel/functions`, for `mode: \"delete\"`. */\n    readonly dangerouslyDeleteByTag?: TagPurge;\n} | {\n    /** A Vercel access token for the REST API. Keep it in an env var. */\n    readonly token: string;\n    readonly projectId: string;\n    readonly teamId?: string;\n    /** Purge one environment only; default both. */\n    readonly target?: \"production\" | \"preview\";\n    /** The fetch purge calls go through; tests pass their own. */\n    readonly fetch?: typeof fetch;\n}) & {\n    /**\n     * `invalidate` (default) marks tagged pages stale: the next visitor gets the old page while Vercel\n     * refetches. `delete` drops them, so the next visitors wait on the origin together.\n     */\n    readonly mode?: \"invalidate\" | \"delete\";\n    readonly queue?: PurgeQueueOptions;\n};"
+  },
+  {
+    "name": "VercelRuntime",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type VercelRuntime = \"edge\" | \"node\";",
+    "doc": "/** Ordinary Vercel SSR uses Edge unless Node is explicitly selected. */"
   },
   {
     "name": "VerificationCompletedView",
@@ -19192,6 +19295,13 @@
     "doc": "/**\n * Declare which pages and files each host serves. Hand the result to `createWebApp({ hostPolicy })`\n * (or export it as `hostPolicy` from the framework module, which `nifra build`'s server entry reads):\n * it is evaluated before the build's static files, the prerendered pages, the mounts and every page.\n * On Vercel the CDN answers the build's files before the function runs, so there it covers the rest.\n * A hand-written entry calls `check(request, buildAssets)` first, before its own static handler.\n *\n * ```ts\n * export const hostPolicy = createHostPolicy({\n *   rules: [{\n *     hosts: (host) => !OWN_HOSTS.has(host),\n *     pages: [\"/\", \"/p/:id\", \"/share/*\"],\n *     paths: [\"/api/submissions/*\"],\n *   }],\n * })\n * ```\n */"
   },
   {
+    "name": "createImageAssets",
+    "kind": "function",
+    "package": "@nifrajs/image",
+    "signature": "export declare function createImageAssets(options?: ImageBuildOptions): ImageAssets;",
+    "doc": "/** Shared builder for client/SSR imports. Processing results depend on bytes, never absolute paths. */"
+  },
+  {
     "name": "createImageHandler",
     "kind": "function",
     "package": "@nifrajs/image",
@@ -20760,7 +20870,7 @@
     "name": "generateServerEntry",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function generateServerEntry(options: {\n    readonly target: BuildTarget;\n    /** Import specifier for the module exporting `adapter` (e.g. `\"../framework.ts\"`). */\n    readonly adapterImport: string;\n    /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */\n    readonly backendImport?: string;\n    /** Import specifier for the module exporting `use`, or `undefined`. Must resolve to the\n     * same edge-safe module as `adapterImport`. */\n    readonly useImport?: string;\n    /** `createWebApp` options to import by name, each mapped to the specifier of the edge-safe module\n     * that exports it. */\n    readonly optionImports?: ServerEntryOptionImports;\n    /** Document `<title>` passed to `createWebApp`. */\n    readonly title?: string;\n    /** Encoded root-relative public file paths copied into the deploy directory. */\n    readonly publicFiles?: readonly string[];\n    /** URL paths of the content-hashed client outputs (the build manifest's `assets`). When given, a\n     * self-hosted entry caches only these immutably; otherwise every file under `/assets/` is. */\n    readonly hashedFiles?: readonly string[];\n    /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */\n    readonly clientIp?: ServerEntryClientIp;\n    /** How a self-hosted server stops and keeps idle connections. See {@link ServerEntrySelfHost}. */\n    readonly selfHost?: ServerEntrySelfHost;\n    /** The server manifest exports `copyChunks` (the client build split copy tables by locale). */\n    readonly copyChunks?: boolean;\n    /** `bun` / `node` only: the pages the build prerendered into `_prerendered/`, by request path, which\n     * the app answers from their file (see `createWebApp`'s `prerenderedPages`). */\n    readonly prerenderedPages?: Readonly<Record<string, ServerPrerenderedPage>>;\n}): string;",
+    "signature": "export declare function generateServerEntry(options: {\n    readonly target: BuildTarget;\n    /** Vercel-only runtime selection; Edge remains the default. */\n    readonly vercelRuntime?: VercelRuntime;\n    /** Import specifier for the module exporting `adapter` (e.g. `\"../framework.ts\"`). */\n    readonly adapterImport: string;\n    /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */\n    readonly backendImport?: string;\n    /** Import specifier for the module exporting `use`, or `undefined`. Must resolve to the\n     * same edge-safe module as `adapterImport`. */\n    readonly useImport?: string;\n    /** `createWebApp` options to import by name, each mapped to the specifier of the edge-safe module\n     * that exports it. */\n    readonly optionImports?: ServerEntryOptionImports;\n    /** Document `<title>` passed to `createWebApp`. */\n    readonly title?: string;\n    /** Encoded root-relative public file paths copied into the deploy directory. */\n    readonly publicFiles?: readonly string[];\n    /** URL paths of the content-hashed client outputs (the build manifest's `assets`). When given, a\n     * self-hosted entry caches only these immutably; otherwise every file under `/assets/` is. */\n    readonly hashedFiles?: readonly string[];\n    /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */\n    readonly clientIp?: ServerEntryClientIp;\n    /** How a self-hosted server stops and keeps idle connections. See {@link ServerEntrySelfHost}. */\n    readonly selfHost?: ServerEntrySelfHost;\n    /** The server manifest exports `copyChunks` (the client build split copy tables by locale). */\n    readonly copyChunks?: boolean;\n    /** `bun` / `node` only: the pages the build prerendered into `_prerendered/`, by request path, which\n     * the app answers from their file (see `createWebApp`'s `prerenderedPages`). */\n    readonly prerenderedPages?: Readonly<Record<string, ServerPrerenderedPage>>;\n}): string;",
     "doc": "/**\n * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports\n * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the\n * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires\n * the right host:\n *   - `cloudflare` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).\n *   - `deno`: a `@nifrajs/deno` server that serves the client bundle with Deno's file API.\n *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those\n *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).\n * `adapterImport`/`backendImport` are the specifiers the entry uses (relative to where it's written) -\n * `buildServer` writes the entry next to `serverEntry`, so they're resolved from there. Pure (string in,\n * string out) so the generation is unit-testable without a real build.\n */"
   },
   {
@@ -21088,11 +21198,25 @@
     "doc": "/**\n * Whether `If-Range` (the header, or `null`) lets a range request be answered partially; otherwise the\n * whole file is the conformant answer, not a fallback. An entity tag must equal the file's strong\n * `etag` (RFC 9110 section 13.1.5). A date must equal `lastModified` to the second, and counts only\n * for a file with no strong tag: a client holding the tag sends it, and a date cannot tell apart two\n * versions dated in the same second - here or on another instance - so resuming by one could splice\n * them.\n */"
   },
   {
+    "name": "imageBunPlugin",
+    "kind": "function",
+    "package": "@nifrajs/image",
+    "signature": "export declare function imageBunPlugin(options?: ImageBuildOptions): ImageBunPlugin;",
+    "doc": "/** Install in both clientPlugins and serverPlugins; no codec is loaded unless explicitly supplied. */"
+  },
+  {
     "name": "imageDimensions",
     "kind": "function",
     "package": "@nifrajs/image",
     "signature": "export declare function imageDimensions(bytes: Uint8Array): ImageInfo | null;",
     "doc": "/** Parse intrinsic dimensions + format from image header bytes, or `null` if unrecognized/too short. */"
+  },
+  {
+    "name": "imageVitePlugin",
+    "kind": "function",
+    "package": "@nifrajs/image",
+    "signature": "export declare function imageVitePlugin(options?: ImageBuildOptions): ImageVitePlugin;",
+    "doc": "/** Use in vitePlugins for both development and production; the dev middleware serves hashed bytes. */"
   },
   {
     "name": "implement",
@@ -22837,7 +22961,7 @@
     "name": "planBuildTarget",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function planBuildTarget(target: BuildTarget, outDir: string): BuildTargetPlan;",
+    "signature": "export declare function planBuildTarget(target: BuildTarget, outDir: string, vercelRuntime?: VercelRuntime): BuildTargetPlan;",
     "doc": "/**\n * Resolve the target-specific deploy shape before any bundling starts. Keeping this decision pure\n * means Bun and Vite strategies share the same output filename, server target, and hand-off text;\n * the filesystem emitter only has to execute the plan.\n */"
   },
   {
@@ -23742,8 +23866,8 @@
     "name": "resolveImage",
     "kind": "function",
     "package": "@nifrajs/image",
-    "signature": "export declare function resolveImage(props: ImageProps, loader?: ImageLoader): ResolvedImage;",
-    "doc": "/**\n * Resolve {@link ImageProps} + an {@link ImageLoader} into `<img>` attributes. CLS-safe (`width`/\n * `height` required + > 0, else a dev error), lazy + async-decoding by default, with a responsive\n * `srcSet` built from `widths` via the loader. If every width produces the same URL (e.g.\n * {@link identityLoader}), `srcSet` is omitted (it'd be redundant).\n */"
+    "signature": "export declare function resolveImage(props: ImageInputProps, loader?: ImageLoader): ResolvedImage;",
+    "doc": "/**\n * Resolve a URL or imported asset into CLS-safe attributes. Explicit dimensions override imported\n * metadata; supplying just one scales the other to preserve the source's aspect ratio. Prebuilt\n * variants need no runtime loader. An explicit CDN loader takes precedence over those variants.\n */"
   },
   {
     "name": "resolveLocale",
@@ -26157,6 +26281,13 @@
     "package": "@nifrajs/uploads",
     "signature": "export declare function validateUpload(input: Uint8Array | ArrayBuffer | Blob, options: ValidateUploadOptions): Promise<UploadResult>;",
     "doc": "/** Validate uploaded bytes/Blob: size cap + magic-byte type sniff against an optional allow-list. */"
+  },
+  {
+    "name": "validateVercelRuntime",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function validateVercelRuntime(target: BuildTarget, runtime: unknown): void;",
+    "doc": "/** Validate before any deploy directory is cleared, including untyped config/API callers. */"
   },
   {
     "name": "vanillaAdapter",

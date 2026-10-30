@@ -2150,6 +2150,14 @@ function writesTo(ts: TypeScriptApi, root: TSApi.Node, name: string): SqlWrite[]
 }
 
 function mentionsName(ts: TypeScriptApi, node: TSApi.Node, name: string): boolean {
+  // A member/key named like the variable does not read that variable (`record = client.record()`).
+  if (ts.isPropertyAccessExpression(node)) return mentionsName(ts, node.expression, name)
+  if (ts.isPropertyAssignment(node)) {
+    return (
+      mentionsName(ts, node.initializer, name) ||
+      (ts.isComputedPropertyName(node.name) && mentionsName(ts, node.name.expression, name))
+    )
+  }
   if (ts.isIdentifier(node)) return node.text === name
   return ts.forEachChild(node, (child) => mentionsName(ts, child, name) || undefined) === true
 }

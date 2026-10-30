@@ -1,3 +1,5 @@
+import { nodeHandlerSource } from "../internal/node-handler-source.ts"
+
 export interface ComponentEntryOptions {
   readonly build: string
   readonly entry: string
@@ -60,31 +62,7 @@ export function componentServerEntry(options: ComponentEntryOptions): string {
     ].join("\n")}\n`
   const http = [
     'import { createServer } from "node:http"',
-    'import { Readable } from "node:stream"',
-    'import { pipeline } from "node:stream/promises"',
-    "const handle = async (req, res) => {",
-    "  const abort = new AbortController()",
-    "  const close = () => { if (!res.writableEnded) abort.abort() }",
-    '  res.on("close", close)',
-    "  try {",
-    "    const headers = new Headers()",
-    "    for (let i = 0; i < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i], req.rawHeaders[i + 1])",
-    // Resolving the target against a base reads `//evil.example/admin` as a host; the origin comes
-    // from a validated Host header, and an absolute-form target is routed by its path.
-    '    const host = req.headers.host ?? "localhost"',
-    "    if (!/^[\\w.:[\\]-]+$/.test(host)) { res.writeHead(400); res.end(); return }",
-    '    const target = req.url.startsWith("/") ? req.url : ((url) => url.pathname + url.search)(new URL(req.url))',
-    '    const request = new Request("http://" + host + target, { method: req.method, headers, signal: abort.signal, ...(["GET", "HEAD"].includes(req.method) ? {} : { body: Readable.toWeb(req), duplex: "half" }) })',
-    "    const response = await serve(request)",
-    "    res.statusCode = response.status",
-    '    for (const [name, value] of response.headers) if (name !== "set-cookie") res.setHeader(name, value)',
-    "    const cookies = response.headers.getSetCookie()",
-    '    if (cookies.length) res.setHeader("set-cookie", cookies)',
-    '    if (response.body && req.method !== "HEAD") await pipeline(Readable.fromWeb(response.body), res)',
-    "    else res.end()",
-    '  } catch { if (!res.headersSent) res.writeHead(500); res.end("component_failed") }',
-    '  finally { res.off("close", close) }',
-    "}",
+    ...nodeHandlerSource({ fetch: "serve(request)", failure: "component_failed" }),
   ]
   return `${[
     ...setup,

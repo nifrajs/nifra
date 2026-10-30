@@ -159,6 +159,8 @@ Usage:
                                          _routes.json. The server entry is generated from your
                                          backend/framework.ts (adapter) + backend/app.ts + routes/.
                                          --report prints a per-chunk size + gzip table (biggest first).
+                                         Vercel defaults to Edge; export vercelRuntime = "node" from
+                                         nifra.config.ts for ordinary Node.js 22 serverless SSR.
                 [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
                                          (faster, Bun-native) unless your ONLY transforms are
                                          \`vitePlugins\`, which the Bun build cannot run - then Vite,
@@ -830,7 +832,9 @@ async function buildForTarget(
   flag: string | undefined,
   flags: Flags,
 ): Promise<void> {
-  const { parseBuildTarget, renderSizeReport } = await import("@nifrajs/web/build")
+  const { parseBuildTarget, renderSizeReport, validateVercelRuntime } = await import(
+    "@nifrajs/web/build"
+  )
   const target = parseBuildTarget(
     flag ?? app.framework.target ?? "bun",
     flag === undefined ? "target in nifra.config.ts" : "--target",
@@ -839,7 +843,13 @@ async function buildForTarget(
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
   const { framework: fw } = app
+  validateVercelRuntime(target, fw.vercelRuntime)
   if (fw.componentPipeline !== undefined) {
+    // The component pipeline already owns its Vercel Node handler; this selector is ordinary SSR only.
+    if (fw.vercelRuntime !== undefined)
+      throw new Error(
+        "[nifra/components] vercelRuntime selects ordinary SSR only; omit it for the component pipeline",
+      )
     if (flags.bun)
       throw new Error(
         "[nifra/components] Components require the Vite 8 pipeline; Bun remains a server runtime",
@@ -954,6 +964,7 @@ async function buildForTarget(
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
+    ...(fw.vercelRuntime !== undefined ? { vercelRuntime: fw.vercelRuntime } : {}),
     ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
     live: fw.live?.clientEntry,
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server

@@ -72,7 +72,7 @@ export async function preparePprApp(setup: PprFixtureSetup = REACT): Promise<Pre
     routesDir,
     manifest: discoverRoutes(routesDir),
     deployment: assets.entry,
-    requestScoped: (id) => id.endsWith("/ppr/app/lib/session.ts"),
+    requestScoped: (id) => id.endsWith("/ppr/app/lib/session.backend.ts"),
     plugins: setup.serverPlugins,
     onFailure: (routeId, error) =>
       shellFailures.push([routeId, error instanceof Error ? error.message : String(error)]),

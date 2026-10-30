@@ -54,11 +54,17 @@ const gif = (b: Uint8Array, dv: DataView): ImageInfo | null => {
 }
 
 /** The EXIF orientation (1-8) an APP1 segment's TIFF block declares, read within `[start, end)`. */
-const exifOrientation = (b: Uint8Array, dv: DataView, start: number, end: number): number => {
+const exifOrientation = (b: Uint8Array, start: number, end: number): number => {
   // "Exif\0\0", then a TIFF header: byte order ("II" little / "MM" big), 42, IFD0's offset.
   const exif = [0x45, 0x78, 0x69, 0x66, 0, 0]
   if (start + 14 > end || exif.some((byte, i) => b[start + i] !== byte)) return 1
-  const tiff = start + 6
+  return tiffOrientation(b, start + 6, end)
+}
+
+/** Internal shared TIFF reader, also used by build-time PNG/WebP container metadata. */
+export function tiffOrientation(b: Uint8Array, tiff: number, end: number): number {
+  if (tiff < 0 || end > b.length || tiff + 8 > end) return 1
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength)
   const little = b[tiff] === 0x49 && b[tiff + 1] === 0x49
   if (!little && !(b[tiff] === 0x4d && b[tiff + 1] === 0x4d)) return 1
   if (dv.getUint16(tiff + 2, little) !== 42) return 1
@@ -91,7 +97,7 @@ const jpegFrame = (
     }
     const next = offset + 2 + dv.getUint16(offset + 2) // skip this segment (2-byte marker + length)
     if (marker === 0xe1 && orientation === 1) {
-      orientation = exifOrientation(b, dv, offset + 4, Math.min(next, b.length))
+      orientation = exifOrientation(b, offset + 4, Math.min(next, b.length))
     }
     offset = next
   }

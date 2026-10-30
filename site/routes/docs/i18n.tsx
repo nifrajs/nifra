@@ -76,6 +76,47 @@ export function meta({ params, origin }: MetaArgs): Meta {
   }
 }`
 
+const TRANSLATED_PATHNAMES = `// shared/i18n.ts - explicit STATIC pathname translations, not content or dynamic slug translation.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+
+const locales = defineLocales({ default: "en", locales: { en: {}, fr: {}, de: {} } })
+export const urls = defineI18nRouting(locales, {
+  pathnames: {
+    "/about": { fr: "/a-propos", de: "/ueber-uns" },
+    "/contact": { fr: "/contactez-nous" }, // Missing German name; availability is separate below.
+  },
+  // Always the canonical key, even when the incoming URL is /fr/contactez-nous.
+  pageLocales: (path) => path === "/contact" ? ["en", "fr"] : undefined,
+})
+
+urls.localizePathname("/about", "fr") // "/fr/a-propos"
+urls.localizePathname("/fr/a-propos", "de") // "/de/ueber-uns"
+urls.unlocalizePathname("/de/ueber-uns") // { locale: "de", pathname: "/about" }
+urls.alternates("/fr/a-propos").canonical // "/fr/a-propos"
+urls.staticPathnames() // ["/about", "/fr/a-propos", "/de/ueber-uns", "/contact", "/fr/contactez-nous"]`
+
+const TRANSLATED_DISPATCH = `// doc-check: skip - imports the app's own routing module and generated route types.
+// routes/[...path].backend.ts, paired with routes/[...path].tsx rendering props.data.page.
+// A root catch-all receives /about, /fr/a-propos and /de/ueber-uns; it needs at least one segment.
+import { notFound, redirect } from "@nifrajs/web"
+import { t } from "@nifrajs/schema"
+import { urls } from "../shared/i18n"
+import type { Route } from "./+types/[...path]"
+
+const pages = new Map([["/about", "about"], ["/contact", "contact"]])
+export const loaderOutput = t.object({ page: t.string(), locale: t.string() })
+export function loader({ request }: Route.LoaderArgs) {
+  const { pathname, search } = new URL(request.url)
+  const match = urls.matchSegment(urls.getPathLocale(pathname), pathname + search)
+  if (match.kind === "not-found") notFound()
+  if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+  const canonical = urls.unlocalizePathname(pathname).pathname.replace(/\\/$/, "") || "/"
+  const page = pages.get(canonical)
+  if (!page) notFound() // Includes unknown and draft-prefixed paths: never dispatch arbitrary input.
+  return { page, locale: urls.localeOf(pathname) }
+}`
+
 const NEGOTIATE = `// routes/index.backend.ts - resolve the locale + return only that catalog's messages.
 import { negotiateLocale } from "@nifrajs/i18n"
 import { t } from "@nifrajs/schema"
@@ -297,13 +338,52 @@ export default function I18n() {
       <CodeBlock code={ALTERNATES} lang="ts" />
       <p>
         A page that exists in some languages only is declared once, with <code>pageLocales</code>{" "}
-        (given the path without its locale prefix; it must be pure). Then{" "}
+        (given the canonical path without its locale prefix; it must be pure). Then{" "}
         <code>matchSegment</code> answers not-found for the other locales, <code>alternates</code>{" "}
         lists only the page's own (none for a page in one locale), <code>localesOf(path)</code> names
         them for a prerender's static paths, and <code>localizePathname(path, locale, {`{ fallback: "default" }`})</code>{" "}
         links a menu entry to the default locale's page where the page is missing. A{" "}
         <code>pageLocales</code> that throws, or names a locale the registry does not declare, throws
         rather than serving every locale.
+      </p>
+
+      <h3>Explicit static translated pathnames</h3>
+      <p>
+        Optionally declare <code>pathnames</code>: canonical unprefixed static paths mapped to
+        unprefixed locale spellings. Missing entries keep the canonical spelling; they do not make a
+        page unavailable (<code>pageLocales</code> still owns that). Language switches, reverse
+        lookup, canonical links, <code>hreflang</code> and <code>matchSegment</code> redirects all
+        use the same table. With no table, existing prefix-only behavior is unchanged.
+      </p>
+      <CodeBlock code={TRANSLATED_PATHNAMES} lang="ts" />
+      <p>
+        <code>staticPathnames()</code> enumerates mapped public URLs only, in mapping declaration
+        order then served-locale registry order, filtered by <code>pageLocales</code>. Feed explicit
+        static entries to your prerender setup after wiring incoming routing; the prerender driver
+        does not automatically enumerate catch-all routes. Unmapped pages are not discovered.
+        Draft locales are never included. Unicode spellings such as <code>/紹介</code> are
+        emitted URL-encoded and resolve from <code>new URL(request.url).pathname</code>. Reverse
+        lookup returns a URL-encoded canonical pathname; <code>pageLocales</code> sees the declared
+        canonical key. Query strings and trailing slashes survive translation, hashes too;
+        SEO links and redirects omit the hash as before.
+      </p>
+      <p>
+        <strong>Mappings do not create files or filesystem aliases.</strong> A file named
+        <code> about.tsx</code> alone will not serve <code>/fr/a-propos</code>. Supply matching
+        routes yourself, or use a catch-all dispatcher that resolves
+        <code> unlocalizePathname</code> to an explicit page registry, for example:
+      </p>
+      <CodeBlock code={TRANSLATED_DISPATCH} lang="ts" />
+      <p>
+        Keep a separate <code>routes/index.tsx</code> for the root; a catch-all needs at least one
+        segment. Literal routes take precedence, so ensure they also use the same canonical checks
+        when they overlap this dispatcher. Registering <code>i18n</code> below supplies locale
+        metadata and prefix guards, not pathname rewrites. Dynamic slug maps, automatic filesystem
+        aliases, automatic content translation and domain-based routing are outside this API.
+        Invalid static paths (patterns, URL delimiters, dot segments or encoded separators), unknown
+        locale keys, per-locale collisions including fallback paths, and translations shadowing
+        another canonical key throw when the router is defined. Paths must not already carry a
+        served locale prefix.
       </p>
 
       <h2>Register the routing once</h2>

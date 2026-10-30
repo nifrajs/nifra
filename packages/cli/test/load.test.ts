@@ -91,3 +91,38 @@ test("a non-relative clientModule shadowing a local file is rejected with the ./
     loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` }),
   ).rejects.toThrow(/no "\.\/" prefix.*"\.\/frontend\/client\.tsx"/s)
 })
+
+test("nifra.config.ts retains the ordinary Vercel runtime selector", async () => {
+  const root = createFixtureRoot("tmp-load-vercel-")
+  dirs.push(root)
+  writeAppFile(root, "routes/index.ts", "export default function Page() {}")
+  writeAppFile(root, "backend/framework.ts", "export const adapter = {}")
+  writeAppFile(
+    root,
+    "nifra.config.ts",
+    `export { adapter } from "./backend/framework.ts"
+export const clientModule = "./frontend/client.ts"
+export const target = "vercel"
+export const vercelRuntime = "node"`,
+  )
+  const app = await loadApp(root)
+  expect(app.framework.target).toBe("vercel")
+  expect(app.framework.vercelRuntime).toBe("node")
+})
+
+for (const value of ["nodejs22.x", "invalid", 22, null]) {
+  test(`loadApp rejects unsupported vercelRuntime ${JSON.stringify(value)}`, async () => {
+    const root = createFixtureRoot("tmp-load-vercel-")
+    dirs.push(root)
+    writeAppFile(root, "routes/index.ts", "export default function Page() {}")
+    writeAppFile(
+      root,
+      "nifra.config.ts",
+      `export const adapter = {}
+export const clientModule = "./frontend/client.ts"
+export const target = "vercel"
+export const vercelRuntime = ${JSON.stringify(value)}`,
+    )
+    await expect(loadApp(root)).rejects.toThrow('`vercelRuntime` must be "edge" or "node"')
+  })
+}

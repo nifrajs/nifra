@@ -3777,7 +3777,7 @@ _No named exports (side-effect entrypoint)._
 - **SegmentMatch** _(type)_ - `type SegmentMatch<K extends string = string> = | { readonly kind: "ok"; readonly locale: K } | { readonly kind: "not-found" } | { readonly kind: "redirect"; readonly location: string }`
   What a `[lang]` segment value means for the request.
 - **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath<K extends string = string>`
-  A pathname with its locale prefix removed (or not, when it carries none).
+  A canonical pathname with its locale prefix removed (or not, when it carries none).
 - **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions<K>) => LocalizedRouter<K>`
   Bind the app's locale-prefixed URL scheme to a {@link Locales} registry.
 
@@ -3791,9 +3791,12 @@ _No named exports (side-effect entrypoint)._
 - **ImageFormat** _(type)_ - `type ImageFormat = "png" | "jpeg" | "gif" | "webp"`
   Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe `width`/`height` (build-time tooling can pre-read them into a manifest). A JPEG's are the size it is dis…
 - **ImageInfo** _(interface)_ - `interface ImageInfo`
+- **ImageInputProps** _(type)_ - `type ImageInputProps = ImageProps | StaticImageProps`
 - **ImageLoader** _(type)_ - `type ImageLoader = (args: { src: string; width: number; quality?: number }) => string`
   Builds a variant URL for `src` at a target pixel `width` (and optional `quality`).
+- **ImagePresentationProps** _(interface)_ - `interface ImagePresentationProps`
 - **ImageProps** _(interface)_ - `interface ImageProps`
+  String URLs retain the original, extendable props contract.
 - **OgImageOptions** _(interface)_ - `interface OgImageOptions`
 - **OgImageRasterized** _(interface)_ - `interface OgImageRasterized`
 - **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
@@ -3804,6 +3807,11 @@ _No named exports (side-effect entrypoint)._
 - **ResvgRenderer** _(interface)_ - `interface ResvgRenderer`
 - **SelfHostedLoaderOptions** _(interface)_ - `interface SelfHostedLoaderOptions`
 - **SignImageUrlOptions** _(interface)_ - `interface SignImageUrlOptions`
+- **StaticImageData** _(interface)_ - `interface StaticImageData`
+  Intrinsic display dimensions (including EXIF orientation), plus optional prebuilt variants.
+- **StaticImageProps** _(interface)_ - `interface StaticImageProps`
+- **StaticImageVariant** _(interface)_ - `interface StaticImageVariant`
+  Browser-safe output of an `?image` import. No filesystem or codec enters the client.
 - **cloudflareLoader** _(function)_ - `cloudflareLoader: (options?: CloudflareLoaderOptions) => ImageLoader`
   Cloudflare Images loader - builds `/cdn-cgi/image/<options>/<source>` URLs that the Cloudflare edge resizes on the fly (also emits `format=auto` for webp/avif negotiation). Works on Cloudflare Pages / Workers with Images enabled.
 - **createPngRasterizer** _(function)_ - `createPngRasterizer: (render: PngRenderer) => OgImageRasterizer`
@@ -3820,8 +3828,8 @@ _No named exports (side-effect entrypoint)._
   Read just the leading bytes of an image file (via the platform `Bun.file`/`fetch` blob) and parse its dimensions. Build-time tooling: pre-read dimensions into a manifest so `<Image>` is CLS-safe without hardcoding sizes. Reads at most `maxBytes` (default 64 KB - enough for any header).
 - **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string`
   Render a bounded, deterministic SVG suitable for an `og:image` endpoint.
-- **resolveImage** _(function)_ - `resolveImage: (props: ImageProps, loader?: ImageLoader) => ResolvedImage`
-  Resolve {@link ImageProps} + an {@link ImageLoader} into `<img>` attributes. CLS-safe (`width`/ `height` required + > 0, else a dev error), lazy + async-decoding by default, with a responsive `srcSet` built from `widths` via the loader. If every width produces the same URL (e.g. {@link identityLoad…
+- **resolveImage** _(function)_ - `resolveImage: (props: ImageInputProps, loader?: ImageLoader) => ResolvedImage`
+  Resolve a URL or imported asset into CLS-safe attributes. Explicit dimensions override imported metadata; supplying just one scales the other to preserve the source's aspect ratio. Prebuilt variants need no runtime loader. An explicit CDN loader takes precedence over those variants.
 - **selfHostedLoader** _(function)_ - `selfHostedLoader: (options: SelfHostedLoaderOptions) => ImageLoader`
   Loader for nifra's **self-hosted** resize endpoint (`createImageHandler` from `@nifrajs/image/server`, backed by `Bun.Image`/sharp/WASM). Builds `<endpoint>?src=…&w=…[&q=…][&s=…]` (the endpoint negotiates the output format). Pure + dependency-free. For runtimes without a native codec, pair the endp…
 - **signImageUrl** _(function)_ - `signImageUrl: (endpoint: string, image: { src: string; width: number; quality?: number; }, options: SignImageUrlOptions) => string`
@@ -3855,6 +3863,15 @@ _No named exports (side-effect entrypoint)._
 - **wasmImageBackend** _(function)_ - `wasmImageBackend: (codecs: WasmImageCodecs) => ImageBackend`
   {@link ImageBackend} backed by injected WASM codecs - the only backend that runs on the **edge** (Workers / Vercel-Edge / Deno-Deploy), where neither `Bun.Image` nor sharp exists. `probe` reads the source header via nifra's dependency-free reader (so decompression bombs are rejected before any deco…
 
+### `@nifrajs/image/build`
+
+- **ImageAssets** _(interface)_ - `interface ImageAssets`
+- **ImageBuildAsset** _(interface)_ - `interface ImageBuildAsset`
+  The structural asset hook consumed by Nifra's build pipelines. Paths are relative to /assets/.
+- **ImageBuildOptions** _(interface)_ - `interface ImageBuildOptions`
+- **createImageAssets** _(function)_ - `createImageAssets: (options?: ImageBuildOptions) => ImageAssets`
+  Shared builder for client/SSR imports. Processing results depend on bytes, never absolute paths.
+
 ### `@nifrajs/image/og`
 
 - **OgImageOptions** _(interface)_ - `interface OgImageOptions`
@@ -3875,6 +3892,18 @@ _No named exports (side-effect entrypoint)._
   Adapt an injected SVG→PNG renderer to `ogImageResponse`.
 - **createResvgRasterizer** _(function)_ - `createResvgRasterizer: (Resvg: ResvgConstructor) => OgImageRasterizer`
   Reference adapter for Resvg-compatible constructors, without making the optional codec a dependency.
+
+### `@nifrajs/image/plugins`
+
+- **ImageAssetPlugin** _(interface)_ - `interface ImageAssetPlugin`
+- **ImageBunPlugin** _(interface)_ - `interface ImageBunPlugin`
+  Structural Bun hooks keep the shared plugin entry usable without Bun's ambient types.
+- **ImageVitePlugin** _(interface)_ - `interface ImageVitePlugin`
+  Structural Vite plugin type: the image package does not depend on Vite at runtime.
+- **imageBunPlugin** _(function)_ - `imageBunPlugin: (options?: ImageBuildOptions) => ImageBunPlugin`
+  Install in both clientPlugins and serverPlugins; no codec is loaded unless explicitly supplied.
+- **imageVitePlugin** _(function)_ - `imageVitePlugin: (options?: ImageBuildOptions) => ImageVitePlugin`
+  Use in vitePlugins for both development and production; the dev middleware serves hashed bytes.
 
 ### `@nifrajs/image/server`
 
@@ -5799,6 +5828,8 @@ _No named exports (side-effect entrypoint)._
 - **SizeReport** _(interface)_ - `interface SizeReport`
   A whole build's size report - every chunk (largest first) + the totals.
 - **StaticBuildTargetPlan** _(interface)_ - `interface StaticBuildTargetPlan`
+- **VercelRuntime** _(type)_ - `type VercelRuntime = "edge" | "node"`
+  Ordinary Vercel SSR uses Edge unless Node is explicitly selected.
 - **aggregateSizeReport** _(function)_ - `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport`
   Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the file + gzipping it) happens in the orchestrator; this is the deterministic, unit-testable core.
 - **buildAssetPaths** _(function)_ - `buildAssetPaths: (client: BuildManifest) => string[]`
@@ -5837,7 +5868,7 @@ _No named exports (side-effect entrypoint)._
   The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean.
 - **formatServerOnlyLeak** _(function)_ - `formatServerOnlyLeak: (findings: ReadonlyArray<ServerOnlyFinding>) => string | undefined`
   The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean.
-- **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly useImport?: string; readonly optionImports?: ServerEntryOptionImports; readonly ti…`
+- **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly vercelRuntime?: VercelRuntime; readonly adapterImport: string; readonly backendImport?: string; readonly useImport?: string; readonly optionImports…`
   Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires the…
 - **htmlFileFor** _(function)_ - `htmlFileFor: (pattern: string) => string`
   Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`. Segments are written decoded (`/caf%C3%A9` → `café/index.html`) because a static host decodes the request path before it looks for a file; a segment with no such file name stays as written.
@@ -5863,7 +5894,7 @@ _No named exports (side-effect entrypoint)._
   The baked per-route `routeStyles` map in a committed server-manifest (empty if absent/unparseable). Pure.
 - **parseManifestStyles** _(function)_ - `parseManifestStyles: (source: string) => string[]`
   The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure.
-- **planBuildTarget** _(function)_ - `planBuildTarget: (target: BuildTarget, outDir: string) => BuildTargetPlan`
+- **planBuildTarget** _(function)_ - `planBuildTarget: (target: BuildTarget, outDir: string, vercelRuntime?: VercelRuntime) => BuildTargetPlan`
   Resolve the target-specific deploy shape before any bundling starts. Keeping this decision pure means Bun and Vite strategies share the same output filename, server target, and hand-off text; the filesystem emitter only has to execute the plan.
 - **preactDedupePlugin** _(const)_ - `preactDedupePlugin: (from: string) => BunPlugin`
 - **prerenderRoutes** _(function)_ - `prerenderRoutes: (options: PrerenderOptions) => Promise<PrerenderResult>`
@@ -5878,6 +5909,8 @@ _No named exports (side-effect entrypoint)._
   Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes the server mounted, so the function bodies - and everything they import - never reach a browser.
 - **svelteDedupePlugin** _(const)_ - `svelteDedupePlugin: (from: string) => BunPlugin`
   Dedupe Svelte to a single copy - the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) whi…
+- **validateVercelRuntime** _(function)_ - `validateVercelRuntime: (target: BuildTarget, runtime: unknown) => void`
+  Validate before any deploy directory is cleared, including untyped config/API callers.
 - **zoneGuardPlugin** _(function)_ - `zoneGuardPlugin: (options: ZoneGuardOptions) => BunPlugin`
 
 ### `@nifrajs/web/build-vite`
@@ -6967,9 +7000,10 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-preact/image`
 
-- **Image** _(function)_ - `Image: (props: ImageComponentProps) => VNode`
-  Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space); `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
+- **Image** _(function)_ - `Image: (props: ImageComponentProps | StaticImageComponentProps) => VNode`
+  Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them; `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
 - **ImageComponentProps** _(interface)_ - `interface ImageComponentProps`
+- **StaticImageComponentProps** _(type)_ - `type StaticImageComponentProps = StaticImageProps & Omit<ImageComponentProps, "src" | "width" | "height">`
 
 ### `@nifrajs/web-preact/keep-alive`
 
@@ -7128,9 +7162,10 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-react/image`
 
-- **Image** _(function)_ - `Image: (props: ImageComponentProps) => ReactElement`
-  Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space); `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
+- **Image** _(function)_ - `Image: (props: ImageComponentProps | StaticImageComponentProps) => ReactElement`
+  Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them; `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
 - **ImageComponentProps** _(interface)_ - `interface ImageComponentProps`
+- **StaticImageComponentProps** _(type)_ - `type StaticImageComponentProps = StaticImageProps & Omit<ImageComponentProps, "src" | "width" | "height">`
 
 ### `@nifrajs/web-react/island`
 
@@ -7356,9 +7391,10 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-solid/image`
 
-- **Image** _(function)_ - `Image: (props: ImageComponentProps) => JSX.Element`
-  Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space); `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
+- **Image** _(function)_ - `Image: (props: ImageComponentProps | StaticImageComponentProps) => JSX.Element`
+  Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them; `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
 - **ImageComponentProps** _(interface)_ - `interface ImageComponentProps`
+- **StaticImageComponentProps** _(type)_ - `type StaticImageComponentProps = StaticImageProps & Omit<ImageComponentProps, "src" | "width" | "height">`
 
 ### `@nifrajs/web-solid/keep-alive`
 
@@ -7712,7 +7748,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/image`
 
-- **Image** _(const)_ - `Image: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ src: { type: StringConstructor; required: true; }; width: { type: NumberConstructor; required: true; }; height: { type: NumberConstructor; required: …`
+- **Image** _(const)_ - `Image: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ src: { type: PropType<string | StaticImageData>; required: true; }; width: { type: NumberConstructor; required: false; default: undefined; }; height:…`
 
 ### `@nifrajs/web-vue/keep-alive`
 

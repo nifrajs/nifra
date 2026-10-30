@@ -396,10 +396,22 @@
     "code": "// routes/index.backend.ts - resolve the locale + return only that catalog's messages.\nimport { negotiateLocale } from \"@nifrajs/i18n\"\nimport { t } from \"@nifrajs/schema\"\nimport { catalogs, locales } from \"../shared/catalogs\"\nimport type { Route } from \"./+types/index\"\n\n// A catalog is open-ended, so its schema is the explicit opt-out of the strict default.\nexport const loaderOutput = t.object({ locale: t.string(), messages: t.looseObject({}) })\nexport async function loader({ request }: Route.LoaderArgs) {\n  const locale = negotiateLocale(request, { locales, defaultLocale: \"en\", queryParam: \"lang\", cookie: \"lang\" })\n  return { locale, messages: catalogs[locale] }   // ?lang= → cookie → Accept-Language → default\n}"
   },
   {
+    "name": "TRANSLATED_PATHNAMES",
+    "topic": "Nifra - i18n",
+    "slug": "i18n",
+    "code": "// shared/i18n.ts - explicit STATIC pathname translations, not content or dynamic slug translation.\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { defineI18nRouting } from \"@nifrajs/i18n/routing\"\n\nconst locales = defineLocales({ default: \"en\", locales: { en: {}, fr: {}, de: {} } })\nexport const urls = defineI18nRouting(locales, {\n  pathnames: {\n    \"/about\": { fr: \"/a-propos\", de: \"/ueber-uns\" },\n    \"/contact\": { fr: \"/contactez-nous\" }, // Missing German name; availability is separate below.\n  },\n  // Always the canonical key, even when the incoming URL is /fr/contactez-nous.\n  pageLocales: (path) => path === \"/contact\" ? [\"en\", \"fr\"] : undefined,\n})\n\nurls.localizePathname(\"/about\", \"fr\") // \"/fr/a-propos\"\nurls.localizePathname(\"/fr/a-propos\", \"de\") // \"/de/ueber-uns\"\nurls.unlocalizePathname(\"/de/ueber-uns\") // { locale: \"de\", pathname: \"/about\" }\nurls.alternates(\"/fr/a-propos\").canonical // \"/fr/a-propos\"\nurls.staticPathnames() // [\"/about\", \"/fr/a-propos\", \"/de/ueber-uns\", \"/contact\", \"/fr/contactez-nous\"]"
+  },
+  {
     "name": "DIMENSIONS",
     "topic": "Nifra - images",
     "slug": "images",
     "code": "import { imageDimensions, readImageDimensions } from \"@nifrajs/image\"\n\n// Pure-JS header read - PNG / JPEG / GIF / WebP. No decode, no codec, no deps.\nconst info = await readImageDimensions(Bun.file(\"public/hero.jpg\"))\n// → { width: 1200, height: 630, format: \"jpeg\" }   (null if unrecognized)\n\n// Build-time tooling: pre-read sizes into a manifest so <Image> is CLS-safe\n// without hardcoding width/height at every call site. The sync variant takes the\n// raw header bytes you already have in memory (no file read):\nconst headerBytes = await Bun.file(\"public/hero.jpg\").bytes()\nimageDimensions(headerBytes)"
+  },
+  {
+    "name": "IMPORT_PLUGINS",
+    "topic": "Nifra - images",
+    "slug": "images",
+    "code": "// backend/framework.ts — add these beside your existing framework plugins:\nimport { imageBunPlugin } from \"@nifrajs/image/plugins\"\n\nconst images = { root: process.cwd() }\nexport const clientPlugins = [imageBunPlugin(images)]\nexport const serverPlugins = [imageBunPlugin(images)]\n\n// For the Vite pipeline instead (including component mode):\n// import { imageVitePlugin } from \"@nifrajs/image/plugins\"\n// export const vitePlugins = [imageVitePlugin(images)]"
   },
   {
     "name": "LOADERS",
