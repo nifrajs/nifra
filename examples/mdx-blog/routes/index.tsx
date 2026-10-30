@@ -1,3 +1,4 @@
+import { rawHref } from "@nifrajs/web-react/router"
 import { For } from "solid-js"
 import type { Route } from "./+types/index"
 
@@ -11,7 +12,7 @@ export default function Index(props: Route.ComponentProps) {
         <For each={props.data.posts}>
           {(p) => (
             <li>
-              <a href={`/blog/${p.slug}`}>{p.title}</a> - <span>{p.summary}</span>
+              <a href={rawHref(`/blog/${p.slug}`)}>{p.title}</a> - <span>{p.summary}</span>
             </li>
           )}
         </For>

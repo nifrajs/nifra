@@ -41,7 +41,7 @@ export default function Search({ data }: Route.ComponentProps) {
       >
         toggle view
       </button>{" "}
-      <a id="set-q" href="/search?page=1&q=react">
+      <a id="set-q" href={href({ to: "/search", search: { page: 1, q: "react", view: "list" } })}>
         set q=react
       </a>
     </div>

@@ -1,3 +1,4 @@
+import { rawHref } from "@nifrajs/web-react/router"
 import { POSTS } from "../../shared/data/posts"
 import { breadcrumbs, FEED_LINK, pageMeta } from "../../shared/meta"
 
@@ -34,12 +35,12 @@ export default function BlogIndex() {
     <div className="prose">
       <h1 className="page">Blog</h1>
       <p className="lead">
-        Engineering notes from building Nifra. <a href="/rss.xml">RSS</a>
+        Engineering notes from building Nifra. <a href={rawHref("/rss.xml")}>RSS</a>
       </p>
       {POSTS.map((post) => (
         <section key={post.slug}>
           <h2>
-            <a href={`/blog/${post.slug}`}>{post.title}</a>
+            <a href={rawHref(`/blog/${post.slug}`)}>{post.title}</a>
           </h2>
           <p>
             {/* `<time dateTime>` rather than a bare string: the visible date and the machine-readable

@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/security",
@@ -380,7 +381,7 @@ export default function Security() {
         validation, constant-time webhook verification, and idempotent retries - ship as first-party
         primitives. All are <b>edge-safe</b> (WebCrypto, no <code>node:crypto</code>) and run unchanged
         on Bun, Node, Deno, and Workers. For how these defaults stack up against Hono, Fastify,
-        Express, and Elysia, see <a href="/docs/security-comparison">security posture, compared</a>.
+        Express, and Elysia, see <a href={href({ to: "/docs/security-comparison" })}>security posture, compared</a>.
       </p>
 
       <h2 id="response-contract">Responses that cannot leak more than they declare</h2>
@@ -440,7 +441,7 @@ export default function Security() {
       <p>
         A <code>merge()</code>d server&rsquo;s routes are covered by a contract the parent installed
         before the merge, as long as the route declares a response and its own server installed none.
-        See <a href="/docs/plugins#parent-use">what a parent&rsquo;s use() covers</a>.
+        See <a href={href({ to: "/docs/plugins", hash: "parent-use" })}>what a parent&rsquo;s use() covers</a>.
       </p>
       <p>
         The check itself is essentially free: with a compiled validator it measures in the
@@ -680,7 +681,7 @@ export default function Security() {
         <code>signDownloadUrl</code> / <code>verifyDownloadUrl</code> mint short-TTL, tamper-evident
         download links (HMAC-SHA256 over the path + expiry, constant-time verify). And{" "}
         <code>stripImageMetadata</code> drops EXIF/GPS by re-encoding the image - through any{" "}
-        <a href="/docs/images">@nifrajs/image</a> backend, with no dependency on it:
+        <a href={href({ to: "/docs/images" })}>@nifrajs/image</a> backend, with no dependency on it:
       </p>
       <CodeBlock code={STRIP} />
 
@@ -816,7 +817,7 @@ export default function Security() {
         <code>csp</code> from <code>createCspPolicy</code>: it allows the framework&apos;s constant
         scripts by hash and adds a nonce only to a page that needs one, so every other page sends the
         same header and stays cacheable under <code>withISR</code> or a CDN. See{" "}
-        <a href="/docs/contract#strict-csp">A strict CSP that still caches</a>.
+        <a href={href({ to: "/docs/contract", hash: "strict-csp" })}>A strict CSP that still caches</a>.
       </p>
 
       <h2>Route assurance - prove every route is guarded</h2>
@@ -880,9 +881,9 @@ export default function Security() {
         <code>__Host-</code>/<code>__Secure-</code> cookie-prefix enforcement (a cookie whose
         attributes violate its prefix contract fails at serialization rather than being silently
         dropped by the browser), signed-cookie sessions + CSRF + route guards
-        (<a href="/docs/auth">@nifrajs/auth</a>), bearer/apiKey auth + a shared-store rate
-        limiter (<a href="/docs/plugins">@nifrajs/middleware</a>), and a hardened image-resize endpoint
-        (<a href="/docs/images">@nifrajs/image/server</a>).
+        (<a href={href({ to: "/docs/auth" })}>@nifrajs/auth</a>), bearer/apiKey auth + a shared-store rate
+        limiter (<a href={href({ to: "/docs/plugins" })}>@nifrajs/middleware</a>), and a hardened image-resize endpoint
+        (<a href={href({ to: "/docs/images" })}>@nifrajs/image/server</a>).
       </p>
 
       <h2>Redacting logs</h2>

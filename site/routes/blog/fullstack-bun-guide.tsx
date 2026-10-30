@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { formatPercent, httpWorkloadRps, percentOf } from "../../shared/data/benchmarks"
 import { CodeBlock } from "../../shared/highlight"
 import { postMeta } from "../../shared/meta"
@@ -118,11 +119,12 @@ export default function FullstackBunGuide() {
       <h2>Validation is the default, not a discipline</h2>
       <p>
         Every route that accepts input declares a schema, in any{" "}
-        <a href="/docs/data">Standard Schema</a> library - Zod, Valibot, ArkType, or a hand-rolled
-        validator. This is a security posture, not a convenience: unvalidated input on a public
-        endpoint is mass assignment waiting to happen, so the framework makes the validated path the
-        shortest one. Server functions take it further - JSON-only content type and same-origin
-        checks are enforced for you (<a href="/docs/server-functions">why</a>).
+        <a href={href({ to: "/docs/data" })}>Standard Schema</a> library - Zod, Valibot, ArkType, or
+        a hand-rolled validator. This is a security posture, not a convenience: unvalidated input on
+        a public endpoint is mass assignment waiting to happen, so the framework makes the validated
+        path the shortest one. Server functions take it further - JSON-only content type and
+        same-origin checks are enforced for you (
+        <a href={href({ to: "/docs/server-functions" })}>why</a>).
       </p>
 
       <h2>The dev loop, including the AI half</h2>
@@ -131,8 +133,9 @@ export default function FullstackBunGuide() {
         <code>nifra check</code> verifies your app - schema coverage, route hygiene, drift between
         contract and code - and returns structured output. If an AI agent writes part of your app
         (increasingly, it does), it reads those failures and fixes its own mistakes. Nifra's docs,
-        examples, and API types are also a <a href="/blog/docs-as-mcp">live MCP server</a> your
-        assistant can query mid-task.
+        examples, and API types are also a{" "}
+        <a href={href({ to: "/blog/docs-as-mcp" })}>live MCP server</a> your assistant can query
+        mid-task.
       </p>
 
       <h2>Deploying - and the runtime escape hatch</h2>
@@ -147,20 +150,22 @@ export default function FullstackBunGuide() {
         )}{" "}
         of Elysia, a backend-only Bun framework, on GET. And because runtimes are adapters, the same
         app deploys to Node, Deno, or edge workers unchanged if your infrastructure demands it.
-        Numbers and methodology: <a href="/benchmarks">benchmarks</a>.
+        Numbers and methodology: <a href={href({ to: "/benchmarks" })}>benchmarks</a>.
       </p>
 
       <h2>Where to go next</h2>
       <ul>
         <li>
-          <a href="/docs">The docs</a> - routing, loaders, mutations, ISR, jobs, caching, auth.
+          <a href={href({ to: "/docs" })}>The docs</a> - routing, loaders, mutations, ISR, jobs,
+          caching, auth.
         </li>
         <li>
-          <a href="/compare">How Nifra compares</a> to Next.js, Elysia, Hono, and Fastify.
+          <a href={href({ to: "/compare" })}>How Nifra compares</a> to Next.js, Elysia, Hono, and
+          Fastify.
         </li>
         <li>
-          <a href="/docs/agents">Agent setup</a> - connect your AI assistant to the live docs
-          endpoint.
+          <a href={href({ to: "/docs/agents" })}>Agent setup</a> - connect your AI assistant to the
+          live docs endpoint.
         </li>
       </ul>
     </article>

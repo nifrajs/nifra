@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { pageMeta } from "../shared/meta"
 
 export const meta = pageMeta(
@@ -55,7 +56,7 @@ export default function About() {
         <a href="https://www.npmjs.com/org/nifrajs" target="_blank" rel="noopener noreferrer">
           @nifrajs npm organization
         </a>
-        . Read the <a href="/docs">documentation</a> or connect an assistant to the{" "}
+        . Read the <a href={href({ to: "/docs" })}>documentation</a> or connect an assistant to the{" "}
         <a href="https://mcp.nifra.dev" target="_blank" rel="noopener noreferrer">
           hosted docs MCP server
         </a>

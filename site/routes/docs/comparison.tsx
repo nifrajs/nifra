@@ -1,5 +1,6 @@
 import { formatPercent, httpRealworldRps, httpWorkloadRps, percentOf } from "../../shared/data/benchmarks"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/comparison",
@@ -70,23 +71,23 @@ export default function Comparison() {
       <ul>
         <li>
           File routing (dynamic / catch-all / groups / optional) + nested layouts, typed search
-          params, and a route <a href="/docs/routing#modal-routes">opened in a modal</a>.
+          params, and a route <a href={href({ to: "/docs/routing", hash: "modal-routes" })}>opened in a modal</a>.
         </li>
         <li>
           SSR · SSG · ISR, streaming SSR with out-of-order Suspense,{" "}
-          <a href="/docs/partial-prerendering">partial prerendering</a>, view
+          <a href={href({ to: "/docs/partial-prerendering" })}>partial prerendering</a>, view
           transitions, and a ~0&nbsp;KB-client vanilla adapter with{" "}
-          <a href="/docs/islands">islands</a> and slot swaps.
+          <a href={href({ to: "/docs/islands" })}>islands</a> and slot swaps.
         </li>
         <li>
-          Loaders + actions + <a href="/docs/server-functions">server functions</a> (typed{" "}
+          Loaders + actions + <a href={href({ to: "/docs/server-functions" })}>server functions</a> (typed{" "}
           <code>serverFn</code> RPC, server code never shipped to the browser) + progressive-enhancement
           forms; <code>defer()</code> / <code>&lt;Await&gt;</code> streaming data; query cache, optimistic
           UI, concurrent fetchers, revalidation.
         </li>
         <li>
-          <a href="/docs/live">Live refresh</a> (a publish reloads only the loaders that read the
-          changed keys) and <a href="/docs/keep-alive">keep-alive</a> pages (back and forward bring
+          <a href={href({ to: "/docs/live" })}>Live refresh</a> (a publish reloads only the loaders that read the
+          changed keys) and <a href={href({ to: "/docs/keep-alive" })}>keep-alive</a> pages (back and forward bring
           the same page back, state and scroll included).
         </li>
         <li>Head/meta, hover/focus prefetch, scroll restoration.</li>
@@ -104,12 +105,12 @@ export default function Comparison() {
       <h2>Server code and server-only views</h2>
       <p>
         Nifra provides typed loaders and actions, streaming SSR, islands and typed{" "}
-        <a href="/docs/server-functions">server functions</a>. Server functions keep their
+        <a href={href({ to: "/docs/server-functions" })}>server functions</a>. Server functions keep their
         implementation, secrets and database handles off the browser and use the same validated
         mutation API across the supported UI libraries.
       </p>
       <p>
-        The optional <a href="/docs/server-components">server-components pipeline</a> adds
+        The optional <a href={href({ to: "/docs/server-components" })}>server-components pipeline</a> adds
         server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
         Solid and Preact use their native islands in validated server-rendered ranges. All five
         adapters pass the same certification, and a partially prerendered page can show a server
@@ -119,13 +120,13 @@ export default function Comparison() {
 
       <h2>Caching and fresh data</h2>
       <p>
-        <a href="/docs/rendering">SSG and ISR</a> cover pages that change rarely. Three more tools
+        <a href={href({ to: "/docs/rendering" })}>SSG and ISR</a> cover pages that change rarely. Three more tools
         cover the pages that do not:
       </p>
       <ul>
         <li>
           <b>
-            <a href="/docs/partial-prerendering">Partial prerendering</a>
+            <a href={href({ to: "/docs/partial-prerendering" })}>Partial prerendering</a>
           </b>{" "}
           (all five adapters). The part of a page that is the same for every visitor is
           built once, cached and sent at once; each per-visitor hole streams into it as its own loader
@@ -136,7 +137,7 @@ export default function Comparison() {
         </li>
         <li>
           <b>
-            <a href="/docs/live">Live refresh</a>
+            <a href={href({ to: "/docs/live" })}>Live refresh</a>
           </b>
           . A loader names the keys its data read with <code>live(...keys)</code>; a{" "}
           <code>publish</code>, or an action&apos;s <code>revalidate(paths, data, &#123; keys &#125;)</code>,
@@ -153,7 +154,7 @@ export default function Comparison() {
         </li>
         <li>
           <b>
-            <a href="/docs/keep-alive">Keep-alive</a>
+            <a href={href({ to: "/docs/keep-alive" })}>Keep-alive</a>
           </b>{" "}
           (all five adapters). <code>export const keepAlive = true</code> keeps a page mounted after
           the visitor leaves it; back and forward bring it back with its state, scroll and focus.

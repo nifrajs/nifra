@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { highlight } from "../shared/highlight"
 import {
   codeRuns,
@@ -259,7 +260,7 @@ export default function Play() {
         <p>
           Same code, on your machine: <code className="inline">bun create nifra my-app</code>
         </p>
-        <a className="button ghost" href="/docs">
+        <a className="button ghost" href={href({ to: "/docs" })}>
           Read the docs
         </a>
       </section>

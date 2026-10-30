@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta("/docs/server-components", "Nifra - Server components", "Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte, Solid and Preact hydration.")
 
@@ -121,8 +122,8 @@ export default function ServerComponents() {
     <CodeBlock code={OWNER} lang="ts" />
     <p>The owner lists the components and instances that may execute. A browser cannot invent a new instance or change its input. Initial HTML and hydration state reuse one execution. A refresh sends a bounded <code>x-nifra-component</code> selection to the actual owning page URL using same-origin GET.</p>
     <p>Hooks, filesystem middleware, gate layouts, ordinary layouts and the page loader run before component work on both initial requests and refreshes. Ordinary layout and page loaders retain their parallel execution; use <code>gate: true</code> when a layout must block the page loader. Component execution preserves the admitted request's environment, API, response controls, cancellation, budgets and effect accounting.</p>
-    <p>Owners declare allowed capabilities and definitions may narrow that set. Domain writes are rejected in this GET path. Mutate through a validated <a href="/docs/server-functions">server function</a> or route action, then refresh after success. Native React <code>"use server"</code> actions and serialized closures are unsupported.</p>
-    <p>A partially prerendered page can instead show a component in a hole, rendered for each visitor after the shared shell; its route lists the component under <code>holes</code> rather than <code>owners</code>. See <a href="/docs/partial-prerendering">partial prerendering</a>.</p>
+    <p>Owners declare allowed capabilities and definitions may narrow that set. Domain writes are rejected in this GET path. Mutate through a validated <a href={href({ to: "/docs/server-functions" })}>server function</a> or route action, then refresh after success. Native React <code>"use server"</code> actions and serialized closures are unsupported.</p>
+    <p>A partially prerendered page can instead show a component in a hole, rendered for each visitor after the shared shell; its route lists the component under <code>holes</code> rather than <code>owners</code>. See <a href={href({ to: "/docs/partial-prerendering" })}>partial prerendering</a>.</p>
 
     <h2>Native views and client islands</h2>
     <p>React definitions return JSX in the RSC environment. Register every definition with <code>createReactComponentRenderer</code> in the RSC entry, and connect that renderer through <code>reactServerComponents</code> in the SSR entry. Imported <code>"use client"</code> exports require a companion <code>*.props.ts</code> with a matching closed schema for every export. The compiler guards element creation and cloning before a client prop handoff.</p>

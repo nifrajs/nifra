@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/frontend-guidance",
@@ -64,7 +65,7 @@ export default function FrontendGuidance() {
         <li>
           <strong>CSP and browser:</strong> React <code>Activity</code> hydration, inline styles under a
           strict Content-Security-Policy, and WebKit&apos;s handling of streamed module scripts. Server-runtime differences are in{" "}
-          <a href="/docs/runtime-differences">runtime differences</a>.
+          <a href={href({ to: "/docs/runtime-differences" })}>runtime differences</a>.
         </li>
       </ul>
 

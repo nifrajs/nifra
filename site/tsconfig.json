@@ -8,7 +8,8 @@
     "jsx": "react-jsx",
     "types": ["bun", "react", "react-dom", "mdx"]
   },
-  "include": ["./**/*.ts", "./**/*.tsx"],
+  // The generated route table, which a dot directory keeps out of the globs: `href()` types its `to` from it.
+  "include": ["./**/*.ts", "./**/*.tsx", "./.nifra/types/routes.d.ts"],
   "exclude": [
     "./node_modules",
     "./public",
