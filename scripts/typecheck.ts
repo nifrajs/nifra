@@ -182,6 +182,16 @@ export function uncheckedBenchSources(): readonly string[] {
   )
 }
 
+/** The file's text, or `undefined` when there is no such file: one read, so nothing can change between a check and the use. */
+function readIfPresent(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8")
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined
+    throw error
+  }
+}
+
 /** Apps whose server entry imports the `server-manifest.ts` their build generates (gitignored) beside it. */
 const SERVER_MANIFEST_APPS: readonly string[] = ["site", "bench/ssr/nifra-isr"]
 
@@ -193,9 +203,14 @@ function writeServerManifests(): void {
   for (const app of SERVER_MANIFEST_APPS) {
     const file = join(ROOT, app, "server-manifest.ts")
     const routes = discoverRoutes(join(ROOT, app, "routes"))
-    const source = existsSync(file)
-      ? resyncServerManifestSource(readFileSync(file, "utf8"), routes, "./routes/")
-      : generateServerManifest(routes, { resolve: (route) => `./routes/${route}`, clientEntry: "" })
+    const built = readIfPresent(file)
+    const source =
+      built === undefined
+        ? generateServerManifest(routes, {
+            resolve: (route) => `./routes/${route}`,
+            clientEntry: "",
+          })
+        : resyncServerManifestSource(built, routes, "./routes/")
     writeFileSync(file, source)
   }
 }
