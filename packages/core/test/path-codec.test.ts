@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test"
 import {
   browserPathSegment,
+  compileRoutePattern,
   decodePathSegment,
   encodePathSegment,
   fillRoutePath,
+  matchRoutePattern,
 } from "../src/router/pattern.ts"
 import { needsResolving } from "../src/server/request-target.ts"
 import {
@@ -56,6 +58,13 @@ test("needsResolving flags exactly the characters the browser spelling encodes",
     if (needsResolving(`/${value}`) !== encodes) drifted.push(`U+00${code.toString(16)}`)
   }
   expect(drifted).toEqual([])
+})
+
+test("a non-ASCII run ends at the next ASCII character, and U+0080 is two bytes", () => {
+  expect(encodePathSegment("\u0080")).toBe("%C2%80")
+  expect(encodePathSegment("é$&+,:=@")).toBe("%C3%A9$&+,:=@")
+  expect(encodePathSegment("é;[]|")).toBe("%C3%A9%3B%5B%5D%7C")
+  expect(browserPathSegment("é;[]|")).toBe("%C3%A9;[]|")
 })
 
 test("decodePathSegment is the inverse, and says undefined for a malformed escape", () => {
@@ -154,6 +163,30 @@ test("fillRoutePath refuses a mixed-segment value the router would cut different
   expect(fillRoutePath("/p/post-:id", { id: "post-1" })).toEqual({
     ok: true,
     path: "/p/post-post-1",
+  })
+})
+
+test("fillRoutePath names each bad param once, and a missing mixed param as missing", () => {
+  expect(fillRoutePath("/docs/*slug", { slug: "../.." })).toEqual({
+    ok: false,
+    missing: [],
+    invalid: ["slug"],
+  })
+  expect(fillRoutePath("/files/:name.:ext", { name: "a" })).toEqual({
+    ok: false,
+    missing: ["ext"],
+    invalid: [],
+  })
+})
+
+// The router anchors a segment's last literal to its end, so a value that holds it still comes back whole.
+test("fillRoutePath accepts a value holding the literal that closes the segment", () => {
+  const filled = fillRoutePath("/files/:name.json", { name: "a.json" })
+  expect(filled).toEqual({ ok: true, path: "/files/a.json.json" })
+  const compiled = compileRoutePattern("/files/:name.json")
+  expect(matchRoutePattern(compiled, "/files/a.json.json")).toMatchObject({
+    matched: true,
+    params: { name: "a.json" },
   })
 })
 

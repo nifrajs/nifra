@@ -712,15 +712,18 @@ param that is missing, empty, `.`, `..` or an unpaired surrogate throws a
 or a history delta such as `navigate(-1)`; a string or a template literal is a
 compile error. So do React's `Link`, `NavLink` and `Navigate`
 (`<Link to={href({ to: "/pricing" })}>`) and the server's
-`redirect()`; `Link` and `NavLink` also throw at render when
-`to` is not a same-origin path, and `redirect` takes any string with
-`{ external: true }`. For a same-origin path built elsewhere - a CMS link,
+`redirect()`; when `to` is not a same-origin path,
+`Link` and `NavLink` render the anchor without an `href`,
+and `Navigate` and `setSearchParams` do not navigate; each logs a
+`console.error` that names the call and never the value. `redirect`
+takes an off-origin location with `{ external: true }`, which still refuses
+one holding a line break. For a same-origin path built elsewhere - a CMS link,
 `/llms.txt` - `rawHref("/llms.txt")` checks it (one leading
 `/`, no backslash or control character) and returns the same type. A link to
 another site is a plain `<a href>`. A path that comes from outside is
 checked where it is read: `rawHref` throws a `TypeError` for one that is
-not same-origin, so catch it at that call when a field cannot be trusted, and the page never
-reaches `Link` with a value it would refuse.
+not same-origin, so catch it at that call when a field cannot be trusted. A value that gets
+past it as a forged `Href` costs only its own link.
 
 ### Moving existing links to href()
 

@@ -30,6 +30,7 @@ test("a path begins with one slash and nothing a URL parser resolves off-origin"
     "/\r/evil.com",
     "/\n/evil.com",
     "/a\0b",
+    "/a\u001fb",
     "/a\u007fb",
     "/.//evil.com/x",
     "/a/..//evil.com/x",

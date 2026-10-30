@@ -1,6 +1,7 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test"
 import {
   type BlockerFunction,
+  type Href,
   rawHref,
   setBlockerController,
   setBrowserNavigate,
@@ -105,4 +106,22 @@ test("Navigate uses the browser bridge after the client mounts", async () => {
   })
 
   expect(calls).toEqual([["/next", { replace: true }]])
+})
+
+test("Navigate given a destination it cannot use logs and does not navigate", async () => {
+  const calls: unknown[] = []
+  setBrowserNavigate((to) => calls.push(to))
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the point of this test is a value no href() or rawHref() call made
+  const forged = "//evil.example/x" as Href
+
+  try {
+    await withRoot(async (root) => {
+      await act(async () => root.render(createElement(Navigate, { to: forged })))
+    })
+    expect(calls).toEqual([])
+    expect(errors).toHaveBeenCalledTimes(1)
+  } finally {
+    errors.mockRestore()
+  }
 })

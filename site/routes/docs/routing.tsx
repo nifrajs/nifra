@@ -451,15 +451,18 @@ export default function Routing() {
         or a history delta such as <code>navigate(-1)</code>; a string or a template literal is a
         compile error. So do React's <code>Link</code>, <code>NavLink</code> and <code>Navigate</code>{" "}
         (<code>{`<Link to={href({ to: "/pricing" })}>`}</code>) and the server's{" "}
-        <code>redirect()</code>; <code>Link</code> and <code>NavLink</code> also throw at render when{" "}
-        <code>to</code> is not a same-origin path, and <code>redirect</code> takes any string with{" "}
-        <code>{`{ external: true }`}</code>. For a same-origin path built elsewhere - a CMS link,{" "}
+        <code>redirect()</code>; when <code>to</code> is not a same-origin path,{" "}
+        <code>Link</code> and <code>NavLink</code> render the anchor without an <code>href</code>,
+        and <code>Navigate</code> and <code>setSearchParams</code> do not navigate; each logs a{" "}
+        <code>console.error</code> that names the call and never the value. <code>redirect</code>{" "}
+        takes an off-origin location with <code>{`{ external: true }`}</code>, which still refuses
+        one holding a line break. For a same-origin path built elsewhere - a CMS link,{" "}
         <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
         <code>/</code>, no backslash or control character) and returns the same type. A link to
         another site is a plain <code>&lt;a href&gt;</code>. A path that comes from outside is
         checked where it is read: <code>rawHref</code> throws a <code>TypeError</code> for one that is
-        not same-origin, so catch it at that call when a field cannot be trusted, and the page never
-        reaches <code>Link</code> with a value it would refuse.
+        not same-origin, so catch it at that call when a field cannot be trusted. A value that gets
+        past it as a forged <code>Href</code> costs only its own link.
       </p>
 
       <h2 id="typed-links">Moving existing links to href()</h2>
