@@ -26,6 +26,21 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./build": {
+      "bun": "./src/build.ts",
+      "types": "./dist/build.d.ts",
+      "default": "./dist/build.js"
+    },
+    "./plugins": {
+      "bun": "./src/plugins.ts",
+      "types": "./dist/plugins.d.ts",
+      "default": "./dist/plugins.js"
+    },
+    "./imports": {
+      "bun": "./src/imports.ts",
+      "types": "./dist/imports.d.ts",
+      "default": "./dist/imports.js"
+    },
     "./server": {
       "bun": "./src/server.ts",
       "types": "./dist/server.d.ts",
@@ -55,6 +70,9 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "devDependencies": {
+    "sharp": "0.35.5"
   },
   "license": "MIT",
   "publishConfig": {

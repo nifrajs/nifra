@@ -6,6 +6,7 @@
  */
 
 import { signImageParams } from "./sign.ts"
+import { type StaticImageData, staticImageSources } from "./static.ts"
 
 /** Builds a variant URL for `src` at a target pixel `width` (and optional `quality`). */
 export type ImageLoader = (args: { src: string; width: number; quality?: number }) => string
@@ -98,12 +99,22 @@ export function signImageUrl(
   return `${endpoint}?${params.toString()}`
 }
 
-export interface ImageProps {
+/** String URLs retain the original, extendable props contract. */
+export interface ImageProps extends ImagePresentationProps {
   readonly src: string
-  /** Intrinsic width (px) - **required**, reserves layout space (no CLS). */
   readonly width: number
-  /** Intrinsic height (px) - **required** (no CLS). */
   readonly height: number
+}
+
+export interface StaticImageProps extends ImagePresentationProps {
+  readonly src: StaticImageData
+  readonly width?: number
+  readonly height?: number
+}
+
+export type ImageInputProps = ImageProps | StaticImageProps
+
+export interface ImagePresentationProps {
   /** Alt text - **required** for accessibility (use `alt=""` for decorative images). */
   readonly alt: string
   /** `sizes` attribute for responsive selection (e.g. `"(max-width: 600px) 100vw, 600px"`). */
@@ -131,48 +142,68 @@ export interface ResolvedImage {
 }
 
 /**
- * Resolve {@link ImageProps} + an {@link ImageLoader} into `<img>` attributes. CLS-safe (`width`/
- * `height` required + > 0, else a dev error), lazy + async-decoding by default, with a responsive
- * `srcSet` built from `widths` via the loader. If every width produces the same URL (e.g.
- * {@link identityLoader}), `srcSet` is omitted (it'd be redundant).
+ * Resolve a URL or imported asset into CLS-safe attributes. Explicit dimensions override imported
+ * metadata; supplying just one scales the other to preserve the source's aspect ratio. Prebuilt
+ * variants need no runtime loader. An explicit CDN loader takes precedence over those variants.
  */
 export function resolveImage(
-  props: ImageProps,
+  props: ImageInputProps,
   loader: ImageLoader = identityLoader,
 ): ResolvedImage {
+  const image = typeof props.src === "string" ? undefined : props.src
   if (
-    !Number.isFinite(props.width) ||
-    props.width <= 0 ||
-    !Number.isFinite(props.height) ||
-    props.height <= 0
+    image !== undefined &&
+    (!image ||
+      !Number.isFinite(image.width) ||
+      image.width <= 0 ||
+      !Number.isFinite(image.height) ||
+      image.height <= 0)
   ) {
+    throw new Error("[nifra/image] imported image requires positive intrinsic dimensions")
+  }
+  const width =
+    props.width ??
+    (image && props.height !== undefined
+      ? (props.height * image.width) / image.height
+      : image?.width) ??
+    Number.NaN
+  const height =
+    props.height ??
+    (image && props.width !== undefined
+      ? (props.width * image.height) / image.width
+      : image?.height) ??
+    Number.NaN
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
     throw new Error(
-      `[nifra/image] <Image> requires positive width + height (got ${props.width}×${props.height}) - they reserve layout space to prevent CLS.`,
+      `[nifra/image] <Image> requires positive width + height (got ${width}×${height}) - they reserve layout space to prevent CLS.`,
     )
   }
   const eager = props.priority === true || props.loading === "eager"
-  const widths = [...new Set(props.widths ?? [props.width, props.width * 2])].sort((a, b) => a - b)
-
-  // Build the loader args, omitting `quality` when unset (exactOptionalPropertyTypes: no `undefined`).
+  if (props.widths?.some((value) => !Number.isFinite(value) || value <= 0)) {
+    throw new Error("[nifra/image] responsive widths must be positive finite numbers")
+  }
+  const source = typeof props.src === "string" ? props.src : props.src.src
+  const widths = [...new Set(props.widths ?? [width, width * 2])].sort((a, b) => a - b)
   const at = (w: number): string =>
     loader(
       props.quality === undefined
-        ? { src: props.src, width: w }
-        : { src: props.src, width: w, quality: props.quality },
+        ? { src: source, width: w }
+        : { src: source, width: w, quality: props.quality },
     )
   const entries = widths.map((w) => ({ url: at(w), w }))
-  const allSame = entries.every((e) => e.url === entries[0]?.url)
-  const srcSet = allSame ? undefined : entries.map((e) => `${e.url} ${e.w}w`).join(", ")
-
-  // `src` is the 1× (intrinsic-width) variant - the fallback for browsers ignoring srcSet.
+  const allSame = entries.every((entry) => entry.url === entries[0]?.url)
+  const srcSet = allSame ? undefined : entries.map((entry) => `${entry.url} ${entry.w}w`).join(", ")
+  const sources =
+    image !== undefined && loader === identityLoader
+      ? staticImageSources(image, width, props.widths)
+      : { src: at(width), ...(srcSet !== undefined ? { srcSet } : {}) }
   const base: ResolvedImage = {
-    src: at(props.width),
-    width: props.width,
-    height: props.height,
+    ...sources,
+    width,
+    height,
     alt: props.alt,
     loading: eager ? "eager" : "lazy",
     decoding: "async",
-    ...(srcSet !== undefined ? { srcSet } : {}),
     ...(props.sizes !== undefined ? { sizes: props.sizes } : {}),
     ...(props.priority === true ? { fetchPriority: "high" as const } : {}),
   }

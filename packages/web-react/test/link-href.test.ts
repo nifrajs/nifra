@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { type Href, href, rawHref } from "@nifrajs/web"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -54,11 +54,23 @@ test("I10: Link and NavLink render a built Href as the anchor's href", () => {
   )
 })
 
-test("I10: Link and NavLink given a forged Href throw instead of rendering it", () => {
-  for (const value of FORGED) {
-    const to = forged(value)
-    expect(() => renderToStaticMarkup(createElement(Link, { to }, "x"))).toThrow(/same-origin/)
-    expect(() => renderToStaticMarkup(createElement(NavLink, { to }, "x"))).toThrow(/same-origin/)
+test("I10: Link and NavLink given a forged Href render no href and log it, never throw", () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    for (const value of FORGED) {
+      const to = forged(value)
+      errors.mockClear()
+      expect(renderToStaticMarkup(createElement(Link, { to }, "x"))).toBe("<a>x</a>")
+      expect(errors).toHaveBeenCalledTimes(1)
+      errors.mockClear()
+      expect(renderToStaticMarkup(createElement(NavLink, { to }, "x"))).not.toContain("href=")
+      expect(errors).toHaveBeenCalledTimes(1)
+      const logged = errors.mock.calls.flat().join(" ")
+      expect(logged).toContain("same-origin")
+      if (value !== "") expect(logged).not.toContain(value)
+    }
+  } finally {
+    errors.mockRestore()
   }
 })
 

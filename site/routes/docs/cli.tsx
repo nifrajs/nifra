@@ -128,6 +128,18 @@ export default function Cli() {
         adapter. This keeps build tooling and native dependencies out of generated server bundles.
       </p>
       <CodeBlock code={FRAMEWORK} />
+      <p>
+        Ordinary <code>vercel</code> builds default to Edge. To opt into Node.js 22, export both{" "}
+        <code>{`target = "vercel"`}</code> and <code>{`vercelRuntime = "node"`}</code> from{" "}
+        <code>nifra.config.ts</code>, then run <code>nifra build</code> (or{" "}
+        <code>nifra build --target vercel</code>) and <code>vercel deploy --prebuilt</code> from
+        the project root. Both Bun and Vite builds write <code>.vercel/output</code> unless{" "}
+        <code>--out</code> overrides it. Omit the selector or use <code>"edge"</code> to retain
+        Edge; other values and use with a different target are refused before output is cleared.
+        There is no separate runtime flag. Node functions support Node built-ins but not Bun APIs
+        or a persistent server; the CLI/build still requires Bun. See{" "}
+        <a href={href({ to: "/docs/deployment", hash: "vercel-node" })}>runtime output and limitations</a>.
+      </p>
 
       <h2 id="commands">Command reference</h2>
       <p>

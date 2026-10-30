@@ -50,6 +50,8 @@ import {
   planBuildTarget,
   type ServerBuild,
   type SizeReport,
+  type VercelRuntime,
+  validateVercelRuntime,
 } from "./build-plan.ts"
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
@@ -68,7 +70,9 @@ import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
 import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
+import { emitPluginImages, isImageAssetUrl } from "./internal/image-assets.ts"
 import { adapterRefusal } from "./internal/node-adapter.ts"
+import { nodeHandlerSource } from "./internal/node-handler-source.ts"
 import { assertIdentityParity } from "./internal/parity.ts"
 import {
   type ServerPrerenderedPage,
@@ -773,10 +777,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
   const copyChunks = copy?.urls ?? {}
+  const images = emitPluginImages(options.plugins ?? [], outDir, publicPath)
   return writeClientManifest(
     {
       entry: entryUrl,
-      assets: [...outputs.map((o) => toUrl(o.path)), ...Object.values(copyChunks)],
+      assets: [...outputs.map((o) => toUrl(o.path)), ...Object.values(copyChunks), ...images],
       routes,
     },
     { publicFiles, css, routeStyles, copyChunks },
@@ -1421,6 +1426,8 @@ const PRERENDERED_DIR = "_prerendered"
  */
 export function generateServerEntry(options: {
   readonly target: BuildTarget
+  /** Vercel-only runtime selection; Edge remains the default. */
+  readonly vercelRuntime?: VercelRuntime
   /** Import specifier for the module exporting `adapter` (e.g. `"../framework.ts"`). */
   readonly adapterImport: string
   /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */
@@ -1460,6 +1467,7 @@ export function generateServerEntry(options: {
     clientIp,
     selfHost,
   } = options
+  validateVercelRuntime(target, options.vercelRuntime)
   if (clientIp !== undefined && clientIp !== "platform") {
     throw new Error(
       `[nifra/web] generateServerEntry: clientIp must be "platform" or left out, got ${JSON.stringify(clientIp)}`,
@@ -1596,6 +1604,17 @@ export function generateServerEntry(options: {
     return `${lines.join("\n")}\n`
   }
   if (target === "vercel") {
+    if (options.vercelRuntime === "node") {
+      lines.push(
+        ...nodeHandlerSource({
+          fetch: "app.fetch(request)",
+          failure: "server_failed",
+          protocol: "https",
+        }),
+        "export default handle",
+      )
+      return `${lines.join("\n")}\n`
+    }
     lines.push(
       "// Vercel Edge Function - Vercel serves /assets/* from its CDN; this only SSRs page routes.",
       'export const config = { runtime: "edge" }',
@@ -1670,6 +1689,8 @@ async function measureOutputs(paths: readonly string[]): Promise<ChunkSize[]> {
 }
 
 export interface BuildTargetOptions {
+  /** Vercel-only: opt into Node.js 22 serverless SSR instead of the default Edge function. */
+  readonly vercelRuntime?: VercelRuntime
   /** The `routes/` directory to discover (absolute path). */
   readonly routesDir: string
   /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated, so the
@@ -1900,7 +1921,7 @@ export async function buildTargetWith(
     options.cssCodeSplit === undefined ? undefined : normalizeCssCodeSplit(options.cssCodeSplit)
   const requestedCssLoading =
     options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
-  const targetPlan = planBuildTarget(parseBuildTarget(target), outDir)
+  const targetPlan = planBuildTarget(parseBuildTarget(target), outDir, options.vercelRuntime)
   const sources = [
     routesDir,
     process.cwd(),
@@ -1982,6 +2003,22 @@ export async function buildTargetWith(
     writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
   }
 
+  // Server-only imports and lazy prerender modules can discover images after the client build.
+  const emittedImages = new Set<string>()
+  const collectImages = (): boolean => {
+    const images = emitPluginImages(
+      [...(options.clientPlugins ?? []), ...(options.serverPlugins ?? [])],
+      assetsDir,
+      "/assets/",
+      emittedImages,
+    )
+    const assets = [...new Set([...client.assets, ...images])]
+    if (assets.length === client.assets.length) return false
+    client = { ...client, assets }
+    writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
+    return true
+  }
+
   // A self-hosting server answers its prerendered pages from their file. The static target is all
   // prerendered pages; the edge targets keep rendering them on demand.
   const prerenderedPages =
@@ -1996,6 +2033,7 @@ export async function buildTargetWith(
           secretScan,
         )
       : undefined
+  collectImages()
 
   if (targetPlan.kind === "static") {
     if (options.prerenderApp === undefined) {
@@ -2008,6 +2046,7 @@ export async function buildTargetWith(
     // build above, so the hydration `<script src>` the prerendered HTML emits matches the emitted bundle.
     // A stale/placeholder entry here 404s → the pages render but never hydrate (inert controls).
     const app = await options.prerenderApp(client)
+    collectImages()
     const result = await prerenderRoutes({
       app,
       routes: manifest.routes,
@@ -2022,10 +2061,9 @@ export async function buildTargetWith(
           "`export const prerender = true` (static) or `getStaticPaths` (dynamic).",
       )
     }
+    collectImages()
     rmSync(workDir, { recursive: true, force: true })
-    const size = aggregateSizeReport(
-      await measureOutputs(client.assets.map((u) => assetUrlToPath(u, assetsDir))),
-    )
+    const size = aggregateSizeReport(await measureOutputs(codeAssetPaths(client.assets, assetsDir)))
     return {
       target,
       outDir,
@@ -2039,46 +2077,65 @@ export async function buildTargetWith(
   // lands next to it (buildServer writes it there). The adapter/backend specifiers are resolved from
   // workDir, so the caller passes paths relative to it (or absolute).
   const serverEntryPath = `${workDir}/server-entry.ts`
-  writeFileSync(
-    serverEntryPath,
-    generateServerEntry({
-      target,
-      adapterImport: options.adapterImport,
-      ...(options.useImport !== undefined ? { useImport: options.useImport } : {}),
-      ...(options.optionImports !== undefined ? { optionImports: options.optionImports } : {}),
-      ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
-      ...(options.title !== undefined ? { title: options.title } : {}),
-      ...(publicFiles.length > 0 ? { publicFiles } : {}),
-      hashedFiles: client.assets,
-      ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
-      ...(options.selfHost !== undefined ? { selfHost: options.selfHost } : {}),
-      ...(client.copyChunks !== undefined ? { copyChunks: true } : {}),
-      ...(prerenderedPages !== undefined ? { prerenderedPages } : {}),
-    }),
-  )
-  const { worker, outputs } = await bundler.buildServer({
-    routesDir,
-    serverEntry: serverEntryPath,
-    outDir: `${workDir}/server`,
-    clientEntry: client.entry,
-    target: targetPlan.serverTarget,
-    ...(client.css !== undefined ? { styles: client.css } : {}),
-    ...(client.routeStyles !== undefined ? { routeStyles: client.routeStyles } : {}),
-    ...(client.copyChunks !== undefined ? { copyChunks: client.copyChunks } : {}),
-    buildAssets: buildAssetPaths(client),
-    ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
-    define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
-    ...(client.cssLoading !== undefined
-      ? { cssLoading: client.cssLoading }
-      : requestedCssLoading !== undefined
-        ? { cssLoading: requestedCssLoading }
+  const bundleServer = async (): Promise<ServerBuild> => {
+    writeFileSync(
+      serverEntryPath,
+      generateServerEntry({
+        target,
+        ...(options.vercelRuntime !== undefined ? { vercelRuntime: options.vercelRuntime } : {}),
+        adapterImport: options.adapterImport,
+        ...(options.useImport !== undefined ? { useImport: options.useImport } : {}),
+        ...(options.optionImports !== undefined ? { optionImports: options.optionImports } : {}),
+        ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
+        ...(options.title !== undefined ? { title: options.title } : {}),
+        ...(publicFiles.length > 0 ? { publicFiles } : {}),
+        hashedFiles: client.assets,
+        ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
+        ...(options.selfHost !== undefined ? { selfHost: options.selfHost } : {}),
+        ...(client.copyChunks !== undefined ? { copyChunks: true } : {}),
+        ...(prerenderedPages !== undefined ? { prerenderedPages } : {}),
+      }),
+    )
+    return bundler.buildServer({
+      routesDir,
+      serverEntry: serverEntryPath,
+      outDir: `${workDir}/server`,
+      clientEntry: client.entry,
+      target: targetPlan.serverTarget,
+      ...(client.css !== undefined ? { styles: client.css } : {}),
+      ...(client.routeStyles !== undefined ? { routeStyles: client.routeStyles } : {}),
+      ...(client.copyChunks !== undefined ? { copyChunks: client.copyChunks } : {}),
+      buildAssets: buildAssetPaths(client),
+      ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
+      define: {
+        "process.env.NODE_ENV": '"production"',
+        ...(options.define ?? {}),
+        // Node functions never use core's optional Bun branches (listen/file/sleep).
+        ...(options.vercelRuntime === "node"
+          ? { Bun: "undefined", "globalThis.Bun": "undefined" }
+          : {}),
+      },
+      ...(client.cssLoading !== undefined
+        ? { cssLoading: client.cssLoading }
+        : requestedCssLoading !== undefined
+          ? { cssLoading: requestedCssLoading }
+          : {}),
+      root: resolvePath(dirname(routesDir)),
+      generatedFiles: [resolvePath(workDir, options.adapterImport)],
+      ...(options.publicEnvPrefix !== undefined
+        ? { publicEnvPrefix: options.publicEnvPrefix }
         : {}),
-    root: resolvePath(dirname(routesDir)),
-    generatedFiles: [resolvePath(workDir, options.adapterImport)],
-    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
-    // The Deno entry tags its files with node:crypto, which Deno provides itself.
-    ...(targetPlan.target === "deno" ? { providedBuiltins: ["node:crypto"] } : {}),
-  })
+      // The Deno entry tags its files with node:crypto, which Deno provides itself.
+      ...(targetPlan.target === "deno" ? { providedBuiltins: ["node:crypto"] } : {}),
+    })
+  }
+  let { worker, outputs } = await bundleServer()
+  if (collectImages()) {
+    // Bake SSR-only images into buildAssets/host-policy classification too, not only the disk files.
+    ;({ worker, outputs } = await bundleServer())
+    if (collectImages())
+      throw new Error("[nifra/web] Image sources changed during the server build; rebuild")
+  }
   // The deploy dir below ships `worker` alone: a code-split server would lose its chunks and fail at its
   // first import of one, never at build time.
   const chunks = outputs.filter(
@@ -2124,10 +2181,25 @@ export async function buildTargetWith(
     const fn = dirname(`${outDir}/${targetPlan.outputFile}`)
     mkdirSync(fn, { recursive: true })
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
+    const node = options.vercelRuntime === "node"
     writeFileSync(
       `${fn}/.vc-config.json`,
-      `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
+      `${JSON.stringify(
+        node
+          ? {
+              runtime: "nodejs22.x",
+              handler: "index.js",
+              launcherType: "Nodejs",
+              shouldAddHelpers: false,
+              // Without it Vercel buffers the response, so streamed SSR and PPR holes arrive at once.
+              supportsResponseStreaming: true,
+            }
+          : { runtime: "edge", entrypoint: "index.js" },
+        null,
+        2,
+      )}\n`,
     )
+    if (node) writeFileSync(`${fn}/package.json`, `${JSON.stringify({ type: "module" })}\n`)
     // Files the build wrote are served first; every other path is the SSR function's.
     writeFileSync(
       `${outDir}/config.json`,
@@ -2139,7 +2211,7 @@ export async function buildTargetWith(
   rmSync(workDir, { recursive: true, force: true })
 
   // Size report over the client assets + the server bundle (its parse cost matters on the edge).
-  const clientPaths = client.assets.map((u) => assetUrlToPath(u, assetsDir))
+  const clientPaths = codeAssetPaths(client.assets, assetsDir)
   const serverPath = `${outDir}/${targetPlan.outputFile}`
   const size = aggregateSizeReport(await measureOutputs([...clientPaths, serverPath]))
   return { target, outDir, client, run: targetPlan.run, size }
@@ -2148,4 +2220,8 @@ export async function buildTargetWith(
 /** Map a client asset URL (`/assets/x-hash.js`) back to its on-disk path under `assetsDir`. The
  * `publicPath` prefix is always `/assets/` for these builds, so strip it and rejoin. */
 const assetUrlToPath = (url: string, assetsDir: string): string =>
-  `${assetsDir}/${url.slice(url.lastIndexOf("/") + 1)}`
+  `${assetsDir}/${url.slice("/assets/".length)}`
+
+/** The client assets a size report covers: code and styles, not the media image plugins emit. */
+const codeAssetPaths = (urls: readonly string[], assetsDir: string): string[] =>
+  urls.filter((url) => !isImageAssetUrl(url)).map((url) => assetUrlToPath(url, assetsDir))

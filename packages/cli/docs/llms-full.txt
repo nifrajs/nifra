@@ -712,15 +712,18 @@ param that is missing, empty, `.`, `..` or an unpaired surrogate throws a
 or a history delta such as `navigate(-1)`; a string or a template literal is a
 compile error. So do React's `Link`, `NavLink` and `Navigate`
 (`<Link to={href({ to: "/pricing" })}>`) and the server's
-`redirect()`; `Link` and `NavLink` also throw at render when
-`to` is not a same-origin path, and `redirect` takes any string with
-`{ external: true }`. For a same-origin path built elsewhere - a CMS link,
+`redirect()`; when `to` is not a same-origin path,
+`Link` and `NavLink` render the anchor without an `href`,
+and `Navigate` and `setSearchParams` do not navigate; each logs a
+`console.error` that names the call and never the value. `redirect`
+takes an off-origin location with `{ external: true }`, which still refuses
+one holding a line break. For a same-origin path built elsewhere - a CMS link,
 `/llms.txt` - `rawHref("/llms.txt")` checks it (one leading
 `/`, no backslash or control character) and returns the same type. A link to
 another site is a plain `<a href>`. A path that comes from outside is
 checked where it is read: `rawHref` throws a `TypeError` for one that is
-not same-origin, so catch it at that call when a field cannot be trusted, and the page never
-reaches `Link` with a value it would refuse.
+not same-origin, so catch it at that call when a field cannot be trusted. A value that gets
+past it as a forged `Href` costs only its own link.
 
 ### Moving existing links to href()
 
@@ -5913,9 +5916,9 @@ loader at a CDN and the runtime stays tiny. Or self-host: the optional
 
 ### The <Image> component
 
-`width` and `height` are **required** and validated
-`> 0` - they reserve layout space so the page never shifts when the image loads
-(the CLS contract). It's `loading="lazy"` + `decoding="async"` by default;
+For string URLs, `width` and `height` are **required** and validated
+`> 0`. Imported metadata can supply them automatically. Dimensions reserve layout
+space so the page never shifts (the CLS contract). It's `loading="lazy"` + `decoding="async"` by default;
 mark the LCP image with `priority` to get `eager` +
 `fetchpriority="high"`. Extra DOM props (`className`, `style`,
 `id`, `data-*`) pass straight through to the `<img>`.
@@ -5947,6 +5950,81 @@ The responsive `srcSet` is built from `widths` (default
 `[width, width*2]` for 1×/2× retina), de-duped and sorted; if every width yields
 the same URL (e.g. the identity loader), `srcSet` is omitted. The browser then picks
 the right candidate for the device's pixel ratio and the `sizes` you declare.
+
+### Local image imports
+
+Opt into `?image` imports to read PNG, JPEG, GIF and WebP dimensions at build time,
+including JPEG, PNG and WebP display orientation. The import is a browser-safe `StaticImageData`
+object; no filesystem code or codec ships to the browser. Ordinary string URLs are unchanged.
+
+```ts
+// env.d.ts — enable the typed metadata import:
+/// <reference types="@nifrajs/image/imports" />
+
+// routes/index.tsx (React; also supported by Preact, Solid, Vue and Svelte)
+import { Image } from "@nifrajs/web-react/image"
+import hero from "../shared/images/hero.jpg?image"
+
+export default function Page() {
+  return <Image src={hero} alt="Mountain lake" priority />
+  // Optional width={600} infers height from the source aspect ratio.
+}
+```
+
+```ts
+// backend/framework.ts — add these beside your existing framework plugins:
+import { imageBunPlugin } from "@nifrajs/image/plugins"
+
+const images = { root: process.cwd() }
+export const clientPlugins = [imageBunPlugin(images)]
+export const serverPlugins = [imageBunPlugin(images)]
+
+// For the Vite pipeline instead (including component mode):
+// import { imageVitePlugin } from "@nifrajs/image/plugins"
+// export const vitePlugins = [imageVitePlugin(images)]
+```
+
+Keep the same image options in client and server builds. Preserve your framework's existing
+plugins when adding these. Metadata-only imports need no native dependency. Nifra emits the
+original bytes under `/assets/_images/` with content-hashed names, registers them in
+the build manifest, and serves them in development. Static builds deploy these files too;
+no image endpoint is needed. For standalone bundler use, emit the plugin's
+`nifraStaticAssets()` files yourself. A custom `publicPath` (a root-relative prefix
+or an absolute http(s) URL) must match your client build's asset prefix; a mismatch fails the build.
+
+### Build-time responsive variants
+
+Supply `widths` and an explicit `ImageBackend` to generate real responsive
+files at build time. This reuses the sharp, Bun.Image or WASM backend seam; sharp is an optional
+application dependency, not a Nifra runtime dependency. Both the processor and sharp path work
+on Node without Bun. Outputs support WebP (default), JPEG and PNG; widths never upscale the source.
+
+```ts
+// doc-check: skip - install sharp and merge with your framework's existing plugins.
+import sharp from "sharp"
+import { Buffer } from "node:buffer"
+import { sharpImageBackend } from "@nifrajs/image/backends"
+import { imageBunPlugin } from "@nifrajs/image/plugins"
+
+const images = {
+  root: process.cwd(),
+  widths: [320, 640, 1200],
+  format: "webp" as const,
+  quality: 80,
+  backend: sharpImageBackend((bytes) => sharp(Buffer.from(bytes))),
+}
+export const clientPlugins = [imageBunPlugin(images)]
+export const serverPlugins = [imageBunPlugin(images)]
+// Vite: use imageVitePlugin(images) in vitePlugins instead.
+```
+
+The component chooses only emitted variants; per-render `widths` filters available
+candidates rather than creating files. Build-time `quality` is baked in. An explicit
+CDN loader overrides the static variant selection. Defaults cap sources at 16 MiB and 40 million
+pixels; `maxSourceBytes` and `maxSourcePixels` are configurable. At most 32
+widths, each up to 8192 pixels, are accepted. Sources must remain inside `root`,
+including symlink targets. GIF, animated PNG and animated WebP imports are metadata-only; AVIF and SVG metadata
+imports are not supported.
 
 ### Loaders
 
@@ -6248,13 +6326,91 @@ export function meta({ params, origin }: MetaArgs): Meta {
 ```
 
 A page that exists in some languages only is declared once, with `pageLocales`
-(given the path without its locale prefix; it must be pure). Then
+(given the canonical path without its locale prefix; it must be pure). Then
 `matchSegment` answers not-found for the other locales, `alternates`
 lists only the page's own (none for a page in one locale), `localesOf(path)` names
 them for a prerender's static paths, and `localizePathname(path, locale, { fallback: "default" })`
 links a menu entry to the default locale's page where the page is missing. A
 `pageLocales` that throws, or names a locale the registry does not declare, throws
 rather than serving every locale.
+
+#### Explicit static translated pathnames
+
+Optionally declare `pathnames`: canonical unprefixed static paths mapped to
+unprefixed locale spellings. Missing entries keep the canonical spelling; they do not make a
+page unavailable (`pageLocales` still owns that). Language switches, reverse
+lookup, canonical links, `hreflang` and `matchSegment` redirects all
+use the same table. With no table, existing prefix-only behavior is unchanged.
+
+```ts
+// shared/i18n.ts - explicit STATIC pathname translations, not content or dynamic slug translation.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+
+const locales = defineLocales({ default: "en", locales: { en: {}, fr: {}, de: {} } })
+export const urls = defineI18nRouting(locales, {
+  pathnames: {
+    "/about": { fr: "/a-propos", de: "/ueber-uns" },
+    "/contact": { fr: "/contactez-nous" }, // Missing German name; availability is separate below.
+  },
+  // Always the canonical key, even when the incoming URL is /fr/contactez-nous.
+  pageLocales: (path) => path === "/contact" ? ["en", "fr"] : undefined,
+})
+
+urls.localizePathname("/about", "fr") // "/fr/a-propos"
+urls.localizePathname("/fr/a-propos", "de") // "/de/ueber-uns"
+urls.unlocalizePathname("/de/ueber-uns") // { locale: "de", pathname: "/about" }
+urls.alternates("/fr/a-propos").canonical // "/fr/a-propos"
+urls.staticPathnames() // ["/about", "/fr/a-propos", "/de/ueber-uns", "/contact", "/fr/contactez-nous"]
+```
+
+`staticPathnames()` enumerates mapped public URLs only, in mapping declaration
+order then served-locale registry order, filtered by `pageLocales`. Feed explicit
+static entries to your prerender setup after wiring incoming routing; the prerender driver
+does not automatically enumerate catch-all routes. Unmapped pages are not discovered.
+Draft locales are never included. Unicode spellings such as `/紹介` are
+emitted URL-encoded and resolve from `new URL(request.url).pathname`. Reverse
+lookup returns a URL-encoded canonical pathname; `pageLocales` sees the declared
+canonical key. Query strings and trailing slashes survive translation, hashes too;
+SEO links and redirects omit the hash as before.
+
+**Mappings do not create files or filesystem aliases.** A file named
+` about.tsx` alone will not serve `/fr/a-propos`. Supply matching
+routes yourself, or use a catch-all dispatcher that resolves
+` unlocalizePathname` to an explicit page registry, for example:
+
+```ts
+// doc-check: skip - imports the app's own routing module and generated route types.
+// routes/[...path].backend.ts, paired with routes/[...path].tsx rendering props.data.page.
+// A root catch-all receives /about, /fr/a-propos and /de/ueber-uns; it needs at least one segment.
+import { notFound, redirect } from "@nifrajs/web"
+import { t } from "@nifrajs/schema"
+import { urls } from "../shared/i18n"
+import type { Route } from "./+types/[...path]"
+
+const pages = new Map([["/about", "about"], ["/contact", "contact"]])
+export const loaderOutput = t.object({ page: t.string(), locale: t.string() })
+export function loader({ request }: Route.LoaderArgs) {
+  const { pathname, search } = new URL(request.url)
+  const match = urls.matchSegment(urls.getPathLocale(pathname), pathname + search)
+  if (match.kind === "not-found") notFound()
+  if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+  const canonical = urls.unlocalizePathname(pathname).pathname.replace(/\/$/, "") || "/"
+  const page = pages.get(canonical)
+  if (!page) notFound() // Includes unknown and draft-prefixed paths: never dispatch arbitrary input.
+  return { page, locale: urls.localeOf(pathname) }
+}
+```
+
+Keep a separate `routes/index.tsx` for the root; a catch-all needs at least one
+segment. Literal routes take precedence, so ensure they also use the same canonical checks
+when they overlap this dispatcher. Registering `i18n` below supplies locale
+metadata and prefix guards, not pathname rewrites. Dynamic slug maps, automatic filesystem
+aliases, automatic content translation and domain-based routing are outside this API.
+Invalid static paths (patterns, URL delimiters, dot segments or encoded separators), unknown
+locale keys, per-locale collisions including fallback paths, and translations shadowing
+another canonical key throw when the router is defined. Paths must not already carry a
+served locale prefix.
 
 ### Register the routing once
 
@@ -7166,7 +7322,7 @@ server()
 
 ## Nifra - Deployment
 
-> One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.
+> One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge or Node.
 
 `app.fetch(request)` is a pure Web-standard handler, so the same app runs
 anywhere. Pick a runtime; the code doesn't change.
@@ -7236,7 +7392,7 @@ Cloudflare Pages
 
 `wrangler.toml`
 
-Vercel Edge
+Vercel (Edge by default; Node opt-in)
 
 `.vercel/output/`
 
@@ -7250,6 +7406,40 @@ SSG & ISR.
 
 The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
 Cloudflare and Vercel the platform serves it.
+
+#### Vercel: Edge or Node.js
+
+Ordinary SSR keeps the existing Edge output for `nifra build --target vercel`.
+For Node built-ins and Node-compatible server libraries, keep the target and opt into Node
+in `nifra.config.ts` (there is no separate runtime CLI flag):
+
+```ts
+// nifra.config.ts (alongside your adapter/clientModule exports)
+export const target = "vercel"
+export const vercelRuntime = "node" // "edge" or omitted preserves the Edge function
+
+// Build and deploy from the project root:
+// bunx nifra build             # or: bunx nifra build --target vercel
+// vercel deploy --prebuilt
+```
+
+Both Bun and Vite production pipelines emit Build Output API v3 at
+`.vercel/output`: `static/` holds the client chunks and public files;
+`functions/index.func/` holds the SSR function. Node mode declares
+`nodejs22.x` and exports an HTTP handler without listening at import. It serves
+pages and the backend mounted with `apiPrefix`. Programmatic builds use
+`buildTarget("vercel", { ...options, vercelRuntime: "node" })`, or the same
+option on `buildTargetVite`. A different target or an unsupported runtime is
+refused before clearing the previous build; remove the selector when switching targets.
+
+This is serverless Node, not the self-hosted `node` target: no Bun APIs, listening
+sockets, persistent in-process jobs or WebSocket server. Execution duration, streaming and
+filesystem availability remain subject to Vercel limits; native dependencies must be
+deploy-compatible. `selfHost` does not start a server here. Builds still require
+Bun. Static files are served first by Vercel, so host policy in the function cannot protect
+CDN files. The component pipeline retains its existing Vercel Node output and does not take
+this ordinary-SSR selector. The generated handler is tested locally under Node; this is not
+a claim of a live Vercel deployment test.
 
 The Bun, Node and Deno entries pass the socket peer as `c.clientIp`. Cloudflare
 and Vercel expose no socket, so an edge build has no caller address unless
@@ -7473,8 +7663,9 @@ export default toFetchHandler(app)
 ```
 
 Deploy: `wrangler pages deploy dist` (Pages) or `wrangler deploy`
-(Workers). The `vercel` target emits the same edge bundle as a Build Output API
-function under `.vercel/output`.
+(Workers). The `vercel` target defaults to an Edge Build Output API function
+under `.vercel/output`; [opt into Node.js](#vercel-node) for
+Node-compatible server dependencies.
 
 ## Nifra - CLI
 
@@ -7568,6 +7759,17 @@ export const vitePlugins = [react()]          // only if you want Vite's dev pip
 //   conditions    = ["solid"]                 // Solid: resolve solid-js to its source
 //   define        = { __VUE_OPTIONS_API__: "true", ... }   // Vue feature flags
 ```
+
+Ordinary `vercel` builds default to Edge. To opt into Node.js 22, export both
+`target = "vercel"` and `vercelRuntime = "node"` from
+`nifra.config.ts`, then run `nifra build` (or
+`nifra build --target vercel`) and `vercel deploy --prebuilt` from
+the project root. Both Bun and Vite builds write `.vercel/output` unless
+`--out` overrides it. Omit the selector or use `"edge"` to retain
+Edge; other values and use with a different target are refused before output is cleared.
+There is no separate runtime flag. Node functions support Node built-ins but not Bun APIs
+or a persistent server; the CLI/build still requires Bun. See
+runtime output and limitations.
 
 ### Command reference
 
@@ -20927,7 +21129,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/image
 
-`CloudflareLoaderOptions`, `HtmlImageAttrs`, `ImageFormat`, `ImageInfo`, `ImageLoader`, `ImageProps`, `OgImageOptions`, `OgImageRasterized`, `OgImageRasterizer`, `PngRenderer`, `ResolvedImage`, `ResvgConstructor`, `ResvgRenderer`, `SelfHostedLoaderOptions`, `SignImageUrlOptions`, `cloudflareLoader`, `createPngRasterizer`, `createResvgRasterizer`, `identityLoader`, `imageDimensions`, `ogImageResponse`, `readImageDimensions`, `renderOgImage`, `resolveImage`, `selfHostedLoader`, `signImageUrl`, `toHtmlAttrs`
+`CloudflareLoaderOptions`, `HtmlImageAttrs`, `ImageFormat`, `ImageInfo`, `ImageInputProps`, `ImageLoader`, `ImagePresentationProps`, `ImageProps`, `OgImageOptions`, `OgImageRasterized`, `OgImageRasterizer`, `PngRenderer`, `ResolvedImage`, `ResvgConstructor`, `ResvgRenderer`, `SelfHostedLoaderOptions`, `SignImageUrlOptions`, `StaticImageData`, `StaticImageProps`, `StaticImageVariant`, `cloudflareLoader`, `createPngRasterizer`, `createResvgRasterizer`, `identityLoader`, `imageDimensions`, `ogImageResponse`, `readImageDimensions`, `renderOgImage`, `resolveImage`, `selfHostedLoader`, `signImageUrl`, `toHtmlAttrs`
 
 ## @nifrajs/island-trigger
 

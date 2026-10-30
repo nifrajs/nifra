@@ -11,7 +11,7 @@ import type { ShellCheckRecord } from "../../../../src/internal/ppr/compile-shel
 import { createWebApp } from "../../../../src/internal/web-app.ts"
 import { type PprOptions, partialPrerendering } from "../../../../src/ppr.ts"
 import type { RenderAdapter } from "../../../../src/render-seam.ts"
-import { probe, releaseHeld } from "./lib/probe.ts"
+import { probe, releaseHeld } from "./lib/probe.backend.ts"
 
 /** Signs the fixture's draft cookies; a test value, as `enableDraft` documents. */
 export const DRAFT_SECRET = "ppr-fixture-draft-secret-not-for-production"

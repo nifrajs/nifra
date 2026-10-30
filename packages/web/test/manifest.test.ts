@@ -238,7 +238,8 @@ test("enumerateStaticRoutes spells params with the shared codec and drops what n
       }),
     }),
   ])
-  expect(paths).toEqual(["/blog/a+b,c%3Bd", "/blog/..%2F..%2Fescape%20hatch"])
+  // Strict: Bun's toEqual passes an array that only gains trailing `undefined` items.
+  expect(paths).toStrictEqual(["/blog/a+b,c%3Bd", "/blog/..%2F..%2Fescape%20hatch"])
 })
 
 test("enumerateStaticRoutes: static opt-ins + dynamic getStaticPaths, skips the rest", async () => {
