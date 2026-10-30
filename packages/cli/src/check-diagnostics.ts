@@ -382,6 +382,7 @@ export interface CheckTypecheckResult {
   /** TypeScript sources found with no tsconfig.json to typecheck them. */
   readonly sourcesWithoutTsconfig?: number
   readonly outsideProgram?: readonly string[]
+  readonly routeTableOutsideProgram?: string
 }
 
 export interface CheckAnalysisInput {

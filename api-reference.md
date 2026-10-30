@@ -5350,7 +5350,6 @@ _No named exports (side-effect entrypoint)._
 - **FontPreloadInput** _(interface)_ - `interface FontPreloadInput`
 - **FontSource** _(interface)_ - `interface FontSource`
 - **GenerateClientEntryOptions** _(interface)_ - `interface GenerateClientEntryOptions`
-- **GenerateRouteSearchTypesOptions** _(interface)_ - `interface GenerateRouteSearchTypesOptions`
 - **GenerateServerManifestOptions** _(interface)_ - `interface GenerateServerManifestOptions`
 - **GetStaticPaths** _(type)_ - `type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>`
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
@@ -5360,6 +5359,8 @@ _No named exports (side-effect entrypoint)._
 - **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions`
 - **HostPolicyRule** _(interface)_ - `interface HostPolicyRule`
   One host's surface. A request on a host no rule names is not restricted.
+- **Href** _(type)_ - `type Href<Pattern extends string = string> = string & { readonly [hrefBrand]: Pattern }`
+  An in-app URL built from a route: a string at runtime, a branded string to the compiler, so a plain string or a template literal is not assignable to it. `Pattern` is the {@link RouteTable} key it was built for.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
@@ -5459,8 +5460,8 @@ _No named exports (side-effect entrypoint)._
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
 - **NavigateOptions** _(interface)_ - `interface NavigateOptions`
   Options for a programmatic navigation.
-- **NavigateSearchOf** _(type)_ - `type NavigateSearchOf<To extends string> = To extends keyof RouteSearch ? RouteSearch[To] : Record<string, unknown>`
-  The `search` type for a navigate to `To`: the route's schema output when `To` is a mapped {@link RouteSearch} key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is always allowed). Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form with…
+- **NavigateSearchOf** _(type)_ - `type NavigateSearchOf<To extends string> = To extends keyof RouteTable ? RouteTable[To] extends { readonly search: infer Search } ? Search : Record<string, unknown> : Record<string, unknown>`
+  The `search` type for a navigate to `To`: the route's schema output when `To` is a {@link RouteTable} key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is always allowed). Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form with a wrong…
 - **NavigateTargetInput** _(interface)_ - `interface NavigateTargetInput`
   The runtime shape of an object-form navigate target (loose - the typed narrowing lives in {@link NavigateFunction}'s generic call signature). `to` is a bare pathname; `search` is serialized onto it; `replace` folds into the options.
 - **NonceContext** _(interface)_ - `interface NonceContext<Env = unknown>`
@@ -5554,8 +5555,8 @@ _No named exports (side-effect entrypoint)._
   A route module - the default component + optional loader / action / meta.
 - **RoutePattern** _(interface)_ - `interface RoutePattern`
   A route id paired with its nifra pattern (e.g. `":id"` segments) - the matcher input.
-- **RouteSearch** _(interface)_ - `interface RouteSearch`
-  The augmentable route -> search-type map for typed cross-route navigation. Empty by default (so an object-form navigate to any path is allowed with a loose `search`). A build step (`nifra sync-routes`) OR the app declares one entry per route path against its `searchSchema` output:
+- **RouteTable** _(interface)_ - `interface RouteTable`
+  Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the object a link to the route needs (`Record<string, never>` when the pattern has none), `search` the output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types…
 - **RouterState** _(interface)_ - `interface RouterState`
   The router's observable state. A new object is published on every transition.
 - **SERVER_FN_MODULE** _(const)_ - `SERVER_FN_MODULE: RegExp`
@@ -5566,7 +5567,7 @@ _No named exports (side-effect entrypoint)._
   HTML returned by an explicit, caller-supplied sanitizer. It is also trusted by the adapters.
 - **ScriptDescriptor** _(interface)_ - `interface ScriptDescriptor`
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
-  The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
+  The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: `nifra types` maps each route pattern to `SearchOf<typeof import("./routes/<file>")>` in…
 - **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "shared"; readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
   Partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
 - **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
@@ -5651,8 +5652,6 @@ _No named exports (side-effect entrypoint)._
 - **fontPreload** _(function)_ - `fontPreload: (input: FontPreloadInput) => LinkDescriptor`
   Build a font preload as a `<link>` attribute set for a route/layout's `meta.link` - nifra injects it into `<head>` (`<link rel="preload" as="font" type="font/woff2" crossorigin="anonymous">`). Values are escaped at injection by the head renderer. Preloading the font file removes a render-blocking r…
 - **generateClientEntry** _(function)_ - `generateClientEntry: (manifest: Manifest, options: GenerateClientEntryOptions) => string`
-- **generateRouteSearchTypes** _(function)_ - `generateRouteSearchTypes: (manifest: Manifest, options: GenerateRouteSearchTypesOptions) => string`
-  Codegen: emit a `.d.ts` that types cross-route `navigate({ to, search })` against each route's `searchSchema`. It augments the {@link RouteSearch} map with `"<pattern>": SearchOf<typeof import(...)>` for every **static** route (one with no `:param`/`*` segment - a concrete `to` a caller can pass; a…
 - **generateServerManifest** _(function)_ - `generateServerManifest: (manifest: Manifest, options: GenerateServerManifestOptions) => string`
 - **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
@@ -6651,6 +6650,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/route-types`
 
+- **ROUTE_TABLE_FILE** _(const)_ - `ROUTE_TABLE_FILE: ".nifra/types/routes.d.ts"`
+  The generated `RouteTable`, relative to the app root.
 - **ROUTE_TYPES_DIR** _(const)_ - `ROUTE_TYPES_DIR: ".nifra/types"`
   Where the generated types live, relative to the app root.
 - **RouteTypesOptions** _(interface)_ - `interface RouteTypesOptions`

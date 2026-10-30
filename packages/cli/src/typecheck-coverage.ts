@@ -6,6 +6,7 @@
  */
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { ROUTE_TABLE_FILE } from "@nifrajs/web/route-types"
 import { stripComments } from "./check-scan.ts"
 
 const ZONE_FOLDER = new Set(["routes", "frontend", "backend", "shared"])
@@ -139,6 +140,28 @@ const excludedBy = (patterns: readonly string[], file: string): boolean =>
   patterns.some(
     (pattern) => new Bun.Glob(pattern).match(file) || new Bun.Glob(`${pattern}/**`).match(file),
   )
+
+// A named import of a navigation API from `@nifrajs/web` or an adapter: what the route table types.
+const NAVIGATION_IMPORT =
+  /\bimport\s+(?:type\s+)?\{[^}]*\b(?:useNavigate|Link|NavLink|Navigate|redirect|href|rawHref)\b[^}]*\}\s*from\s*["']@nifrajs\/web(?:-[a-z]+)?["']/
+
+/**
+ * `.nifra/types/routes.d.ts` (project-relative) when a source file uses a navigation API, the table
+ * exists, and no program holds it. A program that imports any route's `./+types` module loads the table
+ * through that module's reference; one that does not, and does not name it, never sees it, so
+ * `navigate` and `redirect` quietly accept any target. An app that uses none of them is left alone.
+ */
+export function routeTableOutsideProgram(
+  cwd: string,
+  programFiles: readonly string[],
+  sources: ReadonlyArray<{ readonly content: string }>,
+): string | undefined {
+  const table = join(cwd, ROUTE_TABLE_FILE)
+  if (!existsSync(table) || !sources.some(({ content }) => NAVIGATION_IMPORT.test(content)))
+    return undefined
+  const wanted = new Set([canonical(table), canonical(real(table))])
+  return programFiles.some((file) => wanted.has(canonical(file))) ? undefined : ROUTE_TABLE_FILE
+}
 
 /**
  * The TypeScript files under a zone folder that `programFiles` does not contain, project-relative and

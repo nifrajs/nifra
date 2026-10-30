@@ -6671,12 +6671,6 @@
     "signature": "export interface GenerateRegressionTestOptions {\n    /** Import specifier for the app under test. Default `\"../src/app\"`. */\n    readonly importPath?: string;\n    /** Named export of the app. Default `\"app\"`. */\n    readonly appExport?: string;\n    /** Also assert the response shape. Default false (status-only is the robust regression signal). */\n    readonly assertShape?: boolean;\n    /** Dotted key paths in the request body whose string values are safe to embed verbatim. */\n    readonly allow?: readonly string[];\n    /** Query parameter names whose values are safe to embed verbatim. Default none. */\n    readonly allowQuery?: readonly string[];\n    /** Header names (any case) whose values are safe to embed verbatim. Default `[\"content-type\"]`. */\n    readonly allowHeaders?: readonly string[];\n    /** Embed the capsule's `note` verbatim. Default false: a note is free text and is redacted. */\n    readonly keepNote?: boolean;\n}"
   },
   {
-    "name": "GenerateRouteSearchTypesOptions",
-    "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface GenerateRouteSearchTypesOptions {\n    /** Turn a route source file into a module specifier for a `typeof import(...)` type - the same contract\n     * as `generateClientEntry`'s `resolve`, but WITHOUT a file extension (a `.d.ts` imports a module, not a\n     * path). Relative to wherever the emitted `.d.ts` is written. */\n    readonly resolve: (file: string) => string;\n    /** The module whose `RouteSearch` interface is augmented (default `\"@nifrajs/web\"`). Every adapter's\n     * `NavigateTarget` reads `@nifrajs/web`'s `RouteSearch`, so the default types `navigate` on all of them. */\n    readonly module?: string;\n}"
-  },
-  {
     "name": "GenerateServerManifestOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -7054,6 +7048,13 @@
     "kind": "type",
     "package": "@nifrajs/agent",
     "signature": "export type HostileCodeIsolation = \"none\" | \"os\";"
+  },
+  {
+    "name": "Href",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type Href<Pattern extends string = string> = string & {\n    readonly [hrefBrand]: Pattern;\n};",
+    "doc": "/**\n * An in-app URL built from a route: a string at runtime, a branded string to the compiler, so a plain\n * string or a template literal is not assignable to it. `Pattern` is the {@link RouteTable} key it was\n * built for.\n */"
   },
   {
     "name": "HreflangLink",
@@ -10309,8 +10310,8 @@
     "name": "NavigateSearchOf",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type NavigateSearchOf<To extends string> = To extends keyof RouteSearch ? RouteSearch[To] : Record<string, unknown>;",
-    "doc": "/**\n * The `search` type for a navigate to `To`: the route's schema output when `To` is a mapped\n * {@link RouteSearch} key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is\n * always allowed). Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form\n * with a wrong shape - `navigate({ to: \"/reports\", search: { page: \"x\" } })` is a compile error.\n */"
+    "signature": "export type NavigateSearchOf<To extends string> = To extends keyof RouteTable ? RouteTable[To] extends {\n    readonly search: infer Search;\n} ? Search : Record<string, unknown> : Record<string, unknown>;",
+    "doc": "/**\n * The `search` type for a navigate to `To`: the route's schema output when `To` is a {@link RouteTable}\n * key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is always allowed).\n * Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form with a wrong\n * shape - `navigate({ to: \"/reports\", search: { page: \"x\" } })` is a compile error.\n */"
   },
   {
     "name": "NavigateTargetInput",
@@ -12273,6 +12274,13 @@
     "doc": "/** Hard budget for the offline route-language intersection. Never use this on the request path. */"
   },
   {
+    "name": "ROUTE_TABLE_FILE",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const ROUTE_TABLE_FILE = \".nifra/types/routes.d.ts\";",
+    "doc": "/** The generated `RouteTable`, relative to the app root. */"
+  },
+  {
     "name": "ROUTE_TYPES_DIR",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -13840,13 +13848,6 @@
     "doc": "/** Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…). */"
   },
   {
-    "name": "RouteSearch",
-    "kind": "interface",
-    "package": "@nifrajs/web",
-    "signature": "export interface RouteSearch {\n}",
-    "doc": "/**\n * The augmentable route -> search-type map for typed cross-route navigation. Empty by default (so an\n * object-form navigate to any path is allowed with a loose `search`). A build step (`nifra sync-routes`)\n * OR the app declares one entry per route path against its `searchSchema` output:\n *\n * ```ts\n * declare module \"@nifrajs/web\" {\n *   interface RouteSearch {\n *     \"/reports\": { page: number; q: string }\n *   }\n * }\n * ```\n *\n * With that, `navigate({ to: \"/reports\", search: { page: 2 } })` type-checks `search` against\n * `/reports`'s schema, and a wrong shape is a compile error. See {@link NavigateTarget}.\n */"
-  },
-  {
     "name": "RouteSnapshot",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -13858,6 +13859,13 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface RouteSnapshotSchema {\n    readonly headers?: SchemaSnapshot;\n    readonly cookies?: SchemaSnapshot;\n    readonly body?: SchemaSnapshot;\n    readonly query?: SchemaSnapshot;\n    readonly params?: SchemaSnapshot;\n    readonly response?: SchemaSnapshot;\n    readonly sse?: SchemaSnapshot;\n    readonly errors?: Readonly<Record<string, SchemaSnapshot>>;\n}"
+  },
+  {
+    "name": "RouteTable",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteTable {\n}",
+    "doc": "/**\n * Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the\n * object a link to the route needs (`Record<string, never>` when the pattern has none), `search` the\n * output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types`\n * writes `.nifra/types/routes.d.ts`, which fills it from the route files:\n *\n * ```ts\n * declare module \"@nifrajs/web\" {\n *   interface RouteTable {\n *     \"/users/:id\": { readonly params: { readonly id: string }; readonly search: { tab: string } }\n *   }\n * }\n * ```\n *\n * There is one key per pattern, so an optional segment (`[[lang]]`) is two keys with exact params each.\n * With an empty table every `to` is accepted and `search` is loose.\n */"
   },
   {
     "name": "RouteTypesOptions",
@@ -14797,7 +14805,7 @@
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type SearchOf<Module> = Module extends {\n    searchSchema: infer S;\n} ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>;",
-    "doc": "/**\n * The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed\n * query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route\n * navigation: generated route types (`nifra sync-routes`) map each path to\n * `SearchOf<typeof import(\"./routes/<file>\")>`, populating the augmentable `RouteSearch` interface.\n */"
+    "doc": "/**\n * The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed\n * query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route\n * navigation: `nifra types` maps each route pattern to\n * `SearchOf<typeof import(\"./routes/<file>\")>` in `.nifra/types/routes.d.ts`, populating the augmentable\n * `RouteTable` interface.\n */"
   },
   {
     "name": "SearchParamsInit",
@@ -20782,13 +20790,6 @@
     "package": "@nifrajs/testing",
     "signature": "export declare function generateRegressionTest(capsule: IncidentCapsule, options?: GenerateRegressionTestOptions): string;",
     "doc": "/**\n * Emit a committable regression test from a capsule. Body strings, query values, header values (bar\n * `content-type`) and the note are redacted BY DEFAULT with a sanitize banner - replace the\n * `<redacted>` placeholders with safe, reproducing values before you commit. The path is kept\n * verbatim because it selects the route, so the file always asks for it to be reviewed. The test\n * asserts the response contract via {@link assertIncidentReplays}.\n */"
-  },
-  {
-    "name": "generateRouteSearchTypes",
-    "kind": "function",
-    "package": "@nifrajs/web",
-    "signature": "export declare function generateRouteSearchTypes(manifest: Manifest, options: GenerateRouteSearchTypesOptions): string;",
-    "doc": "/**\n * Codegen: emit a `.d.ts` that types cross-route `navigate({ to, search })` against each route's\n * `searchSchema`. It augments the {@link RouteSearch} map with `\"<pattern>\": SearchOf<typeof import(...)>`\n * for every **static** route (one with no `:param`/`*` segment - a concrete `to` a caller can pass; a\n * dynamic route's concrete path can't match its pattern key, so those keep the loose object form). Written\n * by `nifra sync-routes` next to the route tree and included in the app's `tsconfig`; because it is\n * regenerated from the route files, a `navigate` whose `search` no longer matches the route's schema\n * becomes a `tsc` error - the same drift guarantee as nifra's typed client, no hand-maintained map.\n */"
   },
   {
     "name": "generateServerEntry",

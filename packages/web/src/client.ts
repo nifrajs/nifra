@@ -63,7 +63,7 @@ export { createClientRouter, createMatcher } from "./router.ts"
 // its router/query modules - and every one of those modules is in the browser graph. They are defined
 // in DOM-safe modules already; the only thing wrong was the specifier they were imported through.
 export { searchOf, searchOfChain } from "./search.ts"
-// Types are deliberately NOT re-exported here. `RouteSearch` is augmented by generated code through
+// Types are deliberately NOT re-exported here. `RouteTable` is augmented by generated code through
 // `declare module "@nifrajs/web"`, and an interface augmentation lands on the module it names - so a
 // type taken from this path would be the un-augmented one and typed `navigate({ to, search })` would
 // silently go loose. Adapters keep sourcing types from the root; what they must avoid is the

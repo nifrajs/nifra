@@ -81,7 +81,6 @@ const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
   ["nifra_capabilities", "writes files", "Writes, checks or explains the capability lockfile."],
   ["nifra_manifest", "writes files", "Emits or diffs the route trust manifest."],
   ["nifra_sync_manifest", "writes files", "Regenerates the server-manifest route tables."],
-  ["nifra_sync_routes", "writes files", "Regenerates nifra-routes.d.ts."],
   ["nifra_scaffold", "writes files", "The route files for a URL path; with write, creates them."],
   ["nifra_context", "runs project code", "The route index and conventions, sliced by path or kind."],
   ["nifra_routes", "runs project code", "Every route served: a list, a graph, render modes, or the hooks each runs."],

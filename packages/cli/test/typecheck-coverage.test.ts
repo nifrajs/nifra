@@ -2,7 +2,12 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
 import { collectCheckResult, renderCheckReport } from "../src/check.ts"
-import { filesOutsideProgram, splitListedFiles, zoneFolderOf } from "../src/typecheck-coverage.ts"
+import {
+  filesOutsideProgram,
+  routeTableOutsideProgram,
+  splitListedFiles,
+  zoneFolderOf,
+} from "../src/typecheck-coverage.ts"
 import {
   createFixtureProject,
   createFixtureRoot,
@@ -103,6 +108,37 @@ describe("filesOutsideProgram", () => {
   })
 })
 
+describe("routeTableOutsideProgram", () => {
+  const user = [{ content: 'import { Link } from "@nifrajs/web-react"\n' }]
+
+  test("names the table only when a file navigates, it exists, and no program holds it", () => {
+    const cwd = createFixtureProject(root, "table-")
+    const table = join(cwd, ".nifra/types/routes.d.ts")
+    const program = [join(cwd, "routes/index.ts")]
+    expect(routeTableOutsideProgram(cwd, program, user)).toBeUndefined()
+    writeAppFile(cwd, ".nifra/types/routes.d.ts", "export {}\n")
+    expect(routeTableOutsideProgram(cwd, program, user)).toBe(".nifra/types/routes.d.ts")
+    expect(routeTableOutsideProgram(cwd, [...program, table], user)).toBeUndefined()
+  })
+
+  test("is silent for an app that imports no navigation API", () => {
+    const cwd = createFixtureProject(root, "table-quiet-")
+    writeAppFile(cwd, ".nifra/types/routes.d.ts", "export {}\n")
+    for (const content of [
+      "export const a = 1\n",
+      'import { json } from "@nifrajs/core"\n',
+      'import { Link } from "./link"\n',
+    ])
+      expect(routeTableOutsideProgram(cwd, [], [{ content }])).toBeUndefined()
+    for (const content of [
+      'import { redirect } from "@nifrajs/web"\n',
+      'import { Link, NavLink } from "@nifrajs/web-react"\n',
+      'import type { Href } from "@nifrajs/web"\nimport { useNavigate as go } from "@nifrajs/web-solid"\n',
+    ])
+      expect(routeTableOutsideProgram(cwd, [], [{ content }])).toBe(".nifra/types/routes.d.ts")
+  })
+})
+
 describe("nifra check - zoned files outside the tsc program", () => {
   const tsconfig = (include: readonly string[]): string =>
     JSON.stringify({
@@ -157,6 +193,35 @@ process.exit(0)
     expect(result.typecheck).toBe("pass")
     expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toHaveLength(0)
   }, 30_000)
+
+  test("a route table no program loads is a warning, and listing it under files clears it", async () => {
+    const cwd = project(["routes", "backend"])
+    writeAppFile(
+      cwd,
+      "routes/link.ts",
+      '// @ts-nocheck\nimport { Link } from "@nifrajs/web-react"\nexport const view = Link\n',
+    )
+    const result = await collectCheckResult(cwd)
+    const findings = result.diagnostics.filter((d) => d.rule === "typecheck")
+    expect(findings).toHaveLength(1)
+    expect(findings[0]?.severity).toBe("warning")
+    expect(findings[0]?.file).toBe(".nifra/types/routes.d.ts")
+    expect(findings[0]?.message).toContain("is outside tsc's program")
+    // A warning leaves the typecheck itself standing: it read every zoned file.
+    expect(result.typecheck).toBe("pass")
+
+    writeAppFile(
+      cwd,
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, types: [] },
+        include: ["routes", "backend"],
+        files: [".nifra/types/routes.d.ts"],
+      }),
+    )
+    const fixed = await collectCheckResult(cwd)
+    expect(fixed.diagnostics.filter((d) => d.rule === "typecheck")).toHaveLength(0)
+  }, 60_000)
 
   test("typecheck ignore globs keep deliberately excluded files out of the finding", async () => {
     const cwd = project(["routes"])

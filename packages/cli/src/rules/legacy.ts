@@ -409,8 +409,29 @@ const typecheckRule: CheckRule = {
       }
     }
     findings.push(...outsideProgramFindings(tc.outsideProgram ?? []))
+    if (tc.routeTableOutsideProgram !== undefined)
+      findings.push(routeTableFinding(tc.routeTableOutsideProgram))
     return findings
   },
+}
+
+/** The route table exists but no program loads it: every `to` and `search` stays loose, silently. */
+function routeTableFinding(file: string): Diagnostic {
+  return legacyDiagnostic("typecheck", {
+    severity: "warning",
+    file,
+    message: `${file} is outside tsc's program, so navigate, redirect and Link accept any target and search: no route imports its ./+types module, and no tsconfig names the table`,
+    fix: `Add "${file}" to tsconfig.json "files" (a "files" entry is not filtered by "exclude"), or import a route's ./+types module from a file the program holds`,
+    suggestion: {
+      kind: "manual",
+      title: "Load the generated route table",
+      steps: [
+        `Add "${file}" to the "files" array in tsconfig.json, or in another tsconfig the typecheck runs.`,
+        'List it under "files", not "include": an "exclude" that names ".nifra" would drop it from "include".',
+        "Run `nifra check` again; links and redirects are now checked against the app's routes.",
+      ],
+    },
+  })
 }
 
 /** One finding per zone folder: the fix (tsconfig `include`) is per folder, not per file. */
