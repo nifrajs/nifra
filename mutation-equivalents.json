@@ -871,5 +871,162 @@
       "from": "ts.isPropertyAssignment(experimental)",
       "reason": "A shorthand `experimental` has no `initializer`, so reading it gives the `undefined` the other branch returns."
     }
+  ],
+  "packages/cli/src/rules/internal-links.ts": [
+    {
+      "op": "condition->true",
+      "fn": "pageRoutes",
+      "code": "if (loaded === undefined) {",
+      "from": "loaded === undefined",
+      "reason": "A per-run cache: a miss builds an equal route set."
+    },
+    {
+      "op": "condition->false",
+      "fn": "loadPageRoutes",
+      "code": "if (!existsSync(routesDir)) return undefined",
+      "from": "!existsSync(routesDir)",
+      "reason": "discoverRoutes on a folder that does not exist throws or finds nothing, and both end in the same undefined."
+    },
+    {
+      "op": "condition->true",
+      "fn": "judge",
+      "code": "const found = routes.match(dynamic ? path.replaceAll(ANCHOR_HOLE, \"x\") : path)",
+      "from": "dynamic",
+      "reason": "The replacement has nothing to replace in a path without a hole."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "commentAt",
+      "code": "if (text.startsWith(\">\", body)) return { start, bodyEnd: body, end: body + 1 }",
+      "from": "+",
+      "reason": "The characters between the shortened and the real end are not markup, so the scan from there finds the same anchors, comments and lines."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "markupEnd",
+      "code": "} else if (!expression && braces === 0 && char === \">\") return at + 1",
+      "from": "+",
+      "reason": "The end moves back onto the tag's own >, which the scan then steps over as text."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "lineLookup",
+      "code": "for (let at = text.indexOf(\"\\n\"); at !== -1; at = text.indexOf(\"\\n\", at + 1)) starts.push(at + 1)",
+      "from": "+",
+      "nth": 1,
+      "reason": "No tag or attribute starts on the last character of a line."
+    },
+    {
+      "op": "condition->true",
+      "fn": "backendMount",
+      "code": "if (read.kind === \"literal\") prefix = read.value",
+      "from": "read.kind === \"literal\"",
+      "reason": "An unreadable prefix has no value, and the mount is unknown then anyway."
+    },
+    {
+      "op": "delete statement",
+      "fn": "pageRoutes",
+      "code": "cache.set(ctx, loaded)",
+      "from": "cache.set(ctx, loaded)",
+      "reason": "A per-run cache: a miss builds an equal route set."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "loadPageRoutes",
+      "code": "apiStrip: mount?.strip ?? false,",
+      "from": "false",
+      "reason": "With the mount unknown, backendUnknown already stops every dead-link verdict, so the backend entries are never consulted."
+    },
+    {
+      "op": "return undefined",
+      "fn": "servedElsewhere",
+      "code": "return false",
+      "from": "return false",
+      "reason": "false and undefined are both falsy to the caller."
+    },
+    {
+      "op": "condition->false",
+      "fn": "judge",
+      "code": "const rest = cut < 0 ? \"\" : written.slice(cut)",
+      "from": "cut < 0",
+      "reason": "With no ? or #, written.slice(-1) is the path's last character, which is neither of them."
+    },
+    {
+      "op": "condition->false",
+      "fn": "judge",
+      "code": "const found = routes.match(dynamic ? path.replaceAll(ANCHOR_HOLE, \"x\") : path)",
+      "from": "dynamic",
+      "reason": "A hole and the x standing for it fill the same params; they differ only against a literal that ends in x."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "commentAt",
+      "code": "if (text.startsWith(\"->\", body)) return { start, bodyEnd: body, end: body + 2 }",
+      "from": "+",
+      "reason": "The characters between the shortened and the real end are not markup, so the scan from there finds the same anchors, comments and lines."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "markupEnd",
+      "code": "for (let at = start; at < text.length; at++) {",
+      "from": "<",
+      "reason": "At text.length the character is undefined, which no branch takes."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "templateHrefs",
+      "code": "for (let at = 0; at < text.length; ) {",
+      "from": "<",
+      "reason": "At text.length the character is undefined, which no branch takes."
+    },
+    {
+      "op": "condition->false",
+      "fn": "templateHrefs",
+      "code": "if (text[at] !== \"<\") {",
+      "from": "text[at] !== \"<\"",
+      "reason": "The tag pattern below rejects every position that is not a <, and the scan steps on by one."
+    },
+    {
+      "op": "condition->false",
+      "fn": "templateFindings",
+      "code": "if (!text.includes(\"href\")) continue",
+      "from": "!text.includes(\"href\")",
+      "reason": "A file without the word href holds no href attribute, so the scan below finds nothing in it."
+    },
+    {
+      "op": "binary &&->||",
+      "fn": "mayMatch",
+      "code": "mayMatch: (text) => text.includes(\"<a\") && text.includes(\"href\"),",
+      "from": "&&",
+      "reason": "A pre-filter: find reads the real anchors, so a looser filter costs time and changes no finding."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "judge",
+      "code": "const path = cut < 0 ? written : written.slice(0, cut)",
+      "from": "<",
+      "reason": "cut is the index of ? or # in a path that begins with /, so it is never 0."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "judge",
+      "code": "const rest = cut < 0 ? \"\" : written.slice(cut)",
+      "from": "<",
+      "reason": "cut is the index of ? or # in a path that begins with /, so it is never 0."
+    },
+    {
+      "op": "condition->true",
+      "fn": "report",
+      "code": "message: note === undefined ? verdict.message : `${verdict.message} ${note}`,",
+      "from": "note === undefined",
+      "reason": "note is never set: this rule does not ask scanSources to require a reason."
+    },
+    {
+      "op": "delete statement",
+      "fn": "templateHrefs",
+      "code": "expectations += code(text.slice(previous))",
+      "from": "expectations += code(text.slice(previous))",
+      "reason": "A line past the last comment holds no comment, and the upward search stops on a missing line as it does on a line of code."
+    }
   ]
 }
