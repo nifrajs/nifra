@@ -5363,7 +5363,7 @@ _No named exports (side-effect entrypoint)._
   One host's surface. A request on a host no rule names is not restricted.
 - **Href** _(type)_ - `type Href<Pattern extends string = string> = string & { readonly "~nifraHref": Pattern }`
   An in-app URL: what `href()` builds from a route and `rawHref()` returns for a checked path. A string at runtime, a branded string to the compiler, so a plain string or a template literal is not assignable to it. `Pattern` is the {@link RouteTable} key it was built for. The brand is a named propert…
-- **HrefOptions** _(type)_ - `type HrefOptions<K extends Pattern> = { readonly to: K; readonly search?: SearchOfRoute<K> | undefined; readonly hash?: string | undefined } & ParamsOption<K>`
+- **HrefOptions** _(type)_ - `type HrefOptions<K extends Pattern> = { readonly to: K; readonly search?: SearchOfRoute<K> | undefined; readonly hash?: string | undefined } & ParamsOption<K> & SlotOptions<K>`
   What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has any, absent when it has none), the route's `search` as its `searchSchema` outputs it, and the `hash` without its `#`.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
@@ -5555,6 +5555,13 @@ _No named exports (side-effect entrypoint)._
   A route module - the default component + optional loader / action / meta.
 - **RoutePattern** _(interface)_ - `interface RoutePattern`
   A route id paired with its nifra pattern (e.g. `":id"` segments) - the matcher input.
+- **RouteSlotName** _(type)_ - `type RouteSlotName = NamesInRoute<RouteTable[keyof RouteTable]> & string`
+  Union of slot names registered by the generated route manifest.
+- **RouteSlotPatternsOf** _(type)_ - `type RouteSlotPatternsOf<T> = T extends { readonly routeSlots: infer Slots } ? Slots extends Readonly<Record<string, readonly string[]>> ? Slots : Readonly<Record<never, never>> : Readonly<Record<never, never>>`
+  Preserve route-module slot declarations in the generated, per-route `RouteTable`.
+- **RouteSlotRegistry** _(type)_ - `type RouteSlotRegistry = Readonly<Record<string, readonly string[]>>`
+- **RouteSlotTarget** _(type)_ - `type RouteSlotTarget = Href<keyof RouteTable & string>`
+  A typed route URL that a registered route slot may display.
 - **RouteTable** _(interface)_ - `interface RouteTable`
   Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the object a link to the route needs (`Record<string, never>` when the pattern has none), `search` the output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types…
 - **RouterState** _(interface)_ - `interface RouterState`
@@ -5953,8 +5960,12 @@ _No named exports (side-effect entrypoint)._
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
   The idle blocker - a stable reference (no needless adapter re-renders while unblocked).
 - **InstallHistoryOptions** _(interface)_ - `interface InstallHistoryOptions`
+- **LoadedRouteSlot** _(interface)_ - `interface LoadedRouteSlot`
 - **MutationCancelledError** _(class)_ - `class MutationCancelledError`
   Rejection returned when {@link MutationHandle.cancel} discards an in-flight result.
+- **RouteSlotLoadError** _(class)_ - `class RouteSlotLoadError`
+- **RouteSlotRuntime** _(interface)_ - `interface RouteSlotRuntime`
+- **RouteSlotStateError** _(class)_ - `class RouteSlotStateError`
 - **WaitForStylesOptions** _(interface)_ - `interface WaitForStylesOptions`
   Options for {@link waitForStyles}.
 - **applyHead** _(function)_ - `applyHead: (head: Meta, path?: string) => void`
@@ -5971,6 +5982,7 @@ _No named exports (side-effect entrypoint)._
   Read the nonce carried by the current server-rendered document, if any.
 - **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
+- **getRouteSlotRuntime** _(function)_ - `getRouteSlotRuntime: () => RouteSlotRuntime | undefined`
 - **gone** _(function)_ - `gone: (options?: StatusPageOptions) => never`
   Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and was deliberately removed - a withdrawn listing, a deleted post.
 - **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
@@ -5981,12 +5993,17 @@ _No named exports (side-effect entrypoint)._
   Intercept submissions of same-origin `<form method="post">` whose action targets an app route: submit via the router (no full reload - POST the action, then revalidate the active loader). On failure it falls back to a native submit, so the form still works. Returns a teardown function.
 - **installHistory** _(function)_ - `installHistory: (router: ClientRouter, options?: InstallHistoryOptions) => () => void`
   Attach history + link interception to a router. Returns a teardown function that removes the listeners. A data-fetch failure during a client navigation falls back to a full-page load, so navigation degrades gracefully rather than leaving the user stuck.
+- **loadRouteSlot** _(function)_ - `loadRouteSlot: (runtime: RouteSlotRuntime, name: string, parentPath: string, targetValue: string, signal: AbortSignal) => Promise<LoadedRouteSlot>`
+  Resolve an addressed slot through the current router and its normal authorized route-data path.
 - **localeOfProps** _(function)_ - `localeOfProps: (props: RenderProps | undefined) => PageLocale | undefined`
   The locale of the page `props` render: the server's answer on SSR, else the one the client names from `props.path`. What every adapter's `useLocale` reads.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **notFound** _(function)_ - `notFound: (options?: StatusPageOptions) => never`
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
+- **onRouteSlotIdentityChange** _(function)_ - `onRouteSlotIdentityChange: (listener: () => void) => () => void`
+- **parseRouteSlots** _(function)_ - `parseRouteSlots: (path: string) => RouteSlotTargets`
+  Parse and strictly validate the one canonical route-slot query value.
 - **rawHref** _(function)_ - `rawHref: (path: string) => Href`
   An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
@@ -5999,12 +6016,19 @@ _No named exports (side-effect entrypoint)._
   The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderP…
 - **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
   The search for a route whose effective schema is a CHAIN - a `_layout` may declare `searchSchema` for shared keys (`?org`, `?theme`) and each page declares its own. The raw query is validated against every schema in the chain (outermost layout first, page last) and their outputs are merged, page-wi…
+- **setRouteSlot** _(function)_ - `setRouteSlot: (path: string, name: string, target: string | null) => string`
+  Change a single slot while retaining the other URL-addressed slots.
+- **setRouteSlotRuntime** _(function)_ - `setRouteSlotRuntime: (runtime: RouteSlotRuntime) => void`
 - **signalHydrated** _(function)_ - `signalHydrated: () => void`
   Mark the document interactive once the client has hydrated: sets `data-nifra-hydrated` on `<html>` and fires a one-shot `nifra:hydrated` event. The generated client entry calls this on the next frame after the adapter mounts (so every framework binding gets it), letting apps gate a custom JS-only i…
 - **statusPage** _(function)_ - `statusPage: (status: number, options?: StatusPageOptions) => never`
   Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
+- **stripRouteSlots** _(function)_ - `stripRouteSlots: (path: string) => string`
+  Remove framework-owned state before the active page's loader sees its search params.
 - **waitForStyles** _(function)_ - `waitForStyles: (options?: WaitForStylesOptions) => Promise<void>`
   Wait for the framework-owned deferred stylesheet links in the initial document, then promote them to `media="all"`. It is safe to call more than once: repeated calls for one document share the same per-link waits, and duplicate framework links are removed before waiting. Blocking links are not touc…
+- **withRouteSlots** _(function)_ - `withRouteSlots: (path: string, targets: RouteSlotTargets) => string`
+  Replace the route-slot query value, preserving all unrelated query parameters and the hash.
 
 ### `@nifrajs/web/conformance`
 
@@ -7046,6 +7070,9 @@ _No named exports (side-effect entrypoint)._
 - **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
   A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **RenderPropsContext** _(const)_ - `RenderPropsContext: import("preact").Context<RenderProps | undefined>`
+- **RouteSlot** _(function)_ - `RouteSlot: ({ name, fallback, error }: RouteSlotProps) => VNode | null`
+- **RouteSlotController** _(interface)_ - `interface RouteSlotController`
+- **RouteSlotProps** _(interface)_ - `interface RouteSlotProps`
 - **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
@@ -7065,6 +7092,7 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
   Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page, where its effects keep running: pause timers and listeners on it. Always `true` on the server and on a page that does not keep alive.
+- **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hostile input already failed cl…
 
@@ -7237,6 +7265,10 @@ _No named exports (side-effect entrypoint)._
   The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
 - **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
   When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
+- **RouteSlot** _(function)_ - `RouteSlot: ({ name, fallback, error }: RouteSlotProps) => ReactNode`
+  Render the registered route's complete layout and page chain in this independently navigable region.
+- **RouteSlotController** _(interface)_ - `interface RouteSlotController`
+- **RouteSlotProps** _(interface)_ - `interface RouteSlotProps`
 - **RouterContext** _(const)_ - `RouterContext: import("react").Context<RouterContextValue>`
 - **RouterContextValue** _(interface)_ - `interface RouterContextValue`
   The current route the routing hooks read. Provided by `compose` on SSR + client mount alike.
@@ -7266,6 +7298,8 @@ _No named exports (side-effect entrypoint)._
   The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct: `compose` provides the same value server-side (from the request match) and client-side (from router state), so a param rendered into markup doesn't flash on hydration.
 - **usePending** _(function)_ - `usePending: () => boolean`
   Convenience boolean form of {@link useNavigation}: `true` while a client navigation is in flight.
+- **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
+  Read or navigate one route slot without changing any sibling slot's URL state or component tree.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params: the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from `searchOf(searchSchema, url.search)` server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hos…
 - **useSearchParams** _(function)_ - `useSearchParams: () => readonly [URLSearchParams, SetSearchParams]`
@@ -7623,6 +7657,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
   A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
+- **RouteSlotController** _(interface)_ - `interface RouteSlotController`
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
 - **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
@@ -7641,6 +7676,8 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => () => boolean`
   Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive. Call it while the component initializes; read it in markup or a `$derived`.
+- **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
+  Read or update the URL state for one slot while preserving every sibling slot.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a `$…
 
@@ -7814,6 +7851,8 @@ _No named exports (side-effect entrypoint)._
   A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **RenderPropsProvider** _(const)_ - `RenderPropsProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererEl…`
   Provides {@link useMatches}' render props to its subtree: a `computed` view of its `value` prop, so the injected ref follows each navigation's props. Renders its default slot. `compose` provides the same key through its single route-context component.
+- **RouteSlot** _(const)_ - `RouteSlot: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ name: { type: PropType<RouteSlotName>; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
+- **RouteSlotController** _(interface)_ - `interface RouteSlotController`
 - **SearchProvider** _(const)_ - `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
   Provides `useSearch`'s value to its subtree. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot. `compose` provides th…
 - **UIMatch** _(interface)_ - `interface UIMatch`
@@ -7834,6 +7873,8 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => Readonly<Ref<boolean>>`
   Whether the page this component renders in is on screen, as a ref: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
+- **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
+  Read or navigate one route slot without changing any sibling slot's URL state or component tree.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`
   The route's typed, validated search params as a reactive ref - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value` …
 

@@ -182,6 +182,8 @@ export interface KeepAliveOptions {
 
 /** Client hooks populated by the generated route entry after a route chunk loads. */
 export interface ClientRouteHooks {
+  /** page's registered independently navigable route-slot identities. */
+  readonly routeSlots?: Readonly<Record<string, readonly string[]>>
   readonly clientLoader?: ClientLoader
   readonly clientAction?: ClientAction
   /** The page's `shareData` export: `false` gives every reload of it fresh data. */
@@ -361,6 +363,11 @@ export type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>
 export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
+  /**
+   * Named, independently navigable route regions. Each name is bound to route patterns from the
+   * generated route table; URL state selects only one of these registered identities.
+   */
+  readonly routeSlots?: Readonly<Record<string, readonly string[]>>
   /** Layout loader that must run before actions and is not retained across the action's render. */
   readonly gate?: boolean
   readonly action?: Action

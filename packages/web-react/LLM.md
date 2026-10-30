@@ -24,12 +24,12 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **Navigate** _(function)_ - `Navigate: ({ to, replace }: NavigateProps) => null` · from `@nifrajs/web-react/router`
 - **NestedServerComponent** _(function)_ - `NestedServerComponent: ({ instance, html, }: { readonly instance: string; readonly html: string; }) => import("react").DOMElement<{ "data-n…` · from `@nifrajs/web-react/server-components/nested`
 - **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
+- **RouteSlot** _(function)_ - `RouteSlot: ({ name, fallback, error }: RouteSlotProps) => ReactNode` · from `@nifrajs/web-react/router`
 - **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("react").FunctionComponentElement<{ readon…` · from `@nifrajs/web-react/server-components/outlet`
 - **createReactComponentRenderer** _(function)_ - `createReactComponentRenderer: (components: readonly ServerComponentHandle[]) => (reference: string, props: unknown, context: ComponentRende…` · from `@nifrajs/web-react/server-components/rsc`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
-- **guardedClientElement** _(function)_ - `guardedClientElement: (type: unknown, raw: unknown, key?: unknown) => ReactNode | undefined` · from `@nifrajs/web-react/server-components/guard`
 
-_…and 74 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 78 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

@@ -208,6 +208,37 @@ export default function Layout(props: { children?: ReactNode; boundaries?: Bound
   )
 }`
 
+const ROUTE_SLOTS = `// routes/dashboard.tsx - name the only route identities this panel may display
+import { href } from "@nifrajs/web"
+import { RouteSlot, useRouteSlot } from "@nifrajs/web-react/router"
+
+export const routeSlots = {
+  inspector: ["/users/:id"],
+  activity: ["/activity"],
+} as const
+
+export default function Dashboard() {
+  const inspector = useRouteSlot("inspector")
+  return (
+    <>
+      <button onClick={() => inspector.open(href({ to: "/users/:id", params: { id: "7" } }))}>
+        Inspect user 7
+      </button>
+      <RouteSlot name="inspector" fallback={<p>Select a user.</p>} />
+      <RouteSlot name="activity" fallback={<p>Activity is closed.</p>} />
+    </>
+  )
+}
+
+// A shareable link can open more than one panel at once.
+const dashboard = href({
+  to: "/dashboard",
+  slots: {
+    inspector: href({ to: "/users/:id", params: { id: "7" } }),
+    activity: href({ to: "/activity" }),
+  },
+})`
+
 export default function Routing() {
   return (
     <div className="prose">
@@ -572,6 +603,40 @@ export default function Routing() {
           The component renders the boundary itself: it reads <code>boundaries.&lt;name&gt;</code>{" "}
           from its props and calls the boundary&apos;s <code>render</code> with the data. Every
           adapter passes <code>boundaries</code> to the layouts and the page.
+        </li>
+      </ul>
+
+      <h2 id="parallel-routes">Independently navigable route slots</h2>
+      <p>
+        An intercepted route is useful for one modal over its owning page. A dashboard with several
+        panels that open, change route, and close independently uses route slots. The page declares
+        named slots and an allowlist of route patterns for each. A slot renders that target&apos;s full
+        layout and page chain in its own component tree; each slot has separate loading and error UI.
+      </p>
+      <CodeBlock code={ROUTE_SLOTS} lang="tsx" />
+      <ul>
+        <li>
+          <code>href</code> checks both the slot name and target route against the generated route
+          table. At runtime, the server checks the same registration and route identity before it can
+          serve or cache the page shell. The reserved slot query is bounded and canonical, and is
+          removed before application search parsing.
+        </li>
+        <li>
+          The server sends only the page shell. After hydration, each target loads through the normal
+          same-origin route-data request, so its middleware, gates, and loader run with the current
+          request&apos;s authorization. Target data is never embedded in the cached shell. Identity
+          changes and returning focus trigger a fresh authorized load; navigation cancels stale work.
+        </li>
+        <li>
+          Browser Back and Forward restore the slot URLs. Updating one slot retains sibling slots and
+          the page&apos;s own loader data; changing slot state alone does not rerun that page loader.
+          Up to four slot targets may be open at once, with bounded concurrent loading.
+        </li>
+        <li>
+          React, Preact, Solid, and Vue export <code>RouteSlot</code> and <code>useRouteSlot</code>{" "}
+          from their <code>/router</code> entry. Svelte exports <code>useRouteSlot</code> from{" "}
+          <code>@nifrajs/web-svelte/router</code> and the <code>RouteSlot</code> component from{" "}
+          <code>@nifrajs/web-svelte/route-slot</code>.
         </li>
       </ul>
 

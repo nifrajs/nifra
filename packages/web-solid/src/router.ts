@@ -36,6 +36,8 @@ import { PageContext } from "./page-visibility.ts"
 
 export { href, rawHref } from "@nifrajs/web/client"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
+export type { RouteSlotController, RouteSlotProps } from "./route-slot.tsx"
+export { RouteSlot, useRouteSlot } from "./route-slot.tsx"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search + a stable accessor for a `useSearch` used outside a nifra route tree.

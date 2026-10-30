@@ -29,6 +29,8 @@ import { usePageVisibility } from "./page-visibility.ts"
 
 export { href, rawHref } from "@nifrajs/web/client"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
+export type { RouteSlotController, RouteSlotProps } from "./route-slot.ts"
+export { RouteSlot, useRouteSlot } from "./route-slot.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search so the default context value has a stable reference.

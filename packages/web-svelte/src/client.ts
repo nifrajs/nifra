@@ -1,4 +1,5 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { setRouteSlotRuntime } from "@nifrajs/web/client"
 /**
  * @nifrajs/web-svelte/client - Svelte 5 client runtime. `hydrate` hydrates a single SSR'd route via the
  * recursive `Chain`; `mountRouter` hydrates the reactive `Router` component, which subscribes to the
@@ -50,6 +51,7 @@ export const hydrationAssuranceHook = Object.freeze({
  */
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, matchChains, container } = options
+  setRouteSlotRuntime({ router, routes, searchSchemas, matchChains })
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   warningsTo(assuranceHook("onWarning"), () =>
     svelteHydrate(Router, {

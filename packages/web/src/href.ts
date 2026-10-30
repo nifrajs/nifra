@@ -5,6 +5,7 @@ import {
   isSameOriginPath,
 } from "@nifrajs/core/pattern"
 import type { Href, RouteTable } from "./navigation.ts"
+import { ROUTE_SLOTS_PARAM, withRouteSlots } from "./route-slots.ts"
 import { serializeSearch } from "./search.ts"
 
 type Pattern = keyof RouteTable & string
@@ -15,6 +16,24 @@ type ParamsOf<K extends Pattern> = RouteTable[K] extends { readonly params: infe
 type SearchOfRoute<K extends Pattern> = RouteTable[K] extends { readonly search: infer Search }
   ? Search
   : never
+
+type SlotRegistryOf<K extends Pattern> = RouteTable[K] extends { readonly slots: infer Slots }
+  ? Slots
+  : Readonly<Record<never, never>>
+type SlotNamesOf<K extends Pattern> = keyof SlotRegistryOf<K> & string
+type SlotTargetOf<
+  K extends Pattern,
+  Name extends SlotNamesOf<K>,
+> = SlotRegistryOf<K>[Name] extends readonly (infer Target extends string)[]
+  ? Href<Extract<Target, Pattern>>
+  : never
+type SlotOptions<K extends Pattern> = [SlotNamesOf<K>] extends [never]
+  ? { readonly slots?: never }
+  : {
+      readonly slots?: Readonly<{
+        [Name in SlotNamesOf<K>]?: SlotTargetOf<K, Name> | null
+      }>
+    }
 
 // A route without params is typed `Record<string, never>`, whose keys are all strings.
 type ParamsOption<K extends Pattern> = string extends keyof ParamsOf<K>
@@ -30,7 +49,8 @@ export type HrefOptions<K extends Pattern> = {
   readonly to: K
   readonly search?: SearchOfRoute<K> | undefined
   readonly hash?: string | undefined
-} & ParamsOption<K>
+} & ParamsOption<K> &
+  SlotOptions<K>
 
 // Route patterns are a closed set for typed callers, so the cache stays small; an untyped caller could
 // pass any string, so it is bounded and starts over when full.
@@ -58,6 +78,7 @@ type UntypedHrefOptions = {
   readonly params?: Readonly<Record<string, string | undefined>>
   readonly search?: Record<string, unknown> | undefined
   readonly hash?: string | undefined
+  readonly slots?: Readonly<Record<string, string | null>>
 }
 
 function fragment(hash: string): string {
@@ -85,7 +106,7 @@ function fragment(hash: string): string {
  */
 export function href<K extends Pattern>(options: HrefOptions<K>): Href<K> {
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: HrefOptions<K> is this shape with the route table's types in place of string and unknown
-  const { to, params, search, hash } = options as UntypedHrefOptions
+  const { to, params, search, hash, slots } = options as UntypedHrefOptions
   const filled = fillRoutePath(compiled(to), params ?? {})
   if (!filled.ok) {
     const problems = [
@@ -99,6 +120,15 @@ export function href<K extends Pattern>(options: HrefOptions<K>): Href<K> {
   }
   let url = filled.path
   if (search !== undefined) url += serializeSearch(search)
+  if (new URLSearchParams(url.slice(url.indexOf("?") + 1)).has(ROUTE_SLOTS_PARAM)) {
+    throw new TypeError(`[nifra/web] ${ROUTE_SLOTS_PARAM} is reserved for route-slot state`)
+  }
+  if (slots !== undefined) {
+    const targets = Object.fromEntries(
+      Object.entries(slots).filter((entry): entry is [string, string] => entry[1] !== null),
+    )
+    url = withRouteSlots(url, targets)
+  }
   if (hash !== undefined && hash !== "") url += fragment(hash)
   return brand<K>(url)
 }

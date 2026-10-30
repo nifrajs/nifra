@@ -10,7 +10,7 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 
 ## Public entrypoints
 
-`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/hole` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/keep-alive` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/ppr` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/server-components` · `@nifrajs/web-svelte/server-components/client` · `@nifrajs/web-svelte/server-components/outlet` · `@nifrajs/web-svelte/svg`
+`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/hole` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/keep-alive` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/ppr` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/route-slot` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/server-components` · `@nifrajs/web-svelte/server-components/client` · `@nifrajs/web-svelte/server-components/outlet` · `@nifrajs/web-svelte/svg`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 - **svelteHmrBoundary** _(function)_ - `svelteHmrBoundary: ({ filename }: { filename: string; }) => { hmr: boolean; }` · from `@nifrajs/web-svelte/plugin`
 - **svelteMdxBunPlugin** _(function)_ - `svelteMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/mdx`
 
-_…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 45 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

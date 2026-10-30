@@ -1,4 +1,5 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { setRouteSlotRuntime } from "@nifrajs/web/client"
 import { assuranceHook } from "@nifrajs/web/internal/hydration-assurance"
 /**
  * @nifrajs/web-react/client - React client runtime. `hydrate` hydrates a single SSR'd route;
@@ -94,6 +95,7 @@ function Level({ depth, ...overrides }: { readonly depth: number }): ReactNode {
  */
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, matchChains, container } = options
+  setRouteSlotRuntime({ router, routes, searchSchemas, matchChains })
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   // What the server rendered. React hydrates against THIS, whatever the store says by the time it gets
   // to the component - hydration is scheduled, and a store that moved on first (a client loader that

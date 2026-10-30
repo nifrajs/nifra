@@ -32,6 +32,12 @@ import { CACHE_CHANNEL } from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
+import {
+  normalizeRouteSlotRegistry,
+  parseRouteSlots,
+  RouteSlotStateError,
+  validateRouteSlotTargets,
+} from "../route-slots.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
 import { identityEpochHook, type KeepAliveServerOptions } from "./identity-epoch.ts"
@@ -722,6 +728,31 @@ export function createWebApp<Env = unknown>(
     const pattern = route.pattern
     if (pattern.startsWith("/*")) ownsRootCatchAll = true
     const render = pageExecutor.get(route)
+    const renderCached = prerendered === undefined ? render : prerendered(render)
+    const renderWithValidatedSlots = async (ctx: Parameters<typeof render>[0]) => {
+      try {
+        const targets = parseRouteSlots(ctx.req.url)
+        if (Object.keys(targets).length > 0) {
+          const module = await route.load()
+          const registry = normalizeRouteSlotRegistry(
+            module.routeSlots,
+            new Set(manifest.routes.map((entry) => entry.pattern)),
+          )
+          validateRouteSlotTargets(targets, registry, (path) => {
+            const matched = pageExecutor.matchRoute(path)
+            const targetPattern =
+              matched === null
+                ? undefined
+                : manifest.routes.find((entry) => entry.id === matched.routeId)?.pattern
+            return targetPattern === undefined ? null : { pattern: targetPattern }
+          })
+        }
+      } catch (error) {
+        if (error instanceof RouteSlotStateError) return new Response(null, { status: 400 })
+        throw error
+      }
+      return renderCached(ctx)
+    }
     app.register(
       "GET",
       pattern,
@@ -729,7 +760,7 @@ export function createWebApp<Env = unknown>(
         options.serverComponents?.hosts?.(route.id) === true
         ? { capabilities: options.serverComponents.capabilities(route.id) }
         : undefined,
-      prerendered === undefined ? render : prerendered(render),
+      renderWithValidatedSlots,
     )
     app.register("POST", pattern, undefined, pageExecutor.post(route))
   }

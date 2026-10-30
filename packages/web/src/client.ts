@@ -46,6 +46,14 @@ export { identityChanged } from "./identity.ts"
  * before hydrating. The fix is for the entry not to name the server module in the first place.
  */
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
+export type { LoadedRouteSlot, RouteSlotRuntime } from "./internal/route-slot-runtime.ts"
+export {
+  getRouteSlotRuntime,
+  loadRouteSlot,
+  onRouteSlotIdentityChange,
+  RouteSlotLoadError,
+  setRouteSlotRuntime,
+} from "./internal/route-slot-runtime.ts"
 // For route helpers shared by a loader and a component, which the browser loads too: imported from the
 // root, they put its `node:crypto` import into Vite dev's browser deps on every page.
 export { gone, notFound, statusPage } from "./internal/status-page.ts"
@@ -57,6 +65,13 @@ export {
 } from "./navigation.ts"
 export { createMutation, createQueryClient, MutationCancelledError } from "./query.ts"
 export { localeOfProps } from "./render-seam.ts"
+export {
+  parseRouteSlots,
+  RouteSlotStateError,
+  setRouteSlot,
+  stripRouteSlots,
+  withRouteSlots,
+} from "./route-slots.ts"
 export { createClientRouter, createMatcher } from "./router.ts"
 // Same reason, for the ADAPTER packages (`@nifrajs/web-react` and friends). Every one of them reaches
 // for these from the root - `searchOfChain` in its `/client` entry, the navigation and query values in

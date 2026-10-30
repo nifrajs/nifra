@@ -3463,14 +3463,14 @@
     "name": "ClientRouteHooks",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ClientRouteHooks {\n    readonly clientLoader?: ClientLoader;\n    readonly clientAction?: ClientAction;\n    /** The page's `shareData` export: `false` gives every reload of it fresh data. */\n    readonly shareData?: boolean;\n    /** The page's `keepAlive` export: the page stays mounted after a visitor leaves it. */\n    readonly keepAlive?: true | KeepAliveOptions;\n    /** Neutral boundary descriptors needed for soft-navigation interception. A boundary's loader lives in\n     * the route's backend half, so the browser never learns whether one exists. */\n    readonly boundaries?: ReadonlyArray<Omit<BoundaryDescriptor, \"hasLoad\">>;\n}",
+    "signature": "export interface ClientRouteHooks {\n    /** page's registered independently navigable route-slot identities. */\n    readonly routeSlots?: Readonly<Record<string, readonly string[]>>;\n    readonly clientLoader?: ClientLoader;\n    readonly clientAction?: ClientAction;\n    /** The page's `shareData` export: `false` gives every reload of it fresh data. */\n    readonly shareData?: boolean;\n    /** The page's `keepAlive` export: the page stays mounted after a visitor leaves it. */\n    readonly keepAlive?: true | KeepAliveOptions;\n    /** Neutral boundary descriptors needed for soft-navigation interception. A boundary's loader lives in\n     * the route's backend half, so the browser never learns whether one exists. */\n    readonly boundaries?: ReadonlyArray<Omit<BoundaryDescriptor, \"hasLoad\">>;\n}",
     "doc": "/** Client hooks populated by the generated route entry after a route chunk loads. */"
   },
   {
     "name": "ClientRouter",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ClientRouter {\n    /** Current state; stable reference between transitions (so `useSyncExternalStore` can bail). */\n    snapshot: () => RouterState;\n    /** Subscribe to transitions; returns an unsubscribe fn. */\n    subscribe: (listener: () => void) => () => void;\n    /**\n     * Navigate to a path: match → fetch loader data → publish. No-op for an unmatched path. A loader\n     * redirect to another route is followed; one that leaves the app (another origin, a `#fragment`, no\n     * route) rejects with its target as `redirectTo`.\n     */\n    navigate: (path: string) => Promise<void>;\n    /**\n     * Submit an action (POST `body` to `action` in data mode): a redirect becomes a client\n     * navigation; otherwise the data return is published as `actionData` and the active route's\n     * loader is revalidated so the mutation is reflected. Pass `{ revalidate: false }` to SKIP that\n     * revalidation - keep the current `data` and just publish the action's `actionData` (useful when\n     * the action already returned everything that changed, saving the extra round-trip). A redirect\n     * always loads its target regardless. Rejects on failure (caller falls back); once the server has\n     * answered, at any status, the rejection's `redirectTo` names the page to load instead of posting\n     * again. A revalidation answered with a terminal status renders that status route in the page's\n     * place.\n     */\n    submit: (action: string, body: NonNullable<RequestInit[\"body\"]>, opts?: SubmitOptions) => Promise<void>;\n    /** Run the initial route's client loader after the adapter has hydrated the SSR markup. */\n    hydrate: () => Promise<void>;\n    /**\n     * Mark cached route data stale and refresh the active view. With `paths`, target exactly those\n     * (e.g. the routes a mutation changed); without, invalidate the whole cache. The active route\n     * refreshes immediately - refetched + republished - whenever it's in scope (an explicit list that\n     * includes it, or an invalidate-all); other stale entries refetch lazily when next read (a\n     * fetcher, or the next navigation/access). Rejects if the active refetch fails (like `navigate`).\n     * A refetch answered with a terminal status renders that status route in the page's place; one\n     * whose status page renders inside layouts rejects, so the caller can load the page as a document.\n     * The keyed substrate for targeted revalidation (the `X-Nifra-Revalidate` header) and fetchers.\n     */\n    invalidate: (paths?: readonly string[]) => Promise<void>;\n    /**\n     * Warm a path's chunk + loader data into a bounded one-shot cache without publishing state -\n     * a later `navigate` to it transitions with no network round-trip. Best-effort: failures and\n     * unmatched paths are no-ops. Wired to link hover/focus by `installHistory`.\n     */\n    prefetch: (path: string) => Promise<void>;\n    /**\n     * Get (lazily creating) the stable {@link Fetcher} for `key` - an independent, concurrent\n     * load/submit state machine for row-level mutations or side-channel loads that must not disturb\n     * the active view. The same `key` always returns the same fetcher (so a binding can subscribe to a\n     * stable store). Keys are app-chosen and typically stable (e.g. a row id).\n     */\n    fetcher: (key: string) => Fetcher;\n    /** All live fetchers - for a global busy view (e.g. a `useFetchers` binding). */\n    fetchers: () => readonly Fetcher[];\n    /** Subscribe to any-fetcher-changed (a transition on any fetcher, or a new one created) - backs a\n     * `useFetchers` binding; returns an unsubscribe fn. */\n    subscribeFetchers: (listener: () => void) => () => void;\n    /** Match a path against the manifest patterns (exposed for history/link wiring). */\n    match: (path: string) => RouteMatch | null;\n}",
+    "signature": "export interface ClientRouter {\n    /** Current state; stable reference between transitions (so `useSyncExternalStore` can bail). */\n    snapshot: () => RouterState;\n    /** Subscribe to transitions; returns an unsubscribe fn. */\n    subscribe: (listener: () => void) => () => void;\n    /**\n     * Navigate to a path: match → fetch loader data → publish. No-op for an unmatched path. A loader\n     * redirect to another route is followed; one that leaves the app (another origin, a `#fragment`, no\n     * route) rejects with its target as `redirectTo`.\n     */\n    navigate: (path: string) => Promise<void>;\n    /**\n     * Submit an action (POST `body` to `action` in data mode): a redirect becomes a client\n     * navigation; otherwise the data return is published as `actionData` and the active route's\n     * loader is revalidated so the mutation is reflected. Pass `{ revalidate: false }` to SKIP that\n     * revalidation - keep the current `data` and just publish the action's `actionData` (useful when\n     * the action already returned everything that changed, saving the extra round-trip). A redirect\n     * always loads its target regardless. Rejects on failure (caller falls back); once the server has\n     * answered, at any status, the rejection's `redirectTo` names the page to load instead of posting\n     * again. A revalidation answered with a terminal status renders that status route in the page's\n     * place.\n     */\n    submit: (action: string, body: NonNullable<RequestInit[\"body\"]>, opts?: SubmitOptions) => Promise<void>;\n    /** Run the initial route's client loader after the adapter has hydrated the SSR markup. */\n    hydrate: () => Promise<void>;\n    /**\n     * Mark cached route data stale and refresh the active view. With `paths`, target exactly those\n     * (e.g. the routes a mutation changed); without, invalidate the whole cache. The active route\n     * refreshes immediately - refetched + republished - whenever it's in scope (an explicit list that\n     * includes it, or an invalidate-all); other stale entries refetch lazily when next read (a\n     * fetcher, or the next navigation/access). Rejects if the active refetch fails (like `navigate`).\n     * A refetch answered with a terminal status renders that status route in the page's place; one\n     * whose status page renders inside layouts rejects, so the caller can load the page as a document.\n     * The keyed substrate for targeted revalidation (the `X-Nifra-Revalidate` header) and fetchers.\n     */\n    invalidate: (paths?: readonly string[]) => Promise<void>;\n    /**\n     * Warm a path's chunk + loader data into a bounded one-shot cache without publishing state -\n     * a later `navigate` to it transitions with no network round-trip. Best-effort: failures and\n     * unmatched paths are no-ops. Wired to link hover/focus by `installHistory`.\n     */\n    prefetch: (path: string) => Promise<void>;\n    /**\n     * Get (lazily creating) the stable {@link Fetcher} for `key` - an independent, concurrent\n     * load/submit state machine for row-level mutations or side-channel loads that must not disturb\n     * the active view. The same `key` always returns the same fetcher (so a binding can subscribe to a\n     * stable store). Keys are app-chosen and typically stable (e.g. a row id).\n     */\n    fetcher: (key: string) => Fetcher;\n    /** All live fetchers - for a global busy view (e.g. a `useFetchers` binding). */\n    fetchers: () => readonly Fetcher[];\n    /** Subscribe to any-fetcher-changed (a transition on any fetcher, or a new one created) - backs a\n     * `useFetchers` binding; returns an unsubscribe fn. */\n    subscribeFetchers: (listener: () => void) => () => void;\n    /** Match a path against the manifest patterns (exposed for history/link wiring). */\n    match: (path: string) => RouteMatch | null;\n    /** Load a route's lazy component chain before an independently mounted route slot renders it. */\n    loadModule: (routeId: string, path?: string) => Promise<void>;\n    /** Read and validate a route's slot registry after its module has loaded. */\n    routeSlotsFor: (routeId: string) => RouteSlotRegistry;\n    /** Read the generated manifest identity for a route id. */\n    routePattern: (routeId: string) => string | undefined;\n}",
     "doc": "/** The agnostic router store consumed by per-adapter Router bindings. */"
   },
   {
@@ -7060,7 +7060,7 @@
     "name": "HrefOptions",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type HrefOptions<K extends Pattern> = {\n    readonly to: K;\n    readonly search?: SearchOfRoute<K> | undefined;\n    readonly hash?: string | undefined;\n} & ParamsOption<K>;",
+    "signature": "export type HrefOptions<K extends Pattern> = {\n    readonly to: K;\n    readonly search?: SearchOfRoute<K> | undefined;\n    readonly hash?: string | undefined;\n} & ParamsOption<K> & SlotOptions<K>;",
     "doc": "/**\n * What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has\n * any, absent when it has none), the route's `search` as its `searchSchema` outputs it, and the `hash`\n * without its `#`.\n */"
   },
   {
@@ -8720,6 +8720,12 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface LoadGoogleFontResult {\n    readonly family: string;\n    /** A self-hosted `@font-face` stylesheet (one rule per written file). Import it from your app. */\n    readonly css: string;\n    /** Every file written to `outDir`. */\n    readonly assets: readonly FontAsset[];\n    /** `fontPreload()` link-attribute sets - spread the ones you want into a layout's `meta.link`.\n     * Preloading *every* weight/subset is wasteful; usually preload just the primary subset + weight. */\n    readonly preloads: readonly LinkDescriptor[];\n}"
+  },
+  {
+    "name": "LoadedRouteSlot",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LoadedRouteSlot {\n    readonly routeId: string;\n    readonly path: string;\n    readonly params: Record<string, string>;\n    readonly search: Record<string, unknown>;\n    readonly data: unknown;\n    readonly serverComponents?: ComponentState;\n    readonly layoutData?: readonly unknown[];\n    readonly boundaries?: BoundaryStates;\n    readonly live?: unknown;\n    /** Parent path binds the loaded view to the authorization context that requested it. */\n    readonly parentPath: string;\n    readonly matchChain?: MatchChain;\n    readonly chain: readonly unknown[];\n}"
   },
   {
     "name": "Loader",
@@ -13785,7 +13791,7 @@
     "name": "RouteModule",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    /** Layout loader that must run before actions and is not retained across the action's render. */\n    readonly gate?: boolean;\n    readonly action?: Action;\n    /**\n     * Backend half only: which browser origins may POST to {@link action}. When omitted, a request\n     * whose `Origin` is another site's is refused with 403 before middleware, gates or the action run;\n     * requests without an `Origin` (non-browser clients) pass. An array allows exactly those origins\n     * (and refuses a request without one); a function decides, receiving `null` when there is none.\n     * Use it for a callback a third party posts to, such as an identity provider's `form_post`.\n     * `Origin` is browser-enforced, not authentication: keep the action's own auth checks.\n     */\n    readonly allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean);\n    /**\n     * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the\n     * loader returns data. Keys it does not declare are dropped before the page renders; a declared\n     * field of the wrong shape fails the request with a 500 naming the field's path.\n     */\n    readonly loaderOutput?: StandardSchemaV1;\n    /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */\n    readonly actionOutput?: StandardSchemaV1;\n    /**\n     * Backend half only: the loader of a partially prerendered page's shared shell. It\n     * receives no request, so its output is the same for every visitor and the shell is cached.\n     */\n    readonly shellLoader?: (ctx: ShellCtx) => unknown;\n    /** Backend half only: the schema of what {@link shellLoader} returns. */\n    readonly shellOutput?: StandardSchemaV1;\n    /**\n     * Backend half only: query parameters that select a different shell, each with its\n     * closed set of values (`{ search: { color: [\"red\", \"blue\"] } }`). Any other parameter, or a value\n     * outside its set, builds the default shell; holes still read the whole query.\n     */\n    readonly shellVariations?: ShellVariations;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** Named async boundaries owned by this route. The adapter renders their neutral state seam. A\n     * boundary's `load` comes from {@link boundaryLoaders} in the route's backend half; the frontend\n     * file declares only how it renders. */\n    readonly boundaries?: readonly BoundaryRegistration[];\n    /** Backend half only: each boundary's server loader, keyed by boundary name. */\n    readonly boundaryLoaders?: Readonly<Record<string, BoundaryLoaderEntry>>;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    /**\n     * `false` gives every client reload of this page (an action's revalidation, `invalidate()`, a live\n     * refresh) fresh data. By default a reload keeps the identity of the parts of `data` and the layouts'\n     * data that it did not change, so an unchanged row keeps its DOM and component state, and a renderer\n     * that memoizes on identity skips it. Not every unchanged row, though: an array whose first 32\n     * elements all changed is taken whole, later unchanged elements included, so code that needs a row's\n     * identity must not count on it. Opt out for a page whose code compares `data` against its value\n     * from before the reload, or whose rows re-render whatever their identity, which then pay the\n     * comparison for nothing. Client-only.\n     */\n    readonly shareData?: boolean;\n    /**\n     * Keep this page mounted after the visitor leaves it, so back and forward show it again as it was\n     * left: its component state, form fields, inner scroll offsets and focus. At most three pages are\n     * kept per tab, each for at most 10 minutes; a kept page is shown again only by a back or forward to\n     * its own history entry, and its data reloads in place. A sign-in or sign-out drops every kept page.\n     * Client-only.\n     */\n    readonly keepAlive?: true | KeepAliveOptions;\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * `false` renders this route's component in the browser only. The server still matches the route,\n     * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the\n     * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser\n     * hydrates against that, then renders the component. For a component that cannot render on a\n     * server: one that reads `window` or a browser-only API while it renders.\n     *\n     * The module itself is still imported on the server, for its loader and options - so an import\n     * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the\n     * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.\n     */\n    readonly ssr?: boolean;\n    /**\n     * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates\n     * before the component takes over - a skeleton, a spinner. Receives the same props as the\n     * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.\n     */\n    readonly HydrateFallback?: unknown;\n    /**\n     * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout\n     * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from\n     * the module on the server and in the browser, so it must be the same value on both.\n     */\n    readonly handle?: unknown;\n    /**\n     * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`. By default (`true`) the\n     * page renders inside the layouts above it with their loader data and `meta`, as a nested `_404`\n     * renders. When those layouts cannot render it - a loader throws, a gate or the middleware refuses -\n     * a root status page renders alone and an `_error` inside its layouts without their data, with the\n     * same status. `false` always renders them that way, and runs no layout loader for them.\n     */\n    readonly inLayouts?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /**\n     * Bounded tags ISR on-demand invalidation (`?tag=...`) and a CDN purge reach this page by. A list, or\n     * a function of the route's params and URL (`({ params }) => [\\`product:${params.id}\\`]`) for tags\n     * per page. Tags travel to the CDN and reach anyone reading the origin: never put personal data in one.\n     */\n    readonly revalidateTags?: RevalidateTags;\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
+    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    /**\n     * Named, independently navigable route regions. Each name is bound to route patterns from the\n     * generated route table; URL state selects only one of these registered identities.\n     */\n    readonly routeSlots?: Readonly<Record<string, readonly string[]>>;\n    /** Layout loader that must run before actions and is not retained across the action's render. */\n    readonly gate?: boolean;\n    readonly action?: Action;\n    /**\n     * Backend half only: which browser origins may POST to {@link action}. When omitted, a request\n     * whose `Origin` is another site's is refused with 403 before middleware, gates or the action run;\n     * requests without an `Origin` (non-browser clients) pass. An array allows exactly those origins\n     * (and refuses a request without one); a function decides, receiving `null` when there is none.\n     * Use it for a callback a third party posts to, such as an identity provider's `form_post`.\n     * `Origin` is browser-enforced, not authentication: keep the action's own auth checks.\n     */\n    readonly allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean);\n    /**\n     * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the\n     * loader returns data. Keys it does not declare are dropped before the page renders; a declared\n     * field of the wrong shape fails the request with a 500 naming the field's path.\n     */\n    readonly loaderOutput?: StandardSchemaV1;\n    /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */\n    readonly actionOutput?: StandardSchemaV1;\n    /**\n     * Backend half only: the loader of a partially prerendered page's shared shell. It\n     * receives no request, so its output is the same for every visitor and the shell is cached.\n     */\n    readonly shellLoader?: (ctx: ShellCtx) => unknown;\n    /** Backend half only: the schema of what {@link shellLoader} returns. */\n    readonly shellOutput?: StandardSchemaV1;\n    /**\n     * Backend half only: query parameters that select a different shell, each with its\n     * closed set of values (`{ search: { color: [\"red\", \"blue\"] } }`). Any other parameter, or a value\n     * outside its set, builds the default shell; holes still read the whole query.\n     */\n    readonly shellVariations?: ShellVariations;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** Named async boundaries owned by this route. The adapter renders their neutral state seam. A\n     * boundary's `load` comes from {@link boundaryLoaders} in the route's backend half; the frontend\n     * file declares only how it renders. */\n    readonly boundaries?: readonly BoundaryRegistration[];\n    /** Backend half only: each boundary's server loader, keyed by boundary name. */\n    readonly boundaryLoaders?: Readonly<Record<string, BoundaryLoaderEntry>>;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    /**\n     * `false` gives every client reload of this page (an action's revalidation, `invalidate()`, a live\n     * refresh) fresh data. By default a reload keeps the identity of the parts of `data` and the layouts'\n     * data that it did not change, so an unchanged row keeps its DOM and component state, and a renderer\n     * that memoizes on identity skips it. Not every unchanged row, though: an array whose first 32\n     * elements all changed is taken whole, later unchanged elements included, so code that needs a row's\n     * identity must not count on it. Opt out for a page whose code compares `data` against its value\n     * from before the reload, or whose rows re-render whatever their identity, which then pay the\n     * comparison for nothing. Client-only.\n     */\n    readonly shareData?: boolean;\n    /**\n     * Keep this page mounted after the visitor leaves it, so back and forward show it again as it was\n     * left: its component state, form fields, inner scroll offsets and focus. At most three pages are\n     * kept per tab, each for at most 10 minutes; a kept page is shown again only by a back or forward to\n     * its own history entry, and its data reloads in place. A sign-in or sign-out drops every kept page.\n     * Client-only.\n     */\n    readonly keepAlive?: true | KeepAliveOptions;\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * `false` renders this route's component in the browser only. The server still matches the route,\n     * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the\n     * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser\n     * hydrates against that, then renders the component. For a component that cannot render on a\n     * server: one that reads `window` or a browser-only API while it renders.\n     *\n     * The module itself is still imported on the server, for its loader and options - so an import\n     * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the\n     * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.\n     */\n    readonly ssr?: boolean;\n    /**\n     * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates\n     * before the component takes over - a skeleton, a spinner. Receives the same props as the\n     * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.\n     */\n    readonly HydrateFallback?: unknown;\n    /**\n     * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout\n     * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from\n     * the module on the server and in the browser, so it must be the same value on both.\n     */\n    readonly handle?: unknown;\n    /**\n     * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`. By default (`true`) the\n     * page renders inside the layouts above it with their loader data and `meta`, as a nested `_404`\n     * renders. When those layouts cannot render it - a loader throws, a gate or the middleware refuses -\n     * a root status page renders alone and an `_error` inside its layouts without their data, with the\n     * same status. `false` always renders them that way, and runs no layout loader for them.\n     */\n    readonly inLayouts?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /**\n     * Bounded tags ISR on-demand invalidation (`?tag=...`) and a CDN purge reach this page by. A list, or\n     * a function of the route's params and URL (`({ params }) => [\\`product:${params.id}\\`]`) for tags\n     * per page. Tags travel to the CDN and reach anyone reading the origin: never put personal data in one.\n     */\n    readonly revalidateTags?: RevalidateTags;\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
     "doc": "/** A route module - the default component + optional loader / action / meta. */"
   },
   {
@@ -13839,6 +13845,112 @@
     "package": "nifra",
     "signature": "export interface RouteSchema {\n    /** Explicit external-protocol mode. The handler owns raw `c.req` parsing/streaming; no JSON body\n     * parser or schema-driven 422 path is installed. A finite transport cap still applies by default. */\n    readonly wire?: \"raw\";\n    /**\n     * Choose trust-boundary order for sensitive routes. Public routes validate first by default;\n     * routes with `authenticate()` default to auth first. `validate-before-auth` is an explicit\n     * compatibility escape hatch, while `auth-before-validation` can reject without parsing the body.\n     */\n    readonly validationOrder?: \"validate-before-auth\" | \"auth-before-validation\";\n    /** Transport body cap for this route. Defaults to the server's maxBodyBytes. Use a finite\n     * smaller/larger limit for a specific endpoint. The 'unlimited' value is an explicit\n     * streaming/upload exemption and requires a non-empty bodyLimitReason for auditability.\n     *\n     * 'unlimited' is legal only for schema-less streaming/upload routes. It is rejected with `body` or\n     * `idempotency`, because those lanes buffer the body before user code can apply a protocol-specific\n     * bound. Read an unlimited route from `c.req.body` as a stream and bound it by the protocol it speaks;\n     * `nifra.body-bounded` is deliberately NOT published for an unlimited route. */\n    readonly bodyLimit?: number | \"unlimited\";\n    /** Required explanation when bodyLimit is 'unlimited' (for example, a streaming upload is\n     * bounded by an upstream object-store protocol). */\n    readonly bodyLimitReason?: string;\n    /** Declared effect tokens. Reflected for assurance; never read by validation or serialization. */\n    readonly capabilities?: readonly string[];\n    /**\n     * Dedupe retries of this (mutating) route on an `Idempotency-Key` header. The first request runs and\n     * its response is stored; a retry with the same key replays that response without re-running the\n     * handler, and a key reused with a different body is rejected (409). A missing key on an\n     * idempotency-required route fails closed (400). Off the hot path - routes without it are unchanged.\n     */\n    readonly idempotency?: IdempotencyConfig;\n    /**\n     * Highest data-sensitivity this route's response body carries (`public` | `pii` | `secret`). A\n     * declarative, compile-time + introspection fact - never validated at runtime. Reflected for tooling,\n     * recorded in the capability lockfile (so a route that starts returning PII is a reviewable change),\n     * and read by downstream policy (e.g. a partner-API surface refusing to expose `pii`/`secret`).\n     */\n    readonly classification?: DataClassification;\n    /**\n     * Inline **route-assurance evidence**: the enforcement posture this route carries, declared adjacent to\n     * the handler (e.g. `[NIFRA_ASSURANCE.AUTHENTICATED]`). Each id becomes route-scoped `declared` evidence\n     * in reflection, so a `nifra.assurance.ts` policy `require:` clause is satisfiable WITHOUT rewriting an\n     * in-handler guard into a `withRouteAssurance`-marked middleware. Ids are lowercase dot/dash segments\n     * (invalid ids throw at registration). Reflected for the assurance gate; never read on the hot path.\n     *\n     * This is an author ASSERTION (recorded as `source: \"declared\"`), not runtime proof - like every\n     * assurance marker it is trusted by the static gate, which matches on the evidence id, not its source.\n     * Declare an id only on a route whose guard actually enforces it; a false declaration silently satisfies\n     * the policy. (`source` is retained in reflection, so a stricter policy or reviewer can still tell\n     * declared evidence from enforcement-module evidence.)\n     */\n    readonly assurance?: readonly string[];\n    /**\n     * Mark this route a **dynamic route family**: a template (`/api/:slug/:resource`) whose concrete\n     * resources are resolved at runtime (auto-CRUD over tenant-defined tables, a catch-all dispatcher).\n     * Purely declarative - it does not change dispatch. It surfaces in reflection so the assurance gate and\n     * tooling treat the one templated route as a deliberate family whose evidence covers every runtime-\n     * resolved resource, instead of reading it as a single forgotten route.\n     */\n    readonly family?: boolean;\n    /** Optional **path-params schema**. Path params arrive as strings (`/users/:id` -> `c.params.id`);\n     * declaring a schema validates them at the boundary (a malformed `:id` is a `422` before the handler,\n     * like `body`/`query`) and can coerce them (use `t.query({ id: t.integer() })` for a numeric param).\n     * The schema must cover every path param; with the strict default an undeclared path param is rejected.\n     * When omitted, `c.params` stays the path-inferred `Record<name, string>`. */\n    readonly params?: StandardSchemaV1;\n    /** Optional request-header schema; the validated output is `c.headers` and a failure is a `422`.\n     * Every client sends headers a route never declares (`host`, `user-agent`, `accept`), so a closed\n     * object schema (`t.object`) validates only the names it declares, each read case-insensitively and\n     * keyed as declared. `t.headers` is the open form: it receives every header, names lower-cased,\n     * and coerces values like `t.query`. A schema that does not expose its JSON Schema (a zod\n     * `.strict()` or valibot `strictObject`) receives every header, so declare it open. */\n    readonly headers?: StandardSchemaV1;\n    /** Optional request-cookie schema. It validates the cookies parsed from the `Cookie` header -\n     * names as sent, values URL-decoded strings, the first of a repeated name - before the handler\n     * runs, and the validated output is `c.cookies`. A failure is a `422`, like `headers`. A browser\n     * sends every cookie the site has set, so declare the ones the route reads with an open schema\n     * (`t.cookies`, `t.looseObject`) rather than rejecting the rest. */\n    readonly cookies?: StandardSchemaV1;\n    readonly body?: StandardSchemaV1;\n    readonly query?: StandardSchemaV1;\n    /** Optional **response contract**. When declared: the handler's return is type-checked against it\n     * (the implementation can't drift from the contract), the typed client sees THIS as the response type\n     * (the contract - not the handler's incidental return), and it's emitted into OpenAPI/JSON-Schema so\n     * tooling and coding agents can read the exact shape. It is **not** validated at runtime (zero\n     * hot-path cost) - purely a compile-time + introspection contract. */\n    readonly response?: StandardSchemaV1;\n    /**\n     * Optional **error-response contract**: a map of HTTP status code → the Standard Schema of that error's\n     * body. Declares a route's failure modes so they flow into OpenAPI (as non-2xx `responses`), the\n     * `/llms.txt` context, and other introspection - the whole contract, not just the happy path, is legible\n     * to tooling and coding agents. Like `response`, it is **not** validated at runtime (zero hot-path cost);\n     * it's a compile-time + introspection contract. Example: `{ 404: NotFound, 409: Conflict }`. */\n    readonly errors?: Readonly<Record<number, StandardSchemaV1>>;\n    /**\n     * Optional **SSE event contract**: the Standard Schema of each event's `data` payload on a\n     * streaming route (declared via `app.sse()`). Marks the route as a typed event stream - the\n     * typed client grows a `.subscribe()` for it, and the schema flows into reflection. Like\n     * `response`, it is **not** validated at runtime (zero hot-path cost); the server-side\n     * `stream.send()` is compile-time-checked against it instead.\n     */\n    readonly sse?: StandardSchemaV1;\n    /**\n     * Hook fired when the request fails `headers`/`cookies`/`params`/`body`/`query` validation, before the handler\n     * runs. `kind` says which input failed. Its return value selects one of three outcomes (may be async):\n     *   - a **`Response`** → returned as-is, short-circuiting the route (custom error envelope, redirect, …).\n     *   - **any other value** → treated as a repaired payload and **re-validated once** against the same\n     *     schema. If it now passes, the handler runs with it; if it still fails, the original `422` stands.\n     *     Re-validation means a bad return can't bypass the schema - the trust boundary holds.\n     *   - **`undefined`** → give up; the original validation `422` is returned unchanged.\n     * A route hook **overrides** the app-wide default set via `server({ onValidationError })`; return\n     * `undefined` to fall through to the plain `422` even when an app default exists. Typical uses: a custom\n     * error envelope, coercing the input, or prompting an LLM to repair the payload (re-validated, so it can't\n     * bypass the schema).\n     */\n    readonly onValidationError?: (issues: ReadonlyArray<StandardIssue>, ctx: Context, kind: \"body\" | \"query\" | \"params\" | \"headers\" | \"cookies\") => Response | unknown | Promise<Response | unknown>;\n}",
     "doc": "/** Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…). */"
+  },
+  {
+    "name": "RouteSlot",
+    "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function RouteSlot({ name, fallback, error }: RouteSlotProps): VNode | null;"
+  },
+  {
+    "name": "RouteSlot",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function RouteSlot({ name, fallback, error }: RouteSlotProps): ReactNode;",
+    "doc": "/** Render the registered route's complete layout and page chain in this independently navigable region. */"
+  },
+  {
+    "name": "RouteSlot",
+    "kind": "const",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare const RouteSlot: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    name: {\n        type: PropType<RouteSlotName>;\n        required: true;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}> | import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>[] | null, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    name: {\n        type: PropType<RouteSlotName>;\n        required: true;\n    };\n}>> & Readonly<{}>, {}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;"
+  },
+  {
+    "name": "RouteSlotController",
+    "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface RouteSlotController {\n    readonly target: string | undefined;\n    readonly status: \"idle\" | \"loading\" | \"ready\" | \"error\";\n    readonly content: LoadedRouteSlot | undefined;\n    readonly error: string | undefined;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
+  },
+  {
+    "name": "RouteSlotController",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface RouteSlotController {\n    readonly target: string | undefined;\n    readonly status: \"idle\" | \"loading\" | \"ready\" | \"error\";\n    readonly content: LoadedRouteSlot | undefined;\n    readonly error: string | undefined;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
+  },
+  {
+    "name": "RouteSlotController",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface RouteSlotController {\n    readonly target: string | undefined;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
+  },
+  {
+    "name": "RouteSlotController",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
+    "signature": "export interface RouteSlotController {\n    readonly target: ComputedRef<string | undefined>;\n    readonly status: ComputedRef<\"idle\" | \"loading\" | \"ready\" | \"error\">;\n    readonly content: ComputedRef<LoadedRouteSlot | undefined>;\n    readonly error: ComputedRef<string | undefined>;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
+  },
+  {
+    "name": "RouteSlotLoadError",
+    "kind": "class",
+    "package": "@nifrajs/web",
+    "signature": "export declare class RouteSlotLoadError extends Error {\n    readonly code: string;\n    constructor(code: string);\n}"
+  },
+  {
+    "name": "RouteSlotName",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteSlotName = NamesInRoute<RouteTable[keyof RouteTable]> & string;",
+    "doc": "/** Union of slot names registered by the generated route manifest. */"
+  },
+  {
+    "name": "RouteSlotPatternsOf",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteSlotPatternsOf<T> = T extends {\n    readonly routeSlots: infer Slots;\n} ? Slots extends Readonly<Record<string, readonly string[]>> ? Slots : Readonly<Record<never, never>> : Readonly<Record<never, never>>;",
+    "doc": "/** Preserve route-module slot declarations in the generated, per-route `RouteTable`. */"
+  },
+  {
+    "name": "RouteSlotProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface RouteSlotProps {\n    readonly name: RouteSlotName;\n    readonly fallback?: ComponentChildren;\n    readonly error?: ComponentChildren | ((code: string) => ComponentChildren);\n}"
+  },
+  {
+    "name": "RouteSlotProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface RouteSlotProps {\n    readonly name: RouteSlotName;\n    readonly fallback?: ReactNode;\n    readonly error?: ReactNode | ((code: string) => ReactNode);\n}"
+  },
+  {
+    "name": "RouteSlotProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface RouteSlotProps {\n  name: RouteSlotName\n  /** Rendered while the addressed route is loading. */\n  children?: Snippet\n  /** Rendered when the authorized route request fails, with a stable error code. */\n  error?: Snippet<[code: string]>\n}"
+  },
+  {
+    "name": "RouteSlotRegistry",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteSlotRegistry = Readonly<Record<string, readonly string[]>>;"
+  },
+  {
+    "name": "RouteSlotRuntime",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteSlotRuntime {\n    readonly router: ClientRouter;\n    readonly routes: Readonly<Record<string, readonly unknown[]>>;\n    readonly searchSchemas: Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>> | undefined;\n    readonly matchChains: Readonly<Record<string, MatchChain>> | undefined;\n}"
+  },
+  {
+    "name": "RouteSlotStateError",
+    "kind": "class",
+    "package": "@nifrajs/web",
+    "signature": "export declare class RouteSlotStateError extends TypeError {\n    readonly code: \"malformed\" | \"unknown_slot\" | \"unknown_route\" | \"invalid_target\" | \"too_large\";\n    constructor(code: RouteSlotStateError[\"code\"], message?: string);\n}"
+  },
+  {
+    "name": "RouteSlotTarget",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteSlotTarget = Href<keyof RouteTable & string>;",
+    "doc": "/** A typed route URL that a registered route slot may display. */"
   },
   {
     "name": "RouteSnapshot",
@@ -20845,6 +20957,12 @@
     "signature": "export declare function getFixRecipe(id: string): FixRecipe | undefined;"
   },
   {
+    "name": "getRouteSlotRuntime",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function getRouteSlotRuntime(): RouteSlotRuntime | undefined;"
+  },
+  {
     "name": "getSession",
     "kind": "function",
     "package": "@nifrajs/authjs",
@@ -21740,6 +21858,13 @@
     "doc": "/**\n * Download a Google font, self-host it, and return a CLS-safe `@font-face` stylesheet + preloads.\n * See the module header for the full flow and security model. I/O (`fetch`, `writeFile`) is injectable\n * so this is unit-testable without the network.\n */"
   },
   {
+    "name": "loadRouteSlot",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function loadRouteSlot(runtime: RouteSlotRuntime, name: string, parentPath: string, targetValue: string, signal: AbortSignal): Promise<LoadedRouteSlot>;",
+    "doc": "/** Resolve an addressed slot through the current router and its normal authorized route-data path. */"
+  },
+  {
     "name": "localeCookie",
     "kind": "function",
     "package": "@nifrajs/i18n",
@@ -22356,6 +22481,12 @@
     "doc": "/**\n * Run `callback` each time the `keepAlive` page this component renders in is shown again, once it is\n * back in the document with its scroll and focus. Unlike Vue's `onActivated`, not when it first mounts.\n */"
   },
   {
+    "name": "onRouteSlotIdentityChange",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function onRouteSlotIdentityChange(listener: () => void): () => void;"
+  },
+  {
     "name": "openGraph",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -22727,6 +22858,13 @@
     "package": "@nifrajs/agent-review",
     "signature": "export declare function parseReviewReport(input: unknown): Promise<ReviewReport>;",
     "doc": "/** Parse a JSON string or unknown value into a bounded, deeply frozen review report. */"
+  },
+  {
+    "name": "parseRouteSlots",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseRouteSlots(path: string): RouteSlotTargets;",
+    "doc": "/** Parse and strictly validate the one canonical route-slot query value. */"
   },
   {
     "name": "parseRubricVerdict",
@@ -24698,6 +24836,19 @@
     "doc": "/** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */"
   },
   {
+    "name": "setRouteSlot",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function setRouteSlot(path: string, name: string, target: string | null): string;",
+    "doc": "/** Change a single slot while retaining the other URL-addressed slots. */"
+  },
+  {
+    "name": "setRouteSlotRuntime",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function setRouteSlotRuntime(runtime: RouteSlotRuntime): void;"
+  },
+  {
     "name": "setSsrModuleLoader",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -25114,6 +25265,13 @@
     "package": "@nifrajs/uploads",
     "signature": "export declare function stripImageMetadata(bytes: Uint8Array, backend: ImageReencoder, options?: StripImageMetadataOptions): Promise<Uint8Array>;",
     "doc": "/**\n * Re-encode an image to its intrinsic size, dropping all embedded metadata. Returns clean bytes.\n * A source over `maxPixels` throws {@link ImagePixelLimitError} without being decoded. Each call\n * holds a full decoded image in memory, so bound how many run at once where uploads arrive.\n */"
+  },
+  {
+    "name": "stripRouteSlots",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function stripRouteSlots(path: string): string;",
+    "doc": "/** Remove framework-owned state before the active page's loader sees its search params. */"
   },
   {
     "name": "stripSvgPreamble",
@@ -26104,6 +26262,33 @@
     "doc": "/** Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation). */"
   },
   {
+    "name": "useRouteSlot",
+    "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function useRouteSlot(name: RouteSlotName): RouteSlotController;"
+  },
+  {
+    "name": "useRouteSlot",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function useRouteSlot(name: RouteSlotName): RouteSlotController;",
+    "doc": "/** Read or navigate one route slot without changing any sibling slot's URL state or component tree. */"
+  },
+  {
+    "name": "useRouteSlot",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function useRouteSlot(name: RouteSlotName): RouteSlotController;",
+    "doc": "/** Read or update the URL state for one slot while preserving every sibling slot. */"
+  },
+  {
+    "name": "useRouteSlot",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function useRouteSlot(name: RouteSlotName): RouteSlotController;",
+    "doc": "/** Read or navigate one route slot without changing any sibling slot's URL state or component tree. */"
+  },
+  {
     "name": "useSearch",
     "kind": "function",
     "package": "@nifrajs/web-preact",
@@ -26515,6 +26700,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function withRouteAssurance<T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]): T;",
     "doc": "/** Attach enforcement evidence to the middleware/plugin that installs it. */"
+  },
+  {
+    "name": "withRouteSlots",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function withRouteSlots(path: string, targets: RouteSlotTargets): string;",
+    "doc": "/** Replace the route-slot query value, preserving all unrelated query parameters and the hash. */"
   },
   {
     "name": "wrapWebSocketMessageValidation",

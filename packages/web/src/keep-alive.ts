@@ -658,6 +658,9 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
         }
       },
       navigate,
+      loadModule: inner.loadModule,
+      routeSlotsFor: inner.routeSlotsFor,
+      routePattern: inner.routePattern,
       submit: async (action, body, submitOptions) => {
         await afterRestore()
         try {

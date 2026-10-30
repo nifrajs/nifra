@@ -16,14 +16,14 @@
 <script>
   import { hasContext, setContext } from "svelte"
   import Self from "./Chain.svelte"
-  let { chain, props, data, layoutData } = $props()
+  let { chain, props, data, layoutData, replaceContext = false } = $props()
   // Provide the validated search as a getter (so `useSearch` reads the current value reactively) - the
   // same value the server put in RenderProps.search, so a query-reading page hydrates with no drift. The
   // key string is kept in sync with router.ts's `useSearch`.
   setContext("@nifrajs/web-svelte:search", () => props.search ?? {})
   // The props `useMatches` reads, provided once by the outermost Chain, where `layoutData` is still
   // whole (each nested Chain holds only its own tail). The key string is kept in sync with router.ts.
-  if (!hasContext("@nifrajs/web-svelte:props")) {
+  if (replaceContext || !hasContext("@nifrajs/web-svelte:props")) {
     setContext("@nifrajs/web-svelte:props", () => ({ ...props, data, layoutData }))
   }
 </script>
@@ -38,7 +38,7 @@
        `failed` snippet renders the route's _error component with the serialized error. -->
   {@const Fallback = chain[0].__nifraErrorBoundary}
   <svelte:boundary>
-    <Self chain={chain.slice(1)} {props} {data} {layoutData} />
+      <Self chain={chain.slice(1)} {props} {data} {layoutData} {replaceContext} />
     {#snippet failed(error)}
       <Fallback data={{ name: error?.name ?? "Error", message: String(error?.message ?? error) }} />
     {/snippet}
@@ -47,7 +47,7 @@
   {@const Layout = chain[0]}
   <Layout data={layoutData?.[0] ?? null} boundaries={props.boundaries}>
     {#snippet children()}
-      <Self chain={chain.slice(1)} {props} {data} layoutData={layoutData?.slice(1)} />
+      <Self chain={chain.slice(1)} {props} {data} layoutData={layoutData?.slice(1)} {replaceContext} />
     {/snippet}
   </Layout>
 {/if}

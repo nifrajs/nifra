@@ -7,6 +7,7 @@ import {
   type Submission,
 } from "../src/index.ts"
 import { setPresenter } from "../src/internal/present.ts"
+import { parseRouteSlots, setRouteSlot, withRouteSlots } from "../src/route-slots.ts"
 import { redirectOf } from "../src/router.ts"
 
 describe("createMatcher", () => {
@@ -138,6 +139,55 @@ describe("createClientRouter", () => {
     r.subscribe(() => seen.push(r.snapshot().pending))
     await r.navigate("/users/1")
     expect(seen).toEqual([true, false])
+  })
+
+  test("slot-only navigation preserves siblings and skips the page loader", async () => {
+    const slotPatterns = [
+      { routeId: "dashboard", pattern: "/dashboard" },
+      { routeId: "user", pattern: "/users/:id" },
+      { routeId: "activity", pattern: "/activity" },
+    ]
+    const initial: RouterState = {
+      routeId: "dashboard",
+      params: {},
+      path: "/dashboard?tab=overview",
+      data: { dashboard: true },
+      pending: false,
+    }
+    let pageLoads = 0
+    const router = createClientRouter({
+      patterns: slotPatterns,
+      initial,
+      routeHooks: {
+        dashboard: { routeSlots: { inspector: ["/users/:id"], activity: ["/activity"] } },
+      },
+      fetchData: async () => {
+        pageLoads++
+        return { dashboard: true }
+      },
+    })
+
+    const opened = withRouteSlots(initial.path, {
+      inspector: "/users/7",
+      activity: "/activity",
+    })
+    await router.navigate(opened)
+    expect(router.snapshot().path).toBe(opened)
+    expect(router.snapshot().data).toBe(initial.data)
+    expect(pageLoads).toBe(0)
+
+    const changed = setRouteSlot(opened, "inspector", "/users/8")
+    await router.navigate(changed)
+    expect(parseRouteSlots(router.snapshot().path)).toEqual({
+      activity: "/activity",
+      inspector: "/users/8",
+    })
+    expect(pageLoads).toBe(0)
+
+    const closed = setRouteSlot(changed, "inspector", null)
+    await router.navigate(closed)
+    expect(parseRouteSlots(router.snapshot().path)).toEqual({ activity: "/activity" })
+    expect(pageLoads).toBe(0)
   })
 
   test("navigate publishes the target as pendingPath while in flight, cleared when settled", async () => {

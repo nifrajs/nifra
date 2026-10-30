@@ -174,6 +174,9 @@ const fakeRouter = (initial: RouterState): FakeRouter => {
     fetchers: () => [fetcher],
     subscribeFetchers: () => () => {},
     match: (path) => ({ routeId: path, params: {} }),
+    loadModule: async () => {},
+    routeSlotsFor: () => ({}),
+    routePattern: () => undefined,
   }
   return {
     inner,
