@@ -1844,8 +1844,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       if (inflight.has(path) || freshPrefetch(path) !== undefined) return
       const matched = match(path)
       if (matched === null) return
-      const token = {}
-      inflight.set(path, token)
+      const prefetchMarker = {}
+      inflight.set(path, prefetchMarker)
       const epoch = documentEpoch()
       try {
         // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from -
@@ -1864,14 +1864,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (
           loaded.serverComponents === undefined &&
           !holes &&
-          inflight.get(path) === token &&
+          inflight.get(path) === prefetchMarker &&
           epoch === documentEpoch()
         )
           prefetched.set(path, [loaded, Date.now(), epoch])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {
-        if (inflight.get(path) === token) inflight.delete(path)
+        if (inflight.get(path) === prefetchMarker) inflight.delete(path)
       }
     },
     fetcher: (key) => {
