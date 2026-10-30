@@ -1,5 +1,5 @@
 import { RouteConfigError } from "../errors.ts"
-import { decodePathSegment, encodePathSegment } from "./path-codec.ts"
+import { encodePathSegment } from "./path-codec.ts"
 
 export { browserPathSegment, decodePathSegment, encodePathSegment } from "./path-codec.ts"
 export { isSameOriginPath } from "./same-origin-path.ts"
@@ -643,10 +643,12 @@ export function decodeRouteParams(raw: Record<string, string>): Record<string, s
   for (const key in raw) {
     const value = raw[key]!
     if (!value.includes("%")) continue
-    const decoded = decodePathSegment(value)
-    if (decoded === undefined) return null
-    out ??= { ...raw }
-    out[key] = decoded
+    try {
+      out ??= { ...raw }
+      out[key] = decodeURIComponent(value)
+    } catch {
+      return null
+    }
   }
   return out ?? raw
 }
