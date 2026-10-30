@@ -70,20 +70,25 @@ jobs:
         if: matrix.group == 'tests'
         run: bun run test:rest
 
-      # The live Postgres suites skip without a server. The runner image ships one with its service
-      # off; the password only guards a throwaway server bound to localhost.
-      - name: Start PostgreSQL
+      # The live Postgres suites skip without a server. The runner image's own server tracks the
+      # newest major (18 on ubuntu-26.04), so PostgreSQL 16 runs in a container; the password only
+      # guards a throwaway server bound to localhost.
+      - name: Start PostgreSQL 16
         if: matrix.group == 'postgres'
         run: |
-          sudo systemctl start postgresql.service
-          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          docker run -d --name nifra-pg16 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:5432:5432 \
+            postgres:16@sha256:1beaa3084eee2676f20a9cd9928f0bf2c5bf674f8e49f81017912183d377c61c
+          for _ in $(seq 60); do
+            pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
           # Without dblink the suite's dblink checks return early and pass.
           test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
         env:
           NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
 
-      # The runner's server is PostgreSQL 16; the grant gate and the function allowlist read catalogs
-      # that change between majors, so the same suites run against the newest one as well.
+      # The grant gate and the function allowlist read catalogs that change between majors, so the same
+      # suites run against the newest one as well.
       - name: Start PostgreSQL 18
         if: matrix.group == 'postgres-18'
         run: |

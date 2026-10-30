@@ -46,12 +46,17 @@ jobs:
         run: bun run build
 
       # Without a server the live Postgres suites skip, and every mutant only they kill survives. The
-      # runner image ships PostgreSQL with its service off; the password guards a localhost throwaway.
-      - name: Start PostgreSQL
+      # runner image's own server tracks the newest major, so PostgreSQL 16 runs in a container; the
+      # password guards a localhost throwaway.
+      - name: Start PostgreSQL 16
         continue-on-error: true
         run: |
-          sudo systemctl start postgresql.service
-          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          docker run -d --name nifra-pg16 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:5432:5432 \
+            postgres:16@sha256:1beaa3084eee2676f20a9cd9928f0bf2c5bf674f8e49f81017912183d377c61c
+          for _ in $(seq 60); do
+            pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
 
       # --bail stops each test run at its first failure, so the kill matrix names one killer per mutant.
       - name: Mutate the changed lines

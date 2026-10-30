@@ -105,11 +105,15 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
 
       # The same server as ci.yml's postgres group, for the postgres-live gate in the runtimes group.
-      - name: Start PostgreSQL
+      - name: Start PostgreSQL 16
         if: matrix.group == 'runtimes'
         run: |
-          sudo systemctl start postgresql.service
-          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          docker run -d --name nifra-pg16 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:5432:5432 \
+            postgres:16@sha256:1beaa3084eee2676f20a9cd9928f0bf2c5bf674f8e49f81017912183d377c61c
+          for _ in $(seq 60); do
+            pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
           test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
         env:
           NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
