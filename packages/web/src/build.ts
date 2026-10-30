@@ -2190,6 +2190,8 @@ export async function buildTargetWith(
               handler: "index.js",
               launcherType: "Nodejs",
               shouldAddHelpers: false,
+              // Without it Vercel buffers the response, so streamed SSR and PPR holes arrive at once.
+              supportsResponseStreaming: true,
             }
           : { runtime: "edge", entrypoint: "index.js" },
         null,

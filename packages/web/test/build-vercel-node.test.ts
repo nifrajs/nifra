@@ -115,6 +115,7 @@ for (const pipeline of ["bun", "vite"] as const) {
       handler: "index.js",
       launcherType: "Nodejs",
       shouldAddHelpers: false,
+      supportsResponseStreaming: true,
     })
     expect(JSON.parse(readFileSync(join(fn, "package.json"), "utf8"))).toEqual({ type: "module" })
     expect(readFileSync(join(out, "static/.well-known/proof.txt"), "utf8")).toBe("static proof")

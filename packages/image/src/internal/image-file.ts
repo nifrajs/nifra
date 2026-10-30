@@ -56,7 +56,7 @@ export function cacheImageAsset(cache: string, asset: ImageBuildAsset): void {
     }
     if (
       offset !== asset.source.byteLength ||
-      bytes.subarray(0, offset).some((byte, i) => byte !== asset.source[i])
+      !Buffer.from(bytes.buffer, bytes.byteOffset, offset).equals(asset.source)
     )
       throw invalid()
   } finally {

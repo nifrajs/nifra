@@ -312,6 +312,7 @@ describe("pathname configuration safety", () => {
       "/fr/about",
       "/FR/about",
       "/%66r/about",
+      "/%25252561",
     ]) {
       expect(() => router({ pathnames: { [path]: {} } }), path).toThrow(/pathnames/)
       expect(() => router({ pathnames: { "/about": { fr: path } } }), path).toThrow(/pathnames/)
@@ -358,5 +359,26 @@ describe("pathname configuration safety", () => {
         expect(new URL(output, "https://app.example").origin, output).toBe("https://app.example")
       }
     }
+  })
+
+  test("request segments cost a bounded number of decode passes however deeply they nest", () => {
+    const r = router()
+    const nested = `%25${"25".repeat(8000)}`
+    const input = `/fr/${nested}`
+    const decode = globalThis.decodeURIComponent
+    let calls = 0
+    globalThis.decodeURIComponent = (value: string): string => {
+      calls++
+      return decode(value)
+    }
+    try {
+      r.unlocalizePathname(input)
+    } finally {
+      globalThis.decodeURIComponent = decode
+    }
+    // One decode matches the locale prefix; the segment itself gets a fixed handful, never one per layer.
+    expect(calls).toBeLessThanOrEqual(8)
+    expect(r.unlocalizePathname(input)).toEqual({ locale: "fr", pathname: `/${nested}` })
+    expect(r.localizePathname(input, "de")).toBe(`/de/${nested}`)
   })
 })

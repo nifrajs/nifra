@@ -16,14 +16,18 @@ function hasControl(value: string): boolean {
   return false
 }
 
+/** Extra decodes allowed after the first; a legitimate path never nests encodings this deep. */
+const MAX_NESTED_DECODES = 2
+
 /** Decode each segment separately: a separator must never become part of another segment. */
 function normalizedSegments(segments: readonly string[]): string[] | undefined {
   try {
     return segments.map((segment) => {
       const decoded = decodeURIComponent(segment)
       // Reject nested encoding tricks too, without mistaking a literal percent sign for an escape.
+      // A request controls the nesting depth, so the passes are capped: each one is a full scan.
       let check = decoded
-      for (;;) {
+      for (let layer = 0; ; layer++) {
         if (
           check === "." ||
           check === ".." ||
@@ -33,6 +37,7 @@ function normalizedSegments(segments: readonly string[]): string[] | undefined {
           throw new Error("unsafe segment")
         }
         if (!/%[\da-f]{2}/i.test(check)) break
+        if (layer === MAX_NESTED_DECODES) throw new Error("unsafe segment")
         const next = decodeURIComponent(check)
         if (next === check) break
         check = next

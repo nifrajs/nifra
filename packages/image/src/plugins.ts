@@ -41,16 +41,24 @@ async function moduleSource(
   images: ImageAssets,
   file: string,
   options?: ImageBuildOptions,
+  published?: Set<string>,
 ): Promise<string> {
   const data = await images.load(file)
-  if (options !== undefined && process.env.NIFRA_DEV_HMR === "1") {
+  if (options !== undefined && published !== undefined && process.env.NIFRA_DEV_HMR === "1") {
     // Bun's HTML bundler owns a separate plugin instance. Publish to the ignored dev cache so its
     // images are available before the background leak-check build has run.
     const cache = resolve(
       process.env.NIFRA_DEV_ROOT ?? options.root ?? process.cwd(),
       ".nifra/image-assets",
     )
-    for (const asset of images.assets()) cacheImageAsset(cache, asset)
+    // Names are content hashes, so a published asset is final for this build: re-verifying every
+    // earlier asset on each import made N imports cost N^2 file reads.
+    for (const asset of images.assets()) {
+      const key = `${cache}/${asset.fileName}`
+      if (published.has(key)) continue
+      cacheImageAsset(cache, asset)
+      published.add(key)
+    }
   }
   return `export default ${JSON.stringify(data)}\n`
 }
@@ -58,16 +66,18 @@ async function moduleSource(
 /** Install in both clientPlugins and serverPlugins; no codec is loaded unless explicitly supplied. */
 export function imageBunPlugin(options: ImageBuildOptions = {}): ImageBunPlugin {
   const images = createImageAssets(options)
+  const published = new Set<string>()
   return {
     name: "nifra-image",
     nifraStaticAssets: () => images.assets(),
     setup(build) {
       images.clear()
+      published.clear()
       build.onResolve({ filter: IMAGE_IMPORT }, (args) => ({
         path: resolve(args.resolveDir || dirname(args.importer), args.path),
       }))
       build.onLoad({ filter: IMAGE_IMPORT }, async (args) => ({
-        contents: await moduleSource(images, sourceFile(args.path), options),
+        contents: await moduleSource(images, sourceFile(args.path), options, published),
         loader: "js",
       }))
     },
