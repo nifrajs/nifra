@@ -1,10 +1,14 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { Glob } from "bun"
-import { IGNORED } from "../check-scan.ts"
+import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
+import { IGNORED, stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { ANCHOR_HOLE } from "../internal/source-facts.ts"
+import { buildRouteTable } from "../introspect.ts"
+import { commentBlockExpectation } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
+import { readStaticApiPrefix } from "./pages.ts"
 import { scanSources } from "./source-scan.ts"
 
 /**
@@ -62,6 +66,42 @@ function distance(a: string, b: string): number {
   return row[b.length] ?? 0
 }
 
+/** Read only literal mount exports, never import/evaluate the app's config. An unreadable field
+ * leaves the dead-link verdict open, just like an unreadable backend registration. */
+function backendMount(
+  ctx: RuleContext,
+): { readonly prefix: string | undefined; readonly strip: boolean } | undefined {
+  let prefix: string | undefined
+  let strip = false
+  let prefixUnknown = false
+  let stripUnknown = false
+  // nifra.config.ts overrides individual fields inherited from backend/framework.ts.
+  for (const file of [FRAMEWORK_FILE, CONFIG_FILE]) {
+    const path = join(ctx.root, file)
+    if (!existsSync(path)) continue
+    const source = stripComments(readFileSync(path, "utf8"))
+    const read = readStaticApiPrefix(source)
+    if (read.kind !== "default") {
+      prefixUnknown = read.kind === "unreadable"
+      if (read.kind === "literal") prefix = read.value
+    }
+    if (/\bapiStrip\b/.test(source)) {
+      const literal =
+        /\bexport\s+const\s+apiStrip\s*(?::\s*boolean\s*)?=\s*(true|false)\s*(?:as\s+const\s*)?(?:;|\r?\n|$)/.exec(
+          source,
+        )
+      stripUnknown = literal === null
+      if (literal !== null) strip = literal[1] === "true"
+    }
+    // A star re-export may supply either field; it cannot prove an absent/default mount.
+    if (/\bexport\s*\*/.test(source)) {
+      prefixUnknown = true
+      stripUnknown = true
+    }
+  }
+  return prefixUnknown || stripUnknown ? undefined : { prefix, strip }
+}
+
 function pageRoutes(ctx: RuleContext): Promise<PageRoutes | undefined> {
   let loaded = cache.get(ctx)
   if (loaded === undefined) {
@@ -96,10 +136,19 @@ async function loadPageRoutes(ctx: RuleContext): Promise<PageRoutes | undefined>
     }
   }
   const pageEntries = sortRoutesBySpecificity(patterns.flatMap(compile))
-  const backendEntries = ctx.project.routes.flatMap((route) => compile(route.path))
+  const mount = backendMount(ctx)
+  const backendEntries = buildRouteTable({
+    pages: [],
+    api: ctx.project.routes,
+    apiPrefix: mount?.prefix ?? "",
+    apiStrip: mount?.strip ?? false,
+  })
+    // Without a configured mount, preserve the scan's allowance for independently served backends.
+    .filter((route) => mount?.prefix === undefined || route.autoMounted)
+    .flatMap((route) => compile(route.path))
   const staticPatterns = patterns.filter((pattern) => !/[:*]/.test(pattern))
   return {
-    backendUnknown: ctx.project.sourceFindings.routePaths.length > 0,
+    backendUnknown: mount === undefined || ctx.project.sourceFindings.routePaths.length > 0,
     match(path) {
       for (const entry of pageEntries) {
         const found = matchRoutePattern(entry.pattern, path)
@@ -181,8 +230,10 @@ function judge(routes: PageRoutes, written: string): Verdict | undefined {
   }
 }
 
-const adviceFor = (code: string): string =>
-  `a link kept as written, on purpose: \`// nifra-expect ${code}: <reason>\` above the attribute`
+const adviceFor = (code: string, template: boolean): string =>
+  template
+    ? `a link kept as written, on purpose: \`<!-- nifra-expect ${code}: <reason> -->\` above the anchor`
+    : `a link kept as written, on purpose: \`// nifra-expect ${code}: <reason>\` above the attribute`
 
 function report(
   code: string,
@@ -191,6 +242,7 @@ function report(
   line: number,
   verdict: Verdict,
   note: string | undefined,
+  template = false,
 ): Diagnostic {
   return diagnostic({
     code,
@@ -198,32 +250,114 @@ function report(
     file,
     line,
     message: note === undefined ? verdict.message : `${verdict.message} ${note}`,
-    evidence: [...verdict.evidence, adviceFor(code)],
+    evidence: [...verdict.evidence, adviceFor(code, template)],
     verify: "nifra check",
   })
 }
 
-/** The `href` value of every `<a>` in a Vue or Svelte template that is a string literal, with its offset. */
-function templateHrefs(text: string): Array<{ readonly at: number; readonly value: string }> {
-  const found: Array<{ at: number; value: string }> = []
-  for (const open of text.matchAll(/<a(?=[\s/>])/g)) {
-    ATTRIBUTE.lastIndex = open.index + 2
+/** The end of a markup tag or `{expression}`, ignoring `>`/braces inside quoted values. */
+function markupEnd(text: string, start: number, expression = false): number {
+  let quote: string | undefined
+  let braces = expression ? 1 : 0
+  for (let at = start; at < text.length; at++) {
+    const char = text[at]
+    if (quote !== undefined) {
+      if (braces > 0 && char === "\\") at++
+      else if (char === quote) quote = undefined
+    } else if (char === '"' || char === "'" || (braces > 0 && char === "`")) quote = char
+    else if (char === "{") braces++
+    else if (char === "}") {
+      braces--
+      if (expression && braces === 0) return at + 1
+    } else if (!expression && braces === 0 && char === ">") return at + 1
+  }
+  return text.length
+}
+
+/** Scan markup, not script strings, HTML comments or other tags' quoted attributes. The existing
+ * componentScripts scanner only extracts scripts and cannot distinguish these template regions. */
+function templateHrefs(
+  text: string,
+  vue: boolean,
+): {
+  readonly hrefs: Array<{ readonly at: number; readonly tagAt: number; readonly value: string }>
+  readonly expectationLines: readonly string[]
+} {
+  const hrefs: Array<{ at: number; tagAt: number; value: string }> = []
+  const comments: Array<{ start: number; end: number }> = []
+  let templateDepth = 0
+  for (let at = 0; at < text.length; ) {
+    if (text.startsWith("<!--", at)) {
+      const close = text.indexOf("-->", at + 4)
+      const end = close < 0 ? text.length : close + 3
+      comments.push({ start: at, end })
+      at = end
+      continue
+    }
+    if (text[at] === "{" && (!vue || text.startsWith("{{", at))) {
+      at = markupEnd(text, at + 1, true)
+      continue
+    }
+    if (text[at] !== "<") {
+      at++
+      continue
+    }
+    const tag = /^<(\/?)([\w-]+)(?=[\s/>])/.exec(text.slice(at))
+    if (tag === null) {
+      at++
+      continue
+    }
+    const tagAt = at
+    const end = markupEnd(text, at + tag[0].length)
+    const name = tag[2]?.toLowerCase()
+    const closing = tag[1] === "/"
+    at = end
+    if (!closing && (name === "script" || name === "style")) {
+      const close = name === "script" ? /<\/script\s*>/gi : /<\/style\s*>/gi
+      close.lastIndex = end
+      const match = close.exec(text)
+      at = match === null ? text.length : close.lastIndex
+      continue
+    }
+    if (name === "template") templateDepth += closing ? -1 : 1
+    if (closing || name !== "a" || (vue && templateDepth <= 0)) continue
+    ATTRIBUTE.lastIndex = tagAt + tag[0].length
     for (let match = ATTRIBUTE.exec(text); match !== null; match = ATTRIBUTE.exec(text)) {
-      const [whole, name, doubled, single, braceDouble, braceSingle, braceTemplate] = match
-      if (name !== "href" && name !== ":href" && name !== "v-bind:href") continue
+      const [whole, attribute, doubled, single, braceDouble, braceSingle, braceTemplate] = match
+      if (attribute !== "href" && attribute !== ":href" && attribute !== "v-bind:href") continue
       const raw = doubled ?? single
       const value =
-        name === "href"
+        attribute === "href"
           ? (raw ?? braceDouble ?? braceSingle ?? braceTemplate)
           : raw
               ?.match(BOUND_LITERAL)
               ?.slice(1)
               .find((part) => part !== undefined)
       if (value !== undefined)
-        found.push({ at: ATTRIBUTE.lastIndex - whole.length + whole.indexOf(name), value })
+        hrefs.push({
+          at: ATTRIBUTE.lastIndex - whole.length + whole.indexOf(attribute),
+          tagAt,
+          value,
+        })
     }
   }
-  return found
+  // Adapt only real HTML comments to the shared directive parser. Non-comment code stays a block
+  // boundary; quoted marker text cannot suppress anything. Line counts are unchanged.
+  const code = (part: string): string => part.replace(/[^\s]/g, "x")
+  let expectations = ""
+  let previous = 0
+  for (const comment of comments) {
+    expectations += code(text.slice(previous, comment.start))
+    expectations += text
+      .slice(comment.start + 4, comment.end)
+      .replace(/-->$/, "")
+      .split("\n")
+      .map((line) => `// ${line}`)
+      .join("\n")
+    previous = comment.end
+  }
+  expectations += code(text.slice(previous))
+  return { hrefs, expectationLines: expectations.split("\n") }
 }
 
 async function templateFindings(
@@ -241,14 +375,20 @@ async function templateFindings(
     // The source index holds only a component's script blocks; the links are in its template.
     const text = readFileSync(join(ctx.root, file), "utf8")
     if (!text.includes("href")) continue
-    for (const { at, value } of templateHrefs(text)) {
+    const { hrefs, expectationLines } = templateHrefs(text, file.endsWith(".vue"))
+    for (const { at, tagAt, value } of hrefs) {
       if (!value.startsWith("/") || value.startsWith("//")) continue
       // A Svelte `{expression}` inside the value is a hole.
       const verdict = judge(routes, value.replace(/\$?\{[^}]*\}/g, ANCHOR_HOLE))
       if (verdict?.kind !== kind) continue
-      findings.push(
-        report(code, severity, file, text.slice(0, at).split("\n").length, verdict, undefined),
+      const line = text.slice(0, at).split("\n").length
+      const tagLine = text.slice(0, tagAt).split("\n").length
+      if (
+        commentBlockExpectation(expectationLines, tagLine, [code, "internal-link"]) !== undefined ||
+        commentBlockExpectation(expectationLines, line, [code, "internal-link"]) !== undefined
       )
+        continue
+      findings.push(report(code, severity, file, line, verdict, undefined, true))
     }
   }
   return findings

@@ -110,6 +110,13 @@ test("a mixed segment is built exactly when the router reads the same params bac
     { pattern: "/f/:name.:ext", names: ["name", "ext"], join: ([a, b]) => `/f/${a}.${b}` },
     { pattern: "/p/post-:id", names: ["id"], join: ([a]) => `/p/post-${a}` },
     { pattern: "/x/:a-:b-:c", names: ["a", "b", "c"], join: ([a, b, c]) => `/x/${a}-${b}-${c}` },
+    { pattern: "/f/:name:ext.txt", names: ["name", "ext"], join: ([a, b]) => `/f/${a}${b}.txt` },
+    {
+      pattern: "/x/:a:b:c.txt",
+      names: ["a", "b", "c"],
+      join: ([a, b, c]) => `/x/${a}${b}${c}.txt`,
+    },
+    { pattern: "/v:a:b.json", names: ["a", "b"], join: ([a, b]) => `/v${a}${b}.json` },
   ]
   const partners = ["x", "a.b", "-", "a-b", "é", "%2e"]
   const failures: string[] = []
@@ -144,4 +151,24 @@ test("a mixed segment is built exactly when the router reads the same params bac
   expect(filled("/p/post-:id", { id: "." })).toBeUndefined()
   expect(built).toBeGreaterThan(1000)
   expect(refused).toBeGreaterThan(50)
+})
+
+test("adjacent mixed parameters only accept the router's one-character split", () => {
+  for (const a of ["hello", "é", " ", "%", "😀"]) {
+    expect(fillRoutePath("/:a:b.txt", { a, b: "world" })).toEqual({
+      ok: false,
+      missing: [],
+      invalid: ["a"],
+    })
+  }
+  expect(fillRoutePath("/:a:b:c.txt", { a: "hello", b: "world", c: "end" })).toEqual({
+    ok: false,
+    missing: [],
+    invalid: ["a", "b"],
+  })
+  const params = { a: "h", b: "é world" }
+  const compiled = compileRoutePattern("/:a:b.txt")
+  const result = fillRoutePath(compiled, params)
+  expect(result).toEqual({ ok: true, path: "/h%C3%A9%20world.txt" })
+  if (result.ok) expect(matchRoutePattern(compiled, result.path)).toEqual({ matched: true, params })
 })

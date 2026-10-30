@@ -143,13 +143,13 @@ const excludedBy = (patterns: readonly string[], file: string): boolean =>
 
 // A named import of a navigation API from `@nifrajs/web` or an adapter: what the route table types.
 const NAVIGATION_IMPORT =
-  /\bimport\s+(?:type\s+)?\{[^}]*\b(?:useNavigate|Link|NavLink|Navigate|redirect|href|rawHref)\b[^}]*\}\s*from\s*["']@nifrajs\/web(?:-[a-z]+)?["']/
+  /\bimport\s+(?:type\s+)?\{[^}]*\b(?:useNavigate|Link|NavLink|Navigate|redirect|href|rawHref)\b[^}]*\}\s*from\s*["']@nifrajs\/web(?:-[a-z]+)?(?:\/(?:router|client))?["']/
 
 /**
  * `.nifra/types/routes.d.ts` (project-relative) when a source file uses a navigation API, the table
  * exists, and no program holds it. A program that imports any route's `./+types` module loads the table
- * through that module's reference; one that does not, and does not name it, never sees it, so
- * `navigate` and `redirect` quietly accept any target. An app that uses none of them is left alone.
+ * through that module's reference; one that does not, and does not name it, never sees it. Its `href`
+ * calls have no route keys to check against. An app that uses none of these APIs is left alone.
  */
 export function routeTableOutsideProgram(
   cwd: string,

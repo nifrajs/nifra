@@ -659,7 +659,7 @@ export type FilledRoutePath =
       readonly ok: false
       /** Params the pattern names that `params` leaves out or holds as the empty string. */
       readonly missing: readonly string[]
-      /** Params whose value no path segment can carry (see {@link encodePathSegment}). */
+      /** Params whose value cannot be carried or would be split differently by this pattern. */
       readonly invalid: readonly string[]
     }
 
@@ -668,8 +668,8 @@ export type FilledRoutePath =
  * value is split on `/` and each part encoded, empty parts dropped; a `.` or `..` part is invalid, as
  * a whole-segment value is. Nothing is thrown for a bad value: the caller decides what a missing or
  * invalid param means. A param inside a mixed segment is invalid when its value holds the literal that ends it (`name` = `a.b` in
- * `:name.:ext`), because the router would split it differently. A param's constraint (`:id{[0-9]+}`) is not
- * checked here.
+ * `:name.:ext`), or when it touches the next param and encodes to more than one character, because the
+ * router would split it differently. A param's constraint (`:id{[0-9]+}`) is not checked here.
  */
 export function fillRoutePath(
   pattern: string | CompiledRoutePattern,
@@ -734,7 +734,10 @@ export function fillRoutePath(
         // character in or later. A value holding that literal earlier would come back as different
         // params. A literal in the last place is the segment's tail, which is anchored to its end.
         const next = shape[i + 1]
-        if (next?.t === "lit" && shape[i + 2] !== undefined) {
+        // With no separating literal the matcher gives this parameter exactly one raw character.
+        // Splitting a percent-escape here would also make the captured parameters malformed.
+        if (next?.t === "param" && encoded.length !== 1) invalid = noted(invalid, part.name)
+        else if (next?.t === "lit" && shape[i + 2] !== undefined) {
           if ((encoded + next.v).indexOf(next.v, 1) !== encoded.length)
             invalid = noted(invalid, part.name)
         }

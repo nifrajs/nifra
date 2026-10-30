@@ -121,6 +121,33 @@ describe("routeTableOutsideProgram", () => {
     expect(routeTableOutsideProgram(cwd, [...program, table], user)).toBeUndefined()
   })
 
+  test("recognizes navigation APIs from browser-safe subpaths", () => {
+    const cwd = createFixtureProject(root, "table-subpaths-")
+    const table = join(cwd, ".nifra/types/routes.d.ts")
+    writeAppFile(cwd, ".nifra/types/routes.d.ts", "export {}\n")
+    for (const source of [
+      "@nifrajs/web/client",
+      "@nifrajs/web-react/router",
+      "@nifrajs/web-preact/router",
+      "@nifrajs/web-solid/router",
+      "@nifrajs/web-svelte/router",
+      "@nifrajs/web-vue/router",
+    ]) {
+      const sources = [{ content: `import { href as routeHref, useNavigate } from "${source}"\n` }]
+      expect(routeTableOutsideProgram(cwd, [], sources)).toBe(".nifra/types/routes.d.ts")
+      expect(routeTableOutsideProgram(cwd, [table], sources)).toBeUndefined()
+    }
+    for (const source of [
+      "@nifrajs/web-react/query",
+      "@nifrajs/web-react/router-extra",
+      "@nifrajs/web/client-extra",
+      "@nifrajs/web/router/extra",
+    ])
+      expect(
+        routeTableOutsideProgram(cwd, [], [{ content: `import { href } from "${source}"\n` }]),
+      ).toBeUndefined()
+  })
+
   test("is silent for an app that imports no navigation API", () => {
     const cwd = createFixtureProject(root, "table-quiet-")
     writeAppFile(cwd, ".nifra/types/routes.d.ts", "export {}\n")
