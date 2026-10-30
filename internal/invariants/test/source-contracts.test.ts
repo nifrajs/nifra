@@ -189,6 +189,10 @@ const RULES: readonly Rule[] = [
       "packages/core/src/binary.ts": { count: 2, reason: "a Content-Disposition filename*" },
       "packages/content/src/index.ts": { count: 1, reason: "a cursor, a query-string value" },
       "packages/web/src/fonts-google.ts": { count: 2, reason: "query-string values" },
+      "packages/web/src/href.ts": {
+        count: 1,
+        reason: "the hash, a fragment the router never matches",
+      },
       "packages/web/src/internal/ppr/contract.ts": { count: 2, reason: "query-string pairs" },
       "packages/web/src/internal/secret-scan.ts": {
         count: 1,

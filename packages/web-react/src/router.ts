@@ -27,7 +27,7 @@ import type {
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
-import { getBrowserNavigate, IDLE_BLOCKER, registerBlocker } from "@nifrajs/web/client"
+import { getBrowserNavigate, IDLE_BLOCKER, rawHref, registerBlocker } from "@nifrajs/web/client"
 // Its own subpath, so an app that never calls `useMatches` bundles none of it.
 import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
@@ -47,6 +47,7 @@ import {
   useState,
 } from "react"
 
+export { href, rawHref } from "@nifrajs/web/client"
 export { usePageVisibility } from "./page-visibility.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, PrefetchMode, UIMatch }
 
@@ -223,7 +224,7 @@ export function usePending(): boolean {
   return useContext(RouterContext).pending
 }
 
-/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object;
+/** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta;
  * a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across
  * renders; resolves the browser navigate at call time (so it works as soon as `installHistory` has run,
  * and no-ops before then / on the server). */
@@ -310,7 +311,7 @@ export function useSearchParams(): readonly [URLSearchParams, SetSearchParams] {
     (next, options) => {
       const resolved = typeof next === "function" ? next(new URLSearchParams(search)) : next
       const qs = toSearchParams(resolved).toString()
-      navigate(pathname + (qs !== "" ? `?${qs}` : ""), options)
+      navigate(rawHref(pathname + (qs !== "" ? `?${qs}` : "")), options)
     },
     [navigate, pathname, search],
   )
@@ -459,7 +460,7 @@ export interface NavigateProps {
 export function Navigate({ to, replace }: NavigateProps): null {
   const navigate = useNavigate()
   useEffect(() => {
-    navigate(to, { replace: replace === true })
+    navigate(rawHref(to), { replace: replace === true })
   }, [navigate, to, replace])
   return null
 }

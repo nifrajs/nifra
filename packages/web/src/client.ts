@@ -36,6 +36,7 @@ export function currentDocumentNonce(): string | undefined {
   return script.getAttribute("nonce") ?? undefined
 }
 
+export { href, rawHref } from "./href.ts"
 export { identityChanged } from "./identity.ts"
 /**
  * Everything the generated client entry needs, re-exported here so that entry imports ONE module and
@@ -53,7 +54,6 @@ export {
   getBrowserNavigate,
   IDLE_BLOCKER,
   registerBlocker,
-  resolveNavigate,
 } from "./navigation.ts"
 export { createMutation, createQueryClient, MutationCancelledError } from "./query.ts"
 export { localeOfProps } from "./render-seam.ts"
@@ -65,7 +65,7 @@ export { createClientRouter, createMatcher } from "./router.ts"
 export { searchOf, searchOfChain } from "./search.ts"
 // Types are deliberately NOT re-exported here. `RouteTable` is augmented by generated code through
 // `declare module "@nifrajs/web"`, and an interface augmentation lands on the module it names - so a
-// type taken from this path would be the un-augmented one and typed `navigate({ to, search })` would
+// type taken from this path would be the un-augmented one and typed `href({ to, search })` would
 // silently go loose. Adapters keep sourcing types from the root; what they must avoid is the
 // `export type { X } from "@nifrajs/web"` FORM, which leaves a bare `import "@nifrajs/web"` behind for
 // its side effects. `import type` + a local `export type` erases completely.

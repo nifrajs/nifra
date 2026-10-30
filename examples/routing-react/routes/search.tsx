@@ -1,4 +1,4 @@
-import { useNavigate, useSearch } from "@nifrajs/web-react/router"
+import { href, useNavigate, useSearch } from "@nifrajs/web-react/router"
 import { searchSchema } from "../shared/search.ts"
 import type { Route } from "./+types/search"
 
@@ -14,7 +14,6 @@ export const meta = { title: "nifra - Typed search params" }
 export default function Search({ data }: Route.ComponentProps) {
   const { page, q, view } = useSearch<typeof searchSchema>() // { page: number; q: string; view }
   const navigate = useNavigate()
-  const base = `page=${page}${q ? `&q=${q}` : ""}`
   return (
     <div>
       <h1 id="page">Typed search</h1>
@@ -26,7 +25,7 @@ export default function Search({ data }: Route.ComponentProps) {
       <button
         id="next"
         type="button"
-        onClick={() => navigate(`/search?page=${page + 1}${q ? `&q=${q}` : ""}&view=${view}`)}
+        onClick={() => navigate(href({ to: "/search", search: { page: page + 1, q, view } }))}
       >
         next page
       </button>{" "}
@@ -34,7 +33,11 @@ export default function Search({ data }: Route.ComponentProps) {
       <button
         id="toggle-view"
         type="button"
-        onClick={() => navigate(`/search?${base}&view=${view === "grid" ? "list" : "grid"}`)}
+        onClick={() =>
+          navigate(
+            href({ to: "/search", search: { page, q, view: view === "grid" ? "list" : "grid" } }),
+          )
+        }
       >
         toggle view
       </button>{" "}

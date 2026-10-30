@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
-import { setBrowserNavigate } from "@nifrajs/web"
+import { rawHref, setBrowserNavigate } from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { compose } from "../src/compose.ts"
@@ -193,7 +193,7 @@ test("useNavigate no-ops (no throw) before a browser navigate is registered", ()
     return null
   }
   renderToStaticMarkup(compose([Page], { data: null }))
-  expect(() => navigate?.("/x")).not.toThrow()
+  expect(() => navigate?.(rawHref("/x"))).not.toThrow()
 })
 
 test("useNavigate forwards through the registered browser bridge", () => {
@@ -205,11 +205,11 @@ test("useNavigate forwards through the registered browser bridge", () => {
     return null
   }
   renderToStaticMarkup(compose([Page], { data: null }))
-  navigate?.("/next", { replace: true })
+  navigate?.(rawHref("/next"), { replace: true })
   expect(calls).toEqual([["/next", { replace: true }]])
 })
 
-test("useNavigate object form serializes search onto `to` (typed cross-route navigate)", () => {
+test("useNavigate takes the href() URL, search and hash included, and a history delta", () => {
   const calls: Array<[string | number, unknown]> = []
   setBrowserNavigate((to, options) => calls.push([to, options]))
   let navigate: ReturnType<typeof useNavigate> | undefined
@@ -218,16 +218,12 @@ test("useNavigate object form serializes search onto `to` (typed cross-route nav
     return null
   }
   renderToStaticMarkup(compose([Page], { data: null }))
-  // The object target's `search` is serialized onto `to`; `replace` folds into the options.
-  navigate?.({ to: "/reports", search: { page: 2, q: "hi" } })
-  navigate?.({ to: "/x", search: { a: 1 }, replace: true })
-  // The string + delta forms still work unchanged.
-  navigate?.("/plain")
+  navigate?.(rawHref("/reports?page=2&q=hi#top"))
+  navigate?.(rawHref("/x?a=1"), { replace: true })
   navigate?.(-1)
   expect(calls).toEqual([
-    ["/reports?page=2&q=hi", undefined],
+    ["/reports?page=2&q=hi#top", undefined],
     ["/x?a=1", { replace: true }],
-    ["/plain", undefined],
     [-1, undefined],
   ])
 })

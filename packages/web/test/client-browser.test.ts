@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, expect, jest, test } from "bun:test"
 import { installForms, installHistory, signalHydrated } from "../src/client.ts"
+import { rawHref } from "../src/href.ts"
+import { navigateNow } from "../src/internal/navigate-runtime.ts"
 import {
   type Blocker,
   closeBoundary,
   getBrowserNavigate,
+  type Href,
   registerBlocker,
 } from "../src/navigation.ts"
 import {
@@ -747,6 +750,37 @@ test("programmatic navigation hard-loads unmatched paths but rejects cross-origi
   getBrowserNavigate()?.("https://elsewhere.test/page")
   expect(fallback).toEqual(["/outside"])
   expect(historyCalls).toEqual([])
+  stop()
+})
+
+test("a forged Href cannot make the navigate every adapter returns leave the origin", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  // A path is followed, so the refusals below are the origin check and not a navigate that is not wired.
+  navigateNow(rawHref("/settings?tab=2"))
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/settings?tab=2"])
+  historyCalls = []
+  for (const value of [
+    "https://elsewhere.test/page",
+    "//elsewhere.test/page",
+    "/\\elsewhere.test/page",
+    "/\t/elsewhere.test/page",
+    "javascript:alert(1)",
+    "data:text/html,x",
+  ]) {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the point of the test is a value no href() or rawHref() call made
+    const forged = value as Href
+    navigateNow(forged)
+    navigateNow(forged, { replace: true })
+  }
+  await Bun.sleep(0)
+  expect(fallback).toEqual([])
+  expect(navigated).toEqual(["/settings?tab=2"])
+  expect(historyCalls).toEqual([])
+  expect(locationState.pathname).toBe("/settings")
   stop()
 })
 

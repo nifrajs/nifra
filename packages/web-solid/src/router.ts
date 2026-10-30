@@ -34,6 +34,7 @@ import {
 } from "solid-js"
 import { PageContext } from "./page-visibility.ts"
 
+export { href, rawHref } from "@nifrajs/web/client"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
@@ -104,7 +105,7 @@ export function useSearch<Schema extends StandardSchemaV1 | undefined = undefine
   >
 }
 
-/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).
+/** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta).
  * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops
  * before then / on the server. */
 export function useNavigate(): NavigateFunction {
