@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import type { HttpMemoryCapture } from "../site/shared/data/memory-types.ts"
+import type { HttpMemoryCapture, HttpMemoryRuntime } from "../site/shared/data/memory-types.ts"
 
 export interface BenchRow {
   readonly name: string
@@ -104,7 +104,7 @@ export interface SsrSiteTable {
 }
 
 export interface SiteBench {
-  readonly httpMemory?: HttpMemoryCapture
+  readonly httpMemory?: Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>>
   readonly _note?: string
   // One record per slice, not one for the file: the suites run at different times, and a shared
   // record would attribute every table to whichever suite wrote last.
@@ -207,7 +207,31 @@ export function ohaVersion(): string {
 
 /** Merge a partial set of slices over the current data - pure; only the passed slices change. */
 export function mergeSiteBench(current: SiteBench, partial: Partial<SiteBench>): SiteBench {
-  return { ...current, ...partial }
+  if (partial.httpMemory === undefined) return { ...current, ...partial }
+
+  const previous = current.httpMemory as unknown
+  let currentMemory: Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>> = {}
+  if (previous !== null && typeof previous === "object") {
+    if ("rows" in previous) {
+      const legacy = previous as Omit<HttpMemoryCapture, "runtime" | "runtimeVersion"> & {
+        readonly node: string
+      }
+      currentMemory = {
+        node: {
+          ...legacy,
+          runtime: "node",
+          runtimeVersion: legacy.node,
+        },
+      }
+    } else {
+      currentMemory = previous as Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>>
+    }
+  }
+  return {
+    ...current,
+    ...partial,
+    httpMemory: { ...currentMemory, ...partial.httpMemory },
+  }
 }
 
 /** The HTTP slice the landing shows: Node, `GET /users/:id` (routing + path param - the representative

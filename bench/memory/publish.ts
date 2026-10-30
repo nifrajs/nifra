@@ -4,8 +4,11 @@ import { memoryCapture } from "./results.ts"
 
 export async function publishMemory(path: string): Promise<void> {
   const capture = memoryCapture(await Bun.file(path).json())
-  await assertBenchmarkPublishable({ ...activeBenchRuntimeVersions(), node: capture.node })
-  await writeSiteBench({ httpMemory: capture })
+  await assertBenchmarkPublishable({
+    ...activeBenchRuntimeVersions(),
+    [capture.runtime]: capture.runtimeVersion,
+  })
+  await writeSiteBench({ httpMemory: { [capture.runtime]: capture } })
 }
 
 if (import.meta.main) {

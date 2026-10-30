@@ -320,59 +320,70 @@ export default function Benchmarks() {
         </>
       )}
 
-      {HTTP_MEMORY !== undefined && (
+      {HTTP_MEMORY.length > 0 && (
         <>
-          <h2 style={{ marginTop: 48 }}>Backend - memory footprint</h2>
-          <p className="note">
-            Captured {HTTP_MEMORY.date} with Node {HTTP_MEMORY.node} on {HTTP_MEMORY.cpu},{" "}
-            {HTTP_MEMORY.platform}. Median of {HTTP_MEMORY.rounds} fresh processes per framework,
-            with {HTTP_MEMORY.requestsPerPhase.toLocaleString("en-US")} GETs and POSTs per process
-            at {HTTP_MEMORY.connections} connections. Lower is better.
-          </p>
+          <h2 style={{ marginTop: 48 }}>Backend - memory footprint across runtimes</h2>
           <p className="lead">
-            The same authenticated routes, loaded as native modules for every framework. RSS is
-            resident process memory after a forced collection; heap is retained JavaScript memory
-            after the POST phase. Peak RSS is the OS high-water mark since startup. These are
+            The same authenticated GET and POST workloads run in fresh processes on each runtime.
+            RSS is resident process memory after a forced collection; heap is retained JavaScript
+            memory after the POST phase. Peak RSS is the OS high-water mark since startup. These are
             process footprints, including the runtime, rather than bytes allocated per request.
-            Nifra is a workspace build. This capture covers Node; Bun and Deno need their own
-            measurements.
+            Nifra is a workspace build in every capture. Fastify and Express use each runtime&apos;s
+            <code>node:http</code> compatibility on Bun and Deno. The site updater captures runtimes
+            sequentially on one host; each table names its CPU, platform, and capture date.
           </p>
-          <div style={{ overflowX: "auto" }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Framework</th>
-                  <th className="num">Ready RSS</th>
-                  <th className="num">After GET</th>
-                  <th className="num">After POST</th>
-                  <th className="num">Peak RSS</th>
-                  <th className="num">POST heap</th>
-                </tr>
-              </thead>
-              <tbody>
-                {HTTP_MEMORY.rows.map((row) => (
-                  <tr key={row.name} className={row.nifra ? "hl" : undefined}>
-                    <td>
-                      <Named name={row.name} version={row.version} />
-                    </td>
-                    <td className="num">{row.readyRssMiB.toFixed(1)} MiB</td>
-                    <td className="num">{row.getRssMiB.toFixed(1)} MiB</td>
-                    <td
-                      className="num"
-                      title={`Observed range: ${row.postRssMinMiB.toFixed(1)}-${row.postRssMaxMiB.toFixed(1)} MiB`}
-                    >
-                      {row.postRssMiB.toFixed(1)} MiB
-                    </td>
-                    <td className="num">{row.peakRssMiB.toFixed(1)} MiB</td>
-                    <td className="num">{row.postHeapMiB.toFixed(1)} MiB</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {HTTP_MEMORY.map((capture) => (
+            <div key={capture.runtime}>
+              <h3 style={{ marginTop: 24 }}>
+                {capture.runtime[0]?.toUpperCase()}
+                {capture.runtime.slice(1)} {capture.runtimeVersion}
+              </h3>
+              <p className="note">
+                Captured {capture.date} on {capture.cpu}, {capture.platform}. Median of{" "}
+                {capture.rounds} fresh processes per framework, with{" "}
+                {capture.requestsPerPhase.toLocaleString("en-US")} GETs and POSTs per process at{" "}
+                {capture.connections} connections. Lower is better.
+              </p>
+              <div style={{ overflowX: "auto" }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Framework</th>
+                      <th className="num">Ready RSS</th>
+                      <th className="num">After GET</th>
+                      <th className="num">After POST</th>
+                      <th className="num">Peak RSS</th>
+                      <th className="num">POST heap</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {capture.rows.map((row) => (
+                      <tr key={row.name} className={row.nifra ? "hl" : undefined}>
+                        <td>
+                          <Named name={row.name} version={row.version} />
+                        </td>
+                        <td className="num">{row.readyRssMiB.toFixed(1)} MiB</td>
+                        <td className="num">{row.getRssMiB.toFixed(1)} MiB</td>
+                        <td
+                          className="num"
+                          title={`Observed range: ${row.postRssMinMiB.toFixed(1)}-${row.postRssMaxMiB.toFixed(1)} MiB`}
+                        >
+                          {row.postRssMiB.toFixed(1)} MiB
+                        </td>
+                        <td className="num">{row.peakRssMiB.toFixed(1)} MiB</td>
+                        <td className="num">{row.postHeapMiB.toFixed(1)} MiB</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
           <p className="note">
-            Reproduce with <code>bun run bench:memory</code>. Forced collection exposes retained
-            memory; it does not establish a leak-free application or measure allocation churn.
+            Reproduce the Node capture with <code>bun run bench:memory</code>, or capture and update
+            all three runtimes with <code>bun run bench:memory:update</code>. Forced collection
+            exposes retained memory; it does not establish a leak-free application or measure
+            allocation churn.
           </p>
         </>
       )}
