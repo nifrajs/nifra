@@ -153,6 +153,85 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  memory:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (contains(github.event.pull_request.labels.*.name, 'bench') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'bench'))
+    name: memory on ${{ matrix.runtime }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [bun, node, deno]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.12.0
+
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+
+      - name: Install oha 1.16.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/oha" \
+            https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/oha"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Runner identity
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: |
+          mkdir -p bench-ci/metadata
+          {
+            printf 'commit=%s\nrun_id=%s\nattempt=%s\nsuite=memory\nruntime=%s\n' \
+              "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNTIME"
+            date -u +%FT%TZ
+            bun --version
+            bun --revision
+            node --version
+            deno --version
+            uname -srm
+            lscpu
+            oha --version
+          } | tee "bench-ci/metadata/memory-$RUNTIME.txt"
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Capture memory
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: >-
+          node bench/profiling/run.mjs --mode=memory --runtime="$RUNTIME"
+          --packaging=native --rounds=5 --requests=50000
+          --out="bench-ci/memory-$RUNTIME"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bench-memory-${{ matrix.runtime }}
+          path: |
+            bench-ci/memory-${{ matrix.runtime }}/realworld-memory.json
+            bench-ci/metadata/memory-${{ matrix.runtime }}.txt
+          if-no-files-found: error
+          retention-days: 90
+
   summary:
     needs: measure
     # Runs when a measure job failed, but not for a cancelled run, which may have no report at all.

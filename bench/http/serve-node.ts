@@ -17,9 +17,8 @@
  *   node bench/http/serve-node.ts <fastify|hono|express|elysia|node-raw> <port>
  */
 
-import type { IncomingMessage, ServerResponse } from "node:http"
+import type { ServerResponse } from "node:http"
 import { createServer } from "node:http"
-import { Readable } from "node:stream"
 
 const framework = process.argv[2]
 const port = Number(process.argv[3])
@@ -60,7 +59,8 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 if (framework === "fastify") {
   const { default: Fastify } = await import("fastify")
-  const app = Fastify()
+  // Match the other targets' strict numeric body validation; Fastify otherwise coerces JSON values.
+  const app = Fastify({ ajv: { customOptions: { coerceTypes: false } } })
   app.get("/", () => ({ hello: "world" }))
   // Route generics type params/body without casts.
   app.get<{ Params: { id: string } }>("/users/:id", (req) => ({ id: req.params.id }))
@@ -71,7 +71,6 @@ if (framework === "fastify") {
         querystring: {
           type: "object",
           required: ["q", "limit"],
-          additionalProperties: false,
           properties: { q: { type: "string" }, limit: { type: "string" } },
         },
       },
@@ -86,7 +85,6 @@ if (framework === "fastify") {
         body: {
           type: "object",
           required: ["name", "age"],
-          additionalProperties: false,
           properties: { name: { type: "string" }, age: { type: "number" } },
         },
       },
@@ -97,6 +95,7 @@ if (framework === "fastify") {
 } else if (framework === "hono") {
   const { Hono } = await import("hono")
   const { validator } = await import("hono/validator")
+  const { serve } = await import("@hono/node-server")
   const app = new Hono()
     .get("/", (c) => c.json({ hello: "world" }))
     .get("/users/:id", (c) => c.json({ id: c.req.param("id") }))
@@ -112,13 +111,7 @@ if (framework === "fastify") {
       validator("json", (value, c) => (isUser(value) ? value : c.json({ error: "invalid" }, 400))),
       (c) => c.json({ id: "1", name: c.req.valid("json").name }),
     )
-  createServer((req, res) => {
-    const response = app.fetch(toWebRequest(req))
-    void Promise.resolve(response).then(
-      (settled) => writeWebResponse(settled, res),
-      () => sendJson(res, 500, { error: "internal" }),
-    )
-  }).listen(port)
+  serve({ fetch: app.fetch, port })
 } else if (framework === "express") {
   const { default: express } = await import("express")
   const app = express()
@@ -199,41 +192,4 @@ if (framework === "fastify") {
   server.listen(port)
 } else {
   throw new Error(`unknown framework: ${framework ?? "(none)"}`)
-}
-
-function toWebRequest(req: IncomingMessage): Request {
-  const host = req.headers.host ?? "localhost"
-  const url = `http://${host}${req.url ?? "/"}`
-  const method = req.method ?? "GET"
-  const headers = new Headers()
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined) continue
-    headers.set(key, Array.isArray(value) ? value.join(", ") : value)
-  }
-  const init: RequestInit & { duplex?: "half" } = { method, headers }
-  if (method !== "GET" && method !== "HEAD") {
-    // Node's Web-stream declaration is distinct from the DOM BodyInit declaration used by Request.
-    init.body = Readable.toWeb(req) as unknown as BodyInit
-    init.duplex = "half"
-  }
-  return new Request(url, init)
-}
-
-async function writeWebResponse(response: Response, res: ServerResponse): Promise<void> {
-  const headers: Record<string, string | string[]> = {}
-  response.headers.forEach((value, key) => {
-    headers[key] = value
-  })
-  const setCookies = response.headers.getSetCookie?.()
-  if (setCookies !== undefined && setCookies.length > 0) headers["set-cookie"] = setCookies
-  res.writeHead(response.status, headers)
-  if (response.body !== null) {
-    const reader = response.body.getReader()
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      res.write(value)
-    }
-  }
-  res.end()
 }
