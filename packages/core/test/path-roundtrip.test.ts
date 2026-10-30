@@ -35,7 +35,7 @@ interface Answer {
 async function reaches(path: string, expected: Answer): Promise<string | undefined> {
   const response = await app.fetch(new Request(`${ORIGIN}${path}`))
   if (response.status !== 200) return `${path} answered ${response.status}`
-  const got = (await response.json()) as Answer
+  const got: Answer = await response.json()
   return JSON.stringify(got) === JSON.stringify(expected)
     ? undefined
     : `${path} reached ${JSON.stringify(got)}`
