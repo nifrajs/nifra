@@ -137,6 +137,26 @@ test("fillRoutePath fills wildcard and mixed segments", () => {
   expect(fillRoutePath("/p/post-:id", { id: "a b" })).toEqual({ ok: true, path: "/p/post-a%20b" })
 })
 
+test("fillRoutePath refuses a mixed-segment value the router would cut differently", () => {
+  expect(fillRoutePath("/files/:name.:ext", { name: "a.b", ext: "c" })).toEqual({
+    ok: false,
+    missing: [],
+    invalid: ["name"],
+  })
+  expect(fillRoutePath("/files/:name.:ext", { name: "a", ext: "b.c" })).toEqual({
+    ok: true,
+    path: "/files/a.b.c",
+  })
+  expect(fillRoutePath("/files/:name.:ext", { name: ".a", ext: "c" })).toEqual({
+    ok: true,
+    path: "/files/.a.c",
+  })
+  expect(fillRoutePath("/p/post-:id", { id: "post-1" })).toEqual({
+    ok: true,
+    path: "/p/post-post-1",
+  })
+})
+
 // A leading empty piece would make `//host`, a protocol-relative URL to another origin.
 test("fillRoutePath never produces a path that leaves the origin", () => {
   for (const value of ["/evil.com", "//evil.com", "\\evil.com", "/\\evil.com", "evil.com/"]) {

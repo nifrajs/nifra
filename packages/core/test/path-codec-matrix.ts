@@ -44,6 +44,33 @@ const SAMPLES = [
   "�",
 ]
 
+/** Values a link may be asked to carry: every ASCII character alone and inside a word, and the hard samples. */
+export function hostileValues(): string[] {
+  const out = new Set<string>([
+    "",
+    ".",
+    "..",
+    "%252e",
+    "%",
+    "\\",
+    "../admin",
+    "/evil.com",
+    "//evil.com",
+    "..%2f..%2fadmin",
+    "a;jsessionid=1",
+    "x?y#z",
+    "a.b",
+    "a..b",
+    ...SAMPLES,
+  ])
+  for (let code = 1; code < 128; code++) {
+    const char = String.fromCharCode(code)
+    out.add(char)
+    out.add(`a${char}b`)
+  }
+  return [...out]
+}
+
 /** What RFC 3986 normalization does to one segment: decode unreserved escapes, upper-case the rest. */
 function rfc3986Segment(segment: string): string {
   return segment.replace(/%([0-9a-fA-F]{2})/g, (_match, digits: string) => {

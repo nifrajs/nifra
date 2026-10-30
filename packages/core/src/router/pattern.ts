@@ -664,7 +664,9 @@ export type FilledRoutePath =
  * The path `pattern` names for `params`, every value spelled by {@link encodePathSegment}. A wildcard
  * value is split on `/` and each part encoded, empty parts dropped; a `.` or `..` part is invalid, as
  * a whole-segment value is. Nothing is thrown for a bad value: the caller decides what a missing or
- * invalid param means. A param's constraint (`:id{[0-9]+}`) is not checked here.
+ * invalid param means. A param inside a mixed segment is invalid when its value holds the literal that ends it (`name` = `a.b` in
+ * `:name.:ext`), because the router would split it differently. A param's constraint (`:id{[0-9]+}`) is not
+ * checked here.
  */
 export function fillRoutePath(
   pattern: string | CompiledRoutePattern,
@@ -708,12 +710,24 @@ export function fillRoutePath(
       parts.push(pieces.join("/"))
     } else {
       let text = ""
-      for (const part of segment.parts) {
-        if (part.t === "lit") text += part.v
-        else {
-          const value = take(part.name)
-          if (value !== undefined) text += encode(part.name, value)
+      const shape = segment.parts
+      for (let i = 0; i < shape.length; i++) {
+        const part = shape[i]!
+        if (part.t === "lit") {
+          text += part.v
+          continue
         }
+        const value = take(part.name)
+        if (value === undefined) continue
+        const encoded = encode(part.name, value)
+        // matchMixedSegment ends a parameter at the first occurrence of the literal after it, one
+        // character in or later. A value holding that literal earlier would come back as different
+        // params. A literal in the last place is the segment's tail, which is anchored to its end.
+        const next = shape[i + 1]
+        if (next?.t === "lit" && shape[i + 2] !== undefined) {
+          if ((encoded + next.v).indexOf(next.v, 1) !== encoded.length) note(invalid, part.name)
+        }
+        text += encoded
       }
       parts.push(text)
     }
