@@ -60,6 +60,7 @@
       "devDependencies": {
         "@elysiajs/node": "^1.4.5",
         "@fastify/http-proxy": "^11.6.5",
+        "@hono/node-server": "2.1.5",
         "@nifrajs/client": "workspace:*",
         "@nifrajs/core": "workspace:*",
         "@nifrajs/middleware": "workspace:*",

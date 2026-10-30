@@ -207,7 +207,7 @@
     "name": "RESPONSE_CONTROLS",
     "topic": "Nifra - Framework contract",
     "slug": "contract",
-    "code": "// routes/account.backend.ts - response headers and cookies, from a loader or an action.\nimport { t } from \"@nifrajs/schema\"\nimport { type LoaderContext, redirect } from \"@nifrajs/web\"\n\ndeclare function signIn(email: string, password: string): Promise<{ token: string } | null>\n\nexport const loaderOutput = t.object({ plan: t.string() })\nexport const actionOutput = t.object({ error: t.string() })\n\nexport async function loader(ctx: LoaderContext) {\n  // Headers land on the rendered document.\n  ctx.set.headers[\"cache-control\"] = \"public, max-age=60\"\n  ctx.set.headers[\"x-robots-tag\"] = \"noindex\"\n  return { plan: \"pro\" }\n}\n\nexport async function action(ctx: LoaderContext) {\n  const form = await ctx.request.formData()\n  const session = await signIn(String(form.get(\"email\")), String(form.get(\"password\")))\n  if (session === null) return { error: \"Wrong email or password\" }\n  // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.\n  ctx.set.cookie(\"session\", session.token, { maxAge: 60 * 60 * 24 * 7 })\n  throw redirect(\"/dashboard\") // the cookie rides the redirect\n}"
+    "code": "// routes/account.backend.ts - response headers and cookies, from a loader or an action.\nimport { t } from \"@nifrajs/schema\"\nimport { type LoaderContext, rawHref, redirect } from \"@nifrajs/web\"\n\ndeclare function signIn(email: string, password: string): Promise<{ token: string } | null>\n\nexport const loaderOutput = t.object({ plan: t.string() })\nexport const actionOutput = t.object({ error: t.string() })\n\nexport async function loader(ctx: LoaderContext) {\n  // Headers land on the rendered document.\n  ctx.set.headers[\"cache-control\"] = \"public, max-age=60\"\n  ctx.set.headers[\"x-robots-tag\"] = \"noindex\"\n  return { plan: \"pro\" }\n}\n\nexport async function action(ctx: LoaderContext) {\n  const form = await ctx.request.formData()\n  const session = await signIn(String(form.get(\"email\")), String(form.get(\"password\")))\n  if (session === null) return { error: \"Wrong email or password\" }\n  // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.\n  ctx.set.cookie(\"session\", session.token, { maxAge: 60 * 60 * 24 * 7 })\n  throw redirect(rawHref(\"/dashboard\")) // the cookie rides the redirect\n}"
   },
   {
     "name": "REUSABLE_ROUTER",
@@ -381,7 +381,7 @@
     "name": "GUARD",
     "topic": "Nifra - i18n",
     "slug": "i18n",
-    "code": "// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { defineI18nRouting } from \"@nifrajs/i18n/routing\"\nimport { notFound, type RouteMiddleware, redirect } from \"@nifrajs/web\"\n\nconst urls = defineI18nRouting(\n  defineLocales({ default: \"en\", locales: { en: {}, hi: {}, gu: { draft: true } } }),\n)\n\nexport const middleware: RouteMiddleware = (ctx) => {\n  const { pathname, search } = new URL(ctx.request.url)\n  const match = urls.matchSegment(ctx.params.lang, pathname + search)\n  if (match.kind === \"not-found\") notFound()\n  if (match.kind === \"redirect\") return redirect(match.location, { status: 308 })\n  return undefined\n}"
+    "code": "// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { defineI18nRouting } from \"@nifrajs/i18n/routing\"\nimport { notFound, type RouteMiddleware, rawHref, redirect } from \"@nifrajs/web\"\n\nconst urls = defineI18nRouting(\n  defineLocales({ default: \"en\", locales: { en: {}, hi: {}, gu: { draft: true } } }),\n)\n\nexport const middleware: RouteMiddleware = (ctx) => {\n  const { pathname, search } = new URL(ctx.request.url)\n  const match = urls.matchSegment(ctx.params.lang, pathname + search)\n  if (match.kind === \"not-found\") notFound()\n  if (match.kind === \"redirect\") return redirect(rawHref(match.location), { status: 308 })\n  return undefined\n}"
   },
   {
     "name": "LOCALES",
@@ -645,7 +645,7 @@
     "name": "MIDDLEWARE",
     "topic": "Nifra - Routing",
     "slug": "routing",
-    "code": "// routes/account/_layout.backend.ts - runs before every page under /account\nimport { type RouteMiddleware, redirect } from \"@nifrajs/web\"\n\nexport const middleware: RouteMiddleware = ({ request, set }) => {\n  set.headers[\"cache-control\"] = \"private, no-store\"\n  const signedIn = request.headers.get(\"cookie\")?.includes(\"session=\") ?? false\n  return signedIn ? undefined : redirect(\"/login\")\n}"
+    "code": "// routes/account/_layout.backend.ts - runs before every page under /account\nimport { type RouteMiddleware, rawHref, redirect } from \"@nifrajs/web\"\n\nexport const middleware: RouteMiddleware = ({ request, set }) => {\n  set.headers[\"cache-control\"] = \"private, no-store\"\n  const signedIn = request.headers.get(\"cookie\")?.includes(\"session=\") ?? false\n  return signedIn ? undefined : redirect(rawHref(\"/login\"))\n}"
   },
   {
     "name": "ROUTE_BACKEND",

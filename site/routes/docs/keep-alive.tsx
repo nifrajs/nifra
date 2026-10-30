@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/keep-alive",
@@ -153,7 +154,7 @@ export default function KeepAlive() {
           those history entries.
         </li>
         <li>
-          A page left with a <a href="/docs/routing#modal-routes">route open in a modal</a> over
+          A page left with a <a href={href({ to: "/docs/routing", hash: "modal-routes" })}>route open in a modal</a> over
           it is kept with the modal. Back to that entry shows the page and opens the modal over it
           again.
         </li>
@@ -178,7 +179,7 @@ export default function KeepAlive() {
         </li>
         <li>
           Each kept page holds its DOM and its components' memory, at most three per tab. In
-          development, the <a href="/docs/dev#devtools">devtools overlay</a> lists them with their
+          development, the <a href={href({ to: "/docs/dev", hash: "devtools" })}>devtools overlay</a> lists them with their
           path, how long each has been hidden and how many elements it renders.
         </li>
       </ul>
@@ -192,7 +193,7 @@ export default function KeepAlive() {
         hidden still reloads it.
       </p>
       <p>
-        A <a href="/docs/partial-prerendering">partially prerendered</a> page that is kept stops its
+        A <a href={href({ to: "/docs/partial-prerendering" })}>partially prerendered</a> page that is kept stops its
         holes while it is hidden: a hole still loading is cancelled on the server, and a reload on its
         way is dropped. When the page comes back each hole reloads in place, its old content marked{" "}
         <code>aria-busy="true"</code> until the new arrives, with <code>revalidate: false</code> too.
@@ -200,7 +201,7 @@ export default function KeepAlive() {
         <code>&lt;Activity&gt;</code> cleans the page's effects up while it is hidden.
       </p>
       <p>
-        With <a href="/docs/live">live refresh</a>, a hidden page is not watched. When it comes back,
+        With <a href={href({ to: "/docs/live" })}>live refresh</a>, a hidden page is not watched. When it comes back,
         what changed while it was hidden reloads, whatever <code>revalidate</code> says, and a grant
         that expired in the meantime is loaded again.
       </p>
@@ -274,7 +275,7 @@ export default function KeepAlive() {
       </p>
       <CodeBlock code={ISLAND} />
       <p>
-        The <a href="/docs/server-components">server components</a> of a kept page stay mounted too.
+        The <a href={href({ to: "/docs/server-components" })}>server components</a> of a kept page stay mounted too.
         With <code>bindComponentRouter</code> installed, navigation leaves them alone while the page
         is hidden, and the reload of a page that comes back updates them.
       </p>
@@ -293,7 +294,7 @@ export default function KeepAlive() {
       <p>
         In development, the first time a kept page is shown the client reads the page's
         same-origin stylesheets and reports each such selector once, as{" "}
-        <a href="/docs/errors#keepalive-direct-child-css">NIFRA_KEEPALIVE_DIRECT_CHILD_CSS</a>.
+        <a href={href({ to: "/docs/errors", hash: "keepalive-direct-child-css" })}>NIFRA_KEEPALIVE_DIRECT_CHILD_CSS</a>.
       </p>
 
       <h2 id="sign-in">Keep-alive and sign-in</h2>
@@ -316,7 +317,7 @@ export default function KeepAlive() {
         with a new lifetime, or an <code>@nifrajs/auth</code> session committed again with the same
         data. Any change to an <code>@nifrajs/auth</code> session's data rotates it, in either mode,
         so a sign-in or sign-out shows even when the session id stays the same. With{" "}
-        <a href="/docs/auth">
+        <a href={href({ to: "/docs/auth" })}>
           <code>identity</code>
         </a>{" "}
         set on <code>createSessions</code>, only a change to the keys it names rotates it, and a write
@@ -337,7 +338,7 @@ export default function KeepAlive() {
       <p>
         In development, an <code>HttpOnly</code> cookie that changes and is in neither list is
         reported once, as{" "}
-        <a href="/docs/errors#keepalive-identity-cookie">NIFRA_KEEPALIVE_IDENTITY_COOKIE</a>. A flow
+        <a href={href({ to: "/docs/errors", hash: "keepalive-identity-cookie" })}>NIFRA_KEEPALIVE_IDENTITY_COOKIE</a>. A flow
         that changes who is signed in without changing a cookie rotates the epoch itself:
       </p>
       <CodeBlock code={ROTATE} />

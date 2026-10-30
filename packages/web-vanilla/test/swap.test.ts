@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createCspPolicy, createWebApp, type Manifest, redirect } from "@nifrajs/web"
+import { createCspPolicy, createWebApp, type Manifest, rawHref, redirect } from "@nifrajs/web"
 import { MemoryCacheStore, withISR } from "../../web/src/isr.ts"
 import { html, slot, type VanillaComponent, vanillaAdapter } from "../src/index.ts"
 
@@ -38,7 +38,7 @@ const manifest = (): Manifest => ({
         },
         action: async (ctx) => {
           const body = await ctx.request.formData()
-          return body.get("go") === "1" ? redirect("/hotels?q=Ritz") : { saved: true }
+          return body.get("go") === "1" ? redirect(rawHref("/hotels?q=Ritz")) : { saved: true }
         },
       }),
     },

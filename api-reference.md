@@ -2716,6 +2716,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **CompiledRoutePattern** _(interface)_ - `interface CompiledRoutePattern`
   Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
+- **FilledRoutePath** _(type)_ - `type FilledRoutePath = | { readonly ok: true; readonly path: string } | { readonly ok: false; readonly missing: readonly string[]; readonly invalid: readonly string[] }`
 - **MixedPart** _(type)_ - `type MixedPart = | { readonly t: "lit"; readonly v: string } | { readonly t: "param"; readonly name: string; readonly c?: ParamConstraint | undefined }`
   One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. A parameter written with a constraint (`:id{[0-9]+}`) carries it as `c`; a segment that is one constrained parameter and nothing else is a `mixed` segment with that single part.
 - **MixedSegmentShape** _(type)_ - `type MixedSegmentShape = readonly string[]`
@@ -2724,6 +2725,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What a constrained parameter accepts, parsed from the `{...}` after its name.
 - **RoutePatternMatch** _(type)_ - `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
 - **RoutePatternSegment** _(type)_ - `type RoutePatternSegment`
+- **browserPathSegment** _(function)_ - `browserPathSegment: (value: string) => string`
+  `value` as a browser spells it in a request URL: {@link encodePathSegment} with `; [ ] |` left as written. Used for one thing, registering a public file under the spelling its page links request; it differs from the canonical form on those four characters only.
 - **compareMixedPartsSpecificity** _(function)_ - `compareMixedPartsSpecificity: (left: readonly MixedPart[], right: readonly MixedPart[]) => number`
   Total ordering for mixed segment shapes, shared by the trie and regex-based routers.
 - **compareRoutePatternSpecificity** _(function)_ - `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
@@ -2732,10 +2735,18 @@ Every public export of every package and documented subpath - name, kind, signat
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **constrainedParts** _(function)_ - `constrainedParts: (parts: readonly MixedPart[]) => readonly MixedPart[] | undefined`
   The parts of a mixed segment when at least one of its parameters has a constraint, else `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.
+- **decodePathSegment** _(function)_ - `decodePathSegment: (raw: string) => string | undefined`
+  `raw` with its percent-escapes decoded, or `undefined` when one is malformed. The inverse of {@link encodePathSegment} and of {@link browserPathSegment}; a segment in any other spelling decodes too. What a malformed escape means is the caller's policy.
 - **decodeRouteParams** _(function)_ - `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
   Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
+- **encodePathSegment** _(function)_ - `encodePathSegment: (value: string) => string`
+  `value` as one path segment. Left as written: letters, digits, the at sign and `- . _ ~ ! $ & ' ( ) * + , : =`. Everything else is percent-encoded, UTF-8 and upper-case hex, including `; [ ] | / ? # % \`.
 - **expandOptionalParams** _(function)_ - `expandOptionalParams: (pattern: string) => readonly string[]`
   The concrete patterns an optional-parameter pattern stands for, shortest first.
+- **fillRoutePath** _(function)_ - `fillRoutePath: (pattern: string | CompiledRoutePattern, params: Readonly<Record<string, string | undefined>>) => FilledRoutePath`
+  The path `pattern` names for `params`, every value spelled by {@link encodePathSegment}. A wildcard value is split on `/` and each part encoded, empty parts dropped; a `.` or `..` part is invalid, as a whole-segment value is. Nothing is thrown for a bad value: the caller decides what a missing or i…
+- **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
+  Is `value` a destination that stays on this origin?
 - **matchMixedSegment** _(function)_ - `matchMixedSegment: (shape: MixedSegmentShape, segment: string, out: string[], checked?: readonly MixedPart[]) => boolean`
   Match ONE path segment against a mixed shape, in a single left-to-right pass.
 - **matchRoutePattern** _(function)_ - `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
@@ -5370,7 +5381,6 @@ _No named exports (side-effect entrypoint)._
 - **FontPreloadInput** _(interface)_ - `interface FontPreloadInput`
 - **FontSource** _(interface)_ - `interface FontSource`
 - **GenerateClientEntryOptions** _(interface)_ - `interface GenerateClientEntryOptions`
-- **GenerateRouteSearchTypesOptions** _(interface)_ - `interface GenerateRouteSearchTypesOptions`
 - **GenerateServerManifestOptions** _(interface)_ - `interface GenerateServerManifestOptions`
 - **GetStaticPaths** _(type)_ - `type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>`
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
@@ -5380,6 +5390,10 @@ _No named exports (side-effect entrypoint)._
 - **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions`
 - **HostPolicyRule** _(interface)_ - `interface HostPolicyRule`
   One host's surface. A request on a host no rule names is not restricted.
+- **Href** _(type)_ - `type Href<Pattern extends string = string> = string & { readonly "~nifraHref": Pattern }`
+  An in-app URL: what `href()` builds from a route and `rawHref()` returns for a checked path. A string at runtime, a branded string to the compiler, so a plain string or a template literal is not assignable to it. `Pattern` is the {@link RouteTable} key it was built for. The brand is a named propert…
+- **HrefOptions** _(type)_ - `type HrefOptions<K extends Pattern> = { readonly to: K; readonly search?: SearchOfRoute<K> | undefined; readonly hash?: string | undefined } & ParamsOption<K>`
+  What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has any, absent when it has none), the route's `search` as its `searchSchema` outputs it, and the `hash` without its `#`.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
@@ -5475,14 +5489,10 @@ _No named exports (side-effect entrypoint)._
   A mutation's lifecycle status.
 - **NAV_FROM_HEADER** _(const)_ - `NAV_FROM_HEADER: "x-nifra-from"`
   The path a client navigation is coming FROM, sent on the data-mode GET.
-- **NavigateFunction** _(interface)_ - `interface NavigateFunction`
-  A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
+  A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **NavigateOptions** _(interface)_ - `interface NavigateOptions`
   Options for a programmatic navigation.
-- **NavigateSearchOf** _(type)_ - `type NavigateSearchOf<To extends string> = To extends keyof RouteSearch ? RouteSearch[To] : Record<string, unknown>`
-  The `search` type for a navigate to `To`: the route's schema output when `To` is a mapped {@link RouteSearch} key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is always allowed). Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form with…
-- **NavigateTargetInput** _(interface)_ - `interface NavigateTargetInput`
-  The runtime shape of an object-form navigate target (loose - the typed narrowing lives in {@link NavigateFunction}'s generic call signature). `to` is a bare pathname; `search` is serialized onto it; `replace` folds into the options.
 - **NonceContext** _(interface)_ - `interface NonceContext<Env = unknown>`
   Context supplied while resolving a document's CSP nonce.
 - **NonceGenerator** _(type)_ - `type NonceGenerator<Env = unknown> = ( context: NonceContext<Env>, ) => string | undefined | Promise<string | undefined>`
@@ -5574,8 +5584,8 @@ _No named exports (side-effect entrypoint)._
   A route module - the default component + optional loader / action / meta.
 - **RoutePattern** _(interface)_ - `interface RoutePattern`
   A route id paired with its nifra pattern (e.g. `":id"` segments) - the matcher input.
-- **RouteSearch** _(interface)_ - `interface RouteSearch`
-  The augmentable route -> search-type map for typed cross-route navigation. Empty by default (so an object-form navigate to any path is allowed with a loose `search`). A build step (`nifra sync-routes`) OR the app declares one entry per route path against its `searchSchema` output:
+- **RouteTable** _(interface)_ - `interface RouteTable`
+  Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the object a link to the route needs (`Record<string, never>` when the pattern has none), `search` the output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types…
 - **RouterState** _(interface)_ - `interface RouterState`
   The router's observable state. A new object is published on every transition.
 - **SERVER_FN_MODULE** _(const)_ - `SERVER_FN_MODULE: RegExp`
@@ -5586,7 +5596,7 @@ _No named exports (side-effect entrypoint)._
   HTML returned by an explicit, caller-supplied sanitizer. It is also trusted by the adapters.
 - **ScriptDescriptor** _(interface)_ - `interface ScriptDescriptor`
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
-  The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
+  The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: `nifra types` maps each route pattern to `SearchOf<typeof import("./routes/<file>")>` in…
 - **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "shared"; readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
   Partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
 - **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
@@ -5671,8 +5681,6 @@ _No named exports (side-effect entrypoint)._
 - **fontPreload** _(function)_ - `fontPreload: (input: FontPreloadInput) => LinkDescriptor`
   Build a font preload as a `<link>` attribute set for a route/layout's `meta.link` - nifra injects it into `<head>` (`<link rel="preload" as="font" type="font/woff2" crossorigin="anonymous">`). Values are escaped at injection by the head renderer. Preloading the font file removes a render-blocking r…
 - **generateClientEntry** _(function)_ - `generateClientEntry: (manifest: Manifest, options: GenerateClientEntryOptions) => string`
-- **generateRouteSearchTypes** _(function)_ - `generateRouteSearchTypes: (manifest: Manifest, options: GenerateRouteSearchTypesOptions) => string`
-  Codegen: emit a `.d.ts` that types cross-route `navigate({ to, search })` against each route's `searchSchema`. It augments the {@link RouteSearch} map with `"<pattern>": SearchOf<typeof import(...)>` for every **static** route (one with no `:param`/`*` segment - a concrete `to` a caller can pass; a…
 - **generateServerManifest** _(function)_ - `generateServerManifest: (manifest: Manifest, options: GenerateServerManifestOptions) => string`
 - **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
@@ -5680,6 +5688,8 @@ _No named exports (side-effect entrypoint)._
   Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and was deliberately removed - a withdrawn listing, a deleted post.
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
+  The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
 - **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
   Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data/swap headers, and, for a request carrying a cookie or Authorization or accepted by an authenticatio…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
@@ -5706,7 +5716,9 @@ _No named exports (side-effect entrypoint)._
   Read a self-hosted build's prerendered pages for `createWebApp`'s `prerenderedPages`. Only the build's own files are reachable, each opened only once its real path is inside `dir`, so a link planted in the deployed tree cannot point a page elsewhere. A deploy's files do not change while it runs, so…
 - **previewEndpoint** _(function)_ - `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
   A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
-- **redirect** _(function)_ - `redirect: (location: string, options?: RedirectOptions) => ResponseResult`
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href`
+  An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
+- **redirect** _(function)_ - `redirect: { (location: Href, options?: RedirectOptions & { readonly external?: false; }): ResponseResult; (location: string, options: RedirectOptions & { readonly external: true; }): ResponseResult; }`
   Build a redirect - return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
   Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
@@ -5719,8 +5731,6 @@ _No named exports (side-effect entrypoint)._
   Resolve all dynamic boundaries concurrently. Each receives a fresh frozen context object; one failure becomes that boundary's error state and never rejects a sibling or exposes sibling data. Static/intercepting modes remain `unresolved` until their phase-specific runtime owns them.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` export - a static object, or a function of the route's data/params.
-- **resolveNavigate** _(function)_ - `resolveNavigate: (to: string | number | NavigateTargetInput, options?: NavigateOptions) => { readonly to: string | number; readonly options: NavigateOptions | undefined; }`
-  Normalize a navigate argument to the bridge's `(to, options)`: a string path or history-delta passes through; an object target has its `search` serialized onto `to` and its `replace` folded into the options. The one place the object form becomes a URL, so every adapter's `navigate` resolves it iden…
 - **resolvePublicPath** _(function)_ - `resolvePublicPath: (root: string, pathname: string) => string | undefined`
   Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.
 - **resolveStaticBoundaries** _(function)_ - `resolveStaticBoundaries: (boundaries: readonly BoundaryRegistration[], context: StaticCtx, cache?: StaticBoundaryCache) => Promise<BoundaryStates>`
@@ -5996,6 +6006,8 @@ _No named exports (side-effect entrypoint)._
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
 - **gone** _(function)_ - `gone: (options?: StatusPageOptions) => never`
   Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and was deliberately removed - a withdrawn listing, a deleted post.
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
+  The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
 - **identityChanged** _(function)_ - `identityChanged: () => void`
   Tell this tab and every other tab of the origin that the visitor signed in or out. Call it at login and logout when identity lives in client storage (a bearer token) rather than in a cookie, which the server's epoch cookie already covers: every page kept alive for the previous visitor is dropped.
 - **installForms** _(function)_ - `installForms: (router: ClientRouter) => () => void`
@@ -6008,14 +6020,14 @@ _No named exports (side-effect entrypoint)._
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **notFound** _(function)_ - `notFound: (options?: StatusPageOptions) => never`
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href`
+  An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
   Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
 - **resolveChainMeta** _(function)_ - `resolveChainMeta: (metas: readonly (MetaInput | undefined)[], layoutData: readonly unknown[] | undefined, args: MetaArgs) => Meta[]`
   Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its component renders. The SSR head and a soft navigation both resolve through this, so they match.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` export - a static object, or a function of the route's data/params.
-- **resolveNavigate** _(function)_ - `resolveNavigate: (to: string | number | NavigateTargetInput, options?: NavigateOptions) => { readonly to: string | number; readonly options: NavigateOptions | undefined; }`
-  Normalize a navigate argument to the bridge's `(to, options)`: a string path or history-delta passes through; an object target has its `search` serialized onto `to` and its `replace` folded into the options. The one place the object form becomes a URL, so every adapter's `navigate` resolves it iden…
 - **searchOf** _(function)_ - `searchOf: (searchSchema: StandardSchemaV1 | undefined, rawSearch: string) => Record<string, unknown>`
   The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderP…
 - **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
@@ -6675,6 +6687,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/route-types`
 
+- **ROUTE_TABLE_FILE** _(const)_ - `ROUTE_TABLE_FILE: ".nifra/types/routes.d.ts"`
+  The generated `RouteTable`, relative to the app root.
 - **ROUTE_TYPES_DIR** _(const)_ - `ROUTE_TYPES_DIR: ".nifra/types"`
   Where the generated types live, relative to the app root.
 - **RouteTypesOptions** _(interface)_ - `interface RouteTypesOptions`
@@ -7063,22 +7077,26 @@ _No named exports (side-effect entrypoint)._
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
-- **NavigateFunction** _(interface)_ - `interface NavigateFunction`
-  A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
+  A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **RenderPropsContext** _(const)_ - `RenderPropsContext: import("preact").Context<RenderProps | undefined>`
 - **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
+  The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
   Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document. The page keeps running while it is hidden: pause its timers, sockets and media here. A hook: call it unconditionally while rendering. A no-op outside a kept page.
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
   Run `callback` each time the `keepAlive` page this component renders in is shown again. A hook.
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href`
+  An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
 - **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]`
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismatch.
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
-  Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+  Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
   Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page, where its effects keep running: pause timers and listeners on it. Always `true` on the server and on a page that does not keep alive.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
@@ -7245,9 +7263,9 @@ _No named exports (side-effect entrypoint)._
 - **NavLinkRenderProps** _(interface)_ - `interface NavLinkRenderProps`
   The state a {@link NavLink}'s function-form `className`/`style`/`children` receive.
 - **Navigate** _(function)_ - `Navigate: ({ to, replace }: NavigateProps) => null`
-  Declaratively navigate on mount - the component analogue of `useNavigate` (e.g. a guard that renders `<Navigate to="/login" replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders `null`); the redirect happens once on the client after hydration.
-- **NavigateFunction** _(interface)_ - `interface NavigateFunction`
-  A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+  Declaratively navigate on mount - the component analogue of `useNavigate` (e.g. a guard that renders `<Navigate to={href({ to: "/login" })} replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders `null`); the redirect happens once on the client after hydration.
+- **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
+  A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **NavigateProps** _(interface)_ - `interface NavigateProps`
   {@link Navigate} props: the destination `to` and whether to `replace` the history entry.
 - **Navigation** _(interface)_ - `interface Navigation`
@@ -7263,6 +7281,10 @@ _No named exports (side-effect entrypoint)._
   Set the query string. Accepts a `URLSearchParams`, a record, a raw string, or an updater of the current params; navigates to the same pathname with the new query (push, or replace via options).
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
+  The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href`
+  An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (a `<Link>`/anchor c…
 - **useLocation** _(function)_ - `useLocation: () => Location`
@@ -7270,7 +7292,7 @@ _No named exports (side-effect entrypoint)._
 - **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]`
   The rendered chain, outermost layout first and the page last: each module's `id`, the URL `pathname` it wraps, its `params` and loader `data`, and its `handle` export. The same list on the server and in the browser, so a layout can render breadcrumbs or read a flag the page exports:
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
-  Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object; a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across renders; resolves the browser navigate at call time (so it works as soon as `installHistory` …
+  Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta; a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across renders; resolves the browser navigate at call time (so it works as soon as `installHistory` has run,…
 - **useNavigation** _(function)_ - `useNavigation: () => Navigation`
   Observe client navigation to drive loading UI (a top-bar spinner, dimmed content, a skeleton). nifra navigates imperatively - it fetches the next route's chunk + loader data while the current route stays on screen, then swaps - so `pending` is the signal for "a transition is in flight," not a Suspe…
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
@@ -7465,22 +7487,26 @@ _No named exports (side-effect entrypoint)._
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
-- **NavigateFunction** _(interface)_ - `interface NavigateFunction`
-  A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
+  A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **RenderPropsContext** _(const)_ - `RenderPropsContext: Context<RenderProps | undefined>`
 - **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
+  The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
   Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component sets up; it is removed with the component. A no-op o…
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
   Run `callback` each time the `keepAlive` page this component renders in is shown again.
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href`
+  An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
 - **useMatches** _(function)_ - `useMatches: () => Accessor<readonly UIMatch[]>`
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as a reactive accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydratio…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
-  Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+  Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => Accessor<boolean>`
   Whether the page this component renders in is on screen, as an accessor: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>`
@@ -7631,20 +7657,24 @@ _No named exports (side-effect entrypoint)._
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
-- **NavigateFunction** _(interface)_ - `interface NavigateFunction`
-  A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
+  A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
+  The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void`
   Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page. The page keeps running while it is hidden: pause its timers, sockets and media here. Call it while the component initializes; returns its removal. A no-op outside a kept page.
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void`
   Run `callback` each time the `keepAlive` page this component renders in is shown again.
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href`
+  An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor clic…
 - **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]`
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as an accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismat…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
-  Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+  Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => () => boolean`
   Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive. Call it while the component initializes; read it in markup or a `$derived`.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
@@ -7816,24 +7846,28 @@ _No named exports (side-effect entrypoint)._
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
-- **NavigateFunction** _(interface)_ - `interface NavigateFunction`
-  A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
+  A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **RenderPropsProvider** _(const)_ - `RenderPropsProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererEl…`
   Provides {@link useMatches}' render props to its subtree: a `computed` view of its `value` prop, so the injected ref follows each navigation's props. Renders its default slot. `compose` provides the same key through its single route-context component.
 - **SearchProvider** _(const)_ - `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
   Provides `useSearch`'s value to its subtree. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot. `compose` provides th…
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
+  The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void`
   Run `callback` each time the `keepAlive` page this component renders in is hidden behind another page, before it leaves the document (Vue's `onDeactivated` runs after). The page keeps running while it is hidden: pause its timers, sockets and media here. Call it in `setup`; it is removed with the co…
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void`
   Run `callback` each time the `keepAlive` page this component renders in is shown again, once it is back in the document with its scroll and focus. Unlike Vue's `onActivated`, not when it first mounts.
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href`
+  An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click, `useNavigate`…
 - **useMatches** _(function)_ - `useMatches: () => Readonly<Ref<readonly UIMatch[]>>`
   The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as a reactive ref. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mis…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
-  Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+  Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => Readonly<Ref<boolean>>`
   Whether the page this component renders in is on screen, as a ref: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`

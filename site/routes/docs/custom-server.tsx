@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/custom-server",
@@ -343,7 +344,7 @@ export default function CustomServer() {
         reads what the app declares sets <code>NIFRA_REFLECT</code> to its own name first:{" "}
         <code>check</code>, <code>routes</code>, <code>context</code>, <code>openapi</code>,{" "}
         <code>contracts</code>, <code>capabilities</code>, <code>manifest</code>, <code>doctor</code>
-        , <code>diff</code>, <code>sync-routes</code>, <code>sync-manifest</code>, and{" "}
+        , <code>diff</code>, <code>sync-manifest</code>, and{" "}
         <code>assure</code> without <code>--bundle</code>, <code>--strict</code>,{" "}
         <code>--hydration</code>, <code>--interact</code> or <code>--out</code>. Commands that send the
         app requests, such as <code>smoke</code>, <code>prove</code>, <code>levels</code> and the{" "}
@@ -395,7 +396,7 @@ export default function CustomServer() {
       <p>
         Packages duplicated the same way are reported as one finding with one combined{" "}
         <code>singleCopy</code> list. The preload this needs, and the version-skew case it cannot
-        cover, are in <a href="/docs/troubleshooting">Troubleshooting</a>.
+        cover, are in <a href={href({ to: "/docs/troubleshooting" })}>Troubleshooting</a>.
       </p>
     </div>
   )

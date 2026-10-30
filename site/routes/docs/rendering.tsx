@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/rendering",
@@ -147,14 +148,14 @@ curl -X POST https://example.com/__nifra/revalidate \\
   -d '{ "paths": ["/products/42"], "tags": ["catalog"] }'
 # → { "revalidated": ["/products/42"], "revalidatedTags": ["catalog"], "cdn": "accepted" }`
 
-const DRAFT = `// doc-check: skip - fragment spanning three files: your \`app\`, \`env\`, \`redirect\`, and route \`slug\`.
+const DRAFT = `// doc-check: skip - fragment spanning three files: your \`app\`, \`env\`, and route \`slug\`.
 // 1. Mount the preview entry point your CMS links to. It checks the token in CONSTANT TIME,
 //    sets the signed HttpOnly cookie, and refuses an off-site ?to= (an open redirect otherwise).
-import { previewEndpoint, disableDraft } from "@nifrajs/web"
+import { previewEndpoint, disableDraft, redirect, rawHref } from "@nifrajs/web"
 
 const preview = previewEndpoint({ secret: env.PREVIEW_TOKEN, draftSecret: env.DRAFT_SECRET })
 app.get("/api/preview", (c) => preview(c.req)) // ?token=…&to=/posts/hello
-app.get("/api/preview/exit", (c) => (disableDraft(c), redirect("/")))
+app.get("/api/preview/exit", (c) => (disableDraft(c), redirect(rawHref("/"))))
 // Gating it yourself instead? Use enableDraft(c, env.DRAFT_SECRET) AFTER your own check - and
 // compare the token in constant time, since === leaks it one character at a time.
 
@@ -226,7 +227,7 @@ export default function Rendering() {
         This is request-time progressive SSR: the whole page, shell included, renders for each
         request, and deferred values remain request-scoped. To serve the part that is the same for
         every visitor from a cache and stream only the per-visitor parts, use{" "}
-        <a href="/docs/partial-prerendering">partial prerendering</a>.
+        <a href={href({ to: "/docs/partial-prerendering" })}>partial prerendering</a>.
       </p>
 
       <h2>SSG - prerender at build</h2>
@@ -364,7 +365,7 @@ export default function Rendering() {
         A per-request CSP nonce makes a page uncacheable. For a strict policy under ISR, give{" "}
         <code>createWebApp</code> a <code>csp</code> from <code>createCspPolicy</code> instead of a{" "}
         <code>nonce</code>: constant scripts are allowed by hash, so only a page that needs a nonce
-        carries one - see <a href="/docs/contract#strict-csp">A strict CSP that still caches</a>.
+        carries one - see <a href={href({ to: "/docs/contract", hash: "strict-csp" })}>A strict CSP that still caches</a>.
       </p>
       <p>
         A page that must not be cached as a whole, because it is personalized or carries a nonce, can
@@ -484,8 +485,8 @@ export default function Rendering() {
         Content that's the same for everyone and changes rarely → <b>SSG</b>. Content that changes
         occasionally and can tolerate seconds-to-minutes of staleness → <b>ISR</b>. Per-request or
         per-user content → plain <b>SSR</b> (the default). A page that is mostly shared with a few
-        per-visitor parts → <a href="/docs/partial-prerendering">partial prerendering</a>. You can mix them in one app, route by route. A page that must update while it
-        is open, without a reload, adds <a href="/docs/live">live refresh</a> to any of them.
+        per-visitor parts → <a href={href({ to: "/docs/partial-prerendering" })}>partial prerendering</a>. You can mix them in one app, route by route. A page that must update while it
+        is open, without a reload, adds <a href={href({ to: "/docs/live" })}>live refresh</a> to any of them.
       </p>
     </div>
   )

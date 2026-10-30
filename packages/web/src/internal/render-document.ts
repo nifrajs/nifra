@@ -17,6 +17,7 @@ import type {
   RouteModule,
   UnsafeScriptDescriptor,
 } from "../manifest.ts"
+import type { Href } from "../navigation.ts"
 import type {
   DocumentParts,
   MatchChain,
@@ -918,10 +919,12 @@ export interface RedirectOptions {
  * mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303
  * (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
  *
- * **Secure by default:** `location` must be a same-origin path (begins with `/`, not `//`). An
- * off-origin/absolute destination throws unless you pass `{ external: true }` - this closes the
- * open-redirect footgun of `return redirect(formData.get("next"))` on the no-JS (native-form) path,
- * which serves the action's control-flow value verbatim.
+ * **Secure by default:** `location` is an `Href` - built by `href()` for a route of the app or by
+ * `rawHref()` for a same-origin path built elsewhere - and must be a same-origin path (begins with `/`,
+ * not `//`); a plain string is a compile error. An off-origin/absolute destination is a string and
+ * throws unless you pass `{ external: true }` - this closes the open-redirect footgun of
+ * `return redirect(formData.get("next"))` on the no-JS (native-form) path, which serves the action's
+ * control-flow value verbatim.
  *
  * Returns a plain render, not a `Response`. A redirect is a status line and one header - the most
  * body-less response there is - and building a `Response` for it costs the whole Web object plus, on
@@ -931,6 +934,14 @@ export interface RedirectOptions {
  *
  * @param options redirect status, extra headers, and whether an off-origin destination is intentional.
  */
+export function redirect(
+  location: Href,
+  options?: RedirectOptions & { readonly external?: false },
+): ResponseResult
+export function redirect(
+  location: string,
+  options: RedirectOptions & { readonly external: true },
+): ResponseResult
 export function redirect(location: string, options: RedirectOptions = {}): ResponseResult {
   if (options.external !== true && !isSameOriginPath(location)) {
     throw new Error(

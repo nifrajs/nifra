@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { MULTIPLIERS } from "../../shared/data/benchmarks"
 import { compareMeta } from "../../shared/meta"
 
@@ -93,16 +94,17 @@ export default function VsNextjs() {
         {REACT_SSR_MULTIPLIER} as many requests per second as Next.js. The harness lives in the
         Nifra repo, publishes its methodology, and includes rows Nifra does not win. That gap is not
         React being slow: it is the cost of the meta-framework layer around the render. Full tables
-        and per-framework results are on the <a href="/benchmarks">benchmarks page</a>.
+        and per-framework results are on the{" "}
+        <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
       </p>
 
       <h2>Where Next.js is the right choice</h2>
       <p>
         Next.js brings the largest React ecosystem, years of production hardening at scale, and
         first-party Vercel integration. Nifra's optional{" "}
-        <a href="/docs/server-components">server-components pipeline</a> uses native React
-        RSC/Flight and corresponding Vue, Svelte, Solid and Preact implementations, with its own
-        certified compiler tuple and explicit support limits.
+        <a href={href({ to: "/docs/server-components" })}>server-components pipeline</a> uses native
+        React RSC/Flight and corresponding Vue, Svelte, Solid and Preact implementations, with its
+        own certified compiler tuple and explicit support limits.
       </p>
 
       <h2>Where Nifra wins</h2>
@@ -125,7 +127,7 @@ export default function VsNextjs() {
           <strong>Built for AI agents.</strong> Documentation, runnable examples, and exact API
           types ship as a live MCP server, and verification commands (<code>nifra check</code>,{" "}
           <code>nifra assure</code>) return structured output an agent can act on. See{" "}
-          <a href="/blog/docs-as-mcp">why docs should be an MCP server</a>.
+          <a href={href({ to: "/blog/docs-as-mcp" })}>why docs should be an MCP server</a>.
         </li>
         <li>
           <strong>Speed as a floor, not a feature.</strong> SSR, ISR, and raw HTTP throughput are
@@ -138,9 +140,9 @@ export default function VsNextjs() {
       <p>
         <code>bun create nifra my-app --template site --framework react</code> scaffolds the
         full-stack shape: file-based routes, typed loaders, server functions, and a typed client.
-        The <a href="/docs/migrate-frontend">migration guide</a> covers moving an existing app; the
-        full capability-by-capability breakdown is in{" "}
-        <a href="/docs/comparison">the comparison doc</a>.
+        The <a href={href({ to: "/docs/migrate-frontend" })}>migration guide</a> covers moving an
+        existing app; the full capability-by-capability breakdown is in{" "}
+        <a href={href({ to: "/docs/comparison" })}>the comparison doc</a>.
       </p>
     </article>
   )

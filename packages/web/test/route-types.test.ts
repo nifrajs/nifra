@@ -1,64 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { describe, expect, test } from "bun:test"
+import { existsSync, readFileSync, rmSync } from "node:fs"
+import { join } from "node:path"
 import ts from "typescript"
 import { routeTypeFiles, staleRouteTypes, writeRouteTypes } from "../src/route-types.ts"
+import { typeApp } from "./_type-app.ts"
 
-// `nifra types` writes `.nifra/types/<routes>/<dir>/+types/<name>.d.ts` per route file. Temp apps live
-// inside the workspace so `@nifrajs/*` resolves; the type checks read workspace source through the
-// `bun` export condition, so they never depend on a stale `dist`.
-const TMP = `${import.meta.dir}/.tmp-route-types-`
-let root: string
-
-const write = (path: string, text: string): void => {
-  const file = join(root, path)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, text)
-}
-const generated = (path: string): string => readFileSync(join(root, ".nifra/types", path), "utf8")
-
-/** Type errors in `files`, as `file:line message`, with `.nifra/types` merged in through `rootDirs`. */
-function typeErrors(files: readonly string[]): string[] {
-  const program = ts.createProgram(
-    files.map((file) => join(root, file)),
-    {
-      strict: true,
-      noEmit: true,
-      skipLibCheck: true,
-      target: ts.ScriptTarget.ESNext,
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.Bundler,
-      customConditions: ["bun"],
-      allowImportingTsExtensions: true,
-      jsx: ts.JsxEmit.Preserve,
-      types: ["bun"],
-      lib: ["lib.esnext.d.ts", "lib.dom.d.ts"],
-      rootDirs: [root, join(root, ".nifra/types")],
-    },
-  )
-  // Only the app's own files: workspace source is checked by the repo's typecheck, not here.
-  // TypeScript names files with `/` separators; on Windows `root` has `\` ones.
-  const prefix = root.replaceAll("\\", "/")
-  const own = (diagnostic: ts.Diagnostic): boolean =>
-    diagnostic.file === undefined || diagnostic.file.fileName.startsWith(prefix)
-  return ts
-    .getPreEmitDiagnostics(program)
-    .filter(own)
-    .map((diagnostic) => {
-      const where =
-        diagnostic.file === undefined || diagnostic.start === undefined
-          ? ""
-          : `${diagnostic.file.fileName.slice(prefix.length + 1)}:${diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line + 1} `
-      return where + ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")
-    })
-}
-
-beforeEach(() => {
-  root = mkdtempSync(TMP)
-})
-afterEach(() => {
-  rmSync(root, { recursive: true, force: true })
-})
+// `nifra types` writes `.nifra/types/<routes>/<dir>/+types/<name>.d.ts` per route file.
+const app = typeApp(`${import.meta.dir}/.tmp-route-types-`)
+const { write, generated, typeErrors } = app
 
 describe("generated route types", () => {
   test("one module per route file, params from the path", () => {
@@ -68,10 +17,11 @@ describe("generated route types", () => {
     write("routes/raw/files/[...path].tsx", "export default () => null\n")
     write("routes/(shop)/items/[id].svelte", "<p>item</p>\n")
     write("routes/_404.tsx", "export default () => null\n")
-    const files = [...routeTypeFiles({ appRoot: root }).keys()].map((file) =>
-      file.slice(root.length + 1).replaceAll("\\", "/"),
+    const files = [...routeTypeFiles({ appRoot: app.root }).keys()].map((file) =>
+      file.slice(app.root.length + 1).replaceAll("\\", "/"),
     )
     expect(files.sort()).toEqual([
+      ".nifra/types/routes.d.ts",
       ".nifra/types/routes/(shop)/items/+types/[id].d.ts",
       ".nifra/types/routes/+types/_404.d.ts",
       ".nifra/types/routes/+types/_layout.d.ts",
@@ -79,7 +29,7 @@ describe("generated route types", () => {
       ".nifra/types/routes/[[lang]]/docs/+types/[page].d.ts",
       ".nifra/types/routes/raw/files/+types/[...path].d.ts",
     ])
-    writeRouteTypes({ appRoot: root })
+    writeRouteTypes({ appRoot: app.root })
     expect(generated("routes/[[lang]]/docs/+types/[page].d.ts")).toContain(
       "export type Params = { readonly lang?: string; readonly page: string }",
     )
@@ -100,7 +50,7 @@ describe("generated route types", () => {
   test("a part-literal segment carries the params inside it", () => {
     write("routes/post-[id].tsx", "export default () => null\n")
     write("routes/[lang]-feed/[year]-[month].xml.tsx", "export default () => null\n")
-    writeRouteTypes({ appRoot: root })
+    writeRouteTypes({ appRoot: app.root })
     expect(generated("routes/+types/post-[id].d.ts")).toContain(
       "export type Params = { readonly id: string }",
     )
@@ -114,15 +64,20 @@ describe("generated route types", () => {
     const name = `it's x`
     write(`routes/${name}.tsx`, "export default () => null\n")
     write(`routes/${name}.backend.ts`, "export const loader = () => ({})\n")
-    const [source] = [...routeTypeFiles({ appRoot: root }).values()]
-    if (source === undefined) throw new Error("no route type file generated")
-    const diagnostics = ts.transpileModule(source, {
-      fileName: "route.ts",
-      reportDiagnostics: true,
-    })
-    expect(diagnostics.diagnostics ?? []).toEqual([])
+    const sources = [...routeTypeFiles({ appRoot: app.root }).values()]
+    const source = sources.find((text) => text.includes("export namespace Route"))
+    const table = sources.find((text) => text.includes("interface RouteTable"))
+    if (source === undefined || table === undefined) throw new Error("no route type file generated")
+    for (const text of [source, table]) {
+      const diagnostics = ts.transpileModule(text, {
+        fileName: "route.ts",
+        reportDiagnostics: true,
+      })
+      expect(diagnostics.diagnostics ?? []).toEqual([])
+    }
     expect(source).toContain(`it's\\u2028x.backend`)
     expect(source.split("\n")[0]).toContain("\\u2028")
+    expect(table).toContain(`"/it's\\u2028x"`)
   })
 
   test("data is the output schema's type, and api is the registered backend's", () => {
@@ -166,7 +121,7 @@ describe("generated route types", () => {
         "",
       ].join("\n"),
     )
-    writeRouteTypes({ appRoot: root })
+    writeRouteTypes({ appRoot: app.root })
     expect(generated("register.d.ts")).toContain("readonly backend: typeof backend")
     expect(typeErrors(["routes/blog/[slug].tsx", "routes/blog/[slug].backend.ts"])).toEqual([])
   }, 60_000)
@@ -176,12 +131,12 @@ describe("generated route types", () => {
       "routes/feed/[id].backend.ts",
       [
         'import { t } from "@nifrajs/schema"',
-        'import { defer, redirect, revalidate } from "@nifrajs/web"',
+        'import { defer, href, redirect, revalidate } from "@nifrajs/web"',
         'import type { Route } from "./+types/[id]"',
         "export const loaderOutput = t.object({ title: t.string(), feed: t.deferred(t.array(t.number())) })",
         "export const actionOutput = t.object({ ok: t.boolean() })",
         "export const loader: Route.Loader = async ({ params }) => {",
-        '  if (params.id === "old") return redirect("/feed/new")',
+        '  if (params.id === "old") return redirect(href({ to: "/feed/:id", params: { id: "new" } }))',
         "  return { title: params.id, feed: defer(Promise.resolve([1, 2])) }",
         "}",
         "export const action: Route.Action = async ({ params }) => {",
@@ -214,16 +169,16 @@ describe("generated route types", () => {
     write(
       "routes/plain.backend.ts",
       [
-        'import { redirect } from "@nifrajs/web"',
+        'import { href, redirect } from "@nifrajs/web"',
         'import type { Route } from "./+types/plain"',
-        'export const loader: Route.Loader = () => redirect("/")',
+        'export const loader: Route.Loader = () => redirect(href({ to: "/plain" }))',
         "// @ts-expect-error no loaderOutput: data is refused",
         "export const data: Route.Loader = () => ({ secret: 1 })",
         "",
       ].join("\n"),
     )
     write("routes/plain.tsx", "export default () => null\n")
-    writeRouteTypes({ appRoot: root })
+    writeRouteTypes({ appRoot: app.root })
     expect(generated("routes/feed/+types/[id].d.ts")).toContain(
       "export type Loader = (args: LoaderArgs) => RouteLoaderReturn<Backend>",
     )
@@ -267,7 +222,7 @@ describe("generated route types", () => {
     write("routes/loose.backend.ts", backend("loose", shell, "{ crat: { load: () => 1 } }"))
     write("routes/shim.svelte", "<p>shim</p>\n")
     write("routes/shim.backend.ts", backend("shim", shell, "{ crat: { load: () => 1 } }"))
-    writeRouteTypes({ appRoot: root })
+    writeRouteTypes({ appRoot: app.root })
     expect(generated("routes/+types/held.d.ts")).toContain(
       "export type BoundaryLoaders = BoundaryLoadersOf<Frontend, Backend>",
     )
@@ -313,12 +268,12 @@ describe("generated route types", () => {
       timed: `{ cart: { load: () => 1, revalidate: 30 }, price: { load: () => 1, revalidate: 30 } }`,
       unfilled: `{ ${cart} }`,
     }
-    const page = readFileSync(join(root, "routes/stock.tsx"), "utf8")
+    const page = readFileSync(join(app.root, "routes/stock.tsx"), "utf8")
     for (const [name, loaders] of Object.entries(cases)) {
       write(`routes/${name}.tsx`, page)
       write(`routes/${name}.backend.ts`, backend(loaders).replace("+types/stock", `+types/${name}`))
     }
-    writeRouteTypes({ appRoot: root })
+    writeRouteTypes({ appRoot: app.root })
     const errors = typeErrors(Object.keys(cases).map((name) => `routes/${name}.backend.ts`)).sort()
     expect(errors).toHaveLength(4)
     const [nosy, timed, unfilled, unpriced] = errors
@@ -344,8 +299,128 @@ describe("generated route types", () => {
         "",
       ].join("\n"),
     )
-    writeRouteTypes({ appRoot: root })
+    writeRouteTypes({ appRoot: app.root })
     expect(typeErrors(["routes/about.tsx"])).toEqual([])
+  }, 60_000)
+
+  test("routes.d.ts holds one RouteTable entry per pattern, params from the compiled pattern", () => {
+    for (const file of [
+      "index.tsx",
+      "[[lang]]/docs/[page].tsx",
+      "raw/files/[...path].tsx",
+      "(shop)/items/[id].svelte",
+      "post-[id].tsx",
+      "[lang]-feed/[year]-[month].xml.tsx",
+    ])
+      write(`routes/${file}`, "export default () => null\n")
+    writeRouteTypes({ appRoot: app.root })
+    const table = generated("routes.d.ts")
+    const entries = [
+      ...table.matchAll(/^ {4}("[^"]+"): \{ readonly params: (.+?); readonly search:/gm),
+    ]
+    expect(entries.map((entry) => [entry[1], entry[2]])).toEqual([
+      ['"/"', "Record<string, never>"],
+      [
+        '"/:lang-feed/:year-:month.xml"',
+        "{ readonly lang: string; readonly year: string; readonly month: string }",
+      ],
+      ['"/:lang/docs/:page"', "{ readonly lang: string; readonly page: string }"],
+      ['"/docs/:page"', "{ readonly page: string }"],
+      ['"/items/:id"', "{ readonly id: string }"],
+      ['"/post-:id"', "{ readonly id: string }"],
+      ['"/raw/files/*path"', "{ readonly path: string }"],
+    ])
+    // A script module's search comes from its `searchSchema`; a .svelte/.vue/.mdx one has no exports to read.
+    expect(table).toContain(
+      '"/post-:id": { readonly params: { readonly id: string }; readonly search: SearchOf<typeof import("../../routes/post-[id]")> }',
+    )
+    expect(table).toContain(
+      '"/items/:id": { readonly params: { readonly id: string }; readonly search: Record<string, unknown> }',
+    )
+    // Every route module loads the table, so importing any one of them is enough.
+    expect(generated("routes/+types/index.d.ts")).toContain(
+      '/// <reference path="../../routes.d.ts" />',
+    )
+    expect(generated("routes/raw/files/+types/[...path].d.ts")).toContain(
+      '/// <reference path="../../../../routes.d.ts" />',
+    )
+  })
+
+  test("a page's Route.Params is what its RouteTable entries carry", () => {
+    for (const file of [
+      "index.tsx",
+      "post-[id].tsx",
+      "raw/[...path].tsx",
+      "[[lang]]/docs/[page].tsx",
+    ])
+      write(`routes/${file}`, "export default () => null\n")
+    writeRouteTypes({ appRoot: app.root })
+    write(
+      "check.ts",
+      [
+        'import type { RouteTable } from "@nifrajs/web"',
+        'import type { Route as Index } from "./.nifra/types/routes/+types/index"',
+        'import type { Route as Post } from "./.nifra/types/routes/+types/post-[id]"',
+        'import type { Route as Raw } from "./.nifra/types/routes/raw/+types/[...path]"',
+        'import type { Route as Docs } from "./.nifra/types/routes/[[lang]]/docs/+types/[page]"',
+        "type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2",
+        "  ? true",
+        "  : false",
+        'export const index: Same<RouteTable["/"]["params"], Index.Params> = true',
+        'export const post: Same<RouteTable["/post-:id"]["params"], Post.Params> = true',
+        'export const raw: Same<RouteTable["/raw/*path"]["params"], Raw.Params> = true',
+        "// An optional segment is two table entries, and the page's params admit both.",
+        'export const withLang: Docs.Params = {} as RouteTable["/:lang/docs/:page"]["params"]',
+        'export const withoutLang: Docs.Params = {} as RouteTable["/docs/:page"]["params"]',
+        "// @ts-expect-error the check is not vacuous: these two entries differ",
+        'export const differs: Same<RouteTable["/docs/:page"]["params"], RouteTable["/:lang/docs/:page"]["params"]> = true',
+        "",
+      ].join("\n"),
+    )
+    expect(typeErrors(["check.ts"])).toEqual([])
+  }, 60_000)
+
+  test("importing a route's types loads the table, so href's search is typed", () => {
+    write(
+      "routes/reports.tsx",
+      [
+        'import { t } from "@nifrajs/schema"',
+        "export const searchSchema = t.object({ page: t.number() })",
+        "export default () => null",
+        "",
+      ].join("\n"),
+    )
+    write(
+      "routes/reports/[id].tsx",
+      [
+        'import { t } from "@nifrajs/schema"',
+        "export const searchSchema = t.object({ q: t.string() })",
+        "export default () => null",
+        "",
+      ].join("\n"),
+    )
+    write("routes/plain.tsx", "export default () => null\n")
+    writeRouteTypes({ appRoot: app.root })
+    write(
+      "check.ts",
+      [
+        'import { href } from "@nifrajs/web"',
+        'import type { Route } from "./.nifra/types/routes/+types/plain"',
+        "// Nothing but this import brings the table in.",
+        "export type Loaded = Route.Params",
+        'export const page = href({ to: "/reports", search: { page: 1 } })',
+        "// @ts-expect-error page is a number",
+        'export const wrong = href({ to: "/reports", search: { page: "x" } })',
+        "// A dynamic route is typed too: its pattern is a key of its own.",
+        'export const query = href({ to: "/reports/:id", params: { id: "7" }, search: { q: "a" } })',
+        "// @ts-expect-error q is a string",
+        'export const wrongQuery = href({ to: "/reports/:id", params: { id: "7" }, search: { q: 1 } })',
+        "// @ts-expect-error a path that is no route is not a key of the table",
+        'export const elsewhere = href({ to: "/elsewhere" })',
+        "",
+      ].join("\n"),
+    )
+    expect(typeErrors(["check.ts"])).toEqual([])
   }, 60_000)
 })
 
@@ -353,15 +428,19 @@ describe("writeRouteTypes", () => {
   test("writes what changed, removes what no route generates, and reports staleness", () => {
     write("routes/a.tsx", "export default () => null\n")
     write("routes/b.tsx", "export default () => null\n")
-    expect(staleRouteTypes({ appRoot: root })).toHaveLength(2)
-    expect(writeRouteTypes({ appRoot: root }).written).toHaveLength(2)
-    expect(staleRouteTypes({ appRoot: root })).toEqual([])
-    expect(writeRouteTypes({ appRoot: root })).toEqual({ written: [], removed: [] })
+    // Two route modules and the route table.
+    expect(staleRouteTypes({ appRoot: app.root })).toHaveLength(3)
+    expect(writeRouteTypes({ appRoot: app.root }).written).toHaveLength(3)
+    expect(staleRouteTypes({ appRoot: app.root })).toEqual([])
+    expect(writeRouteTypes({ appRoot: app.root })).toEqual({ written: [], removed: [] })
 
-    rmSync(join(root, "routes/b.tsx"))
-    const b = join(root, ".nifra/types/routes/+types/b.d.ts")
-    expect(staleRouteTypes({ appRoot: root })).toEqual([b])
-    expect(writeRouteTypes({ appRoot: root })).toEqual({ written: [], removed: [b] })
+    // A removed route changes the table and removes its own module.
+    rmSync(join(app.root, "routes/b.tsx"))
+    const b = join(app.root, ".nifra/types/routes/+types/b.d.ts")
+    const table = join(app.root, ".nifra/types/routes.d.ts")
+    expect(staleRouteTypes({ appRoot: app.root })).toEqual([table, b].sort())
+    expect(writeRouteTypes({ appRoot: app.root })).toEqual({ written: [table], removed: [b] })
     expect(existsSync(b)).toBe(false)
+    expect(generated("routes.d.ts")).not.toContain('"/b"')
   })
 })

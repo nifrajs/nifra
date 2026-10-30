@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/capabilities",
@@ -337,8 +338,8 @@ export default function Capabilities() {
       </p>
       <CodeBlock code={LEVELS} lang="bash" />
       <p>
-        That is L2 on <a href="/docs/verification">the verification ladder</a>. See also{" "}
-        <a href="/docs/server-functions">server functions</a>, which are public POST endpoints and are
+        That is L2 on <a href={href({ to: "/docs/verification" })}>the verification ladder</a>. See also{" "}
+        <a href={href({ to: "/docs/server-functions" })}>server functions</a>, which are public POST endpoints and are
         covered by exactly the same policy.
       </p>
 

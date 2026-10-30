@@ -1,3 +1,4 @@
+import { encodePathSegment } from "@nifrajs/core/pattern"
 import type { Locales } from "./locales.ts"
 
 type Pathnames<K extends string> = Readonly<Record<string, Partial<Record<K, string | undefined>>>>
@@ -42,7 +43,7 @@ function normalizedSegments(segments: readonly string[]): string[] | undefined {
         if (next === check) break
         check = next
       }
-      return encodeURIComponent(decoded)
+      return encodePathSegment(decoded)
     })
   } catch {
     return undefined

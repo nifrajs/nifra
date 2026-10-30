@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/structure",
@@ -115,7 +116,7 @@ export default function Structure() {
             </td>
             <td>
               a page: the component, <code>meta</code>,{" "}
-              <a href="/docs/keep-alive">
+              <a href={href({ to: "/docs/keep-alive" })}>
                 <code>keepAlive</code>
               </a>
             </td>
@@ -129,7 +130,7 @@ export default function Structure() {
               that page's <code>loader</code>, <code>action</code>, <code>loaderOutput</code>,{" "}
               <code>actionOutput</code>, <code>hydrate</code>, <code>revalidate</code>,{" "}
               <code>shellLoader</code> and <code>boundaryLoaders</code> (a{" "}
-              <a href="/docs/partial-prerendering">partially prerendered</a> page),{" "}
+              <a href={href({ to: "/docs/partial-prerendering" })}>partially prerendered</a> page),{" "}
               <code>middleware</code> (in <code>_layout.backend.ts</code>)
             </td>
             <td>never</td>
@@ -233,7 +234,7 @@ export default function Structure() {
         same app from <code>backend/app.ts</code> built with stand-in dependencies, so every operation
         is visible without a database or secrets; <code>nifra check</code> names an implemented
         operation it does not serve (NF-C039). See{" "}
-        <a href="/docs/types-first#stub-entry">the stand-in entry</a>.
+        <a href={href({ to: "/docs/types-first", hash: "stub-entry" })}>the stand-in entry</a>.
       </p>
 
       <h2>A route is two files</h2>
@@ -251,7 +252,9 @@ export default function Structure() {
         <code>loaderOutput</code> lets through. <code>nifra dev</code>, <code>nifra build</code>,{" "}
         <code>nifra check</code> and <code>nifra types</code> write these files under{" "}
         <code>.nifra/types</code>; the app's <code>tsconfig.json</code> resolves them with{" "}
-        <code>{'"rootDirs": [".", "./.nifra/types"]'}</code>.
+        <code>{'"rootDirs": [".", "./.nifra/types"]'}</code>. The same directory holds{" "}
+        <code>routes.d.ts</code>, one entry per URL pattern with its params and search output, and
+        every generated <code>./+types</code> module loads it.
       </p>
 
       <h2>What may import what</h2>

@@ -1,3 +1,5 @@
+import { href } from "@nifrajs/web-solid/router"
+
 export const meta = { title: "Not found" }
 
 export default function NotFound() {
@@ -7,7 +9,7 @@ export default function NotFound() {
         <span class="grad">404</span>
       </h1>
       <p>That page doesn't exist.</p>
-      <a class="btn" href="/">
+      <a class="btn" href={href({ to: "/" })}>
         ← Back home
       </a>
     </section>

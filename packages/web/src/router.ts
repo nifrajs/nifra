@@ -12,7 +12,7 @@ import { parseNdjsonData } from "./deferred.ts"
 import { documentEpoch, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
 import { present } from "./internal/present.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
-import { appUrl, requestPattern } from "./internal/route-path.ts"
+import { appUrl } from "./internal/route-path.ts"
 import { shareData } from "./internal/share-data.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
@@ -238,7 +238,7 @@ export function createMatcher(
   for (const pattern of patterns) {
     // Pass the literal to the public router seam: package type resolution may point the two core
     // subpaths at different source/dist declarations, while registration-time compilation is cheap.
-    routeIndex.add("GET", requestPattern(pattern.pattern), pattern.routeId)
+    routeIndex.add("GET", pattern.pattern, pattern.routeId)
   }
   return (path) => {
     // Strip the query without allocating a `split("?")` array - matcher runs per match.

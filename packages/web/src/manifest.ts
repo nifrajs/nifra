@@ -9,6 +9,7 @@ import {
   type CompiledRoutePattern,
   compareRoutePatternSpecificity,
   compileRoutePattern,
+  fillRoutePath,
   paramConstraint,
 } from "@nifrajs/core/pattern"
 import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
@@ -1162,6 +1163,11 @@ export function filePathToRoutes(file: string): FileRoutePattern[] {
   }
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!
+    if (/[#?]/.test(seg)) {
+      throw new Error(
+        `[nifra/web] "${file}" has "#" or "?" in "${seg}": a request path cannot carry either, so no URL reaches this route. Rename the file.`,
+      )
+    }
     if (seg === "index") {
       mark()
       continue
@@ -1605,38 +1611,6 @@ export function buildManifest(
   return notFound === undefined ? base : { ...base, notFound }
 }
 
-const FILL_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g
-
-const encodeRouteParam = (value: string): string => {
-  const encoded = encodeURIComponent(value)
-  // `encodeURIComponent(".")` and `encodeURIComponent("..")` intentionally leave dots alone, but those
-  // are filesystem path segments during prerender output. Keep them URL-equivalent while making them
-  // inert as path components.
-  return encoded === "." || encoded === ".." ? encoded.replace(/\./g, "%2E") : encoded
-}
-
-/**
- * Substitute a route pattern's `:param` segments with concrete values: `/users/:id` + `{id:"7"}` →
- * `/users/7`. Returns the filled path plus any params that had no value (a `getStaticPaths` bug) so
- * the caller can skip rather than emit a path with a literal `:name`. Shared by the SSG driver and
- * {@link enumerateStaticRoutes}.
- */
-export function fillRoutePattern(
-  pattern: string,
-  params: Record<string, string>,
-): { path: string; missing: string[] } {
-  const missing: string[] = []
-  const path = pattern.replace(FILL_PARAM, (_m, name: string) => {
-    const value = params[name]
-    if (value === undefined) {
-      missing.push(name)
-      return `:${name}`
-    }
-    return encodeRouteParam(value)
-  })
-  return { path, missing }
-}
-
 /** The static-routing facts a server needs from the route modules: which concrete paths are
  * prerendered, plus each dynamic route's `getStaticPaths` fallback policy. */
 export interface StaticRoutes {
@@ -1667,8 +1641,8 @@ export async function enumerateStaticRoutes(routes: readonly RouteEntry[]): Prom
       const { paths: staticPaths, fallback = "ssr" } = await mod.getStaticPaths()
       fallbacks[route.pattern] = fallback
       for (const { params } of staticPaths) {
-        const { path, missing } = fillRoutePattern(route.pattern, params)
-        if (missing.length === 0) paths.push(path)
+        const filled = fillRoutePath(route.pattern, params)
+        if (filled.ok) paths.push(filled.path)
       }
     } else if (mod.prerender === true) {
       paths.push(route.pattern)

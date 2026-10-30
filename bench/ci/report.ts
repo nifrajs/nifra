@@ -3,6 +3,7 @@
  * facts beside them, and the summary computed from them. The raw rounds are what the artifact keeps;
  * every percentage is recomputed from them, so a later regression gate can re-pool old reports.
  */
+import { isRecord } from "../is-record.ts"
 import { type Matrix, type Measure, median, pooledRatios, type RoundCell } from "../rounds.ts"
 import type { CoreSplit } from "./host.ts"
 import { type MedianInterval, medianInterval } from "./stats.ts"
@@ -65,9 +66,6 @@ export interface CiReport {
   readonly host: HostFacts
   readonly runs: readonly RunOutput[]
 }
-
-const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> =>
-  typeof v === "object" && v !== null && !Array.isArray(v)
 
 function record(v: unknown, where: string): Readonly<Record<string, unknown>> {
   if (!isRecord(v)) throw new Error(`${where}: expected an object`)

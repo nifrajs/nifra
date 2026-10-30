@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { setBrowserNavigate } from "@nifrajs/web"
+import { rawHref, setBrowserNavigate } from "@nifrajs/web"
 import { h } from "preact"
 import { renderToString } from "preact-render-to-string"
 import { compose } from "../src/compose.ts"
@@ -24,10 +24,10 @@ test("useNavigate forwards through the bridge and no-ops before it", () => {
   )
   if (nav === undefined) throw new Error("the component never rendered")
 
-  expect(() => nav?.("/x")).not.toThrow() // no bridge yet
+  expect(() => nav?.(rawHref("/x"))).not.toThrow() // no bridge yet
   const calls: Array<[string | number, unknown]> = []
   setBrowserNavigate((to, o) => calls.push([to, o]))
-  nav("/next", { replace: true })
+  nav(rawHref("/next"), { replace: true })
   expect(calls).toEqual([["/next", { replace: true }]])
 })
 

@@ -15,21 +15,21 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte com
 ## Key exports
 
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => NifraSvelteErrorBoundary` · from `@nifrajs/web-svelte/client`
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>` · from `@nifrajs/web-svelte/router`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-svelte/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-svelte/client`
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => () => void` · from `@nifrajs/web-svelte/keep-alive`
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => () => void` · from `@nifrajs/web-svelte/keep-alive`
 - **provideQueryClient** _(function)_ - `provideQueryClient: (client: QueryClient, state?: DehydratedState) => void` · from `@nifrajs/web-svelte/query`
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href` · from `@nifrajs/web-svelte/router`
 - **rich** _(function)_ - `rich: <R, M extends object = import("./format.js").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Read…` · from `@nifrajs/web-svelte/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-svelte/fetcher`
 - **svelteBunPlugin** _(function)_ - `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/plugin`
 - **svelteComponentClient** _(function)_ - `svelteComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").Compon…` · from `@nifrajs/web-svelte/server-components/client`
 - **svelteHmrBoundary** _(function)_ - `svelteHmrBoundary: ({ filename }: { filename: string; }) => { hmr: boolean; }` · from `@nifrajs/web-svelte/plugin`
 - **svelteMdxBunPlugin** _(function)_ - `svelteMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/mdx`
-- **svelteSvgComponentBunPlugin** _(function)_ - `svelteSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/svg`
-- **svgToSvelte** _(function)_ - `svgToSvelte: (xml: string) => string` · from `@nifrajs/web-svelte/svg`
 
-_…and 41 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

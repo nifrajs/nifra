@@ -10,6 +10,7 @@ import {
   notFound,
   type RenderAdapter,
   type RouteModule,
+  rawHref,
   redirect,
   revalidate,
 } from "../src/index.ts"
@@ -515,7 +516,7 @@ describe("what passes without a schema, and what never does", () => {
     const none = contract(undefined)
     expect(guardValue(none, undefined)).toBeUndefined()
     expect(guardValue(none, null)).toBeNull()
-    const to = redirect("/login")
+    const to = redirect(rawHref("/login"))
     expect(guardValue(none, to)).toBe(to)
     const gone = new Response(null, { status: 410 })
     expect(guardValue(none, gone)).toBe(gone)
@@ -552,7 +553,7 @@ describe("what passes without a schema, and what never does", () => {
       throw leak
     }, contract(schema))
     expect((await refusal(() => async())).message).toContain("returned a 200 Response")
-    const to = redirect("/login")
+    const to = redirect(rawHref("/login"))
     const redirecting = guardChannel(() => {
       throw to
     }, contract(schema))
@@ -808,7 +809,7 @@ describe("a route's backend half", () => {
   })
 
   test("a loader that only redirects needs no schema", async () => {
-    const app = appOf({ loader: () => redirect("/elsewhere") })
+    const app = appOf({ loader: () => redirect(rawHref("/elsewhere")) })
     const res = await app.fetch(new Request("http://x/page"))
     expect(res.status).toBe(303)
   })

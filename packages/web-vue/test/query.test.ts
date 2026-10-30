@@ -196,7 +196,7 @@ test("Vue provider hydrates a request-local cache before child setup", async () 
   let query: ReturnType<typeof useQuery<string>> | undefined
   const Child = defineComponent({
     setup() {
-      query = useQuery(["vue", "request"], async () => "network")
+      query = useQuery(["vue", "request"], async () => "network", { staleTime: 10 })
       return () => h("span", query?.state.value.data)
     },
   })

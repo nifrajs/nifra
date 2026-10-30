@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/streaming",
@@ -112,11 +113,11 @@ export default function Streaming() {
         The same <code>defer()</code> works in actions and across client-side soft navigations (an
         NDJSON stream settles the deferred values), and it's framework-agnostic - React{" "}
         <code>&lt;Suspense&gt;</code> and Solid's streaming both drive it from one core. See{" "}
-        <a href="/docs/frameworks">Frameworks</a> for which adapters stream the boundary in the
+        <a href={href({ to: "/docs/frameworks" })}>Frameworks</a> for which adapters stream the boundary in the
         server HTML.
       </p>
       <p>
-        <a href="/docs/partial-prerendering">Partial prerendering</a> streams the same
+        <a href={href({ to: "/docs/partial-prerendering" })}>Partial prerendering</a> streams the same
         way from a cached shell: the part of the page every visitor shares goes out at once from the
         cache, and each per-visitor hole streams in as its loader settles.
       </p>

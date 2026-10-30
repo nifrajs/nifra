@@ -1,4 +1,8 @@
 import { RouteConfigError } from "../errors.ts"
+import { encodePathSegment } from "./path-codec.ts"
+
+export { browserPathSegment, decodePathSegment, encodePathSegment } from "./path-codec.ts"
+export { isSameOriginPath } from "./same-origin-path.ts"
 
 const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const RESERVED_PARAM_NAMES = new Set(["__proto__", "constructor", "prototype"])
@@ -647,6 +651,129 @@ export function decodeRouteParams(raw: Record<string, string>): Record<string, s
     }
   }
   return out ?? raw
+}
+
+export type FilledRoutePath =
+  | { readonly ok: true; readonly path: string }
+  | {
+      readonly ok: false
+      /** Params the pattern names that `params` leaves out or holds as the empty string. */
+      readonly missing: readonly string[]
+      /** Params whose value cannot be carried or would be split differently by this pattern. */
+      readonly invalid: readonly string[]
+    }
+
+/**
+ * The path `pattern` names for `params`, every value spelled by {@link encodePathSegment}. A wildcard
+ * value is split on `/` and each part encoded, empty parts dropped; a `.` or `..` part is invalid, as
+ * a whole-segment value is. Nothing is thrown for a bad value: the caller decides what a missing or
+ * invalid param means. A param inside a mixed segment is invalid when its value holds the literal that ends it (`name` = `a.b` in
+ * `:name.:ext`), or when it touches the next param and encodes to more than one character, because the
+ * router would split it differently. A param's constraint (`:id{[0-9]+}`) is not checked here.
+ */
+export function fillRoutePath(
+  pattern: string | CompiledRoutePattern,
+  params: Readonly<Record<string, string | undefined>>,
+): FilledRoutePath {
+  const compiled = typeof pattern === "string" ? compileRoutePattern(pattern) : pattern
+  // Built as one string, with the two problem lists made only when a param is bad: a path that fills
+  // allocates nothing else.
+  let path = ""
+  let missing: string[] | undefined
+  let invalid: string[] | undefined
+  const segments = compiled.segments
+  for (let s = 0; s < segments.length; s++) {
+    const segment = segments[s]!
+    if (segment.kind === "static") {
+      path += `/${segment.value}`
+    } else if (segment.kind === "param") {
+      const value = fillValue(params, segment.name)
+      if (value === undefined) {
+        missing = noted(missing, segment.name)
+        path += "/"
+        continue
+      }
+      const encoded = spell(value)
+      if (encoded === undefined) invalid = noted(invalid, segment.name)
+      path += `/${encoded ?? ""}`
+    } else if (segment.kind === "wildcard") {
+      const value = fillValue(params, segment.name)
+      let joined = ""
+      let any = false
+      if (value !== undefined) {
+        for (const piece of value.split("/")) {
+          if (piece === "") continue
+          const encoded = spell(piece)
+          if (encoded === undefined) invalid = noted(invalid, segment.name)
+          joined += any ? `/${encoded ?? ""}` : (encoded ?? "")
+          any = true
+        }
+      }
+      if (!any) missing = noted(missing, segment.name)
+      path += `/${joined}`
+    } else {
+      let text = ""
+      const shape = segment.parts
+      for (let i = 0; i < shape.length; i++) {
+        const part = shape[i]!
+        if (part.t === "lit") {
+          text += part.v
+          continue
+        }
+        const value = fillValue(params, part.name)
+        if (value === undefined) {
+          missing = noted(missing, part.name)
+          continue
+        }
+        const encoded = spell(value)
+        if (encoded === undefined) {
+          invalid = noted(invalid, part.name)
+          continue
+        }
+        // matchMixedSegment ends a parameter at the first occurrence of the literal after it, one
+        // character in or later. A value holding that literal earlier would come back as different
+        // params. A literal in the last place is the segment's tail, which is anchored to its end.
+        const next = shape[i + 1]
+        // With no separating literal the matcher gives this parameter exactly one raw character.
+        // Splitting a percent-escape here would also make the captured parameters malformed.
+        if (next?.t === "param" && encoded.length !== 1) invalid = noted(invalid, part.name)
+        else if (next?.t === "lit" && shape[i + 2] !== undefined) {
+          if ((encoded + next.v).indexOf(next.v, 1) !== encoded.length)
+            invalid = noted(invalid, part.name)
+        }
+        text += encoded
+      }
+      path += `/${text}`
+    }
+  }
+  return missing !== undefined || invalid !== undefined
+    ? { ok: false, missing: missing ?? [], invalid: invalid ?? [] }
+    : { ok: true, path: path === "" ? "/" : path }
+}
+
+/** A param's value when it is a non-empty string the caller gave, not one inherited from the prototype. */
+function fillValue(
+  params: Readonly<Record<string, string | undefined>>,
+  name: string,
+): string | undefined {
+  const value = Object.hasOwn(params, name) ? params[name] : undefined
+  return typeof value === "string" && value !== "" ? value : undefined
+}
+
+/** `value` spelled as one path segment, or undefined when no segment can carry it. */
+function spell(value: string): string | undefined {
+  try {
+    return encodePathSegment(value)
+  } catch {
+    return undefined
+  }
+}
+
+/** `list` with `name` in it once, made when there was none. */
+function noted(list: string[] | undefined, name: string): string[] {
+  if (list === undefined) return [name]
+  if (!list.includes(name)) list.push(name)
+  return list
 }
 
 /** Match one compiled pattern and return decoded captures. The caller decides cross-pattern order. */

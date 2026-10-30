@@ -17,7 +17,9 @@ import type {
 } from "@nifrajs/core/assurance"
 import { canonicalJson } from "@nifrajs/core/canonical-json"
 import {
+  type CompiledRoutePattern,
   compileRoutePattern,
+  fillRoutePath,
   type ParamConstraint,
   type RoutePatternSegment,
 } from "@nifrajs/core/pattern"
@@ -858,30 +860,28 @@ function materializePath(
   path: string,
   params: Readonly<Record<string, string>> | undefined,
 ): string {
-  let segments: readonly RoutePatternSegment[]
+  let compiled: CompiledRoutePattern
   try {
-    segments = compileRoutePattern(path).segments
+    compiled = compileRoutePattern(path)
   } catch {
     return path
   }
-  const fill = (name: string, constraint?: ParamConstraint): string => {
-    const given = params?.[name]
-    if (given !== undefined) return encodeURIComponent(given)
-    return constraint === undefined ? `${name}-contract` : satisfying(constraint)
+  const values: Record<string, string> = {}
+  const place = (name: string, constraint?: ParamConstraint): void => {
+    values[name] =
+      params?.[name] ?? (constraint === undefined ? `${name}-contract` : satisfying(constraint))
   }
-  const filled = segments.map((segment) => {
-    if (segment.kind === "static") return segment.value
-    if (segment.kind === "param") return fill(segment.name)
-    if (segment.kind === "mixed") {
-      return segment.parts
-        .map((part) => (part.t === "lit" ? part.v : fill(part.name, part.c)))
-        .join("")
+  for (const segment of compiled.segments) {
+    if (segment.kind === "param") place(segment.name)
+    else if (segment.kind === "wildcard") {
+      values[segment.name] =
+        params?.[segment.name] ?? `${segment.name === "*" ? "path" : segment.name}/contract`
+    } else if (segment.kind === "mixed") {
+      for (const part of segment.parts) if (part.t === "param") place(part.name, part.c)
     }
-    const value =
-      params?.[segment.name] ?? `${segment.name === "*" ? "path" : segment.name}/contract`
-    return value.split("/").filter(Boolean).map(encodeURIComponent).join("/")
-  })
-  return `/${filled.join("/")}`
+  }
+  const filled = fillRoutePath(compiled, values)
+  return filled.ok ? filled.path : path
 }
 
 const paramNamesOf = (laboratory: RouteLaboratory): readonly string[] =>
