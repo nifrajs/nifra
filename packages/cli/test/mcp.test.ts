@@ -38,6 +38,7 @@ import {
   type McpToolContext,
 } from "../src/mcp-protocol.ts"
 import { loadBackend, runBackend } from "../src/mcp-run.ts"
+import { removeReleasedDirectory } from "./fixture-root.ts"
 
 const INFO = { name: "nifra", version: "0.0.0-test" }
 const tools: McpTool[] = [
@@ -599,7 +600,7 @@ describe("runBackend (nifra_run engine) - input guards", () => {
     } finally {
       proc?.kill()
       await proc?.exited.catch(() => 0)
-      await rm(dir, { recursive: true, force: true })
+      await removeReleasedDirectory(dir)
     }
   })
 
@@ -654,7 +655,7 @@ describe("runBackend (nifra_run engine) - input guards", () => {
       expect(followBody.count).toBeGreaterThan(survivorBody.count)
     } finally {
       worker?.stop()
-      await rm(dir, { recursive: true, force: true })
+      await removeReleasedDirectory(dir)
     }
   })
 })
