@@ -48,13 +48,11 @@ export function fixtureApp(
     styles: assets.css ?? [],
     csp,
     draftSecret: DRAFT_SECRET,
-    experimental: {
-      ppr: partialPrerendering({
-        shellChecks: prepared.shellChecks,
-        origin: "https://shop.example",
-        options: pprOptions ?? {},
-      }),
-    },
+    ppr: partialPrerendering({
+      shellChecks: prepared.shellChecks,
+      origin: "https://shop.example",
+      options: pprOptions ?? {},
+    }),
   })
   app.get("/assets/*", async (c) => {
     const name = new URL(c.req.url).pathname.slice("/assets/".length)

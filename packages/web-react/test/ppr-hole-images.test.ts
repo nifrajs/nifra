@@ -53,7 +53,7 @@ test("a responsive image in a plain or an interactive hole fills it, with no res
     adapter: reactAdapter,
     manifest,
     clientEntry: "/c.js",
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
   })
   const html = await (await app.fetch(new Request("http://shop.test/p"))).text()
   const frame = (name: string): string =>

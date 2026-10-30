@@ -1,5 +1,6 @@
 /** Solid's mutation, paged-query and provider bindings under its browser build. */
 import { expect, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 import { createQueryClient } from "@nifrajs/web"
 import { createComponent, createRoot } from "solid-js"
 import { createInfiniteQuery, createMutation, QueryClientProvider } from "../src/query.ts"
@@ -9,7 +10,7 @@ const SPAWN_TIMEOUT_MS = 30_000
 test(
   "the bindings fetch on mount unless disabled, track their accessors, and survive a failing mutation",
   async () => {
-    const script = new URL("./fixtures/query-browser.ts", import.meta.url).pathname
+    const script = fileURLToPath(new URL("./fixtures/query-browser.ts", import.meta.url))
     const proc = Bun.spawn([process.execPath, "--conditions=browser", script], {
       stdout: "pipe",
       stderr: "pipe",

@@ -17,7 +17,7 @@ import type { LoadedLayoutModules } from "../render-document.ts"
 import type { PprAdmissionStats } from "./admission.ts"
 import type { ResolvedPprOptions } from "./options.ts"
 
-/** An app built with `experimental.ppr` carries its {@link PprServer} under this key. */
+/** An app built with `ppr` carries its {@link PprServer} under this key. */
 export const PPR_SERVER: unique symbol = Symbol.for("nifra.web.ppr")
 
 /** The key of a {@link PprSetup}'s factory. */
@@ -222,7 +222,7 @@ export interface PprIntegration {
   ): Readonly<Record<string, string>>
 }
 
-/** What `partialPrerendering()` returns for `createWebApp({ experimental: { ppr } })`. */
+/** What `partialPrerendering()` returns for `createWebApp({ ppr })`. */
 export interface PprSetup {
   readonly [PPR_SETUP]: (environment: PprEnvironment) => PprIntegration
 }

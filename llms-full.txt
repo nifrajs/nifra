@@ -206,7 +206,7 @@ params, and a route [opened in a modal](/docs/routing#modal-routes).
 
 -
 SSR · SSG · ISR, streaming SSR with out-of-order Suspense,
-[partial prerendering](/docs/partial-prerendering) (experimental), view
+[partial prerendering](/docs/partial-prerendering), view
 transitions, and a ~0 KB-client vanilla adapter with
 [islands](/docs/islands) and slot swaps.
 
@@ -254,7 +254,7 @@ cover the pages that do not:
 **
 [Partial prerendering](/docs/partial-prerendering)
 **
-(experimental, all five adapters). The part of a page that is the same for every visitor is
+(all five adapters). The part of a page that is the same for every visitor is
 built once, cached and sent at once; each per-visitor hole streams into it as its own loader
 settles. The build refuses a shell whose code reaches a module that reads the visitor, and
 `checkShellCanaries` looks for visitor data in a served shell. A shared hole, such
@@ -2134,7 +2134,7 @@ export default function Product({ data }: Route.ComponentProps) {
 This is request-time progressive SSR: the whole page, shell included, renders for each
 request, and deferred values remain request-scoped. To serve the part that is the same for
 every visitor from a cache and stream only the per-visitor parts, use
-[partial prerendering](/docs/partial-prerendering) (experimental).
+[partial prerendering](/docs/partial-prerendering).
 
 ### SSG - prerender at build
 
@@ -2536,8 +2536,7 @@ a metric instead of its final value - aggregate those with `delta` or
 Content that's the same for everyone and changes rarely → **SSG**. Content that changes
 occasionally and can tolerate seconds-to-minutes of staleness → **ISR**. Per-request or
 per-user content → plain **SSR** (the default). A page that is mostly shared with a few
-per-visitor parts → [partial prerendering](/docs/partial-prerendering)
-(experimental). You can mix them in one app, route by route. A page that must update while it
+per-visitor parts → [partial prerendering](/docs/partial-prerendering). You can mix them in one app, route by route. A page that must update while it
 is open, without a reload, adds [live refresh](/docs/live) to any of them.
 
 ## Nifra - Hydration & pre-hydration forms
@@ -3045,7 +3044,7 @@ NDJSON stream settles the deferred values), and it's framework-agnostic - React
 [Frameworks](/docs/frameworks) for which adapters stream the boundary in the
 server HTML.
 
-[Partial prerendering](/docs/partial-prerendering) (experimental) streams the same
+[Partial prerendering](/docs/partial-prerendering) streams the same
 way from a cached shell: the part of the page every visitor shares goes out at once from the
 cache, and each per-visitor hole streams in as its loader settles.
 
@@ -3397,7 +3396,7 @@ progressive-enhancement forms (work with JS off).
 -
 [Live refresh](/docs/live), [keep-alive](/docs/keep-alive) pages,
 [server components](/docs/server-components), and
-[partial prerendering](/docs/partial-prerendering) (experimental).
+[partial prerendering](/docs/partial-prerendering).
 
 -
 True HMR in dev for all five (`@nifrajs/web/vite`) - see
@@ -7648,7 +7647,7 @@ Regenerate a committed `server-manifest.ts` from `routes/` without a full build.
 
 `nifra scaffold hole <route> <name> [--shared] [--interactive] [--timeout <ms>] [--server]`
 
-Experimental. Add a hole to a [partially prerendered](/docs/partial-prerendering) route: its definition, `boundaries` entry and `Hole` in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.
+Add a hole to a [partially prerendered](/docs/partial-prerendering) route: its definition, `boundaries` entry and `Hole` in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.
 
 `nifra openapi [--format json | yaml] [--path <prefix>]`
 
@@ -13611,7 +13610,7 @@ opt-in [server components](/docs/server-components) on all five adapters
 Partial prerendering (Cache Components)
 
 a `shellLoader` and holes - see
-[Partial prerendering](/docs/partial-prerendering) (experimental)
+[Partial prerendering](/docs/partial-prerendering)
 
 Intercepting routes (`(.)photo`)
 
@@ -13922,16 +13921,13 @@ No span carries a request body, a job payload, an event payload, a raw cache key
 Without a tracer configured, the cache and the queue run the code they ran before: no clock
 reads, no events, no extra frames.
 
-## Nifra - Partial prerendering (experimental)
+## Nifra - Partial prerendering
 
 > Serve a page's shared frame from a cached shell at once, then stream each per-visitor part as its own loader settles. Shared holes, server components in holes, a store shared by processes, Deno and Workers, eligibility rules, the no-JavaScript limit, proxies and connection limits.
 
 Most of a product page is the same for everyone: the title, the description, the layout. A
 partially prerendered route serves that part from a cached shell at once, then streams each
 per-visitor part, a hole, into it as its own loader settles.
-
-[!WARNING] Experimental. It is enabled through `experimental.ppr`, and its API may
-change in any release.
 
 ### Set it up
 
@@ -13970,9 +13966,7 @@ export const app = createWebApp({
   csp: createCspPolicy({
     header: ({ sources }) => `script-src 'self' ${sources}; object-src 'none'; base-uri 'none'`,
   }),
-  experimental: {
-    ppr: partialPrerendering({ shellChecks, origin: "https://shop.example" }),
-  },
+  ppr: partialPrerendering({ shellChecks, origin: "https://shop.example" }),
 })
 ```
 
@@ -20281,8 +20275,8 @@ One package, the same on React, Preact, Vue, Solid and Svelte (pick the renderer
 - Streaming SSR with `defer()`, SSG, and ISR with tag purges - [rendering](https://nifra.dev/docs/rendering).
 - [Live refresh](https://nifra.dev/docs/live) (`@nifrajs/web/live`, `/live-client`, `/live-redis`):
   loaders declare keys, a publish reloads only what read them.
-- [Partial prerendering](https://nifra.dev/docs/partial-prerendering) (`@nifrajs/web/ppr`,
-  experimental): a cached shell, with per-visitor holes streamed in.
+- [Partial prerendering](https://nifra.dev/docs/partial-prerendering) (`@nifrajs/web/ppr`): a cached
+  shell, with per-visitor holes streamed in.
 - [Keep-alive](https://nifra.dev/docs/keep-alive) pages, a query cache, optimistic fetchers, and
   [islands](https://nifra.dev/docs/islands) (`@nifrajs/web/islands`) for pages with no framework runtime.
 - Optional [server components](https://nifra.dev/docs/server-components) on all five adapters:

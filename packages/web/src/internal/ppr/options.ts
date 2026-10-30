@@ -1,7 +1,7 @@
 /**
- * Partial prerendering limits and defaults. Internal while the feature is experimental: every
- * number the plan names lives here once, so a deployment overrides it in one object and the request
- * path reads the resolved copy rather than a scattered constant.
+ * Partial prerendering limits and defaults. Every number the plan names lives here once, so a
+ * deployment overrides it in one object and the request path reads the resolved copy rather than a
+ * scattered constant.
  */
 
 /** Overrides for {@link PPR_DEFAULTS}. Every field is optional; an omitted one keeps its default. */

@@ -116,7 +116,7 @@ export default function Streaming() {
         server HTML.
       </p>
       <p>
-        <a href="/docs/partial-prerendering">Partial prerendering</a> (experimental) streams the same
+        <a href="/docs/partial-prerendering">Partial prerendering</a> streams the same
         way from a cached shell: the part of the page every visitor shares goes out at once from the
         cache, and each per-visitor hole streams in as its loader settles.
       </p>

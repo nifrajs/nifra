@@ -126,7 +126,7 @@ the app grows. The same web layer runs on React, Vue, Solid, Svelte, or Preact.
 The web layer also keeps pages fresh and fast without a second data layer:
 
 - [**Live refresh**](https://nifra.dev/docs/live) - a loader names the keys it read with `live(...)`; a publish reloads only those loaders on every open tab, through the same middleware, gates and loaders a navigation runs.
-- [**Partial prerendering**](https://nifra.dev/docs/partial-prerendering) (experimental) - the part of a page every visitor shares is served from a cache at once, and each per-visitor hole streams in as its loader settles.
+- [**Partial prerendering**](https://nifra.dev/docs/partial-prerendering) - the part of a page every visitor shares is served from a cache at once, and each per-visitor hole streams in as its loader settles.
 - [**Server components**](https://nifra.dev/docs/server-components) on all five adapters - React RSC/Flight, and native server-rendered ranges for the others.
 - [**Keep-alive**](https://nifra.dev/docs/keep-alive) - back and forward bring a page back with its state, scroll and focus.
 - **SSG and ISR** with tag purges that clear data caches, the page store, live pages and the CDN in order, so a writer reads its own write.

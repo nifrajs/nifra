@@ -1,5 +1,6 @@
 /** Svelte's mutation and paged-query stores, and the provider that scopes a client to a component tree. */
 import { expect, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 import { createQueryClient } from "@nifrajs/web"
 import { get } from "svelte/store"
 import { provideQueryClient, useInfiniteQuery, useMutation } from "../src/query.ts"
@@ -170,7 +171,7 @@ test(
     console.log(JSON.stringify({ seeded, empty, other }));
   `
     const proc = Bun.spawn([process.execPath, "--eval", code], {
-      cwd: new URL("..", import.meta.url).pathname,
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
       stdout: "pipe",
       stderr: "pipe",
     })

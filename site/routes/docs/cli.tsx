@@ -362,7 +362,7 @@ export default function Cli() {
             <td>
               <code>nifra scaffold hole &lt;route&gt; &lt;name&gt; [--shared] [--interactive] [--timeout &lt;ms&gt;] [--server]</code>
             </td>
-            <td>Experimental. Add a hole to a <a href="/docs/partial-prerendering">partially prerendered</a> route: its definition, <code>boundaries</code> entry and <code>Hole</code> in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.</td>
+            <td>Add a hole to a <a href="/docs/partial-prerendering">partially prerendered</a> route: its definition, <code>boundaries</code> entry and <code>Hole</code> in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.</td>
           </tr>
           <tr>
             <td>

@@ -46,7 +46,7 @@ export interface ServerComponentsOptions {
   readonly adapter: ServerComponentRenderAdapter
   readonly owners: Readonly<Record<string, ComponentOwner>>
   /**
-   * Experimental: route id to the server components its partially prerendered holes may show, each
+   * Route id to the server components its partially prerendered holes may show, each
    * through `serverHole`. A route is an owner or hosts holes, never both.
    */
   readonly holes?: Readonly<Record<string, ComponentHoles>>

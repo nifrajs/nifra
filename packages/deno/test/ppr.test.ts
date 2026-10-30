@@ -81,7 +81,7 @@ function appWith(probe: Probe, timeout?: number) {
     adapter,
     manifest,
     clientEntry: "/c.js",
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
   })
 }
 

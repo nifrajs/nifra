@@ -1674,7 +1674,7 @@ const scaffoldSpec: CommandSpec<ScaffoldInput, HoleScaffoldResult> = {
     required: ["ok", "page", "backend", "changed", "snippets", "next"],
   }),
   transports: ["cli"],
-  stability: "experimental",
+  stability: "stable",
   argv: {
     positionals: ["kind", "route", "name"],
     flags: [

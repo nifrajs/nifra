@@ -426,7 +426,7 @@ export interface PageExecutionOptions<Env = unknown> {
   /** Logs a failure an `_error` boundary answered. Without a boundary the error propagates and the
    * server logs it, so this runs only where the server never sees the throw. */
   readonly logBoundaryError?: (error: unknown, request: Request) => void
-  /** Experimental partial prerendering: routes with a `shellLoader` stream a shared shell, then holes. */
+  /** Partial prerendering: routes with a `shellLoader` stream a shared shell, then holes. */
   readonly ppr?: PprIntegration
 }
 

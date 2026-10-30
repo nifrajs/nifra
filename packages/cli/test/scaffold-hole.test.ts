@@ -103,7 +103,7 @@ test("a dynamic, a shared and an interactive hole land in the page and its backe
     adapter: reactAdapter,
     manifest: discoverRoutes(join(root, "routes")),
     clientEntry: "/c.js",
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
   })
   const html = await (await app.fetch(new Request("http://shop.test/s/3"))).text()
   for (const name of ["note", "stock-level", "cart"])

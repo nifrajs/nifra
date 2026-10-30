@@ -127,7 +127,7 @@ export default function MigrateFrontend() {
             <td>Partial prerendering (Cache Components)</td>
             <td>
               a <code>shellLoader</code> and holes - see{" "}
-              <a href="/docs/partial-prerendering">Partial prerendering</a> (experimental)
+              <a href="/docs/partial-prerendering">Partial prerendering</a>
             </td>
           </tr>
           <tr>
