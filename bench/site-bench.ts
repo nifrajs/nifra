@@ -208,29 +208,10 @@ export function ohaVersion(): string {
 /** Merge a partial set of slices over the current data - pure; only the passed slices change. */
 export function mergeSiteBench(current: SiteBench, partial: Partial<SiteBench>): SiteBench {
   if (partial.httpMemory === undefined) return { ...current, ...partial }
-
-  const previous = current.httpMemory as unknown
-  let currentMemory: Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>> = {}
-  if (previous !== null && typeof previous === "object") {
-    if ("rows" in previous) {
-      const legacy = previous as Omit<HttpMemoryCapture, "runtime" | "runtimeVersion"> & {
-        readonly node: string
-      }
-      currentMemory = {
-        node: {
-          ...legacy,
-          runtime: "node",
-          runtimeVersion: legacy.node,
-        },
-      }
-    } else {
-      currentMemory = previous as Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>>
-    }
-  }
   return {
     ...current,
     ...partial,
-    httpMemory: { ...currentMemory, ...partial.httpMemory },
+    httpMemory: { ...(current.httpMemory ?? {}), ...partial.httpMemory },
   }
 }
 

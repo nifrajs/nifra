@@ -74,11 +74,11 @@ const mib = (value: number): number => value / 1048576
 
 export function memoryCapture(input: unknown): HttpMemoryCapture {
   const { meta, samples } = parsedResults.parse(input)
-  const expected = expectedTargets[meta.runtime]
+  const expected: readonly string[] = expectedTargets[meta.runtime]
   const keys = new Set<string>()
   for (const sample of samples) {
     const key = `${sample.target}/${sample.round}`
-    if (!(expected as readonly string[]).includes(sample.target))
+    if (!expected.includes(sample.target))
       throw new Error(`unexpected ${meta.runtime} memory target: ${sample.target}`)
     if (sample.round >= meta.rounds || keys.has(key))
       throw new Error(`duplicate or out-of-range memory sample: ${key}`)
