@@ -5,6 +5,7 @@ import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { IGNORED, stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
+import { toPosix } from "../internal/posix-path.ts"
 import { ANCHOR_HOLE } from "../internal/source-facts.ts"
 import { buildRouteTable } from "../introspect.ts"
 import { commentBlockExpectation } from "./comment-markers.ts"
@@ -408,8 +409,11 @@ async function templateFindings(
 ): Promise<Diagnostic[]> {
   const findings: Diagnostic[] = []
   const files: string[] = []
-  for await (const file of new Glob("**/*.{vue,svelte}").scan({ cwd: ctx.root, dot: false }))
+  for await (const entry of new Glob("**/*.{vue,svelte}").scan({ cwd: ctx.root, dot: false })) {
+    // Bun yields `\` paths on Windows, which IGNORED and TEST_DIR (and the reported location) expect as `/`.
+    const file = toPosix(entry)
     if (!IGNORED.test(file) && !TEST_DIR.test(file)) files.push(file)
+  }
   for (const file of files.sort()) {
     // The source index holds only a component's script blocks; the links are in its template.
     const text = readFileSync(join(ctx.root, file), "utf8")
