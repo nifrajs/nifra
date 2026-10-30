@@ -8,7 +8,6 @@
  */
 
 import data from "./benchmarks.json"
-import type { HttpMemoryCapture } from "./memory-types"
 
 /** A bar-chart row: a framework's req/s (higher is better); `you` flags Nifra's rows. */
 export interface BenchRow {
@@ -133,12 +132,9 @@ export function ssrMultiplier(framework: string): string {
 
 export const HTTP_WORKLOADS_CAPTURED: CapturedMeta = data.httpWorkloadsCaptured
 export const HTTP_REALWORLD_CAPTURED: CapturedMeta = data.httpRealworldCaptured
-export const HTTP_MEMORY = Object.values(data.httpMemory ?? {})
-  .filter((capture): capture is HttpMemoryCapture => capture !== undefined)
-  .sort(
-    (a, b) =>
-      ["node", "bun", "deno"].indexOf(a.runtime) - ["node", "bun", "deno"].indexOf(b.runtime),
-  )
+export const HTTP_MEMORY = Object.values(data.httpMemory ?? {}).sort(
+  (a, b) => ["node", "bun", "deno"].indexOf(a.runtime) - ["node", "bun", "deno"].indexOf(b.runtime),
+)
 export const SSR_CAPTURED: CapturedMeta = data.ssrCaptured
 
 export type HttpWorkloadMetric = "getUsers" | "postUsers"
