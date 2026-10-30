@@ -824,73 +824,221 @@
     "oha": "1.16.0"
   },
   "httpMemory": {
-    "date": "2026-10-21",
-    "node": "26.12.0",
-    "platform": "darwin 24.6.0",
-    "cpu": "Apple M3 Max",
-    "revision": "4432d483c2ba5c7656573363c7c67d1934332e5e",
-    "workspaceArtifactSHA256": "bed0864455976407ae428fcd8f4425bb07a5f649f37373c89811db6aba0a48ba",
-    "protocol": "fresh-native-node-v1",
-    "rounds": 5,
-    "requestsPerPhase": 50000,
-    "connections": 50,
-    "rows": [
-      {
-        "name": "Nifra",
-        "version": "5.5.1",
-        "nifra": true,
-        "readyRssMiB": 44.6231689453125,
-        "getRssMiB": 75.0013427734375,
-        "postRssMiB": 77.54827880859375,
-        "postHeapMiB": 15.44805908203125,
-        "peakRssMiB": 129.65625,
-        "postRssMinMiB": 72.953857421875,
-        "postRssMaxMiB": 79.8292236328125
-      },
-      {
-        "name": "Fastify",
-        "version": "5.12.7",
-        "readyRssMiB": 56.3575439453125,
-        "getRssMiB": 81.47015380859375,
-        "postRssMiB": 85.18890380859375,
-        "postHeapMiB": 16.681167602539062,
-        "peakRssMiB": 137.875,
-        "postRssMinMiB": 79.79852294921875,
-        "postRssMaxMiB": 85.48614501953125
-      },
-      {
-        "name": "Elysia",
-        "version": "1.4.30",
-        "readyRssMiB": 50.1534423828125,
-        "getRssMiB": 76.04925537109375,
-        "postRssMiB": 146.3248291015625,
-        "postHeapMiB": 11.137123107910156,
-        "peakRssMiB": 196.4375,
-        "postRssMinMiB": 137.526611328125,
-        "postRssMaxMiB": 152.0140380859375
-      },
-      {
-        "name": "Hono",
-        "version": "4.13.13",
-        "readyRssMiB": 42.02569580078125,
-        "getRssMiB": 79.32958984375,
-        "postRssMiB": 143.3699951171875,
-        "postHeapMiB": 7.964973449707031,
-        "peakRssMiB": 197.53125,
-        "postRssMinMiB": 141.2919921875,
-        "postRssMaxMiB": 153.6231689453125
-      },
-      {
-        "name": "Express",
-        "version": "5.3.0",
-        "readyRssMiB": 46.99664306640625,
-        "getRssMiB": 79.11114501953125,
-        "postRssMiB": 84.7049560546875,
-        "postHeapMiB": 14.678337097167969,
-        "peakRssMiB": 141.21875,
-        "postRssMinMiB": 77.595458984375,
-        "postRssMaxMiB": 85.67364501953125
-      }
-    ]
+    "node": {
+      "date": "2026-10-30",
+      "runtime": "node",
+      "runtimeVersion": "26.12.0",
+      "node": "26.12.0",
+      "platform": "darwin 24.6.0",
+      "cpu": "Apple M3 Max",
+      "revision": "b168d08fe150716c16399bb30de73d11dda21036",
+      "workspaceArtifactSHA256": "237d127d2d1e3d1db6df56d253ec7178a88c0237050f766f4c8b010c32d2e31e",
+      "protocol": "fresh-native-node-v1",
+      "rounds": 5,
+      "requestsPerPhase": 50000,
+      "connections": 50,
+      "rows": [
+        {
+          "name": "Nifra",
+          "version": "5.9.0",
+          "nifra": true,
+          "readyRssMiB": 123.765625,
+          "getRssMiB": 151.9375,
+          "postRssMiB": 156.96875,
+          "postHeapMiB": 14.641502380371094,
+          "peakRssMiB": 156.96875,
+          "postRssMinMiB": 153.765625,
+          "postRssMaxMiB": 159.390625
+        },
+        {
+          "name": "Fastify",
+          "version": "5.12.7",
+          "readyRssMiB": 133.4375,
+          "getRssMiB": 159.171875,
+          "postRssMiB": 162.078125,
+          "postHeapMiB": 16.638381958007812,
+          "peakRssMiB": 162.078125,
+          "postRssMinMiB": 159.109375,
+          "postRssMaxMiB": 165.78125
+        },
+        {
+          "name": "Elysia",
+          "version": "1.4.30",
+          "readyRssMiB": 125.265625,
+          "getRssMiB": 152.140625,
+          "postRssMiB": 226.875,
+          "postHeapMiB": 11.294609069824219,
+          "peakRssMiB": 230.671875,
+          "postRssMinMiB": 211.71875,
+          "postRssMaxMiB": 233.671875
+        },
+        {
+          "name": "Hono",
+          "version": "4.13.13",
+          "readyRssMiB": 117.578125,
+          "getRssMiB": 141.765625,
+          "postRssMiB": 153.453125,
+          "postHeapMiB": 12.679344177246094,
+          "peakRssMiB": 153.453125,
+          "postRssMinMiB": 148.65625,
+          "postRssMaxMiB": 161.578125
+        },
+        {
+          "name": "Express",
+          "version": "5.3.0",
+          "readyRssMiB": 125.3125,
+          "getRssMiB": 158.078125,
+          "postRssMiB": 165.984375,
+          "postHeapMiB": 14.738151550292969,
+          "peakRssMiB": 165.984375,
+          "postRssMinMiB": 157,
+          "postRssMaxMiB": 170.84375
+        }
+      ]
+    },
+    "bun": {
+      "date": "2026-10-30",
+      "runtime": "bun",
+      "runtimeVersion": "1.4.4",
+      "node": "26.12.0",
+      "platform": "darwin 24.6.0",
+      "cpu": "Apple M3 Max",
+      "revision": "b168d08fe150716c16399bb30de73d11dda21036",
+      "workspaceArtifactSHA256": "237d127d2d1e3d1db6df56d253ec7178a88c0237050f766f4c8b010c32d2e31e",
+      "protocol": "fresh-native-bun-v1",
+      "rounds": 5,
+      "requestsPerPhase": 50000,
+      "connections": 50,
+      "rows": [
+        {
+          "name": "Nifra",
+          "version": "5.9.0",
+          "nifra": true,
+          "readyRssMiB": 11.4544677734375,
+          "getRssMiB": 20.15771484375,
+          "postRssMiB": 20.79840087890625,
+          "postHeapMiB": 1.7782869338989258,
+          "peakRssMiB": 29.1884765625,
+          "postRssMinMiB": 19.40771484375,
+          "postRssMaxMiB": 22.11077880859375
+        },
+        {
+          "name": "Fastify",
+          "version": "5.12.7",
+          "readyRssMiB": 32.01702880859375,
+          "getRssMiB": 46.68902587890625,
+          "postRssMiB": 45.2984619140625,
+          "postHeapMiB": 7.864075660705566,
+          "peakRssMiB": 67.2822265625,
+          "postRssMinMiB": 41.6578369140625,
+          "postRssMaxMiB": 46.3453369140625
+        },
+        {
+          "name": "Elysia",
+          "version": "1.4.30",
+          "readyRssMiB": 15.95452880859375,
+          "getRssMiB": 22.65765380859375,
+          "postRssMiB": 24.17340087890625,
+          "postHeapMiB": 2.9440536499023438,
+          "peakRssMiB": 32.0791015625,
+          "postRssMinMiB": 23.56396484375,
+          "postRssMaxMiB": 24.47021484375
+        },
+        {
+          "name": "Hono",
+          "version": "4.13.13",
+          "readyRssMiB": 10.5950927734375,
+          "getRssMiB": 19.57965087890625,
+          "postRssMiB": 20.29827880859375,
+          "postHeapMiB": 1.4645929336547852,
+          "peakRssMiB": 29.8291015625,
+          "postRssMinMiB": 18.51708984375,
+          "postRssMaxMiB": 20.40771484375
+        },
+        {
+          "name": "Express",
+          "version": "5.3.0",
+          "readyRssMiB": 20.84515380859375,
+          "getRssMiB": 41.34527587890625,
+          "postRssMiB": 40.93902587890625,
+          "postHeapMiB": 5.544471740722656,
+          "peakRssMiB": 64.6103515625,
+          "postRssMinMiB": 38.22027587890625,
+          "postRssMaxMiB": 42.40777587890625
+        }
+      ]
+    },
+    "deno": {
+      "date": "2026-10-30",
+      "runtime": "deno",
+      "runtimeVersion": "2.9.7",
+      "node": "26.12.0",
+      "platform": "darwin 24.6.0",
+      "cpu": "Apple M3 Max",
+      "revision": "b168d08fe150716c16399bb30de73d11dda21036",
+      "workspaceArtifactSHA256": "237d127d2d1e3d1db6df56d253ec7178a88c0237050f766f4c8b010c32d2e31e",
+      "protocol": "fresh-native-deno-v1",
+      "rounds": 5,
+      "requestsPerPhase": 50000,
+      "connections": 50,
+      "rows": [
+        {
+          "name": "Nifra",
+          "version": "5.9.0",
+          "nifra": true,
+          "readyRssMiB": 42.4375,
+          "getRssMiB": 66.84375,
+          "postRssMiB": 71.078125,
+          "postHeapMiB": 6.53314208984375,
+          "peakRssMiB": 71.078125,
+          "postRssMinMiB": 68.015625,
+          "postRssMaxMiB": 77.984375
+        },
+        {
+          "name": "Fastify",
+          "version": "5.12.7",
+          "readyRssMiB": 60.375,
+          "getRssMiB": 149.703125,
+          "postRssMiB": 177.84375,
+          "postHeapMiB": 11.658836364746094,
+          "peakRssMiB": 177.84375,
+          "postRssMinMiB": 160.859375,
+          "postRssMaxMiB": 181.484375
+        },
+        {
+          "name": "Elysia",
+          "version": "1.4.30",
+          "readyRssMiB": 51.8125,
+          "getRssMiB": 70,
+          "postRssMiB": 131.15625,
+          "postHeapMiB": 10.009071350097656,
+          "peakRssMiB": 131.15625,
+          "postRssMinMiB": 129.578125,
+          "postRssMaxMiB": 133.390625
+        },
+        {
+          "name": "Hono",
+          "version": "4.13.13",
+          "readyRssMiB": 43.140625,
+          "getRssMiB": 68.65625,
+          "postRssMiB": 73.609375,
+          "postHeapMiB": 6.426322937011719,
+          "peakRssMiB": 73.609375,
+          "postRssMinMiB": 71.625,
+          "postRssMaxMiB": 74.0625
+        },
+        {
+          "name": "Express",
+          "version": "5.3.0",
+          "readyRssMiB": 51.78125,
+          "getRssMiB": 167.5,
+          "postRssMiB": 175.953125,
+          "postHeapMiB": 9.84759521484375,
+          "peakRssMiB": 176.5,
+          "postRssMinMiB": 170.59375,
+          "postRssMaxMiB": 181.515625
+        }
+      ]
+    }
   }
 }

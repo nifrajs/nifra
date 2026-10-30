@@ -6,6 +6,8 @@ import {
   httpFrameworkVersion,
   httpRealworldFromResults,
   httpWorkloadsFromResults,
+  type LegacySiteBench,
+  mergeSiteBench,
   NIFRA_VERSION,
   packageVersion,
   type SiteBench,
@@ -94,6 +96,24 @@ describe("the committed site dataset", () => {
   const data: SiteBench = JSON.parse(
     readFileSync(join(import.meta.dir, "..", "site", "shared", "data", "benchmarks.json"), "utf8"),
   )
+
+  test("a legacy Node memory capture is normalized before a partial runtime update", () => {
+    const nodeCapture = data.httpMemory?.node
+    const bunCapture = data.httpMemory?.bun
+    if (nodeCapture === undefined || bunCapture === undefined)
+      throw new Error("[test] committed Node and Bun memory captures are required")
+    const { runtime, runtimeVersion, ...legacyMemory } = nodeCapture
+    expect(runtime).toBe("node")
+    expect(runtimeVersion).toBe(nodeCapture.node)
+
+    const legacyData: LegacySiteBench = { ...data, httpMemory: legacyMemory }
+    const merged = mergeSiteBench(legacyData, { httpMemory: { bun: bunCapture } })
+    expect(merged.httpMemory).toEqual({
+      node: { ...legacyMemory, runtime: "node", runtimeVersion: legacyMemory.node },
+      bun: bunCapture,
+    })
+  })
+
   const published: ReadonlyArray<
     readonly [string, ReadonlyArray<{ readonly name: string; readonly version: string }>]
   > = [
