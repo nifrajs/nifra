@@ -308,18 +308,21 @@ export function ohaVersion(): string {
 }
 
 /** Merge a partial set of slices over the current data - pure; only the passed slices change. */
+/** Merge a partial set of slices over the current data - pure; only the passed slices change. */
 export function mergeSiteBench(
   current: SiteBench | LegacySiteBench,
   partial: Partial<SiteBench>,
 ): SiteBench {
-  if (current.httpMemory === undefined && partial.httpMemory === undefined)
-    return { ...current, ...partial }
+  const { httpMemory: currentMemory, ...currentWithoutMemory } = current
+  const { httpMemory: partialMemory, ...partialWithoutMemory } = partial
+  const merged = { ...currentWithoutMemory, ...partialWithoutMemory }
+
+  if (currentMemory === undefined && partialMemory === undefined) return merged
   return {
-    ...current,
-    ...partial,
+    ...merged,
     httpMemory: {
-      ...normalizeHttpMemory(current.httpMemory),
-      ...normalizeHttpMemory(partial.httpMemory),
+      ...normalizeHttpMemory(currentMemory),
+      ...normalizeHttpMemory(partialMemory),
     },
   }
 }
