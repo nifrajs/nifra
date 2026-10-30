@@ -79,6 +79,12 @@ export interface ServerComponentRenderAdapter {
     props: unknown,
     context: ComponentRenderContext,
   ): ComponentRender | Promise<ComponentRender>
+  /** Optional React Flight stream for progressive owner refreshes. */
+  renderProgressive?(
+    view: unknown,
+    props: unknown,
+    context: ComponentRenderContext,
+  ): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>
 }
 
 export interface ComponentInstance {
@@ -88,9 +94,27 @@ export interface ComponentInstance {
   readonly parent?: string
 }
 
+export interface ComponentOwnerCachePolicy {
+  /** The cache can serve this complete route document to any anonymous visitor. */
+  readonly scope: "public"
+  /** Required assertion that route, loader, layout, and component output are request-independent. */
+  readonly requestIndependent: true
+  /** Positive freshness window in seconds for this complete owner route. */
+  readonly revalidate: number
+  /** Public invalidation tags shared by this route's cached documents. */
+  readonly tags?: readonly string[]
+}
+
 export interface ComponentOwner {
   readonly components: readonly ServerComponentHandle[]
   readonly capabilities?: readonly string[]
+  /**
+   * Opts the complete owner route document into the shared ISR store. This is an explicit
+   * application contract: every loader, layout, owner callback, and rendered record for this
+   * route must be independent of request identity and secrets. Runtime validation also requires
+   * the anonymous owner scope and no component capabilities.
+   */
+  readonly cache?: ComponentOwnerCachePolicy
   readonly instances: (
     ctx: ServerComponentContext,
   ) => readonly ComponentInstance[] | Promise<readonly ComponentInstance[]>
@@ -132,6 +156,10 @@ export interface ComponentState {
 export interface ServerComponentRuntime {
   owns(routeId: string): boolean
   capabilities(routeId: string): readonly string[]
+  /** Deployment/build/adapter/route identity for explicitly public owner-page ISR entries. */
+  cacheIdentity?(routeId: string): string | undefined
+  /** Public ISR policy for the complete document of an opted-in owner route. */
+  cachePolicy?(routeId: string): ComponentOwnerCachePolicy | undefined
   classify(request: Request, routeId: string): import("./protocol.ts").ComponentRequest | undefined
   execute(
     routeId: string,
@@ -139,6 +167,13 @@ export interface ServerComponentRuntime {
     selection?: import("./protocol.ts").ComponentRequest,
     nonce?: string,
   ): Promise<ComponentState>
+  /** Progressive owner refresh; present only when the render adapter supports it. */
+  progressive?(
+    routeId: string,
+    context: ServerComponentContext,
+    selection: import("./protocol.ts").ComponentRequest,
+    nonce?: string,
+  ): Promise<Response>
   response(state: ComponentState, selection: import("./protocol.ts").ComponentRequest): Response
   failure(error: unknown): Response
   /** Whether the route's partially prerendered holes may show server components. */

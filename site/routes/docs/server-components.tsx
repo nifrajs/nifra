@@ -29,14 +29,22 @@ import { componentBuild } from "@nifrajs/web/server-components/build-info"
 import { createServerComponents, serverComponentInstance } from "@nifrajs/web/server-components"
 import { vueServerComponents } from "@nifrajs/web-vue/server-components"
 import { Product } from "./Product.component.server"
+declare const deploymentId: string // stable and unique for this deployed environment
 
 const components = createServerComponents({
   build: componentBuild,
+  deployment: deploymentId,
   adapter: vueServerComponents(),
   owners: {
     product: { // exact manifest route id, not a URL pattern
       components: [Product],
       scope: "anonymous", // personalized pages supply a public auth-scope token
+      cache: {
+        scope: "public",
+        requestIndependent: true,
+        revalidate: 300,
+        tags: ["catalog"],
+      },
       instances: (ctx) => [serverComponentInstance(Product, "product", { id: ctx.params.id })],
     },
   },
@@ -150,8 +158,9 @@ export default function ServerComponents() {
     <p>The runtime matrix covers Bun 1.3.14 and 1.4.4, Node 22.23.3 and 26.12.0, Deno 2.0.0 and 2.9.7, Cloudflare Workers and Pages under workerd compatibility date 2026-09-18, and Vercel's Node 22 entry. Browser certification uses Playwright 1.63.0 with Chromium 153.0.8010.12, Firefox 155.0 and WebKit 26.6. Vanilla retains ordinary SSR; its server-component opt-in is rejected.</p>
 
     <h2>Streaming, caching and CSP</h2>
-    <p>Rendering is bounded before it becomes a verified record. React's exact Flight bytes produce both initial HTML and the hydration payload. Refresh uses a bounded framed stream; the client validates the entire result before native preparation and commit. This first release does not progressively commit partial component trees or expose a generic component-defer API.</p>
-    <p>Component HTML, page-data and refresh responses are <code>private, no-store</code>. ISR lookup, public fragment caching and static prerendering are bypassed or rejected for opted-in owners. Use ordinary SSR routes for public cached pages. A nonce must be fresh per response; pass it through <code>createWebApp</code>. Strict CSP and Chromium Trusted Types are covered by the browser suite. If your policy requires Trusted Types, install <code>installComponentTrustedTypesPolicy()</code> from <code>@nifrajs/web/server-components/trusted-html</code> before hydration and allow the native framework's policy where required.</p>
+    <p>Initial owner-route HTML still waits for its complete state. Owner refreshes negotiate <code>application/vnd.nifra.component-flight-v1</code> only for one selected React record with no currently mounted Nifra descendants. The server sends a bounded metadata frame followed by sanitized Flight rows as they become ready. The client checks the closed metadata shape, route owner, build, identity scope and navigation epochs before handing the stream to React; each frame is checked for size, order, count and completion before its bytes reach Flight. React commits the record root and ready Suspense fallbacks while later Flight segments remain in flight, then reveals each boundary as its segment resolves. Refreshes with multiple Nifra records or currently mounted Nifra descendants, unsupported adapters or no Flight negotiation use the bounded buffered response. This refresh protocol stays separate from PPR and does not make refresh output cacheable.</p>
+    <p>An owner route is eligible for shared ISR only when its owner declares <code>cache: { scope: "public", requestIndependent: true, revalidate, tags }</code>. That contract covers the complete route, layouts and loaders, owner callbacks, component authorization and loading, and rendered output. Runtime also requires a static anonymous owner scope, a deployment identity, and no owner capabilities. Never opt in output derived from a user, credential, authorization decision or secret. Cache identity includes the canonical URL, deployment, build, adapter and route. Requests with credentials or accepted authentication state, data or swap mode, component refreshes, non-GET methods, errors, <code>Set-Cookie</code> or unsupported <code>Vary</code> bypass storage. Responses leaving Nifra remain <code>private, no-store</code>; only the configured Nifra ISR store keeps an approved document. To purge an owner route by path, pass the same app instance to <code>revalidateEndpoint({ app, store, secret })</code> so the purge uses the same deployment/build/route partition. Tag purges affect entries carrying the declared tag. Without the ISR wrapper, owner caching is disabled.</p>
+    <p>PPR holes keep their separate caching lifecycle. A nonce must be fresh per response; pass it through <code>createWebApp</code>. Strict CSP and Chromium Trusted Types are covered by the browser suite. If your policy requires Trusted Types, install <code>installComponentTrustedTypesPolicy()</code> from <code>@nifrajs/web/server-components/trusted-html</code> before hydration and allow the native framework's policy where required.</p>
     <p>HTML, URLs, styles, slots and portal targets are validated before insertion. React-owned bootstrap scripts require the expected nonce; raw executable HTML and foreign script/assets are rejected. Per-input, per-stream, per-document, depth, concurrency, queue and deadline limits fail closed. Cancellation propagates to reads and native work; an uncooperative promise retains its admission slot until it settles.</p>
     <p>Forms work without JavaScript. Successful actions reauthorize the owner GET exactly once. Parent-domain cookie changes, and Secure cookies on a request the app sees as <code>http:</code> (a TLS terminator in front), return 303 to the same path so the browser applies its cookie policy before the GET, preserving the action headers and cookies.</p>
 

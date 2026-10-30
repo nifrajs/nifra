@@ -1867,6 +1867,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let layoutRetained: readonly number[] = []
         let responseHeaders: Record<string, string> | undefined
         let componentState: import("../server-components/types.ts").ComponentState | undefined
+        let componentAnswer: Response | undefined
         const requestApi = apiFor(c)
         let run: LayoutRun | undefined
         let skipPage = false
@@ -2061,12 +2062,22 @@ export function createPageRequestExecutor<Env = unknown>(
                 layoutData: layoutData ?? [],
               }),
             )
-            componentState = await componentRuntime!.execute(
-              route.id,
-              componentContext,
-              componentRequest,
-              options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
-            )
+            const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
+            if (componentRequest !== undefined && componentRuntime!.progressive !== undefined) {
+              componentAnswer = await componentRuntime!.progressive(
+                route.id,
+                componentContext,
+                componentRequest,
+                nonce,
+              )
+            } else {
+              componentState = await componentRuntime!.execute(
+                route.id,
+                componentContext,
+                componentRequest,
+                nonce,
+              )
+            }
           }
           if (holeStates !== undefined) {
             // The static resolver names every boundary, leaving the dynamic ones to the holes.
@@ -2094,8 +2105,13 @@ export function createPageRequestExecutor<Env = unknown>(
           if (componentRequest !== undefined) return componentRuntime!.failure(err)
           return renderRouteFailure(c.req, c.env, route, c.params, err, run, controls.personalized)
         }
-        if (componentRequest !== undefined && componentState !== undefined) {
-          const answer = componentRuntime!.response(componentState, componentRequest)
+        if (componentRequest !== undefined) {
+          const answer =
+            componentAnswer ??
+            (componentState === undefined
+              ? undefined
+              : componentRuntime!.response(componentState, componentRequest))
+          if (answer === undefined) throw new Error("component_contract")
           const headers = new Headers(answer.headers)
           for (const [name, value] of Object.entries(responseHeaders ?? {}))
             if (name !== "cache-control" && name !== "content-type" && name !== "vary")

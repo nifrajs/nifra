@@ -53,3 +53,28 @@ test("public Flight rejects malformed framing, closure actions and excessive nes
   )
   expect(await new Response(stream).text()).toBe('0:I["client",[],"Counter"]\n1:42\n')
 })
+
+test("public Flight stream publishes a complete row before the source ends and abort cancels it", async () => {
+  const encoder = new TextEncoder()
+  const abort = new AbortController()
+  let cancelSource!: () => void
+  const sourceCancelled = new Promise<void>((resolve) => {
+    cancelSource = resolve
+  })
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('0:["$","p",null,{"children":"fast"},"$1","$2",1]\n'))
+    },
+    cancel() {
+      cancelSource()
+    },
+  })
+  const output = await publicFlightStream(source, abort.signal)
+  const reader = output.getReader()
+  const first = await reader.read()
+  expect(first.done).toBe(false)
+  expect(new TextDecoder().decode(first.value)).toContain("fast")
+
+  abort.abort()
+  await sourceCancelled
+})

@@ -1,8 +1,9 @@
 import { setHoleComponents } from "../internal/hole-runtime.ts"
 import { onPageRelease } from "../internal/page-events.ts"
 import { ServerComponentError } from "./error.ts"
-import { readComponentFrames } from "./frames.ts"
+import { readComponentFlightFrames, readComponentFrames } from "./frames.ts"
 import {
+  COMPONENT_FLIGHT_MEDIA_TYPE,
   COMPONENT_HEADER,
   COMPONENT_LIMITS,
   COMPONENT_MEDIA_TYPE,
@@ -11,7 +12,7 @@ import {
 import { registerComponentController, unregisterComponentController } from "./registry.ts"
 import { componentResponseFailure } from "./response.ts"
 import { BoundedComponentTasks } from "./scheduler.ts"
-import { parseComponentRecord, parseComponentState } from "./state.ts"
+import { componentToken, parseComponentRecord, parseComponentState } from "./state.ts"
 import { readComponentBytes } from "./stream.ts"
 import type { ComponentKey, ComponentRecord, ComponentState, ServerComponent } from "./types.ts"
 import { componentInputKey, componentValue } from "./value.ts"
@@ -49,6 +50,13 @@ export interface ComponentClientAdapter {
     prepared: unknown,
     current: CurrentComponent,
   ): void | Promise<void>
+  /** Update a mounted root from a progressive framework stream and return its bounded snapshot. */
+  updateProgressive?(
+    root: ComponentClientRoot,
+    flight: ReadableStream<Uint8Array>,
+    current: CurrentComponent,
+    signal: AbortSignal,
+  ): Promise<NonNullable<ComponentRecord["payload"]>>
 }
 export interface ComponentControllerOptions {
   readonly state: ComponentState
@@ -235,7 +243,10 @@ export class ComponentController {
     mounted.abort.abort()
     mounted.abort = new AbortController()
     mounted.generation++
-    for (const child of this.#descendants(instance)) {
+    const descendants = this.#descendants(instance)
+    const acceptProgressive =
+      this.#options.adapter.updateProgressive !== undefined && descendants.length === 0
+    for (const child of descendants) {
       child.abort.abort()
       child.abort = new AbortController()
       child.generation++
@@ -270,7 +281,9 @@ export class ComponentController {
           signal,
           headers: {
             [COMPONENT_HEADER]: componentRequestHeader(request),
-            accept: COMPONENT_MEDIA_TYPE,
+            accept: acceptProgressive
+              ? `${COMPONENT_FLIGHT_MEDIA_TYPE}, ${COMPONENT_MEDIA_TYPE}`
+              : COMPONENT_MEDIA_TYPE,
           },
         })
         if (!current()) return false
@@ -337,12 +350,100 @@ export class ComponentController {
           }
           return false
         }
-        if (
-          response.headers.get("content-type")?.split(";")[0]?.trim() !== COMPONENT_MEDIA_TYPE ||
-          response.body === null
-        )
+        const responseType = response.headers.get("content-type")?.split(";")[0]?.trim()
+        if (responseType === COMPONENT_FLIGHT_MEDIA_TYPE && !acceptProgressive)
           throw new ServerComponentError("component_protocol", 400)
-        const decoded = await readComponentFrames(response.body, signal)
+        let decoded: Awaited<ReturnType<typeof readComponentFrames>>
+        let progressiveUpdated = false
+        if (responseType === COMPONENT_FLIGHT_MEDIA_TYPE) {
+          if (
+            response.body === null ||
+            this.#options.adapter.updateProgressive === undefined ||
+            mounted.root === undefined
+          )
+            throw new ServerComponentError("component_protocol", 400)
+          const progressive = await readComponentFlightFrames(response.body, signal)
+          const discardFlight = async (): Promise<void> => {
+            await progressive.flight.cancel().catch(() => {
+              /* Preserve the metadata, scope, or navigation failure that made the body unusable. */
+            })
+          }
+          let meta: Record<string, unknown>
+          try {
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The complete metadata object is checked against a closed key set and every field below is validated before use.
+            meta = componentValue(progressive.metadata, COMPONENT_LIMITS.headerBytes) as Record<
+              string,
+              unknown
+            >
+          } catch (error) {
+            await discardFlight()
+            throw error
+          }
+          const fields = [
+            "v",
+            "build",
+            "adapter",
+            "owner",
+            "scope",
+            "instance",
+            "reference",
+            "key",
+            "parent",
+            "generation",
+            "routeEpoch",
+            "authEpoch",
+          ]
+          if (
+            typeof meta !== "object" ||
+            meta === null ||
+            Array.isArray(meta) ||
+            Object.keys(meta).length !== fields.length ||
+            fields.some((field) => !Object.hasOwn(meta, field)) ||
+            meta.v !== request.v ||
+            meta.build !== request.build ||
+            meta.adapter !== this.state.adapter ||
+            !componentToken(meta.owner) ||
+            !componentToken(meta.scope) ||
+            meta.instance !== instance ||
+            meta.reference !== request.reference ||
+            meta.key !== request.key ||
+            meta.parent !== request.parent ||
+            meta.generation !== request.generation ||
+            meta.routeEpoch !== request.routeEpoch ||
+            meta.authEpoch !== request.authEpoch ||
+            meta.owner !== this.state.owner
+          ) {
+            await discardFlight()
+            throw new ServerComponentError("component_protocol", 400)
+          }
+          if (meta.scope !== this.state.scope) {
+            await discardFlight()
+            this.#options.onError?.("component_denied")
+            await this.invalidateScope()
+            return false
+          }
+          if (!current() || signal.aborted) {
+            await discardFlight()
+            return false
+          }
+          updating = true
+          const payload = await this.#options.adapter.updateProgressive(
+            mounted.root,
+            progressive.flight,
+            current,
+            signal,
+          )
+          if (!current()) return false
+          decoded = {
+            metadata: meta,
+            value: { ...this.#state, records: [{ ...mounted.record, payload }] },
+          }
+          progressiveUpdated = true
+        } else {
+          if (responseType !== COMPONENT_MEDIA_TYPE || response.body === null)
+            throw new ServerComponentError("component_protocol", 400)
+          decoded = await readComponentFrames(response.body, signal)
+        }
         const next = parseComponentState(
           decoded.value,
           COMPONENT_LIMITS.outputBytes,
@@ -393,12 +494,14 @@ export class ComponentController {
         }
         if (!current()) return false
         const record = next.records[0]!
-        const prepared = await this.#options.adapter.prepare(record, current, mounted.host, next)
-        if (!current() || signal.aborted) return false
-        if (mounted.root === undefined) throw new ServerComponentError("component_contract")
-        updating = true
-        await this.#options.adapter.update(mounted.root, record, prepared, current)
-        if (!current()) return false
+        if (!progressiveUpdated) {
+          const prepared = await this.#options.adapter.prepare(record, current, mounted.host, next)
+          if (!current() || signal.aborted) return false
+          if (mounted.root === undefined) throw new ServerComponentError("component_contract")
+          updating = true
+          await this.#options.adapter.update(mounted.root, record, prepared, current)
+          if (!current()) return false
+        }
         const replaced = recordSubtree(this.#state.records, instance)
         this.#state = {
           ...this.#state,
