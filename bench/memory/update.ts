@@ -1,7 +1,8 @@
 import { assertBenchmarkPublishable } from "../publish-guard.ts"
-import { publishMemory } from "./publish.ts"
+import { publishMemoryBatch } from "./publish.ts"
 
 await assertBenchmarkPublishable()
+const captures: string[] = []
 for (const runtime of ["node", "bun", "deno"] as const) {
   console.log(`Capturing HTTP memory on ${runtime}`)
   const capture = Bun.spawn(
@@ -18,5 +19,6 @@ for (const runtime of ["node", "bun", "deno"] as const) {
     { stdout: "inherit", stderr: "inherit" },
   )
   if ((await capture.exited) !== 0) throw new Error(`${runtime} memory capture failed`)
-  await publishMemory(`bench/profiling/results/${runtime}/realworld-memory.json`)
+  captures.push(`bench/profiling/results/${runtime}/realworld-memory.json`)
 }
+await publishMemoryBatch(captures)

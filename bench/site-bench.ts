@@ -13,7 +13,11 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import type { HttpMemoryCapture, HttpMemoryRuntime } from "../site/shared/data/memory-types.ts"
+import type {
+  HttpMemoryCapture,
+  HttpMemoryRow,
+  HttpMemoryRuntime,
+} from "../site/shared/data/memory-types.ts"
 
 export interface BenchRow {
   readonly name: string
@@ -126,6 +130,103 @@ export interface SiteBench {
   readonly proof: readonly ProofStat[]
 }
 
+export type LegacyNodeHttpMemoryCapture = Omit<HttpMemoryCapture, "runtime" | "runtimeVersion">
+export type LegacySiteBench = Omit<SiteBench, "httpMemory"> & {
+  readonly httpMemory?: LegacyNodeHttpMemoryCapture
+}
+
+const HTTP_MEMORY_RUNTIMES = ["node", "bun", "deno"] as const
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function isMemoryRow(value: unknown): value is HttpMemoryRow {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.name === "string" &&
+    typeof value.version === "string" &&
+    (!("nifra" in value) || typeof value.nifra === "boolean") &&
+    typeof value.readyRssMiB === "number" &&
+    typeof value.getRssMiB === "number" &&
+    typeof value.postRssMiB === "number" &&
+    typeof value.postHeapMiB === "number" &&
+    typeof value.peakRssMiB === "number" &&
+    typeof value.postRssMinMiB === "number" &&
+    typeof value.postRssMaxMiB === "number"
+  )
+}
+
+function isMemoryCaptureBase(value: unknown): value is LegacyNodeHttpMemoryCapture {
+  if (!isRecord(value) || !Array.isArray(value.rows) || !value.rows.every(isMemoryRow)) return false
+  return (
+    typeof value.node === "string" &&
+    typeof value.date === "string" &&
+    typeof value.platform === "string" &&
+    typeof value.cpu === "string" &&
+    typeof value.revision === "string" &&
+    typeof value.workspaceArtifactSHA256 === "string" &&
+    (value.protocol === "fresh-native-node-v1" ||
+      value.protocol === "fresh-native-bun-v1" ||
+      value.protocol === "fresh-native-deno-v1") &&
+    typeof value.rounds === "number" &&
+    typeof value.requestsPerPhase === "number" &&
+    typeof value.connections === "number"
+  )
+}
+
+function isLegacyNodeMemoryCapture(value: unknown): value is LegacyNodeHttpMemoryCapture {
+  return (
+    isMemoryCaptureBase(value) &&
+    value.protocol === "fresh-native-node-v1" &&
+    !("runtime" in value) &&
+    !("runtimeVersion" in value)
+  )
+}
+
+function isHttpMemoryRuntime(value: string): value is HttpMemoryRuntime {
+  return HTTP_MEMORY_RUNTIMES.some((runtime) => runtime === value)
+}
+
+function isHttpMemoryCapture(
+  value: unknown,
+  runtime: HttpMemoryRuntime,
+): value is HttpMemoryCapture {
+  const expectedProtocol =
+    runtime === "node"
+      ? "fresh-native-node-v1"
+      : runtime === "bun"
+        ? "fresh-native-bun-v1"
+        : "fresh-native-deno-v1"
+  return (
+    isMemoryCaptureBase(value) &&
+    "runtime" in value &&
+    value.runtime === runtime &&
+    "runtimeVersion" in value &&
+    typeof value.runtimeVersion === "string" &&
+    value.protocol === expectedProtocol
+  )
+}
+
+function normalizeHttpMemory(
+  value: unknown,
+): Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>> {
+  if (value === undefined || value === null) return {}
+  if (isLegacyNodeMemoryCapture(value)) {
+    return { node: { ...value, runtime: "node", runtimeVersion: value.node } }
+  }
+  if (!isRecord(value)) throw new Error("invalid HTTP memory capture map")
+
+  const captures: Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>> = {}
+  for (const [runtime, candidate] of Object.entries(value)) {
+    if (!isHttpMemoryRuntime(runtime) || !isHttpMemoryCapture(candidate, runtime)) {
+      throw new Error(`invalid HTTP memory capture for ${runtime}`)
+    }
+    captures[runtime] = candidate
+  }
+  return captures
+}
+
 const SITE_DATA = join(import.meta.dir, "..", "site", "shared", "data", "benchmarks.json")
 
 function manifestVersion(path: string): string {
@@ -206,12 +307,19 @@ export function ohaVersion(): string {
 }
 
 /** Merge a partial set of slices over the current data - pure; only the passed slices change. */
-export function mergeSiteBench(current: SiteBench, partial: Partial<SiteBench>): SiteBench {
-  if (partial.httpMemory === undefined) return { ...current, ...partial }
+export function mergeSiteBench(
+  current: SiteBench | LegacySiteBench,
+  partial: Partial<SiteBench>,
+): SiteBench {
+  if (current.httpMemory === undefined && partial.httpMemory === undefined)
+    return { ...current, ...partial }
   return {
     ...current,
     ...partial,
-    httpMemory: { ...(current.httpMemory ?? {}), ...partial.httpMemory },
+    httpMemory: {
+      ...normalizeHttpMemory(current.httpMemory),
+      ...normalizeHttpMemory(partial.httpMemory),
+    },
   }
 }
 
@@ -367,7 +475,7 @@ export function httpRealworldFromResults(
 /** Read the site data, merge the slice, write it back (stable 2-space JSON). No-ops on an empty slice. */
 export async function writeSiteBench(partial: Partial<SiteBench>): Promise<void> {
   if (Object.keys(partial).length === 0) return
-  const current = (await Bun.file(SITE_DATA).json()) as SiteBench
+  const current: SiteBench | LegacySiteBench = await Bun.file(SITE_DATA).json()
   await Bun.write(SITE_DATA, `${JSON.stringify(mergeSiteBench(current, partial), null, 2)}\n`)
   process.stderr.write(
     `updated site/shared/data/benchmarks.json (${Object.keys(partial).join(", ")})\n`,
