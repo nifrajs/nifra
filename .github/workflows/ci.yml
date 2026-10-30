@@ -199,7 +199,7 @@ jobs:
           bun-version: 1.4.4
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
           deno-version: 2.9.7
@@ -320,7 +320,7 @@ jobs:
       # off `packageManager`, which looks for a lockfile this Bun repo does not have.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -354,7 +354,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -389,7 +389,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
 
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
