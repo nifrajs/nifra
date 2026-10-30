@@ -13937,7 +13937,7 @@
     "name": "RouteSlotRuntime",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteSlotRuntime {\n    readonly router: ClientRouter;\n    readonly routes: Readonly<Record<string, readonly unknown[]>>;\n    readonly searchSchemas: Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>> | undefined;\n    readonly matchChains: Readonly<Record<string, MatchChain>> | undefined;\n}"
+    "signature": "export interface RouteSlotRuntime {\n    readonly router: RouteSlotRouter;\n    readonly routes: Readonly<Record<string, readonly unknown[]>>;\n    readonly searchSchemas: Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>> | undefined;\n    readonly matchChains: Readonly<Record<string, MatchChain>> | undefined;\n}"
   },
   {
     "name": "RouteSlotStateError",
@@ -25270,8 +25270,7 @@
     "name": "stripRouteSlots",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function stripRouteSlots(path: string): string;",
-    "doc": "/** Remove framework-owned state before the active page's loader sees its search params. */"
+    "signature": "export declare function stripRouteSlots(path: string): string;"
   },
   {
     "name": "stripSvgPreamble",
