@@ -1,5 +1,51 @@
 # @nifrajs/web
 
+## 5.10.0
+
+### Minor Changes
+
+- 611a3be: Expose mutation and infinite-query bindings across the framework adapters, with request-scoped query-client providers and SSR cache hydration. Mutation functions and callbacks receive a cooperative abort signal, and identity changes cancel pending work across tabs. `dehydrate` can filter regular and infinite query values before they are serialized to the browser.
+- 7f32bb2: `dehydrate` now sends nothing unless `shouldDehydrateQuery` selects the queries to include. Every dehydrated value is serialized into the page and readable by the visitor, so a bare `dehydrate()` no longer sends every successful query. To keep the previous behavior, pass `shouldDehydrateQuery: () => true`.
+- d2066e0: Add opt-in local `?image` metadata imports and content-hashed build-time responsive variants using the existing injectable image backends. Emit images with client, SSR and static builds, and infer imported dimensions in all five UI adapters. String image URLs retain their existing dimension requirements.
+  
+  Add explicit static translated-path mappings to i18n routing, with reciprocal URL/SEO helpers, availability-aware redirects and static-path enumeration. These mappings do not implicitly create filesystem route aliases.
+  
+  Add `vercelRuntime: "node"` for ordinary SSR Vercel builds through both bundlers, using a shared streaming Node request bridge. Vercel Edge remains the default.
+- a6af4c9: A path segment has one spelling in every place a framework writes one. `@nifrajs/core/pattern` exports `encodePathSegment(value)`, `decodePathSegment(raw)`, `browserPathSegment(value)` and `fillRoutePath(pattern, params)`. `encodePathSegment` leaves `A-Za-z0-9 - . _ ~ ! $ & ' ( ) * + , : = @` as written and percent-encodes everything else in upper-case hex, so `;`, `[`, `]` and `|` are escaped (a proxy that reads `;` as a path parameter cannot change the path). A value no segment can carry (`.`, `..`, a lone surrogate) throws `RangeError`. `fillRoutePath` reports a value the router would read back as different params, such as `name` = `a.b` in `:name.:ext`, as invalid.
+  
+  `getStaticPaths` output, the prerender report and written files, `enumerateStaticRoutes`, the typed client's path params and the contract fuzzer's request paths all use it. A `getStaticPaths` entry that leaves out a param or holds one no path can carry is skipped, and the prerender report names the param. Files in `public/` are served under the spelling a page links and the one a browser sends for the same name.
+- 683c3d6: A partially prerendered route may declare an intercepting boundary (a modal route) beside its holes. `partialPrerendering()` used to refuse it at the first request; now the shell carries the boundary unresolved, and a client navigation to its URL opens the target over the page with the page and its filled holes still mounted. The boundary is not a hole and does not count toward `maxHolesPerRoute`.
+- 824a75e: Partial prerendering is no longer experimental. `createWebApp` takes it as `ppr`, where it was `experimental.ppr`, and the `experimental` option is gone: passing it throws a `TypeError` that names `ppr`, and the startup errors name `ppr.origin`, `ppr.deployment` and `ppr.store`. `nifra upgrade` moves `experimental: { ppr }` to `ppr` in a `createWebApp` options literal and lists any other `experimental` shape it finds there by line (options spread in, or built in another file, are yours to check). `nifra scaffold` is stable.
+- 5845e1c: A route file whose name holds `#` or `?` is an error that names the file. A request path cannot carry either character, so no URL reached such a route; its link was built with a fragment or a query in it.
+- 5d1be78: `nifra dev`, `nifra build`, `nifra check` and `nifra types` write `.nifra/types/routes.d.ts`, which fills `RouteTable` (exported from `@nifrajs/web`) with one `{ params, search }` entry per URL pattern. `params` comes from the compiled pattern, the function the router matches with, and `search` is the route's `searchSchema` output (the raw query when it declares none). An optional segment such as `[[lang]]` is two entries with exact params each, and `Route.Params` is read from the same patterns. Every generated `./+types` module references the table, so a program that imports any route's types loads it. `Href` is exported as the type of a built in-app URL.
+  
+  `nifra check` warns when a source file imports a navigation API (`Link`, `useNavigate`, `redirect` and the like) and no program loads the table; listing `.nifra/types/routes.d.ts` under `files` in tsconfig.json clears it. The starter's `.nifra/types` includes the table.
+  
+  Upgrade: `RouteSearch`, `generateRouteSearchTypes` and `GenerateRouteSearchTypesOptions` are removed, and so is `nifra sync-routes` (with the `nifra_sync_routes` MCP tool). Delete `nifra-routes.d.ts` and its tsconfig `include` entry, and move any hand-written `RouteSearch` entry to `RouteTable` as `"/path": { params: ...; search: ... }`.
+- 1faf86c: `href({ to, params, search, hash })` builds an in-app URL from a route pattern and returns an `Href`; `rawHref(path)` returns one for a same-origin path built elsewhere (a CMS link, `/llms.txt`). `to` is a key of the generated `RouteTable`, so a misspelt route, a missing, misspelt or extra param, and a `search` that breaks the route's schema are compile errors. A route without a `searchSchema` takes any `search`. Each param is encoded as one path segment, so a value such as `a/b` or `//evil.com` cannot change where the URL goes; a param that is missing, empty, `.`, `..` or an unpaired surrogate throws a `TypeError` naming it and the pattern. `rawHref` throws a `TypeError` unless `isSameOriginPath` accepts the path. Both are exported by `@nifrajs/web` and by the `/router` entry of every adapter.
+  
+  `navigate` takes an `Href` or a history delta. A string, a template literal and the `{ to, search }` object form are compile errors, and a value forged past the types is still held to the same-origin check the browser navigate makes. `<Navigate to>` and the `useSearchParams` setter in `@nifrajs/web-react` pass their path through `rawHref`, so an off-origin `to` throws instead of doing nothing. `isSameOriginPath` is exported from `@nifrajs/core/pattern` as well as `@nifrajs/core/server`.
+  
+  Upgrade: `navigate("/users/7")` becomes `navigate(href({ to: "/users/:id", params: { id: "7" } }))`, `navigate({ to, search, replace: true })` becomes `navigate(href({ to, search }), { replace: true })`, and a path built elsewhere is `navigate(rawHref(path))`. `resolveNavigate`, `NavigateTargetInput` and `NavigateSearchOf` are removed from `@nifrajs/web`.
+- 950996b: `redirect()` takes an `Href` (from `href()` or `rawHref()`), and any other string needs `{ external: true }`, so `redirect("/login")`, a template literal and a string variable are compile errors. React's `Link`, `NavLink` and `Navigate` take `to: Href`. `Link` and `NavLink` render the anchor without an `href` (and log a `console.error`) when `to` is not a same-origin path, instead of writing it into the anchor's `href`; a link to another site is a plain `<a href>`.
+  
+  Upgrade: `redirect("/login")` becomes `redirect(href({ to: "/login" }))`, `<Link to="/pricing">` becomes `<Link to={href({ to: "/pricing" })}>`, and a path built elsewhere is `rawHref(path)` in either. `redirect(url, { external: true })` is unchanged.
+
+### Patch Changes
+
+- 535c4e5: Bound nested percent-decoding when translated pathnames are looked up, and refuse segments nested deeper than three encodings. Publish each development image asset once per build instead of re-verifying earlier ones on every import. Mark ordinary Vercel Node functions as response-streaming.
+- 87e7fd9: Closing a modal route with Back shows the page underneath as it was instead of fetching it again. The fetch rebuilt the page's dynamic boundaries: each showed its fallback and then refilled, under a page that never left the screen. The router now restores the page it kept, unless that page was loaded for a previous visitor or marked stale.
+- 0aa10d0: Publish cached and emitted image files atomically, and name the file to delete when one does not match its content hash. Keep animated images as the original instead of failing a build that resizes others. Reuse processed variants across the client and server builds. Keep image files out of the size report and write each emitted file once per build. Open source images through a pinned descriptor. Accept an absolute http(s) `publicPath` and refuse a plugin built for a different one. Answer dev requests outside the image prefix without parsing them.
+- ab69ee6: A tab that reads a new identity epoch cookie announces it on the page's shared identity channel, so its own identity listeners run once.
+- 548bade: A destination that is not a same-origin path costs only its own link: `Link` and `NavLink` render the anchor without an `href`, `Navigate` and `setSearchParams` do not navigate, and each logs a `console.error` instead of throwing. `rawHref` still throws a `TypeError`.
+- e465ed5: Prevent check/use races in build-time and development image output. Create assets with exclusive, no-follow opens; validate and read existing content through the held descriptor; refuse swapped files/directories and bound verification reads. Add deterministic symlink-swap regressions. Fix new-file lint violations and restore imported-image resolver coverage without changing lint or coverage baselines.
+- d2066e0: Restore the repository check gate without weakening global rules. Distinguish property names from variable self-references in SQL assembly scanning, retain detection of real interpolation and concatenation, and document reviewed comparisons of public labels/object identities and escaped table identifiers. Correct fixture dependency declarations and backend zoning while preserving intentionally unsafe PPR shell tests.
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [1faf86c]
+  - @nifrajs/core@5.10.0
+  - @nifrajs/island-trigger@5.10.0
+
 ## 5.9.0
 
 ### Minor Changes

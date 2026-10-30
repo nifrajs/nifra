@@ -1,5 +1,54 @@
 # @nifrajs/examples
 
+## 5.10.0
+
+### Patch Changes
+
+- Updated dependencies [535c4e5]
+- Updated dependencies [15fe870]
+- Updated dependencies [fb0a18b]
+- Updated dependencies [87e7fd9]
+- Updated dependencies [611a3be]
+- Updated dependencies [be02893]
+- Updated dependencies [7f32bb2]
+- Updated dependencies [0aa10d0]
+- Updated dependencies [ab69ee6]
+- Updated dependencies [a0a8b34]
+- Updated dependencies [548bade]
+- Updated dependencies [d2066e0]
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [e465ed5]
+- Updated dependencies [683c3d6]
+- Updated dependencies [824a75e]
+- Updated dependencies [d2066e0]
+- Updated dependencies [5845e1c]
+- Updated dependencies [5d1be78]
+- Updated dependencies [2c361be]
+- Updated dependencies [1faf86c]
+- Updated dependencies [950996b]
+  - @nifrajs/image@5.10.0
+  - @nifrajs/i18n@5.10.0
+  - @nifrajs/web@5.10.0
+  - @nifrajs/cli@5.10.0
+  - @nifrajs/web-react@5.10.0
+  - @nifrajs/web-preact@5.10.0
+  - @nifrajs/web-vue@5.10.0
+  - @nifrajs/web-svelte@5.10.0
+  - @nifrajs/web-solid@5.10.0
+  - @nifrajs/core@5.10.0
+  - @nifrajs/client@5.10.0
+  - @nifrajs/auth@5.10.0
+  - @nifrajs/deno@5.10.0
+  - @nifrajs/mcp@5.10.0
+  - @nifrajs/middleware@5.10.0
+  - @nifrajs/schema@5.10.0
+  - @nifrajs/webmcp@5.10.0
+  - @nifrajs/workers@5.10.0
+  - @nifrajs/content@5.10.0
+  - @nifrajs/node@5.10.0
+  - @nifrajs/web-vanilla@5.10.0
+
 ## 5.9.0
 
 ### Patch Changes

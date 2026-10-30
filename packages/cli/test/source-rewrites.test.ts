@@ -205,6 +205,24 @@ describe("an upgrade with a source rewrite", () => {
     expect(plan.dependencyAdds.map(({ name }) => name)).toEqual(["@nifrajs/core"])
   })
 
+  test("the 5.10 recipe selects ppr-option and moves experimental.ppr", async () => {
+    const root = join(FIXTURES, "ppr-option")
+    await mkdir(join(root, "src"), { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/web": "^5.9.0" } }, null, 2),
+    )
+    await writeFile(
+      join(root, "src/app.ts"),
+      'import { createWebApp } from "@nifrajs/web"\nexport const app = createWebApp({ experimental: { ppr: setup } })\n',
+    )
+    const plan = computeUpgrade(root, chainRecipes("5.10.0", "5.9.0"), true, false, false, [], ts)
+    expect(plan.sourceRewrites).toEqual([{ file: "src/app.ts", rewrite: "ppr-option", count: 1 }])
+    expect(await readFile(join(root, "src/app.ts"), "utf8")).toContain(
+      "createWebApp({ ppr: setup })",
+    )
+  })
+
   test("without TypeScript it refuses before writing anything", async () => {
     const root = await project("without-ts")
     const before = await readFile(join(root, "package.json"), "utf8")

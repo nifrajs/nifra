@@ -12,7 +12,7 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
 test("a plain name is listed once", () => {
-  expect(publicUrlPaths("img/logo.png")).toEqual(["/img/logo.png"])
+  expect(publicUrlPaths(join("img", "logo.png"))).toEqual(["/img/logo.png"])
   expect(publicUrlPaths("report,2026+v2.csv")).toEqual(["/report,2026+v2.csv"])
 })
 
@@ -26,20 +26,22 @@ test("copyPublicDir lists every path a browser may request for each file", async
   const from = join(root, "public")
   const to = join(root, "out")
   mkdirSync(join(from, "dir"), { recursive: true })
-  for (const name of ["plain.txt", "a[1];b|c.png", "dir/x,y+z.css", "café.txt"]) {
+  // `|` cannot be in a Windows file name; the pure-function test above covers its spellings there.
+  const pipe = process.platform === "win32" ? "" : "|"
+  for (const name of ["plain.txt", `a[1];b${pipe}c.png`, join("dir", "x,y+z.css"), "café.txt"]) {
     writeFileSync(join(from, name), "x")
   }
   const copied = await copyPublicDir(from, to)
   expect(copied).toEqual([
-    "/a%5B1%5D%3Bb%7Cc.png",
-    "/a[1];b|c.png",
+    `/a%5B1%5D%3Bb${pipe && "%7C"}c.png`,
+    `/a[1];b${pipe}c.png`,
     "/caf%C3%A9.txt",
     "/dir/x,y+z.css",
     "/plain.txt",
   ])
   for (const request of [
-    "/a[1];b|c.png",
-    "/a%5B1%5D%3Bb%7Cc.png",
+    `/a[1];b${pipe}c.png`,
+    `/a%5B1%5D%3Bb${pipe && "%7C"}c.png`,
     "/caf%C3%A9.txt",
     "/dir/x,y+z.css",
   ]) {
