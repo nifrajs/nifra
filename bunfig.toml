@@ -9,14 +9,15 @@
 # report makes any regression visible immediately). `scripts/test-coverage.ts` applies the floor per
 # file, as Bun does; a file the committed `coverage-baseline.json` already records under the floor is
 # held at that number by `check:coverage` instead, and every other file must clear it.
-preload = ["@nifrajs/core/single-copy/register"]
+# Resolve from this checkout during the root postinstall; workspace aliases may not exist yet.
+preload = ["./packages/core/src/single-copy-register.ts"]
 
 [test]
 coverageThreshold = 0.9
 # Loads before any test file. Disables fetch connection pooling for loopback only, so a recycled
 # ephemeral port cannot serve a request from a pooled connection to the server that previously held
 # it. That was the source of a moving, full-suite-only flake - see the file for the measurements.
-preload = ["@nifrajs/core/single-copy/register", "./scripts/test-preload.ts"]
+preload = ["./packages/core/src/single-copy-register.ts", "./scripts/test-preload.ts"]
 # Bun-only build/dev tooling was excluded here wholesale on the premise that it is "not unit-testable to
 # 90%". Measuring it disproved that: `prerender.ts` was already at 100% functions / 98% lines, and
 # `build.ts` was 1.7 points from qualifying. The exclusions were load-bearing for nothing, while
