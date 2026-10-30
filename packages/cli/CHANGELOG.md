@@ -1,5 +1,62 @@
 # @nifrajs/cli
 
+## 5.10.0
+
+### Minor Changes
+
+- 15fe870: `nifra check` reports an `<a href="/path">` written as a string, using the app's routes to tell two cases apart. NF-C057 (warn) is a path that no page, no backend route and no file in `public/` serves, so the link is a 404; the message names the nearest page when it is a typo away. NF-C058 (info) is a path that is a page today; the message gives the `href()` call that replaces it. A template literal is judged by its shape and never reported as dead. `.tsx`, `.vue` and `.svelte` files are read; a project with no `routes/` directory, or a backend route path the scan cannot read, gets no dead-link verdict.
+  
+  Neither code fails a check by default (a warning fails only under `--strict`). Raise, lower or silence either with `rules` in `nifra.config`; keep one link as written with `rawHref(path)` or `// nifra-expect NF-C058: <reason>` above the attribute.
+- fb0a18b: `nifra check` adds NF-C056 (error): `serverFunctions("todo", todos)` where `todos` is a namespace import of `todos.fn.ts`. The client stubs call the namespace named by the file, so a mount under another word 404s on every call. A mount kept on purpose takes `// nifra-expect NF-C056: <reason>` above the call.
+- d2066e0: Add opt-in local `?image` metadata imports and content-hashed build-time responsive variants using the existing injectable image backends. Emit images with client, SSR and static builds, and infer imported dimensions in all five UI adapters. String image URLs retain their existing dimension requirements.
+  
+  Add explicit static translated-path mappings to i18n routing, with reciprocal URL/SEO helpers, availability-aware redirects and static-path enumeration. These mappings do not implicitly create filesystem route aliases.
+  
+  Add `vercelRuntime: "node"` for ordinary SSR Vercel builds through both bundlers, using a shared streaming Node request bridge. Vercel Edge remains the default.
+- 824a75e: Partial prerendering is no longer experimental. `createWebApp` takes it as `ppr`, where it was `experimental.ppr`, and the `experimental` option is gone: passing it throws a `TypeError` that names `ppr`, and the startup errors name `ppr.origin`, `ppr.deployment` and `ppr.store`. `nifra upgrade` moves `experimental: { ppr }` to `ppr` in a `createWebApp` options literal and lists any other `experimental` shape it finds there by line (options spread in, or built in another file, are yours to check). `nifra scaffold` is stable.
+- 5d1be78: `nifra dev`, `nifra build`, `nifra check` and `nifra types` write `.nifra/types/routes.d.ts`, which fills `RouteTable` (exported from `@nifrajs/web`) with one `{ params, search }` entry per URL pattern. `params` comes from the compiled pattern, the function the router matches with, and `search` is the route's `searchSchema` output (the raw query when it declares none). An optional segment such as `[[lang]]` is two entries with exact params each, and `Route.Params` is read from the same patterns. Every generated `./+types` module references the table, so a program that imports any route's types loads it. `Href` is exported as the type of a built in-app URL.
+  
+  `nifra check` warns when a source file imports a navigation API (`Link`, `useNavigate`, `redirect` and the like) and no program loads the table; listing `.nifra/types/routes.d.ts` under `files` in tsconfig.json clears it. The starter's `.nifra/types` includes the table.
+  
+  Upgrade: `RouteSearch`, `generateRouteSearchTypes` and `GenerateRouteSearchTypesOptions` are removed, and so is `nifra sync-routes` (with the `nifra_sync_routes` MCP tool). Delete `nifra-routes.d.ts` and its tsconfig `include` entry, and move any hand-written `RouteSearch` entry to `RouteTable` as `"/path": { params: ...; search: ... }`.
+
+### Patch Changes
+
+- be02893: NF-C057 and NF-C058 judge a link with a `${...}` in it against the pages it can reach, so `` href={`/${slug}`} `` resolves to the dynamic page `/:slug` and no longer to a page that happens to be named `x`. When two pages are equally close to a mistyped link, the diagnostic names the same one on every machine: the pages are compared in code-unit order, not in the order the file system lists them.
+- a0a8b34: `nifra check` finds the links in `.vue` and `.svelte` templates on Windows, names them as `routes/about.vue`, and skips `node_modules` and test folders there as it does elsewhere.
+- 7e292dd: Reject adjacent mixed-route parameter values that the router would split differently, including percent-encoded values that would become malformed captures.
+  
+  Make internal-link diagnostics account for stripped backend mounts, ignore commented-out and script-string anchors in Vue/Svelte components, and honor template-comment suppressions. Detect navigation imports from browser-safe router and client subpaths when checking route-table coverage.
+- d2066e0: Restore the repository check gate without weakening global rules. Distinguish property names from variable self-references in SQL assembly scanning, retain detection of real interpolation and concatenation, and document reviewed comparisons of public labels/object identities and escaped table identifiers. Correct fixture dependency declarations and backend zoning while preserving intentionally unsafe PPR shell tests.
+- Updated dependencies [535c4e5]
+- Updated dependencies [87e7fd9]
+- Updated dependencies [611a3be]
+- Updated dependencies [7f32bb2]
+- Updated dependencies [0aa10d0]
+- Updated dependencies [ab69ee6]
+- Updated dependencies [548bade]
+- Updated dependencies [d2066e0]
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [e465ed5]
+- Updated dependencies [683c3d6]
+- Updated dependencies [824a75e]
+- Updated dependencies [d2066e0]
+- Updated dependencies [5845e1c]
+- Updated dependencies [5d1be78]
+- Updated dependencies [1faf86c]
+- Updated dependencies [950996b]
+  - @nifrajs/i18n@5.10.0
+  - @nifrajs/web@5.10.0
+  - @nifrajs/core@5.10.0
+  - @nifrajs/client@5.10.0
+  - @nifrajs/testing@5.10.0
+  - @nifrajs/mcp-db@5.10.0
+  - @nifrajs/mcp@5.10.0
+  - @nifrajs/schema@5.10.0
+  - @nifrajs/agent-review@5.10.0
+  - @nifrajs/runner@5.10.0
+
 ## 5.9.0
 
 ### Minor Changes

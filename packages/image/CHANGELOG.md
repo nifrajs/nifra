@@ -1,5 +1,21 @@
 # @nifrajs/image
 
+## 5.10.0
+
+### Minor Changes
+
+- d2066e0: Add opt-in local `?image` metadata imports and content-hashed build-time responsive variants using the existing injectable image backends. Emit images with client, SSR and static builds, and infer imported dimensions in all five UI adapters. String image URLs retain their existing dimension requirements.
+  
+  Add explicit static translated-path mappings to i18n routing, with reciprocal URL/SEO helpers, availability-aware redirects and static-path enumeration. These mappings do not implicitly create filesystem route aliases.
+  
+  Add `vercelRuntime: "node"` for ordinary SSR Vercel builds through both bundlers, using a shared streaming Node request bridge. Vercel Edge remains the default.
+
+### Patch Changes
+
+- 535c4e5: Bound nested percent-decoding when translated pathnames are looked up, and refuse segments nested deeper than three encodings. Publish each development image asset once per build instead of re-verifying earlier ones on every import. Mark ordinary Vercel Node functions as response-streaming.
+- 0aa10d0: Publish cached and emitted image files atomically, and name the file to delete when one does not match its content hash. Keep animated images as the original instead of failing a build that resizes others. Reuse processed variants across the client and server builds. Keep image files out of the size report and write each emitted file once per build. Open source images through a pinned descriptor. Accept an absolute http(s) `publicPath` and refuse a plugin built for a different one. Answer dev requests outside the image prefix without parsing them.
+- e465ed5: Prevent check/use races in build-time and development image output. Create assets with exclusive, no-follow opens; validate and read existing content through the held descriptor; refuse swapped files/directories and bound verification reads. Add deterministic symlink-swap regressions. Fix new-file lint violations and restore imported-image resolver coverage without changing lint or coverage baselines.
+
 ## 5.9.0
 
 ### Patch Changes
