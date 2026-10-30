@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import { AsyncLocalStorage } from "node:async_hooks"
 import type { BoundaryRequestCtx, BoundaryStates, ShellCtx } from "../src/boundary.ts"
+import { rawHref } from "../src/href.ts"
 import { type PprOptions, resolvePprOptions } from "../src/internal/ppr/options.ts"
 import {
   createPprServer,
@@ -419,7 +420,7 @@ describe("PPR shared holes", () => {
         }),
         shared("redirect", () => {
           loads.redirect++
-          return redirect("/elsewhere")
+          return redirect(rawHref("/elsewhere"))
         }),
         shared("thrown", () => {
           loads.thrown++

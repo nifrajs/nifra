@@ -7,6 +7,7 @@ import {
   type MountRouterOptions,
   type RenderAdapter,
   type RouteModule,
+  rawHref,
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER } from "../src/router.ts"
@@ -114,7 +115,7 @@ describe("the server render of an ssr = false route", () => {
       "map.tsx": {
         ssr: false,
         loader: () => {
-          throw redirect("/login")
+          throw redirect(rawHref("/login"))
         },
       },
     })

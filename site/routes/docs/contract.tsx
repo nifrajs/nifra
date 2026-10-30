@@ -65,7 +65,7 @@ export const hydrate = false   // opt out of full-document hydration (static / i
 
 const RESPONSE_CONTROLS = `// routes/account.backend.ts - response headers and cookies, from a loader or an action.
 import { t } from "@nifrajs/schema"
-import { type LoaderContext, redirect } from "@nifrajs/web"
+import { type LoaderContext, rawHref, redirect } from "@nifrajs/web"
 
 declare function signIn(email: string, password: string): Promise<{ token: string } | null>
 
@@ -85,7 +85,7 @@ export async function action(ctx: LoaderContext) {
   if (session === null) return { error: "Wrong email or password" }
   // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.
   ctx.set.cookie("session", session.token, { maxAge: 60 * 60 * 24 * 7 })
-  throw redirect("/dashboard") // the cookie rides the redirect
+  throw redirect(rawHref("/dashboard")) // the cookie rides the redirect
 }`
 
 const HEAD_MERGE = `// routes/_layout.tsx - a layout can export \`meta\` too. Its tags are SITEWIDE: they land in

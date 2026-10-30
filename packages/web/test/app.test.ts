@@ -11,13 +11,18 @@ import {
   type Manifest,
   type RenderAdapter,
   type RouteEntry,
+  rawHref,
   redirect,
   revalidate,
   unsafeInlineScript,
   webProjectEvidence,
 } from "../src/index.ts"
 import { openCacheChannel } from "../src/isr.ts"
+import type { Href } from "../src/navigation.ts"
 import { streamOf } from "./streams.ts"
+
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: these tests hand redirect() values no href() or rawHref() call made
+const forged = (value: string): Href => value as Href
 
 // The in-process backend mount target - the symbol-keyed `BackendMount` shape `inProcessClient(app)`
 // returns. Reproduced here so the web test exercises the real `createWebApp` `/api/*` auto-mount
@@ -803,7 +808,7 @@ test("an action's Response (redirect) passes straight through (Post/Redirect/Get
         pattern: "/",
         layoutIds: [],
         file: "index.tsx",
-        load: async () => ({ default: "page", action: () => redirect("/thanks") }),
+        load: async () => ({ default: "page", action: () => redirect(rawHref("/thanks")) }),
       },
     ],
     layouts: {},
@@ -925,7 +930,7 @@ test("POST with X-Nifra-Data converts an action redirect into an X-Nifra-Redirec
         pattern: "/",
         layoutIds: [],
         file: "index.tsx",
-        load: async () => ({ default: "page", action: () => redirect("/thanks") }),
+        load: async () => ({ default: "page", action: () => redirect(rawHref("/thanks")) }),
       },
     ],
     layouts: {},
@@ -979,7 +984,7 @@ test("a THROWN action redirect converts exactly like a returned one (throw/retur
         load: async () => ({
           default: "page",
           action: () => {
-            throw redirect("/thanks")
+            throw redirect(rawHref("/thanks"))
           },
         }),
       },
@@ -1007,7 +1012,7 @@ test("a RETURNED loader redirect passes through like a thrown one, never seriali
         pattern: "/",
         layoutIds: [],
         file: "index.tsx",
-        load: async () => ({ default: "page", loader: () => redirect("/login") }),
+        load: async () => ({ default: "page", loader: () => redirect(rawHref("/login")) }),
       },
     ],
     layouts: {},
@@ -1041,21 +1046,23 @@ test("createWebApp modulepreloads the matched route's chunks when routePreload i
 test("redirect() allows same-origin paths and status options [AUDIT Sec-4]", () => {
   // A redirect is plain data, not a `Response`: `plain` is the lane every renderer checks first, so
   // asserting on it is asserting that no `Response` is built for the most body-less response there is.
-  expect(redirect("/thanks")).not.toBeInstanceOf(Response)
-  expect(redirect("/thanks").plain).toEqual({
+  expect(redirect(rawHref("/thanks"))).not.toBeInstanceOf(Response)
+  expect(redirect(rawHref("/thanks")).plain).toEqual({
     status: 303,
     headers: { location: "/thanks" },
     body: undefined,
   })
-  expect(redirect("/x", { status: 307 }).plain?.status).toBe(307)
-  expect(redirect("/x", { status: 308 }).plain?.status).toBe(308)
+  expect(redirect(rawHref("/x"), { status: 307 }).plain?.status).toBe(307)
+  expect(redirect(rawHref("/x"), { status: 308 }).plain?.status).toBe(308)
   // Extra headers merge with the location, which always wins its own key.
-  expect(redirect("/x", { headers: { "cache-control": "no-store" } }).plain?.headers).toEqual({
+  expect(
+    redirect(rawHref("/x"), { headers: { "cache-control": "no-store" } }).plain?.headers,
+  ).toEqual({
     "cache-control": "no-store",
     location: "/x",
   })
   // The off-lane fallback still builds the same response bytes for a caller that needs one.
-  const response = redirect("/thanks").toResponse()
+  const response = redirect(rawHref("/thanks")).toResponse()
   expect(response.status).toBe(303)
   expect(response.headers.get("location")).toBe("/thanks")
 })
@@ -1063,7 +1070,7 @@ test("redirect() allows same-origin paths and status options [AUDIT Sec-4]", () 
 test("redirect() rejects off-origin destinations unless { external: true } [AUDIT Sec-4]", () => {
   // Open-redirect guard: an absolute URL, protocol-relative "//host", a scheme, or a bare relative.
   for (const bad of ["https://evil.com", "//evil.com", "http://x", "javascript:alert(1)", "foo"]) {
-    expect(() => redirect(bad)).toThrow(/same-origin/)
+    expect(() => redirect(forged(bad))).toThrow(/same-origin/)
   }
   // Explicit opt-in is honored.
   const r = redirect("https://example.com/ok", { external: true })
@@ -1083,23 +1090,23 @@ test("redirect() rejects paths a URL parser resolves off-origin [AUDIT Sec-4]", 
     "/\n/evil.example",
   ]
   for (const bad of escapes) {
-    expect(() => redirect(bad)).toThrow(/same-origin/)
+    expect(() => redirect(forged(bad))).toThrow(/same-origin/)
     // The reason they are refused, stated as the browser sees it.
     expect(new URL(bad, "https://app.example").host).toBe("evil.example")
   }
   // Percent-encoded forms are NOT escapes - they stay a literal path segment on this origin.
-  expect(redirect("/%5Cevil.example").plain?.headers?.location).toBe("/%5Cevil.example")
+  expect(redirect(rawHref("/%5Cevil.example")).plain?.headers?.location).toBe("/%5Cevil.example")
 })
 
 test("redirect() rejects a path whose dot segments resolve it to //host", () => {
   // Same-origin as a Location, but the resolved path `//evil.example/x` is protocol-relative to any
   // client that builds a URL from it.
   for (const bad of ["/.//evil.example/x", "/a/..//evil.example/x", "/%2e//evil.example/x"]) {
-    expect(() => redirect(bad)).toThrow(/same-origin/)
+    expect(() => redirect(forged(bad))).toThrow(/same-origin/)
     expect(new URL(bad, "https://app.example").pathname).toBe("//evil.example/x")
   }
   for (const ok of ["/a/../b", "/./x", "/x.y/z", "/a%2Fb"])
-    expect(redirect(ok).plain?.headers?.location).toBe(ok)
+    expect(redirect(rawHref(ok)).plain?.headers?.location).toBe(ok)
 })
 
 // --- /api/* auto-mount: createWebApp serves the in-process backend over HTTP (dev + prod) ---

@@ -131,12 +131,12 @@ describe("generated route types", () => {
       "routes/feed/[id].backend.ts",
       [
         'import { t } from "@nifrajs/schema"',
-        'import { defer, redirect, revalidate } from "@nifrajs/web"',
+        'import { defer, href, redirect, revalidate } from "@nifrajs/web"',
         'import type { Route } from "./+types/[id]"',
         "export const loaderOutput = t.object({ title: t.string(), feed: t.deferred(t.array(t.number())) })",
         "export const actionOutput = t.object({ ok: t.boolean() })",
         "export const loader: Route.Loader = async ({ params }) => {",
-        '  if (params.id === "old") return redirect("/feed/new")',
+        '  if (params.id === "old") return redirect(href({ to: "/feed/:id", params: { id: "new" } }))',
         "  return { title: params.id, feed: defer(Promise.resolve([1, 2])) }",
         "}",
         "export const action: Route.Action = async ({ params }) => {",
@@ -169,9 +169,9 @@ describe("generated route types", () => {
     write(
       "routes/plain.backend.ts",
       [
-        'import { redirect } from "@nifrajs/web"',
+        'import { href, redirect } from "@nifrajs/web"',
         'import type { Route } from "./+types/plain"',
-        'export const loader: Route.Loader = () => redirect("/")',
+        'export const loader: Route.Loader = () => redirect(href({ to: "/plain" }))',
         "// @ts-expect-error no loaderOutput: data is refused",
         "export const data: Route.Loader = () => ({ secret: 1 })",
         "",

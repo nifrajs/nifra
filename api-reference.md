@@ -5689,7 +5689,7 @@ _No named exports (side-effect entrypoint)._
   A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
 - **rawHref** _(function)_ - `rawHref: (path: string) => Href`
   An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
-- **redirect** _(function)_ - `redirect: (location: string, options?: RedirectOptions) => ResponseResult`
+- **redirect** _(function)_ - `redirect: { (location: Href, options?: RedirectOptions & { readonly external?: false; }): ResponseResult; (location: string, options: RedirectOptions & { readonly external: true; }): ResponseResult; }`
   Build a redirect - return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
   Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
@@ -7228,7 +7228,7 @@ _No named exports (side-effect entrypoint)._
 - **NavLinkRenderProps** _(interface)_ - `interface NavLinkRenderProps`
   The state a {@link NavLink}'s function-form `className`/`style`/`children` receive.
 - **Navigate** _(function)_ - `Navigate: ({ to, replace }: NavigateProps) => null`
-  Declaratively navigate on mount - the component analogue of `useNavigate` (e.g. a guard that renders `<Navigate to="/login" replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders `null`); the redirect happens once on the client after hydration.
+  Declaratively navigate on mount - the component analogue of `useNavigate` (e.g. a guard that renders `<Navigate to={href({ to: "/login" })} replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders `null`); the redirect happens once on the client after hydration.
 - **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
   A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
 - **NavigateProps** _(interface)_ - `interface NavigateProps`

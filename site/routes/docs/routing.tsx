@@ -46,12 +46,12 @@ export async function loader({ params }: Route.LoaderArgs) {
 }`
 
 const MIDDLEWARE = `// routes/account/_layout.backend.ts - runs before every page under /account
-import { type RouteMiddleware, redirect } from "@nifrajs/web"
+import { type RouteMiddleware, rawHref, redirect } from "@nifrajs/web"
 
 export const middleware: RouteMiddleware = ({ request, set }) => {
   set.headers["cache-control"] = "private, no-store"
   const signedIn = request.headers.get("cookie")?.includes("session=") ?? false
-  return signedIn ? undefined : redirect("/login")
+  return signedIn ? undefined : redirect(rawHref("/login"))
 }`
 
 const CATCHALL = `// routes/files/[...path].backend.ts - the page is routes/files/[...path].tsx, and together they
@@ -150,7 +150,7 @@ const PREFETCH = `// A docs sidebar: each link loads as it scrolls into view.
 </nav>
 
 // React's <Link> takes it as a prop.
-<Link to="/pricing" prefetch="render">Pricing</Link>`
+<Link to={href({ to: "/pricing" })} prefetch="render">Pricing</Link>`
 
 const BREADCRUMBS = `// routes/orgs/[org]/_layout.tsx
 import type { ReactNode } from "react"
@@ -430,10 +430,14 @@ export default function Routing() {
         param that is missing, empty, <code>.</code>, <code>..</code> or an unpaired surrogate throws a{" "}
         <code>TypeError</code> naming it. <code>navigate</code> takes only an <code>href</code> result,
         or a history delta such as <code>navigate(-1)</code>; a string or a template literal is a
-        compile error. For a same-origin path built elsewhere - a CMS link, <code>/llms.txt</code> -{" "}
-        <code>{`rawHref("/llms.txt")`}</code> checks it (one leading <code>/</code>, no backslash or
-        control character) and returns the same type. A link to another site is a plain{" "}
-        <code>&lt;a href&gt;</code>.
+        compile error. So do React's <code>Link</code>, <code>NavLink</code> and <code>Navigate</code>{" "}
+        (<code>{`<Link to={href({ to: "/pricing" })}>`}</code>) and the server's{" "}
+        <code>redirect()</code>; <code>Link</code> and <code>NavLink</code> also throw at render when{" "}
+        <code>to</code> is not a same-origin path, and <code>redirect</code> takes any string with{" "}
+        <code>{`{ external: true }`}</code>. For a same-origin path built elsewhere - a CMS link,{" "}
+        <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
+        <code>/</code>, no backslash or control character) and returns the same type. A link to
+        another site is a plain <code>&lt;a href&gt;</code>.
       </p>
 
       <h2>Prefetching</h2>
