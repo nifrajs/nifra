@@ -13,7 +13,6 @@
  */
 
 import type { ClientRouter } from "./router.ts"
-import { serializeSearch } from "./search.ts"
 
 /** Options for a programmatic navigation. */
 export interface NavigateOptions {
@@ -48,72 +47,22 @@ export interface NavigateOptions {
 // biome-ignore lint/suspicious/noEmptyInterface: augmentation target - empty by design, `nifra types` fills it.
 export interface RouteTable {}
 
-declare const hrefBrand: unique symbol
+/**
+ * An in-app URL: what `href()` builds from a route and `rawHref()` returns for a checked path. A string
+ * at runtime, a branded string to the compiler, so a plain string or a template literal is not assignable
+ * to it. `Pattern` is the {@link RouteTable} key it was built for. The brand is a named property, not a
+ * `unique symbol`, so an `Href` from one copy of this package is assignable to another's.
+ */
+export type Href<Pattern extends string = string> = string & { readonly "~nifraHref": Pattern }
 
 /**
- * An in-app URL built from a route: a string at runtime, a branded string to the compiler, so a plain
- * string or a template literal is not assignable to it. `Pattern` is the {@link RouteTable} key it was
- * built for.
+ * A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by
+ * `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a
+ * history delta (`-1` back, `1` forward). A plain string or a template literal is a compile error: the
+ * route, its params and its search are checked where the link is built. A no-op on the server and before
+ * hydration.
  */
-export type Href<Pattern extends string = string> = string & { readonly [hrefBrand]: Pattern }
-
-/**
- * The `search` type for a navigate to `To`: the route's schema output when `To` is a {@link RouteTable}
- * key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is always allowed).
- * Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form with a wrong
- * shape - `navigate({ to: "/reports", search: { page: "x" } })` is a compile error.
- */
-export type NavigateSearchOf<To extends string> = To extends keyof RouteTable
-  ? RouteTable[To] extends { readonly search: infer Search }
-    ? Search
-    : Record<string, unknown>
-  : Record<string, unknown>
-
-/** The runtime shape of an object-form navigate target (loose - the typed narrowing lives in
- * {@link NavigateFunction}'s generic call signature). `to` is a bare pathname; `search` is serialized
- * onto it; `replace` folds into the options. */
-export interface NavigateTargetInput {
-  readonly to: string
-  readonly search?: Record<string, unknown>
-  readonly replace?: boolean
-  readonly state?: unknown
-}
-
-/**
- * A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or
- * replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }`
- * whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wrong shape for a
- * mapped route is a compile error; an unmapped path takes a loose `search`). The object form's `search` is
- * serialized onto `to`. A no-op on the server / before hydration.
- */
-export interface NavigateFunction {
-  (to: string | number, options?: NavigateOptions): void
-  <To extends string>(target: {
-    readonly to: To
-    readonly search?: NavigateSearchOf<To>
-    readonly replace?: boolean
-    readonly state?: unknown
-  }): void
-}
-
-/**
- * Normalize a navigate argument to the bridge's `(to, options)`: a string path or history-delta passes
- * through; an object target has its `search` serialized onto `to` and its `replace` folded into the
- * options. The one place the object form becomes a URL, so every adapter's `navigate` resolves it
- * identically.
- */
-export function resolveNavigate(
-  to: string | number | NavigateTargetInput,
-  options?: NavigateOptions,
-): { readonly to: string | number; readonly options: NavigateOptions | undefined } {
-  if (typeof to !== "object") return { to, options }
-  const query = to.search !== undefined ? serializeSearch(to.search) : ""
-  if (to.replace !== true && to.state === undefined) return { to: to.to + query, options }
-  const resolved: { replace?: boolean; state?: unknown } = { ...options }
-  if (to.replace === true) resolved.replace = true
-  if (to.state !== undefined) resolved.state = to.state
-  return { to: to.to + query, options: resolved }
-}
+export type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void
 
 /**
  * When a link warms its route's chunk and loader data ahead of a click. Set it with the

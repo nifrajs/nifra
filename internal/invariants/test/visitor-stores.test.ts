@@ -1348,6 +1348,10 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
       "deferred values of one response; they belong to the route data that carries them",
   },
   "packages/web/src/fn-state.ts": { "listeners@createServerFnStore": LISTENERS },
+  "packages/web/src/href.ts": {
+    compiledPatterns:
+      "route patterns compiled by their text, bounded and dropped when full; no data",
+  },
   "packages/web/src/identity.ts": { "listeners@listenersOf": LISTENERS },
   "packages/web/src/internal/deferred-free.ts": {
     deferredFree: "marks values known to hold no deferred, weakly",

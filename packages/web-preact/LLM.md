@@ -23,13 +23,13 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 - **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ComponentChildren; }) => ComponentChildren` · from `@nifrajs/web-preact/query`
 - **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("preact").VNode<import("preact").Attribute…` · from `@nifrajs/web-preact/server-components/outlet`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-preact/client`
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>` · from `@nifrajs/web-preact/router`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-preact/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-preact/client`
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void` · from `@nifrajs/web-preact/keep-alive`
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void` · from `@nifrajs/web-preact/keep-alive`
-- **preactComponentClient** _(function)_ - `preactComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").Compon…` · from `@nifrajs/web-preact/server-components/client`
 
-_…and 41 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

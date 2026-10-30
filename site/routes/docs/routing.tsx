@@ -46,12 +46,12 @@ export async function loader({ params }: Route.LoaderArgs) {
 }`
 
 const MIDDLEWARE = `// routes/account/_layout.backend.ts - runs before every page under /account
-import { type RouteMiddleware, redirect } from "@nifrajs/web"
+import { type RouteMiddleware, rawHref, redirect } from "@nifrajs/web"
 
 export const middleware: RouteMiddleware = ({ request, set }) => {
   set.headers["cache-control"] = "private, no-store"
   const signedIn = request.headers.get("cookie")?.includes("session=") ?? false
-  return signedIn ? undefined : redirect("/login")
+  return signedIn ? undefined : redirect(rawHref("/login"))
 }`
 
 const CATCHALL = `// routes/files/[...path].backend.ts - the page is routes/files/[...path].tsx, and together they
@@ -150,7 +150,7 @@ const PREFETCH = `// A docs sidebar: each link loads as it scrolls into view.
 </nav>
 
 // React's <Link> takes it as a prop.
-<Link to="/pricing" prefetch="render">Pricing</Link>`
+<Link to={href({ to: "/pricing" })} prefetch="render">Pricing</Link>`
 
 const BREADCRUMBS = `// routes/orgs/[org]/_layout.tsx
 import type { ReactNode } from "react"
@@ -411,16 +411,33 @@ export default function Routing() {
         <code>[params, setParams]</code> tuple.
       </p>
       <p>
-        To WRITE search, <code>useNavigate</code> takes an object target:{" "}
-        <code>{`navigate({ to: "/reports", search: { page: 2 } })`}</code> serializes <code>search</code>{" "}
-        onto <code>to</code> (no hand-built query strings). <code>nifra dev</code>, <code>nifra build</code>,{" "}
-        <code>nifra check</code> and <code>nifra types</code> write <code>.nifra/types/routes.d.ts</code>,
-        which maps every route pattern to its params and its schema output, and each route's generated{" "}
-        <code>./+types</code> module loads it. So <code>search</code> is typed against the target route's
-        schema - a wrong shape for a known route is a compile error, while any other path takes a loose{" "}
-        <code>search</code> - and a changed <code>searchSchema</code> shows up as a <code>tsc</code>{" "}
-        error at the stale call. The plain string-path and history-delta forms
-        (<code>navigate("/about")</code>, <code>navigate(-1)</code>) are unchanged.
+        To WRITE search, build the link with <code>href</code> and hand it to <code>useNavigate</code>:{" "}
+        <code>{`navigate(href({ to: "/reports", search: { page: 2 } }))`}</code>. <code>href</code> and{" "}
+        <code>rawHref</code> are exported by every adapter's router entry (
+        <code>@nifrajs/web-&lt;framework&gt;/router</code>). <code>nifra dev</code>,{" "}
+        <code>nifra build</code>, <code>nifra check</code> and <code>nifra types</code> write{" "}
+        <code>.nifra/types/routes.d.ts</code>, which maps every route pattern to its params and its
+        schema output, and each route's generated <code>./+types</code> module loads it. So{" "}
+        <code>to</code> is one of those patterns, <code>params</code> holds that route's params, and{" "}
+        <code>search</code> is typed against its schema: a misspelt route, a missing param and a wrong
+        search shape are compile errors, and a changed <code>searchSchema</code> shows up as a{" "}
+        <code>tsc</code> error at the stale call. A route without a <code>searchSchema</code> takes any{" "}
+        <code>search</code>.
+      </p>
+      <p>
+        Each param is encoded as one path segment, so a value such as <code>a/b</code> or{" "}
+        <code>//evil.com</code> stays inside the segment and never changes where the link goes. A
+        param that is missing, empty, <code>.</code>, <code>..</code> or an unpaired surrogate throws a{" "}
+        <code>TypeError</code> naming it. <code>navigate</code> takes only an <code>href</code> result,
+        or a history delta such as <code>navigate(-1)</code>; a string or a template literal is a
+        compile error. So do React's <code>Link</code>, <code>NavLink</code> and <code>Navigate</code>{" "}
+        (<code>{`<Link to={href({ to: "/pricing" })}>`}</code>) and the server's{" "}
+        <code>redirect()</code>; <code>Link</code> and <code>NavLink</code> also throw at render when{" "}
+        <code>to</code> is not a same-origin path, and <code>redirect</code> takes any string with{" "}
+        <code>{`{ external: true }`}</code>. For a same-origin path built elsewhere - a CMS link,{" "}
+        <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
+        <code>/</code>, no backslash or control character) and returns the same type. A link to
+        another site is a plain <code>&lt;a href&gt;</code>.
       </p>
 
       <h2>Prefetching</h2>

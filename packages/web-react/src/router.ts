@@ -19,6 +19,7 @@ import type {
   Blocker,
   BlockerFunction,
   BlockerState,
+  Href,
   NavigateFunction,
   NavigateOptions,
   PrefetchMode,
@@ -27,7 +28,7 @@ import type {
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
-import { getBrowserNavigate, IDLE_BLOCKER, registerBlocker } from "@nifrajs/web/client"
+import { getBrowserNavigate, IDLE_BLOCKER, rawHref, registerBlocker } from "@nifrajs/web/client"
 // Its own subpath, so an app that never calls `useMatches` bundles none of it.
 import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
@@ -47,6 +48,7 @@ import {
   useState,
 } from "react"
 
+export { href, rawHref } from "@nifrajs/web/client"
 export { usePageVisibility } from "./page-visibility.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, PrefetchMode, UIMatch }
 
@@ -223,7 +225,7 @@ export function usePending(): boolean {
   return useContext(RouterContext).pending
 }
 
-/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object;
+/** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta;
  * a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across
  * renders; resolves the browser navigate at call time (so it works as soon as `installHistory` has run,
  * and no-ops before then / on the server). */
@@ -310,7 +312,7 @@ export function useSearchParams(): readonly [URLSearchParams, SetSearchParams] {
     (next, options) => {
       const resolved = typeof next === "function" ? next(new URLSearchParams(search)) : next
       const qs = toSearchParams(resolved).toString()
-      navigate(pathname + (qs !== "" ? `?${qs}` : ""), options)
+      navigate(rawHref(pathname + (qs !== "" ? `?${qs}` : "")), options)
     },
     [navigate, pathname, search],
   )
@@ -328,8 +330,9 @@ function isPlainLeftClick(event: MouseEvent, target: string | undefined): boolea
 /** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and
  * `prefetch`. */
 export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
-  /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */
-  readonly to: string
+  /** The destination: an `Href` from `href()` or `rawHref()`. Rendered as the `<a href>`, and a render throws
+   * unless it is a same-origin path; a link to another site is a plain `<a>`. */
+  readonly to: Href
   /** Replace the current history entry instead of pushing. */
   readonly replace?: boolean
   /** When the link warms its route ahead of a click - rendered as `data-nifra-prefetch`. Unset, the
@@ -358,7 +361,7 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
   }
   return createElement("a", {
     ...rest,
-    href: to,
+    href: rawHref(to),
     target,
     onClick: handleClick,
     ref,
@@ -447,13 +450,13 @@ function matchesPrefix(current: string, target: string): boolean {
 
 /** {@link Navigate} props: the destination `to` and whether to `replace` the history entry. */
 export interface NavigateProps {
-  readonly to: string
+  readonly to: Href
   readonly replace?: boolean
 }
 
 /**
  * Declaratively navigate on mount - the component analogue of `useNavigate` (e.g. a guard that renders
- * `<Navigate to="/login" replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders
+ * `<Navigate to={href({ to: "/login" })} replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders
  * `null`); the redirect happens once on the client after hydration.
  */
 export function Navigate({ to, replace }: NavigateProps): null {

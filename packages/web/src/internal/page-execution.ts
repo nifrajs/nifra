@@ -24,6 +24,7 @@ import type { CspPolicy } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { type Deferred, defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
 import { isDraftEnabled } from "../draft.ts"
+import { rawHref } from "../href.ts"
 import { routeTags } from "../isr.ts"
 import type {
   LayoutEntry,
@@ -876,7 +877,7 @@ export function createPageRequestExecutor<Env = unknown>(
       // missing from it, never reaches the app's code.
       const match = i18n.matchSegment(ctx.params.lang, pathOf(ctx.request))
       if (match.kind === "redirect") {
-        throw tagLayoutError(redirect(match.location, { status: 308 }), "_layout")
+        throw tagLayoutError(redirect(rawHref(match.location), { status: 308 }), "_layout")
       }
       if (match.kind === "not-found") {
         try {

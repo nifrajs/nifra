@@ -14,6 +14,7 @@ import {
   type RenderAdapter,
   type RouteMiddleware,
   type RouteModule,
+  rawHref,
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER, REDIRECT_HEADER } from "../src/router.ts"
@@ -89,8 +90,8 @@ const orgApp = () => {
       calls.push(name)
       seen[name] = { ...ctx.params }
       const answer = query(ctx, name)
-      if (answer === "redirect") return redirect("/login")
-      if (answer === "throw") throw redirect("/login")
+      if (answer === "redirect") return redirect(rawHref("/login"))
+      if (answer === "throw") throw redirect(rawHref("/login"))
       if (answer === "forbidden") return new Response("no entry", { status: 403 })
       if (answer === "missing") notFound()
       if (answer === "fail") throw new Error(`${name} failed`)

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { setBrowserNavigate } from "@nifrajs/web"
+import { href, setBrowserNavigate } from "@nifrajs/web"
 import { renderToStaticMarkup } from "react-dom/server"
 import { compose } from "../src/compose.ts"
 import { type NavigateFunction, useNavigate } from "../src/router.ts"
@@ -21,7 +21,7 @@ declare module "@nifrajs/web" {
   }
 }
 
-test("navigate({ to, search }) is typed against the generated RouteTable", () => {
+test("navigate takes an href() URL, typed against the generated RouteTable", () => {
   const calls: Array<[string | number, unknown]> = []
   setBrowserNavigate((to, o) => calls.push([to, o]))
   let nav: NavigateFunction | undefined
@@ -31,13 +31,11 @@ test("navigate({ to, search }) is typed against the generated RouteTable", () =>
   }
   renderToStaticMarkup(compose([Page], { data: null }))
 
-  // A mapped route: `search` is typed to that route's schema output.
-  nav?.({ to: "/typed-only", search: { page: 5 } })
+  nav?.(href({ to: "/typed-only", search: { page: 5 } }))
   // @ts-expect-error - page must be a number for /typed-only (a stale shape is a tsc error, the drift guarantee).
-  nav?.({ to: "/typed-only", search: { page: "nope" } })
-  // An unmapped path keeps the loose form (any search), so navigation is never blocked on a missing entry.
-  nav?.({ to: "/anything", search: { whatever: true } })
+  nav?.(href({ to: "/typed-only", search: { page: "nope" } }))
+  // @ts-expect-error - a plain string is not an Href.
+  nav?.("/typed-only?page=5")
 
   expect(calls[0]).toEqual(["/typed-only?page=5", undefined])
-  expect(calls[2]).toEqual(["/anything?whatever=true", undefined])
 })

@@ -89,6 +89,7 @@ export {
   type HostPolicyRule,
   isHostPolicy,
 } from "./host-policy.ts"
+export { type HrefOptions, href, rawHref } from "./href.ts"
 export {
   type GenerateClientEntryOptions,
   type GenerateServerManifestOptions,
@@ -225,12 +226,9 @@ export {
   IDLE_BLOCKER,
   type NavigateFunction,
   type NavigateOptions,
-  type NavigateSearchOf,
-  type NavigateTargetInput,
   type PrefetchMode,
   type RouteTable,
   registerBlocker,
-  resolveNavigate,
   setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
