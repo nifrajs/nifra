@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/edge",
@@ -59,7 +60,7 @@ export default function Edge() {
         Export through <code>toFetchHandler</code> rather than handing the app out directly. Besides{" "}
         <code>env</code> and <code>ctx.waitUntil</code>, it tells nifra the request came from the
         platform's own HTTP parser, which lets the{" "}
-        <a href="/docs/security">bounded-body cap</a> trust the declared{" "}
+        <a href={href({ to: "/docs/security" })}>bounded-body cap</a> trust the declared{" "}
         <code>Content-Length</code> as a real transport frame instead of re-counting every JSON body.
         A bare <code>export default app</code> has no such signal and pays the extra pass unless you
         set <code>server({"{ trustBodyFraming: true }"})</code>.

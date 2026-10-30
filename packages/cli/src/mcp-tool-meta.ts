@@ -177,7 +177,6 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
     },
   },
   nifra_sync_manifest: { annotations: WRITE, fields: { json: JSON_RESULT, dir: DIR } },
-  nifra_sync_routes: { annotations: WRITE, fields: { json: JSON_RESULT, dir: DIR } },
   nifra_prove: {
     annotations: EXECUTE,
     fields: {

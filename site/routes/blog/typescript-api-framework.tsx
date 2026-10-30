@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { formatRatio, formatRps, httpWorkloadRps } from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
 
@@ -115,9 +116,9 @@ export default function TypescriptApiFramework() {
       </table>
       <p>
         Throughput from our published harness (oha @ 50 conns, identical semantics; all rows +
-        methodology on <a href="/benchmarks">benchmarks</a>). tRPC is a contract layer over an HTTP
-        server rather than a server itself, so it has no row - pair its column with whichever host
-        you'd run.
+        methodology on <a href={href({ to: "/benchmarks" })}>benchmarks</a>). tRPC is a contract
+        layer over an HTTP server rather than a server itself, so it has no row - pair its column
+        with whichever host you'd run.
       </p>
 
       <h2>How to choose</h2>
@@ -133,20 +134,21 @@ export default function TypescriptApiFramework() {
         </li>
         <li>
           <strong>Bun-first backend:</strong> Elysia. <strong>Everything-runtimes minimal:</strong>{" "}
-          Hono. (<a href="/blog/elysia-vs-hono">head-to-head</a>.)
+          Hono. (<a href={href({ to: "/blog/elysia-vs-hono" })}>head-to-head</a>.)
         </li>
         <li>
           <strong>All three levels, REST-shaped, plus a frontend:</strong> Nifra - the inferred
           client extends beyond fetch calls into SSR loaders, pages, and server functions for
           React/Vue/Svelte/Solid/Preact, validation is the default, and the API surface ships as a{" "}
-          <a href="/blog/docs-as-mcp">live MCP server</a> so AI agents write against your real
-          contract. Fastest of the set in our Node runs, and the with the same app delivering about{" "}
+          <a href={href({ to: "/blog/docs-as-mcp" })}>live MCP server</a> so AI agents write against
+          your real contract. Fastest of the set in our Node runs, and the with the same app
+          delivering about{" "}
           {formatRatio(
             httpWorkloadRps("Bun", "Nifra", "getUsers"),
             httpWorkloadRps("Node", "Nifra", "getUsers"),
           )}{" "}
           as many GET /users/:id requests per second on Bun as Node (
-          <a href="/blog/bun-vs-node">measured on the same code</a>).
+          <a href={href({ to: "/blog/bun-vs-node" })}>measured on the same code</a>).
         </li>
       </ul>
 

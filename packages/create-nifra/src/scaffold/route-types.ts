@@ -26,6 +26,7 @@ function routeModule(
   const lines = [
     header(`routes/${name}.${extension}`),
     '/// <reference path="../../register.d.ts" />',
+    '/// <reference path="../../routes.d.ts" />',
     'import type { OutputOf, RouteActionReturn, RouteLoaderArgs, RouteLoaderReturn, SearchSchemaOf } from "@nifrajs/client"',
   ]
   lines.push(
@@ -82,6 +83,26 @@ function routeModule(
   return lines.join("\n")
 }
 
+/** `routes.d.ts` for the starter's one URL pattern, `/`, served by `routes/index`. */
+function routeTable(extension: string): string {
+  // Only a script module's exports are visible to TypeScript; a .svelte/.vue one is an ambient shim.
+  const search =
+    extension === "tsx"
+      ? 'SearchOf<typeof import("../../routes/index")>'
+      : "Record<string, unknown>"
+  return [
+    header("routes/"),
+    'import type { SearchOf } from "@nifrajs/web"',
+    "",
+    'declare module "@nifrajs/web" {',
+    "  interface RouteTable {",
+    `    "/": { readonly params: Record<string, never>; readonly search: ${search} }`,
+    "  }",
+    "}",
+    "",
+  ].join("\n")
+}
+
 /** Every `.nifra/types` file of a starter whose route files carry `extension`, by app-relative path. */
 export function starterRouteTypes(extension: string): Map<string, string> {
   const files = new Map<string, string>()
@@ -99,6 +120,7 @@ export function starterRouteTypes(extension: string): Map<string, string> {
       "",
     ].join("\n"),
   )
+  files.set(".nifra/types/routes.d.ts", routeTable(extension))
   for (const [name, kind, hasBackend] of STARTER_ROUTES) {
     files.set(
       `.nifra/types/routes/+types/${name}.d.ts`,

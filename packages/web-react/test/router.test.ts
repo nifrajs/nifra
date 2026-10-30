@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
-import { setBrowserNavigate } from "@nifrajs/web"
+import { rawHref, setBrowserNavigate } from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { compose } from "../src/compose.ts"
@@ -116,7 +116,7 @@ test("useSearchParams exposes the current query", () => {
 
 test("Link renders a real <a href> (working before hydration, right-clickable)", () => {
   const html = renderToStaticMarkup(
-    createElement(Link, { to: "/about", className: "nav" }, "About"),
+    createElement(Link, { to: rawHref("/about"), className: "nav" }, "About"),
   )
   expect(html).toContain('href="/about"')
   expect(html).toContain('class="nav"')
@@ -125,11 +125,11 @@ test("Link renders a real <a href> (working before hydration, right-clickable)",
 
 test("Link's prefetch renders as data-nifra-prefetch, and unset leaves an explicit attribute alone", () => {
   const viewport = renderToStaticMarkup(
-    createElement(Link, { to: "/next", prefetch: "viewport" }, "Next"),
+    createElement(Link, { to: rawHref("/next"), prefetch: "viewport" }, "Next"),
   )
   expect(viewport).toContain('data-nifra-prefetch="viewport"')
   const nav = renderToStaticMarkup(
-    createElement(NavLink, { to: "/docs", prefetch: "none" }, "Docs"),
+    createElement(NavLink, { to: rawHref("/docs"), prefetch: "none" }, "Docs"),
   )
   expect(nav).toContain('data-nifra-prefetch="none"')
   // With no prop, an attribute the caller passes is kept; with neither, none is rendered.
@@ -137,22 +137,27 @@ test("Link's prefetch renders as data-nifra-prefetch, and unset leaves an explic
     createElement(Link, { to: "/x", "data-nifra-prefetch": "render" } as never, "X"),
   )
   expect(passed).toContain('data-nifra-prefetch="render"')
-  expect(renderToStaticMarkup(createElement(Link, { to: "/y" }, "Y"))).not.toContain("prefetch")
+  expect(renderToStaticMarkup(createElement(Link, { to: rawHref("/y") }, "Y"))).not.toContain(
+    "prefetch",
+  )
 })
 
 test("NavLink marks aria-current on a prefix match", () => {
-  const active = withRoute("/users/7", createElement(NavLink, { to: "/users" }, "Users"))
+  const active = withRoute("/users/7", createElement(NavLink, { to: rawHref("/users") }, "Users"))
   expect(active).toContain('aria-current="page"')
 
-  const inactive = withRoute("/posts", createElement(NavLink, { to: "/users" }, "Users"))
+  const inactive = withRoute("/posts", createElement(NavLink, { to: rawHref("/users") }, "Users"))
   expect(inactive).not.toContain("aria-current")
 })
 
 test("NavLink end matches exactly - home isn't active on a subpath", () => {
-  const onSub = withRoute("/dashboard", createElement(NavLink, { to: "/", end: true }, "Home"))
+  const onSub = withRoute(
+    "/dashboard",
+    createElement(NavLink, { to: rawHref("/"), end: true }, "Home"),
+  )
   expect(onSub).not.toContain("aria-current")
 
-  const onHome = withRoute("/", createElement(NavLink, { to: "/", end: true }, "Home"))
+  const onHome = withRoute("/", createElement(NavLink, { to: rawHref("/"), end: true }, "Home"))
   expect(onHome).toContain('aria-current="page"')
 })
 
@@ -162,7 +167,7 @@ test("NavLink resolves a function className with the active state", () => {
     createElement(
       NavLink,
       {
-        to: "/users",
+        to: rawHref("/users"),
         className: ({ isActive }: { isActive: boolean }) => (isActive ? "on" : "off"),
       },
       "U",
@@ -172,18 +177,18 @@ test("NavLink resolves a function className with the active state", () => {
 })
 
 test("NavLink is case-insensitive by default, case-sensitive when asked", () => {
-  const insensitive = withRoute("/Users", createElement(NavLink, { to: "/users" }, "U"))
+  const insensitive = withRoute("/Users", createElement(NavLink, { to: rawHref("/users") }, "U"))
   expect(insensitive).toContain('aria-current="page"')
 
   const sensitive = withRoute(
     "/Users",
-    createElement(NavLink, { to: "/users", caseSensitive: true }, "U"),
+    createElement(NavLink, { to: rawHref("/users"), caseSensitive: true }, "U"),
   )
   expect(sensitive).not.toContain("aria-current")
 })
 
 test("Navigate renders nothing on the server (the redirect is a client effect)", () => {
-  expect(renderToStaticMarkup(createElement(Navigate, { to: "/login" }))).toBe("")
+  expect(renderToStaticMarkup(createElement(Navigate, { to: rawHref("/login") }))).toBe("")
 })
 
 test("useNavigate no-ops (no throw) before a browser navigate is registered", () => {
@@ -193,7 +198,7 @@ test("useNavigate no-ops (no throw) before a browser navigate is registered", ()
     return null
   }
   renderToStaticMarkup(compose([Page], { data: null }))
-  expect(() => navigate?.("/x")).not.toThrow()
+  expect(() => navigate?.(rawHref("/x"))).not.toThrow()
 })
 
 test("useNavigate forwards through the registered browser bridge", () => {
@@ -205,11 +210,11 @@ test("useNavigate forwards through the registered browser bridge", () => {
     return null
   }
   renderToStaticMarkup(compose([Page], { data: null }))
-  navigate?.("/next", { replace: true })
+  navigate?.(rawHref("/next"), { replace: true })
   expect(calls).toEqual([["/next", { replace: true }]])
 })
 
-test("useNavigate object form serializes search onto `to` (typed cross-route navigate)", () => {
+test("useNavigate takes the href() URL, search and hash included, and a history delta", () => {
   const calls: Array<[string | number, unknown]> = []
   setBrowserNavigate((to, options) => calls.push([to, options]))
   let navigate: ReturnType<typeof useNavigate> | undefined
@@ -218,16 +223,12 @@ test("useNavigate object form serializes search onto `to` (typed cross-route nav
     return null
   }
   renderToStaticMarkup(compose([Page], { data: null }))
-  // The object target's `search` is serialized onto `to`; `replace` folds into the options.
-  navigate?.({ to: "/reports", search: { page: 2, q: "hi" } })
-  navigate?.({ to: "/x", search: { a: 1 }, replace: true })
-  // The string + delta forms still work unchanged.
-  navigate?.("/plain")
+  navigate?.(rawHref("/reports?page=2&q=hi#top"))
+  navigate?.(rawHref("/x?a=1"), { replace: true })
   navigate?.(-1)
   expect(calls).toEqual([
-    ["/reports?page=2&q=hi", undefined],
+    ["/reports?page=2&q=hi#top", undefined],
     ["/x?a=1", { replace: true }],
-    ["/plain", undefined],
     [-1, undefined],
   ])
 })
@@ -280,6 +281,15 @@ test("setSearchParams navigates with the new query - record/string/URLSearchPara
   set({ tags: ["a", "b"] }) // array value → repeated key
   set({}) // empty → no "?" suffix
   expect(calls).toEqual(["/s?q=new", "/s?q=raw&p=2", "/s?a=1", "/s?q=up", "/s?tags=a&tags=b", "/s"])
+})
+
+test("setSearchParams on a path that reads as another host throws instead of navigating", () => {
+  const calls: unknown[] = []
+  setBrowserNavigate((to) => calls.push(to))
+  // `//host/x` is a protocol-relative reference: handed to the browser it leaves the origin.
+  const set = captureSetSearchParams("//evil.example/x?q=1")
+  expect(() => set({ q: "2" })).toThrow(TypeError)
+  expect(calls).toEqual([])
 })
 
 // A minimal MouseEvent stand-in for driving Link's click handler without a DOM. `preventDefault`
@@ -403,7 +413,7 @@ test("NavLink.isPending is true when a navigation targets this link (prefix matc
     createElement(
       NavLink,
       {
-        to: "/users",
+        to: rawHref("/users"),
         className: ({ isPending }: { isPending: boolean }) => (isPending ? "loading" : ""),
       },
       "Users",
@@ -419,7 +429,7 @@ test("NavLink.isPending is false when the pending navigation targets a different
     createElement(
       NavLink,
       {
-        to: "/users",
+        to: rawHref("/users"),
         className: ({ isPending }: { isPending: boolean }) => (isPending ? "loading" : "idle"),
       },
       "Users",

@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/query",
@@ -131,7 +132,7 @@ export default function Query() {
         surgery.
       </p>
       <p>
-        In an app with <a href="/docs/live">live refresh</a>, a query can name the live keys its data
+        In an app with <a href={href({ to: "/docs/live" })}>live refresh</a>, a query can name the live keys its data
         depends on: <code>useQuery(key, fn, {"{ live: [`post:${id}`] }"})</code> refetches whenever
         the server publishes one of them.
       </p>
@@ -141,7 +142,7 @@ export default function Query() {
         <code>@nifrajs/web/client</code> clears every query client in the page: mounted queries go
         back to pending and refetch, the rest drop their data. A fetch still loading loads once more
         for the new visitor before it settles. In an app with a{" "}
-        <a href="/docs/keep-alive#sign-in">keepAlive</a> route, the identity epoch cookie a sign-in
+        <a href={href({ to: "/docs/keep-alive", hash: "sign-in" })}>keepAlive</a> route, the identity epoch cookie a sign-in
         or sign-out response rotates does the same on the client&apos;s next read.
       </p>
       <p>

@@ -29,7 +29,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
 - **guardedClientElement** _(function)_ - `guardedClientElement: (type: unknown, raw: unknown, key?: unknown) => ReactNode | undefined` · from `@nifrajs/web-react/server-components/guard`
 
-_…and 72 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 74 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

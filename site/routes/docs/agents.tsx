@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/agents",
@@ -81,7 +82,6 @@ const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
   ["nifra_capabilities", "writes files", "Writes, checks or explains the capability lockfile."],
   ["nifra_manifest", "writes files", "Emits or diffs the route trust manifest."],
   ["nifra_sync_manifest", "writes files", "Regenerates the server-manifest route tables."],
-  ["nifra_sync_routes", "writes files", "Regenerates nifra-routes.d.ts."],
   ["nifra_scaffold", "writes files", "The route files for a URL path; with write, creates them."],
   ["nifra_context", "runs project code", "The route index and conventions, sliced by path or kind."],
   ["nifra_routes", "runs project code", "Every route served: a list, a graph, render modes, or the hooks each runs."],
@@ -266,7 +266,7 @@ export default function Agents() {
         Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
         can read the project, learn the real API, run actual requests against the backend it just
         edited, and finish with a report of what the change proved. The same typed capabilities can
-        power the agent inside your product through <a href="/docs/webmcp">WebMCP and predictive UI</a>
+        power the agent inside your product through <a href={href({ to: "/docs/webmcp" })}>WebMCP and predictive UI</a>
         or stream into a product surface through AG-UI.
       </p>
 
@@ -731,7 +731,7 @@ export default function Agents() {
         different question of what the project <em>holds</em>, as a cumulative ladder from a typed
         contract (L0) to contract-derived invariant tests (L4). A scaffolded app starts at L1, and each
         rung it has not reached reports the specific thing missing - so the ladder doubles as the list
-        of what to do next. See <a href="/docs/verification">the verification ladder</a>.
+        of what to do next. See <a href={href({ to: "/docs/verification" })}>the verification ladder</a>.
       </p>
       <CodeBlock code={GATE} lang="bash" />
 

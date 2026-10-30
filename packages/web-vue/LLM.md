@@ -19,17 +19,17 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **compileVueStyles** _(function)_ - `compileVueStyles: (source: string, filename: string) => string` · from `@nifrajs/web-vue/plugin`
 - **createServerComponentOutlet** _(function)_ - `createServerComponentOutlet: <Input, Props, View>(component: Handle<Input, Props, View>) => FunctionalComponent<Omit<ServerComponentProps<I…` · from `@nifrajs/web-vue/server-components/outlet`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-vue/client`
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>` · from `@nifrajs/web-vue/router`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-vue/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-vue/client`
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void` · from `@nifrajs/web-vue/keep-alive`
 - **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void` · from `@nifrajs/web-vue/keep-alive`
 - **provideQueryClient** _(function)_ - `provideQueryClient: (client: QueryClient, state?: DehydratedState) => void` · from `@nifrajs/web-vue/query`
+- **rawHref** _(function)_ - `rawHref: (path: string) => Href` · from `@nifrajs/web-vue/router`
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-vue/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-vue/fetcher`
-- **svgToVueSfc** _(function)_ - `svgToVueSfc: (xml: string) => string` · from `@nifrajs/web-vue/svg`
-- **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>` · from `@nifrajs/web-vue/router`
 
-_…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 45 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

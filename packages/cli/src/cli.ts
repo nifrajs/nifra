@@ -238,9 +238,6 @@ Usage:
   nifra sync-manifest                    Regenerate a committed web server-manifest.ts from routes/ WITHOUT
                                          a full build - clears server-manifest drift after a route add/rename
                                          (a new hydrating component still needs a full build).
-  nifra sync-routes                      Regenerate nifra-routes.d.ts from routes/ so navigate({ to, search })
-                                         is typed against each static route's searchSchema (a stale shape is a
-                                         tsc error). Include the file in your tsconfig. Pure file write.
   nifra snapshot [--out <file>]          Write the backend's API contract (routes + schemas) as plain
                                          JSON - the baseline for \`nifra diff\`. Default api-snapshot.json.
   nifra diff    [<baseline>] [--json]    Breaking-change gate: re-snapshot the contract and compare
@@ -317,7 +314,8 @@ Usage:
                                          React server component for the hole.
   nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
                                          params, the data its output schemas let through, and api typed
-                                         by backend/app.ts. dev, build and check refresh them too;
+                                         by backend/app.ts, plus routes.d.ts, the table href() checks
+                                         links against. dev, build and check refresh them too;
                                          --check fails when one is stale.
   nifra schemas [--write] [--check] [--json]
                                          Draft loaderOutput/actionOutput from each loader's and
@@ -1150,7 +1148,6 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "openapi",
   "routes",
   "sync-manifest",
-  "sync-routes",
 ])
 
 const HELD_OPEN_GRACE_MS = 2_000

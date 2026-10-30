@@ -8,6 +8,7 @@ import {
   type Manifest,
   notFound,
   type RenderAdapter,
+  rawHref,
   redirect,
 } from "../src/index.ts"
 import { varyOnDataHeader } from "../src/internal/response-controls.ts"
@@ -250,7 +251,7 @@ describe("ctx.set.headers", () => {
       appFor({
         loader: (ctx) => {
           written(ctx)
-          throw redirect("/login")
+          throw redirect(rawHref("/login"))
         },
       }),
     )
@@ -462,7 +463,7 @@ describe("ctx.set.cookie", () => {
     const app = appFor({
       loader: (ctx) => {
         ctx.set.cookie("seen", "1")
-        throw redirect("/next", { status: 301 })
+        throw redirect(rawHref("/next"), { status: 301 })
       },
     })
     const res = await doc(app)
@@ -539,7 +540,7 @@ describe("ctx.set.cookie", () => {
     const app = appFor({
       action: async (ctx) => {
         await enableDraft(ctx, "a-draft-secret-of-enough-length!")
-        return redirect("/page")
+        return redirect(rawHref("/page"))
       },
     })
     const res = await post(app)
@@ -583,7 +584,7 @@ describe("ctx.set in an action", () => {
   test("a login action sets its cookie and redirects, on a form post and on a fetch submit", async () => {
     const action: Loader = (ctx) => {
       ctx.set.cookie("session", "s1")
-      return redirect("/home")
+      return redirect(rawHref("/home"))
     }
     const form = await post(appFor({ action }))
     expect(form.status).toBe(303)
@@ -687,7 +688,7 @@ describe("ctx.set after the response is committed", () => {
   test("a redirect, a status page, and an error page close the controls too", async () => {
     const outcomes: Array<() => unknown> = [
       () => {
-        throw redirect("/next")
+        throw redirect(rawHref("/next"))
       },
       () => notFound(),
       () => {
@@ -850,7 +851,7 @@ describe("the Node direct-body lane", () => {
     const app = nodeApp({
       loader: (ctx) => {
         ctx.set.cookie("sid", "abc")
-        throw redirect("/next", { status: 301 })
+        throw redirect(rawHref("/next"), { status: 301 })
       },
     })
     const sent = sentByNode(await app.resolveNode(new Request("http://x/page")))
@@ -899,7 +900,7 @@ describe("a queued cookie keeps every outcome out of shared caches", () => {
     const app = appFor({
       loader: (ctx) => {
         ctx.set.cookie("sid", "abc")
-        throw redirect("/next", {
+        throw redirect(rawHref("/next"), {
           status: 301,
           headers: { "Cache-Control": "public, max-age=60", "x-reason": "moved" },
         })

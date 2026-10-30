@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { rawHref } from "../src/href.ts"
 import { navigateNow } from "../src/internal/navigate-runtime.ts"
 import { setBrowserNavigate } from "../src/navigation.ts"
 
@@ -6,7 +7,7 @@ afterEach(() => setBrowserNavigate(undefined))
 
 describe("navigateNow", () => {
   test("does nothing before a browser navigate is registered, and keeps nothing for one", () => {
-    navigateNow("/a")
+    navigateNow(rawHref("/a"))
     const calls: unknown[] = []
     setBrowserNavigate((to) => {
       calls.push(to)
@@ -19,9 +20,9 @@ describe("navigateNow", () => {
     setBrowserNavigate((to, options) => {
       calls.push([to, options])
     })
-    navigateNow("/a", { replace: true })
+    navigateNow(rawHref("/a"), { replace: true })
     navigateNow(-1)
-    navigateNow({ to: "/b", search: { q: "x" }, replace: true })
+    navigateNow(rawHref("/b?q=x"), { replace: true })
     expect(calls).toEqual([
       ["/a", { replace: true }],
       [-1, undefined],

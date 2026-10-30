@@ -1,7 +1,7 @@
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 // `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
 // bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
-// Vite's dev server. Sourced from the ROOT so the generated `RouteSearch` augmentation applies.
+// Vite's dev server. Sourced from the ROOT so the generated `RouteTable` augmentation applies.
 import type {
   Blocker,
   BlockerFunction,
@@ -36,6 +36,7 @@ import {
 import { PAGE_KEY } from "./page-visibility.ts"
 import { PROPS_KEY, SEARCH_KEY } from "./route-context.ts"
 
+export { href, rawHref } from "@nifrajs/web/client"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
@@ -114,7 +115,7 @@ export function useSearch<Schema extends StandardSchemaV1 | undefined = undefine
   >
 }
 
-/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).
+/** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta).
  * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops
  * before then / on the server. */
 export function useNavigate(): NavigateFunction {

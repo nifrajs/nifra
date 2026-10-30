@@ -50,7 +50,12 @@ import {
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { sourceIndex } from "./rules/index.ts"
-import { filesOutsideProgram, splitListedFiles, typecheckProjects } from "./typecheck-coverage.ts"
+import {
+  filesOutsideProgram,
+  routeTableOutsideProgram,
+  splitListedFiles,
+  typecheckProjects,
+} from "./typecheck-coverage.ts"
 
 export type {
   CheckAnalysisInput,
@@ -110,6 +115,8 @@ interface TypecheckResult {
   readonly programFiles?: readonly string[]
   /** Zoned TypeScript files outside the program, project-relative: the typecheck never read them. */
   readonly outsideProgram?: readonly string[]
+  /** The generated route table, when it exists and the program does not hold it. */
+  readonly routeTableOutsideProgram?: string
 }
 
 /**
@@ -384,7 +391,7 @@ function withoutTsconfig(
 function withProgramCoverage(
   cwd: string,
   result: TypecheckResult,
-  sourceFiles: ReadonlyArray<{ readonly file: string }>,
+  sourceFiles: ReadonlyArray<{ readonly file: string; readonly content: string }>,
   checkConfig: CheckConfig,
 ): TypecheckResult {
   const { programFiles, ...rest } = result
@@ -395,7 +402,12 @@ function withProgramCoverage(
     sourceFiles.map((source) => source.file),
     programFiles,
   ).filter((file) => !ignore?.some((pattern) => safeIgnoreGlobMatch(pattern, file)))
-  return outside.length === 0 ? rest : { ...rest, outsideProgram: outside }
+  const table = routeTableOutsideProgram(cwd, programFiles, sourceFiles)
+  return {
+    ...rest,
+    ...(outside.length === 0 ? {} : { outsideProgram: outside }),
+    ...(table === undefined ? {} : { routeTableOutsideProgram: table }),
+  }
 }
 
 /** Build the rule input from one source walk and the other check-wide scans. */

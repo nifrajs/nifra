@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { repeatedPrefixOf } from "@nifrajs/core/response-observer"
 import type { BoundaryRequestCtx, BoundaryStates } from "../src/boundary.ts"
 import { createCspPolicy } from "../src/csp.ts"
+import { rawHref } from "../src/href.ts"
 import { type PprOptions, resolvePprOptions } from "../src/internal/ppr/options.ts"
 import { PPR_RUNTIME, pprScriptHashes } from "../src/internal/ppr/runtime.ts"
 import {
@@ -1098,9 +1099,9 @@ describe("PPR server: what a hole cannot do, and when its slot frees", () => {
     try {
       const holes = [
         hole("thrown", () => {
-          throw redirect("/login")
+          throw redirect(rawHref("/login"))
         }),
-        hole("returned", () => redirect("/login")),
+        hole("returned", () => redirect(rawHref("/login"))),
         hole("missing", () => notFound()),
         hole("cart", () => 2),
       ]

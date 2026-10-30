@@ -78,7 +78,7 @@ const IGNORED_DIR =
 // legitimately drives `fetch`, hand-rolls a client, and calls a route directly. It is NOT excluded from
 // `nifra doctor`: tsc typechecks tests, so an import a test declares nowhere is a real broken build.
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
-const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
+export const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
 
 /** Paths crossing the scanner boundary are project-relative identifiers, not filesystem paths. Keep
  * them stable across runtimes so rules, diagnostics, ignore globs, and import chains have one shape. */

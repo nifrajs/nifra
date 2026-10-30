@@ -53,13 +53,12 @@ _…and 70 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra migrate <kind> [--from <value>] [--to <value>] [--write] [--zones] [--json] [--dir <value>] - Move an app onto the frontend/backend split (`migrate layout`), or migrate static Tailwind utilities to StyleX.
 - nifra scaffold <kind> <route> <name> [--shared] [--interactive] [--timeout <value>] [--server] [--json] [--dir <value>] - Add a partially prerendered hole to a route (`scaffold hole <route> <name>`): its definition and `<Hole>` in the page, its loader in the backend half.
 - nifra target <target> [--json] [--dir <value>] - Show the app's deploy target, or switch it (`nifra target cloudflare`): the `target` `nifra build` emits, kept in nifra.config.ts.
-- nifra types [--check] [--json] [--dir <value>] - Generate each route's `./+types` module (params, schema-typed data, typed `api`); `--check` fails when one is stale.
+- nifra types [--check] [--json] [--dir <value>] - Generate each route's `./+types` module (params, schema-typed data, typed `api`) and `.nifra/types/routes.d.ts`, the route table `href()` checks links against; `--check` fails when one is stale.
 - nifra schemas [--write] [--check] [--json] [--dir <value>] - Write a reviewable `loaderOutput`/`actionOutput` from the loader's or action's return type where a route has none (`--write`), keep generated ones current, and list returned fields a hand-written schema drops.
 - nifra snapshot [--out <value>] [--json] - Write the backend API contract as a versioned JSON baseline.
 - nifra diff <baseline> [--json] - Compare the current backend contract with a baseline and fail on breaking changes.
 - nifra contracts <action> [--out <value>] [--json] - Snapshot or check the deterministic route contract lock.
 - nifra sync-manifest [--json] - Regenerate generated server-manifest route tables without a full build.
-- nifra sync-routes [--json] - Regenerate nifra-routes.d.ts so typed navigation follows route search schemas.
 - nifra prove [--file <value>] [--min <value>] [--json] - Build the static verification work graph, plan the cheapest proofs for the changed files, and report a machine-checkable stop condition.
 - nifra replay <file> - Validate a token-only verification metadata file and dispatch it against its gate.
 - nifra smoke [--fixture <value>] [--in-process] [--json] - Run the declared production SSR, mounted-API, 404, header, auth, contract, and hydration smoke checks.

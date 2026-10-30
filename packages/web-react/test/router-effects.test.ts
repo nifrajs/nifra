@@ -1,5 +1,10 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
-import { type BlockerFunction, setBlockerController, setBrowserNavigate } from "@nifrajs/web"
+import {
+  type BlockerFunction,
+  rawHref,
+  setBlockerController,
+  setBrowserNavigate,
+} from "@nifrajs/web"
 import { GlobalWindow } from "happy-dom"
 import { act, createElement, type ReactNode } from "react"
 import type { Root } from "react-dom/client"
@@ -94,7 +99,9 @@ test("Navigate uses the browser bridge after the client mounts", async () => {
   setBrowserNavigate((to, options) => calls.push([to, options]))
 
   await withRoot(async (root) => {
-    await act(async () => root.render(createElement(Navigate, { to: "/next", replace: true })))
+    await act(async () =>
+      root.render(createElement(Navigate, { to: rawHref("/next"), replace: true })),
+    )
   })
 
   expect(calls).toEqual([["/next", { replace: true }]])

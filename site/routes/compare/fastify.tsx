@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import {
   formatPercent,
   formatRatio,
@@ -36,7 +37,7 @@ export default function VsFastify() {
         {formatRps(httpWorkloadRps("Node", "Nifra", "getUsers"))} req/s and Fastify at{" "}
         {formatRps(httpWorkloadRps("Node", "Fastify", "getUsers"))} req/s. Behind them: Elysia,
         Express, Hono. Every row, the methodology, and the harness itself are public on the{" "}
-        <a href="/benchmarks">benchmarks page</a> - rerun it and check us.
+        <a href={href({ to: "/benchmarks" })}>benchmarks page</a> - rerun it and check us.
       </p>
 
       <h2>The part Fastify cannot do: leave Node</h2>
@@ -117,8 +118,9 @@ export default function VsFastify() {
         </li>
       </ul>
       <p>
-        Capability-by-capability detail: <a href="/docs/comparison">the comparison doc</a>.
-        Scaffold: <code>bun create nifra my-app</code>.
+        Capability-by-capability detail:{" "}
+        <a href={href({ to: "/docs/comparison" })}>the comparison doc</a>. Scaffold:{" "}
+        <code>bun create nifra my-app</code>.
       </p>
     </article>
   )

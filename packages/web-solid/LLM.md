@@ -26,10 +26,10 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel bu
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCal…` · from `@nifrajs/web-solid/query`
 - **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => CreateQueryResult<T>` · from `@nifrajs/web-solid/query`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-solid/client`
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>` · from `@nifrajs/web-solid/router`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-solid/client`
-- **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-solid/client`
 
-_…and 42 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
+_…and 44 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 

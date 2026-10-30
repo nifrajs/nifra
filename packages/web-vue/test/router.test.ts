@@ -3,6 +3,7 @@ import {
   type Blocker,
   type BlockerFunction,
   IDLE_BLOCKER,
+  rawHref,
   setBlockerController,
   setBrowserNavigate,
 } from "@nifrajs/web"
@@ -49,10 +50,10 @@ function fakeController(): {
 
 test("useNavigate forwards through the bridge and no-ops before it", () => {
   const nav = useNavigate()
-  expect(() => nav("/x")).not.toThrow() // no bridge yet
+  expect(() => nav(rawHref("/x"))).not.toThrow() // no bridge yet
   const calls: Array<[string | number, unknown]> = []
   setBrowserNavigate((to, o) => calls.push([to, o]))
-  nav("/next", { replace: true })
+  nav(rawHref("/next"), { replace: true })
   expect(calls).toEqual([["/next", { replace: true }]])
 })
 

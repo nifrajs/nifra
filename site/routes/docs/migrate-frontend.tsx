@@ -1,6 +1,7 @@
 import { ssrMultiplier } from "../../shared/data/benchmarks"
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/migrate-frontend",
@@ -114,34 +115,34 @@ export default function MigrateFrontend() {
             <td>
               an action&apos;s <code>revalidate(paths, data, &#123; tags &#125;)</code>, or{" "}
               <code>revalidateEndpoint</code> for a webhook - see{" "}
-              <a href="/docs/rendering">SSG &amp; ISR</a>
+              <a href={href({ to: "/docs/rendering" })}>SSG &amp; ISR</a>
             </td>
           </tr>
           <tr>
             <td>Server Components · `"use client"`</td>
             <td>
-              opt-in <a href="/docs/server-components">server components</a> on all five adapters
+              opt-in <a href={href({ to: "/docs/server-components" })}>server components</a> on all five adapters
             </td>
           </tr>
           <tr>
             <td>Partial prerendering (Cache Components)</td>
             <td>
               a <code>shellLoader</code> and holes - see{" "}
-              <a href="/docs/partial-prerendering">Partial prerendering</a>
+              <a href={href({ to: "/docs/partial-prerendering" })}>Partial prerendering</a>
             </td>
           </tr>
           <tr>
             <td>Intercepting routes (`(.)photo`)</td>
             <td>
               a boundary with <code>{`{ intercept: "/photos/:id" }`}</code> - see{" "}
-              <a href="/docs/routing#modal-routes">Opening a route in a modal</a>
+              <a href={href({ to: "/docs/routing", hash: "modal-routes" })}>Opening a route in a modal</a>
             </td>
           </tr>
           <tr>
             <td>`keepalive` in `definePageMeta`</td>
             <td>
               <code>export const keepAlive = true</code> - see{" "}
-              <a href="/docs/keep-alive">Keep-alive</a>
+              <a href={href({ to: "/docs/keep-alive" })}>Keep-alive</a>
             </td>
           </tr>
         </tbody>
@@ -173,16 +174,16 @@ export default function MigrateFrontend() {
           <b>Much faster SSR</b> - the current dynamic-page snapshot reports Nifra at{" "}
           {ssrMultiplier("React")} the throughput of Next.js, {ssrMultiplier("Vue")} Nuxt, and{" "}
           {ssrMultiplier("Svelte")} SvelteKit / {ssrMultiplier("Solid")} SolidStart, with a fraction
-          of the client JavaScript. See <a href="/benchmarks">benchmarks</a>.
+          of the client JavaScript. See <a href={href({ to: "/benchmarks" })}>benchmarks</a>.
         </li>
         <li>
           <b>End-to-end types with no codegen</b>, the same app on Bun / Node / Deno / the edge, and a
-          backend you can also ship on its own. Start with <a href="/docs">Getting started</a>.
+          backend you can also ship on its own. Start with <a href={href({ to: "/docs" })}>Getting started</a>.
         </li>
       </ul>
       <p>
         Moving a backend (Express, Hono, Fastify, Elysia) instead? See{" "}
-        <a href="/docs/migrate-backend">Migrating a backend</a>.
+        <a href={href({ to: "/docs/migrate-backend" })}>Migrating a backend</a>.
       </p>
     </div>
   )

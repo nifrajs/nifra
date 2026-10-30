@@ -36,7 +36,6 @@ test("the stable catalog is the public command allowlist", () => {
     "diff",
     "contracts",
     "sync-manifest",
-    "sync-routes",
     "prove",
     "replay",
     "smoke",

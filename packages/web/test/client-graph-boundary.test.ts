@@ -18,7 +18,7 @@ import { Glob } from "bun"
  *   import { type X, type Y } from "@nifrajs/web"  // ditto - inline `type` is not `import type`
  *
  * `import type { X } from "@nifrajs/web"` is erased completely and stays allowed - types must keep
- * coming from the root, because generated code augments `RouteSearch` through
+ * coming from the root, because generated code augments `RouteTable` through
  * `declare module "@nifrajs/web"` and an augmentation lands on the module it names.
  */
 

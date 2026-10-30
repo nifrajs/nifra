@@ -163,6 +163,8 @@ export const CHECK_CODES: Readonly<Record<string, ReviewCheckId>> = {
   "NF-C054": "typed-client",
   "NF-C055": "route-boundary",
   "NF-C056": "route-boundary",
+  "NF-C057": "typed-client",
+  "NF-C058": "typed-client",
   "NF-C046": "dependency",
   "NF-D001": "dependency",
   "NF-D002": "dependency",

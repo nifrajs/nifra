@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/plugins",
@@ -622,7 +623,7 @@ export default function Plugins() {
         (nullable) or <code>auth.requirePrincipal(req)</code> (throws <code>401</code>) - mirroring{" "}
         <code>@nifrajs/auth</code> and <code>@nifrajs/better-auth</code>. It's verified once per request and
         cached. For full session-based auth (OAuth, magic links, 2FA), see{" "}
-        <a href="/docs/auth">Auth &amp; sessions</a>.
+        <a href={href({ to: "/docs/auth" })}>Auth &amp; sessions</a>.
       </p>
       <CodeBlock code={AUTHN} />
       <ul>
@@ -686,7 +687,7 @@ export default function Plugins() {
         <code>idempotency()</code> makes a retried unsafe request (same <code>Idempotency-Key</code> header)
         replay the first response instead of re-running the side effect - no double-charge on a dropped
         connection. It short-circuits before the handler; a concurrent retry gets a <code>409</code>. See{" "}
-        <a href="/docs/security">Security &amp; hardening</a> for the store contract, the production
+        <a href={href({ to: "/docs/security" })}>Security &amp; hardening</a> for the store contract, the production
         guidance (shared store + DB constraint), and the <code>Set-Cookie</code> rule.
       </p>
       <CodeBlock code={RELIABILITY} />
@@ -789,7 +790,7 @@ export default function Plugins() {
         The security set - <code>csrf</code> (signed double-submit + Origin/Referer), <code>jwt</code>,{" "}
         <code>ipRestriction</code> (IPv4/IPv6 + CIDR, fails closed), and <code>bodyLimit</code>{" "}
         (Content-Length cap before routing) - is documented with hardening guidance on{" "}
-        <a href="/docs/security">Security &amp; hardening</a>. All comparisons are constant-time and all
+        <a href={href({ to: "/docs/security" })}>Security &amp; hardening</a>. All comparisons are constant-time and all
         defaults fail closed.
       </p>
 
