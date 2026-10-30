@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import {
+  getRouteSlotRuntime,
   loadRouteSlot,
   RouteSlotLoadError,
   type RouteSlotRuntime,
   withRouteSlotConcurrency,
 } from "../src/internal/route-slot-runtime.ts"
-import type { ClientRouter, RouteMatch } from "../src/router.ts"
+import type { RouteMatch } from "../src/router.ts"
 
 const makeRuntime = (): RouteSlotRuntime => {
   const matches: Record<string, RouteMatch> = {
@@ -24,7 +25,7 @@ const makeRuntime = (): RouteSlotRuntime => {
       return routeId === "user" ? "/users/:id" : routeId === "admin" ? "/admin/:id" : "/dashboard"
     },
     async loadModule() {},
-  } as unknown as ClientRouter
+  } satisfies RouteSlotRuntime["router"]
   return {
     router,
     routes: { user: [() => null] },
@@ -157,5 +158,40 @@ describe("route-slot loading", () => {
     release()
     expect(await Promise.all(tasks)).toHaveLength(12)
     expect(peak).toBe(4)
+  })
+})
+
+describe("route slot runtime global", () => {
+  test("fails closed for malformed cross-bundle runtime records", () => {
+    const key = Symbol.for("nifra.web.route-slot-runtime")
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key)
+    const router: RouteSlotRuntime["router"] = {
+      match: () => null,
+      loadModule: async () => undefined,
+      routeSlotsFor: () => ({}),
+      routePattern: () => undefined,
+    }
+    const accessorRuntime = Object.defineProperty({ routes: {} }, "router", {
+      get() {
+        throw new Error("runtime getter must not run")
+      },
+    })
+    const invalid: readonly unknown[] = [
+      { router: {}, routes: {} },
+      { router, routes: { route: {} } },
+      { router, routes: {}, searchSchemas: { route: [{}] } },
+      { router, routes: {}, matchChains: { route: { ids: ["route"], handles: [] } } },
+      accessorRuntime,
+    ]
+
+    try {
+      for (const runtime of invalid) {
+        Reflect.set(globalThis, key, runtime)
+        expect(getRouteSlotRuntime()).toBeUndefined()
+      }
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(globalThis, key)
+      else Object.defineProperty(globalThis, key, previous)
+    }
   })
 })

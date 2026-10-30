@@ -152,12 +152,17 @@ export function useRouteSlot(name: RouteSlotName): RouteSlotController {
 export const RouteSlot = defineComponent({
   name: "NifraRouteSlot",
   props: {
-    name: { type: String as unknown as PropType<RouteSlotName>, required: true },
+    name: {
+      // biome-ignore lint/plugin/noChainedTypeAssertions: Vue's String runtime constructor cannot encode the generated route-specific literal union; the runtime registry rejects names absent from the active route.
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Vue checks the prop as a string and the active route's registry validates the exact slot name before loading.
+      type: String as unknown as PropType<RouteSlotName>,
+      required: true,
+    },
   },
   setup(props, { slots }) {
     // The runtime string prop is narrowed by generated RouteTable types in an application build.
     // Vue's String constructor cannot express that literal union in the adapter package build.
-    const slot = useRouteSlot(props.name as unknown as RouteSlotName)
+    const slot = useRouteSlot(props.name)
     return () => {
       const content = slot.content.value
       if (content !== undefined) return compose(content.chain, content)

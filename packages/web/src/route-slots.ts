@@ -42,6 +42,11 @@ function stateError(code: RouteSlotStateError["code"], message?: string): RouteS
   return new RouteSlotStateError(code, message)
 }
 
+function nullRecord<T>(): Record<string, T> {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: A fresh null-prototype record has no inherited keys; callers add only names validated against SLOT_NAME.
+  return Object.create(null) as Record<string, T>
+}
+
 function urlOf(path: string): URL {
   try {
     return new URL(path, SENTINEL_ORIGIN)
@@ -97,7 +102,7 @@ function orderedTargets(value: unknown): Record<string, string> {
     throw stateError("malformed")
   const own = Object.keys(value)
   if (own.length > MAX_ROUTE_SLOTS) throw stateError("too_large")
-  const slots: Record<string, string> = Object.create(null) as Record<string, string>
+  const slots = nullRecord<string>()
   for (const name of own.sort()) {
     if (!SLOT_NAME.test(name)) throw stateError("malformed")
     slots[name] = normalizeRouteSlotTarget(Reflect.get(value, name))
@@ -113,13 +118,15 @@ function canonicalPayload(slots: Record<string, string>): string {
 export function parseRouteSlots(path: string): RouteSlotTargets {
   const url = urlOf(path)
   const values = url.searchParams.getAll(ROUTE_SLOTS_PARAM)
-  if (values.length === 0) return Object.freeze(Object.create(null) as Record<string, string>)
-  if (values.length !== 1 || values[0]!.length > MAX_ROUTE_SLOT_STATE_CHARS)
-    throw stateError(values.length > 1 ? "malformed" : "too_large")
+  if (values.length === 0) return Object.freeze(nullRecord<string>())
+  if (values.length !== 1) throw stateError("malformed")
+  const serialized = values[0]
+  if (serialized === undefined) throw stateError("malformed")
+  if (serialized.length > MAX_ROUTE_SLOT_STATE_CHARS) throw stateError("too_large")
 
   let payload: unknown
   try {
-    payload = JSON.parse(values[0]!) as unknown
+    payload = JSON.parse(serialized)
   } catch {
     throw stateError("malformed")
   }
@@ -134,7 +141,7 @@ export function parseRouteSlots(path: string): RouteSlotTargets {
   )
     throw stateError("malformed")
   const slots = orderedTargets(Reflect.get(payload, "slots"))
-  if (canonicalPayload(slots) !== values[0]) throw stateError("malformed")
+  if (canonicalPayload(slots) !== serialized) throw stateError("malformed")
   return Object.freeze(slots)
 }
 
@@ -161,10 +168,59 @@ export function setRouteSlot(path: string, name: string, target: string | null):
 }
 
 /** Remove framework-owned state before the active page's loader sees its search params. */
+function isRouteSlotsParameter(segment: string): boolean {
+  const equals = segment.indexOf("=")
+  const rawKey = equals < 0 ? segment : segment.slice(0, equals)
+  if (rawKey.length > ROUTE_SLOTS_PARAM.length * 3) return false
+  try {
+    return decodeURIComponent(rawKey.replace(/\+/g, " ")) === ROUTE_SLOTS_PARAM
+  } catch {
+    return false
+  }
+}
+
+/** Removes only the reserved route-slot key without reparsing or rewriting the other query text. */
+export function stripRouteSlotsSearch(search: string): string {
+  let start = 0
+  let found = false
+  while (start <= search.length) {
+    const ampersand = search.indexOf("&", start)
+    const end = ampersand < 0 ? search.length : ampersand
+    if (isRouteSlotsParameter(search.slice(start, end))) found = true
+    if (ampersand < 0) break
+    start = ampersand + 1
+  }
+  if (!found) return search
+
+  let output = ""
+  let kept = 0
+  start = 0
+  while (start <= search.length) {
+    const ampersand = search.indexOf("&", start)
+    const end = ampersand < 0 ? search.length : ampersand
+    const segment = search.slice(start, end)
+    if (!isRouteSlotsParameter(segment)) {
+      if (kept > 0) output += "&"
+      output += segment
+      kept++
+    }
+    if (ampersand < 0) break
+    start = ampersand + 1
+  }
+  return output
+}
+
 export function stripRouteSlots(path: string): string {
-  const url = urlOf(path)
-  url.searchParams.delete(ROUTE_SLOTS_PARAM)
-  return `${url.pathname}${url.search}${url.hash}`
+  const hashIndex = path.indexOf("#")
+  const beforeHash = hashIndex < 0 ? path : path.slice(0, hashIndex)
+  const hash = hashIndex < 0 ? "" : path.slice(hashIndex)
+  const queryIndex = beforeHash.indexOf("?")
+  if (queryIndex < 0) return path
+
+  const search = beforeHash.slice(queryIndex + 1)
+  const stripped = stripRouteSlotsSearch(search)
+  if (stripped === search) return path
+  return `${beforeHash.slice(0, queryIndex)}${stripped.length === 0 ? "" : `?${stripped}`}${hash}`
 }
 
 /** Validate route-module declarations once they meet the runtime manifest. */
@@ -172,16 +228,12 @@ export function normalizeRouteSlotRegistry(
   value: unknown,
   knownPatterns: ReadonlySet<string>,
 ): RouteSlotRegistry {
-  if (value === undefined)
-    return Object.freeze(Object.create(null) as Record<string, readonly string[]>)
+  if (value === undefined) return Object.freeze(nullRecord<readonly string[]>())
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw stateError("malformed", "[nifra/web] routeSlots must be a plain record of route patterns")
   const names = Object.keys(value)
   if (names.length > MAX_ROUTE_SLOT_NAMES) throw stateError("too_large")
-  const registry: Record<string, readonly string[]> = Object.create(null) as Record<
-    string,
-    readonly string[]
-  >
+  const registry = nullRecord<readonly string[]>()
   for (const name of names.sort()) {
     if (!SLOT_NAME.test(name)) throw stateError("malformed")
     const patterns: unknown = Reflect.get(value, name)

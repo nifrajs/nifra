@@ -7,6 +7,7 @@ import {
   ROUTE_SLOTS_PARAM,
   RouteSlotStateError,
   setRouteSlot,
+  stripRouteSlots,
   withRouteSlots,
 } from "../src/route-slots.ts"
 
@@ -93,4 +94,23 @@ describe("route-slot URL state", () => {
       "malformed",
     )
   })
+})
+
+test("stores inherited object names as own route-slot entries", () => {
+  const registry = normalizeRouteSlotRegistry(
+    { constructor: ["/users/:id"] },
+    new Set(["/users/:id"]),
+  )
+  expect(Object.getPrototypeOf(registry)).toBeNull()
+  expect(Object.hasOwn(registry, "constructor")).toBe(true)
+  expect(Object.getOwnPropertyDescriptor(registry, "constructor")?.value).toEqual(["/users/:id"])
+})
+
+test("strips route-slot state without rewriting path bytes or other query text", () => {
+  expect(stripRouteSlots("//evil.example/x")).toBe("//evil.example/x")
+  expect(stripRouteSlots("/\\evil.example/y")).toBe("/\\evil.example/y")
+  const encodedName = ROUTE_SLOTS_PARAM.replaceAll("_", "%5f")
+  expect(stripRouteSlots(`/reports?keep=%2f&${encodedName}=x&next=2#panel`)).toBe(
+    "/reports?keep=%2f&next=2#panel",
+  )
 })

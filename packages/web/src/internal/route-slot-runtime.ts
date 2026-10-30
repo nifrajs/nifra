@@ -23,8 +23,10 @@ export class RouteSlotLoadError extends Error {
   }
 }
 
+type RouteSlotRouter = Pick<ClientRouter, "match" | "loadModule" | "routeSlotsFor" | "routePattern">
+
 export interface RouteSlotRuntime {
-  readonly router: ClientRouter
+  readonly router: RouteSlotRouter
   readonly routes: Readonly<Record<string, readonly unknown[]>>
   readonly searchSchemas:
     | Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>>
@@ -59,39 +61,132 @@ export function onRouteSlotIdentityChange(listener: () => void): () => void {
   return onIdentityChange(listener)
 }
 
-export function getRouteSlotRuntime(): RouteSlotRuntime | undefined {
-  const value: unknown = Reflect.get(globalThis, RUNTIME_KEY)
-  if (typeof value !== "object" || value === null) return undefined
-  const router: unknown = Reflect.get(value, "router")
-  const routes: unknown = Reflect.get(value, "routes")
-  const searchSchemas: unknown = Reflect.get(value, "searchSchemas")
-  const matchChains: unknown = Reflect.get(value, "matchChains")
-  if (
-    typeof router !== "object" ||
-    router === null ||
-    typeof routes !== "object" ||
-    routes === null
-  )
-    return undefined
-  if (
-    (searchSchemas !== undefined &&
-      (typeof searchSchemas !== "object" || searchSchemas === null)) ||
-    typeof Reflect.get(router, "match") !== "function" ||
-    typeof Reflect.get(router, "loadModule") !== "function" ||
-    typeof Reflect.get(router, "routeSlotsFor") !== "function" ||
-    typeof Reflect.get(router, "routePattern") !== "function"
-  )
-    return undefined
-  if (matchChains !== undefined && (typeof matchChains !== "object" || matchChains === null))
-    return undefined
-  return {
-    router: router as ClientRouter,
-    routes: routes as Readonly<Record<string, readonly unknown[]>>,
-    searchSchemas: searchSchemas as
-      | Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>>
-      | undefined,
-    matchChains: matchChains as Readonly<Record<string, MatchChain>> | undefined,
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === null || prototype === Object.prototype
+  } catch {
+    return false
   }
+}
+
+function ownDataValue(value: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function ownDataEntries(value: unknown): readonly (readonly [string, unknown])[] | undefined {
+  if (!isPlainRecord(value)) return undefined
+  try {
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== "string")) return undefined
+    const entries: (readonly [string, unknown])[] = []
+    for (const key of keys) {
+      if (typeof key !== "string") return undefined
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined || !("value" in descriptor)) return undefined
+      entries.push([key, descriptor.value])
+    }
+    return entries
+  } catch {
+    return undefined
+  }
+}
+
+function isFunctionProperty(value: object, key: string): boolean {
+  const seen = new Set<object>()
+  try {
+    let current: object | null = value
+    while (current !== null && !seen.has(current)) {
+      seen.add(current)
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)
+      if (descriptor !== undefined)
+        return "value" in descriptor && typeof descriptor.value === "function"
+      current = Object.getPrototypeOf(current)
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
+function isRouteSlotRouter(value: unknown): value is RouteSlotRouter {
+  if (typeof value !== "object" || value === null) return false
+  return ["match", "loadModule", "routeSlotsFor", "routePattern"].every((key) =>
+    isFunctionProperty(value, key),
+  )
+}
+
+function isRouteModulesRecord(
+  value: unknown,
+): value is Readonly<Record<string, readonly unknown[]>> {
+  const entries = ownDataEntries(value)
+  return entries !== undefined && entries.every(([, modules]) => Array.isArray(modules))
+}
+
+function isStandardSchema(value: unknown): value is StandardSchemaV1 {
+  if (!isPlainRecord(value)) return false
+  const standard = ownDataValue(value, "~standard")
+  if (!isPlainRecord(standard)) return false
+  return (
+    ownDataValue(standard, "version") === 1 &&
+    typeof ownDataValue(standard, "vendor") === "string" &&
+    typeof ownDataValue(standard, "validate") === "function"
+  )
+}
+
+function isSearchSchemaArray(value: unknown): value is readonly (StandardSchemaV1 | undefined)[] {
+  if (!Array.isArray(value)) return false
+  try {
+    return value.every((schema) => schema === undefined || isStandardSchema(schema))
+  } catch {
+    return false
+  }
+}
+
+function isSearchSchemaRecord(
+  value: unknown,
+): value is Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>> {
+  const entries = ownDataEntries(value)
+  return entries !== undefined && entries.every(([, schemas]) => isSearchSchemaArray(schemas))
+}
+
+function isMatchChain(value: unknown): value is MatchChain {
+  if (!isPlainRecord(value)) return false
+  const ids = ownDataValue(value, "ids")
+  const handles = ownDataValue(value, "handles")
+  if (!Array.isArray(ids) || !Array.isArray(handles) || ids.length !== handles.length) return false
+  try {
+    return ids.every((id) => typeof id === "string")
+  } catch {
+    return false
+  }
+}
+
+function isMatchChainRecord(value: unknown): value is Readonly<Record<string, MatchChain>> {
+  const entries = ownDataEntries(value)
+  return entries !== undefined && entries.every(([, chain]) => isMatchChain(chain))
+}
+
+export function getRouteSlotRuntime(): RouteSlotRuntime | undefined {
+  const value = ownDataValue(globalThis, RUNTIME_KEY)
+  if (!isPlainRecord(value)) return undefined
+
+  const router = ownDataValue(value, "router")
+  const routes = ownDataValue(value, "routes")
+  const searchSchemas = ownDataValue(value, "searchSchemas")
+  const matchChains = ownDataValue(value, "matchChains")
+
+  if (!isRouteSlotRouter(router) || !isRouteModulesRecord(routes)) return undefined
+  if (searchSchemas !== undefined && !isSearchSchemaRecord(searchSchemas)) return undefined
+  if (matchChains !== undefined && !isMatchChainRecord(matchChains)) return undefined
+
+  return { router, routes, searchSchemas, matchChains }
 }
 
 function takeLoadSlot(signal: AbortSignal): Promise<() => void> {
@@ -209,7 +304,7 @@ export async function loadRouteSlot(
         ),
         data: response,
         ...(runtime.matchChains?.[target.routeId] === undefined
-          ? {}
+          ? undefined
           : { matchChain: runtime.matchChains?.[target.routeId] }),
         chain,
       }
@@ -239,13 +334,13 @@ export async function loadRouteSlot(
       ),
       data: response.data,
       ...(response.serverComponents === undefined
-        ? {}
+        ? undefined
         : { serverComponents: response.serverComponents }),
-      ...(response.layoutData === undefined ? {} : { layoutData: response.layoutData }),
-      ...(response.boundaries === undefined ? {} : { boundaries: response.boundaries }),
-      ...(response.live === undefined ? {} : { live: response.live }),
+      ...(response.layoutData === undefined ? undefined : { layoutData: response.layoutData }),
+      ...(response.boundaries === undefined ? undefined : { boundaries: response.boundaries }),
+      ...(response.live === undefined ? undefined : { live: response.live }),
       ...(runtime.matchChains?.[target.routeId] === undefined
-        ? {}
+        ? undefined
         : { matchChain: runtime.matchChains?.[target.routeId] }),
       chain: components,
     }

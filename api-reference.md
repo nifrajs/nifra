@@ -6024,7 +6024,6 @@ _No named exports (side-effect entrypoint)._
 - **statusPage** _(function)_ - `statusPage: (status: number, options?: StatusPageOptions) => never`
   Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
 - **stripRouteSlots** _(function)_ - `stripRouteSlots: (path: string) => string`
-  Remove framework-owned state before the active page's loader sees its search params.
 - **waitForStyles** _(function)_ - `waitForStyles: (options?: WaitForStylesOptions) => Promise<void>`
   Wait for the framework-owned deferred stylesheet links in the initial document, then promote them to `media="all"`. It is safe to call more than once: repeated calls for one document share the same per-link waits, and duplicate framework links are removed before waiting. Blocking links are not touc…
 - **withRouteSlots** _(function)_ - `withRouteSlots: (path: string, targets: RouteSlotTargets) => string`
