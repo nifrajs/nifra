@@ -59,7 +59,8 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 if (framework === "fastify") {
   const { default: Fastify } = await import("fastify")
-  const app = Fastify()
+  // Match the other targets' strict numeric body validation; Fastify otherwise coerces JSON values.
+  const app = Fastify({ ajv: { customOptions: { coerceTypes: false } } })
   app.get("/", () => ({ hello: "world" }))
   // Route generics type params/body without casts.
   app.get<{ Params: { id: string } }>("/users/:id", (req) => ({ id: req.params.id }))

@@ -100,7 +100,8 @@ function sendJson(
 
 if (framework === "fastify") {
   const { default: Fastify } = await import("fastify")
-  const app = Fastify()
+  // Match the other targets' strict numeric body validation; Fastify otherwise coerces JSON values.
+  const app = Fastify({ ajv: { customOptions: { coerceTypes: false } } })
   app.addHook("onSend", (req, reply, payload, done) => {
     for (const [k, v] of SEC_ENTRIES) reply.header(k, v)
     reply.header("x-request-id", req.headers["x-request-id"] ?? crypto.randomUUID())
@@ -160,7 +161,8 @@ if (framework === "fastify") {
 } else if (framework === "fastify-body") {
   // Fastify's body-observing tier: onSend receives the serialized payload string.
   const { default: Fastify } = await import("fastify")
-  const app = Fastify()
+  // Keep validation behavior identical to the ordinary Fastify target.
+  const app = Fastify({ ajv: { customOptions: { coerceTypes: false } } })
   app.addHook("onSend", (req, reply, payload, done) => {
     for (const [k, v] of SEC_ENTRIES) reply.header(k, v)
     reply.header("x-request-id", req.headers["x-request-id"] ?? crypto.randomUUID())

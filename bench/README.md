@@ -55,8 +55,9 @@ same-run ratios (nifra vs the field, % of the raw server) - not the absolute num
 
 Workloads are identical across every framework (`bench/http/serve*.ts`): `GET /users/:id` (routing +
 path param) and `POST /users` (validated body), plus `GET /` and `GET /search` under `--full`. The
-schema probes require the same fields and types; unknown query and body fields are accepted and
-ignored, matching Nifra's benchmark Standard Schema fixture. They run before measurement. Each
+schema probes check required fields, strict types, and accepted extra query/body fields. Fastify's
+Ajv coercion is disabled so a string age cannot pass its numeric schema. The probes match Nifra's
+benchmark Standard Schema fixture and run before measurement. Each
 server runs in its own subprocess. A runtime section boots all of them, then measures in interleaved
 rounds (`BENCH_ROUNDS`, default 4, odd counts round up): each round takes one count-bounded `oha`
 sample of every server, one at a time, so only the sampled server carries load. A row's % of the raw
@@ -74,7 +75,8 @@ Fastify also runs on Bun and Deno through each runtime's `node:http` compatibili
 real API route actually has - fixed security and CORS response headers, a request-id hook,
 bearer-token auth, and a cookie read - which nifra compiles into its fused derive-and-before lane.
 The GET and POST validators require the same fields and types and ignore unknown fields, matching
-Nifra's benchmark Standard Schema fixture; the runner probes both behaviors before timing. Each
+Nifra's benchmark Standard Schema fixture; the runner probes missing fields, wrong types, and extra
+fields before timing. Each
 target writes the same headers for the one allowed fixture origin; preflight and rejected-origin
 policy behavior are outside the timed workload.
 Its Bun runner preloads `dist-core-preload.ts` so workspace middleware shares the app's built core;

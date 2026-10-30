@@ -328,6 +328,14 @@ async function probeWorkload(base: string, workload: Workload): Promise<void> {
     if (invalid.status < 400 || invalid.status >= 500) {
       throw new Error(`${workload.name}: validator accepted an invalid body`)
     }
+    const wrongType = await fetch(`${base}/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Ada", age: "36" }),
+    })
+    if (wrongType.status < 400 || wrongType.status >= 500) {
+      throw new Error(`${workload.name}: validator accepted a string for numeric age`)
+    }
     const withExtra = await fetch(`${base}/users`, {
       method: "POST",
       headers: { "content-type": "application/json" },
