@@ -11,7 +11,16 @@ import {
   setRouteSlot,
   stripRouteSlots,
 } from "@nifrajs/web/client"
-import { createEffect, createMemo, createSignal, type JSX, onCleanup, useContext } from "solid-js"
+import {
+  createComponent,
+  createEffect,
+  createMemo,
+  createSignal,
+  type JSX,
+  onCleanup,
+  useContext,
+} from "solid-js"
+import { Dynamic } from "solid-js/web"
 import { compose } from "./compose.ts"
 import { RenderPropsContext, useNavigate } from "./router.ts"
 
@@ -154,13 +163,14 @@ export function RouteSlot(props: RouteSlotProps): JSX.Element {
       const code = slot.error() ?? "unavailable"
       if (typeof props.error === "function") return props.error(code)
       if (props.error !== undefined) return props.error
-      return (
-        <div role="alert" data-route-slot-error={code}>
-          This panel is unavailable.
-        </div>
-      )
+      return createComponent(Dynamic, {
+        component: "div",
+        role: "alert",
+        "data-route-slot-error": code,
+        children: "This panel is unavailable.",
+      })
     }
     return slot.target() !== undefined ? (props.fallback ?? null) : null
   }
-  return <Render />
+  return createComponent(Render, {})
 }

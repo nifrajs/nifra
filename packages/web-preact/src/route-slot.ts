@@ -11,7 +11,7 @@ import {
   setRouteSlot,
   stripRouteSlots,
 } from "@nifrajs/web/client"
-import { type ComponentChildren, h, type VNode } from "preact"
+import { type ComponentChildren, Fragment, h, type VNode } from "preact"
 import { useContext, useEffect, useRef, useState } from "preact/hooks"
 import { compose } from "./compose.ts"
 import { RenderPropsContext, useNavigate } from "./router.ts"
@@ -131,8 +131,8 @@ export function RouteSlot({ name, fallback = null, error }: RouteSlotProps): VNo
   const slot = useRouteSlot(name)
   if (slot.content !== undefined) return compose(slot.content.chain, slot.content)
   if (slot.status === "error") {
-    if (typeof error === "function") return h("span", null, error(slot.error ?? "unavailable"))
-    if (error !== undefined) return h("span", null, error)
+    if (typeof error === "function") return h(Fragment, null, error(slot.error ?? "unavailable"))
+    if (error !== undefined) return h(Fragment, null, error)
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Preact's invariant VNode props need the same boundary widening used by compose.
     return h(
       "div",
@@ -140,5 +140,5 @@ export function RouteSlot({ name, fallback = null, error }: RouteSlotProps): VNo
       "This panel is unavailable.",
     ) as VNode
   }
-  return slot.target === undefined ? null : h("span", null, fallback)
+  return slot.target === undefined ? null : h(Fragment, null, fallback)
 }

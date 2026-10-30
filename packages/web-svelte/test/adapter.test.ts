@@ -46,6 +46,32 @@ test(
   },
   SPAWN_TIMEOUT_MS,
 )
+test(
+  "RouteSlot renders its fallback during SSR while the URL-addressed target loads",
+  async () => {
+    const code = `
+      import { plugin } from "bun";
+      import { svelteBunPlugin } from ${asImport("../src/plugin.ts")};
+      plugin(svelteBunPlugin("ssr"));
+      const { svelteAdapter } = await import(${asImport("../src/index.ts")});
+      const RouteSlotPage = (await import(${asImport("./fixtures/route-slot-page.svelte")})).default;
+      const path = "/dashboard?__nifra_slots=" + encodeURIComponent('{"v":1,"slots":{"inspector":"/users/7"}}');
+      const html = await svelteAdapter.renderToString([RouteSlotPage], {
+        data: null, search: {}, path,
+      });
+      if (!html.includes("<p>Select a user.</p>")) throw new Error("RouteSlot did not render its SSR fallback; got: " + html);
+    `
+    const proc = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" })
+    const [stdout, stderr, codeResult] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect(`${stdout}${stderr}`).toBe("")
+    expect(codeResult).toBe(0)
+  },
+  SPAWN_TIMEOUT_MS,
+)
 
 test(
   "the adapter can be imported BEFORE the SSR plugin is registered",
