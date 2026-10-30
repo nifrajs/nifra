@@ -26,7 +26,7 @@ concurrency:
 jobs:
   target:
     name: mutation (${{ matrix.target }} ${{ matrix.shard }}/${{ matrix.shards }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
     permissions:
       contents: read

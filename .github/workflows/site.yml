@@ -27,7 +27,7 @@ jobs:
   # nothing is published here. scripts/release-branch.test.ts keeps the shared steps identical.
   deploy-site:
     name: deploy-site
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       actions: read

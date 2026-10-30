@@ -61,7 +61,7 @@ jobs:
       (contains(github.event.pull_request.labels.*.name, 'bench') &&
       (github.event.action != 'labeled' || github.event.label.name == 'bench'))
     name: ${{ matrix.suite }} on ${{ matrix.runtime }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The manual accuracy workflow can collect up to 15 whole-matrix runs.
     timeout-minutes: 360
     env:
@@ -159,7 +159,7 @@ jobs:
       (contains(github.event.pull_request.labels.*.name, 'bench') &&
       (github.event.action != 'labeled' || github.event.label.name == 'bench'))
     name: memory on ${{ matrix.runtime }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -236,7 +236,7 @@ jobs:
     needs: measure
     # Runs when a measure job failed, but not for a cancelled run, which may have no report at all.
     if: ${{ !cancelled() && needs.measure.result != 'skipped' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

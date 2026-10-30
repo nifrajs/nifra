@@ -27,7 +27,7 @@ permissions:
 jobs:
   explore:
     name: explore (${{ matrix.mode }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     strategy:
       fail-fast: false

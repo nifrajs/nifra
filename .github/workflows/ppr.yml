@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-26.04, macos-latest]
         framework: [react, svelte, preact, vue, solid]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40

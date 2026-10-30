@@ -14,7 +14,7 @@ permissions: {}
 jobs:
   checks:
     name: check (${{ matrix.group }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -173,7 +173,7 @@ jobs:
     name: check
     needs: checks
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -186,7 +186,7 @@ jobs:
     # The browser x runtime matrix runs once per release, in release verification. This job is the
     # manual pre-release run for a branch; PRs keep the contracts step and the component unit tests.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     timeout-minutes: 45
@@ -259,7 +259,7 @@ jobs:
         run: bun run scripts/test-windows.ts
 
   deno:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -303,7 +303,7 @@ jobs:
   # already had this job; Node and Workers did not, so two published adapters had zero coverage on
   # the runtimes they exist for. This closes the Node half.
   node:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -339,7 +339,7 @@ jobs:
   # local dev server runs the same workerd runtime used by the platform and persists the Durable Object
   # SQLite state in a temporary directory owned by the job.
   workers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -374,7 +374,7 @@ jobs:
   # The fixed seed keeps a pull request's run repeatable; the nightly runtime-differential workflow
   # explores fresh seeds with a far larger budget.
   runtime-differential:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -413,7 +413,7 @@ jobs:
   # files, shared CSS Modules, and a keyframe export so a dropped route or a pipeline-specific class map
   # turns this job red. Hashed filenames are intentionally ignored by the checker.
   pipeline-parity:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
