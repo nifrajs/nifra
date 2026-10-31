@@ -162,6 +162,27 @@ test("readSingleCopyRegistration tells the run preload from the test preload", a
   }
 })
 
+test("readSingleCopyRegistration recognizes a checkout-local registrar and rejects another file", async () => {
+  const relative = "./packages/core/src/single-copy-register.ts"
+  const { ground, app } = await linkedRepos("registration-checkout-path", {
+    bunfig: `preload = ["${relative}"]\n[test]\npreload = ["${relative}"]\n`,
+  })
+  const registrar = join(app, "packages/core/src/single-copy-register.ts")
+  try {
+    await mkdir(dirname(registrar), { recursive: true })
+    await writeFile(
+      registrar,
+      'import { registerSingleCopy } from "./single-copy"\nregisterSingleCopy()\n',
+    )
+    expect(readSingleCopyRegistration(app)).toMatchObject({ run: true, test: true })
+
+    await writeFile(registrar, "export const unrelated = true\n")
+    expect(readSingleCopyRegistration(app)).toMatchObject({ run: false, test: false })
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
 test("a preload written below [install] arms nothing for `bun run`, and the table is named", async () => {
   const { ground, app } = await linkedRepos("registration-install-table", {
     declaration: ["state"],
@@ -303,6 +324,58 @@ test.each([
       ours: ["app", "ui"],
       theirs: ["app", "ui"],
     })
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("the preload finds the declaring app root from a filtered workspace cwd", async () => {
+  const { ground, app } = await linkedRepos("workspace-preload-root", {
+    declaration: ["state"],
+  })
+  const workspace = join(app, "packages", "web")
+  try {
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(workspace, "package.json"), JSON.stringify({ name: "@example/web" }))
+    await writeFile(
+      join(workspace, "preload.ts"),
+      `import { registerSingleCopy } from ${JSON.stringify(join(import.meta.dir, "..", "src", "single-copy.ts"))}\n` +
+        "console.log(JSON.stringify(registerSingleCopy().root))\n",
+    )
+    const result = Bun.spawnSync({
+      cmd: ["bun", "--preload", "./preload.ts", "-e", "void 0"],
+      cwd: workspace,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr.toString()).toBe("")
+    expect(result.stdout.toString().trim()).toBe(JSON.stringify(app))
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("the preload keeps the current directory when no ancestor declares single-copy packages", async () => {
+  const { ground, app } = await linkedRepos("workspace-preload-no-root-config")
+  const workspace = join(app, "packages", "web")
+  try {
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(workspace, "package.json"), JSON.stringify({ name: "@example/web" }))
+    await writeFile(
+      join(workspace, "preload.ts"),
+      `import { registerSingleCopy } from ${JSON.stringify(join(import.meta.dir, "..", "src", "single-copy.ts"))}\n` +
+        "console.log(JSON.stringify(registerSingleCopy().root))\n",
+    )
+    const result = Bun.spawnSync({
+      cmd: ["bun", "--preload", "./preload.ts", "-e", "void 0"],
+      cwd: workspace,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr.toString()).toBe("")
+    expect(result.stdout.toString().trim()).toBe(JSON.stringify(workspace))
   } finally {
     await rm(ground, { recursive: true, force: true })
   }

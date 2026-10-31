@@ -425,24 +425,53 @@ export function createServerComponents(options: ServerComponentsOptions): Server
       ) {
         const instance = picked[0]!
         let owner: string | undefined
-        const framed = await requestTasks.runStream(signal, () =>
-          admission.runStream(signal, async () => {
-            const prepared = await prepareAuthorizedServerComponent(authorized.get(instance.id)!)
-            const renderContext: import("./types.ts").ComponentRenderContext = {
-              reference: instance.reference,
-              instance: instance.id,
-              signal,
-              children: [],
+        const framed = await requestTasks.runStream(signal, async () => {
+          let flight: ReadableStream<Uint8Array> | undefined
+          let cancelFlightPromise: Promise<void> | undefined
+          let framedStream: ReadableStream<Uint8Array> | undefined
+          const cancelFlight = (): Promise<void> => {
+            if (flight === undefined) return Promise.resolve()
+            cancelFlightPromise ??= flight.cancel(signal.reason).catch(() => {
+              // Abort or the authoritative render/metadata error owns the response failure.
+            })
+            return cancelFlightPromise
+          }
+          const cancelFlightOnAbort = (): void => {
+            void cancelFlight()
+          }
+          signal.addEventListener("abort", cancelFlightOnAbort, { once: true })
+          try {
+            const renderProgressive = options.adapter.renderProgressive!
+            flight = await admission.run(signal, async () => {
+              const prepared = await prepareAuthorizedServerComponent(authorized.get(instance.id)!)
+              const renderContext: import("./types.ts").ComponentRenderContext = {
+                reference: instance.reference,
+                instance: instance.id,
+                signal,
+                children: [],
+              }
+              if (nonce !== undefined) Object.assign(renderContext, { nonce })
+              const createdFlight = await renderProgressive.call(
+                options.adapter,
+                prepared.view,
+                prepared.props,
+                renderContext,
+              )
+              flight = createdFlight
+              if (signal.aborted) {
+                await cancelFlight()
+                throw componentAbort(signal)
+              }
+              return createdFlight
+            })
+            if (signal.aborted) {
+              await cancelFlight()
+              throw componentAbort(signal)
             }
-            if (nonce !== undefined) Object.assign(renderContext, { nonce })
-            const flight = await options.adapter.renderProgressive!(
-              prepared.view,
-              prepared.props,
-              renderContext,
-            )
-            if (signal.aborted) throw componentAbort(signal)
             owner = await identity(routeId)
-            return componentFlightFrames(
+            if (owner === undefined) throw new ServerComponentError("component_contract")
+            if (signal.aborted) throw componentAbort(signal)
+            framedStream = componentFlightFrames(
               {
                 v: 1,
                 build: options.build,
@@ -460,8 +489,14 @@ export function createServerComponents(options: ServerComponentsOptions): Server
               flight,
               signal,
             )
-          }),
-        )
+            return framedStream
+          } catch (error) {
+            if (flight !== undefined && framedStream === undefined) await cancelFlight()
+            throw error
+          } finally {
+            signal.removeEventListener("abort", cancelFlightOnAbort)
+          }
+        })
         if (owner === undefined) throw new ServerComponentError("component_contract")
         const headers = new Headers(COMPONENT_RESPONSE_HEADERS)
         headers.set("content-type", COMPONENT_FLIGHT_MEDIA_TYPE)

@@ -604,6 +604,7 @@ export function createWebApp<Env = unknown>(
       const cacheableOwnerDocument =
         cacheableOwner &&
         cacheChannel.enabled &&
+        options.nonce === undefined &&
         request.method === "GET" &&
         !request.headers.has("x-nifra-component") &&
         !request.headers.has("x-nifra-data") &&

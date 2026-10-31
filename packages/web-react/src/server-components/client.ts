@@ -4,16 +4,12 @@ import type {
   ComponentRecord,
   CurrentComponent,
 } from "@nifrajs/web/server-components/client"
-import {
-  bytesStream,
-  decodeComponentBytes,
-  encodeComponentBytes,
-  readComponentBytes,
-} from "@nifrajs/web/server-components/stream"
+import { bytesStream, decodeComponentBytes } from "@nifrajs/web/server-components/stream"
 import { createFromReadableStream } from "@vitejs/plugin-rsc/browser"
 import { createElement, type ReactNode, useLayoutEffect, useSyncExternalStore } from "react"
 import { flushSync } from "react-dom"
 import { createRoot, hydrateRoot } from "react-dom/client"
+import { updateProgressiveFlight } from "./progressive-update.ts"
 
 // Flight's framework-facing lazy ABI is pinned with React/Flight in the compatibility gate.
 async function prepareTree(
@@ -178,14 +174,16 @@ export function reactComponentClient(): ComponentClientAdapter {
       ;(root as FlightRoot).publish(tree as ReactNode, current)
     },
     async updateProgressive(root, flight, current, signal) {
-      const [renderStream, snapshotStream] = flight.tee()
-      const snapshot = readComponentBytes(snapshotStream, signal)
-      const tree = await createFromReadableStream<ReactNode>(renderStream)
-      if (!current() || signal.aborted)
-        throw new Error("component_cancelled")
-        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: This client stores roots created only by FlightRoot in its private per-instance map.
-      ;(root as FlightRoot).publish(tree, current)
-      return { flight: encodeComponentBytes(await snapshot) }
+      return updateProgressiveFlight(
+        flight,
+        signal,
+        current,
+        (stream) => createFromReadableStream<ReactNode>(stream),
+        (tree, isCurrent) => {
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: This client stores roots created only by FlightRoot in its private per-instance map.
+          ;(root as FlightRoot).publish(tree, isCurrent)
+        },
+      )
     },
   }
 }
