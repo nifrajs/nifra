@@ -154,6 +154,9 @@ coveragePathIgnorePatterns = [
   # the server markup, but their event handlers, `Transition` hooks and client-only branches run in the
   # page, so it reads 82.35% function coverage here (line 98.41%).
   "**/web-vue/test/fixtures/slot-chain.ts",
+  # React route-slot fixtures execute in the launched browser, outside Bun's coverage process
+  # (measured 2026-10-31: 0-12.5% functions and 0-10% lines); the browser suite asserts their behavior.
+  "**/web-react/test/fixtures/route-slots/routes/**/*.tsx",
   # The cli tests' dot-prefixed fixture roots (`.nifra-capability-fixtures-RFjrrM`,
   # `.nifra-levels-fixtures-2wAq0Q`, `.nifra-verification-golden-xNR6qa`): stub backends at 0-50%
   # function coverage under a directory name that is random per run. Same class as `cli/test/.tmp-*`.

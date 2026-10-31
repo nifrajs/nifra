@@ -21,6 +21,8 @@ test("useRouteSlot reads the scoped URL and edits only its own slot", async () =
     const { useRouteSlot } = await import("../src/route-slot.ts")
     const slot = useRouteSlot("inspector" satisfies RouteSlotName)
     expect(slot.target).toBeUndefined()
+    path = "/dashboard?slot.inspector=%"
+    expect(slot.target).toBeUndefined()
     path = "/dashboard?tab=svelte&slot.inspector=%2Fusers%2F7"
     expect(slot.target).toBe("/users/7")
     slot.open(href({ to: "/users/:id", params: { id: "8" } }))

@@ -1,4 +1,4 @@
-import type { RouteSlotName, RouteSlotTarget } from "@nifrajs/web"
+import type { RenderProps, RouteSlotName, RouteSlotTarget } from "@nifrajs/web"
 import {
   getRouteSlotStore,
   type LoadedRouteSlot,
@@ -11,6 +11,7 @@ import {
   stripRouteSlots,
   syncRouteSlotStore,
 } from "@nifrajs/web/client"
+import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
 import {
   createComponent,
   createEffect,
@@ -23,7 +24,7 @@ import {
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { compose } from "./compose.ts"
-import { RenderPropsContext, useNavigate } from "./router.ts"
+import { RenderPropsContext } from "./router-context.ts"
 
 export interface RouteSlotController {
   readonly target: () => string | undefined
@@ -34,58 +35,79 @@ export interface RouteSlotController {
   close(): void
 }
 
+export interface RouteSlotHooks {
+  createEffect(effect: () => void): void
+  createMemo<T>(read: () => T): () => T
+  createSignal<T>(initial: T): readonly [() => T, (next: T | ((previous: T) => T)) => void]
+  onCleanup(cleanup: () => void): void
+}
+
 export interface RouteSlotProps {
   readonly name: RouteSlotName
   readonly fallback?: JSX.Element
   readonly error?: JSX.Element | ((code: string) => JSX.Element)
 }
 
-/** Read or navigate one route slot without changing any sibling slot's URL state or component tree. */
-export function useRouteSlot(name: RouteSlotName): RouteSlotController {
-  const props = useContext(RenderPropsContext)
-  const navigate = useNavigate()
-  const path = (): string => props?.path ?? "/"
-  const pending = (): boolean => props?.pending === true
-  const parsed = createMemo(() => routeSlotTargetFromPath(path(), name))
-  const basePath = createMemo(() => stripRouteSlots(path()))
-  const store = createMemo(() => getRouteSlotStore(basePath(), name))
-  const [snapshot, setSnapshot] = createSignal<RouteSlotSnapshot>(store().getServerSnapshot())
-  const requestKey = createMemo(() =>
-    routeSlotSyncKey(basePath(), name, parsed().target, parsed().error, pending()),
-  )
+/** Build the hook with its small reactive surface; the test seam avoids global module mocks. */
+export function createRouteSlotBinding(
+  readProps: () => RenderProps | undefined,
+  navigate: (href: string) => void,
+  hooks: RouteSlotHooks,
+): (name: RouteSlotName) => RouteSlotController {
+  return function useRouteSlot(name: RouteSlotName): RouteSlotController {
+    const props = readProps()
+    const path = (): string => props?.path ?? "/"
+    const pending = (): boolean => props?.pending === true
+    const parsed = hooks.createMemo(() => routeSlotTargetFromPath(path(), name))
+    const basePath = hooks.createMemo(() => stripRouteSlots(path()))
+    const store = hooks.createMemo(() => getRouteSlotStore(basePath(), name))
+    const [snapshot, setSnapshot] = hooks.createSignal<RouteSlotSnapshot>(
+      store().getServerSnapshot(),
+    )
+    const requestKey = hooks.createMemo(() =>
+      routeSlotSyncKey(basePath(), name, parsed().target, parsed().error, pending()),
+    )
 
-  createEffect(() => {
-    const currentStore = store()
-    setSnapshot(currentStore.getSnapshot())
-    const unsubscribe = currentStore.subscribe(() => setSnapshot(currentStore.getSnapshot()))
-    onCleanup(unsubscribe)
-  })
+    hooks.createEffect(() => {
+      const currentStore = store()
+      setSnapshot(currentStore.getSnapshot())
+      const unsubscribe = currentStore.subscribe(() => setSnapshot(currentStore.getSnapshot()))
+      hooks.onCleanup(unsubscribe)
+    })
 
-  createEffect(() => {
-    const current = parsed()
-    syncRouteSlotStore(store(), basePath(), name, current.target, current.error, pending())
-  })
+    hooks.createEffect(() => {
+      const current = parsed()
+      syncRouteSlotStore(store(), basePath(), name, current.target, current.error, pending())
+    })
 
-  const current = createMemo(() => {
-    const value = snapshot()
-    return value.key === requestKey() ? value : undefined
-  })
+    const current = hooks.createMemo(() => {
+      const value = snapshot()
+      return value.key === requestKey() ? value : undefined
+    })
 
-  return {
-    target: () => parsed().target,
-    status: () =>
-      current()?.status ??
-      (parsed().error !== undefined
-        ? "error"
-        : pending() || parsed().target === undefined
-          ? "idle"
-          : "loading"),
-    content: () => current()?.content,
-    error: () => current()?.error ?? parsed().error,
-    open: (target) => navigate(rawHref(setRouteSlot(path(), name, String(target)))),
-    close: () => navigate(rawHref(setRouteSlot(path(), name, null))),
+    return {
+      target: () => parsed().target,
+      status: () =>
+        current()?.status ??
+        (parsed().error !== undefined
+          ? "error"
+          : pending() || parsed().target === undefined
+            ? "idle"
+            : "loading"),
+      content: () => current()?.content,
+      error: () => current()?.error ?? parsed().error,
+      open: (target) => navigate(rawHref(setRouteSlot(path(), name, String(target)))),
+      close: () => navigate(rawHref(setRouteSlot(path(), name, null))),
+    }
   }
 }
+
+/** Read or navigate one route slot without changing any sibling slot's URL state or component tree. */
+export const useRouteSlot = createRouteSlotBinding(
+  () => useContext(RenderPropsContext),
+  navigateNow,
+  { createEffect, createMemo, createSignal, onCleanup },
+)
 
 /** Render the registered route's complete layout and page chain in this independently navigable region. */
 

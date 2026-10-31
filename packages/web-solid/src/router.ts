@@ -23,22 +23,16 @@ import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
  * DOM-free bridges (`getBrowserNavigate` / `registerBlocker`, populated by `installHistory`); `useSearch`
  * reads the accessor `compose` provides on SSR + client mount alike. Imports only `solid-js`. No JSX.
  */
-import {
-  type Accessor,
-  type Context,
-  createContext,
-  createMemo,
-  createSignal,
-  onCleanup,
-  useContext,
-} from "solid-js"
+import { type Accessor, createMemo, createSignal, onCleanup, useContext } from "solid-js"
 import { PageContext } from "./page-visibility.ts"
+import { RenderPropsContext, SearchContext } from "./router-context.ts"
 
 export { href, rawHref } from "@nifrajs/web/client"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
 export type { RouteSlotController, RouteSlotProps } from "./route-slot.tsx"
 export { RouteSlot, useRouteSlot } from "./route-slot.tsx"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
+export { RenderPropsContext, SearchContext }
 
 // Frozen empty search + a stable accessor for a `useSearch` used outside a nifra route tree.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -51,22 +45,6 @@ const EMPTY_SEARCH_ACCESSOR: Accessor<Record<string, unknown>> = () => EMPTY_SEA
  * code under Bun provides; route modules through Vite's SSR runner read), and Solid matches provider
  * to reader by context object identity - two `createContext` results make `useSearch` SSR-render its
  * empty default in dev. */
-const SEARCH_CONTEXT_SLOT = Symbol.for("nifra.web-solid.search-context")
-const searchContextSlot = globalThis as {
-  [SEARCH_CONTEXT_SLOT]?: Context<Accessor<Record<string, unknown>> | undefined>
-}
-export const SearchContext =
-  searchContextSlot[SEARCH_CONTEXT_SLOT] ?? createContext<Accessor<Record<string, unknown>>>()
-searchContextSlot[SEARCH_CONTEXT_SLOT] = SearchContext
-
-/** The props `compose` rendered the chain with - getters over the router snapshot on the client - which
- * {@link useMatches} reads. A `globalThis` singleton for the same reason as {@link SearchContext}. */
-const PROPS_CONTEXT_SLOT = Symbol.for("nifra.web-solid.props-context")
-const propsContextSlot = globalThis as { [PROPS_CONTEXT_SLOT]?: Context<RenderProps | undefined> }
-export const RenderPropsContext =
-  propsContextSlot[PROPS_CONTEXT_SLOT] ?? createContext<RenderProps>()
-propsContextSlot[PROPS_CONTEXT_SLOT] = RenderPropsContext
-
 const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
 
 /**
