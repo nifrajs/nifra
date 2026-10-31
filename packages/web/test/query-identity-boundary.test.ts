@@ -541,6 +541,23 @@ describe("the page's identity channel", () => {
     })
   })
 
+  test("is still made and posted on where the channel has no unref, as in a browser", async () => {
+    let posted = 0
+    class Browserish {
+      addEventListener(): void {}
+      postMessage(): void {
+        posted++
+      }
+      close(): void {}
+    }
+    await withChannel(Browserish, () => {
+      const off = onIdentityChange(() => {})
+      identityChanged()
+      off()
+      expect(posted).toBe(1)
+    })
+  })
+
   test("is not made, and nothing is posted, where there is no window", async () => {
     let made = 0
     class Counting {

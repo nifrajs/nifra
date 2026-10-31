@@ -628,3 +628,95 @@ describe("closing an intercept boundary", () => {
     expect(router.snapshot()).toMatchObject({ routeId: "index", path: "/" })
   })
 })
+
+// What a binding reads when the router calls it: the state the change left, not an earlier one.
+function heard(router: ReturnType<typeof createClientRouter>) {
+  const seen: RouterState[] = []
+  router.subscribe(() => seen.push(router.snapshot()))
+  return seen
+}
+
+describe("what subscribers hear around an intercept boundary", () => {
+  test("opening one ends on the boundary held and nothing pending", async () => {
+    const { fetchData } = server()
+    const router = createClientRouter({ patterns, initial, fetchData, routeHooks: hooks })
+    const seen = heard(router)
+    await router.navigate("/photos/2")
+    expect(seen.at(-1)).toBe(router.snapshot())
+    expect(seen.at(-1)).toMatchObject({
+      pending: false,
+      pendingPath: undefined,
+      intercepted: { boundary: "photo", pagePath: "/" },
+    })
+  })
+
+  test("closing one by Back ends on the page with nothing pending", async () => {
+    const { fetchData } = server()
+    const router = await opened(fetchData)
+    const seen = heard(router)
+    await router.navigate("/")
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.at(-1)).toBe(router.snapshot())
+    expect(seen.at(-1)).toMatchObject({ path: "/", pending: false, pendingPath: undefined })
+    expect(seen.at(-1)?.intercepted).toBeUndefined()
+  })
+
+  test("a navigation that fails ends on the page it left with nothing pending", async () => {
+    const { fetchData } = server({}, new Set(["/about"]))
+    const router = createClientRouter({ patterns, initial, fetchData, routeHooks: hooks })
+    const seen = heard(router)
+    await expect(router.navigate("/about")).rejects.toThrow("[test] /about failed")
+    expect(seen.length).toBeGreaterThan(1)
+    expect(seen.at(-1)).toBe(router.snapshot())
+    expect(seen.at(-1)).toMatchObject({ path: "/", pending: false })
+  })
+})
+
+describe("the boundaries a page keeps while one is held", () => {
+  const named = {
+    photo: { ...unresolved("photo", "/photos/:id"), errorId: "photo-error" },
+    user: { ...unresolved("user", "/users/:id"), errorId: "user-error" },
+  }
+  const described = {
+    index: {
+      boundaries: [
+        { name: "photo", mode: { intercept: "/photos/:id" }, errorId: "photo-error" },
+        { name: "user", mode: { intercept: "/users/:id" }, errorId: "user-error" },
+      ],
+    },
+  }
+
+  test("each keeps the error page its descriptor names, held, reset, and closed again", async () => {
+    const { fetchData } = server()
+    const router = createClientRouter({
+      patterns,
+      initial: { ...initial, boundaries: named },
+      fetchData,
+      routeHooks: described,
+    })
+    await router.navigate("/photos/2")
+    expect(router.snapshot().boundaries?.photo).toMatchObject({
+      status: "ready",
+      errorId: "photo-error",
+    })
+    expect(router.snapshot().boundaries?.user).toEqual(named.user)
+    await router.navigate("/")
+    expect(router.snapshot().boundaries?.photo).toEqual(named.photo)
+    expect(router.snapshot().boundaries?.user).toEqual(named.user)
+  })
+
+  test("a boundary that is not an intercept stays as the page shows it", async () => {
+    const { fetchData } = server()
+    const side = { name: "side", mode: "dynamic" as const, status: "ready" as const, data: 1 }
+    const router = createClientRouter({
+      patterns,
+      initial: { ...initial, boundaries: { ...pageBoundaries, side } },
+      fetchData,
+      routeHooks: hooks,
+    })
+    await router.navigate("/photos/2")
+    expect(router.snapshot().boundaries?.side).toBe(side)
+    await router.navigate("/")
+    expect(router.snapshot().boundaries?.side).toBe(side)
+  })
+})
