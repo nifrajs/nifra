@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 import { href } from "@nifrajs/web"
 import { GlobalWindow } from "happy-dom"
 import { installRouteSlotClientHarness } from "../../web/test/route-slot-client-harness.ts"
@@ -117,7 +118,7 @@ if (process.env.NIFRA_ROUTE_SLOT_CLIENT_CHILD === "1") {
   })
 } else {
   test("Vue route-slot browser behavior runs with a fresh DOM runtime", async () => {
-    const proc = Bun.spawn([process.execPath, "test", new URL(import.meta.url).pathname], {
+    const proc = Bun.spawn([process.execPath, "test", fileURLToPath(import.meta.url)], {
       env: { ...process.env, NIFRA_ROUTE_SLOT_CLIENT_CHILD: "1" },
       stdout: "pipe",
       stderr: "pipe",
