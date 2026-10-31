@@ -1,14 +1,19 @@
-import { afterAll, expect, test } from "bun:test"
+import { afterAll, expect, jest, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import { releasePage } from "../src/internal/page-events.ts"
 import {
   type ComponentClientAdapter,
   ComponentController,
   type ComponentState,
+  holeComponents,
   resolveComponentRecord,
 } from "../src/server-components/client.ts"
-import { componentFrames } from "../src/server-components/frames.ts"
-import { COMPONENT_MEDIA_TYPE, readComponentRequest } from "../src/server-components/protocol.ts"
+import { componentFlightFrames, componentFrames } from "../src/server-components/frames.ts"
+import {
+  COMPONENT_FLIGHT_MEDIA_TYPE,
+  COMPONENT_MEDIA_TYPE,
+  readComponentRequest,
+} from "../src/server-components/protocol.ts"
 
 const locationBefore = Object.getOwnPropertyDescriptor(globalThis, "location")
 Object.defineProperty(globalThis, "location", {
@@ -233,6 +238,93 @@ test("failed preparation can be retried without retaining an orphan mount", asyn
     await expect(controller.mount(h.host, "instance_1")).rejects.toThrow()
     await controller.mount(h.host, "instance_1")
     expect(h.trace).toEqual(["hydrate:public"])
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("a refresh joining a failed initial preparation does not send an owner request", async () => {
+  const h = harness()
+  let started!: () => void
+  let rejectPrepare!: (error: Error) => void
+  const preparing = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  h.adapter.prepare = () => {
+    started()
+    return new Promise((_resolve, reject) => {
+      rejectPrepare = reject
+    })
+  }
+  let fetches = 0
+  const controller = new ComponentController({
+    state: state(),
+    adapter: h.adapter,
+    fetch: async () => {
+      fetches++
+      return new Response(null)
+    },
+  })
+  try {
+    const mounting = controller.mount(h.host, "instance_1").catch(() => undefined)
+    await preparing
+    const refreshing = controller.refresh("instance_1")
+    rejectPrepare(new Error("fixture prepare failure"))
+    expect(await refreshing).toBe(false)
+    await mounting
+    expect(fetches).toBe(0)
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("a readiness waiter times out when its native mount never arrives", async () => {
+  const h = harness()
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  jest.useFakeTimers()
+  try {
+    const ready = controller.whenReady("instance_1")
+    const outcome = ready.then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    jest.advanceTimersByTime(15_000)
+    expect(await outcome).toMatchObject({ code: "component_timeout", status: 504 })
+  } finally {
+    jest.useRealTimers()
+    await controller.dispose()
+  }
+})
+
+test("a hydrated root returned after route cancellation is disposed before it can commit", async () => {
+  const h = harness()
+  let started!: () => void
+  let release!: () => void
+  let disposed = 0
+  const hydrationStarted = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  h.adapter.hydrate = async () => {
+    started()
+    await gate
+    return {
+      update() {},
+      dispose() {
+        disposed++
+      },
+    }
+  }
+  const controller = new ComponentController({ state: state(), adapter: h.adapter })
+  try {
+    const mounting = controller.mount(h.host, "instance_1")
+    await hydrationStarted
+    controller.cancelPending()
+    release()
+    await expect(mounting).rejects.toMatchObject({ code: "component_cancelled" })
+    expect(disposed).toBe(1)
   } finally {
     await controller.dispose()
   }
@@ -611,6 +703,130 @@ test("a refresh the server denies invalidates the scope", async () => {
   expect(result).toMatchObject({ outcome: false, errors: ["component_denied"], records: 0 })
 })
 
+test("a verified progressive Flight refresh updates the mounted root and commits its payload", async () => {
+  const h = harness()
+  const payloads: string[] = []
+  const adapter: ComponentClientAdapter = {
+    ...h.adapter,
+    async updateProgressive(_root, flight, current, signal) {
+      const payload = await new Response(flight).text()
+      if (current() && !signal.aborted) payloads.push(payload)
+      return payload
+    },
+  }
+  const fetch: NonNullable<
+    import("../src/server-components/client.ts").ComponentControllerOptions["fetch"]
+  > = async (url, init) => {
+    const request = readComponentRequest(
+      new Request(url, {
+        ...init,
+        headers: { ...init?.headers, "sec-fetch-site": "same-origin" },
+      }),
+    )!
+    expect(new Headers(init?.headers).get("accept")).toContain(COMPONENT_FLIGHT_MEDIA_TYPE)
+    const metadata = {
+      v: request.v,
+      build: request.build,
+      adapter: "vue",
+      owner: "owner_1",
+      scope: "scope_1",
+      instance: "instance_1",
+      reference: request.reference,
+      key: request.key,
+      parent: request.parent,
+      generation: request.generation,
+      routeEpoch: request.routeEpoch,
+      authEpoch: request.authEpoch,
+    }
+    const flight = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("Flight tree"))
+        controller.close()
+      },
+    })
+    return new Response(
+      componentFlightFrames(metadata, flight, init?.signal ?? new AbortController().signal),
+      { headers: { "content-type": COMPONENT_FLIGHT_MEDIA_TYPE } },
+    )
+  }
+  const controller = new ComponentController({ state: state(), adapter, fetch })
+  try {
+    await controller.mount(h.host, "instance_1")
+    expect(await controller.refresh("instance_1")).toBe(true)
+    expect(controller.state.records[0]?.payload).toBe("Flight tree")
+    expect(payloads).toEqual(["Flight tree"])
+    expect(h.trace).toEqual(["hydrate:public"])
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("a Flight response for a different scope is discarded and clears mounted records", async () => {
+  const h = harness()
+  const errors: string[] = []
+  let cancelled = 0
+  let updated = false
+  const adapter: ComponentClientAdapter = {
+    ...h.adapter,
+    async updateProgressive() {
+      updated = true
+      return "unexpected"
+    },
+  }
+  const fetch: NonNullable<
+    import("../src/server-components/client.ts").ComponentControllerOptions["fetch"]
+  > = async (url, init) => {
+    const request = readComponentRequest(
+      new Request(url, {
+        ...init,
+        headers: { ...init?.headers, "sec-fetch-site": "same-origin" },
+      }),
+    )!
+    const metadata = {
+      v: request.v,
+      build: request.build,
+      adapter: "vue",
+      owner: "owner_1",
+      scope: "scope_2",
+      instance: "instance_1",
+      reference: request.reference,
+      key: request.key,
+      parent: request.parent,
+      generation: request.generation,
+      routeEpoch: request.routeEpoch,
+      authEpoch: request.authEpoch,
+    }
+    const pendingFlight = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("pending"))
+      },
+      cancel() {
+        cancelled++
+      },
+    })
+    return new Response(
+      componentFlightFrames(metadata, pendingFlight, init?.signal ?? new AbortController().signal),
+      { headers: { "content-type": COMPONENT_FLIGHT_MEDIA_TYPE } },
+    )
+  }
+  const controller = new ComponentController({
+    state: state(),
+    adapter,
+    fetch,
+    onError: (code) => errors.push(code),
+  })
+  try {
+    await controller.mount(h.host, "instance_1")
+    expect(await controller.refresh("instance_1")).toBe(false)
+    expect(controller.state.records).toEqual([])
+    expect(errors).toEqual(["component_denied"])
+    expect(cancelled).toBe(1)
+    expect(updated).toBe(false)
+  } finally {
+    await controller.dispose()
+  }
+})
+
 test("a terminal control answer navigates, and a malformed one is a protocol error", async () => {
   const control =
     (body: string | null, header = "200") =>
@@ -699,6 +915,44 @@ function hostAdapter() {
   return { trace, adapter }
 }
 const empty = (): ComponentState => ({ ...state(), records: [] })
+
+test("mount synchronizes child hosts found under the parent root", async () => {
+  const h = harness()
+  const initial = state()
+  const parent = initial.records[0]!
+  const child = {
+    ...parent,
+    reference: "reference_child",
+    instance: "instance_child",
+    parent: parent.instance,
+    key: "child",
+    html: "child",
+  }
+  const childHost = Object.assign(outletHost("child", false), {
+    parentElement: { closest: () => h.host },
+    getAttribute: () => "instance_child",
+  })
+  Object.assign(h.host, { querySelectorAll: () => [childHost] })
+  const controller = new ComponentController({
+    state: { ...initial, records: [parent, child] },
+    adapter: h.adapter,
+  })
+  try {
+    await controller.mount(h.host, parent.instance)
+    expect(h.trace).toEqual(["hydrate:public", "create:child"])
+  } finally {
+    await controller.dispose()
+  }
+})
+
+test("a PPR hole client can be installed and cleared explicitly", () => {
+  const adapter = harness().adapter
+  try {
+    holeComponents(adapter)
+  } finally {
+    holeComponents(undefined)
+  }
+})
 
 test("a parked page's components outlive the navigations away and update once it is back", async () => {
   const { trace, adapter } = hostAdapter()

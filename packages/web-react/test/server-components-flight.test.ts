@@ -78,3 +78,59 @@ test("public Flight stream publishes a complete row before the source ends and a
   abort.abort()
   await sourceCancelled
 })
+
+test("public Flight stream grows and compacts its buffer while preserving split rows", async () => {
+  const encoder = new TextEncoder()
+  const value = "x".repeat(1400)
+  const bytes = encoder.encode(`0:D{"debug":"private"}\n1:${JSON.stringify(value)}\n2:"last"\n`)
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes.subarray(0, 32))
+      controller.enqueue(bytes.subarray(32, 768))
+      controller.enqueue(bytes.subarray(768))
+      controller.close()
+    },
+  })
+  const stream = await publicFlightStream(source, new AbortController().signal)
+  expect(await new Response(stream).text()).toBe(`1:${JSON.stringify(value)}\n2:"last"\n`)
+})
+
+test("public Flight stream refuses empty, oversized, malformed and incomplete transport rows", async () => {
+  const encoder = new TextEncoder()
+  const sources: readonly Uint8Array[][] = [
+    [],
+    [new Uint8Array(0)],
+    [encoder.encode("a".repeat(129))],
+    [encoder.encode(`0:T${"f".repeat(17)}`)],
+    [encoder.encode("0:Tz,payload\n")],
+    [encoder.encode('0:"unterminated"')],
+  ]
+  for (const chunks of sources) {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk)
+        controller.close()
+      },
+    })
+    const stream = await publicFlightStream(source, new AbortController().signal)
+    await expect(stream.getReader().read()).rejects.toThrow()
+  }
+})
+
+test("public Flight stream forwards a downstream cancel to its source", async () => {
+  const encoder = new TextEncoder()
+  let cancelled = 0
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('0:"public"\n'))
+    },
+    cancel() {
+      cancelled++
+    },
+  })
+  const stream = await publicFlightStream(source, new AbortController().signal)
+  const reader = stream.getReader()
+  expect(await reader.read()).toMatchObject({ done: false })
+  await reader.cancel()
+  expect(cancelled).toBe(1)
+})

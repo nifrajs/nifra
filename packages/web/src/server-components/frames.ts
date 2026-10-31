@@ -17,7 +17,7 @@ function frame(type: number, data: Uint8Array): Uint8Array {
 export function componentFrames(
   metadata: unknown,
   value: unknown,
-  maxBytes = COMPONENT_LIMITS.outputBytes,
+  maxBytes: number = COMPONENT_LIMITS.outputBytes,
 ): ReadableStream<Uint8Array> {
   const meta = encoder.encode(JSON.stringify(metadata))
   const body = encoder.encode(JSON.stringify(value))
@@ -56,7 +56,7 @@ export interface DecodedComponentFrames {
 export async function readComponentFrames(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-  maxBytes = COMPONENT_LIMITS.outputBytes,
+  maxBytes: number = COMPONENT_LIMITS.outputBytes,
 ): Promise<DecodedComponentFrames> {
   const reader = stream.getReader()
   const header = new Uint8Array(5)
@@ -194,7 +194,7 @@ export function componentFlightFrames(
   metadata: unknown,
   flight: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-  maxBytes = COMPONENT_LIMITS.outputBytes,
+  maxBytes: number = COMPONENT_LIMITS.outputBytes,
 ): ReadableStream<Uint8Array> {
   const serialized = JSON.stringify(metadata)
   if (typeof serialized !== "string") throw new ServerComponentError("component_protocol", 400)
@@ -301,7 +301,7 @@ export function componentFlightFrames(
 export async function readComponentFlightFrames(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-  maxBytes = COMPONENT_LIMITS.outputBytes,
+  maxBytes: number = COMPONENT_LIMITS.outputBytes,
 ): Promise<DecodedComponentFlightFrames> {
   const reader = stream.getReader()
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(COMPONENT_LIMITS.operationMs)])

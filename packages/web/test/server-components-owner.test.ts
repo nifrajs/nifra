@@ -2,8 +2,11 @@ import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import { createWebApp } from "../src/index.ts"
 import type { Manifest } from "../src/manifest.ts"
-import { readComponentFrames } from "../src/server-components/frames.ts"
-import { componentRequestHeader } from "../src/server-components/protocol.ts"
+import { readComponentFlightFrames, readComponentFrames } from "../src/server-components/frames.ts"
+import {
+  COMPONENT_FLIGHT_MEDIA_TYPE,
+  componentRequestHeader,
+} from "../src/server-components/protocol.ts"
 import {
   createServerComponents,
   defineServerComponent,
@@ -326,6 +329,136 @@ test("component refresh runs the actual owner GET and every owner loader before 
   )
   expect(denied.status).toBe(403)
   expect(trace).toEqual(["owner-get"])
+})
+
+test("a React owner uses progressive Flight only for a verified single-component selection", async () => {
+  const component = defineServerComponent(
+    {
+      input: t.object({}),
+      props: t.object({ title: t.string() }),
+      authorize() {},
+      load: () => ({ title: "public" }),
+      view: ({ props }) => props.title,
+    },
+    "progressive_owner_component",
+  )
+  const payload = new TextEncoder().encode('0:"progressive"\n')
+  const runtime = createServerComponents({
+    build: "build_1",
+    adapter: {
+      name: "react",
+      version: 1,
+      render: () => ({ html: "buffered" }),
+      renderProgressive: (_view, _props, context) => {
+        expect(context.nonce).toBe("nonce_1")
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(payload)
+            controller.close()
+          },
+        })
+      },
+    },
+    owners: {
+      owner: {
+        scope: "anonymous",
+        components: [component],
+        instances: () => [serverComponentInstance(component, "stable", {})],
+      },
+    },
+  })
+  if (runtime.progressive === undefined) throw new Error("React adapter lost progressive support")
+  const request = new Request("https://fixture.test/owner", {
+    headers: { accept: COMPONENT_FLIGHT_MEDIA_TYPE },
+  })
+  const context = {
+    request,
+    req: request,
+    params: {},
+    api: undefined,
+    env: undefined,
+    draft: false,
+    live() {},
+    search: {},
+    set: { headers: {}, cookie() {}, deleteCookie() {} },
+    signal: request.signal,
+    data: null,
+    layoutData: [],
+  }
+  const response = await runtime.progressive(
+    "owner",
+    context,
+    {
+      v: 1,
+      build: "build_1",
+      reference: "progressive_owner_component",
+      key: "stable",
+      parent: null,
+      generation: 1,
+      routeEpoch: 0,
+      authEpoch: 0,
+      input: {},
+    },
+    "nonce_1",
+  )
+  expect(response.headers.get("content-type")).toBe(COMPONENT_FLIGHT_MEDIA_TYPE)
+  const decoded = await readComponentFlightFrames(response.body!, request.signal)
+  expect(decoded.metadata).toMatchObject({
+    v: 1,
+    build: "build_1",
+    adapter: "react",
+    reference: "progressive_owner_component",
+    key: "stable",
+  })
+  expect(await new Response(decoded.flight).text()).toBe('0:"progressive"\n')
+})
+
+test("server component owner setup rejects unsafe build, assets, public cache and undeclared grants", () => {
+  const adapter = { name: "vue" as const, version: 1 as const, render: () => ({ html: "" }) }
+  expect(() => createServerComponents({ build: "bad build", adapter, owners: {} })).toThrow()
+  expect(() =>
+    createServerComponents({
+      build: "build_1",
+      adapter,
+      owners: {},
+      assets: ["/assets/../secret"],
+    }),
+  ).toThrow()
+
+  const cachedOwner = {
+    scope: "anonymous" as const,
+    components: [],
+    instances: () => [],
+    cache: { scope: "public" as const, requestIndependent: true as const, revalidate: 30 },
+  }
+  expect(() =>
+    createServerComponents({ build: "build_1", adapter, owners: { owner: cachedOwner } }),
+  ).toThrow()
+
+  const privileged = defineServerComponent(
+    {
+      input: t.object({}),
+      props: t.object({}),
+      authorize() {},
+      load: () => ({}),
+      view: () => null,
+      capabilities: ["private_read"],
+    },
+    "privileged_component",
+  )
+  expect(() =>
+    createServerComponents({
+      build: "build_1",
+      adapter,
+      owners: {
+        owner: {
+          scope: "anonymous",
+          components: [privileged],
+          instances: () => [],
+        },
+      },
+    }),
+  ).toThrow()
 })
 
 test("progressive component form rerender runs owner GET authorization after the action exactly once", async () => {
