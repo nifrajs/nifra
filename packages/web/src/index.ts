@@ -294,6 +294,12 @@ export {
   ssrModuleLoader,
   type UIMatch,
 } from "./render-seam.ts"
+export type {
+  RouteSlotName,
+  RouteSlotPatternsOf,
+  RouteSlotRegistry,
+  RouteSlotTarget,
+} from "./route-slots.ts"
 // Agnostic client-side router core (pure + DOM-free) - consumed by per-adapter Router bindings.
 // `DATA_HEADER` marks a navigation's data-only GET; `createWebApp` answers it with loader JSON.
 export {

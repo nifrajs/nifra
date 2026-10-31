@@ -10,6 +10,7 @@ import {
 import { createFromReadableStream } from "@vitejs/plugin-rsc/ssr"
 import type { ReactNode } from "react"
 import { renderToReadableStream } from "react-dom/server.edge"
+import { publicFlightStream } from "./flight.ts"
 
 export type ReactFlightRenderer = (
   reference: string,
@@ -47,6 +48,12 @@ export function reactServerComponents(
         html: new TextDecoder().decode(bytes),
         payload: { flight: encodeComponentBytes(flight) },
       }
+    },
+    async renderProgressive(_view, props, context) {
+      return publicFlightStream(
+        await renderFlight(context.reference, props, context),
+        context.signal,
+      )
     },
   }
 }

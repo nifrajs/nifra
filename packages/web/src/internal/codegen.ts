@@ -333,7 +333,7 @@ export function generateClientEntry(
     // backend half, which no browser bundle contains.
     "  const boundaryMods = errorRouteIds.has(id) ? mods.slice(0, -1) : mods",
     "  const boundaries = boundaryMods.flatMap((m) => (m.boundaries ?? []).map((b) => ({ name: b.name, mode: b.mode, ...(b.errorId === undefined ? {} : { errorId: b.errorId }) })))",
-    `  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, shareData: page.shareData, ${keep === undefined ? "" : "keepAlive: page.keepAlive, "}boundaries }`,
+    `  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, shareData: page.shareData, routeSlots: page.routeSlots, ${keep === undefined ? "" : "keepAlive: page.keepAlive, "}boundaries }`,
     "  if (page.ssr === false) holds[id] = [...chains[id].slice(0, -1), page.HydrateFallback ?? (() => null)]",
     "}",
     ...(options.copyChunks === true

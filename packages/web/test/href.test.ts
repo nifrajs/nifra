@@ -241,6 +241,22 @@ test("the hash is encoded as a fragment, and left off when empty", () => {
   expect(() => build({ to: "/r", hash: "\ud800" })).toThrow(/unpaired surrogate/)
 })
 
+test("route-slot keys are reserved only in query text and flat slot targets are composed", () => {
+  expect(build({ to: "/a&slot.side=/users/7" })).toBe("/a&slot.side=/users/7")
+  expect(() =>
+    Reflect.apply(href, undefined, [
+      { to: "/users/:id", params: { id: "7" }, search: { "slot.side": "/users/8" } },
+    ]),
+  ).toThrow("reserved for route-slot state")
+
+  expect(
+    Reflect.apply(href, undefined, [
+      { to: "/dashboard", slots: { side: "/users/7", closed: null } },
+    ]),
+  ).toBe("/dashboard?slot.side=%2Fusers%2F7")
+  expect(Reflect.apply(href, undefined, [{ to: "/dashboard", slots: {} }])).toBe("/dashboard")
+})
+
 test("I7: rawHref accepts exactly what isSameOriginPath accepts, and returns it as written", () => {
   const accepted = [
     "/",

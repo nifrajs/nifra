@@ -571,6 +571,8 @@ interface Page {
   readonly held: readonly Held[]
   /** Arguments for each `kind.function`. */
   readonly calls: Readonly<Record<string, readonly unknown[] | Each>>
+  /** Calls over static route code or manifest metadata, outside visitor state. */
+  readonly visitorIndependent?: Readonly<Record<string, string>>
   /** For a call that returns a promise on a holder that shows nothing itself, what the call ends
    * with, or why it ends with nothing the page shows. Any other ends with what its holder shows. */
   readonly ends?: Readonly<Record<string, (() => unknown) | string>>
@@ -740,6 +742,11 @@ const SURFACES: readonly Surface[] = [
           "fetcher.subscribe": [() => {}],
           "fetcher.load": new Each(elsewhere.map((path) => [path])),
           "fetcher.submit": new Each(elsewhere.map((path) => [path, "x"])),
+        },
+        visitorIndependent: {
+          "router.loadModule": "loads route code; route modules carry no visitor data",
+          "router.routeSlotsFor": "reads static route-slot declarations and route patterns",
+          "router.routePattern": "reads the static route manifest",
         },
         ends: {
           "router.prefetch":
@@ -1061,6 +1068,7 @@ for (const surface of SURFACES) {
             const call = `${held.kind}.${fn}`
             swept.add(call)
             if (listed.calls[call] === undefined) {
+              if (listed.visitorIndependent?.[call] !== undefined) continue
               problems.push(`${call}: not swept; give it arguments`)
               continue
             }
@@ -1209,6 +1217,9 @@ for (const surface of SURFACES) {
           }
         for (const call of Object.keys(listed.calls))
           if (!swept.has(call)) problems.push(`${call}: no such function`)
+        for (const call of Object.keys(listed.visitorIndependent ?? {}))
+          if (!swept.has(call))
+            problems.push(`${call}: visitor-independent declaration for no such function`)
         for (const [call, ends] of Object.entries(listed.ends ?? {}))
           if (!swept.has(call)) problems.push(`${call}: ends for no such function`)
           else if (typeof ends === "string" && ends.includes("say in ends")) problems.push(ends)
@@ -1470,6 +1481,13 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "listeners@createClientRouter": LISTENERS,
     "prefetched@createClientRouter": { scenario: "router-prefetch" },
   },
+  "packages/web/src/internal/route-slot-runtime.ts": {
+    routeSlotStores: {
+      file: "packages/web/test/route-slot-runtime.test.ts",
+      title: "identity change clears prior content and reloads the authorized target",
+    },
+    "#listeners@RouteSlotStore": LISTENERS,
+  },
   "packages/web/src/search.ts": {
     "kept@parse": ONE_CALL,
     "repeated@parse": ONE_CALL,
@@ -1539,6 +1557,8 @@ test("every store a page keeps past one call is enrolled, as visitor data with i
 
 /** Modules holding visitor data that no surface sweeps yet, each with what proves it instead. */
 const UNSWEPT: Readonly<Record<string, string>> = {
+  "packages/web/src/internal/route-slot-runtime.ts":
+    "route-slot stores need a live route runtime; route-slot-runtime.test.ts proves identityChanged aborts prior work and clears prior content",
   "packages/web/src/keep-alive.ts":
     "needs a DOM and the History API to keep pages; the tests KEEP_ALIVE_DROPS names drop its pages by hand",
   "packages/web/src/server-components/client.ts":

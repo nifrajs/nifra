@@ -72,15 +72,17 @@ export async function createApp(
                 ? "B title"
                 : "Public title",
               revision:
-                ctx.search.revision === "new"
-                  ? 2
-                  : ctx.search.revision === "latest"
-                    ? 3
-                    : ctx.request.headers.get("cookie")?.includes("fixture-revision=3")
+                ctx.search.delay === "flight"
+                  ? 4
+                  : ctx.search.revision === "new"
+                    ? 2
+                    : ctx.search.revision === "latest"
                       ? 3
-                      : ctx.request.headers.get("cookie")?.includes("fixture-revision=2")
-                        ? 2
-                        : 1,
+                      : ctx.request.headers.get("cookie")?.includes("fixture-revision=3")
+                        ? 3
+                        : ctx.request.headers.get("cookie")?.includes("fixture-revision=2")
+                          ? 2
+                          : 1,
               islandKey: ctx.search.rekey === "yes" ? 1 : 0,
             }
           },

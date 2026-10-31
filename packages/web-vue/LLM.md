@@ -29,7 +29,7 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-vue/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-vue/fetcher`
 
-_…and 45 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 48 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

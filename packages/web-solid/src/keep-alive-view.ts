@@ -23,7 +23,7 @@ import {
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { PageContext, type PageSlot } from "./page-visibility.ts"
-import { RenderPropsContext, SearchContext } from "./router.ts"
+import { RenderPropsContext, SearchContext } from "./router-context.ts"
 
 /** What the view renders with: one per mount, on the server or in the browser. */
 export interface KeepAliveViewMount {

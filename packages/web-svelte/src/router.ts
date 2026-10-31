@@ -28,6 +28,8 @@ import { getContext } from "svelte"
 import { type Readable, readable } from "svelte/store"
 
 export { href, rawHref } from "@nifrajs/web/client"
+export type { RouteSlotController } from "./route-slot.ts"
+export { useRouteSlot } from "./route-slot.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Must match the string key `Chain.svelte` passes to `setContext` (a string avoids a `.svelte` → `.ts`

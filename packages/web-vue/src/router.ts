@@ -38,6 +38,8 @@ import { PROPS_KEY, SEARCH_KEY } from "./route-context.ts"
 
 export { href, rawHref } from "@nifrajs/web/client"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
+export type { RouteSlotController } from "./route-slot.ts"
+export { RouteSlot, useRouteSlot } from "./route-slot.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search + a stable fallback ref for a `useSearch` used outside a nifra route tree.

@@ -408,7 +408,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // that an identity change cancels in every tab, handing its function and callbacks an abort signal,
   // and `dehydrate` taking a filter: 21,712 -> 22,087 B (Bun 1.4.4). `href` and `rawHref`, a route pattern
   // filled with encoded params and a path checked as same-origin: 22,114 -> 23,476 B (Bun 1.4.4).
-  "nifra-web-client": 23.0,
+  // Route slots add 4,177 B gzip to the 23,476 B href/rawHref baseline (Bun 1.4.4).
+  "nifra-web-client": 27.1,
   "nifra-i18n": 4.3,
 }
 
