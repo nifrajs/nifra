@@ -80,6 +80,7 @@
     "bench:ppr": "bun run bench/ppr/cost.ts && bun run bench/ppr/shared-hole.ts",
     "bench:ppr:gzip": "PPR_GZIP=1 bun run bench/ppr/cost.ts",
     "bench:ppr:saturation": "bun run bench/ppr/saturation.ts",
+    "bench:server-components-cache": "bun run bench/server-components-cache.ts",
     "bench:size": "bun run bench/size/run.ts",
     "bench:workers": "bun run bench/workers/run.ts",
     "gen:llms": "bun run scripts/gen-llms.ts && bun run gen:cards",

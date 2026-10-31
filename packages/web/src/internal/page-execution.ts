@@ -89,6 +89,11 @@ import {
   tagLayoutError,
   withDuplicateInstanceHint,
 } from "./render-document.ts"
+import {
+  OWNER_REQUEST_HEADER_DEPENDENCY_HEADER,
+  requestHeadersWereRead,
+  trackRequestHeaderReads,
+} from "./request-header-tracker.ts"
 import { searchOfRequest } from "./request-search.ts"
 import { originFor, urlPartsFor } from "./request-url.ts"
 import {
@@ -1832,6 +1837,8 @@ export function createPageRequestExecutor<Env = unknown>(
         let live = liveLoadOf?.(c.req)
         const componentRuntime = options.serverComponents
         const componentOwner = componentRuntime?.owns(route.id) === true
+        const loaderRequest =
+          componentOwner && c.req.method === "GET" ? trackRequestHeaderReads(c.req) : c.req
         let componentRequest:
           | import("../server-components/protocol.ts").ComponentRequest
           | undefined
@@ -1867,6 +1874,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let layoutRetained: readonly number[] = []
         let responseHeaders: Record<string, string> | undefined
         let componentState: import("../server-components/types.ts").ComponentState | undefined
+        let componentAnswer: Response | undefined
         const requestApi = apiFor(c)
         let run: LayoutRun | undefined
         let skipPage = false
@@ -1875,8 +1883,8 @@ export function createPageRequestExecutor<Env = unknown>(
         try {
           const ctx: LoaderContext = {
             params: c.params,
-            request: c.req,
-            req: c.req,
+            request: loaderRequest,
+            req: loaderRequest,
             api: requestApi,
             env: c.env,
             draft,
@@ -2061,12 +2069,22 @@ export function createPageRequestExecutor<Env = unknown>(
                 layoutData: layoutData ?? [],
               }),
             )
-            componentState = await componentRuntime!.execute(
-              route.id,
-              componentContext,
-              componentRequest,
-              options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
-            )
+            const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
+            if (componentRequest !== undefined && componentRuntime!.progressive !== undefined) {
+              componentAnswer = await componentRuntime!.progressive(
+                route.id,
+                componentContext,
+                componentRequest,
+                nonce,
+              )
+            } else {
+              componentState = await componentRuntime!.execute(
+                route.id,
+                componentContext,
+                componentRequest,
+                nonce,
+              )
+            }
           }
           if (holeStates !== undefined) {
             // The static resolver names every boundary, leaving the dynamic ones to the holes.
@@ -2088,14 +2106,25 @@ export function createPageRequestExecutor<Env = unknown>(
           }
           // Inside the loader `try`: a header the response cannot carry is a loader error, rendered
           // by the same boundary as one.
-          responseHeaders = controls.documentHeaders()
+          const documentHeaders = controls.documentHeaders() ?? {}
+          if (
+            componentOwner &&
+            (requestHeadersWereRead(c.req) || requestHeadersWereRead(loaderRequest))
+          )
+            documentHeaders[OWNER_REQUEST_HEADER_DEPENDENCY_HEADER] = "1"
+          responseHeaders = documentHeaders
           liveCtx = ctx
         } catch (err) {
           if (componentRequest !== undefined) return componentRuntime!.failure(err)
           return renderRouteFailure(c.req, c.env, route, c.params, err, run, controls.personalized)
         }
-        if (componentRequest !== undefined && componentState !== undefined) {
-          const answer = componentRuntime!.response(componentState, componentRequest)
+        if (componentRequest !== undefined) {
+          const answer =
+            componentAnswer ??
+            (componentState === undefined
+              ? undefined
+              : componentRuntime!.response(componentState, componentRequest))
+          if (answer === undefined) throw new Error("component_contract")
           const headers = new Headers(answer.headers)
           for (const [name, value] of Object.entries(responseHeaders ?? {}))
             if (name !== "cache-control" && name !== "content-type" && name !== "vary")

@@ -7,7 +7,6 @@ import type {
   BlockerFunction,
   BlockerState,
   NavigateFunction,
-  RenderProps,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the

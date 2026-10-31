@@ -51,7 +51,7 @@ export interface RouteSlotProps {
 /** Build the hook with its small reactive surface; the test seam avoids global module mocks. */
 export function createRouteSlotBinding(
   readProps: () => RenderProps | undefined,
-  navigate: (href: string) => void,
+  navigate: (href: ReturnType<typeof rawHref>) => void,
   hooks: RouteSlotHooks,
 ): (name: RouteSlotName) => RouteSlotController {
   return function useRouteSlot(name: RouteSlotName): RouteSlotController {
