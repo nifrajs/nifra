@@ -1,11 +1,13 @@
 name: Mutation nightly
 
 # Whole-file mutation testing of the security boundaries in `mutation-targets.json` (`scripts/mutate.ts`),
-# every night. A job fails on a survivor `mutation-baseline.json` does not list and on a listed one a
-# test now kills, so a kill cannot quietly rot and the baseline only shrinks. Kill a new survivor with a
-# test, or record it in `mutation-equivalents.json` with a reason if no test could notice it. Run by
-# hand with `gate` off, the jobs only report; `bun scripts/mutate.ts --baseline-from <dirs>` turns the
-# downloaded `mutation-*` artifacts into a baseline.
+# every night. A target runs its listed tests and every test that imports one of its files directly, so
+# a new suite for a file guards it with no edit here. A job fails on a survivor `mutation-baseline.json`
+# does not list and on a listed one a test now kills, so a kill cannot quietly rot and the baseline only
+# shrinks. Kill a new survivor with a test, or record it in `mutation-equivalents.json` with a reason if
+# no test could notice it. Run by hand with `gate` off, the jobs only report;
+# `bun scripts/mutate.ts --baseline-from <dirs>` turns the downloaded `mutation-*` artifacts into a
+# baseline.
 
 on:
   schedule:

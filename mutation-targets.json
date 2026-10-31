@@ -22,6 +22,7 @@
       "packages/mcp-db/src/postgres.ts"
     ],
     "tests": ["packages/mcp-db/test"],
+    "exclude": ["packages/cli/test/db-tool.test.ts"],
     "env": ["NIFRA_TEST_POSTGRES_URL"]
   },
   "web-keep-alive": {
@@ -41,6 +42,7 @@
       "packages/web/test/router-intercept.test.ts",
       "packages/web/test/router-origin.test.ts",
       "packages/web/test/router-share.test.ts",
+      "packages/web/test/router-supersede.test.ts",
       "packages/web/test/navigation.test.ts",
       "packages/web/test/navigation-redirect.test.ts",
       "internal/invariants/test/visitor-stores.test.ts"
