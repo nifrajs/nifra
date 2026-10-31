@@ -9,9 +9,11 @@ import {
   validateServerComponentInput,
 } from "./definition.ts"
 import { ServerComponentError } from "./error.ts"
-import { componentFrames } from "./frames.ts"
+import { componentFlightFrames, componentFrames } from "./frames.ts"
 import { componentRangeHTML } from "./html.ts"
 import {
+  acceptsComponentFlight,
+  COMPONENT_FLIGHT_MEDIA_TYPE,
   COMPONENT_LIMITS,
   COMPONENT_RESPONSE_HEADERS,
   componentFailure,
@@ -26,6 +28,7 @@ import type {
   ComponentOwner,
   ComponentRecord,
   ComponentRender,
+  ComponentState,
   ServerComponent,
   ServerComponentContext,
   ServerComponentHandle,
@@ -40,9 +43,14 @@ const admission = new BoundedComponentTasks(
 )
 const encoder = new TextEncoder()
 const token = /^[A-Za-z0-9_-]{1,128}$/
+const cacheTag = /^[A-Za-z][A-Za-z0-9._:/-]{0,126}$/
+const MAX_OWNER_CACHE_TAGS = 32
+const MAX_OWNER_CACHE_REVALIDATE = 31_536_000
 
 export interface ServerComponentsOptions {
   readonly build: string
+  /** Unique per deployed environment when any owner opts into public ISR caching. */
+  readonly deployment?: string
   readonly adapter: ServerComponentRenderAdapter
   readonly owners: Readonly<Record<string, ComponentOwner>>
   /**
@@ -91,9 +99,13 @@ export function serverComponentIdentity(
 export function createServerComponents(options: ServerComponentsOptions): ServerComponentRuntime {
   if (
     !token.test(options.build) ||
+    (options.deployment !== undefined && !token.test(options.deployment)) ||
     options.adapter.version !== 1 ||
     !["react", "vue", "svelte", "solid", "preact"].includes(options.adapter.name)
   )
+    throw new ServerComponentError("component_contract")
+  const hasPublicCache = Object.values(options.owners).some((owner) => owner.cache !== undefined)
+  if (hasPublicCache && options.deployment === undefined)
     throw new ServerComponentError("component_contract")
   const owners = new Map<
     string,
@@ -143,7 +155,49 @@ export function createServerComponents(options: ServerComponentsOptions): Server
       (owner.scope !== "anonymous" && typeof owner.scope !== "function")
     )
       throw new ServerComponentError("component_contract")
-    owners.set(routeId, { owner, components: allowlist(owner.components, owner.capabilities) })
+    const components = allowlist(owner.components, owner.capabilities)
+    let normalizedOwner = owner
+    if (owner.cache !== undefined) {
+      const cache = owner.cache
+      const tags: unknown = cache !== null && typeof cache === "object" ? (cache.tags ?? []) : []
+      const cacheKeys = cache !== null && typeof cache === "object" ? Object.keys(cache).sort() : []
+      if (
+        cache === null ||
+        typeof cache !== "object" ||
+        cache.scope !== "public" ||
+        cache.requestIndependent !== true ||
+        !cacheKeys.includes("revalidate") ||
+        cacheKeys.some(
+          (key) => !["requestIndependent", "revalidate", "scope", "tags"].includes(key),
+        ) ||
+        !Number.isSafeInteger(cache.revalidate) ||
+        cache.revalidate < 1 ||
+        cache.revalidate > MAX_OWNER_CACHE_REVALIDATE ||
+        !Array.isArray(tags) ||
+        tags.length > MAX_OWNER_CACHE_TAGS ||
+        tags.some((tag) => typeof tag !== "string" || !cacheTag.test(tag)) ||
+        new Set(tags).size !== tags.length ||
+        owner.scope !== "anonymous" ||
+        (owner.capabilities?.length ?? 0) > 0 ||
+        [...components.values()].some(
+          (component) => serverComponentCapabilities(component).length > 0,
+        )
+      )
+        throw new ServerComponentError("component_contract")
+      const normalizedCache = {
+        scope: "public" as const,
+        requestIndependent: true as const,
+        revalidate: cache.revalidate,
+      }
+      const normalizedTags = tags.filter((tag): tag is string => typeof tag === "string")
+      if (normalizedTags.length > 0)
+        Object.assign(normalizedCache, { tags: Object.freeze(normalizedTags) })
+      normalizedOwner = {
+        ...owner,
+        cache: Object.freeze(normalizedCache),
+      }
+    }
+    owners.set(routeId, { owner: normalizedOwner, components })
   }
   const holes = new Map<
     string,
@@ -190,8 +244,23 @@ export function createServerComponents(options: ServerComponentsOptions): Server
       })
     return record
   }
-  return {
+  // Keep the transport response private to one execute result so ComponentState stays serializable.
+  const progressiveContexts = new WeakSet<object>()
+  const progressiveAnswers = new WeakMap<ComponentState, Response>()
+  const runtime: ServerComponentRuntime = {
     owns: (routeId) => owners.has(routeId),
+    cacheIdentity(routeId) {
+      const entry = owners.get(routeId)
+      if (entry?.owner.cache === undefined || options.deployment === undefined) return undefined
+      return JSON.stringify([
+        "nifra-owner-v1",
+        options.deployment,
+        options.build,
+        options.adapter.name,
+        routeId,
+      ])
+    },
+    cachePolicy: (routeId) => owners.get(routeId)?.owner.cache,
     capabilities: (routeId) =>
       owners.get(routeId)?.owner.capabilities ?? holes.get(routeId)?.capabilities ?? [],
     hosts: (routeId) => holes.has(routeId),
@@ -347,6 +416,67 @@ export function createServerComponents(options: ServerComponentsOptions): Server
         COMPONENT_LIMITS.requestLoads,
         COMPONENT_LIMITS.instances,
       )
+      if (
+        progressiveContexts.has(context) &&
+        selection !== undefined &&
+        options.adapter.name === "react" &&
+        options.adapter.renderProgressive !== undefined &&
+        picked.length === 1
+      ) {
+        const instance = picked[0]!
+        let owner: string | undefined
+        const framed = await requestTasks.runStream(signal, () =>
+          admission.runStream(signal, async () => {
+            const prepared = await prepareAuthorizedServerComponent(authorized.get(instance.id)!)
+            const renderContext: import("./types.ts").ComponentRenderContext = {
+              reference: instance.reference,
+              instance: instance.id,
+              signal,
+              children: [],
+            }
+            if (nonce !== undefined) Object.assign(renderContext, { nonce })
+            const flight = await options.adapter.renderProgressive!(
+              prepared.view,
+              prepared.props,
+              renderContext,
+            )
+            if (signal.aborted) throw componentAbort(signal)
+            owner = await identity(routeId)
+            return componentFlightFrames(
+              {
+                v: 1,
+                build: options.build,
+                adapter: options.adapter.name,
+                owner,
+                scope,
+                instance: instance.id,
+                reference: selection.reference,
+                key: selection.key,
+                parent: selection.parent,
+                generation: selection.generation,
+                routeEpoch: selection.routeEpoch,
+                authEpoch: selection.authEpoch,
+              },
+              flight,
+              signal,
+            )
+          }),
+        )
+        if (owner === undefined) throw new ServerComponentError("component_contract")
+        const headers = new Headers(COMPONENT_RESPONSE_HEADERS)
+        headers.set("content-type", COMPONENT_FLIGHT_MEDIA_TYPE)
+        const response = new Response(framed, { headers })
+        const state: ComponentState = {
+          v: 1,
+          build: options.build,
+          adapter: options.adapter.name,
+          owner,
+          scope,
+          records: [],
+        }
+        progressiveAnswers.set(state, response)
+        return state
+      }
       let bytes = 0
       let count = candidates.length
       const pending = new Map<string, Promise<ComponentRecord>>()
@@ -409,6 +539,20 @@ export function createServerComponents(options: ServerComponentsOptions): Server
         records,
       }
     },
+    async progressive(routeId, context, selection, nonce) {
+      if (!acceptsComponentFlight(context.request))
+        return runtime.response(
+          await runtime.execute(routeId, context, selection, nonce),
+          selection,
+        )
+      progressiveContexts.add(context)
+      try {
+        const state = await runtime.execute(routeId, context, selection, nonce)
+        return progressiveAnswers.get(state) ?? runtime.response(state, selection)
+      } finally {
+        progressiveContexts.delete(context)
+      }
+    },
     response(state, selection) {
       return new Response(
         componentFrames(
@@ -456,4 +600,5 @@ export function createServerComponents(options: ServerComponentsOptions): Server
       return componentFailure(error)
     },
   }
+  return runtime
 }

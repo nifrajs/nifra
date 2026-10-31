@@ -6844,6 +6844,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/server-components/stream`
 
+- **COMPONENT_OUTPUT_LIMIT** _(const)_ - `COMPONENT_OUTPUT_LIMIT: 1048576`
 - **bytesStream** _(function)_ - `bytesStream: (bytes: Uint8Array) => ReadableStream<Uint8Array>`
 - **decodeComponentBytes** _(function)_ - `decodeComponentBytes: (value: unknown) => Uint8Array`
 - **encodeComponentBytes** _(function)_ - `encodeComponentBytes: (bytes: Uint8Array) => string`
