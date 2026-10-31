@@ -53,6 +53,12 @@
       "svelte": "./dist/Hole.svelte",
       "default": "./dist/Hole.svelte"
     },
+    "./route-slot": {
+      "types": "./dist/RouteSlot.svelte.d.ts",
+      "bun": "./src/RouteSlot.svelte",
+      "svelte": "./dist/RouteSlot.svelte",
+      "default": "./dist/RouteSlot.svelte"
+    },
     "./ppr": {
       "bun": "./src/ppr.ts",
       "types": "./dist/ppr.d.ts",

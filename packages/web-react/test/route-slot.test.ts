@@ -1,0 +1,36 @@
+import { expect, test } from "bun:test"
+import type { RouteSlotName } from "@nifrajs/web"
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { RouteSlot } from "../src/route-slot.ts"
+import { RouterContext } from "../src/router.ts"
+
+declare module "@nifrajs/web" {
+  interface RouteTable {
+    "/dashboard": {
+      readonly params: Record<string, never>
+      readonly slots: {
+        readonly inspector: readonly ["/users/:id"]
+        readonly activity: readonly ["/activity"]
+      }
+    }
+    "/users/:id": { readonly params: { readonly id: string } }
+    "/activity": { readonly params: Record<string, never> }
+  }
+}
+
+test("RouteSlot renders its fallback while a URL-addressed target loads", () => {
+  const path = "/dashboard?slot.inspector=%2Fusers%2F7"
+  const markup = renderToStaticMarkup(
+    createElement(
+      RouterContext.Provider,
+      { value: { params: {}, path, search: {}, pending: false } },
+      createElement(RouteSlot, {
+        name: "inspector" satisfies RouteSlotName,
+        fallback: createElement("p", null, "Select a user."),
+      }),
+    ),
+  )
+
+  expect(markup).toBe("<p>Select a user.</p>")
+})

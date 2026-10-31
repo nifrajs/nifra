@@ -193,6 +193,11 @@ const RULES: readonly Rule[] = [
         count: 1,
         reason: "the hash, a fragment the router never matches",
       },
+      "packages/web/src/route-slots.ts": {
+        count: 1,
+        reason:
+          "a route target embedded as a query value; encoding its slashes keeps query delimiters inert",
+      },
       "packages/web/src/internal/ppr/contract.ts": { count: 2, reason: "query-string pairs" },
       "packages/web/src/internal/secret-scan.ts": {
         count: 1,

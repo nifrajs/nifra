@@ -1,4 +1,5 @@
 import { describe, expect, setSystemTime, spyOn, test } from "bun:test"
+import { rawHref } from "../src/href.ts"
 import { identityChanged } from "../src/identity.ts"
 import {
   createClientRouter,
@@ -7,6 +8,7 @@ import {
   type Submission,
 } from "../src/index.ts"
 import { setPresenter } from "../src/internal/present.ts"
+import { parseRouteSlots, setRouteSlot, withRouteSlots } from "../src/route-slots.ts"
 import { redirectOf } from "../src/router.ts"
 
 describe("createMatcher", () => {
@@ -138,6 +140,74 @@ describe("createClientRouter", () => {
     r.subscribe(() => seen.push(r.snapshot().pending))
     await r.navigate("/users/1")
     expect(seen).toEqual([true, false])
+  })
+
+  test("slot-only navigation preserves siblings and skips the page loader", async () => {
+    const slotPatterns = [
+      { routeId: "dashboard", pattern: "/dashboard" },
+      { routeId: "user", pattern: "/users/:id" },
+      { routeId: "activity", pattern: "/activity" },
+    ]
+    const initial: RouterState = {
+      routeId: "dashboard",
+      params: {},
+      path: "/dashboard?tab=overview",
+      data: { dashboard: true },
+      pending: false,
+    }
+    let pageLoads = 0
+    const loadedModules: string[] = []
+    const router = createClientRouter({
+      patterns: slotPatterns,
+      initial,
+      loadModule: async (routeId, path) => {
+        loadedModules.push(`${routeId}:${path}`)
+      },
+      routeHooks: {
+        dashboard: { routeSlots: { inspector: ["/users/:id"], activity: ["/activity"] } },
+      },
+      fetchData: async () => {
+        pageLoads++
+        return { dashboard: true }
+      },
+    })
+    expect(router.routeSlotsFor("dashboard")).toEqual({
+      inspector: ["/users/:id"],
+      activity: ["/activity"],
+    })
+    await router.loadModule("user", "/users/7")
+    expect(loadedModules).toEqual(["user:/users/7"])
+
+    const opened = withRouteSlots(initial.path, {
+      inspector: "/users/7",
+      activity: "/activity",
+    })
+    await router.navigate(opened)
+    expect(router.snapshot().path).toBe(opened)
+    expect(router.snapshot().data).toBe(initial.data)
+    expect(pageLoads).toBe(0)
+
+    const changed = setRouteSlot(opened, "inspector", "/users/8")
+    await router.navigate(changed)
+    expect(parseRouteSlots(router.snapshot().path)).toEqual({
+      activity: "/activity",
+      inspector: "/users/8",
+    })
+    expect(pageLoads).toBe(0)
+
+    const closed = setRouteSlot(changed, "inspector", null)
+    await router.navigate(closed)
+    expect(parseRouteSlots(router.snapshot().path)).toEqual({ activity: "/activity" })
+    expect(pageLoads).toBe(0)
+
+    await expect(
+      router.navigate(rawHref("/dashboard?tab=changed&slot.unknown=%2Fusers%2F7")),
+    ).rejects.toMatchObject({ code: "unknown_slot" })
+    await expect(
+      router.navigate(rawHref("/dashboard?tab=changed&slot.inspector=%2Fnot-a-route")),
+    ).rejects.toMatchObject({ code: "unknown_route" })
+    expect(router.snapshot().path).toBe(closed)
+    expect(pageLoads).toBe(0)
   })
 
   test("navigate publishes the target as pendingPath while in flight, cleared when settled", async () => {

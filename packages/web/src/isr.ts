@@ -601,6 +601,13 @@ export const ISR_REVALIDATE_HEADER = "x-nifra-isr-revalidate"
  * reads them calls it, so an app nothing caches never sends a route's freshness or tags. */
 export const CACHE_CHANNEL: unique symbol = Symbol.for("nifra.web.cacheChannel")
 
+/** Internal route identity seam for explicitly public server-component owner pages. */
+export const SERVER_COMPONENT_CACHE_PARTITION: unique symbol = Symbol.for(
+  "nifra.web.serverComponentCachePartition",
+)
+/** Internal proof that a public owner document passed createWebApp's response checks. */
+export const OWNER_CACHEABLE_HEADER = "x-nifra-owner-cacheable"
+
 /** Ask `app` to emit its ISR headers; an app without the channel emits whatever it emits. */
 export function openCacheChannel(app: object): void {
   const open: unknown = Reflect.get(app, CACHE_CHANNEL)
@@ -609,12 +616,17 @@ export function openCacheChannel(app: object): void {
 
 /** Drop the ISR headers from a response that leaves the cache layer. */
 export function withoutCacheChannel(res: Response): Response {
-  if (!res.headers.has(ISR_REVALIDATE_HEADER) && !res.headers.has(ISR_REVALIDATE_TAGS_HEADER)) {
+  if (
+    !res.headers.has(ISR_REVALIDATE_HEADER) &&
+    !res.headers.has(ISR_REVALIDATE_TAGS_HEADER) &&
+    !res.headers.has(OWNER_CACHEABLE_HEADER)
+  ) {
     return res
   }
   const target = writableResponse(res)
   target.headers.delete(ISR_REVALIDATE_HEADER)
   target.headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+  target.headers.delete(OWNER_CACHEABLE_HEADER)
   return target
 }
 
@@ -832,27 +844,60 @@ export const urlKeyOf = (query: ISRQuery = "bypass"): ((url: URL) => string | nu
   }
 }
 
-const requestKeyOf =
-  (urlKey: (url: URL) => string | null) =>
-  (req: Request): string | null =>
-    urlKey(new URL(req.url))
-
 /**
  * The key of a request, and of a path on the request's origin. Under the default URL key a path needs
  * no `Request`; a custom `key` is handed one.
  */
-function cacheKeysOf(options: ISROptions): {
+type CachePartition = (req: Request) => string | null | undefined
+
+const partitionedCacheKey = (key: string, partition: string): string =>
+  JSON.stringify(["nifra-owner-v1", partition, key])
+
+function cacheKeysOf(
+  options: ISROptions,
+  partitionOf: CachePartition | undefined,
+): {
   readonly request: (req: Request) => string | null
   readonly path: (path: string, req: Request) => string | null
 } {
+  const inPartition = (key: string | null, req: Request): string | null => {
+    if (key === null || partitionOf === undefined) return key
+    const partition = partitionOf(req)
+    if (partition === undefined) return key
+    return partition === null ? null : partitionedCacheKey(key, partition)
+  }
   const custom = options.key
   if (custom !== undefined) {
-    return { request: custom, path: (path, req) => custom(documentGet(path, req)) }
+    return {
+      request: (req) => inPartition(custom(req), req),
+      path: (path, req) => {
+        const document = documentGet(path, req)
+        return inPartition(custom(document), document)
+      },
+    }
   }
   const urlKey = urlKeyOf(options.query)
   return {
-    request: requestKeyOf(urlKey),
-    path: (path, req) => urlKey(new URL(originOf(req) + path)),
+    request: (req) => inPartition(urlKey(new URL(req.url)), req),
+    path: (path, req) => {
+      const document = documentGet(path, req)
+      return inPartition(urlKey(new URL(originOf(req) + path)), document)
+    },
+  }
+}
+
+function cachePartitionOf(app: object): CachePartition | undefined {
+  const candidate: unknown = Reflect.get(app, SERVER_COMPONENT_CACHE_PARTITION)
+  if (typeof candidate !== "function") return undefined
+  return (req) => {
+    try {
+      const value: unknown = candidate(req)
+      if (value === undefined) return undefined
+      return typeof value === "string" && value.length > 0 && value.length <= 2048 ? value : null
+    } catch {
+      // A broken internal identity seam disables caching for that request.
+      return null
+    }
   }
 }
 
@@ -936,6 +981,24 @@ export const isCacheablePage = (req: Request, res: Response): boolean => {
   return true
 }
 
+const isCacheableOwnerPage = (req: Request, res: Response): boolean => {
+  if (req.method !== "GET") return false
+  if (req.headers.get("x-nifra-data") !== null || req.headers.has("x-nifra-component")) return false
+  if (req.headers.has(SWAP_HEADER) || requestCarriesPrivateState(req)) return false
+  if (res.headers.get(OWNER_CACHEABLE_HEADER) !== "1") return false
+  if (res.status !== 200 || !(res.headers.get("content-type") ?? "").includes("text/html"))
+    return false
+  if (!cacheControlHas(res.headers, ["private"]) || !cacheControlHas(res.headers, ["no-store"]))
+    return false
+  if (hasSetCookie(res.headers)) return false
+  const vary = res.headers.get("vary")
+  if (vary !== null) {
+    const allowed = new Set(["x-nifra-component", "x-nifra-data"])
+    if (vary.split(",").some((part) => !allowed.has(part.trim().toLowerCase()))) return false
+  }
+  return true
+}
+
 // Keep representation and security policy headers, plus `Vary` for legacy entries. Transport,
 // request-specific, framework-control, and unknown internal headers stay out of the shared cache.
 const CACHEABLE_RESPONSE_HEADERS = new Set([
@@ -975,7 +1038,7 @@ const tagsOf = (res: Response): readonly string[] =>
 const headersOf = (res: Response): Record<string, string> => {
   const out: Record<string, string> = {}
   res.headers.forEach((value, key) => {
-    if (isCacheableResponseHeader(key)) out[key] = value
+    if (key !== OWNER_CACHEABLE_HEADER && isCacheableResponseHeader(key)) out[key] = value
   })
   return out
 }
@@ -1091,7 +1154,8 @@ export function withISR(
     const taken = await attempt("fence", key, async () => fence.call(store))
     return taken === STORE_FAILED ? undefined : taken
   }
-  const keys = cacheKeysOf(options)
+  const partitionOf = cachePartitionOf(app)
+  const keys = cacheKeysOf(options, partitionOf)
   const keyOf = keys.request
   const draftSecret = options.draftSecret
   const anonymousCookies = new Set(options.anonymousCookies ?? [])
@@ -1109,6 +1173,20 @@ export function withISR(
     headers.delete("cookie")
     return new Request(req.url, { method: req.method, headers })
   }
+  const isComponentOwnerRequest = (req: Request): boolean => {
+    const partition = partitionOf?.(req)
+    return (
+      typeof partition === "string" &&
+      req.method === "GET" &&
+      !req.headers.has("x-nifra-data") &&
+      !req.headers.has("x-nifra-component") &&
+      !req.headers.has(SWAP_HEADER) &&
+      !requestCarriesPrivateState(req)
+    )
+  }
+  const cacheableResponse = (req: Request, res: Response): boolean =>
+    isCacheablePage(judged(req), res) ||
+    (isComponentOwnerRequest(req) && isCacheableOwnerPage(judged(req), res))
   const regenerating = new Set<string>()
   openCacheChannel(app)
   // This wrapper owns the app's invalidation pipeline from here on: an action's operation comes back
@@ -1198,7 +1276,7 @@ export function withISR(
   ): Promise<Response> => {
     const fence = await fenceFor(key)
     const res = await app.fetch(req, platform)
-    if (!isCacheablePage(judged(req), res)) {
+    if (!cacheableResponse(req, res)) {
       if (remember) rememberUncacheable(key, res)
       return withoutCacheChannel(res)
     }
@@ -1269,7 +1347,7 @@ export function withISR(
     try {
       const fence = await fenceFor(key)
       const res = await app.fetch(req, platform)
-      if (isCacheablePage(judged(req), res)) {
+      if (cacheableResponse(req, res)) {
         const tags = tagsOf(res)
         const entry: CachedResponse = {
           body: await res.text(),
@@ -1303,12 +1381,13 @@ export function withISR(
     // expects the loader payload or one slot. (The write path already refuses both.)
     const privateRoute: unknown = Reflect.get(app, Symbol.for("nifra.web.private-route"))
     const ownsPrivate = typeof privateRoute === "function" && privateRoute(req) === true
+    const ownerCacheRequest = isComponentOwnerRequest(req)
     const key =
       req.method === "GET" &&
       req.headers.get("x-nifra-data") === null &&
       !req.headers.has("x-nifra-component") &&
       !req.headers.has(SWAP_HEADER) &&
-      !ownsPrivate
+      (!ownsPrivate || ownerCacheRequest)
         ? keyOf(req)
         : null
     if (key === null) return passThrough(req, platform)
@@ -1384,6 +1463,8 @@ const MAX_REVALIDATE_BODY_BYTES = 1024 * 1024
 
 export interface RevalidateEndpointOptions {
   readonly store: CacheStore
+  /** The same app instance passed to `withISR`, for deployment-scoped owner-route path purges. */
+  readonly app?: object
   /** Shared secret; the request's token must match it (constant-time). */
   readonly secret: string
   /** Header carrying the secret. Default `x-nifra-revalidate-token`. */
@@ -1438,10 +1519,18 @@ export function revalidateEndpoint(
   assertTokenSecret(options.secret, "revalidateEndpoint")
   const tokenHeader = options.tokenHeader ?? "x-nifra-revalidate-token"
   const urlKey = options.key === undefined ? urlKeyOf(options.query) : undefined
+  const partitionOf = options.app === undefined ? undefined : cachePartitionOf(options.app)
   // Joined as text, never resolved against the origin: `//host/x` must stay a path on this origin.
-  const keyOf =
+  const baseKeyOf =
     options.key ??
     ((path: string, req: Request) => urlKey?.(new URL(new URL(req.url).origin + path)) ?? null)
+  const keyOf = (path: string, req: Request): string | null => {
+    const key = baseKeyOf(path, req)
+    if (key === null || partitionOf === undefined) return key
+    const partition = partitionOf(documentGet(path, req))
+    if (partition === undefined) return key
+    return partition === null ? null : partitionedCacheKey(key, partition)
+  }
   return async (req, platform) => {
     if (req.method !== "POST") return jsonError(405, "method_not_allowed")
     if (!timingSafeEqual(req.headers.get(tokenHeader) ?? "", options.secret)) {

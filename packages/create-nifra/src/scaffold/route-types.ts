@@ -90,13 +90,17 @@ function routeTable(extension: string): string {
     extension === "tsx"
       ? 'SearchOf<typeof import("../../routes/index")>'
       : "Record<string, unknown>"
+  const slots =
+    extension === "tsx"
+      ? 'RouteSlotPatternsOf<typeof import("../../routes/index")>'
+      : "Readonly<Record<never, never>>"
   return [
     header("routes/"),
-    'import type { SearchOf } from "@nifrajs/web"',
+    'import type { RouteSlotPatternsOf, SearchOf } from "@nifrajs/web"',
     "",
     'declare module "@nifrajs/web" {',
     "  interface RouteTable {",
-    `    "/": { readonly params: Record<string, never>; readonly search: ${search} }`,
+    `    "/": { readonly params: Record<string, never>; readonly search: ${search}; readonly slots: ${slots} }`,
     "  }",
     "}",
     "",

@@ -32,6 +32,7 @@ import {
   type Listening,
   mean,
   median,
+  sampledPeakRssDeltaOf,
   spawnUntilListening,
 } from "./harness.ts"
 
@@ -160,13 +161,19 @@ async function load(
 ) {
   const target = ohaTarget(origin, variant, scale)
   oha(target, Math.min(500, n), connections)
+  await fetch(`${origin}/__metrics/reset`)
   const [cpu0, reads0, started] = [await cpuOf(origin), await upstreamReads(), performance.now()]
   const result = oha(target, n, connections)
-  const [cpu1, reads1] = [await cpuOf(origin), await upstreamReads()]
+  const [cpu1, reads1, sampledPeakRssDeltaBytes] = await Promise.all([
+    cpuOf(origin),
+    upstreamReads(),
+    sampledPeakRssDeltaOf(origin),
+  ])
   return {
     rps: result.summary.requestsPerSec,
     cpuPerRequest: (cpu1 - cpu0) / n,
     readsPerRequest: (reads1 - reads0) / n,
+    sampledPeakRssDeltaBytes,
     elapsedMs: performance.now() - started,
   }
 }
@@ -212,9 +219,9 @@ async function timeToFirstByte(origin: string, path: string) {
 const failures: string[] = []
 try {
   console.log("## S0: tiny page, zero loader delay (oha -n 20000 -c 32), two passes\n")
-  console.log("| variant | req/s | CPU per request |")
-  console.log("|---|---|---|")
-  const s0 = new Map<string, { rps: number[]; us: number[] }>()
+  console.log("| variant | req/s | CPU per request | sampled peak RSS delta |")
+  console.log("|---|---|---|---|")
+  const s0 = new Map<string, { rps: number[]; us: number[]; rssDeltaBytes: number[] }>()
   for (let pass = 0; pass < WARMUP_PASSES + PASSES; pass++) {
     for (const framework of FRAMEWORKS) {
       const origin = originOf(`${framework} S0`)
@@ -222,16 +229,17 @@ try {
         const run = await load(origin, variant, 0, 20_000, 32)
         if (pass < WARMUP_PASSES) continue
         const key = `${framework} ${variant.name}`
-        const entry = s0.get(key) ?? { rps: [], us: [] }
+        const entry = s0.get(key) ?? { rps: [], us: [], rssDeltaBytes: [] }
         entry.rps.push(run.rps)
         entry.us.push(run.cpuPerRequest)
+        entry.rssDeltaBytes.push(run.sampledPeakRssDeltaBytes)
         s0.set(key, entry)
       }
     }
   }
   for (const [key, entry] of s0) {
     console.log(
-      `| ${key} | ${entry.rps.map((x) => x.toFixed(0)).join(" / ")} | ${entry.us.map((x) => x.toFixed(0)).join(" / ")} us |`,
+      `| ${key} | ${entry.rps.map((x) => x.toFixed(0)).join(" / ")} | ${entry.us.map((x) => x.toFixed(0)).join(" / ")} us | ${entry.rssDeltaBytes.map((x) => (x / 1_048_576).toFixed(1)).join(" / ")} MiB |`,
     )
   }
 
@@ -265,12 +273,13 @@ try {
       }
     }
     const idle = await idleCpuPerMs(origin)
-    const cost = new Map<string, { us: number[]; reads: number[] }>()
+    const cost = new Map<string, { us: number[]; reads: number[]; rssDeltaBytes: number[] }>()
     const record = async (variant: Variant, n: number) => {
       const run = await load(origin, variant, 1, n, 128)
-      const entry = cost.get(variant.name) ?? { us: [], reads: [] }
+      const entry = cost.get(variant.name) ?? { us: [], reads: [], rssDeltaBytes: [] }
       entry.us.push(run.cpuPerRequest - (idle * run.elapsedMs) / n)
       entry.reads.push(run.readsPerRequest)
+      entry.rssDeltaBytes.push(run.sampledPeakRssDeltaBytes)
       cost.set(variant.name, entry)
     }
     for (let pass = 0; pass < WARMUP_PASSES; pass++) {
@@ -300,7 +309,7 @@ try {
               .map((name) => median(t.frames.get(name) ?? []).toFixed(0))
               .join(" / ")} ms`
       rows.push(
-        `| ${framework} ${variant.name} | ${median(t.ttfb).toFixed(2)} ms | ${frames} | ${median(t.total).toFixed(1)} ms | ${t.bytes} | ${us} | ${mean(c.reads).toFixed(2)} |`,
+        `| ${framework} ${variant.name} | ${median(t.ttfb).toFixed(2)} ms | ${frames} | ${median(t.total).toFixed(1)} ms | ${t.bytes} | ${us} | ${mean(c.reads).toFixed(2)} | ${(median(c.rssDeltaBytes) / 1_048_576).toFixed(1)} MiB |`,
       )
     }
     /** The median over rounds of one variant's CPU over another's, beside the rounds' range. */
@@ -342,9 +351,9 @@ try {
     }
   }
   console.log(
-    `\n| variant | TTFB p50 | hole frames p50 (${Object.values(HOLES).join("/")} ms loaders) | complete p50 | bytes | CPU per request | catalog reads per request |`,
+    `\n| variant | TTFB p50 | hole frames p50 (${Object.values(HOLES).join("/")} ms loaders) | complete p50 | bytes | CPU per request | catalog reads per request | sampled peak RSS delta |`,
   )
-  console.log("|---|---|---|---|---|---|---|")
+  console.log("|---|---|---|---|---|---|---|---|")
   for (const row of rows) console.log(row)
 } finally {
   for (const { proc } of [...servers.values(), upstream]) proc.kill()

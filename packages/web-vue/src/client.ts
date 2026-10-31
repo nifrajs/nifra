@@ -1,4 +1,5 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { setRouteSlotRuntime } from "@nifrajs/web/client"
 import { assuranceHook } from "@nifrajs/web/internal/hydration-assurance"
 import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 /**
@@ -129,6 +130,7 @@ const levelOf = (component: unknown): Component => {
  */
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, matchChains, container } = options
+  setRouteSlotRuntime({ router, routes, searchSchemas, matchChains })
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Root = defineComponent({
     setup() {

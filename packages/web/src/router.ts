@@ -16,6 +16,13 @@ import { appUrl } from "./internal/route-path.ts"
 import { shareData } from "./internal/share-data.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
+import {
+  normalizeRouteSlotRegistry,
+  parseRouteSlots,
+  type RouteSlotRegistry,
+  stripRouteSlots,
+  validateRouteSlotTargets,
+} from "./route-slots.ts"
 import { isClientOnlySearchChange } from "./search.ts"
 
 /**
@@ -130,6 +137,17 @@ export interface RouteDataEnvelope {
   readonly status?: number
   /** A live load's handle, carried through to {@link RouterState.live} untouched. */
   readonly live?: unknown
+}
+
+/** A route-data request that failed before it produced an envelope. */
+export class RouteDataFetchError extends Error {
+  constructor(
+    readonly status: number,
+    path: string,
+  ) {
+    super(`[nifra/web] navigation data fetch failed (${status}): ${path}`)
+    this.name = "RouteDataFetchError"
+  }
 }
 
 /** Recognise the envelope without mistaking a plain loader object that happens to have a `data` key. */
@@ -385,6 +403,12 @@ export interface ClientRouter {
   subscribeFetchers: (listener: () => void) => () => void
   /** Match a path against the manifest patterns (exposed for history/link wiring). */
   match: (path: string) => RouteMatch | null
+  /** Load a route's lazy component chain before an independently mounted route slot renders it. */
+  loadModule: (routeId: string, path?: string) => Promise<void>
+  /** Read and validate a route's slot registry after its module has loaded. */
+  routeSlotsFor: (routeId: string) => RouteSlotRegistry
+  /** Read the generated manifest identity for a route id. */
+  routePattern: (routeId: string) => string | undefined
 }
 
 export interface ClientRouterOptions {
@@ -525,7 +549,7 @@ export const routeDataOf = async (
   if (Number.isInteger(status) && status >= 400 && status <= 599) {
     return { v: 1, data: null, status } satisfies RouteDataEnvelope
   }
-  if (!res.ok) throw new Error(`[nifra/web] navigation data fetch failed (${res.status}): ${path}`)
+  if (!res.ok) throw new RouteDataFetchError(res.status, path)
   return readResponseData(res, signal, read)
 }
 
@@ -602,6 +626,10 @@ const isClientActionResult = (value: unknown): value is ClientActionResult =>
 
 export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const match = createMatcher(options.patterns)
+  const patternsById = new Map(
+    options.patterns.map((pattern) => [pattern.routeId, pattern.pattern]),
+  )
+  const knownPatterns = new Set(options.patterns.map((pattern) => pattern.pattern))
   const fetchData = options.fetchData ?? fetchRouteData
   // Start a handed-over list's fetch now, so the first navigation rarely waits for it.
   if (fetchData === fetchRouteData) prerenderedOf()
@@ -733,6 +761,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     // What this path shows, when this is a reload of it: the same response text again is that, unparsed.
     shown?: LoadedRouteData,
   ): Promise<LoadedRouteData> => {
+    path = stripRouteSlots(path)
     const retainFrom = keepLayouts
       ? state.layoutData && { path: pagePathOf(state), layoutData: state.layoutData }
       : undefined
@@ -1447,6 +1476,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
 
   return {
     match,
+    loadModule: async (routeId, path) => {
+      await options.loadModule?.(routeId, path)
+    },
+    routeSlotsFor: (routeId) =>
+      normalizeRouteSlotRegistry(routeHooks[routeId]?.routeSlots, knownPatterns),
+    routePattern: (routeId) => patternsById.get(routeId),
     snapshot: () => {
       checkEpoch()
       return state
@@ -1461,6 +1496,27 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       checkEpoch()
       const matched = match(path)
       if (matched === null) return
+      const routeSlotTargets = parseRouteSlots(path)
+      if (Object.keys(routeSlotTargets).length > 0) {
+        const registry = normalizeRouteSlotRegistry(
+          routeHooks[matched.routeId]?.routeSlots,
+          knownPatterns,
+        )
+        validateRouteSlotTargets(routeSlotTargets, registry, (pathname) => {
+          const target = match(pathname)
+          const pattern = target === null ? undefined : patternsById.get(target.routeId)
+          return pattern === undefined ? null : { pattern }
+        })
+      }
+      if (path !== state.path && stripRouteSlots(path) === stripRouteSlots(state.path)) {
+        const targets = routeSlotTargets
+        const currentTargets = parseRouteSlots(state.path)
+        if (Object.keys(targets).length > 0 || Object.keys(currentTargets).length > 0) {
+          state = { ...state, path, pending: false, pendingPath: undefined }
+          emit()
+          return
+        }
+      }
       // The target an open boundary already shows (a `#fragment` entry inside it, a link to itself):
       // reloading it would rebuild the boundary and drop its action result. One in its error state
       // loads again, so a link can retry it.

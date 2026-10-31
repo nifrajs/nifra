@@ -50,6 +50,8 @@ import {
 
 export { href, rawHref } from "@nifrajs/web/client"
 export { usePageVisibility } from "./page-visibility.ts"
+export type { RouteSlotController, RouteSlotProps } from "./route-slot.ts"
+export { RouteSlot, useRouteSlot } from "./route-slot.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, PrefetchMode, UIMatch }
 
 /** The current route the routing hooks read. Provided by `compose` on SSR + client mount alike. */

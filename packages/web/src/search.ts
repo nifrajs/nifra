@@ -11,6 +11,7 @@
  */
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import { isRecord } from "./internal/record.ts"
+import { stripRouteSlotsSearch } from "./route-slots.ts"
 
 /**
  * Bounds applied while parsing a query string. A search string is attacker-controlled, so it is capped
@@ -190,6 +191,9 @@ export function parseSearch(
   codec: SearchCodec = jsonCodec,
   limits: SearchLimits = DEFAULT_SEARCH_LIMITS,
 ): Record<string, unknown> {
+  const query = raw.startsWith("?") ? raw.slice(1) : raw
+  const stripped = stripRouteSlotsSearch(query)
+  if (stripped !== query) raw = stripped
   if (raw.length > limits.maxLength) return {}
   return codec.parse(raw, limits)
 }

@@ -12,6 +12,10 @@ const search = (fields: string): string =>
 /** An app whose route table has every param shape: none, one, two with an optional first, a splat. */
 function routes(): void {
   write("routes/index.tsx", PAGE)
+  write(
+    "routes/dashboard.tsx",
+    `export const routeSlots = { inspector: ["/users/:id"] } as const\n${PAGE}`,
+  )
   write("routes/users/[id].tsx", search("tab: t.string()"))
   write("routes/reports.tsx", search("page: t.number()"))
   write("routes/[[lang]]/docs/[page].tsx", PAGE)
@@ -22,6 +26,28 @@ function routes(): void {
 const lines = (...rows: string[]): string => `${rows.join("\n")}\n`
 
 describe("href() types", () => {
+  test("route slots accept only registered names and allowed typed targets", () => {
+    routes()
+    write(
+      "check.ts",
+      lines(
+        'import { href } from "@nifrajs/web"',
+        'import type { Route } from "./.nifra/types/routes/+types/dashboard"',
+        "export type Loaded = Route.Params",
+        'const user = href({ to: "/users/:id", params: { id: "7" } })',
+        'href({ to: "/dashboard", slots: { inspector: user } })',
+        'href({ to: "/dashboard", slots: { inspector: null } })',
+        "// @ts-expect-error the page does not register this slot",
+        'href({ to: "/reports", slots: { inspector: user } })',
+        "// @ts-expect-error the slot name is not registered",
+        'href({ to: "/dashboard", slots: { admin: user } })',
+        "// @ts-expect-error the target route is outside the allowlist",
+        'href({ to: "/dashboard", slots: { inspector: href({ to: "/reports" }) } })',
+      ),
+    )
+    expect(typeErrors(["check.ts"])).toEqual([])
+  }, 60_000)
+
   test("a call that matches the route table compiles, and the result is an Href", () => {
     routes()
     write(
@@ -178,6 +204,38 @@ describe("href() types", () => {
         'navigate(href({ to: "/reports", search: { page: "x" } }))',
         "// @ts-expect-error a string",
         'navigate("/reports")',
+      ),
+    )
+    expect(typeErrors(["check.ts"])).toEqual([])
+  }, 60_000)
+
+  test("every adapter exports typed route-slot controls and the Svelte component", () => {
+    routes()
+    write(
+      "check.ts",
+      lines(
+        'import { href } from "@nifrajs/web"',
+        'import { RouteSlot as ReactRouteSlot, useRouteSlot as useReactRouteSlot } from "@nifrajs/web-react/router"',
+        'import { RouteSlot as PreactRouteSlot, useRouteSlot as usePreactRouteSlot } from "@nifrajs/web-preact/router"',
+        'import { RouteSlot as SolidRouteSlot, useRouteSlot as useSolidRouteSlot } from "@nifrajs/web-solid/router"',
+        'import { RouteSlot as VueRouteSlot, useRouteSlot as useVueRouteSlot } from "@nifrajs/web-vue/router"',
+        'import SvelteRouteSlot from "@nifrajs/web-svelte/route-slot"',
+        'import { useRouteSlot as useSvelteRouteSlot } from "@nifrajs/web-svelte/router"',
+        'import type { Route } from "./.nifra/types/routes/+types/dashboard"',
+        "export type Loaded = Route.Params",
+        'const target = href({ to: "/users/:id", params: { id: "7" } })',
+        'useReactRouteSlot("inspector").open(target)',
+        'usePreactRouteSlot("inspector").open(target)',
+        'useSolidRouteSlot("inspector").open(target)',
+        'useVueRouteSlot("inspector").open(target)',
+        'useSvelteRouteSlot("inspector").open(target)',
+        "void ReactRouteSlot",
+        "void PreactRouteSlot",
+        "void SolidRouteSlot",
+        "void VueRouteSlot",
+        "void SvelteRouteSlot",
+        "// @ts-expect-error slot names come from the route table",
+        'useReactRouteSlot("admin")',
       ),
     )
     expect(typeErrors(["check.ts"])).toEqual([])
