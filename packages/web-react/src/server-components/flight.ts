@@ -114,14 +114,19 @@ export async function publicFlightStream(
       if (closed) releaseLock()
     })
   }
-  const cancel = (): void => {
-    void reader.cancel().catch(() => {
-      /* The request abort or first stream failure is authoritative. */
-    })
+  let cancellation: Promise<void> | undefined
+  const cancel = (reason?: unknown): Promise<void> => {
+    if (cancellation !== undefined) return cancellation
+    cancellation = Promise.resolve()
+      .then(() => reader.cancel(reason))
+      .catch(() => {
+        // The request abort or first stream failure is authoritative if source cleanup rejects.
+      })
+      .then(() => release())
+    return cancellation
   }
   const abort = (): void => {
-    cancel()
-    release()
+    void cancel(signal.reason)
   }
   const append = (chunk: Uint8Array): void => {
     const remaining = end - start
@@ -226,7 +231,7 @@ export async function publicFlightStream(
             append(next.value)
           }
         } catch (error) {
-          cancel()
+          await cancel(error)
           try {
             controller.error(error)
           } finally {
@@ -234,9 +239,8 @@ export async function publicFlightStream(
           }
         }
       },
-      async cancel() {
-        cancel()
-        release()
+      cancel(reason) {
+        return cancel(reason)
       },
     },
     { highWaterMark: 0 },

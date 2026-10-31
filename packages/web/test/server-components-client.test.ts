@@ -871,7 +871,7 @@ test("a refresh answered for another auth scope invalidates instead of updating"
     outcome: false,
     errors: ["component_denied"],
     records: 0,
-    trace: ["hydrate:public"],
+    trace: ["hydrate:public", "dispose:public"],
   })
 })
 

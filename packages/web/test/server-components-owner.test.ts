@@ -413,6 +413,132 @@ test("a React owner uses progressive Flight only for a verified single-component
   expect(await new Response(decoded.flight).text()).toBe('0:"progressive"\n')
 })
 
+test("progressive owner refreshes hold global admission through Flight stream completion", async () => {
+  const blockedLoads: Array<() => void> = []
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+  let loadStarts = 0
+  let resolve64Loads!: () => void
+  let resolve65thLoad!: () => void
+  let resolve64Streams!: () => void
+  let resolve65thStream!: () => void
+  const loadsAt64 = new Promise<void>((resolve) => {
+    resolve64Loads = resolve
+  })
+  const load65 = new Promise<void>((resolve) => {
+    resolve65thLoad = resolve
+  })
+  const streamsAt64 = new Promise<void>((resolve) => {
+    resolve64Streams = resolve
+  })
+  const stream65 = new Promise<void>((resolve) => {
+    resolve65thStream = resolve
+  })
+  const component = defineServerComponent(
+    {
+      input: t.object({}),
+      props: t.object({ title: t.string() }),
+      authorize() {},
+      load: () => {
+        loadStarts += 1
+        if (loadStarts === 64) resolve64Loads()
+        if (loadStarts === 65) resolve65thLoad()
+        return new Promise<{ title: string }>((resolve) => {
+          blockedLoads.push(() => resolve({ title: "public" }))
+        })
+      },
+      view: ({ props }) => props.title,
+    },
+    "progressive_admission_component",
+  )
+  const runtime = createServerComponents({
+    build: "build_1",
+    adapter: {
+      name: "react",
+      version: 1,
+      render: () => ({ html: "buffered" }),
+      renderProgressive: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+            controller.enqueue(new TextEncoder().encode('0:"progressive"\n'))
+            if (streams.length === 64) resolve64Streams()
+            if (streams.length === 65) resolve65thStream()
+          },
+        }),
+    },
+    owners: {
+      owner: {
+        scope: "anonymous",
+        components: [component],
+        instances: () => [serverComponentInstance(component, "stable", {})],
+      },
+    },
+  })
+  const progressive = runtime.progressive
+  if (progressive === undefined) throw new Error("React adapter lost progressive support")
+
+  const selection = {
+    v: 1 as const,
+    build: "build_1",
+    reference: "progressive_admission_component",
+    key: "stable",
+    parent: null,
+    generation: 1,
+    routeEpoch: 0,
+    authEpoch: 0,
+    input: {},
+  }
+  const responses = Array.from({ length: 65 }, (_, index) => {
+    const request = new Request(`https://fixture.test/owner/${index}`, {
+      headers: { accept: COMPONENT_FLIGHT_MEDIA_TYPE },
+    })
+    return progressive(
+      "owner",
+      {
+        request,
+        req: request,
+        params: {},
+        api: undefined,
+        env: undefined,
+        draft: false,
+        live() {},
+        search: {},
+        set: { headers: {}, cookie() {}, deleteCookie() {} },
+        signal: request.signal,
+        data: null,
+        layoutData: [],
+      },
+      selection,
+    )
+  })
+  const bodies = responses.map(async (response) => {
+    const body = (await response).body
+    if (body === null) throw new Error("progressive response has no body")
+    const reader = body.getReader()
+    while (!(await reader.read()).done) {}
+  })
+
+  await loadsAt64
+  expect(loadStarts).toBe(64)
+  for (const release of blockedLoads.splice(0)) release()
+  await streamsAt64
+  for (let i = 0; i < 20; i += 1) await Promise.resolve()
+  const startedBeforeStreamClose = loadStarts
+
+  const firstStream = streams[0]
+  if (firstStream === undefined) throw new Error("progressive stream was not created")
+  firstStream.close()
+  await load65
+  for (const release of blockedLoads.splice(0)) release()
+  await stream65
+
+  for (const stream of streams.slice(1)) stream.close()
+  await Promise.all(bodies)
+  expect(startedBeforeStreamClose).toBe(64)
+  expect(loadStarts).toBe(65)
+  expect(streams).toHaveLength(65)
+})
+
 test("server component owner setup rejects unsafe build, assets, public cache and undeclared grants", () => {
   const adapter = { name: "vue" as const, version: 1 as const, render: () => ({ html: "" }) }
   expect(() => createServerComponents({ build: "bad build", adapter, owners: {} })).toThrow()

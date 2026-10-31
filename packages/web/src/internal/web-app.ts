@@ -53,6 +53,12 @@ import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./
 import { PPR_SERVER, PPR_SETUP, type PprSetup } from "./ppr/contract.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
 import type { RevalidateResult } from "./render-document.ts"
+import {
+  finishRequestHeaderTrackingInPlace,
+  OWNER_REQUEST_HEADER_DEPENDENCY_HEADER,
+  requestHeadersWereRead,
+  trackRequestHeaderReadsInPlace,
+} from "./request-header-tracker.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 
@@ -509,6 +515,27 @@ export function createWebApp<Env = unknown>(
   // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via
   // `app.fetch(req, { env })`; this is a compile-time-only seed (`server<Env>()` casts, doesn't store).
   const app = server<Env>(options.server)
+  const ownerRequestMatcher =
+    options.serverComponents === undefined
+      ? undefined
+      : createMatcher(
+          manifest.routes
+            .filter((route) => options.serverComponents?.owns(route.id) === true)
+            .map((route) => ({ routeId: route.id, pattern: route.pattern })),
+        )
+  if (ownerRequestMatcher !== undefined) {
+    // Observe app-level request hooks before their first header read.
+    app.onRequest((request) => {
+      if (request.method === "GET" && ownerRequestMatcher(new URL(request.url).pathname) !== null)
+        trackRequestHeaderReadsInPlace(request)
+    })
+    // Observe app-level response hooks; this runs before the hooks registered by options.use.
+    app.onResponse((response, request) => {
+      if (request.method === "GET" && ownerRequestMatcher(new URL(request.url).pathname) !== null)
+        trackRequestHeaderReadsInPlace(request)
+      return response
+    })
+  }
   // First of all: a host's refused path must not reach a rate limiter, a mount or a page.
   if (options.hostPolicy !== undefined) {
     if (!isHostPolicy(options.hostPolicy)) {
@@ -527,6 +554,16 @@ export function createWebApp<Env = unknown>(
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.
   options.use?.(app)
+  if (ownerRequestMatcher !== undefined) {
+    // Snapshot app derives/auth/beforeHandle reads before the page handler's framework work.
+    app.beforeHandle((context) => {
+      if (
+        context.req.method === "GET" &&
+        ownerRequestMatcher(new URL(context.req.url).pathname) !== null
+      )
+        finishRequestHeaderTrackingInPlace(context.req)
+    })
+  }
   if (options.serverComponents !== undefined) {
     const runtime = options.serverComponents
     // A route whose holes show server components is one visitor's too.
@@ -544,6 +581,7 @@ export function createWebApp<Env = unknown>(
       request.headers.has("x-nifra-component") || match(new URL(request.url).pathname) !== null
     Object.defineProperty(app, Symbol.for("nifra.web.private-route"), { value: privateRoute })
     app.onResponse((response, request) => {
+      const requestHeadersReadByHooks = requestHeadersWereRead(request)
       if (!privateRoute(request)) return response
       const matched = match(new URL(request.url).pathname)
       const cacheableOwner =
@@ -554,6 +592,9 @@ export function createWebApp<Env = unknown>(
         .split(",")
         .map((part) => part.trim().toLowerCase())
         .filter(Boolean)
+      const requestHeaderDependent =
+        headers.get(OWNER_REQUEST_HEADER_DEPENDENCY_HEADER) === "1" || requestHeadersReadByHooks
+      headers.delete(OWNER_REQUEST_HEADER_DEPENDENCY_HEADER)
       const cacheableOwnerDocument =
         cacheableOwner &&
         cacheChannel.enabled &&
@@ -562,6 +603,7 @@ export function createWebApp<Env = unknown>(
         !request.headers.has("x-nifra-data") &&
         !request.headers.has("authorization") &&
         !request.headers.has("cookie") &&
+        !requestHeaderDependent &&
         !isAuthenticatedRequest(request) &&
         response.status === 200 &&
         (headers.get("content-type") ?? "").toLowerCase().includes("text/html") &&

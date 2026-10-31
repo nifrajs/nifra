@@ -412,6 +412,10 @@ export function createServerComponents(options: ServerComponentsOptions): Server
             ),
           )
       })
+      const requestTasks = new BoundedComponentTasks(
+        COMPONENT_LIMITS.requestLoads,
+        COMPONENT_LIMITS.instances,
+      )
       if (
         progressiveContexts.has(context) &&
         selection !== undefined &&
@@ -420,44 +424,48 @@ export function createServerComponents(options: ServerComponentsOptions): Server
         picked.length === 1
       ) {
         const instance = picked[0]!
-        const prepared = await prepareAuthorizedServerComponent(authorized.get(instance.id)!)
-        const renderContext: import("./types.ts").ComponentRenderContext = {
-          reference: instance.reference,
-          instance: instance.id,
-          signal,
-          children: [],
-        }
-        if (nonce !== undefined) Object.assign(renderContext, { nonce })
-        const flight = await options.adapter.renderProgressive(
-          prepared.view,
-          prepared.props,
-          renderContext,
+        let owner: string | undefined
+        const framed = await requestTasks.runStream(signal, () =>
+          admission.runStream(signal, async () => {
+            const prepared = await prepareAuthorizedServerComponent(authorized.get(instance.id)!)
+            const renderContext: import("./types.ts").ComponentRenderContext = {
+              reference: instance.reference,
+              instance: instance.id,
+              signal,
+              children: [],
+            }
+            if (nonce !== undefined) Object.assign(renderContext, { nonce })
+            const flight = await options.adapter.renderProgressive!(
+              prepared.view,
+              prepared.props,
+              renderContext,
+            )
+            if (signal.aborted) throw componentAbort(signal)
+            owner = await identity(routeId)
+            return componentFlightFrames(
+              {
+                v: 1,
+                build: options.build,
+                adapter: options.adapter.name,
+                owner,
+                scope,
+                instance: instance.id,
+                reference: selection.reference,
+                key: selection.key,
+                parent: selection.parent,
+                generation: selection.generation,
+                routeEpoch: selection.routeEpoch,
+                authEpoch: selection.authEpoch,
+              },
+              flight,
+              signal,
+            )
+          }),
         )
-        if (signal.aborted) throw componentAbort(signal)
-        const owner = await identity(routeId)
+        if (owner === undefined) throw new ServerComponentError("component_contract")
         const headers = new Headers(COMPONENT_RESPONSE_HEADERS)
         headers.set("content-type", COMPONENT_FLIGHT_MEDIA_TYPE)
-        const response = new Response(
-          componentFlightFrames(
-            {
-              v: 1,
-              build: options.build,
-              adapter: options.adapter.name,
-              owner,
-              scope,
-              instance: instance.id,
-              reference: selection.reference,
-              key: selection.key,
-              parent: selection.parent,
-              generation: selection.generation,
-              routeEpoch: selection.routeEpoch,
-              authEpoch: selection.authEpoch,
-            },
-            flight,
-            signal,
-          ),
-          { headers },
-        )
+        const response = new Response(framed, { headers })
         const state: ComponentState = {
           v: 1,
           build: options.build,
@@ -469,10 +477,6 @@ export function createServerComponents(options: ServerComponentsOptions): Server
         progressiveAnswers.set(state, response)
         return state
       }
-      const requestTasks = new BoundedComponentTasks(
-        COMPONENT_LIMITS.requestLoads,
-        COMPONENT_LIMITS.instances,
-      )
       let bytes = 0
       let count = candidates.length
       const pending = new Map<string, Promise<ComponentRecord>>()

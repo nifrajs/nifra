@@ -17,7 +17,20 @@ import {
 
 type Counts = { page: number; component: number; render: number }
 
-function ownerApp(build: string, deployment: string, counts: Counts, requestScoped = false) {
+function ownerApp(
+  build: string,
+  deployment: string,
+  counts: Counts,
+  requestScoped = false,
+  readAcceptLanguage:
+    | "page"
+    | "component"
+    | "on-request"
+    | "derive"
+    | "before-handle"
+    | "on-response"
+    | undefined = undefined,
+) {
   const component = defineServerComponent(
     {
       input: t.object({}),
@@ -25,8 +38,11 @@ function ownerApp(build: string, deployment: string, counts: Counts, requestScop
       authorize() {},
       load(ctx) {
         counts.component += 1
-        const authorization = ctx.request.headers.get("authorization")
-        const cookie = ctx.request.headers.get("cookie")
+        if (readAcceptLanguage === "component") {
+          return { value: ctx.request.headers.get("accept-language") ?? "missing" }
+        }
+        const authorization = requestScoped ? ctx.request.headers.get("authorization") : null
+        const cookie = requestScoped ? ctx.request.headers.get("cookie") : null
         const value = !requestScoped
           ? "public"
           : authorization === "Bearer scope-a"
@@ -83,8 +99,10 @@ function ownerApp(build: string, deployment: string, counts: Counts, requestScop
         middlewareIds: [],
         load: async () => ({
           default: () => null,
-          loader() {
+          loader(ctx) {
             counts.page += 1
+            if (readAcceptLanguage === "page")
+              return { label: ctx.request.headers.get("accept-language") ?? "missing" }
             return { label: "public" }
           },
         }),
@@ -114,6 +132,33 @@ function ownerApp(build: string, deployment: string, counts: Counts, requestScop
     clientEntry: "/entry.js",
     llmsTxt: false,
     serverComponents,
+    use:
+      readAcceptLanguage === "on-request" ||
+      readAcceptLanguage === "derive" ||
+      readAcceptLanguage === "before-handle" ||
+      readAcceptLanguage === "on-response"
+        ? (app) => {
+            const read = (request: Request) => request.headers.get("accept-language")
+            if (readAcceptLanguage === "on-request")
+              app.onRequest((request) => {
+                read(request)
+              })
+            if (readAcceptLanguage === "derive")
+              app.derive((context) => {
+                read(context.req)
+                return {}
+              })
+            if (readAcceptLanguage === "before-handle")
+              app.beforeHandle((context) => {
+                read(context.req)
+              })
+            if (readAcceptLanguage === "on-response")
+              app.onResponse((response, request) => {
+                read(request)
+                return response
+              })
+          }
+        : undefined,
     adapter: {
       renderToString: () => "<main>owner</main>",
       renderToStream: () =>
@@ -251,7 +296,51 @@ test("owner cache rejects credentialed and component-refresh requests and direct
   await direct.arrayBuffer()
 })
 
-test("authenticated users and scopes never cross a public owner cache entry", async () => {
+test("owner cache fails closed when route code or app hooks read request headers", async () => {
+  for (const readFrom of [
+    "page",
+    "component",
+    "on-request",
+    "derive",
+    "before-handle",
+    "on-response",
+  ] as const) {
+    const counts: Counts = { page: 0, component: 0, render: 0 }
+    const { app } = ownerApp(
+      `build_header_${readFrom}`,
+      `deploy_header_${readFrom}`,
+      counts,
+      false,
+      readFrom,
+    )
+    const isr = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+
+    for (const language of ["en", "fr"] as const) {
+      const response = await isr(
+        new Request("https://fixture.test/owner", {
+          headers: { "accept-language": language },
+        }),
+      )
+      expect(response.headers.get("x-nifra-isr")).toBeNull()
+      expect(response.headers.get("cache-control")).toBe("private, no-store")
+      await response.arrayBuffer()
+    }
+
+    expect(counts).toEqual({ page: 2, component: 2, render: 2 })
+  }
+})
+
+test("owner request tracking hooks run on ordinary GETs without changing the response", async () => {
+  const counts: Counts = { page: 0, component: 0, render: 0 }
+  const { app } = ownerApp("build_owner_hook_probe", "deploy_owner_hook_probe", counts, false)
+  const response = await app.fetch(new Request("https://fixture.test/owner"))
+
+  expect(response.status).toBe(200)
+  expect(await response.text()).toContain("owner")
+  expect(counts).toEqual({ page: 1, component: 1, render: 1 })
+})
+
+test("owner output derived from identity headers never enters the public cache", async () => {
   const counts: Counts = { page: 0, component: 0, render: 0 }
   const { app } = ownerApp("build_identity", "deploy_identity", counts, true)
   const store = new MemoryCacheStore()
@@ -259,7 +348,7 @@ test("authenticated users and scopes never cross a public owner cache entry", as
   const url = "https://fixture.test/owner"
 
   const anonymous = await isr(new Request(url))
-  expect(anonymous.headers.get("x-nifra-isr")).toBe("miss")
+  expect(anonymous.headers.get("x-nifra-isr")).toBeNull()
   expect(await anonymous.text()).toContain("\\u003cp\\u003epublic\\u003c/p\\u003e")
 
   const identities = [
@@ -281,12 +370,12 @@ test("authenticated users and scopes never cross a public owner cache entry", as
   }
 
   const anonymousAgain = await isr(new Request(url))
-  expect(anonymousAgain.headers.get("x-nifra-isr")).toBe("hit")
+  expect(anonymousAgain.headers.get("x-nifra-isr")).toBeNull()
   const publicBody = await anonymousAgain.text()
   expect(publicBody).toContain("\\u003cp\\u003epublic\\u003c/p\\u003e")
   for (const identity of identities)
     expect(publicBody).not.toContain(`\\u003cp\\u003e${identity.value}\\u003c/p\\u003e`)
-  expect(counts).toEqual({ page: 5, component: 5, render: 5 })
+  expect(counts).toEqual({ page: 6, component: 6, render: 6 })
 })
 
 test("public owner caching requires deployment identity and a static anonymous scope", () => {

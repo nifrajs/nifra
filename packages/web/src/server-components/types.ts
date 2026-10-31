@@ -97,7 +97,13 @@ export interface ComponentInstance {
 export interface ComponentOwnerCachePolicy {
   /** The cache can serve this complete route document to any anonymous visitor. */
   readonly scope: "public"
-  /** Required assertion that route, loader, layout, and component output are request-independent. */
+  /**
+   * Required assertion that route, loader, layout, and component output are request-independent.
+   * Nifra observes request-header reads through owner-route middleware, loaders, layouts, component
+   * authorization/loading, and app hooks registered with `createWebApp({ use })`; any such read
+   * disables shared storage. Replaced/uninspectable request views fail closed. Database, environment,
+   * global, external-service, and other dependencies remain the application's responsibility.
+   */
   readonly requestIndependent: true
   /** Positive freshness window in seconds for this complete owner route. */
   readonly revalidate: number
@@ -113,6 +119,10 @@ export interface ComponentOwner {
    * application contract: every loader, layout, owner callback, and rendered record for this
    * route must be independent of request identity and secrets. Runtime validation also requires
    * the anonymous owner scope and no component capabilities.
+   * Request-header reads by route middleware/loaders/layouts, component authorization/loading, or
+   * app hooks registered through `createWebApp({ use })` make that response ineligible for shared
+   * storage. Replaced or uninspectable request views fail closed. Database, environment, global,
+   * external-service, and other dependencies remain the application's responsibility.
    */
   readonly cache?: ComponentOwnerCachePolicy
   readonly instances: (
