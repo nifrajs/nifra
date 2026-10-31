@@ -1,4 +1,5 @@
 import { describe, expect, setSystemTime, spyOn, test } from "bun:test"
+import { rawHref } from "../src/href.ts"
 import { identityChanged } from "../src/identity.ts"
 import {
   createClientRouter,
@@ -155,9 +156,13 @@ describe("createClientRouter", () => {
       pending: false,
     }
     let pageLoads = 0
+    const loadedModules: string[] = []
     const router = createClientRouter({
       patterns: slotPatterns,
       initial,
+      loadModule: async (routeId, path) => {
+        loadedModules.push(`${routeId}:${path}`)
+      },
       routeHooks: {
         dashboard: { routeSlots: { inspector: ["/users/:id"], activity: ["/activity"] } },
       },
@@ -166,6 +171,12 @@ describe("createClientRouter", () => {
         return { dashboard: true }
       },
     })
+    expect(router.routeSlotsFor("dashboard")).toEqual({
+      inspector: ["/users/:id"],
+      activity: ["/activity"],
+    })
+    await router.loadModule("user", "/users/7")
+    expect(loadedModules).toEqual(["user:/users/7"])
 
     const opened = withRouteSlots(initial.path, {
       inspector: "/users/7",
@@ -187,6 +198,15 @@ describe("createClientRouter", () => {
     const closed = setRouteSlot(changed, "inspector", null)
     await router.navigate(closed)
     expect(parseRouteSlots(router.snapshot().path)).toEqual({ activity: "/activity" })
+    expect(pageLoads).toBe(0)
+
+    await expect(
+      router.navigate(rawHref("/dashboard?tab=changed&slot.unknown=%2Fusers%2F7")),
+    ).rejects.toMatchObject({ code: "unknown_slot" })
+    await expect(
+      router.navigate(rawHref("/dashboard?tab=changed&slot.inspector=%2Fnot-a-route")),
+    ).rejects.toMatchObject({ code: "unknown_route" })
+    expect(router.snapshot().path).toBe(closed)
     expect(pageLoads).toBe(0)
   })
 

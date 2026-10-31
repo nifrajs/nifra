@@ -46,13 +46,23 @@ export { identityChanged } from "./identity.ts"
  * before hydrating. The fix is for the entry not to name the server module in the first place.
  */
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
-export type { LoadedRouteSlot, RouteSlotRuntime } from "./internal/route-slot-runtime.ts"
+export type {
+  LoadedRouteSlot,
+  RouteSlotRuntime,
+  RouteSlotSnapshot,
+  RouteSlotStatus,
+} from "./internal/route-slot-runtime.ts"
 export {
   getRouteSlotRuntime,
+  getRouteSlotStore,
   loadRouteSlot,
   onRouteSlotIdentityChange,
   RouteSlotLoadError,
+  RouteSlotStore,
+  routeSlotSyncKey,
+  routeSlotTargetFromPath,
   setRouteSlotRuntime,
+  syncRouteSlotStore,
 } from "./internal/route-slot-runtime.ts"
 // For route helpers shared by a loader and a component, which the browser loads too: imported from the
 // root, they put its `node:crypto` import into Vite dev's browser deps on every page.
@@ -66,7 +76,9 @@ export {
 export { createMutation, createQueryClient, MutationCancelledError } from "./query.ts"
 export { localeOfProps } from "./render-seam.ts"
 export {
+  hasRouteSlotsSearch,
   parseRouteSlots,
+  ROUTE_SLOT_QUERY_PREFIX,
   RouteSlotStateError,
   setRouteSlot,
   stripRouteSlots,

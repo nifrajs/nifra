@@ -20,7 +20,7 @@ declare module "@nifrajs/web" {
 }
 
 test("RouteSlot renders its fallback while a URL-addressed target loads", () => {
-  const path = `/dashboard?__nifra_slots=${encodeURIComponent('{"v":1,"slots":{"inspector":"/users/7"}}')}`
+  const path = "/dashboard?slot.inspector=%2Fusers%2F7"
   const markup = renderToStaticMarkup(
     createElement(
       RouterContext.Provider,

@@ -1480,10 +1480,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       await options.loadModule?.(routeId, path)
     },
     routeSlotsFor: (routeId) =>
-      normalizeRouteSlotRegistry(
-        routeHooks[routeId]?.routeSlots,
-        new Set(options.patterns.map((pattern) => pattern.pattern)),
-      ),
+      normalizeRouteSlotRegistry(routeHooks[routeId]?.routeSlots, knownPatterns),
     routePattern: (routeId) => patternsById.get(routeId),
     snapshot: () => {
       checkEpoch()
@@ -1499,19 +1496,22 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       checkEpoch()
       const matched = match(path)
       if (matched === null) return
+      const routeSlotTargets = parseRouteSlots(path)
+      if (Object.keys(routeSlotTargets).length > 0) {
+        const registry = normalizeRouteSlotRegistry(
+          routeHooks[matched.routeId]?.routeSlots,
+          knownPatterns,
+        )
+        validateRouteSlotTargets(routeSlotTargets, registry, (pathname) => {
+          const target = match(pathname)
+          const pattern = target === null ? undefined : patternsById.get(target.routeId)
+          return pattern === undefined ? null : { pattern }
+        })
+      }
       if (path !== state.path && stripRouteSlots(path) === stripRouteSlots(state.path)) {
-        const targets = parseRouteSlots(path)
+        const targets = routeSlotTargets
         const currentTargets = parseRouteSlots(state.path)
         if (Object.keys(targets).length > 0 || Object.keys(currentTargets).length > 0) {
-          const registry = normalizeRouteSlotRegistry(
-            routeHooks[matched.routeId]?.routeSlots,
-            knownPatterns,
-          )
-          validateRouteSlotTargets(targets, registry, (pathname) => {
-            const target = match(pathname)
-            const pattern = target === null ? undefined : patternsById.get(target.routeId)
-            return pattern === undefined ? null : { pattern }
-          })
           state = { ...state, path, pending: false, pendingPath: undefined }
           emit()
           return

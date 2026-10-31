@@ -12273,6 +12273,13 @@
     "doc": "/** Hard budget for the offline route-language intersection. Never use this on the request path. */"
   },
   {
+    "name": "ROUTE_SLOT_QUERY_PREFIX",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const ROUTE_SLOT_QUERY_PREFIX = \"slot.\";",
+    "doc": "/** Reserved query-key prefix carrying independently navigable route-slot targets. */"
+  },
+  {
     "name": "ROUTE_TABLE_FILE",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -13869,13 +13876,13 @@
     "name": "RouteSlotController",
     "kind": "interface",
     "package": "@nifrajs/web-preact",
-    "signature": "export interface RouteSlotController {\n    readonly target: string | undefined;\n    readonly status: \"idle\" | \"loading\" | \"ready\" | \"error\";\n    readonly content: LoadedRouteSlot | undefined;\n    readonly error: string | undefined;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
+    "signature": "export interface RouteSlotController {\n    readonly target: string | undefined;\n    readonly status: RouteSlotStatus;\n    readonly content: LoadedRouteSlot | undefined;\n    readonly error: string | undefined;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
   },
   {
     "name": "RouteSlotController",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface RouteSlotController {\n    readonly target: string | undefined;\n    readonly status: \"idle\" | \"loading\" | \"ready\" | \"error\";\n    readonly content: LoadedRouteSlot | undefined;\n    readonly error: string | undefined;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
+    "signature": "export interface RouteSlotController {\n    readonly target: string | undefined;\n    readonly status: RouteSlotStatus;\n    readonly content: LoadedRouteSlot | undefined;\n    readonly error: string | undefined;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
   },
   {
     "name": "RouteSlotController",
@@ -13887,7 +13894,7 @@
     "name": "RouteSlotController",
     "kind": "interface",
     "package": "@nifrajs/web-vue",
-    "signature": "export interface RouteSlotController {\n    readonly target: ComputedRef<string | undefined>;\n    readonly status: ComputedRef<\"idle\" | \"loading\" | \"ready\" | \"error\">;\n    readonly content: ComputedRef<LoadedRouteSlot | undefined>;\n    readonly error: ComputedRef<string | undefined>;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
+    "signature": "export interface RouteSlotController {\n    readonly target: ComputedRef<string | undefined>;\n    readonly status: ComputedRef<RouteSlotStatus>;\n    readonly content: ComputedRef<LoadedRouteSlot | undefined>;\n    readonly error: ComputedRef<string | undefined>;\n    open(target: RouteSlotTarget): void;\n    close(): void;\n}"
   },
   {
     "name": "RouteSlotLoadError",
@@ -13940,10 +13947,29 @@
     "signature": "export interface RouteSlotRuntime {\n    readonly router: RouteSlotRouter;\n    readonly routes: Readonly<Record<string, readonly unknown[]>>;\n    readonly searchSchemas: Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>> | undefined;\n    readonly matchChains: Readonly<Record<string, MatchChain>> | undefined;\n}"
   },
   {
+    "name": "RouteSlotSnapshot",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteSlotSnapshot {\n    readonly key?: string;\n    readonly status: RouteSlotStatus;\n    readonly content?: LoadedRouteSlot;\n    readonly error?: string;\n}"
+  },
+  {
     "name": "RouteSlotStateError",
     "kind": "class",
     "package": "@nifrajs/web",
     "signature": "export declare class RouteSlotStateError extends TypeError {\n    readonly code: \"malformed\" | \"unknown_slot\" | \"unknown_route\" | \"invalid_target\" | \"too_large\";\n    constructor(code: RouteSlotStateError[\"code\"], message?: string);\n}"
+  },
+  {
+    "name": "RouteSlotStatus",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteSlotStatus = \"idle\" | \"loading\" | \"ready\" | \"error\";"
+  },
+  {
+    "name": "RouteSlotStore",
+    "kind": "class",
+    "package": "@nifrajs/web",
+    "signature": "export declare class RouteSlotStore {\n    #private;\n    constructor(_storeKey: string, onUnused?: () => void);\n    get disposed(): boolean;\n    get active(): boolean;\n    readonly getSnapshot: () => RouteSlotSnapshot;\n    readonly getServerSnapshot: () => RouteSlotSnapshot;\n    readonly subscribe: (listener: () => void) => (() => void);\n    sync(key: string, loader?: RouteSlotLoader, error?: string): void;\n    dispose(): void;\n    refreshForRuntimeChange(): void;\n}",
+    "doc": "/** One shared lifecycle for every adapter consuming the same parent page and slot name. */"
   },
   {
     "name": "RouteSlotTarget",
@@ -20963,6 +20989,12 @@
     "signature": "export declare function getRouteSlotRuntime(): RouteSlotRuntime | undefined;"
   },
   {
+    "name": "getRouteSlotStore",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function getRouteSlotStore(parentPath: string, name: string): RouteSlotStore;"
+  },
+  {
     "name": "getSession",
     "kind": "function",
     "package": "@nifrajs/authjs",
@@ -21082,6 +21114,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function hasResidentBody(response: Response): boolean;",
     "doc": "/** Whether {@link markResidentBody} recorded `response`. Another copy of this module did not. */"
+  },
+  {
+    "name": "hasRouteSlotsSearch",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function hasRouteSlotsSearch(search: string): boolean;",
+    "doc": "/** Check raw query text for framework-owned slot keys, including percent-encoded names. */"
   },
   {
     "name": "hash8",
@@ -22864,7 +22903,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function parseRouteSlots(path: string): RouteSlotTargets;",
-    "doc": "/** Parse and strictly validate the one canonical route-slot query value. */"
+    "doc": "/** Parse and strictly validate flat `slot.<name>=<target>` query values. */"
   },
   {
     "name": "parseRubricVerdict",
@@ -24230,6 +24269,18 @@
     "doc": "/**\n * Return a deterministic path accepted by both patterns, or `undefined` when their path languages are\n * disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?`\n * overlaps `/users` as well as `/users/me`.\n *\n * This is a build/check-time NFA product, never a request-time operation. Route literals are the only\n * input alphabet needed: a literal character is tried verbatim, while `a` is a representative for\n * the unrestricted non-slash character class. No user route text is compiled as a regular expression.\n *\n * A constrained parameter is modelled as its constraint: a value from its list, or a run of its\n * class within its bounds. In a segment that has several parameters the router is stricter than\n * that - it places the literals first and tests the values afterwards - so for such a segment the\n * answer errs towards reporting an overlap that no request can reach, never towards missing one.\n * The state budget is one budget for the whole call, however many concrete paths the two sides have.\n */"
   },
   {
+    "name": "routeSlotSyncKey",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function routeSlotSyncKey(parentPath: string, name: string, target: string | undefined, error: string | undefined, pending: boolean): string;"
+  },
+  {
+    "name": "routeSlotTargetFromPath",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function routeSlotTargetFromPath(path: string, name: string): {\n    readonly target?: string;\n    readonly error?: string;\n};"
+  },
+  {
     "name": "routeTemplateOf",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -25407,6 +25458,12 @@
     "package": "@nifrajs/web-vue",
     "signature": "export declare function svgToVueSfc(xml: string): string;",
     "doc": "/** Wrap raw SVG XML in a template-only Vue SFC (single root → Vue inherits attrs onto the `<svg>`). */"
+  },
+  {
+    "name": "syncRouteSlotStore",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function syncRouteSlotStore(store: RouteSlotStore, parentPath: string, name: string, target: string | undefined, error: string | undefined, pending: boolean): string;"
   },
   {
     "name": "systemClock",
@@ -26705,7 +26762,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function withRouteSlots(path: string, targets: RouteSlotTargets): string;",
-    "doc": "/** Replace the route-slot query value, preserving all unrelated query parameters and the hash. */"
+    "doc": "/** Replace the slot query values while preserving unrelated query text byte for byte. */"
   },
   {
     "name": "wrapWebSocketMessageValidation",

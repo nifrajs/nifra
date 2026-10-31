@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import {
+  hasRouteSlotsSearch,
   MAX_ROUTE_SLOTS,
   normalizeRouteSlotRegistry,
   normalizeRouteSlotTarget,
   parseRouteSlots,
-  ROUTE_SLOTS_PARAM,
+  ROUTE_SLOT_QUERY_PREFIX,
   RouteSlotStateError,
   setRouteSlot,
   stripRouteSlots,
@@ -22,11 +23,14 @@ const errorCode = (work: () => unknown): string => {
 }
 
 describe("route-slot URL state", () => {
-  test("serializes canonical bounded state and preserves unrelated URL state", () => {
+  test("serializes flat bounded state and preserves unrelated URL state", () => {
     const first = withRouteSlots("/dashboard?tab=overview#summary", {
       inspector: "/users/7?tab=activity",
       activity: "/activity",
     })
+    expect(first).toBe(
+      "/dashboard?tab=overview&slot.activity=%2Factivity&slot.inspector=%2Fusers%2F7%3Ftab%3Dactivity#summary",
+    )
     expect(parseRouteSlots(first)).toEqual({
       activity: "/activity",
       inspector: "/users/7?tab=activity",
@@ -34,35 +38,41 @@ describe("route-slot URL state", () => {
 
     const changed = setRouteSlot(first, "inspector", "/users/8")
     expect(parseRouteSlots(changed)).toEqual({ activity: "/activity", inspector: "/users/8" })
-    expect(changed).toContain("tab=overview")
+    expect(changed).toBe(
+      "/dashboard?tab=overview&slot.activity=%2Factivity&slot.inspector=%2Fusers%2F8#summary",
+    )
     expect(changed.endsWith("#summary")).toBe(true)
 
     const closed = setRouteSlot(changed, "activity", null)
     expect(parseRouteSlots(closed)).toEqual({ inspector: "/users/8" })
   })
 
-  test("rejects malformed, duplicate, noncanonical, and oversized state", () => {
-    expect(errorCode(() => parseRouteSlots(`/dashboard?${ROUTE_SLOTS_PARAM}=not-json`))).toBe(
-      "malformed",
-    )
-
-    const duplicate = new URL("/dashboard", "https://nifra.invalid")
-    duplicate.searchParams.append(ROUTE_SLOTS_PARAM, '{"v":1,"slots":{}}')
-    duplicate.searchParams.append(ROUTE_SLOTS_PARAM, '{"v":1,"slots":{}}')
-    expect(errorCode(() => parseRouteSlots(duplicate.pathname + duplicate.search))).toBe(
-      "malformed",
-    )
-
-    const reordered = new URL("/dashboard", "https://nifra.invalid")
-    reordered.searchParams.set(ROUTE_SLOTS_PARAM, '{"v":1,"slots":{"z":"/z","a":"/a"}}')
-    expect(errorCode(() => parseRouteSlots(reordered.pathname + reordered.search))).toBe(
-      "malformed",
+  test("rejects malformed, duplicate, invalid-name, and oversized state", () => {
+    expect(errorCode(() => parseRouteSlots("/dashboard?slot.=x"))).toBe("malformed")
+    expect(
+      errorCode(() =>
+        parseRouteSlots("/dashboard?slot.inspector=%2Fusers%2F7&slot.inspector=%2Fusers%2F8"),
+      ),
+    ).toBe("malformed")
+    expect(errorCode(() => parseRouteSlots("/dashboard?slot.inspector=not-a-path"))).toBe(
+      "invalid_target",
     )
 
     const tooMany = Object.fromEntries(
       Array.from({ length: MAX_ROUTE_SLOTS + 1 }, (_, index) => [`slot${index}`, "/target"]),
     )
     expect(errorCode(() => withRouteSlots("/dashboard", tooMany))).toBe("too_large")
+    expect(errorCode(() => parseRouteSlots(`/dashboard?slot.side=${"x".repeat(1100)}`))).toBe(
+      "too_large",
+    )
+  })
+
+  test("rejects oversized slot names even when the reserved prefix is percent-encoded", () => {
+    const oversizedName = "a".repeat(200)
+    const encodedPrefix = "%73%6c%6f%74%2e"
+    expect(() =>
+      parseRouteSlots(`/dashboard?${encodedPrefix}${oversizedName}=%2Fusers%2F7`),
+    ).toThrow()
   })
 
   test("rejects cross-origin, traversal, separator, fragment, and nested-slot targets", () => {
@@ -74,7 +84,7 @@ describe("route-slot URL state", () => {
       "/users/%2Fadmin",
       "/users/%5cadmin",
       "/users/1#details",
-      "/users/1?__nifra_slots=%7B%22v%22%3A1%2C%22slots%22%3A%7B%7D%7D",
+      "/users/1?slot.side=%2Fadmin",
       "/users/%ZZ",
     ]) {
       expect(errorCode(() => normalizeRouteSlotTarget(target))).toBe("invalid_target")
@@ -106,10 +116,18 @@ test("stores inherited object names as own route-slot entries", () => {
   expect(Object.getOwnPropertyDescriptor(registry, "constructor")?.value).toEqual(["/users/:id"])
 })
 
-test("strips route-slot state without rewriting path bytes or other query text", () => {
+test("slot edits preserve unrelated query bytes and no-op writes do not rewrite", () => {
+  for (const query of ["q=a%20b", "tag[]=1", "a=b;c", "x=~", "x='"]) {
+    const path = `/reports?${query}`
+    const changed = withRouteSlots(path, { side: "/users/1" })
+    expect(stripRouteSlots(changed)).toBe(path)
+    expect(withRouteSlots(path, {})).toBe(path)
+  }
+  expect(hasRouteSlotsSearch("q=a%20b&slot%2Eside=%2Fusers%2F1")).toBe(true)
+  expect(hasRouteSlotsSearch("q=slot.side%3D%2Fusers%2F1")).toBe(false)
   expect(stripRouteSlots("//evil.example/x")).toBe("//evil.example/x")
   expect(stripRouteSlots("/\\evil.example/y")).toBe("/\\evil.example/y")
-  const encodedName = ROUTE_SLOTS_PARAM.replaceAll("_", "%5f")
+  const encodedName = ROUTE_SLOT_QUERY_PREFIX.replace(".", "%2e") + "side"
   expect(stripRouteSlots(`/reports?keep=%2f&${encodedName}=x&next=2#panel`)).toBe(
     "/reports?keep=%2f&next=2#panel",
   )

@@ -221,7 +221,7 @@ export default function Dashboard() {
   const inspector = useRouteSlot("inspector")
   return (
     <>
-      <button onClick={() => inspector.open(href({ to: "/users/:id", params: { id: "7" } }))}>
+      <button type="button" onClick={() => inspector.open(href({ to: "/users/:id", params: { id: "7" } }))}>
         Inspect user 7
       </button>
       <RouteSlot name="inspector" fallback={<p>Select a user.</p>} />
@@ -616,21 +616,34 @@ export default function Routing() {
       <CodeBlock code={ROUTE_SLOTS} lang="tsx" />
       <ul>
         <li>
-          <code>href</code> checks both the slot name and target route against the generated route
-          table. At runtime, the server checks the same registration and route identity before it can
-          serve or cache the page shell. The reserved slot query is bounded and canonical, and is
-          removed before application search parsing.
+          Generated route types constrain the slot name and target route passed to <code>href</code>.
+          At runtime, the client checks slot-only navigation against the page&apos;s registration and
+          route identity, and the server applies the same checks to direct requests. Malformed,
+          duplicate, unknown, or oversized slot state is rejected before rendering; the server
+          returns <code>400</code> for an invalid direct URL. The reserved flat query keys use the
+          form <code>slot.&lt;name&gt;=&lt;target&gt;</code>, allow at most four targets, 1,024
+          encoded characters per target, and 4,096 encoded characters total. They are removed before
+          application search parsing, while unrelated query text stays intact.
         </li>
         <li>
           The server sends only the page shell. After hydration, each target loads through the normal
           same-origin route-data request, so its middleware, gates, and loader run with the current
-          request&apos;s authorization. Target data is never embedded in the cached shell. Identity
-          changes and returning focus trigger a fresh authorized load; navigation cancels stale work.
+          request&apos;s authorization. Target data is never embedded in the cached shell. Slot URLs
+          are inputs, never authorization grants; keep sensitive values out because URLs can appear
+          in <code>Referer</code> headers, logs, and analytics. Identity changes clear old data before
+          reauthorization. Returning focus revalidates at most once per 30 seconds while keeping
+          ready content visible, and navigation cancels stale work.
         </li>
         <li>
-          Browser Back and Forward restore the slot URLs. Updating one slot retains sibling slots and
-          the page&apos;s own loader data; changing slot state alone does not rerun that page loader.
-          Up to four slot targets may be open at once, with bounded concurrent loading.
+          Opening, changing, and closing a slot create history entries; Browser Back and Forward
+          restore the previous slot URLs. Updating one slot retains sibling slots and the page&apos;s
+          own loader data; changing slot state alone does not rerun that page loader. Up to four slot
+          targets may be open at once, with bounded concurrent loading.
+        </li>
+        <li>
+          Slot content is client-rendered in this first slice: server HTML contains the fallback,
+          then hydration performs an authorized route-data fetch. This works well for overlays and
+          modals; always-visible panels incur that post-hydration request.
         </li>
         <li>
           React, Preact, Solid, and Vue export <code>RouteSlot</code> and <code>useRouteSlot</code>{" "}

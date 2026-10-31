@@ -15,12 +15,7 @@ declare module "@nifrajs/web" {
 test("RouteSlot renders its fallback without adding a wrapper element", () => {
   const props: RenderProps = {
     data: null,
-    path: `/dashboard?__nifra_slots=${encodeURIComponent(
-      JSON.stringify({
-        v: 1,
-        slots: { inspector: "/users/7" },
-      }),
-    )}`,
+    path: "/dashboard?slot.inspector=%2Fusers%2F7",
   }
   const markup = renderToString(
     h(
@@ -34,4 +29,27 @@ test("RouteSlot renders its fallback without adding a wrapper element", () => {
   )
 
   expect(markup).toBe("<p>Select a user.</p>")
+})
+
+test("RouteSlot renders stable and custom errors for malformed slot state", () => {
+  const props: RenderProps = {
+    data: null,
+    path: "/dashboard?slot.inspector=%2Fusers%2F7&slot.inspector=%2Fusers%2F8",
+  }
+  const render = (error?: (code: string) => ReturnType<typeof h>): string =>
+    renderToString(
+      h(
+        RenderPropsContext.Provider,
+        { value: props },
+        h(
+          RouteSlot,
+          error === undefined
+            ? { name: "inspector" satisfies RouteSlotName }
+            : { name: "inspector" satisfies RouteSlotName, error },
+        ),
+      ),
+    )
+
+  expect(render()).toContain('role="alert"')
+  expect(render((code) => h("strong", null, code))).toContain("malformed")
 })

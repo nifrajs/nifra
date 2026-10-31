@@ -5,7 +5,7 @@ import {
   isSameOriginPath,
 } from "@nifrajs/core/pattern"
 import type { Href, RouteTable } from "./navigation.ts"
-import { ROUTE_SLOTS_PARAM, withRouteSlots } from "./route-slots.ts"
+import { hasRouteSlotsSearch, ROUTE_SLOT_QUERY_PREFIX, withRouteSlots } from "./route-slots.ts"
 import { serializeSearch } from "./search.ts"
 
 type Pattern = keyof RouteTable & string
@@ -120,8 +120,11 @@ export function href<K extends Pattern>(options: HrefOptions<K>): Href<K> {
   }
   let url = filled.path
   if (search !== undefined) url += serializeSearch(search)
-  if (new URLSearchParams(url.slice(url.indexOf("?") + 1)).has(ROUTE_SLOTS_PARAM)) {
-    throw new TypeError(`[nifra/web] ${ROUTE_SLOTS_PARAM} is reserved for route-slot state`)
+  const queryStart = url.indexOf("?")
+  if (queryStart >= 0 && hasRouteSlotsSearch(url.slice(queryStart + 1))) {
+    throw new TypeError(
+      `[nifra/web] query keys beginning with ${ROUTE_SLOT_QUERY_PREFIX} are reserved for route-slot state`,
+    )
   }
   if (slots !== undefined) {
     const targets = Object.fromEntries(

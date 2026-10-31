@@ -2,7 +2,12 @@ import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryStates } from "../boundary.ts"
 import { onIdentityChange } from "../identity.ts"
 import type { MatchChain } from "../render-seam.ts"
-import { normalizeRouteSlotTarget, stripRouteSlots } from "../route-slots.ts"
+import {
+  normalizeRouteSlotTarget,
+  parseRouteSlots,
+  RouteSlotStateError,
+  stripRouteSlots,
+} from "../route-slots.ts"
 import {
   type ClientRouter,
   fetchRouteData,
@@ -51,11 +56,291 @@ export interface LoadedRouteSlot {
   readonly chain: readonly unknown[]
 }
 
+export type RouteSlotStatus = "idle" | "loading" | "ready" | "error"
+
+export interface RouteSlotSnapshot {
+  readonly key?: string
+  readonly status: RouteSlotStatus
+  readonly content?: LoadedRouteSlot
+  readonly error?: string
+}
+
+type RouteSlotLoader = (signal: AbortSignal) => Promise<LoadedRouteSlot>
+const EMPTY_ROUTE_SLOT_SNAPSHOT: RouteSlotSnapshot = Object.freeze({ status: "idle" })
+const ROUTE_SLOT_FOCUS_MIN_INTERVAL_MS = 30_000
+const MAX_ROUTE_SLOT_STORES = 16
+const routeSlotStores = new Map<string, RouteSlotStore>()
+
+/** One shared lifecycle for every adapter consuming the same parent page and slot name. */
+export class RouteSlotStore {
+  readonly #onUnused: () => void
+  readonly #listeners = new Set<() => void>()
+  #snapshot: RouteSlotSnapshot = EMPTY_ROUTE_SLOT_SNAPSHOT
+  #key: string | undefined
+  #loader: RouteSlotLoader | undefined
+  #controller: AbortController | undefined
+  #epoch = 0
+  #lastFocusRevalidationAt: number | undefined
+  #unsubscribeIdentity: (() => void) | undefined
+  #focusListener: (() => void) | undefined
+  #disposed = false
+
+  constructor(_storeKey: string, onUnused: () => void = () => {}) {
+    this.#onUnused = onUnused
+  }
+
+  get disposed(): boolean {
+    return this.#disposed
+  }
+
+  get active(): boolean {
+    return this.#listeners.size > 0
+  }
+
+  readonly getSnapshot = (): RouteSlotSnapshot => this.#snapshot
+  readonly getServerSnapshot = (): RouteSlotSnapshot => EMPTY_ROUTE_SLOT_SNAPSHOT
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    if (this.#disposed) return () => {}
+    this.#listeners.add(listener)
+    if (this.#listeners.size === 1) this.#attachLifecycleListeners()
+    return () => {
+      this.#listeners.delete(listener)
+      if (this.#listeners.size !== 0) return
+      queueMicrotask(() => {
+        if (this.#listeners.size !== 0 || this.#disposed) return
+        this.dispose()
+        this.#onUnused()
+      })
+    }
+  }
+
+  sync(key: string, loader?: RouteSlotLoader, error?: string): void {
+    if (this.#disposed) return
+    if (this.#key === key) {
+      if (error !== undefined && this.#snapshot.status === "error") return
+      if (loader === undefined && this.#snapshot.status !== "loading") return
+      if (loader !== undefined && this.#snapshot.status !== "idle") return
+    }
+    this.#abortActive()
+    this.#key = key
+    this.#loader = loader
+    if (error !== undefined) {
+      this.#publish({ key, status: "error", error })
+      return
+    }
+    if (loader === undefined) {
+      this.#publish({ key, status: "idle" })
+      return
+    }
+    this.#startLoad(key, loader, false)
+  }
+
+  dispose(): void {
+    if (this.#disposed) return
+    this.#disposed = true
+    this.#abortActive()
+    this.#detachLifecycleListeners()
+    this.#loader = undefined
+    this.#key = undefined
+    this.#snapshot = EMPTY_ROUTE_SLOT_SNAPSHOT
+    this.#listeners.clear()
+  }
+
+  #publish(snapshot: RouteSlotSnapshot): void {
+    this.#snapshot = snapshot
+    for (const listener of this.#listeners) listener()
+  }
+
+  #abortActive(): void {
+    this.#epoch++
+    this.#controller?.abort()
+    this.#controller = undefined
+  }
+
+  #startLoad(key: string, loader: RouteSlotLoader, background: boolean): void {
+    const epoch = ++this.#epoch
+    const controller = new AbortController()
+    const previous = this.#snapshot
+    this.#controller = controller
+    if (!background) this.#publish({ key, status: "loading" })
+    void Promise.resolve()
+      .then(() => {
+        if (controller.signal.aborted) throw controller.signal.reason
+        return loader(controller.signal)
+      })
+      .then((content) => {
+        if (
+          !this.#disposed &&
+          !controller.signal.aborted &&
+          this.#key === key &&
+          this.#epoch === epoch
+        ) {
+          this.#controller = undefined
+          this.#publish({ key, status: "ready", content })
+        }
+      })
+      .catch((error: unknown) => {
+        if (
+          this.#disposed ||
+          controller.signal.aborted ||
+          this.#key !== key ||
+          this.#epoch !== epoch
+        )
+          return
+        this.#controller = undefined
+        if (background && previous.content !== undefined) {
+          this.#publish({ key, status: "ready", content: previous.content })
+          return
+        }
+        this.#publish({ key, status: "error", error: stableSlotError(error).code })
+      })
+  }
+
+  #attachLifecycleListeners(): void {
+    this.#unsubscribeIdentity = onIdentityChange(() => this.#refreshForIdentityChange())
+    if (typeof window !== "undefined") {
+      this.#focusListener = () => this.#revalidateOnFocus()
+      window.addEventListener("focus", this.#focusListener)
+    }
+  }
+
+  #detachLifecycleListeners(): void {
+    this.#unsubscribeIdentity?.()
+    this.#unsubscribeIdentity = undefined
+    if (this.#focusListener !== undefined && typeof window !== "undefined")
+      window.removeEventListener("focus", this.#focusListener)
+    this.#focusListener = undefined
+  }
+
+  #refreshForIdentityChange(): void {
+    const key = this.#key
+    const loader = this.#loader
+    if (key === undefined) return
+    this.#abortActive()
+    this.#publish({ key, status: "idle" })
+    if (loader !== undefined) this.#startLoad(key, loader, false)
+  }
+
+  refreshForRuntimeChange(): void {
+    const key = this.#key
+    const loader = this.#loader
+    if (key === undefined) return
+    this.#abortActive()
+    this.#publish({ key, status: "idle" })
+    if (loader !== undefined) this.#startLoad(key, loader, false)
+  }
+
+  #revalidateOnFocus(): void {
+    const now = globalThis.performance.now()
+    if (
+      this.#lastFocusRevalidationAt !== undefined &&
+      now - this.#lastFocusRevalidationAt < ROUTE_SLOT_FOCUS_MIN_INTERVAL_MS
+    )
+      return
+    if (
+      this.#key === undefined ||
+      this.#loader === undefined ||
+      this.#snapshot.status !== "ready" ||
+      this.#snapshot.content === undefined ||
+      this.#controller !== undefined
+    )
+      return
+    this.#lastFocusRevalidationAt = now
+    this.#startLoad(this.#key, this.#loader, true)
+  }
+}
+
+export function getRouteSlotStore(parentPath: string, name: string): RouteSlotStore {
+  const storeKey = JSON.stringify([stripRouteSlots(parentPath), name])
+  // Server rendering intentionally sees an empty snapshot and never shares request state globally.
+  if (typeof window === "undefined") return new RouteSlotStore(storeKey)
+  const existing = routeSlotStores.get(storeKey)
+  if (existing !== undefined && !existing.disposed) return existing
+  while (routeSlotStores.size >= MAX_ROUTE_SLOT_STORES) {
+    let evicted = false
+    for (const [key, candidate] of routeSlotStores) {
+      if (candidate.active) continue
+      candidate.dispose()
+      routeSlotStores.delete(key)
+      evicted = true
+      break
+    }
+    // Active subscriptions own their stores. The cap applies to idle entries only.
+    if (!evicted) break
+  }
+  const store = new RouteSlotStore(storeKey, () => {
+    if (routeSlotStores.get(storeKey) === store) routeSlotStores.delete(storeKey)
+  })
+  routeSlotStores.set(storeKey, store)
+  return store
+}
+
+export function routeSlotTargetFromPath(
+  path: string,
+  name: string,
+): { readonly target?: string; readonly error?: string } {
+  try {
+    const target = parseRouteSlots(path)[name]
+    return target === undefined ? {} : { target }
+  } catch (error) {
+    return { error: error instanceof RouteSlotStateError ? error.code : "malformed" }
+  }
+}
+
+export function syncRouteSlotStore(
+  store: RouteSlotStore,
+  parentPath: string,
+  name: string,
+  target: string | undefined,
+  error: string | undefined,
+  pending: boolean,
+): string {
+  const basePath = stripRouteSlots(parentPath)
+  const key = routeSlotSyncKey(basePath, name, target, error, pending)
+  if (pending) {
+    store.sync(key)
+    return key
+  }
+  if (error !== undefined) {
+    store.sync(key, undefined, error)
+    return key
+  }
+  if (target === undefined) {
+    store.sync(key)
+    return key
+  }
+  store.sync(key, (signal) => {
+    const runtime = getRouteSlotRuntime()
+    if (runtime === undefined) throw new RouteSlotLoadError("unavailable")
+    return loadRouteSlot(runtime, name, basePath, target, signal)
+  })
+  return key
+}
+
+export function routeSlotSyncKey(
+  parentPath: string,
+  name: string,
+  target: string | undefined,
+  error: string | undefined,
+  pending: boolean,
+): string {
+  return JSON.stringify([stripRouteSlots(parentPath), name, target ?? null, error ?? null, pending])
+}
+
 let active = 0
 const queue: Array<() => void> = []
 
 export function setRouteSlotRuntime(runtime: RouteSlotRuntime): void {
+  const previous = getRouteSlotRuntime()
   Reflect.set(globalThis, RUNTIME_KEY, runtime)
+  const changed =
+    previous === undefined ||
+    previous.router !== runtime.router ||
+    previous.routes !== runtime.routes ||
+    previous.searchSchemas !== runtime.searchSchemas ||
+    previous.matchChains !== runtime.matchChains
+  if (changed) for (const store of routeSlotStores.values()) store.refreshForRuntimeChange()
 }
 
 export function onRouteSlotIdentityChange(listener: () => void): () => void {

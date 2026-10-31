@@ -5963,9 +5963,15 @@ _No named exports (side-effect entrypoint)._
 - **LoadedRouteSlot** _(interface)_ - `interface LoadedRouteSlot`
 - **MutationCancelledError** _(class)_ - `class MutationCancelledError`
   Rejection returned when {@link MutationHandle.cancel} discards an in-flight result.
+- **ROUTE_SLOT_QUERY_PREFIX** _(const)_ - `ROUTE_SLOT_QUERY_PREFIX: "slot."`
+  Reserved query-key prefix carrying independently navigable route-slot targets.
 - **RouteSlotLoadError** _(class)_ - `class RouteSlotLoadError`
 - **RouteSlotRuntime** _(interface)_ - `interface RouteSlotRuntime`
+- **RouteSlotSnapshot** _(interface)_ - `interface RouteSlotSnapshot`
 - **RouteSlotStateError** _(class)_ - `class RouteSlotStateError`
+- **RouteSlotStatus** _(type)_ - `type RouteSlotStatus = "idle" | "loading" | "ready" | "error"`
+- **RouteSlotStore** _(class)_ - `class RouteSlotStore`
+  One shared lifecycle for every adapter consuming the same parent page and slot name.
 - **WaitForStylesOptions** _(interface)_ - `interface WaitForStylesOptions`
   Options for {@link waitForStyles}.
 - **applyHead** _(function)_ - `applyHead: (head: Meta, path?: string) => void`
@@ -5983,8 +5989,11 @@ _No named exports (side-effect entrypoint)._
 - **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
 - **getRouteSlotRuntime** _(function)_ - `getRouteSlotRuntime: () => RouteSlotRuntime | undefined`
+- **getRouteSlotStore** _(function)_ - `getRouteSlotStore: (parentPath: string, name: string) => RouteSlotStore`
 - **gone** _(function)_ - `gone: (options?: StatusPageOptions) => never`
   Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and was deliberately removed - a withdrawn listing, a deleted post.
+- **hasRouteSlotsSearch** _(function)_ - `hasRouteSlotsSearch: (search: string) => boolean`
+  Check raw query text for framework-owned slot keys, including percent-encoded names.
 - **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
   The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
 - **identityChanged** _(function)_ - `identityChanged: () => void`
@@ -6003,7 +6012,7 @@ _No named exports (side-effect entrypoint)._
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
 - **onRouteSlotIdentityChange** _(function)_ - `onRouteSlotIdentityChange: (listener: () => void) => () => void`
 - **parseRouteSlots** _(function)_ - `parseRouteSlots: (path: string) => RouteSlotTargets`
-  Parse and strictly validate the one canonical route-slot query value.
+  Parse and strictly validate flat `slot.<name>=<target>` query values.
 - **rawHref** _(function)_ - `rawHref: (path: string) => Href`
   An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
@@ -6012,6 +6021,8 @@ _No named exports (side-effect entrypoint)._
   Resolve a route's `meta` chain, outermost layout first and the page last. The page's `meta` gets `args`; a layout's gets its own loader data as `data` (`null` when it has no loader), the value its component renders. The SSR head and a soft navigation both resolve through this, so they match.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` export - a static object, or a function of the route's data/params.
+- **routeSlotSyncKey** _(function)_ - `routeSlotSyncKey: (parentPath: string, name: string, target: string | undefined, error: string | undefined, pending: boolean) => string`
+- **routeSlotTargetFromPath** _(function)_ - `routeSlotTargetFromPath: (path: string, name: string) => { readonly target?: string; readonly error?: string; }`
 - **searchOf** _(function)_ - `searchOf: (searchSchema: StandardSchemaV1 | undefined, rawSearch: string) => Record<string, unknown>`
   The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderP…
 - **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
@@ -6024,10 +6035,11 @@ _No named exports (side-effect entrypoint)._
 - **statusPage** _(function)_ - `statusPage: (status: number, options?: StatusPageOptions) => never`
   Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
 - **stripRouteSlots** _(function)_ - `stripRouteSlots: (path: string) => string`
+- **syncRouteSlotStore** _(function)_ - `syncRouteSlotStore: (store: RouteSlotStore, parentPath: string, name: string, target: string | undefined, error: string | undefined, pending: boolean) => string`
 - **waitForStyles** _(function)_ - `waitForStyles: (options?: WaitForStylesOptions) => Promise<void>`
   Wait for the framework-owned deferred stylesheet links in the initial document, then promote them to `media="all"`. It is safe to call more than once: repeated calls for one document share the same per-link waits, and duplicate framework links are removed before waiting. Blocking links are not touc…
 - **withRouteSlots** _(function)_ - `withRouteSlots: (path: string, targets: RouteSlotTargets) => string`
-  Replace the route-slot query value, preserving all unrelated query parameters and the hash.
+  Replace the slot query values while preserving unrelated query text byte for byte.
 
 ### `@nifrajs/web/conformance`
 

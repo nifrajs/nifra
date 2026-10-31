@@ -55,11 +55,70 @@ test(
       plugin(svelteBunPlugin("ssr"));
       const { svelteAdapter } = await import(${asImport("../src/index.ts")});
       const RouteSlotPage = (await import(${asImport("./fixtures/route-slot-page.svelte")})).default;
-      const path = "/dashboard?__nifra_slots=" + encodeURIComponent('{"v":1,"slots":{"inspector":"/users/7"}}');
+      const path = "/dashboard?slot.inspector=%2Fusers%2F7";
       const html = await svelteAdapter.renderToString([RouteSlotPage], {
         data: null, search: {}, path,
       });
       if (!html.includes("<p>Select a user.</p>")) throw new Error("RouteSlot did not render its SSR fallback; got: " + html);
+    `
+    const proc = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" })
+    const [stdout, stderr, codeResult] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect(`${stdout}${stderr}`).toBe("")
+    expect(codeResult).toBe(0)
+  },
+  SPAWN_TIMEOUT_MS,
+)
+test(
+  "RouteSlot loads and renders an authorized target in the browser runtime",
+  async () => {
+    const code = `
+      import { plugin } from "bun";
+      import { svelteBunPlugin } from ${asImport("../src/plugin.ts")};
+      plugin(svelteBunPlugin("dom"));
+      const { GlobalWindow } = await import(${JSON.stringify(import.meta.resolve("happy-dom"))});
+      const browser = new GlobalWindow({ url: "https://route-slot.test/dashboard" });
+      for (const key of Object.getOwnPropertyNames(browser)) {
+        if (key in globalThis) continue;
+        Object.defineProperty(globalThis, key, {
+          configurable: true,
+          writable: true,
+          value: Reflect.get(browser, key),
+        });
+      }
+      globalThis.window = browser;
+      globalThis.document = browser.document;
+      const { mock } = await import("bun:test");
+      const svelteClient = await import(${JSON.stringify(import.meta.resolve("svelte").replace("index-server.js", "index-client.js"))});
+      mock.module("svelte", () => svelteClient);
+      const { flushSync, mount, unmount } = svelteClient;
+      const { installRouteSlotClientHarness } = await import(${asImport("../../web/test/route-slot-client-harness.ts")});
+      const Target = (await import(${asImport("./fixtures/route-slot-client-target.svelte")})).default;
+      const Page = (await import(${asImport("./fixtures/route-slot-client-page.svelte")})).default;
+      const harness = installRouteSlotClientHarness([Target]);
+      const container = document.createElement("div");
+      document.body.append(container);
+      const render = async (path) => {
+        const component = mount(Page, { target: container, props: { path } });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        flushSync();
+        return component;
+      };
+      const ready = await render("/dashboard?slot.inspector=%2Fusers%2F7");
+      if (container.querySelector("#slot-ready")?.textContent !== "authorized target")
+        throw new Error("RouteSlot did not render the authorized client target: " + container.innerHTML);
+      if (harness.requests.length !== 1) throw new Error("RouteSlot did not use one authorized route-data request");
+      unmount(ready);
+      container.replaceChildren();
+      const invalid = await render("/dashboard?slot.inspector=not-a-path");
+      if (!container.querySelector('[data-route-slot-error="invalid_target"]'))
+        throw new Error("RouteSlot did not render its invalid-target state: " + container.innerHTML);
+      unmount(invalid);
+      harness.restore();
+      await browser.happyDOM.close();
     `
     const proc = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" })
     const [stdout, stderr, codeResult] = await Promise.all([

@@ -1,7 +1,7 @@
 import type { Href, RouteTable } from "./navigation.ts"
 
-/** Reserved query key carrying independently navigable route-slot state. */
-export const ROUTE_SLOTS_PARAM = "__nifra_slots"
+/** Reserved query-key prefix carrying independently navigable route-slot targets. */
+export const ROUTE_SLOT_QUERY_PREFIX = "slot."
 
 /** Keep URL state small and request fan-out bounded. */
 export const MAX_ROUTE_SLOTS = 4
@@ -55,6 +55,59 @@ function urlOf(path: string): URL {
   }
 }
 
+function rawSearchOf(path: string): string | undefined {
+  const hash = path.indexOf("#")
+  const beforeHash = hash < 0 ? path : path.slice(0, hash)
+  const query = beforeHash.indexOf("?")
+  return query < 0 ? undefined : beforeHash.slice(query + 1)
+}
+
+function rawKeyStartsWithRouteSlotPrefix(rawKey: string): boolean {
+  let decoded = ""
+  let index = 0
+  while (index < rawKey.length && decoded.length < ROUTE_SLOT_QUERY_PREFIX.length) {
+    if (rawKey[index] === "%") {
+      const byte = rawKey.slice(index + 1, index + 3)
+      if (!/^[0-9a-f]{2}$/i.test(byte)) return false
+      decoded += String.fromCharCode(Number.parseInt(byte, 16))
+      index += 3
+    } else {
+      decoded += rawKey[index] === "+" ? " " : rawKey[index]
+      index++
+    }
+    if (!ROUTE_SLOT_QUERY_PREFIX.startsWith(decoded)) return false
+  }
+  return decoded === ROUTE_SLOT_QUERY_PREFIX
+}
+
+function slotNameFromSegment(segment: string): string | undefined {
+  const equals = segment.indexOf("=")
+  const rawKey = equals < 0 ? segment : segment.slice(0, equals)
+  if (rawKey.length > (ROUTE_SLOT_QUERY_PREFIX.length + 32) * 3)
+    return rawKeyStartsWithRouteSlotPrefix(rawKey) ? "" : undefined
+  try {
+    const key = decodeURIComponent(rawKey.replace(/\+/g, " "))
+    return key.startsWith(ROUTE_SLOT_QUERY_PREFIX)
+      ? key.slice(ROUTE_SLOT_QUERY_PREFIX.length)
+      : undefined
+  } catch {
+    return rawKeyStartsWithRouteSlotPrefix(rawKey) ? "" : undefined
+  }
+}
+
+/** Check raw query text for framework-owned slot keys, including percent-encoded names. */
+export function hasRouteSlotsSearch(search: string): boolean {
+  let start = 0
+  while (start <= search.length) {
+    const ampersand = search.indexOf("&", start)
+    const end = ampersand < 0 ? search.length : ampersand
+    if (slotNameFromSegment(search.slice(start, end)) !== undefined) return true
+    if (ampersand < 0) return false
+    start = ampersand + 1
+  }
+  return false
+}
+
 /** Reject origin changes, fragments, traversal, ambiguous encoded separators and nested slot state. */
 function containsAsciiControl(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
@@ -93,7 +146,7 @@ export function normalizeRouteSlotTarget(value: unknown): string {
   const url = urlOf(value)
   if (url.origin !== SENTINEL_ORIGIN || url.hash !== "") throw stateError("invalid_target")
 
-  if (url.searchParams.has(ROUTE_SLOTS_PARAM)) throw stateError("invalid_target")
+  if (hasRouteSlotsSearch(url.search.slice(1))) throw stateError("invalid_target")
   return `${url.pathname}${url.search}`
 }
 
@@ -110,52 +163,65 @@ function orderedTargets(value: unknown): Record<string, string> {
   return slots
 }
 
-function canonicalPayload(slots: Record<string, string>): string {
-  return JSON.stringify({ v: 1, slots })
-}
-
-/** Parse and strictly validate the one canonical route-slot query value. */
+/** Parse and strictly validate flat `slot.<name>=<target>` query values. */
 export function parseRouteSlots(path: string): RouteSlotTargets {
-  const url = urlOf(path)
-  const values = url.searchParams.getAll(ROUTE_SLOTS_PARAM)
-  if (values.length === 0) return Object.freeze(nullRecord<string>())
-  if (values.length !== 1) throw stateError("malformed")
-  const serialized = values[0]
-  if (serialized === undefined) throw stateError("malformed")
-  if (serialized.length > MAX_ROUTE_SLOT_STATE_CHARS) throw stateError("too_large")
-
-  let payload: unknown
-  try {
-    payload = JSON.parse(serialized)
-  } catch {
-    throw stateError("malformed")
+  const search = rawSearchOf(path)
+  if (search === undefined || !hasRouteSlotsSearch(search))
+    return Object.freeze(nullRecord<string>())
+  const slots = nullRecord<string>()
+  let totalChars = 0
+  let count = 0
+  let start = 0
+  while (start <= search.length) {
+    const ampersand = search.indexOf("&", start)
+    const end = ampersand < 0 ? search.length : ampersand
+    const segment = search.slice(start, end)
+    const name = slotNameFromSegment(segment)
+    if (name !== undefined) {
+      if (!SLOT_NAME.test(name)) throw stateError("malformed")
+      if (Object.hasOwn(slots, name)) throw stateError("malformed")
+      count++
+      if (count > MAX_ROUTE_SLOTS) throw stateError("too_large")
+      totalChars += segment.length
+      if (totalChars > MAX_ROUTE_SLOT_STATE_CHARS) throw stateError("too_large")
+      const equals = segment.indexOf("=")
+      if (equals < 0) throw stateError("invalid_target")
+      let target: string
+      try {
+        target = decodeURIComponent(segment.slice(equals + 1).replace(/\+/g, " "))
+      } catch {
+        throw stateError("invalid_target")
+      }
+      slots[name] = normalizeRouteSlotTarget(target)
+    }
+    if (ampersand < 0) break
+    start = ampersand + 1
   }
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload))
-    throw stateError("malformed")
-  const keys = Object.keys(payload)
-  if (
-    keys.length !== 2 ||
-    !keys.includes("v") ||
-    !keys.includes("slots") ||
-    Reflect.get(payload, "v") !== 1
-  )
-    throw stateError("malformed")
-  const slots = orderedTargets(Reflect.get(payload, "slots"))
-  if (canonicalPayload(slots) !== serialized) throw stateError("malformed")
-  return Object.freeze(slots)
+  return Object.freeze(orderedTargets(slots))
 }
 
-/** Replace the route-slot query value, preserving all unrelated query parameters and the hash. */
+/** Replace the slot query values while preserving unrelated query text byte for byte. */
 export function withRouteSlots(path: string, targets: RouteSlotTargets): string {
   const url = urlOf(path)
+  if (url.origin !== SENTINEL_ORIGIN) throw stateError("invalid_target")
   const slots = orderedTargets(targets)
-  url.searchParams.delete(ROUTE_SLOTS_PARAM)
-  if (Object.keys(slots).length > 0) {
-    const payload = canonicalPayload(slots)
-    if (payload.length > MAX_ROUTE_SLOT_STATE_CHARS) throw stateError("too_large")
-    url.searchParams.set(ROUTE_SLOTS_PARAM, payload)
-  }
-  return `${url.pathname}${url.search}${url.hash}`
+  const search = rawSearchOf(path) ?? ""
+  const hasSlots = hasRouteSlotsSearch(search)
+  if (Object.keys(slots).length === 0 && !hasSlots) return path
+  const preservedSearch = stripRouteSlotsSearch(search)
+  const serializedSlots = Object.entries(slots)
+    .map(([name, target]) => `${ROUTE_SLOT_QUERY_PREFIX}${name}=${encodeURIComponent(target)}`)
+    .join("&")
+  if (serializedSlots.length > MAX_ROUTE_SLOT_STATE_CHARS) throw stateError("too_large")
+  const nextSearch =
+    preservedSearch.length === 0
+      ? serializedSlots
+      : serializedSlots.length === 0
+        ? preservedSearch
+        : `${preservedSearch}&${serializedSlots}`
+  const hashIndex = path.indexOf("#")
+  const hash = hashIndex < 0 ? "" : path.slice(hashIndex)
+  return `${url.pathname}${nextSearch.length === 0 ? "" : `?${nextSearch}`}${hash}`
 }
 
 /** Change a single slot while retaining the other URL-addressed slots. */
@@ -169,14 +235,7 @@ export function setRouteSlot(path: string, name: string, target: string | null):
 
 /** Remove framework-owned state before the active page's loader sees its search params. */
 function isRouteSlotsParameter(segment: string): boolean {
-  const equals = segment.indexOf("=")
-  const rawKey = equals < 0 ? segment : segment.slice(0, equals)
-  if (rawKey.length > ROUTE_SLOTS_PARAM.length * 3) return false
-  try {
-    return decodeURIComponent(rawKey.replace(/\+/g, " ")) === ROUTE_SLOTS_PARAM
-  } catch {
-    return false
-  }
+  return slotNameFromSegment(segment) !== undefined
 }
 
 /** Removes only the reserved route-slot key without reparsing or rewriting the other query text. */

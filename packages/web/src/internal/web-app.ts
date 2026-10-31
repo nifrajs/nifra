@@ -644,6 +644,7 @@ export function createWebApp<Env = unknown>(
   const shadowed = shadowedPages(manifest, preRouteMountPaths(app))
   if (shadowed.length > 0) throw new Error(`[nifra/web] ${formatShadowedPages(shadowed)}`)
   const ownPatterns = new Set(manifest.routes.map((route) => route.pattern))
+  const routePatternById = new Map(manifest.routes.map((route) => [route.id, route.pattern]))
   const prerenderedList = ownPatterns.has(PRERENDERED_LIST_PATH)
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
@@ -731,21 +732,18 @@ export function createWebApp<Env = unknown>(
     const renderCached = prerendered === undefined ? render : prerendered(render)
     const renderWithValidatedSlots = async (ctx: Parameters<typeof render>[0]) => {
       try {
-        const targets = parseRouteSlots(ctx.req.url)
-        if (Object.keys(targets).length > 0) {
-          const module = await route.load()
-          const registry = normalizeRouteSlotRegistry(
-            module.routeSlots,
-            new Set(manifest.routes.map((entry) => entry.pattern)),
-          )
-          validateRouteSlotTargets(targets, registry, (path) => {
-            const matched = pageExecutor.matchRoute(path)
-            const targetPattern =
-              matched === null
-                ? undefined
-                : manifest.routes.find((entry) => entry.id === matched.routeId)?.pattern
-            return targetPattern === undefined ? null : { pattern: targetPattern }
-          })
+        if (ctx.req.url.includes("?")) {
+          const targets = parseRouteSlots(ctx.req.url)
+          if (Object.keys(targets).length > 0) {
+            const module = await route.load()
+            const registry = normalizeRouteSlotRegistry(module.routeSlots, ownPatterns)
+            validateRouteSlotTargets(targets, registry, (path) => {
+              const matched = pageExecutor.matchRoute(path)
+              const targetPattern =
+                matched === null ? undefined : routePatternById.get(matched.routeId)
+              return targetPattern === undefined ? null : { pattern: targetPattern }
+            })
+          }
         }
       } catch (error) {
         if (error instanceof RouteSlotStateError) return new Response(null, { status: 400 })

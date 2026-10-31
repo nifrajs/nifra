@@ -156,8 +156,7 @@ for (const engine of engines) {
 
         await page.evaluate(() => history.back())
         await page.waitForFunction(() => {
-          const state = new URL(location.href).searchParams.get("__nifra_slots")
-          return state !== null && !Reflect.get(JSON.parse(state).slots, "inspector")
+          return !new URL(location.href).searchParams.has("slot.inspector")
         })
         expect(
           await page.evaluate(
@@ -172,6 +171,49 @@ for (const engine of engines) {
 
         await page.evaluate(() => history.forward())
         await page.waitForFunction(() => document.querySelector("#inspector-user") !== null)
+        expect(problems).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }, 30_000)
+
+    test("slot-only navigation preserves raw query bytes and skips the page fetch", async () => {
+      const { page, problems } = await open()
+      try {
+        const rawSearch = "q=a%20b&tag[]=1&semi=a=b;c&tilde=~&quote='"
+        const path = withRouteSlots(`/dashboard?${rawSearch}`, { activity: "/activity" })
+        await page.goto(`${app().url}${path}`)
+        await waitForHydration(page)
+        await waitForSlotRequests(page, 1)
+        await page.waitForFunction(() => document.querySelector("#activity") !== null)
+        await page.evaluate(() => {
+          Reflect.set(
+            window,
+            "__activityBeforeRawQueryNavigation",
+            document.querySelector("#activity"),
+          )
+        })
+
+        await page.click("#open-inspector-7")
+        await page.waitForFunction(() => document.querySelector("#inspector-user") !== null)
+        await waitForSlotRequests(page, 2)
+
+        expect(await page.evaluate(() => location.search)).toContain(
+          "q=a%20b&tag[]=1&semi=a=b;c&tilde=~&quote=%27",
+        )
+        expect(
+          await page.evaluate(
+            () =>
+              Reflect.get(window, "__activityBeforeRawQueryNavigation") ===
+              document.querySelector("#activity"),
+          ),
+        ).toBe(true)
+        expect(
+          await page.evaluate(() => {
+            const requests = Reflect.get(window, "__nifraRouteSlotRequests")
+            return Array.isArray(requests) ? requests.length : -1
+          }),
+        ).toBe(2)
         expect(problems).toEqual([])
       } finally {
         await page.close()
