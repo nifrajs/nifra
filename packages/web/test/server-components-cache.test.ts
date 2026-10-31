@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import {
+  type CreateWebAppOptions,
   createWebApp,
   type ISRApp,
   MemoryCacheStore,
@@ -134,12 +135,11 @@ function ownerApp(
     middlewares: {},
     errors: {},
   }
-  const app = createWebApp({
+  const appOptions: CreateWebAppOptions = {
     manifest,
     clientEntry: "/entry.js",
     llmsTxt: false,
     serverComponents,
-    ...(nonce === undefined ? {} : { nonce }),
     use: (app) => {
       const read = (request: Request) => request.headers.get("accept-language")
       if (readAcceptLanguage === "on-request")
@@ -181,7 +181,8 @@ function ownerApp(
         }),
       hydrationHead: () => "",
     },
-  })
+  }
+  const app = createWebApp(nonce === undefined ? appOptions : { ...appOptions, nonce })
   return { app, build }
 }
 
