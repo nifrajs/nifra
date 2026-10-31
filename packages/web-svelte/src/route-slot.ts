@@ -10,10 +10,11 @@ export interface RouteSlotController {
 }
 
 /** Read or update the URL state for one slot while preserving every sibling slot. */
-export function useRouteSlot(name: RouteSlotName): RouteSlotController {
-  const readProps = getContext<(() => RenderProps) | undefined>("@nifrajs/web-svelte:props")
-  const navigate = useNavigate()
-  const path = (): string => readProps?.().path ?? "/"
+export function createRouteSlotController(
+  name: RouteSlotName,
+  path: () => string,
+  navigate: (href: ReturnType<typeof rawHref>) => void,
+): RouteSlotController {
   return {
     get target() {
       try {
@@ -25,4 +26,10 @@ export function useRouteSlot(name: RouteSlotName): RouteSlotController {
     open: (target) => navigate(rawHref(setRouteSlot(path(), name, String(target)))),
     close: () => navigate(rawHref(setRouteSlot(path(), name, null))),
   }
+}
+
+export function useRouteSlot(name: RouteSlotName): RouteSlotController {
+  const readProps = getContext<(() => RenderProps) | undefined>("@nifrajs/web-svelte:props")
+  const navigate = useNavigate()
+  return createRouteSlotController(name, () => readProps?.().path ?? "/", navigate)
 }

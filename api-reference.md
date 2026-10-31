@@ -7725,7 +7725,6 @@ _No named exports (side-effect entrypoint)._
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => () => boolean`
   Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive. Call it while the component initializes; read it in markup or a `$derived`.
 - **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
-  Read or update the URL state for one slot while preserving every sibling slot.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
   The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a `$…
 
