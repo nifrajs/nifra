@@ -15,6 +15,7 @@ import {
   importedSpecifier,
   installedGroupVersion,
   moveDependenciesText,
+  parseUpgradeArgs,
   pendingInstall,
   pinSweepText,
   rewriteVersionSpec,
@@ -1484,5 +1485,101 @@ describe("dependency adds", () => {
       '"@nifrajs/authjs/react"',
     )
     expect(computeUpgrade(root, recipe, true).dependencyAdds).toEqual([])
+  })
+})
+
+describe("upgrading from a named version", () => {
+  const stale = async (name: string): Promise<string> => {
+    const root = join(FIXTURES, name)
+    await mkdir(join(root, "src"), { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^4.0.0" } }, null, 2),
+    )
+    await writeFile(
+      join(root, "src", "app.ts"),
+      'import { budget } from "@nifrajs/budget"\nexport { budget }',
+    )
+    return root
+  }
+
+  test("pins bumped by hand leave the skipped recipes unapplied until --from names the old version", async () => {
+    const root = await stale("from-named")
+    const app = join(root, "src", "app.ts")
+    const skipped = await captureConsole(() =>
+      runUpgrade(root, { version: "4.0.0", cliVersion: "4.0.0", write: true, verify: false }),
+    )
+    expect(skipped.out).toContain("From 4.0.0; no release recipe in between.")
+    expect(await readFile(app, "utf8")).toContain('"@nifrajs/budget"')
+
+    const named = await captureConsole(() =>
+      runUpgrade(root, {
+        version: "4.0.0",
+        from: "1.13.0",
+        cliVersion: "4.0.0",
+        write: true,
+        verify: false,
+      }),
+    )
+    expect(named.result).toBe(true)
+    expect(named.out).toContain("From 1.13.0, applying the 2.0.0, 3.0.0, 4.0.0 recipes.")
+    expect(await readFile(app, "utf8")).toContain('"@nifrajs/core/budget"')
+  })
+
+  test("a --from that is not a release version fails closed before any edit", async () => {
+    const root = await stale("from-bad")
+    const before = await readFile(join(root, "src", "app.ts"), "utf8")
+    for (const from of ["^1.13.0", "latest", "1.13"]) {
+      const { result, out } = await captureConsole(() =>
+        runUpgrade(root, { version: "4.0.0", from, cliVersion: "4.0.0", write: true }),
+      )
+      expect(result).toBe(false)
+      expect(out).toContain("is not a release version")
+    }
+    expect(await readFile(join(root, "src", "app.ts"), "utf8")).toBe(before)
+  })
+
+  test("--list reads the named version as the installed one", async () => {
+    const root = await stale("from-list")
+    const { out } = await captureConsole(() =>
+      runUpgrade(root, { list: true, json: true, from: "3.0.0", cliVersion: "4.0.0" }),
+    )
+    expect(JSON.parse(out).installed).toBe("3.0.0")
+  })
+})
+
+describe("parseUpgradeArgs", () => {
+  test("reads the version, the switches and --from in both spellings", () => {
+    expect(parseUpgradeArgs(["5.10.0", "--write", "--exact", "--no-hooks"])).toEqual({
+      version: "5.10.0",
+      from: undefined,
+      write: true,
+      json: false,
+      list: false,
+      exact: true,
+      allowDowngrade: false,
+      allowLinkedSkew: false,
+      verify: true,
+      hooks: false,
+    })
+    expect(parseUpgradeArgs(["--from", "5.8.0", "5.10.0"])).toMatchObject({
+      version: "5.10.0",
+      from: "5.8.0",
+    })
+    expect(parseUpgradeArgs(["5.10.0", "--from=5.8.0", "--no-verify"])).toMatchObject({
+      version: "5.10.0",
+      from: "5.8.0",
+      verify: false,
+    })
+  })
+
+  test("refuses what it does not know instead of ignoring it", () => {
+    expect(() => parseUpgradeArgs(["5.10.0", "--form", "5.8.0"])).toThrow("unknown option: --form")
+    expect(() => parseUpgradeArgs(["5.10.0", "5.9.0"])).toThrow("unexpected argument: 5.9.0")
+    expect(() => parseUpgradeArgs(["5.10.0", "--from"])).toThrow("--from needs a version")
+    expect(() => parseUpgradeArgs(["5.10.0", "--from", "--write"])).toThrow(
+      "--from needs a version",
+    )
+    expect(() => parseUpgradeArgs(["5.10.0", "--from="])).toThrow("--from needs a version")
   })
 })

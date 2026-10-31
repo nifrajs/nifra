@@ -21,6 +21,7 @@ nifra build --target cloudflare  # also: node | deno | vercel | static; add --re
 const UPGRADE = `nifra upgrade --list          # the release targets this CLI knows
 nifra upgrade 5.6.0           # dry-run: every planned edit, nothing written
 nifra upgrade 5.6.0 --write   # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.6.0 --from 5.4.0 --write   # pins already bumped by hand: apply the recipes they skipped
 bun install                   # install the new pins
 nifra check                   # verify against them
 nifra doctor                  # afterwards: no "mixed nifra versions" advisory left`
@@ -533,7 +534,10 @@ nifra migrate --from tailwind --to stylex --dir src`}
       </p>
       <CodeBlock code={UPGRADE} lang="bash" />
       <p>
-        It is a dry-run until <code>--write</code>, and the same run twice makes no further edits. An
+        It is a dry-run until <code>--write</code>, and the same run twice makes no further edits. Once
+        the pins name the target, no recipe is left to apply: pass <code>--from &lt;version&gt;</code>{" "}
+        with the version they were at to apply the ones they skipped. An option it does not know is
+        refused rather than ignored. An
         unknown version or a target below what is installed is refused (<code>--allow-downgrade</code>{" "}
         when the rollback is intended); a target newer than the running CLI prints the command for
         that release&apos;s CLI. It edits files under the workspace root only: a symlinked package
