@@ -92,6 +92,18 @@ export function trackRequestHeaderReads(request: Request): Request {
   }
 }
 
+/** Mark a request handoff as cache-dependent even when user code makes a native Request copy. */
+export function markRequestHeaderDependent(request: Request): void {
+  const state = instrumentedRequests.get(request)
+  if (state !== undefined) {
+    state.headersRead = true
+    return
+  }
+  const untracked: RequestDependencyState = { headersRead: true }
+  dependencyByRequest.set(request, untracked)
+  instrumentedRequests.set(request, untracked)
+}
+
 /** Unknown request views fail closed because their header reads could not be observed. */
 export function requestHeadersWereRead(request: Request): boolean {
   let current: Request | undefined = request

@@ -1,15 +1,15 @@
 import { expect, test } from "bun:test"
 import { unlink } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 
 const SPAWN_TIMEOUT_MS = 30_000
 
 test(
   "Solid binding loads and renders a client route slot",
   async () => {
-    const childTestPath = new URL(
-      `./route-slot-client-child-${crypto.randomUUID()}.test.ts`,
-      import.meta.url,
-    ).pathname
+    const childTestPath = fileURLToPath(
+      new URL(`./route-slot-client-child-${crypto.randomUUID()}.test.ts`, import.meta.url),
+    )
     const code = `
       import { afterAll, expect, mock, test } from "bun:test";
       import { GlobalWindow } from ${JSON.stringify(import.meta.resolve("happy-dom"))};

@@ -6753,6 +6753,7 @@ _No named exports (side-effect entrypoint)._
 - **ComponentIsland** _(interface)_ - `interface ComponentIsland`
 - **ComponentKey** _(type)_ - `type ComponentKey = string | number`
 - **ComponentOwner** _(interface)_ - `interface ComponentOwner`
+- **ComponentOwnerCachePolicy** _(interface)_ - `interface ComponentOwnerCachePolicy`
 - **ComponentRecord** _(interface)_ - `interface ComponentRecord`
 - **ComponentRender** _(interface)_ - `interface ComponentRender`
 - **ComponentRenderContext** _(interface)_ - `interface ComponentRenderContext`

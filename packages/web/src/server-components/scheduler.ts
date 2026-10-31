@@ -167,19 +167,47 @@ export class BoundedComponentTasks {
     work: () => ReadableStream<T> | Promise<ReadableStream<T>>,
   ): Promise<ReadableStream<T>> {
     const release = await this.#acquire(signal)
-    try {
-      if (signal.aborted) throw componentAbort(signal)
-      const stream = await work()
-      if (signal.aborted) {
-        // The source may still own React work or buffered bytes. Keep its admission lease until its
-        // cancellation hook settles, just as the retained wrapper does after response delivery.
-        await stream.cancel(signal.reason).catch(() => {})
-        throw componentAbort(signal)
-      }
-      return retainStreamUntilSettled(stream, signal, release)
-    } catch (error) {
+    if (signal.aborted) {
       release()
-      throw error
+      throw componentAbort(signal)
+    }
+    let rejectAbort!: (reason: unknown) => void
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject
+    })
+    const onAbort = (): void => rejectAbort(componentAbort(signal))
+    signal.addEventListener("abort", onAbort, { once: true })
+
+    let pending: Promise<ReadableStream<T>>
+    try {
+      pending = Promise.resolve(work())
+    } catch (error) {
+      signal.removeEventListener("abort", onAbort)
+      release()
+      throw signal.aborted ? componentAbort(signal) : error
+    }
+
+    const settled = pending.then(
+      async (stream) => {
+        signal.removeEventListener("abort", onAbort)
+        if (!signal.aborted) return retainStreamUntilSettled(stream, signal, release)
+        await stream.cancel(signal.reason).catch(() => {
+          // The abort is authoritative; keep the lease until failed source cleanup has settled.
+        })
+        release()
+        throw componentAbort(signal)
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort)
+        release()
+        throw signal.aborted ? componentAbort(signal) : error
+      },
+    )
+
+    try {
+      return await Promise.race([settled, aborted])
+    } finally {
+      signal.removeEventListener("abort", onAbort)
     }
   }
 

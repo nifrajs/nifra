@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import {
+  type CreateWebAppOptions,
   createWebApp,
   type ISRApp,
   MemoryCacheStore,
@@ -30,7 +31,9 @@ function ownerApp(
     | "before-handle"
     | "on-response"
     | "response-vary"
+    | "copied-page"
     | undefined = undefined,
+  nonce?: () => string,
 ) {
   const component = defineServerComponent(
     {
@@ -104,6 +107,10 @@ function ownerApp(
             counts.page += 1
             if (readAcceptLanguage === "page")
               return { label: ctx.request.headers.get("accept-language") ?? "missing" }
+            if (readAcceptLanguage === "copied-page") {
+              const copied = new Request(ctx.request)
+              return { label: copied.headers.get("accept-language") ?? "missing" }
+            }
             return { label: "public" }
           },
         }),
@@ -128,7 +135,7 @@ function ownerApp(
     middlewares: {},
     errors: {},
   }
-  const app = createWebApp({
+  const appOptions: CreateWebAppOptions = {
     manifest,
     clientEntry: "/entry.js",
     llmsTxt: false,
@@ -174,7 +181,8 @@ function ownerApp(
         }),
       hydrationHead: () => "",
     },
-  })
+  }
+  const app = createWebApp(nonce === undefined ? appOptions : { ...appOptions, nonce })
   return { app, build }
 }
 
@@ -301,6 +309,31 @@ test("owner cache rejects credentialed and component-refresh requests and direct
   await direct.arrayBuffer()
 })
 
+test("owner cache excludes documents with a configured nonce resolver", async () => {
+  let nonce = 0
+  const counts: Counts = { page: 0, component: 0, render: 0 }
+  const { app } = ownerApp(
+    "build_nonce_private",
+    "deploy_nonce_private",
+    counts,
+    false,
+    undefined,
+    () => `nonce-${++nonce}`,
+  )
+  const isr = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+
+  for (let request = 0; request < 2; request++) {
+    const response = await isr(new Request("https://fixture.test/owner"))
+    expect(response.headers.get("x-nifra-owner-cacheable")).toBeNull()
+    expect(response.headers.get("x-nifra-isr")).toBeNull()
+    expect(response.headers.get("cache-control")).toBe("private, no-store")
+    await response.arrayBuffer()
+  }
+
+  expect(nonce).toBeGreaterThanOrEqual(2)
+  expect(counts).toEqual({ page: 2, component: 2, render: 2 })
+})
+
 test("owner cache fails closed when route code or app hooks read request headers", async () => {
   for (const readFrom of [
     "page",
@@ -333,6 +366,32 @@ test("owner cache fails closed when route code or app hooks read request headers
 
     expect(counts).toEqual({ page: 2, component: 2, render: 2 })
   }
+})
+
+test("owner cache treats a native Request copy in a loader as request-dependent", async () => {
+  const counts: Counts = { page: 0, component: 0, render: 0 }
+  const { app } = ownerApp(
+    "build_copied_request",
+    "deploy_copied_request",
+    counts,
+    false,
+    "copied-page",
+  )
+  const isr = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+
+  for (const language of ["en", "fr"] as const) {
+    const response = await isr(
+      new Request("https://fixture.test/owner", {
+        headers: { "accept-language": language },
+      }),
+    )
+    expect(response.headers.get("x-nifra-isr")).toBeNull()
+    expect(response.headers.get("x-nifra-owner-cacheable")).toBeNull()
+    expect(response.headers.get("cache-control")).toBe("private, no-store")
+    await response.arrayBuffer()
+  }
+
+  expect(counts).toEqual({ page: 2, component: 2, render: 2 })
 })
 
 test("owner request tracking hooks run on ordinary GETs without changing the response", async () => {
@@ -436,31 +495,58 @@ test("public owner caching requires deployment identity and a static anonymous s
   ).toThrow()
 })
 
-test("ISR bypasses storage when a configured owner cache partition cannot be resolved", async () => {
-  const store = new MemoryCacheStore()
-  let renders = 0
+test("ISR bypasses storage when a configured owner cache partition is invalid", async () => {
+  const invalidResolvers: readonly (() => unknown)[] = [
+    () => null,
+    () => {
+      throw new Error("partition unavailable")
+    },
+    () => "x".repeat(2049),
+  ]
+  for (const resolvePartition of invalidResolvers) {
+    const store = new MemoryCacheStore()
+    let renders = 0
+    const app: ISRApp = {
+      async fetch() {
+        renders += 1
+        return new Response("<main>public</main>", {
+          headers: {
+            "cache-control": "public, max-age=60",
+            "content-type": "text/html; charset=utf-8",
+          },
+        })
+      },
+    }
+    Object.defineProperty(app, Symbol.for("nifra.web.serverComponentCachePartition"), {
+      value: resolvePartition,
+    })
+    const isr = withISR(app, { store, revalidate: 60, now: () => 0 })
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await isr(new Request("https://fixture.test/owner"))
+      expect(response.headers.get("x-nifra-isr")).toBeNull()
+      await response.arrayBuffer()
+    }
+    expect(renders).toBe(2)
+  }
+
   const app: ISRApp = {
     async fetch() {
-      renders += 1
-      return new Response("<main>public</main>", {
-        headers: {
-          "cache-control": "public, max-age=60",
-          "content-type": "text/html; charset=utf-8",
-        },
-      })
+      return new Response("unused")
     },
   }
   Object.defineProperty(app, Symbol.for("nifra.web.serverComponentCachePartition"), {
     value: () => null,
   })
-  const isr = withISR(app, { store, revalidate: 60, now: () => 0 })
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await isr(new Request("https://fixture.test/owner"))
-    expect(response.headers.get("x-nifra-isr")).toBeNull()
-    await response.arrayBuffer()
-  }
-  expect(renders).toBe(2)
+  const endpoint = revalidateEndpoint({ app, store: new MemoryCacheStore(), secret: "secret" })
+  const response = await endpoint(
+    new Request("https://fixture.test/__nifra/revalidate?path=%2Fowner", {
+      method: "POST",
+      headers: { "x-nifra-revalidate-token": "secret" },
+    }),
+  )
+  expect(response.status).toBe(400)
+  expect(await response.json()).toEqual({ ok: false, error: "uncached_query" })
 })
 
 test("ISR never stores error, cookie-setting, or cancelled owner documents", async () => {
