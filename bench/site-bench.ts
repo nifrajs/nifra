@@ -368,9 +368,9 @@ export function httpWorkloadsFromResults(
     title: string
     frameworks: readonly string[]
   }> = [
-    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "bun", title: "Bun", frameworks: ["nifra", "fastify", "elysia", "hono"] },
     { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
-    { key: "deno", title: "Deno", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "deno", title: "Deno", frameworks: ["nifra", "fastify", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",
@@ -433,9 +433,9 @@ export function httpRealworldFromResults(
     title: string
     frameworks: readonly string[]
   }> = [
-    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "bun", title: "Bun", frameworks: ["nifra", "fastify", "elysia", "hono"] },
     { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
-    { key: "deno", title: "Deno", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "deno", title: "Deno", frameworks: ["nifra", "fastify", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",

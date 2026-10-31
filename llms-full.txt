@@ -297,11 +297,11 @@ context, and serialization. In the current matrix Nifra runs **level with Elysia
 100% of Elysia on `GET /users/:id` and
 102% on the validated `POST` - and
 **level with Fastify on Node** (102% of Fastify on GET,
-99% on the validated `POST`), with Elysia, Hono,
-and Express behind. On **Deno** it runs at 98% of Elysia on
-GET and 118% on the validated `POST`. In the realistic shape (security headers + CORS +
+102% on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at 101% of Elysia on
+GET and 119% on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured with
-`oha`) Nifra runs at **104% of Elysia on GET and 104% on POST**. Treat benchmark
+`oha`) Nifra runs at **109% of Elysia on GET and 108% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -13946,8 +13946,8 @@ app.
 
 -
 **Much faster SSR** - the current dynamic-page snapshot reports Nifra at
-15× the throughput of Next.js, 7.2× Nuxt, and
-3.9× SvelteKit / 2.2× SolidStart, with a fraction
+15× the throughput of Next.js, 7.6× Nuxt, and
+3.7× SvelteKit / 2.1× SolidStart, with a fraction
 of the client JavaScript. See benchmarks.
 
 -
