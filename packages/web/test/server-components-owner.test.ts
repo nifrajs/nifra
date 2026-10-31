@@ -413,7 +413,7 @@ test("a React owner uses progressive Flight only for a verified single-component
   expect(await new Response(decoded.flight).text()).toBe('0:"progressive"\n')
 })
 
-test("progressive owner refreshes hold global admission through Flight stream completion", async () => {
+test("progressive owner refreshes hold global admission through Flight creation, not stream delivery", async () => {
   const blockedLoads: Array<() => void> = []
   const streams: ReadableStreamDefaultController<Uint8Array>[] = []
   let loadStarts = 0
@@ -522,19 +522,14 @@ test("progressive owner refreshes hold global admission through Flight stream co
   expect(loadStarts).toBe(64)
   for (const release of blockedLoads.splice(0)) release()
   await streamsAt64
-  for (let i = 0; i < 20; i += 1) await Promise.resolve()
-  const startedBeforeStreamClose = loadStarts
-
-  const firstStream = streams[0]
-  if (firstStream === undefined) throw new Error("progressive stream was not created")
-  firstStream.close()
   await load65
+  const startedBeforeStreamClose = loadStarts
+  expect(startedBeforeStreamClose).toBe(65)
   for (const release of blockedLoads.splice(0)) release()
   await stream65
 
-  for (const stream of streams.slice(1)) stream.close()
+  for (const stream of streams) stream.close()
   await Promise.all(bodies)
-  expect(startedBeforeStreamClose).toBe(64)
   expect(loadStarts).toBe(65)
   expect(streams).toHaveLength(65)
 })

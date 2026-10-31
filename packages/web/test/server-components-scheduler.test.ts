@@ -133,8 +133,12 @@ test("abort during stream creation retains admission until source cancellation s
   const tasks = new BoundedComponentTasks(1, 1)
   const signal = new AbortController()
   let resolveStream!: (stream: ReadableStream<Uint8Array>) => void
+  let beginCancel!: () => void
   let finishCancel!: () => void
   let secondStarted = false
+  const cancelStarted = new Promise<void>((resolve) => {
+    beginCancel = resolve
+  })
   const cancelFinished = new Promise<void>((resolve) => {
     finishCancel = resolve
   })
@@ -148,14 +152,18 @@ test("abort during stream creation retains admission until source cancellation s
 
   await new Promise((resolve) => setTimeout(resolve, 0))
   signal.abort("client disconnected")
+  await expect(first).rejects.toMatchObject({ code: "component_cancelled" })
+  expect(tasks.counts).toEqual({ active: 1, queued: 0 })
+
   resolveStream(
     new ReadableStream<Uint8Array>({
       cancel() {
+        beginCancel()
         return cancelFinished
       },
     }),
   )
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await cancelStarted
 
   const second = tasks.runStream(new AbortController().signal, () => {
     secondStarted = true
@@ -170,9 +178,42 @@ test("abort during stream creation retains admission until source cancellation s
   expect(tasks.counts).toEqual({ active: 1, queued: 1 })
 
   finishCancel()
-  await expect(first).rejects.toMatchObject({ code: "component_cancelled" })
   const secondStream = await second
   await secondStream.getReader().read()
+  expect(tasks.counts).toEqual({ active: 0, queued: 0 })
+})
+
+test("a stream creation rejection after abort releases its retained admission", async () => {
+  const tasks = new BoundedComponentTasks(1, 0)
+  const signal = new AbortController()
+  let rejectWork!: (error: unknown) => void
+  const first = tasks.runStream(
+    signal.signal,
+    () =>
+      new Promise<ReadableStream<Uint8Array>>((_resolve, reject) => {
+        rejectWork = reject
+      }),
+  )
+
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  signal.abort("client disconnected")
+  await expect(first).rejects.toMatchObject({ code: "component_cancelled" })
+  expect(tasks.counts).toEqual({ active: 1, queued: 0 })
+
+  rejectWork(new Error("late stream creation failure"))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(tasks.counts).toEqual({ active: 0, queued: 0 })
+})
+
+test("a synchronous stream creation failure releases admission", async () => {
+  const tasks = new BoundedComponentTasks(1, 0)
+  const failure = new Error("stream failed before returning")
+
+  await expect(
+    tasks.runStream(new AbortController().signal, () => {
+      throw failure
+    }),
+  ).rejects.toBe(failure)
   expect(tasks.counts).toEqual({ active: 0, queued: 0 })
 })
 

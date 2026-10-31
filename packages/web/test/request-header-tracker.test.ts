@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import {
   finishRequestHeaderTrackingInPlace,
+  markRequestHeaderDependent,
   requestHeadersWereRead,
   trackRequestHeaderReads,
   trackRequestHeaderReadsInPlace,
@@ -18,6 +19,18 @@ test("tracks standard header methods and clones that preserve the dependency sta
   const clone = request.clone()
   expect(clone.headers.has("accept-language")).toBe(true)
   expect(requestHeadersWereRead(clone)).toBe(true)
+})
+
+test("explicit request handoff taint covers native Request copies", () => {
+  const request = trackRequestHeaderReads(
+    new Request("https://nifra.invalid/", { headers: { "accept-language": "en" } }),
+  )
+  const copy = new Request(request)
+
+  expect(copy.headers.get("accept-language")).toBe("en")
+
+  markRequestHeaderDependent(request)
+  expect(requestHeadersWereRead(request)).toBe(true)
 })
 
 test("does not let a native Headers prototype call bypass the tracked view", () => {
@@ -68,4 +81,17 @@ test("fails closed when the request view cannot be cloned or is unknown", async 
   expect(trackRequestHeaderReads(observedBeforeRoute)).toBe(observedBeforeRoute)
   expect(requestHeadersWereRead(observedBeforeRoute)).toBe(true)
   expect(requestHeadersWereRead(new Request("https://nifra.invalid/"))).toBe(true)
+})
+
+test("fails closed when the runtime request view cannot be inspected in place", () => {
+  const request = new Proxy(new Request("https://nifra.invalid/"), {
+    get(target, property) {
+      if (property === "headers") throw new TypeError("headers unavailable")
+      return Reflect.get(target, property, target)
+    },
+  })
+
+  trackRequestHeaderReadsInPlace(request)
+
+  expect(requestHeadersWereRead(request)).toBe(true)
 })

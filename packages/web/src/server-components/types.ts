@@ -99,10 +99,11 @@ export interface ComponentOwnerCachePolicy {
   readonly scope: "public"
   /**
    * Required assertion that route, loader, layout, and component output are request-independent.
-   * Nifra observes request-header reads through owner-route middleware, loaders, layouts, component
-   * authorization/loading, and app hooks registered with `createWebApp({ use })`; any such read
-   * disables shared storage. Replaced/uninspectable request views fail closed. Database, environment,
-   * global, external-service, and other dependencies remain the application's responsibility.
+   * Nifra observes request-header reads through owner-route middleware, layouts, component
+   * authorization/loading, and app hooks registered with `createWebApp({ use })`. Accessing the
+   * request from an owner loader is conservatively treated as a dependency, including a native
+   * `Request` copy. Replaced/uninspectable request views fail closed. Database, environment, global,
+   * external-service, and other dependencies remain the application's responsibility.
    */
   readonly requestIndependent: true
   /** Positive freshness window in seconds for this complete owner route. */
