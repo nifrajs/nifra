@@ -133,44 +133,37 @@ function ownerApp(
     clientEntry: "/entry.js",
     llmsTxt: false,
     serverComponents,
-    use:
-      readAcceptLanguage === "on-request" ||
-      readAcceptLanguage === "derive" ||
-      readAcceptLanguage === "before-handle" ||
-      readAcceptLanguage === "on-response" ||
-      readAcceptLanguage === "response-vary"
-        ? (app) => {
-            const read = (request: Request) => request.headers.get("accept-language")
-            if (readAcceptLanguage === "on-request")
-              app.onRequest((request) => {
-                read(request)
-              })
-            if (readAcceptLanguage === "derive")
-              app.derive((context) => {
-                read(context.req)
-                return {}
-              })
-            if (readAcceptLanguage === "before-handle")
-              app.beforeHandle((context) => {
-                read(context.req)
-              })
-            if (readAcceptLanguage === "on-response")
-              app.onResponse((response, request) => {
-                read(request)
-                return response
-              })
-            if (readAcceptLanguage === "response-vary")
-              app.onResponse((response) => {
-                const headers = new Headers(response.headers)
-                headers.set("vary", "x-nifra-data")
-                return new Response(response.body, {
-                  status: response.status,
-                  statusText: response.statusText,
-                  headers,
-                })
-              })
-          }
-        : undefined,
+    use: (app) => {
+      const read = (request: Request) => request.headers.get("accept-language")
+      if (readAcceptLanguage === "on-request")
+        app.onRequest((request) => {
+          read(request)
+        })
+      if (readAcceptLanguage === "derive")
+        app.derive((context) => {
+          read(context.req)
+          return {}
+        })
+      if (readAcceptLanguage === "before-handle")
+        app.beforeHandle((context) => {
+          read(context.req)
+        })
+      if (readAcceptLanguage === "on-response")
+        app.onResponse((response, request) => {
+          read(request)
+          return response
+        })
+      if (readAcceptLanguage === "response-vary")
+        app.onResponse((response) => {
+          const headers = new Headers(response.headers)
+          headers.set("vary", "x-nifra-data")
+          return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+          })
+        })
+    },
     adapter: {
       renderToString: () => "<main>owner</main>",
       renderToStream: () =>
