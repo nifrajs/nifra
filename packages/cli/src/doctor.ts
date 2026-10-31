@@ -884,9 +884,9 @@ const KNOWN_AUTH_PACKAGES = [
 const IDENTITY_SIGNAL = /\b(?:identityCookies\s*:|rotateIdentityEpoch\s*\(|identityChanged\s*\()/
 // A session cookie renamed outright: Better Auth's `advanced.cookies.session_token.name`, Auth.js's
 // `cookies.sessionToken.name`, `@nifrajs/auth`'s `cookieName`. A Better Auth `cookiePrefix` keeps the
-// suffix the identity epoch matches, so it is not one.
+// suffix the identity epoch matches, so it is not one, and neither is a type's `name: string`.
 const RENAMED_SESSION =
-  /\b(?:session_token|sessionToken)\s*:\s*\{[^}]*\bname\s*:|\bcookieName\s*:\s*["'`]/
+  /\b(?:session_token|sessionToken)\s*:\s*\{[^}]*\bname\s*:\s*["'`]|\bcookieName\s*:\s*["'`]/
 
 // Below the app itself, only what a package loads at runtime is followed.
 const AUTH_RUNTIME_FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"] as const

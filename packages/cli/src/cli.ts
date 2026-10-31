@@ -290,7 +290,9 @@ Usage:
                 [--write] [--no-verify]  installed version and it, oldest first: move removed packages,
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
                 [--exact]                ^/~, or exact with --exact; a peer range only when it
-                                         excludes the target), then verify with nifra check.
+                [--from <version>]       excludes the target), then verify with nifra check. --from
+                                         names the installed version when the pins no longer do,
+                                         such as after bumping them by hand.
                 [--allow-downgrade]      Dry-run by default; --write applies, then verifies (--no-verify
                 [--allow-linked-skew]    to skip) and prints how hook scope changed (--no-hooks to skip)
                 [--no-hooks]             once the target is installed, else prints the install command
@@ -1451,19 +1453,14 @@ async function main(): Promise<void> {
   // recipe, then verified with `nifra check`. Dispatch before the eager `loadApp` - it must run on any
   // repo (API-only, not built, or mid-upgrade with edits that don't yet typecheck under dry-run).
   if (command === "upgrade") {
-    const { runUpgrade } = await import("./upgrade.ts")
-    const version = argv.slice(1).find((arg) => !arg.startsWith("-"))
+    if (argv.includes("--help") || argv.includes("-h")) {
+      console.log(HELP)
+      return
+    }
+    const { parseUpgradeArgs, runUpgrade } = await import("./upgrade.ts")
     try {
       const ok = await runUpgrade(process.cwd(), {
-        ...(version !== undefined ? { version } : {}),
-        write: argv.includes("--write"),
-        json: argv.includes("--json"),
-        list: argv.includes("--list"),
-        verify: !argv.includes("--no-verify"),
-        hooks: !argv.includes("--no-hooks"),
-        allowDowngrade: argv.includes("--allow-downgrade"),
-        allowLinkedSkew: argv.includes("--allow-linked-skew"),
-        exact: argv.includes("--exact"),
+        ...parseUpgradeArgs(argv.slice(1)),
         cliVersion: CLI_VERSION,
       })
       if (!ok) process.exitCode = 1

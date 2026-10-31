@@ -93,6 +93,18 @@ test("a session cookie renamed outright under a known auth integration is noted,
   expect((await collectDoctorResult(named)).keepAliveIdentity).toBeUndefined()
 })
 
+test("a type that gives the session cookie a name is not a rename", async () => {
+  const typed = app(
+    { "@nifrajs/web": "5.0.0", "better-auth": "1.0.0" },
+    {
+      "routes/list.tsx": KEPT,
+      "lib/auth.ts":
+        'interface Cookies {\n  sessionToken: { name: string; attributes?: object }\n}\nbetterAuth({ advanced: { cookiePrefix: "orbit" } })\n',
+    },
+  )
+  expect((await collectDoctorResult(typed)).keepAliveIdentity).toBeUndefined()
+})
+
 /** A package outside the app's own package.json, installed into the app as a symlink. */
 const linkPackage = (
   root: string,

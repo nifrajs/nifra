@@ -33,6 +33,39 @@ const assets = serveStatic({ dir: "/srv/public", prefix: "/", fallthrough: true,
     expect(result.manual).toEqual([])
   })
 
+  test("every literal it writes uses the quote the file does, and a JSX attribute does not vote", () => {
+    const single = rewrite(`import { createWebApp, servePublicDir } from '@nifrajs/web'
+
+export const app = createWebApp({
+  publicDir: servePublicDir({ dir: './public', hashedPrefix: '/static/' }),
+})
+`)
+    expect(single.text).toBe(`import { createWebApp } from '@nifrajs/web'
+import { ONE_DAY, serveStatic } from '@nifrajs/core/serve-static'
+
+export const app = createWebApp({
+  publicDir: serveStatic({ dir: './public', prefix: '/', fallthrough: true, hashedFiles: (path) => path.startsWith('/static/'), cacheControl: ONE_DAY }),
+})
+`)
+    const node = rewrite(
+      `import { servePublicDir } from '@nifrajs/web'
+export const a = servePublicDir({ dir: './public', cache: { hashed: 'public, max-age=31536000, immutable' } })
+`,
+      "server.ts",
+    )
+    expect(node.text).toContain("prefix: '/'")
+    expect(node.text).toContain("path.startsWith('/assets/')")
+    expect(node.text).not.toContain('"')
+    const jsx = rewrite(
+      `import { servePublicDir } from '@nifrajs/web'
+export const a = servePublicDir({ dir: './public' })
+export const b = <a href="/x" id="y" class="z">k</a>
+`,
+      "page.tsx",
+    )
+    expect(jsx.text).toContain("prefix: '/'")
+  })
+
   test("each option maps: hashedPrefix, hashedFiles, cache.assets, files, shorthand, and a multi-line literal", () => {
     const result = rewrite(`import { servePublicDir } from "@nifrajs/web"
 
@@ -220,6 +253,34 @@ describe("an upgrade with a source rewrite", () => {
     expect(plan.sourceRewrites).toEqual([{ file: "src/app.ts", rewrite: "ppr-option", count: 1 }])
     expect(await readFile(join(root, "src/app.ts"), "utf8")).toContain(
       "createWebApp({ ppr: setup })",
+    )
+  })
+
+  test("the 5.10 recipe wraps string destinations in rawHref and lists the rest", async () => {
+    const root = join(FIXTURES, "href-navigation")
+    await mkdir(join(root, "src"), { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/web": "^5.9.0" } }, null, 2),
+    )
+    await writeFile(
+      join(root, "src/guard.ts"),
+      `import { redirect } from "@nifrajs/web"\nexport const a = () => redirect("/login")\nexport const b = (id: string) => redirect(\`/users/\${id}\`)\n`,
+    )
+    const plan = computeUpgrade(root, chainRecipes("5.10.0", "5.9.0"), true, false, false, [], ts)
+    expect(plan.sourceRewrites).toEqual([
+      { file: "src/guard.ts", rewrite: "href-navigation", count: 1 },
+    ])
+    expect(plan.manualRewrites).toEqual([
+      {
+        file: "src/guard.ts",
+        line: 3,
+        reason:
+          "the destination is built from a string: build it with href({ to, params, search }), or wrap a path built elsewhere in rawHref(path)",
+      },
+    ])
+    expect(await readFile(join(root, "src/guard.ts"), "utf8")).toContain(
+      'import { rawHref, redirect } from "@nifrajs/web"',
     )
   })
 

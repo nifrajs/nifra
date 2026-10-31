@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { connect } from "node:net"
+import { t } from "@nifrajs/schema"
 import { type Platform, server, silentLogger } from "../src/index.ts"
 import type { Context } from "../src/server/context.ts"
 import { withIdleTimeout } from "../src/server/idle-timeout.ts"
@@ -139,6 +140,31 @@ describe("withIdleTimeout()", () => {
     const app = server().get("/plain", (c) => withIdleTimeout(c, 0, () => ({ ran: true })))
     const res = await app.fetch(new Request("http://x/plain"))
     expect(await res.json()).toEqual({ ran: true })
+  })
+
+  test("a route with a body, query or headers schema passes its own context", async () => {
+    const app = server()
+      .post("/body", { body: t.object({ n: t.integer() }) }, (c) =>
+        withIdleTimeout(c, 0, () => c.body),
+      )
+      .get("/query", { query: t.object({ q: t.string() }) }, (c) =>
+        withIdleTimeout(c, 0, () => c.query),
+      )
+      .get("/headers", { headers: t.object({ "x-k": t.string() }) }, (c) =>
+        withIdleTimeout(c, 0, async () => c.headers),
+      )
+    const post = await app.fetch(
+      new Request("http://x/body", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ n: 3 }),
+      }),
+    )
+    expect(await post.json()).toEqual({ n: 3 })
+    const query = await app.fetch(new Request("http://x/query?q=a"))
+    expect(await query.json()).toEqual({ q: "a" })
+    const headers = await app.fetch(new Request("http://x/headers", { headers: { "x-k": "v" } }))
+    expect((await headers.json())["x-k"]).toBe("v")
   })
 
   test("refuses a negative, fractional, non-finite or over-255 number of seconds", () => {
