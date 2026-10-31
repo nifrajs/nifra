@@ -607,6 +607,8 @@ export const SERVER_COMPONENT_CACHE_PARTITION: unique symbol = Symbol.for(
 )
 /** Internal proof that a public owner document passed createWebApp's response checks. */
 export const OWNER_CACHEABLE_HEADER = "x-nifra-owner-cacheable"
+/** Internal signal that a document's CSP authorizes scripts with a per-render nonce. */
+export const OWNER_NONCE_USED_HEADER = "x-nifra-owner-nonce-used"
 
 /** Ask `app` to emit its ISR headers; an app without the channel emits whatever it emits. */
 export function openCacheChannel(app: object): void {
@@ -619,7 +621,8 @@ export function withoutCacheChannel(res: Response): Response {
   if (
     !res.headers.has(ISR_REVALIDATE_HEADER) &&
     !res.headers.has(ISR_REVALIDATE_TAGS_HEADER) &&
-    !res.headers.has(OWNER_CACHEABLE_HEADER)
+    !res.headers.has(OWNER_CACHEABLE_HEADER) &&
+    !res.headers.has(OWNER_NONCE_USED_HEADER)
   ) {
     return res
   }
@@ -627,6 +630,7 @@ export function withoutCacheChannel(res: Response): Response {
   target.headers.delete(ISR_REVALIDATE_HEADER)
   target.headers.delete(ISR_REVALIDATE_TAGS_HEADER)
   target.headers.delete(OWNER_CACHEABLE_HEADER)
+  target.headers.delete(OWNER_NONCE_USED_HEADER)
   return target
 }
 
@@ -986,6 +990,7 @@ const isCacheableOwnerPage = (req: Request, res: Response): boolean => {
   if (req.headers.get("x-nifra-data") !== null || req.headers.has("x-nifra-component")) return false
   if (req.headers.has(SWAP_HEADER) || requestCarriesPrivateState(req)) return false
   if (res.headers.get(OWNER_CACHEABLE_HEADER) !== "1") return false
+  if (res.headers.get(OWNER_NONCE_USED_HEADER) === "1") return false
   if (res.status !== 200 || !(res.headers.get("content-type") ?? "").includes("text/html"))
     return false
   if (!cacheControlHas(res.headers, ["private"]) || !cacheControlHas(res.headers, ["no-store"]))
@@ -1038,7 +1043,12 @@ const tagsOf = (res: Response): readonly string[] =>
 const headersOf = (res: Response): Record<string, string> => {
   const out: Record<string, string> = {}
   res.headers.forEach((value, key) => {
-    if (key !== OWNER_CACHEABLE_HEADER && isCacheableResponseHeader(key)) out[key] = value
+    if (
+      key !== OWNER_CACHEABLE_HEADER &&
+      key !== OWNER_NONCE_USED_HEADER &&
+      isCacheableResponseHeader(key)
+    )
+      out[key] = value
   })
   return out
 }
@@ -1246,13 +1256,17 @@ export function withISR(
         "`createWebApp({ csp: createCspPolicy(...) })` instead of `nonce` to cache pages under a CSP.",
     )
   }
-  // Keys whose last render declared itself `private` or `no-store`, with when that memo expires. A
-  // remembered key skips the store lookup (a network round trip on a shared store) and renders fresh;
-  // a render that turns out cacheable is stored and forgets the key. So the memo can only cost a cache
-  // hit, never serve the wrong page. Bounded, oldest first, so a URL flood cannot grow it.
+  // Successful private/no-store renders can skip a shared-store lookup until their memo expires.
+  // Refusals and other non-200 results are request outcomes, not stable page privacy declarations.
+  // The map is bounded, oldest first, so a URL flood cannot grow it.
   const uncacheable = new Map<string, number>()
   const rememberUncacheable = (key: string, res: Response): void => {
-    if (options.revalidate === 0 || !cacheControlHas(res.headers, ["private", "no-store"])) return
+    if (
+      options.revalidate === 0 ||
+      res.status !== 200 ||
+      !cacheControlHas(res.headers, ["private", "no-store"])
+    )
+      return
     if (uncacheable.size >= MAX_UNCACHEABLE_KEYS) {
       uncacheable.delete(uncacheable.keys().next().value as string)
     }

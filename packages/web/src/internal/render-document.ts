@@ -9,7 +9,12 @@ import {
 } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { DEFERRED_ERROR_CODE, DEFERRED_RUNTIME, prepareDeferred } from "../deferred.ts"
-import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "../isr.ts"
+import {
+  ISR_REVALIDATE_HEADER,
+  ISR_REVALIDATE_TAGS_HEADER,
+  OWNER_NONCE_USED_HEADER,
+  serializeISRTags,
+} from "../isr.ts"
 import type {
   Loader as LayoutLoader,
   Meta,
@@ -561,10 +566,13 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   if (revalidate !== undefined) headers[ISR_REVALIDATE_HEADER] = String(revalidate)
   const serializedTags = serializeISRTags(revalidateTags)
   if (serializedTags !== undefined) headers[ISR_REVALIDATE_TAGS_HEADER] = serializedTags
-  // A per-request nonce must not be replayed from a browser, CDN, or ISR cache. The same policy
-  // also keeps `withISR` from storing a document whose executable scripts carry request-specific
-  // authorization to run under the caller's CSP.
-  if (nonce !== undefined) headers["cache-control"] = "private, no-store"
+  // A per-render nonce must not be replayed from a browser, CDN, or ISR cache. The internal marker
+  // lets the owner-cache guard distinguish nonce documents from hash-only CSP documents.
+  const markNonceUsed = (): void => {
+    headers["cache-control"] = "private, no-store"
+    headers[OWNER_NONCE_USED_HEADER] = "1"
+  }
+  if (nonce !== undefined) markNonceUsed()
   if (csp !== undefined) {
     const policy = cspHeaderValue(csp, adapter, nonce)
     if (policy !== undefined) headers["content-security-policy"] = policy
@@ -637,7 +645,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       nonce ?? (csp === undefined ? undefined : cspCandidateNonce(csp, requestedNonce))
     const adoptNonce = (): void => {
       if (renderNonce === nonce || csp === undefined || renderNonce === undefined) return
-      headers["cache-control"] = "private, no-store"
+      markNonceUsed()
       const policy = cspHeaderValue(csp, adapter, renderNonce)
       if (policy !== undefined) headers["content-security-policy"] = policy
     }

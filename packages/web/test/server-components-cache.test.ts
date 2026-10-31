@@ -2,7 +2,9 @@ import { expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
 import {
   type CreateWebAppOptions,
+  createCspPolicy,
   createWebApp,
+  defer,
   type ISRApp,
   MemoryCacheStore,
   revalidateEndpoint,
@@ -34,6 +36,9 @@ function ownerApp(
     | "copied-page"
     | undefined = undefined,
   nonce?: () => string,
+  csp?: CreateWebAppOptions["csp"],
+  deferredData = false,
+  adapterUsesNonce = false,
 ) {
   const component = defineServerComponent(
     {
@@ -111,7 +116,9 @@ function ownerApp(
               const copied = new Request(ctx.request)
               return { label: copied.headers.get("accept-language") ?? "missing" }
             }
-            return { label: "public" }
+            return deferredData
+              ? { label: "public", slow: defer(Promise.resolve("ready")) }
+              : { label: "public" }
           },
         }),
       },
@@ -140,6 +147,8 @@ function ownerApp(
     clientEntry: "/entry.js",
     llmsTxt: false,
     serverComponents,
+    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: The fixtures without hash CSP must keep the policy absent.
+    ...(csp === undefined ? {} : { csp }),
     use: (app) => {
       const read = (request: Request) => request.headers.get("accept-language")
       if (readAcceptLanguage === "on-request")
@@ -172,7 +181,10 @@ function ownerApp(
         })
     },
     adapter: {
-      renderToString: () => "<main>owner</main>",
+      renderToString: (_chain, _props, options) =>
+        adapterUsesNonce && options?.nonce !== undefined
+          ? `<script nonce="${options.nonce}">adapterBoot()</script>`
+          : "<main>owner</main>",
       renderToStream: () =>
         new ReadableStream({
           start(controller) {
@@ -307,6 +319,62 @@ test("owner cache rejects credentialed and component-refresh requests and direct
   expect(direct.headers.get("x-nifra-owner-cacheable")).toBeNull()
   expect(direct.headers.get("x-nifra-isr-revalidate")).toBeNull()
   await direct.arrayBuffer()
+})
+
+test("owner cache excludes nonce-bearing hash-CSP documents but keeps nonce-free ones cacheable", async () => {
+  for (const mode of ["nonce-free", "deferred", "adapter"] as const) {
+    let nonce = 0
+    const counts: Counts = { page: 0, component: 0, render: 0 }
+    const csp = createCspPolicy({
+      header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}`,
+      generate: () => `noncevalue${++nonce}`,
+    })
+    const { app } = ownerApp(
+      `build_hash_csp_${mode}`,
+      `deploy_hash_csp_${mode}`,
+      counts,
+      false,
+      undefined,
+      undefined,
+      csp,
+      mode === "deferred",
+      mode === "adapter",
+    )
+    const isr = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+    const request = () => new Request("https://fixture.test/owner")
+    const first = await isr(request())
+    const firstBody = await first.text()
+
+    if (mode === "nonce-free") {
+      expect(first.headers.get("x-nifra-isr")).toBe("miss")
+      expect(firstBody).not.toContain("nonce=")
+      expect(first.headers.get("content-security-policy")).not.toContain("'nonce-")
+      const warm = await isr(request())
+      expect(warm.headers.get("x-nifra-isr")).toBe("hit")
+      await warm.arrayBuffer()
+      expect(counts).toEqual({ page: 1, component: 1, render: 1 })
+      continue
+    }
+
+    const firstNonce = firstBody.match(/nonce="([^"]+)"/)?.[1]
+    expect(firstNonce).toBeTruthy()
+    expect(first.headers.get("content-security-policy")).toContain(`'nonce-${firstNonce}'`)
+    expect(first.headers.get("x-nifra-owner-cacheable")).toBeNull()
+    expect(first.headers.get("x-nifra-owner-nonce-used")).toBeNull()
+    expect(first.headers.get("x-nifra-isr")).toBeNull()
+    expect(first.headers.get("cache-control")).toBe("private, no-store")
+
+    const second = await isr(request())
+    const secondBody = await second.text()
+    const secondNonce = secondBody.match(/nonce="([^"]+)"/)?.[1]
+    expect(secondNonce).toBeTruthy()
+    expect(secondNonce).not.toBe(firstNonce)
+    expect(second.headers.get("content-security-policy")).toContain(`'nonce-${secondNonce}'`)
+    expect(second.headers.get("x-nifra-owner-cacheable")).toBeNull()
+    expect(second.headers.get("x-nifra-owner-nonce-used")).toBeNull()
+    expect(second.headers.get("x-nifra-isr")).toBeNull()
+    expect(counts).toEqual({ page: 2, component: 2, render: 2 })
+  }
 })
 
 test("owner cache excludes documents with a configured nonce resolver", async () => {
