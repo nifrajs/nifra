@@ -273,6 +273,30 @@ test("a late abort notification after stream completion is ignored", async () =>
   expect(tasks.counts).toEqual({ active: 0, queued: 0 })
 })
 
+test("an abort during stream retention setup cancels before the stream is returned", async () => {
+  const tasks = new BoundedComponentTasks(1, 0)
+  const controller = new AbortController()
+  let cancelled = false
+  const source = new ReadableStream<Uint8Array>({
+    cancel() {
+      cancelled = true
+    },
+  })
+  const getReader = source.getReader.bind(source)
+  Object.defineProperty(source, "getReader", {
+    configurable: true,
+    value: () => {
+      controller.abort("client disconnected")
+      return getReader()
+    },
+  })
+
+  const stream = await tasks.runStream(controller.signal, () => source)
+  await expect(stream.getReader().read()).rejects.toMatchObject({ code: "component_cancelled" })
+  expect(cancelled).toBe(true)
+  expect(tasks.counts).toEqual({ active: 0, queued: 0 })
+})
+
 test("reader cleanup failure does not leak stream admission", async () => {
   const tasks = new BoundedComponentTasks(1, 0)
   const source = new ReadableStream<Uint8Array>({

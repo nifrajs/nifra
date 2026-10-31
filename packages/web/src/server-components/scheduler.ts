@@ -132,7 +132,7 @@ export class BoundedComponentTasks {
         release()
         throw componentAbort(signal)
       }
-      let rejectAbort = (_reason: unknown): void => {}
+      let rejectAbort!: (reason: unknown) => void
       const aborted = new Promise<never>((_resolve, reject) => {
         rejectAbort = reject
       })
