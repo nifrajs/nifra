@@ -12,6 +12,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs"
+import { arch, availableParallelism, cpus, platform } from "node:os"
 import { dirname, join } from "node:path"
 import type {
   HttpMemoryCapture,
@@ -42,13 +43,23 @@ export interface ProofStat {
   readonly label: string
 }
 
-/** When and with which toolchain a slice was measured; `deno` is absent for a suite that skips it. */
+export interface CaptureMachine {
+  readonly runner: string
+  readonly cpu: string
+  readonly vcpus: number
+}
+
+/** When, where, and with which toolchain a slice was measured. */
 export interface CapturedMeta {
   readonly date: string
   readonly bun: string
   readonly node: string
   readonly deno?: string
   readonly oha: string
+  readonly source?: string
+  readonly sourceUrl?: string
+  readonly machine?: CaptureMachine
+  readonly machines?: Partial<Record<"bun" | "node" | "deno", CaptureMachine>>
 }
 
 export interface HttpWorkloadRow {
@@ -290,13 +301,31 @@ export function capturedMeta(versions: {
   readonly oha: string
 }): CapturedMeta {
   const bare = (version: string): string => version.trim().replace(/^v/, "")
+  const runId = process.env.GITHUB_RUN_ID
+  const repository = process.env.GITHUB_REPOSITORY
+  const githubRun = process.env.GITHUB_ACTIONS === "true" && runId !== undefined
+  const runner = githubRun
+    ? `GitHub Actions (${process.env.RUNNER_OS ?? platform()} ${process.env.RUNNER_ARCH ?? arch()})`
+    : "Local"
+  const cpu = cpus()[0]?.model.trim() || `${platform()} ${arch()}`
+  const sourceUrl =
+    githubRun && repository !== undefined
+      ? `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repository}/actions/runs/${runId}`
+      : undefined
   const captured: CapturedMeta = {
     date: new Date().toISOString().slice(0, 10),
     bun: bare(versions.bun),
     node: bare(versions.node),
     oha: bare(versions.oha),
+    source:
+      githubRun && process.env.GITHUB_WORKFLOW !== undefined
+        ? `GitHub Actions: ${process.env.GITHUB_WORKFLOW} run #${runId}`
+        : "Local benchmark capture",
+    machine: { runner, cpu, vcpus: availableParallelism() },
   }
-  return versions.deno === undefined ? captured : { ...captured, deno: bare(versions.deno) }
+  const withDeno =
+    versions.deno === undefined ? captured : { ...captured, deno: bare(versions.deno) }
+  return sourceUrl === undefined ? withDeno : { ...withDeno, sourceUrl }
 }
 
 /** The installed `oha`'s version; a published slice names it, so a missing `oha` throws. */
@@ -368,9 +397,9 @@ export function httpWorkloadsFromResults(
     title: string
     frameworks: readonly string[]
   }> = [
-    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "bun", title: "Bun", frameworks: ["nifra", "fastify", "elysia", "hono"] },
     { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
-    { key: "deno", title: "Deno", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "deno", title: "Deno", frameworks: ["nifra", "fastify", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",
@@ -433,9 +462,9 @@ export function httpRealworldFromResults(
     title: string
     frameworks: readonly string[]
   }> = [
-    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "bun", title: "Bun", frameworks: ["nifra", "fastify", "elysia", "hono"] },
     { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
-    { key: "deno", title: "Deno", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "deno", title: "Deno", frameworks: ["nifra", "fastify", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",

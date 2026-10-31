@@ -207,8 +207,8 @@ export default function Comparison() {
               httpWorkloadRps("Deno", "Elysia", "postUsers"),
             ),
           )} on the validated <code>POST</code>. In the realistic shape (security headers + CORS +
-          bearer auth + cookies + validated query/body + a ~2.4&nbsp;KB JSON response, measured with{" "}
-          <code>oha</code>) Nifra runs at <b>{formatPercent(
+          bearer auth + cookies + validated query/body + a ~2.4&nbsp;KB JSON response, measured on{" "}
+          <b>Bun</b> with <code>oha</code>) Nifra runs at <b>{formatPercent(
             percentOf(
               httpRealworldRps("Bun", "Nifra", "get"),
               httpRealworldRps("Bun", "Elysia", "get"),

@@ -2,12 +2,15 @@ import { href, rawHref } from "@nifrajs/web-react/router"
 import type { CSSProperties } from "react"
 import {
   BUNDLE,
+  type CaptureMachine,
   formatRps,
   HERO_SSR,
+  HTTP_WORKLOADS_CAPTURED,
   httpWorkloadRow,
   httpWorkloadRps,
   MULTIPLIERS,
   PROOF,
+  SSR_CAPTURED,
 } from "../shared/data/benchmarks"
 import { CodeBlock } from "../shared/highlight"
 import { pageMeta, softwareApplication } from "../shared/meta"
@@ -253,6 +256,13 @@ const SSR_BARS = rankBars(
     you: row.you === true,
   })),
 )
+const HOME_SSR_MACHINE = SSR_CAPTURED.machines?.node ?? SSR_CAPTURED.machine
+
+function machineLabel(machine: CaptureMachine | undefined): string {
+  return machine === undefined
+    ? "machine not recorded"
+    : `${machine.runner}, ${machine.cpu} (${machine.vcpus} vCPUs)`
+}
 
 const NODE_API_FRAMEWORKS = ["Nifra", "Fastify", "Elysia", "Express", "Hono"] as const
 const NODE_API_BARS = rankBars(
@@ -870,8 +880,23 @@ export default function Home() {
           />
         </div>
         <p className="home-bars-note">
-          Node is shown for the API chart. The Bun and Deno tables, including the rows where Nifra
-          is not first, are on the <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
+          SSR source:{" "}
+          {SSR_CAPTURED.sourceUrl === undefined ? (
+            (SSR_CAPTURED.source ?? "SSR benchmark capture")
+          ) : (
+            <a href={SSR_CAPTURED.sourceUrl}>{SSR_CAPTURED.source ?? "SSR accuracy CI run"}</a>
+          )}
+          . The SSR chart used {machineLabel(HOME_SSR_MACHINE)}. HTTP source:{" "}
+          {HTTP_WORKLOADS_CAPTURED.sourceUrl === undefined ? (
+            (HTTP_WORKLOADS_CAPTURED.source ?? "HTTP benchmark capture")
+          ) : (
+            <a href={HTTP_WORKLOADS_CAPTURED.sourceUrl}>
+              {HTTP_WORKLOADS_CAPTURED.source ?? "HTTP accuracy CI run"}
+            </a>
+          )}
+          . The Node API chart used {machineLabel(HTTP_WORKLOADS_CAPTURED.machine)}. Node is shown
+          for the API chart. The Bun and Deno tables, including the rows where Nifra is not first,
+          are on the <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
         </p>
         <ul className="home-vs" aria-label="Nifra compared with other frameworks">
           {VERSUS.map((item) => (
