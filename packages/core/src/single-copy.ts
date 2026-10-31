@@ -291,11 +291,22 @@ function isSingleCopyRegistrar(entry: string, cwd: string): boolean {
   } catch {
     return false
   }
-  return (
-    /^\s*import\s+\{\s*registerSingleCopy\s*\}\s+from\s+["']\.\/single-copy["']\s*;?\s*$/m.test(
-      source,
-    ) && /^\s*registerSingleCopy\(\)\s*;?\s*$/m.test(source)
-  )
+  const lines = source
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .map((line) => line.trim())
+  const importsRegistrar = lines.some((line) => {
+    const statement = line.endsWith(";") ? line.slice(0, -1) : line
+    return (
+      statement === 'import { registerSingleCopy } from "./single-copy"' ||
+      statement === "import { registerSingleCopy } from './single-copy'"
+    )
+  })
+  const callsRegistrar = lines.some((line) => {
+    const statement = line.endsWith(";") ? line.slice(0, -1) : line
+    return statement === "registerSingleCopy()"
+  })
+  return importsRegistrar && callsRegistrar
 }
 
 /**

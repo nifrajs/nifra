@@ -172,7 +172,7 @@ test("readSingleCopyRegistration recognizes a checkout-local registrar and rejec
     await mkdir(dirname(registrar), { recursive: true })
     await writeFile(
       registrar,
-      'import { registerSingleCopy } from "./single-copy"\nregisterSingleCopy()\n',
+      'import { registerSingleCopy } from "./single-copy"\r\nregisterSingleCopy()\r\n',
     )
     expect(readSingleCopyRegistration(app)).toMatchObject({ run: true, test: true })
 
