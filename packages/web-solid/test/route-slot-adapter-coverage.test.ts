@@ -5,7 +5,7 @@ import { GlobalWindow } from "happy-dom"
 declare module "@nifrajs/web" {
   interface RouteTable {
     "/dashboard": { readonly slots: { readonly inspector: readonly ["/users/:id"] } }
-    "/users/:id": object
+    "/users/:id": { readonly params: { readonly id: string } }
   }
 }
 
@@ -57,7 +57,9 @@ test("the Solid binding subscribes and synchronizes through the shared route-slo
       name: "inspector" satisfies RouteSlotName,
       error: (code) => `Error: ${code}`,
     })
-    expect(typeof result === "function" ? result() : result).toBe("Error: malformed")
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: Solid exposes reactive accessors as JSX children at runtime, but its JSX.Element type excludes accessors.
+    const read = result as unknown as () => unknown
+    expect(read()).toBe("Error: malformed")
     expect(cleanups).toHaveLength(1)
   } finally {
     for (const cleanup of cleanups) cleanup()

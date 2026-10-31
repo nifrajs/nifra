@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
+import { href } from "@nifrajs/web"
 import { GlobalWindow } from "happy-dom"
 import { act, createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -69,7 +70,7 @@ test("React binding subscribes, loads authorized route data, and renders the tar
         type: "button",
         id: "slot-navigation",
         onClick: () => {
-          slot.open("/users/7")
+          slot.open(href({ to: "/users/:id", params: { id: "7" } }))
           slot.close()
         },
       }),

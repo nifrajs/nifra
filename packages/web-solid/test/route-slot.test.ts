@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { type RenderProps, type RouteSlotName, setBrowserNavigate } from "@nifrajs/web"
+import { href, type RenderProps, type RouteSlotName, setBrowserNavigate } from "@nifrajs/web"
 import { createComponent, type JSX } from "solid-js"
 import { Dynamic, renderToString } from "solid-js/web"
 import { RouteSlot, type RouteSlotController, useRouteSlot } from "../src/route-slot.tsx"
@@ -8,7 +8,7 @@ import { RenderPropsContext } from "../src/router.ts"
 declare module "@nifrajs/web" {
   interface RouteTable {
     "/dashboard": { readonly slots: { readonly inspector: readonly ["/users/:id"] } }
-    "/users/:id": object
+    "/users/:id": { readonly params: { readonly id: string } }
   }
 }
 
@@ -78,7 +78,7 @@ test("useRouteSlot open and close preserve the page and sibling query state", ()
       },
     }),
   )
-  controller?.open("/users/8")
+  controller?.open(href({ to: "/users/:id", params: { id: "8" } }))
   controller?.close()
   setBrowserNavigate(undefined)
 

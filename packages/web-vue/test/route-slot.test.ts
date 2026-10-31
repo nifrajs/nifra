@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { type RenderProps, type RouteSlotName, setBrowserNavigate } from "@nifrajs/web"
+import { href, type RenderProps, type RouteSlotName, setBrowserNavigate } from "@nifrajs/web"
 import { GlobalWindow } from "happy-dom"
 import { createSSRApp, h } from "vue"
 import { renderToString } from "vue/server-renderer"
@@ -9,7 +9,7 @@ import { RenderPropsProvider } from "../src/router.ts"
 declare module "@nifrajs/web" {
   interface RouteTable {
     "/dashboard": { readonly slots: { readonly inspector: readonly ["/users/:id"] } }
-    "/users/:id": object
+    "/users/:id": { readonly params: { readonly id: string } }
   }
 }
 
@@ -53,7 +53,9 @@ test("RouteSlot renders a stable error and its custom error slot for malformed s
               h(
                 RouteSlot,
                 { name: "inspector" satisfies RouteSlotName },
-                custom ? { error: ({ code }) => h("strong", null, code) } : {},
+                custom
+                  ? { error: ({ code }: { readonly code: string }) => h("strong", null, code) }
+                  : {},
               ),
           },
         ),
@@ -92,7 +94,7 @@ test("Vue binding subscribes to the shared slot store and navigates only its own
     })
     await renderToString(app)
     expect(controller?.target.value).toBe("/users/7")
-    controller?.open("/users/9")
+    controller?.open(href({ to: "/users/:id", params: { id: "9" } }))
     controller?.close()
     expect(navigations).toEqual([
       "/dashboard?tab=vue&slot.inspector=%2Fusers%2F9",

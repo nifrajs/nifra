@@ -127,7 +127,7 @@ test("slot edits preserve unrelated query bytes and no-op writes do not rewrite"
   expect(hasRouteSlotsSearch("q=slot.side%3D%2Fusers%2F1")).toBe(false)
   expect(stripRouteSlots("//evil.example/x")).toBe("//evil.example/x")
   expect(stripRouteSlots("/\\evil.example/y")).toBe("/\\evil.example/y")
-  const encodedName = ROUTE_SLOT_QUERY_PREFIX.replace(".", "%2e") + "side"
+  const encodedName = ROUTE_SLOT_QUERY_PREFIX.replaceAll(".", "%2e") + "side"
   expect(stripRouteSlots(`/reports?keep=%2f&${encodedName}=x&next=2#panel`)).toBe(
     "/reports?keep=%2f&next=2#panel",
   )

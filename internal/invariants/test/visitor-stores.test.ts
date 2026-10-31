@@ -1471,8 +1471,6 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "seeded@createQueryClient": { scenario: "query-seed" },
   },
   "packages/web/src/router.ts": {
-    "<expr>@routeSlotsFor":
-      "reads static route-slot declarations and route patterns, not visitor data",
     PRERENDERED_SET_CACHE: "prerendered paths, weakly keyed by the build's list",
     "cache@createClientRouter": { scenario: "router-revisit" },
     "fListeners@createFetcher": LISTENERS,
@@ -1482,6 +1480,13 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "interceptMatchers@createClientRouter": MATCHING,
     "listeners@createClientRouter": LISTENERS,
     "prefetched@createClientRouter": { scenario: "router-prefetch" },
+  },
+  "packages/web/src/internal/route-slot-runtime.ts": {
+    routeSlotStores: {
+      file: "packages/web/test/route-slot-runtime.test.ts",
+      title: "identity change clears prior content and reloads the authorized target",
+    },
+    "#listeners@RouteSlotStore": LISTENERS,
   },
   "packages/web/src/search.ts": {
     "kept@parse": ONE_CALL,
@@ -1552,6 +1557,8 @@ test("every store a page keeps past one call is enrolled, as visitor data with i
 
 /** Modules holding visitor data that no surface sweeps yet, each with what proves it instead. */
 const UNSWEPT: Readonly<Record<string, string>> = {
+  "packages/web/src/internal/route-slot-runtime.ts":
+    "route-slot stores need a live route runtime; route-slot-runtime.test.ts proves identityChanged aborts prior work and clears prior content",
   "packages/web/src/keep-alive.ts":
     "needs a DOM and the History API to keep pages; the tests KEEP_ALIVE_DROPS names drop its pages by hand",
   "packages/web/src/server-components/client.ts":

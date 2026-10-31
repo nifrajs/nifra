@@ -8,7 +8,7 @@ import { RenderPropsContext } from "../src/router.ts"
 declare module "@nifrajs/web" {
   interface RouteTable {
     "/dashboard": { readonly slots: { readonly inspector: readonly ["/users/:id"] } }
-    "/users/:id": object
+    "/users/:id": { readonly params: { readonly id: string } }
   }
 }
 

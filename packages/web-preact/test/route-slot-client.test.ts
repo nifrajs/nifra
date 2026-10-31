@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
+import { href } from "@nifrajs/web"
 import { GlobalWindow } from "happy-dom"
 import { h, render } from "preact"
 import { act } from "preact/test-utils"
@@ -9,7 +10,7 @@ import { RenderPropsContext } from "../src/router.ts"
 declare module "@nifrajs/web" {
   interface RouteTable {
     "/dashboard": { readonly slots: { readonly inspector: readonly ["/users/:id"] } }
-    "/users/:id": object
+    "/users/:id": { readonly params: { readonly id: string } }
   }
 }
 
@@ -52,7 +53,7 @@ test("Preact binding subscribes, loads the target chain, and opens and closes UR
         {
           id: "slot-navigation",
           onClick: () => {
-            slot.open("/users/7")
+            slot.open(href({ to: "/users/:id", params: { id: "7" } }))
             slot.close()
           },
         },
@@ -64,7 +65,11 @@ test("Preact binding subscribes, loads the target chain, and opens and closes UR
   try {
     await act(async () => {
       render(
-        h(RenderPropsContext.Provider, { value: { data: null, path, pending: false } }, h(Probe)),
+        h(
+          RenderPropsContext.Provider,
+          { value: { data: null, path, pending: false } },
+          h(Probe, null),
+        ),
         container,
       )
     })

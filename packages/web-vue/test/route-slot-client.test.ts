@@ -1,11 +1,12 @@
 import { afterAll, expect, test } from "bun:test"
+import { href } from "@nifrajs/web"
 import { GlobalWindow } from "happy-dom"
 import { installRouteSlotClientHarness } from "../../web/test/route-slot-client-harness.ts"
 
 declare module "@nifrajs/web" {
   interface RouteTable {
     "/dashboard": { readonly slots: { readonly inspector: readonly ["/users/:id"] } }
-    "/users/:id": object
+    "/users/:id": { readonly params: { readonly id: string } }
   }
 }
 
@@ -68,7 +69,7 @@ if (process.env.NIFRA_ROUTE_SLOT_CLIENT_CHILD === "1") {
               {
                 id: "slot-navigation",
                 onClick: () => {
-                  slot.open("/users/7")
+                  slot.open(href({ to: "/users/:id", params: { id: "7" } }))
                   slot.close()
                 },
               },

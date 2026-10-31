@@ -1,10 +1,10 @@
 import { expect, mock, test } from "bun:test"
-import { type RouteSlotName, setBrowserNavigate } from "@nifrajs/web"
+import { href, type RouteSlotName, setBrowserNavigate } from "@nifrajs/web"
 
 declare module "@nifrajs/web" {
   interface RouteTable {
     "/dashboard": { readonly slots: { readonly inspector: readonly ["/users/:id"] } }
-    "/users/:id": object
+    "/users/:id": { readonly params: { readonly id: string } }
   }
 }
 
@@ -23,7 +23,7 @@ test("useRouteSlot reads the scoped URL and edits only its own slot", async () =
     expect(slot.target).toBeUndefined()
     path = "/dashboard?tab=svelte&slot.inspector=%2Fusers%2F7"
     expect(slot.target).toBe("/users/7")
-    slot.open("/users/8")
+    slot.open(href({ to: "/users/:id", params: { id: "8" } }))
     slot.close()
     expect(navigations).toEqual([
       "/dashboard?tab=svelte&slot.inspector=%2Fusers%2F8",
