@@ -306,6 +306,50 @@ describe("withISR", () => {
     expect(gets).toEqual(["http://x/q"])
   })
 
+  test("an anonymous refusal does not suppress a later cache lookup", async () => {
+    for (const status of [401, 403] as const) {
+      const store = new MemoryCacheStore()
+      const gets: string[] = []
+      const spy: typeof store = Object.assign(Object.create(store), {
+        get: (key: string) => {
+          gets.push(key)
+          return store.get(key)
+        },
+      })
+      let refused = true
+      const { app } = trackApp(() =>
+        refused
+          ? new Response("refused", {
+              status,
+              headers: { "cache-control": "private, no-store", "content-type": "text/html" },
+            })
+          : html("PUBLIC"),
+      )
+      const handler = withISR(app, {
+        store: spy,
+        storeSecret: STORE_SECRET,
+        revalidate: 60,
+        now: () => 0,
+      })
+      const url = "http://x/private-transition"
+
+      const denied = await handler(new Request(url))
+      expect(denied.status).toBe(status)
+      await denied.arrayBuffer()
+      refused = false
+
+      const recovered = await handler(new Request(url))
+      expect(recovered.headers.get("x-nifra-isr")).toBe("miss")
+      expect(gets).toEqual([url, url])
+      await recovered.arrayBuffer()
+
+      const warm = await handler(new Request(url))
+      expect(warm.headers.get("x-nifra-isr")).toBe("hit")
+      expect(gets).toEqual([url, url, url])
+      await warm.arrayBuffer()
+    }
+  })
+
   test("revalidate 0 keeps no no-store memo", async () => {
     const store = new MemoryCacheStore()
     let gets = 0

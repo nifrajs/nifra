@@ -38,6 +38,7 @@ import {
   ISR_REVALIDATE_HEADER,
   ISR_REVALIDATE_TAGS_HEADER,
   OWNER_CACHEABLE_HEADER,
+  OWNER_NONCE_USED_HEADER,
   SERVER_COMPONENT_CACHE_PARTITION,
 } from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
@@ -601,10 +602,13 @@ export function createWebApp<Env = unknown>(
       const requestHeaderDependent =
         headers.get(OWNER_REQUEST_HEADER_DEPENDENCY_HEADER) === "1" || requestHeadersReadByHooks
       headers.delete(OWNER_REQUEST_HEADER_DEPENDENCY_HEADER)
+      const ownerDocumentUsedNonce = headers.get(OWNER_NONCE_USED_HEADER) === "1"
+      headers.delete(OWNER_NONCE_USED_HEADER)
       const cacheableOwnerDocument =
         cacheableOwner &&
         cacheChannel.enabled &&
         options.nonce === undefined &&
+        !ownerDocumentUsedNonce &&
         request.method === "GET" &&
         !request.headers.has("x-nifra-component") &&
         !request.headers.has("x-nifra-data") &&
@@ -970,6 +974,21 @@ export function createWebApp<Env = unknown>(
   })
   // Core's dev-time hook audit reads this: an order-scoped hook added from here on skips every page.
   Object.defineProperty(app, Symbol.for("nifra.web.pagesDeclared"), { value: true })
+
+  // The nonce marker is an internal handoff to the owner-cache check. Strip it after that check so
+  // it never becomes part of a public response, including on apps without server components.
+  if (options.csp !== undefined || options.nonce !== undefined) {
+    app.onResponse((response) => {
+      if (!response.headers.has(OWNER_NONCE_USED_HEADER)) return response
+      const headers = new Headers(response.headers)
+      headers.delete(OWNER_NONCE_USED_HEADER)
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      })
+    })
+  }
 
   return app
 }
