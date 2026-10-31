@@ -32,16 +32,19 @@ const preparePage = async (browser: Parameters<typeof openPage>[0]) => {
     document.cookie = "fixture-subject=alice; Path=/; SameSite=Lax"
     Reflect.set(window, "__nifraRouteSlotRequests", [])
     const originalFetch = window.fetch.bind(window)
-    const trackedFetch: typeof fetch = async (input, init) => {
-      const requestHeaders = new Headers(
-        init?.headers ?? (input instanceof Request ? input.headers : undefined),
-      )
-      if (requestHeaders.has("x-nifra-data")) {
-        const requests = Reflect.get(window, "__nifraRouteSlotRequests")
-        if (Array.isArray(requests)) requests.push(String(input))
-      }
-      return originalFetch(input, init)
-    }
+    const trackedFetch: typeof fetch = Object.assign(
+      async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
+        const requestHeaders = new Headers(
+          init?.headers ?? (input instanceof Request ? input.headers : undefined),
+        )
+        if (requestHeaders.has("x-nifra-data")) {
+          const requests = Reflect.get(window, "__nifraRouteSlotRequests")
+          if (Array.isArray(requests)) requests.push(String(input))
+        }
+        return originalFetch(input, init)
+      },
+      { preconnect: originalFetch.preconnect },
+    )
     window.fetch = trackedFetch
   })
   return { page, problems }
@@ -64,7 +67,7 @@ for (const engine of engines) {
     let browser: Awaited<ReturnType<typeof engine.launch>> | undefined
 
     beforeAll(async () => {
-      browser = await engine.launch({ headless: true })
+      browser = await engine.launch()
     }, 60_000)
 
     afterAll(async () => browser?.close(), 30_000)

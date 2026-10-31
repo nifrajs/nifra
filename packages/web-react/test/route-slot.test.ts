@@ -7,8 +7,15 @@ import { RouterContext } from "../src/router.ts"
 
 declare module "@nifrajs/web" {
   interface RouteTable {
-    "/dashboard": { readonly slots: { readonly inspector: readonly ["/users/:id"] } }
-    "/users/:id": object
+    "/dashboard": {
+      readonly params: Record<string, never>
+      readonly slots: {
+        readonly inspector: readonly ["/users/:id"]
+        readonly activity: readonly ["/activity"]
+      }
+    }
+    "/users/:id": { readonly params: { readonly id: string } }
+    "/activity": { readonly params: Record<string, never> }
   }
 }
 
