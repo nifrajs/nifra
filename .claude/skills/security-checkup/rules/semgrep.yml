@@ -30,6 +30,40 @@ rules:
       - metavariable-regex:
           metavariable: $SECRET
           regex: (?i).*(token|secret|apikey|api_key|password|signature|hmac).*
+      # A comparison against a literal (`token === ""`, `expected === "none"`, `sig === null`)
+      # decides a constant against a constant - there is no per-byte oracle to time, so it is not
+      # the vulnerability this rule guards. Only variable-vs-variable secret comparisons fire.
+      - pattern-not: '$A === "$B"'
+      - pattern-not: '"$B" === $A'
+      - pattern-not: '`$B` === $A'
+      - pattern-not: '$A === `$B`'
+      - pattern-not: '$A === undefined'
+      - pattern-not: '$A === null'
+      - pattern-not: '$A === true'
+      - pattern-not: '$A === false'
+      # `name.length === 0`-style secret-list guards replace the value, they do not leak bytes.
+      - pattern-not: '$A === 0'
+      - pattern-not: '$A === ts.SyntaxKind.$B'
+      - pattern-not: 'ts.SyntaxKind.$B === $A'
+    paths:
+      # Lexers, scanners, and pattern matchers whose variables say "token" but hold TYPE-SCRIPT
+      # lexer items, SQL tokens, route-pattern tokens, or their own scanner plumbing - not secret
+      # material. Enumerated per file (not blanket) so a new secret-comparing consumer in the same
+      # directories still fires.
+      exclude:
+        - '**/core/src/router/overlap.ts'          # route-pattern overlap math: segment tokens
+        - '**/cli/src/check-scan.ts'               # the secret scanner's own AST plumbing
+        - '**/cli/src/output-schemas.ts'           # stringified schema-token comparisons
+        - '**/cli/src/rules/**'                    # rule definitions (they ARE scanners)
+        - '**/mcp-db/src/internal/pg-lexer.ts'     # SQL lexer eat-helpers
+        - '**/mcp-db/src/internal/shared.ts'
+        - '**/web/src/internal/package-entries.ts' # env/FS entry tokenizer
+        - '**/web/src/internal/private-env.ts'     # env template tokenizer
+        - '**/web/src/internal/secret-scan.ts'     # the secret scanner itself
+        - '**/web/src/router.ts'                   # in-flight navigation dedupe tokens
+      # Repo-dev tooling (AST mutation, clone checks, runtime differentials) is not request code.
+        - 'scripts/'
+        - '**/scripts/'
 
   - id: nifra-unbounded-body-read
     languages: [typescript, javascript]

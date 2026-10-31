@@ -2,11 +2,17 @@
 useDefault = true
 
 # Exact, non-secret fixtures used to exercise signing and server-only leak prevention. Restrict the
-# allowlist to test sources so the same token-shaped values still fail closed in product code.
+# allowlist to test sources and the repo's dev-tool fixtures, so the same token-shaped values still
+# fail closed in product code.
 [[allowlists]]
-description = "Documented cryptographic test fixtures"
+description = "Documented cryptographic, protocol, and redaction-test fixtures"
 regexTarget = "secret"
-paths = ['''(?:^|/)packages/(?:auth|cli|core|image|middleware|uploads|web)/test/''', '''^(?:auth|cli|core|image|middleware|uploads|web)/test/''']
+paths = [
+  '''(?:^|/)packages/(?:auth|authjs|cli|core|env|image|middleware|node|pi|uploads|web)/(?:test|test-node)/''',
+  '''^(?:auth|authjs|cli|core|env|image|middleware|node|pi|uploads|web)/(?:test|test-node)/''',
+  '''(?:^|/)scripts/runtime-differential/''',
+  '''^scripts/runtime-differential/''',
+]
 regexes = [
   '''^0123456789abcdef0123456789abcdef$''',
   '''^integration-secret-at-least-32by$''',
@@ -14,4 +20,10 @@ regexes = [
   '''^ghsecret_padded_to_at_least_32byt$''',
   '''^(?:s3cret-key_padded_to_at_least_32|s3cret_padded_to_at_least_32_byte)$''',
   '''^sk-live-1234567890$''',
+  # RFC 6455 appendix A1 example WebSocket key - a documented constant, never a credential.
+  '''^dGhlIHNhbXBsZSBub25jZQ==$''',
+  # Deliberately-invalid placeholders: used to assert that failure messages never echo the value.
+  '''^sk_live_(?:abcdefghijklmnop|supersecret_value)$''',
+  '''^sk-proj-abcdefghijklmnop1234\.$''',
+  '''^test-secret-32-bytes-long-abcdef$''',
 ]
