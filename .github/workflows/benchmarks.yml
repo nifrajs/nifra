@@ -7,11 +7,9 @@ name: Benchmarks
 # server and oha pinned to separate physical cores. Each job keeps sampling until every
 # row's 95% interval is narrow or its run budget is spent, and lists what stayed noisy.
 #
-# Nothing here gates a merge. The nightly reports exist to measure this runner's noise floor first;
-# a regression gate gets its tolerance from them, never from a guess.
+# The nightly accuracy report lives in benchmark-accuracy.yml. This workflow remains the report-only
+# path for manual runs, reusable calls and bench-labeled pull requests.
 on:
-  schedule:
-    - cron: "41 2 * * *"
   workflow_dispatch:
     inputs:
       min_runs:

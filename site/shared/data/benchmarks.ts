@@ -25,13 +25,23 @@ export interface Multiplier {
   readonly rivalVersion: string
 }
 
-/** When and with which toolchain a slice was measured; `deno` is absent for a suite that skips it. */
+export interface CaptureMachine {
+  readonly runner: string
+  readonly cpu: string
+  readonly vcpus: number
+}
+
+/** When, where, and with which toolchain a slice was measured. */
 export interface CapturedMeta {
   readonly date: string
   readonly bun: string
   readonly node: string
   readonly deno?: string
   readonly oha: string
+  readonly source?: string
+  readonly sourceUrl?: string
+  readonly machine?: CaptureMachine
+  readonly machines?: Partial<Record<"bun" | "node" | "deno", CaptureMachine>>
 }
 
 /** One measured HTTP workload row, shared by the benchmarks page and comparison articles. */

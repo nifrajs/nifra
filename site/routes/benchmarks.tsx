@@ -1,5 +1,6 @@
 import {
   type CapturedMeta,
+  type CaptureMachine,
   HTTP_MEMORY,
   HTTP_REALWORLD,
   HTTP_REALWORLD_CAPTURED,
@@ -31,12 +32,31 @@ const fmtJs = (row: SsrTableRow): string => (row.jsGzKb > 0 ? `${row.jsGzKb} KB`
 function Captured({ meta }: { meta: CapturedMeta }) {
   const runtimes = [`Bun ${meta.bun}`, `Node ${meta.node}`]
   if (meta.deno !== undefined) runtimes.push(`Deno ${meta.deno}`)
+  const machines = [
+    ...(meta.machine === undefined ? [] : [`All runtimes: ${describeMachine(meta.machine)}`]),
+    ...(["node", "bun", "deno"] as const).flatMap((runtime) => {
+      const machine = meta.machines?.[runtime]
+      return machine === undefined
+        ? []
+        : [`${runtime[0]?.toUpperCase()}${runtime.slice(1)}: ${describeMachine(machine)}`]
+    }),
+  ]
+  const source =
+    meta.sourceUrl === undefined ? (
+      (meta.source ?? "Source not recorded")
+    ) : (
+      <a href={meta.sourceUrl}>{meta.source ?? "Benchmark run"}</a>
+    )
   return (
     <p className="note">
-      Captured {meta.date} on macOS arm64 with {runtimes.join(", ")} and <code>oha</code> {meta.oha}{" "}
-      at 50 connections.
+      Captured {meta.date}; source: {source}. Machine: {machines.join("; ") || "not recorded"}.
+      Toolchain: {runtimes.join(", ")} and <code>oha</code> {meta.oha} at 50 connections.
     </p>
   )
+}
+
+function describeMachine(machine: CaptureMachine): string {
+  return `${machine.runner}, ${machine.cpu} (${machine.vcpus} vCPUs)`
 }
 
 function Named({ name, version }: { name: string; version: string }) {
@@ -184,12 +204,12 @@ export default function Benchmarks() {
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
       <p className="lead">
-        Each section names the date and toolchain it was captured with. Every number is the median
-        of interleaved rounds - each round measures every framework in turn, so drift on the machine
-        lands on all of them alike - and every row names the version it measured. Compare ratios
-        inside each runtime before absolute request rates, because laptop thermals and warmup move
-        absolute throughput. Reproduce with <code>bun run bench:ssr</code> and{" "}
-        <code>bun run bench:http</code>.
+        Each section links its source run or identifies a local capture, names the CPU used, and
+        lists the toolchain. Every number is the median of interleaved rounds - each round measures
+        every framework in turn, so drift on the machine lands on all of them alike - and every row
+        names the version it measured. Compare ratios inside each runtime before absolute request
+        rates, because hardware and warmup move absolute throughput. Reproduce with{" "}
+        <code>bun run bench:ssr</code> and <code>bun run bench:http</code>.
       </p>
 
       {/* ---- Frontend: full-stack SSR vs the meta-frameworks ---- */}
@@ -262,8 +282,9 @@ export default function Benchmarks() {
         row (the headline multipliers above do exactly that). No Preact meta-framework runs on Node
         (Fresh is Deno-only), so Preact&apos;s table compares with{" "}
         <code>preact-render-to-string</code> in a bare Node server: the renderer&apos;s ceiling,
-        with no router, loader or schema. A client-JS of <code>n/a</code> means the run couldn't
-        account that framework's payload from the SSR HTML.
+        with no router, loader or schema. Bun and Node SSR run in separate hosted jobs, whose CPU
+        models can differ; treat their raw requests/sec as separate measurements. A client-JS of{" "}
+        <code>n/a</code> means the run couldn't account that framework's payload from the SSR HTML.
       </div>
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
@@ -343,6 +364,11 @@ export default function Benchmarks() {
             <code>node:http</code> compatibility on Bun and Deno. The site updater captures runtimes
             sequentially on one host; each table names its CPU, platform, and capture date.
           </p>
+          <p className="note">
+            These are the previous local captures, not results from the accuracy CI run. That run
+            produced no memory artifact; the tables below retain their original capture date and
+            machine for each runtime. See the <a href={SSR_CAPTURED.sourceUrl}>accuracy CI run</a>.
+          </p>
           <h3>Resident memory after POST</h3>
           <p className="note">
             Grouped by framework on one shared scale. Each bar shows resident memory after the same
@@ -401,7 +427,7 @@ export default function Benchmarks() {
                 {capture.runtime.slice(1)} {capture.runtimeVersion}
               </h3>
               <p className="note">
-                Captured {capture.date} on {capture.cpu}, {capture.platform}. Median of{" "}
+                Captured locally on {capture.date} on {capture.cpu}, {capture.platform}. Median of{" "}
                 {capture.rounds} fresh processes per framework, with{" "}
                 {capture.requestsPerPhase.toLocaleString("en-US")} GETs and POSTs per process at{" "}
                 {capture.connections} connections. Lower is better.
