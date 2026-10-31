@@ -19,7 +19,7 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ComponentChildren` · from `@nifrajs/web-preact/ppr`
 - **HydrationBoundary** _(function)_ - `HydrationBoundary: (props: { readonly state: DehydratedState | undefined; readonly children?: ComponentChildren; }) => ComponentChildren` · from `@nifrajs/web-preact/query`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => VNode` · from `@nifrajs/web-preact/i18n`
-- **Image** _(function)_ - `Image: (props: ImageComponentProps) => VNode` · from `@nifrajs/web-preact/image`
+- **Image** _(function)_ - `Image: (props: ImageComponentProps | StaticImageComponentProps) => VNode` · from `@nifrajs/web-preact/image`
 - **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ComponentChildren; }) => ComponentChildren` · from `@nifrajs/web-preact/query`
 - **RouteSlot** _(function)_ - `RouteSlot: ({ name, fallback, error }: RouteSlotProps) => VNode | null` · from `@nifrajs/web-preact/router`
 - **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("preact").VNode<import("preact").Attribute…` · from `@nifrajs/web-preact/server-components/outlet`
@@ -29,7 +29,7 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-preact/client`
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void` · from `@nifrajs/web-preact/keep-alive`
 
-_…and 47 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 48 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

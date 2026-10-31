@@ -9,7 +9,7 @@
  * once, then reloads its data in place. Adapters render the active page and every kept one from
  * {@link slotTree}, and {@link createSlotParking} takes the hidden ones out of the document.
  */
-import { epochOf, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
+import { epochOf, IDENTITY_CHANNEL, identityChannel, onIdentityChange } from "./identity.ts"
 import type { KeepAliveTable } from "./internal/keep-alive-table.ts"
 import { PAGE_HIDE_EVENT, PAGE_SHOW_EVENT, releasePage } from "./internal/page-events.ts"
 import { shareData } from "./internal/share-data.ts"
@@ -388,7 +388,7 @@ export function keepAliveClient(options: KeepAliveClientOptions): KeepAliveClien
       const epoch = readEpoch()
       if (epoch === lastEpoch) return
       lastEpoch = epoch
-      channel?.postMessage("changed")
+      identityChannel()?.postMessage("changed")
       dropKept("identity")
       inner.snapshot()
     }

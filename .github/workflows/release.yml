@@ -63,7 +63,7 @@ jobs:
       fail-fast: false
       matrix:
         group: [core, artifacts, packages, runtimes, pipelines, server-components]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 75
     # Publishing needs a successful check on the merged head SHA only, so a run for an older head
     # is cancelled once a newer push starts one.
@@ -94,7 +94,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -105,11 +105,15 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
 
       # The same server as ci.yml's postgres group, for the postgres-live gate in the runtimes group.
-      - name: Start PostgreSQL
+      - name: Start PostgreSQL 16
         if: matrix.group == 'runtimes'
         run: |
-          sudo systemctl start postgresql.service
-          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          docker run -d --name nifra-pg16 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:5432:5432 \
+            postgres:16@sha256:1beaa3084eee2676f20a9cd9928f0bf2c5bf674f8e49f81017912183d377c61c
+          for _ in $(seq 60); do
+            pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
           test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
         env:
           NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
@@ -138,7 +142,7 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'release/')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -156,7 +160,7 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       actions: read
@@ -284,7 +288,7 @@ jobs:
     name: build-release
     needs: prove-release
     if: needs.prove-release.outputs.is_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -325,7 +329,7 @@ jobs:
     name: publish-release
     needs: [prove-release, build-release]
     if: needs.prove-release.outputs.is_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     environment: npm-publish
     permissions:
@@ -349,7 +353,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
           registry-url: https://registry.npmjs.org
 
       - name: Check npm can publish through trusted publishing
@@ -393,7 +397,7 @@ jobs:
   github-release:
     name: github-release
     needs: [prove-release, publish]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write
@@ -431,7 +435,7 @@ jobs:
   verify-published:
     name: verify-published
     needs: [prove-release, publish]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -458,7 +462,7 @@ jobs:
   deploy-site:
     name: deploy-site
     needs: [prove-release, publish]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read

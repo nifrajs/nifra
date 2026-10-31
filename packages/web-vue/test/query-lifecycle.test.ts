@@ -1,30 +1,41 @@
-import { afterAll, expect, mock, test } from "bun:test"
-import * as vueRuntime from "vue"
+import { expect, test } from "bun:test"
+import { createRenderer, defineComponent, h } from "vue"
+import { type UseInfiniteQueryResult, useInfiniteQuery } from "../src/query.ts"
 
-// The standard Bun test runtime has no mounted Vue app. Invoke its registered lifecycle callback
-// here so this suite covers the adapter's onMounted fetch path without depending on a DOM shim.
-const realVueRuntime = { ...vueRuntime }
-mock.module("vue", () => ({
-  ...realVueRuntime,
-  onMounted: (callback: () => void) => callback(),
-}))
-afterAll(() => mock.module("vue", () => realVueRuntime))
-
-const { useInfiniteQuery } = await import("../src/query.ts")
+// A renderer with no host objects mounts a real component, so Vue runs its `onMounted` hooks without
+// a DOM shim or a module mock (a mocked "vue" outlives its file and changes `onMounted` for every
+// file that runs after it).
+const { render } = createRenderer<object, object>({
+  patchProp: () => {},
+  insert: () => {},
+  remove: () => {},
+  createElement: () => ({}),
+  createText: () => ({}),
+  createComment: () => ({}),
+  setText: () => {},
+  setElementText: () => {},
+  parentNode: () => null,
+  nextSibling: () => null,
+})
 
 test("Vue infinite-query mount callback fetches and updates page computeds", async () => {
   const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
   Object.defineProperty(globalThis, "window", { value: globalThis, configurable: true })
-  const scope = vueRuntime.effectScope()
-
-  try {
-    const query = scope.run(() =>
-      useInfiniteQuery(["vue", "mount-callback"], async (page: number) => page, {
+  const root = {}
+  let query: UseInfiniteQueryResult<number, number> | undefined
+  const Page = defineComponent({
+    setup() {
+      query = useInfiniteQuery(["vue", "mount-callback"], async (page: number) => page, {
         initialPageParam: 0,
         getNextPageParam: (_last, pages) => (pages.length < 2 ? 1 : undefined),
-      }),
-    )
-    if (query === undefined) throw new Error("Vue scope did not run")
+      })
+      return () => h("div")
+    },
+  })
+
+  try {
+    render(h(Page), root)
+    if (query === undefined) throw new Error("Vue did not run the component's setup")
 
     expect(query.isPending.value).toBe(true)
     await query.refetch()
@@ -36,7 +47,7 @@ test("Vue infinite-query mount callback fetches and updates page computeds", asy
     await query.fetchNextPage()
     expect(query.hasNextPage.value).toBe(false)
   } finally {
-    scope.stop()
+    render(null, root)
     if (beforeWindow) Object.defineProperty(globalThis, "window", beforeWindow)
     else Reflect.deleteProperty(globalThis, "window")
   }

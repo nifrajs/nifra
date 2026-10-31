@@ -25,6 +25,7 @@ import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
 import { contractVisibilityRule } from "./rules/contract-visibility.ts"
 import { dataGuardRules } from "./rules/data-guard.ts"
 import { parseRulePacks, runRuleRegistry } from "./rules/index.ts"
+import { internalLinkRules } from "./rules/internal-links.ts"
 import { islandRules } from "./rules/islands.ts"
 import { retiredLayoutRule } from "./rules/layout.ts"
 import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legacy.ts"
@@ -509,6 +510,7 @@ export async function collectCheckDiagnostics(
     routeStatementRule,
     undeclaredResponseRule,
     textSlotBooleanRule,
+    ...internalLinkRules,
     serverFnNamespaceRule,
     ...zoneRules,
     ...dataGuardRules,

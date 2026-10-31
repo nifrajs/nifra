@@ -1,6 +1,6 @@
 import { t } from "@nifrajs/schema"
-import { probe } from "../../../../../../web/test/fixtures/ppr/app/lib/probe.ts"
-import { visitorName } from "../../../../../../web/test/fixtures/ppr/app/lib/session.ts"
+import { probe } from "../../../../../../web/test/fixtures/ppr/app/lib/probe.backend.ts"
+import { visitorName } from "../../../../../../web/test/fixtures/ppr/app/lib/session.backend.ts"
 
 export const shellLoader = async (ctx: { readonly params: Readonly<Record<string, string>> }) => ({
   title: `Stock ${ctx.params.id}`,

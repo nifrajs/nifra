@@ -1,5 +1,19 @@
 # @nifrajs/i18n
 
+## 5.10.0
+
+### Minor Changes
+
+- d2066e0: Add opt-in local `?image` metadata imports and content-hashed build-time responsive variants using the existing injectable image backends. Emit images with client, SSR and static builds, and infer imported dimensions in all five UI adapters. String image URLs retain their existing dimension requirements.
+  
+  Add explicit static translated-path mappings to i18n routing, with reciprocal URL/SEO helpers, availability-aware redirects and static-path enumeration. These mappings do not implicitly create filesystem route aliases.
+  
+  Add `vercelRuntime: "node"` for ordinary SSR Vercel builds through both bundlers, using a shared streaming Node request bridge. Vercel Edge remains the default.
+
+### Patch Changes
+
+- 535c4e5: Bound nested percent-decoding when translated pathnames are looked up, and refuse segments nested deeper than three encodings. Publish each development image asset once per build instead of re-verifying earlier ones on every import. Mark ordinary Vercel Node functions as response-streaming.
+
 ## 5.9.0
 
 ### Patch Changes

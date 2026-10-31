@@ -1,5 +1,18 @@
 # create-nifra
 
+## 5.10.0
+
+### Minor Changes
+
+- 5d1be78: `nifra dev`, `nifra build`, `nifra check` and `nifra types` write `.nifra/types/routes.d.ts`, which fills `RouteTable` (exported from `@nifrajs/web`) with one `{ params, search }` entry per URL pattern. `params` comes from the compiled pattern, the function the router matches with, and `search` is the route's `searchSchema` output (the raw query when it declares none). An optional segment such as `[[lang]]` is two entries with exact params each, and `Route.Params` is read from the same patterns. Every generated `./+types` module references the table, so a program that imports any route's types loads it. `Href` is exported as the type of a built in-app URL.
+  
+  `nifra check` warns when a source file imports a navigation API (`Link`, `useNavigate`, `redirect` and the like) and no program loads the table; listing `.nifra/types/routes.d.ts` under `files` in tsconfig.json clears it. The starter's `.nifra/types` includes the table.
+  
+  Upgrade: `RouteSearch`, `generateRouteSearchTypes` and `GenerateRouteSearchTypesOptions` are removed, and so is `nifra sync-routes` (with the `nifra_sync_routes` MCP tool). Delete `nifra-routes.d.ts` and its tsconfig `include` entry, and move any hand-written `RouteSearch` entry to `RouteTable` as `"/path": { params: ...; search: ... }`.
+- bbdb582: Every starter links with `href()`: the navigation and the 404 page of the React, Preact, Solid, Svelte, Vue and ISR starters build their anchors with `href({ to })`, so a renamed route fails `tsc` instead of leaving a dead link. The generated `AGENTS.md` teaches `href()` and `rawHref()` for `navigate()`, `redirect()` and links, in place of `redirect(url)`.
+  
+  Upgrade, for an existing app: `tsc` lists each `navigate("/x")`, `<Link to="/x">` and `redirect("/x")` (they take an `Href` now), and `href="/` and ``href={`/`` find the plain anchors it cannot see. A route file that imports no `./+types/...` module does not load `.nifra/types/routes.d.ts`; `nifra check` warns, and listing that file under the tsconfig `files` fixes it.
+
 ## 5.9.0
 
 ### Patch Changes

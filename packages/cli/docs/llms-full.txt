@@ -47,7 +47,7 @@ cd my-app
 bun install
 bun run dev`
 
-See the [CLI guide](/docs/cli) for other templates, UI frameworks, and deploy
+See the CLI guide for other templates, UI frameworks, and deploy
 targets.
 
 ### One app, two agent loops
@@ -55,8 +55,8 @@ targets.
 A coding agent can inspect the live project, change it, run real requests, and prove the result.
 A user-facing agent can discover explicit page tools, stream progress into the UI, predict a
 state change, and reconcile it with the server. Both use the same typed capabilities and
-verification boundary. Start with the [agent layer](/docs/agents) or the
-[WebMCP & predictive UI guide](/docs/webmcp) when you are ready to add them.
+verification boundary. Start with the agent layer or the
+WebMCP & predictive UI guide when you are ready to add them.
 
 ### A backend-only alternative
 
@@ -104,12 +104,12 @@ In the `site` template, a route is two files: the page, and a
 `.backend.ts` half whose loader calls your backend in-process during SSR and
 whose `actions` handle mutations. Only what the loader's output schema declares
 reaches the browser. Add streaming, `defer()`, optimistic UI, and a keyed query
-cache as you grow, then [live refresh](/docs/live),
-[keep-alive](/docs/keep-alive) pages,
-[server components](/docs/server-components) and
-[partial prerendering](/docs/partial-prerendering) where a page needs them. The
+cache as you grow, then live refresh,
+keep-alive pages,
+server components and
+partial prerendering where a page needs them. The
 data model is framework-agnostic, so the renderer stays replaceable. See
-[Project structure](/docs/structure) for where code lives.
+Project structure for where code lives.
 
 ```ts
 // routes/index.backend.ts - the loader runs on the server (in-process during SSR, no network),
@@ -150,9 +150,9 @@ export default function Page({ data }: Route.ComponentProps) {
 -
 **Vercel Edge, AWS Lambda, or a static host** - `nifra build --target vercel`,
 `@nifrajs/aws-lambda`, or `nifra build --target static` for a
-prerendered site. See [Deployment](/docs/deployment).
+prerendered site. See Deployment.
 
-See the [benchmarks](/benchmarks) for how it performs.
+See the benchmarks for how it performs.
 
 ## Nifra vs. other frameworks - the honest comparison
 
@@ -202,23 +202,23 @@ Across the board, Nifra ships the modern full-stack feature set on all five UI f
 
 -
 File routing (dynamic / catch-all / groups / optional) + nested layouts, typed search
-params, and a route [opened in a modal](/docs/routing#modal-routes).
+params, and a route opened in a modal.
 
 -
 SSR · SSG · ISR, streaming SSR with out-of-order Suspense,
-[partial prerendering](/docs/partial-prerendering), view
+partial prerendering, view
 transitions, and a ~0 KB-client vanilla adapter with
-[islands](/docs/islands) and slot swaps.
+islands and slot swaps.
 
 -
-Loaders + actions + [server functions](/docs/server-functions) (typed
+Loaders + actions + server functions (typed
 `serverFn` RPC, server code never shipped to the browser) + progressive-enhancement
 forms; `defer()` / `<Await>` streaming data; query cache, optimistic
 UI, concurrent fetchers, revalidation.
 
 -
-[Live refresh](/docs/live) (a publish reloads only the loaders that read the
-changed keys) and [keep-alive](/docs/keep-alive) pages (back and forward bring
+Live refresh (a publish reloads only the loaders that read the
+changed keys) and keep-alive pages (back and forward bring
 the same page back, state and scroll included).
 
 - Head/meta, hover/focus prefetch, scroll restoration.
@@ -234,11 +234,11 @@ of one.
 ### Server code and server-only views
 
 Nifra provides typed loaders and actions, streaming SSR, islands and typed
-[server functions](/docs/server-functions). Server functions keep their
+server functions. Server functions keep their
 implementation, secrets and database handles off the browser and use the same validated
 mutation API across the supported UI libraries.
 
-The optional [server-components pipeline](/docs/server-components) adds
+The optional server-components pipeline adds
 server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
 Solid and Preact use their native islands in validated server-rendered ranges. All five
 adapters pass the same certification, and a partially prerendered page can show a server
@@ -247,12 +247,12 @@ component in a hole. Server functions remain the mutation API; native React
 
 ### Caching and fresh data
 
-[SSG and ISR](/docs/rendering) cover pages that change rarely. Three more tools
+SSG and ISR cover pages that change rarely. Three more tools
 cover the pages that do not:
 
 -
 **
-[Partial prerendering](/docs/partial-prerendering)
+Partial prerendering
 **
 (all five adapters). The part of a page that is the same for every visitor is
 built once, cached and sent at once; each per-visitor hole streams into it as its own loader
@@ -263,7 +263,7 @@ as partial prerendering under Cache Components.
 
 -
 **
-[Live refresh](/docs/live)
+Live refresh
 **
 . A loader names the keys its data read with `live(...keys)`; a
 `publish`, or an action's `revalidate(paths, data, { keys })`,
@@ -280,7 +280,7 @@ the write. A page store shared between processes is signed.
 
 -
 **
-[Keep-alive](/docs/keep-alive)
+Keep-alive
 **
 (all five adapters). `export const keepAlive = true` keeps a page mounted after
 the visitor leaves it; back and forward bring it back with its state, scroll and focus.
@@ -427,7 +427,7 @@ chain (so `n` optionals → `2ⁿ` patterns).
 -
 `x.backend.ts` beside a page or layout is its server half: `loader`,
 `action`, their output schemas, and the other server-only exports. It never
-reaches the browser - see [Project structure](/docs/structure).
+reaches the browser - see Project structure.
 
 -
 `_404.tsx` renders unmatched paths, and whatever a loader answers with
@@ -519,7 +519,7 @@ routes/
 Each page default-exports a component; an optional `meta` export drives
 `<head>` (applied on SSR and on client navigation). Its data comes from a
 `loader` in its `.backend.ts` half - see
-[Loaders & actions](/docs/data).
+Loaders & actions.
 
 A layout's `meta` receives its own loader's data as `data`, the value its
 component renders, or `null` when the layout has no loader. The page's data is
@@ -712,12 +712,73 @@ param that is missing, empty, `.`, `..` or an unpaired surrogate throws a
 or a history delta such as `navigate(-1)`; a string or a template literal is a
 compile error. So do React's `Link`, `NavLink` and `Navigate`
 (`<Link to={href({ to: "/pricing" })}>`) and the server's
-`redirect()`; `Link` and `NavLink` also throw at render when
-`to` is not a same-origin path, and `redirect` takes any string with
-`{ external: true }`. For a same-origin path built elsewhere - a CMS link,
+`redirect()`; when `to` is not a same-origin path,
+`Link` and `NavLink` render the anchor without an `href`,
+and `Navigate` and `setSearchParams` do not navigate; each logs a
+`console.error` that names the call and never the value. `redirect`
+takes an off-origin location with `{ external: true }`, which still refuses
+one holding a line break. For a same-origin path built elsewhere - a CMS link,
 `/llms.txt` - `rawHref("/llms.txt")` checks it (one leading
 `/`, no backslash or control character) and returns the same type. A link to
-another site is a plain `<a href>`.
+another site is a plain `<a href>`. A path that comes from outside is
+checked where it is read: `rawHref` throws a `TypeError` for one that is
+not same-origin, so catch it at that call when a field cannot be trusted. A value that gets
+past it as a forged `Href` costs only its own link.
+
+### Moving existing links to href()
+
+A link written as a string is not checked: `navigate("/pricng")` and
+`<a href="/pricng">` compile and then 404. Moving one is mechanical.
+
+```tsx
+// doc-check: skip - routes of your own app; one line per call, before and after.
+import { href, rawHref } from "@nifrajs/web-react/router"
+
+navigate(`/users/${id}?tab=posts`)
+navigate(href({ to: "/users/:id", params: { id }, search: { tab: "posts" } }))
+
+<a href="/pricing">Pricing</a>
+<a href={href({ to: "/pricing" })}>Pricing</a>
+
+<Link to="/docs#install">Install</Link>
+<Link to={href({ to: "/docs", hash: "install" })}>Install</Link>
+
+throw redirect("/login")
+throw redirect(href({ to: "/login" }))
+
+navigate(cmsLink) // a same-origin path built elsewhere
+navigate(rawHref(cmsLink))
+```
+
+A leftover `navigate("/x")`, `<Link to="/x">` or
+`redirect("/x")` is a compile error at the call, so `tsc` lists what is
+left. A plain `<a href="/x">` is not an error, so search for
+`href="/` and `href={`/` too; a link that opens another site stays
+an `<a href>`. This site, the examples and the starters are held to it by a
+test that fails on a literal internal anchor.
+
+`nifra check` finds the plain anchors in your app too, and reads the route table to
+tell two cases apart. `NF-C057` (a warning) is a path that no page, no backend route
+and no file in `public/` serves: the link is a 404, and the message names the
+nearest page when it is a typo away. `NF-C058` (info) is a path that is a page
+today; the message gives the `href()` call that replaces it. A template literal such
+as ``/users/${id}`` is judged by its shape and never reported as dead, since the
+route it builds may live outside the file routes. Links in `.tsx`, `.vue`
+and `.svelte` files are read. Raise, lower or silence either code with
+`rules` in `nifra.config`, or keep one link as written with
+`rawHref()` or `// nifra-expect NF-C058: <reason>` above the
+attribute (`<!-- nifra-expect NF-C058: <reason> -->` above the anchor in a
+`.vue` or `.svelte` template). A backend mounted under
+`apiPrefix` counts as serving its paths, read from `backend/framework.ts`
+or `nifra.config.ts`; when either holds a value `check` cannot read, no
+link is reported dead. `.jsx` files and an `href` built by a function are
+not read.
+
+The table is a generated file, `.nifra/types/routes.d.ts`. A program in which no route
+imports a `./+types/...` module does not load it, and `to` then accepts no
+route at all, and `nifra check` warns. List `.nifra/types/routes.d.ts` under
+the tsconfig `files`: the `**` globs skip a dot directory, and a
+`files` entry is not filtered by `exclude`.
 
 ### Prefetching
 
@@ -936,7 +997,7 @@ export default function Dashboard() {
   const inspector = useRouteSlot("inspector")
   return (
     <>
-      <button onClick={() => inspector.open(href({ to: "/users/:id", params: { id: "7" } }))}>
+      <button type="button" onClick={() => inspector.open(href({ to: "/users/:id", params: { id: "7" } }))}>
         Inspect user 7
       </button>
       <RouteSlot name="inspector" fallback={<p>Select a user.</p>} />
@@ -1051,7 +1112,7 @@ arktype, …); outputs are inferred end-to-end.
 
 Everything on this page is just `@nifrajs/core` - no frontend, no build step. Use Nifra
 as a standalone backend the way you'd use Hono or Elysia, deploy it to any runtime, and reach
-for [the frontend adapters](/docs/frameworks) only if and when you go full-stack.
+for the frontend adapters only if and when you go full-stack.
 
 ### An inline server
 
@@ -1686,9 +1747,9 @@ client sends nothing rather than reach a route the call does not name.
 `.ws()` throws.
 
 The same client runs in the browser and on the server. During SSR, a route's
-[loader](/docs/data) calls it **in-process** (no network hop) via
-`ctx.api`. Next: [file routing](/docs/routing),
-[loaders & actions](/docs/data), and [plugins](/docs/plugins).
+loader calls it **in-process** (no network hop) via
+`ctx.api`. Next: file routing,
+loaders & actions, and plugins.
 
 ## Nifra - Loaders & actions
 
@@ -1709,9 +1770,9 @@ leaves the server. Declare a timestamp as `t.date()` and the page gets a
 field that is any JSON value, passed through whole - a tool-call payload or a settings blob
 the page does not pick apart. A loader without a schema is flagged by
 `nifra check`. See
-[Project structure](/docs/structure) for the route pair. A loader that names the
+Project structure for the route pair. A loader that names the
 data it read with `live(...keys)` reloads on its own when that data changes - see
-[Live refresh](/docs/live).
+Live refresh.
 
 ```ts
 // routes/users/[id].backend.ts - a loader runs on the server: in-process during SSR (no network
@@ -1783,7 +1844,7 @@ loader **revalidates** (no full reload); with JS disabled the native form POST r
 `actionData`, bounded by `actionOutput`.
 
 A reload of the page on screen (an action's revalidation, `invalidate()`, a
-[live refresh](/docs/live), a fetcher loading its path again) keeps every part of `data` and the
+live refresh, a fetcher loading its path again) keeps every part of `data` and the
 layouts' data that it did not change as the same object, with one bound: an array none of
 whose first 32 elements is unchanged is replaced whole, so a reload that changed every row
 stops comparing early. A row kept this way keeps its DOM and component state: a Solid
@@ -1846,7 +1907,7 @@ in middleware. In development, nifra warns the first time a layout loader withou
 `gate` refuses a request with a redirect, a `Response`, or a 401 or 403,
 and `nifra check` reports one whose loader refuses in its own body (NF-C042). A
 `_layout.backend.ts` that exports `middleware` guards a directory, with
-or without a layout component - see [Route middleware](/docs/routing#middleware).
+or without a layout component - see Route middleware.
 
 A layout's `shouldRevalidate` overrides that default. It runs on the server and
 receives `defaultShouldRevalidate` with the URL and params being left and the ones
@@ -1909,8 +1970,8 @@ export async function loader() {
 ```
 
 For optimistic UI, concurrent fetchers, and a keyed query cache, the same primitives compose
-on all five adapters: see [fetchers](/docs/mutations) and
-[the query cache](/docs/query).
+on all five adapters: see fetchers and
+the query cache.
 
 ## Nifra - Server functions
 
@@ -2091,8 +2152,8 @@ nifra assure
 ✖ POST /_nifra/fn/todos/addTodo (authenticated-write) is missing nifra.authenticated
 ```
 
-See [effect provenance](/docs/capabilities) for what the declaration is checked
-against, and [the verification ladder](/docs/verification) for where this sits.
+See effect provenance for what the declaration is checked
+against, and the verification ladder for where this sits.
 
 ### Cost
 
@@ -2163,7 +2224,7 @@ const anyPending = useFetchers().some((f) => f.snapshot().pending)
 ```
 
 A fetcher holds nothing for the next visitor: `identityChanged()` returns every
-fetcher to idle, and a load still in flight loads once more for the new visitor. In an app with a [keepAlive](/docs/keep-alive#sign-in) route, so
+fetcher to idle, and a load still in flight loads once more for the new visitor. In an app with a keepAlive route, so
 does the identity epoch cookie a sign-in or sign-out response rotates, on the next
 `useFetcher` read.
 
@@ -2227,7 +2288,7 @@ export default function Product({ data }: Route.ComponentProps) {
 This is request-time progressive SSR: the whole page, shell included, renders for each
 request, and deferred values remain request-scoped. To serve the part that is the same for
 every visitor from a cache and stream only the per-visitor parts, use
-[partial prerendering](/docs/partial-prerendering).
+partial prerendering.
 
 ### SSG - prerender at build
 
@@ -2437,7 +2498,7 @@ and is reported once to `onInvalidationError`.
 A per-request CSP nonce makes a page uncacheable. For a strict policy under ISR, give
 `createWebApp` a `csp` from `createCspPolicy` instead of a
 `nonce`: constant scripts are allowed by hash, so only a page that needs a nonce
-carries one - see [A strict CSP that still caches](/docs/contract#strict-csp).
+carries one - see A strict CSP that still caches.
 
 A page that must not be cached as a whole, because it is personalized or carries a nonce, can
 still cache the data its loader reads. Wrap the expensive call in `cache.wrap` from
@@ -2540,14 +2601,14 @@ cache. Pass the same `draftSecret` to `createWebApp` and
 `withISR`; a forged or tampered cookie fails the constant-time signature check.
 
 ```ts
-// doc-check: skip - fragment spanning three files: your `app`, `env`, `redirect`, and route `slug`.
+// doc-check: skip - fragment spanning three files: your `app`, `env`, and route `slug`.
 // 1. Mount the preview entry point your CMS links to. It checks the token in CONSTANT TIME,
 //    sets the signed HttpOnly cookie, and refuses an off-site ?to= (an open redirect otherwise).
-import { previewEndpoint, disableDraft } from "@nifrajs/web"
+import { previewEndpoint, disableDraft, redirect, rawHref } from "@nifrajs/web"
 
 const preview = previewEndpoint({ secret: env.PREVIEW_TOKEN, draftSecret: env.DRAFT_SECRET })
 app.get("/api/preview", (c) => preview(c.req)) // ?token=…&to=/posts/hello
-app.get("/api/preview/exit", (c) => (disableDraft(c), redirect("/")))
+app.get("/api/preview/exit", (c) => (disableDraft(c), redirect(rawHref("/"))))
 // Gating it yourself instead? Use enableDraft(c, env.DRAFT_SECRET) AFTER your own check - and
 // compare the token in constant time, since === leaks it one character at a time.
 
@@ -2629,8 +2690,8 @@ a metric instead of its final value - aggregate those with `delta` or
 Content that's the same for everyone and changes rarely → **SSG**. Content that changes
 occasionally and can tolerate seconds-to-minutes of staleness → **ISR**. Per-request or
 per-user content → plain **SSR** (the default). A page that is mostly shared with a few
-per-visitor parts → [partial prerendering](/docs/partial-prerendering). You can mix them in one app, route by route. A page that must update while it
-is open, without a reload, adds [live refresh](/docs/live) to any of them.
+per-visitor parts → partial prerendering. You can mix them in one app, route by route. A page that must update while it
+is open, without a reload, adds live refresh to any of them.
 
 ## Nifra - Hydration & pre-hydration forms
 
@@ -3134,10 +3195,10 @@ export default function Page({ data }: Route.ComponentProps) {
 The same `defer()` works in actions and across client-side soft navigations (an
 NDJSON stream settles the deferred values), and it's framework-agnostic - React
 `<Suspense>` and Solid's streaming both drive it from one core. See
-[Frameworks](/docs/frameworks) for which adapters stream the boundary in the
+Frameworks for which adapters stream the boundary in the
 server HTML.
 
-[Partial prerendering](/docs/partial-prerendering) streams the same
+Partial prerendering streams the same
 way from a cached shell: the part of the page every visitor shares goes out at once from the
 cache, and each per-visitor hole streams in as its loader settles.
 
@@ -3347,7 +3408,7 @@ After a mutation, `useQueryClient().invalidateQueries(key)` marks matching entri
 stale (by exact key or array **prefix**) and refetches the mounted ones - no manual cache
 surgery.
 
-In an app with [live refresh](/docs/live), a query can name the live keys its data
+In an app with live refresh, a query can name the live keys its data
 depends on: `useQuery(key, fn, { live: [`post:${id}`] })` refetches whenever
 the server publishes one of them.
 
@@ -3357,7 +3418,7 @@ A cached query never answers for the next visitor. `identityChanged()` from
 `@nifrajs/web/client` clears every query client in the page: mounted queries go
 back to pending and refetch, the rest drop their data. A fetch still loading loads once more
 for the new visitor before it settles. In an app with a
-[keepAlive](/docs/keep-alive#sign-in) route, the identity epoch cookie a sign-in
+keepAlive route, the identity epoch cookie a sign-in
 or sign-out response rotates does the same on the client's next read.
 
 It's the same agnostic core under every adapter: the cache, dedup, and invalidation logic
@@ -3424,7 +3485,7 @@ Everything that lives in `@nifrajs/web` rather than the view layer works unchang
 loaders, actions, ISR, SSG, head management, streaming. What you give up is hydration - these
 are server-rendered documents, so set `export const hydrate = false` in the route's
 `.backend.ts` half and reach for
-[islands](/docs/hydration) where a page needs interactivity.
+islands where a page needs interactivity.
 
 Worth it for the surfaces where HTML is the product: landing pages, listings, docs, comparison
 tables. This documentation site renders that way.
@@ -3467,7 +3528,7 @@ export async function loader({ api }: Route.LoaderArgs) {
 
 Component `<style scoped>` (Vue) and `<style>` (Svelte -
 scoped by default) are compiled and scoped into the app stylesheet - no runtime, no FOUC - plus
-CSS Modules and global imports. See [Dev & HMR → Styling](/docs/dev).
+CSS Modules and global imports. See Dev & HMR → Styling.
 `examples/routing-vue-sfc` is a full SSR + hydration + client-nav demo.
 
 ### Same features, every framework
@@ -3487,13 +3548,13 @@ progressive-enhancement forms (work with JS off).
 - Optimistic UI, targeted revalidation, hover-prefetch, and scroll restoration.
 
 -
-[Live refresh](/docs/live), [keep-alive](/docs/keep-alive) pages,
-[server components](/docs/server-components), and
-[partial prerendering](/docs/partial-prerendering).
+Live refresh, keep-alive pages,
+server components, and
+partial prerendering.
 
 -
 True HMR in dev for all five (`@nifrajs/web/vite`) - see
-[Dev & HMR](/docs/dev).
+Dev & HMR.
 
 ### One line changes
 
@@ -3557,7 +3618,7 @@ the client, with a warning in development.
 Dev HMR works for all five adapters through `createViteDevServer` and the
 framework's Vite plugin. React, Preact, and Vue preserve edited component state. Solid
 and Svelte update live without a full page reload, and the edited component may remount. Full
-matrix in [Dev & HMR](/docs/dev).
+matrix in Dev & HMR.
 
 ### React Compiler
 
@@ -3983,7 +4044,7 @@ plugin, the principal is read from the **returned instance** - `auth.principal(r
 (nullable) or `auth.requirePrincipal(req)` (throws `401`) - mirroring
 `@nifrajs/auth` and `@nifrajs/better-auth`. It's verified once per request and
 cached. For full session-based auth (OAuth, magic links, 2FA), see
-[Auth & sessions](/docs/auth).
+Auth & sessions.
 
 ```ts
 // doc-check: skip - fragment: `app`, `lookupUser`, and the `db` lookup are your application's.
@@ -4086,7 +4147,7 @@ app
 `idempotency()` makes a retried unsafe request (same `Idempotency-Key` header)
 replay the first response instead of re-running the side effect - no double-charge on a dropped
 connection. It short-circuits before the handler; a concurrent retry gets a `409`. See
-[Security & hardening](/docs/security) for the store contract, the production
+Security & hardening for the store contract, the production
 guidance (shared store + DB constraint), and the `Set-Cookie` rule.
 
 ```ts
@@ -4337,7 +4398,7 @@ touches one key, so it runs on whichever node owns it.
 The security set - `csrf` (signed double-submit + Origin/Referer), `jwt`,
 `ipRestriction` (IPv4/IPv6 + CIDR, fails closed), and `bodyLimit`
 (Content-Length cap before routing) - is documented with hardening guidance on
-[Security & hardening](/docs/security). All comparisons are constant-time and all
+Security & hardening. All comparisons are constant-time and all
 defaults fail closed.
 
 ### Error reporting
@@ -4364,7 +4425,7 @@ The pieces every production endpoint needs - a body-size cap for raw routes, rea
 validation, constant-time webhook verification, and idempotent retries - ship as first-party
 primitives. All are **edge-safe** (WebCrypto, no `node:crypto`) and run unchanged
 on Bun, Node, Deno, and Workers. For how these defaults stack up against Hono, Fastify,
-Express, and Elysia, see [security posture, compared](/docs/security-comparison).
+Express, and Elysia, see security posture, compared.
 
 ### Responses that cannot leak more than they declare
 
@@ -4459,7 +4520,7 @@ export const app = server().use(
 
 A `merge()`d server's routes are covered by a contract the parent installed
 before the merge, as long as the route declares a response and its own server installed none.
-See [what a parent's use() covers](/docs/plugins#parent-use).
+See what a parent's use() covers.
 
 The check itself is essentially free: with a compiled validator it measures in the
 ~100ns-per-response range, and a realistic middleware-carrying route benchmarks within noise
@@ -4812,7 +4873,7 @@ covering common image / A-V / archive types.
 `signDownloadUrl` / `verifyDownloadUrl` mint short-TTL, tamper-evident
 download links (HMAC-SHA256 over the path + expiry, constant-time verify). And
 `stripImageMetadata` drops EXIF/GPS by re-encoding the image - through any
-[@nifrajs/image](/docs/images) backend, with no dependency on it:
+@nifrajs/image backend, with no dependency on it:
 
 ```ts
 // doc-check: skip - fragment: continues the upload handler above (`result.bytes`).
@@ -5021,7 +5082,7 @@ nonce. For a strict `script-src` on web pages, give `createWebApp` a
 `csp` from `createCspPolicy`: it allows the framework's constant
 scripts by hash and adds a nonce only to a page that needs one, so every other page sends the
 same header and stays cacheable under `withISR` or a CDN. See
-[A strict CSP that still caches](/docs/contract#strict-csp).
+A strict CSP that still caches.
 
 ### Route assurance - prove every route is guarded
 
@@ -5185,9 +5246,9 @@ rejected), SSR serialization that escapes every inline-script value,
 `__Host-`/`__Secure-` cookie-prefix enforcement (a cookie whose
 attributes violate its prefix contract fails at serialization rather than being silently
 dropped by the browser), signed-cookie sessions + CSRF + route guards
-([@nifrajs/auth](/docs/auth)), bearer/apiKey auth + a shared-store rate
-limiter ([@nifrajs/middleware](/docs/plugins)), and a hardened image-resize endpoint
-([@nifrajs/image/server](/docs/images)).
+(@nifrajs/auth), bearer/apiKey auth + a shared-store rate
+limiter (@nifrajs/middleware), and a hardened image-resize endpoint
+(@nifrajs/image/server).
 
 ### Redacting logs
 
@@ -5531,8 +5592,8 @@ $ nifra levels
 ✓ L2 capability lockfile
 ```
 
-That is L2 on [the verification ladder](/docs/verification). See also
-[server functions](/docs/server-functions), which are public POST endpoints and are
+That is L2 on the verification ladder. See also
+server functions, which are public POST endpoints and are
 covered by exactly the same policy.
 
 ### Turning it down
@@ -5670,7 +5731,7 @@ as a session.
 `identity` names the data keys that say who the visitor is: the user id, and any
 key that changes what a page may show, such as an organization or a role. The cookie's tag,
 in either mode, then changes only when one of them does, so
-[keep-alive](/docs/keep-alive#sign-in) keeps the pages it holds across a commit
+keep-alive keeps the pages it holds across a commit
 that writes a cart or a preference. Unset, every key counts. A key left out that decides what
 a page shows lets the next visitor of a browser see the pages kept for the previous one.
 
@@ -5706,12 +5767,12 @@ app.post("/api/login", async (c) => {
   session.set("userId", String(username))
   sessions.regenerate(session)                           // rotate the id on login (fixation defense)
   await sessions.commit(c, session)
-  return redirect("/")                                   // the Set-Cookie rides the redirect
+  return redirect(rawHref("/"))                          // the Set-Cookie rides the redirect
 })
 
 app.post("/api/logout", async (c) => {
   await sessions.destroy(c, await sessions.get(c))
-  return redirect("/login")
+  return redirect(rawHref("/login"))
 })
 ```
 
@@ -5725,7 +5786,7 @@ path), and `requireSession` passes it, so guard a signed-in page with
 `requireUser`. It is plain data, not
 a `Response`: same bytes on the wire, on the lane an ordinary return takes. To guard
 every page under a directory, run the same check in the `middleware` export of that
-directory's `_layout.backend.ts` - see [Route middleware](/docs/routing#middleware).
+directory's `_layout.backend.ts` - see Route middleware.
 
 ```ts
 // routes/account.backend.ts - a protected route's loader reads the session and redirects when absent.
@@ -5856,7 +5917,7 @@ A page or a `frontend/` component that imported `backend/auth.ts` fails
 the build with the import chain that reached it, so a secret cannot ride into the browser
 bundle. A page that needs the user reads it from its loader data, which
 `loaderOutput` narrows to the fields it declares - see
-[Project structure](/docs/structure).
+Project structure.
 
 ### CSRF
 
@@ -5931,9 +5992,9 @@ loader at a CDN and the runtime stays tiny. Or self-host: the optional
 
 ### The <Image> component
 
-`width` and `height` are **required** and validated
-`> 0` - they reserve layout space so the page never shifts when the image loads
-(the CLS contract). It's `loading="lazy"` + `decoding="async"` by default;
+For string URLs, `width` and `height` are **required** and validated
+`> 0`. Imported metadata can supply them automatically. Dimensions reserve layout
+space so the page never shifts (the CLS contract). It's `loading="lazy"` + `decoding="async"` by default;
 mark the LCP image with `priority` to get `eager` +
 `fetchpriority="high"`. Extra DOM props (`className`, `style`,
 `id`, `data-*`) pass straight through to the `<img>`.
@@ -5965,6 +6026,81 @@ The responsive `srcSet` is built from `widths` (default
 `[width, width*2]` for 1×/2× retina), de-duped and sorted; if every width yields
 the same URL (e.g. the identity loader), `srcSet` is omitted. The browser then picks
 the right candidate for the device's pixel ratio and the `sizes` you declare.
+
+### Local image imports
+
+Opt into `?image` imports to read PNG, JPEG, GIF and WebP dimensions at build time,
+including JPEG, PNG and WebP display orientation. The import is a browser-safe `StaticImageData`
+object; no filesystem code or codec ships to the browser. Ordinary string URLs are unchanged.
+
+```ts
+// env.d.ts — enable the typed metadata import:
+/// <reference types="@nifrajs/image/imports" />
+
+// routes/index.tsx (React; also supported by Preact, Solid, Vue and Svelte)
+import { Image } from "@nifrajs/web-react/image"
+import hero from "../shared/images/hero.jpg?image"
+
+export default function Page() {
+  return <Image src={hero} alt="Mountain lake" priority />
+  // Optional width={600} infers height from the source aspect ratio.
+}
+```
+
+```ts
+// backend/framework.ts — add these beside your existing framework plugins:
+import { imageBunPlugin } from "@nifrajs/image/plugins"
+
+const images = { root: process.cwd() }
+export const clientPlugins = [imageBunPlugin(images)]
+export const serverPlugins = [imageBunPlugin(images)]
+
+// For the Vite pipeline instead (including component mode):
+// import { imageVitePlugin } from "@nifrajs/image/plugins"
+// export const vitePlugins = [imageVitePlugin(images)]
+```
+
+Keep the same image options in client and server builds. Preserve your framework's existing
+plugins when adding these. Metadata-only imports need no native dependency. Nifra emits the
+original bytes under `/assets/_images/` with content-hashed names, registers them in
+the build manifest, and serves them in development. Static builds deploy these files too;
+no image endpoint is needed. For standalone bundler use, emit the plugin's
+`nifraStaticAssets()` files yourself. A custom `publicPath` (a root-relative prefix
+or an absolute http(s) URL) must match your client build's asset prefix; a mismatch fails the build.
+
+### Build-time responsive variants
+
+Supply `widths` and an explicit `ImageBackend` to generate real responsive
+files at build time. This reuses the sharp, Bun.Image or WASM backend seam; sharp is an optional
+application dependency, not a Nifra runtime dependency. Both the processor and sharp path work
+on Node without Bun. Outputs support WebP (default), JPEG and PNG; widths never upscale the source.
+
+```ts
+// doc-check: skip - install sharp and merge with your framework's existing plugins.
+import sharp from "sharp"
+import { Buffer } from "node:buffer"
+import { sharpImageBackend } from "@nifrajs/image/backends"
+import { imageBunPlugin } from "@nifrajs/image/plugins"
+
+const images = {
+  root: process.cwd(),
+  widths: [320, 640, 1200],
+  format: "webp" as const,
+  quality: 80,
+  backend: sharpImageBackend((bytes) => sharp(Buffer.from(bytes))),
+}
+export const clientPlugins = [imageBunPlugin(images)]
+export const serverPlugins = [imageBunPlugin(images)]
+// Vite: use imageVitePlugin(images) in vitePlugins instead.
+```
+
+The component chooses only emitted variants; per-render `widths` filters available
+candidates rather than creating files. Build-time `quality` is baked in. An explicit
+CDN loader overrides the static variant selection. Defaults cap sources at 16 MiB and 40 million
+pixels; `maxSourceBytes` and `maxSourcePixels` are configurable. At most 32
+widths, each up to 8192 pixels, are accepted. Sources must remain inside `root`,
+including symlink targets. GIF, animated PNG and animated WebP imports are metadata-only; AVIF and SVG metadata
+imports are not supported.
 
 ### Loaders
 
@@ -6118,7 +6254,7 @@ const url = signImageUrl("/_image", { src: "/private/a.jpg", width: 800 }, {
 Signatures over `(src, w, q)` are **stable** (no expiry), so an SSR-rendered
 `<Image>` srcset hydrates and caches identically. The secret makes a loader
 config **server-only** - inject it from `env` in backend code, never a page or
-`frontend/` module (same discipline as a [session secret](/docs/auth)). For time-limited links to
+`frontend/` module (same discipline as a session secret). For time-limited links to
 private images, `signImageUrl(…, { expiresIn })` adds an `&exp=` the
 handler enforces.
 
@@ -6266,13 +6402,91 @@ export function meta({ params, origin }: MetaArgs): Meta {
 ```
 
 A page that exists in some languages only is declared once, with `pageLocales`
-(given the path without its locale prefix; it must be pure). Then
+(given the canonical path without its locale prefix; it must be pure). Then
 `matchSegment` answers not-found for the other locales, `alternates`
 lists only the page's own (none for a page in one locale), `localesOf(path)` names
 them for a prerender's static paths, and `localizePathname(path, locale, { fallback: "default" })`
 links a menu entry to the default locale's page where the page is missing. A
 `pageLocales` that throws, or names a locale the registry does not declare, throws
 rather than serving every locale.
+
+#### Explicit static translated pathnames
+
+Optionally declare `pathnames`: canonical unprefixed static paths mapped to
+unprefixed locale spellings. Missing entries keep the canonical spelling; they do not make a
+page unavailable (`pageLocales` still owns that). Language switches, reverse
+lookup, canonical links, `hreflang` and `matchSegment` redirects all
+use the same table. With no table, existing prefix-only behavior is unchanged.
+
+```ts
+// shared/i18n.ts - explicit STATIC pathname translations, not content or dynamic slug translation.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+
+const locales = defineLocales({ default: "en", locales: { en: {}, fr: {}, de: {} } })
+export const urls = defineI18nRouting(locales, {
+  pathnames: {
+    "/about": { fr: "/a-propos", de: "/ueber-uns" },
+    "/contact": { fr: "/contactez-nous" }, // Missing German name; availability is separate below.
+  },
+  // Always the canonical key, even when the incoming URL is /fr/contactez-nous.
+  pageLocales: (path) => path === "/contact" ? ["en", "fr"] : undefined,
+})
+
+urls.localizePathname("/about", "fr") // "/fr/a-propos"
+urls.localizePathname("/fr/a-propos", "de") // "/de/ueber-uns"
+urls.unlocalizePathname("/de/ueber-uns") // { locale: "de", pathname: "/about" }
+urls.alternates("/fr/a-propos").canonical // "/fr/a-propos"
+urls.staticPathnames() // ["/about", "/fr/a-propos", "/de/ueber-uns", "/contact", "/fr/contactez-nous"]
+```
+
+`staticPathnames()` enumerates mapped public URLs only, in mapping declaration
+order then served-locale registry order, filtered by `pageLocales`. Feed explicit
+static entries to your prerender setup after wiring incoming routing; the prerender driver
+does not automatically enumerate catch-all routes. Unmapped pages are not discovered.
+Draft locales are never included. Unicode spellings such as `/紹介` are
+emitted URL-encoded and resolve from `new URL(request.url).pathname`. Reverse
+lookup returns a URL-encoded canonical pathname; `pageLocales` sees the declared
+canonical key. Query strings and trailing slashes survive translation, hashes too;
+SEO links and redirects omit the hash as before.
+
+**Mappings do not create files or filesystem aliases.** A file named
+` about.tsx` alone will not serve `/fr/a-propos`. Supply matching
+routes yourself, or use a catch-all dispatcher that resolves
+` unlocalizePathname` to an explicit page registry, for example:
+
+```ts
+// doc-check: skip - imports the app's own routing module and generated route types.
+// routes/[...path].backend.ts, paired with routes/[...path].tsx rendering props.data.page.
+// A root catch-all receives /about, /fr/a-propos and /de/ueber-uns; it needs at least one segment.
+import { notFound, redirect } from "@nifrajs/web"
+import { t } from "@nifrajs/schema"
+import { urls } from "../shared/i18n"
+import type { Route } from "./+types/[...path]"
+
+const pages = new Map([["/about", "about"], ["/contact", "contact"]])
+export const loaderOutput = t.object({ page: t.string(), locale: t.string() })
+export function loader({ request }: Route.LoaderArgs) {
+  const { pathname, search } = new URL(request.url)
+  const match = urls.matchSegment(urls.getPathLocale(pathname), pathname + search)
+  if (match.kind === "not-found") notFound()
+  if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+  const canonical = urls.unlocalizePathname(pathname).pathname.replace(/\/$/, "") || "/"
+  const page = pages.get(canonical)
+  if (!page) notFound() // Includes unknown and draft-prefixed paths: never dispatch arbitrary input.
+  return { page, locale: urls.localeOf(pathname) }
+}
+```
+
+Keep a separate `routes/index.tsx` for the root; a catch-all needs at least one
+segment. Literal routes take precedence, so ensure they also use the same canonical checks
+when they overlap this dispatcher. Registering `i18n` below supplies locale
+metadata and prefix guards, not pathname rewrites. Dynamic slug maps, automatic filesystem
+aliases, automatic content translation and domain-based routing are outside this API.
+Invalid static paths (patterns, URL delimiters, dot segments or encoded separators), unknown
+locale keys, per-locale collisions including fallback paths, and translations shadowing
+another canonical key throw when the router is defined. Paths must not already carry a
+served locale prefix.
 
 ### Register the routing once
 
@@ -6709,7 +6923,7 @@ export default { fetch: (req: Request, env: Env, ctx: ExecutionContext) =>
 Export through `toFetchHandler` rather than handing the app out directly. Besides
 `env` and `ctx.waitUntil`, it tells nifra the request came from the
 platform's own HTTP parser, which lets the
-[bounded-body cap](/docs/security) trust the declared
+bounded-body cap trust the declared
 `Content-Length` as a real transport frame instead of re-counting every JSON body.
 A bare `export default app` has no such signal and pays the extra pass unless you
 set `server({ trustBodyFraming: true })`.
@@ -6833,7 +7047,7 @@ HTTP request, and `upgrade` reads what the guards derived. The origin check runs
 first. A socket registered before a guard stays public, like an HTTP route there. A browser
 cannot set a header on the handshake, so `authenticate()` can read a short-lived,
 single-use ticket from `input.query` - see
-[Authentication runs first](/docs/auth#auth-first).
+Authentication runs first.
 
 ```ts
 // doc-check: skip - illustrative: an existing auth guard and session lookup.
@@ -7184,7 +7398,7 @@ server()
 
 ## Nifra - Deployment
 
-> One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.
+> One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge or Node.
 
 `app.fetch(request)` is a pure Web-standard handler, so the same app runs
 anywhere. Pick a runtime; the code doesn't change.
@@ -7254,7 +7468,7 @@ Cloudflare Pages
 
 `wrangler.toml`
 
-Vercel Edge
+Vercel (Edge by default; Node opt-in)
 
 `.vercel/output/`
 
@@ -7264,10 +7478,44 @@ none (Build Output API v3)
 
 `nifra build --target static` also builds a site with no server: the prerendered
 pages, the client bundle and `public/`, for any static host. See
-[SSG & ISR](/docs/rendering).
+SSG & ISR.
 
 The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
 Cloudflare and Vercel the platform serves it.
+
+#### Vercel: Edge or Node.js
+
+Ordinary SSR keeps the existing Edge output for `nifra build --target vercel`.
+For Node built-ins and Node-compatible server libraries, keep the target and opt into Node
+in `nifra.config.ts` (there is no separate runtime CLI flag):
+
+```ts
+// nifra.config.ts (alongside your adapter/clientModule exports)
+export const target = "vercel"
+export const vercelRuntime = "node" // "edge" or omitted preserves the Edge function
+
+// Build and deploy from the project root:
+// bunx nifra build             # or: bunx nifra build --target vercel
+// vercel deploy --prebuilt
+```
+
+Both Bun and Vite production pipelines emit Build Output API v3 at
+`.vercel/output`: `static/` holds the client chunks and public files;
+`functions/index.func/` holds the SSR function. Node mode declares
+`nodejs22.x` and exports an HTTP handler without listening at import. It serves
+pages and the backend mounted with `apiPrefix`. Programmatic builds use
+`buildTarget("vercel", { ...options, vercelRuntime: "node" })`, or the same
+option on `buildTargetVite`. A different target or an unsupported runtime is
+refused before clearing the previous build; remove the selector when switching targets.
+
+This is serverless Node, not the self-hosted `node` target: no Bun APIs, listening
+sockets, persistent in-process jobs or WebSocket server. Execution duration, streaming and
+filesystem availability remain subject to Vercel limits; native dependencies must be
+deploy-compatible. `selfHost` does not start a server here. Builds still require
+Bun. Static files are served first by Vercel, so host policy in the function cannot protect
+CDN files. The component pipeline retains its existing Vercel Node output and does not take
+this ordinary-SSR selector. The generated handler is tested locally under Node; this is not
+a claim of a live Vercel deployment test.
 
 The Bun, Node and Deno entries pass the socket peer as `c.clientIp`. Cloudflare
 and Vercel expose no socket, so an edge build has no caller address unless
@@ -7367,7 +7615,7 @@ host-specific deploy step for you to fill in (Fly, a registry push, SSH, …).
 ### Bun (its home)
 
 `app.listen(3000)` - the native Bun server. Bun is the runtime where Nifra measures
-fastest (see [benchmarks](/benchmarks)).
+fastest (see benchmarks).
 
 **Every core:** Bun is single-threaded per process - for multi-core boxes,
 spawn one process per core, each binding the same port with
@@ -7376,8 +7624,8 @@ across them (Linux balances ~evenly). A supervisor that spawns + restarts worker
 lines - see `examples/cluster.ts`. Anything shared across workers (rate limits,
 sessions, pub/sub) needs a shared store, as in any multi-instance deploy. So do an ISR page
 store (signed with one `storeSecret` in every process - see
-[SSG & ISR](/docs/rendering)) and
-[live refresh](/docs/live) (one Redis Streams bus for every process).
+SSG & ISR) and
+live refresh (one Redis Streams bus for every process).
 
 ### Node & Deno
 
@@ -7491,8 +7739,9 @@ export default toFetchHandler(app)
 ```
 
 Deploy: `wrangler pages deploy dist` (Pages) or `wrangler deploy`
-(Workers). The `vercel` target emits the same edge bundle as a Build Output API
-function under `.vercel/output`.
+(Workers). The `vercel` target defaults to an Edge Build Output API function
+under `.vercel/output`; [opt into Node.js](#vercel-node) for
+Node-compatible server dependencies.
 
 ## Nifra - CLI
 
@@ -7518,7 +7767,7 @@ nifra build --target cloudflare  # also: node | deno | vercel | static; add --re
 
 ### The layout the CLI reads
 
-`nifra dev` runs the Bun-native [HMR dev server](/docs/dev);
+`nifra dev` runs the Bun-native HMR dev server;
 `nifra build` runs the production build (content-hashed client assets plus a
 target-specific server); `nifra start` runs the default Bun output. The generated
 server serves assets and SSR with matched-route chunks preloaded and route CSS linked in each
@@ -7532,7 +7781,7 @@ pipeline cannot run those, so that app gets Vite for dev and build alike, and sa
 Vite-only app rather than dropping its transforms silently. Every `dev` and
 `build` run prints which bundler it picked and why, and `nifra check`
 answers the same question without starting a server - see
-[which pipeline runs, when](/docs/dev) for the full table.
+which pipeline runs, when for the full table.
 
 ```ts
 my-app/
@@ -7555,7 +7804,7 @@ and `nifra check` reports it as NF-C038: run
 `backend/app.ts` a composition root - merging modules, registering no routes of
 its own - so each route's capability reach stays its own module's. What goes in each
 zone, and what the builds refuse to cross, is on
-[Project structure](/docs/structure).
+Project structure.
 
 ### backend/framework.ts and nifra.config.ts
 
@@ -7586,6 +7835,17 @@ export const vitePlugins = [react()]          // only if you want Vite's dev pip
 //   conditions    = ["solid"]                 // Solid: resolve solid-js to its source
 //   define        = { __VUE_OPTIONS_API__: "true", ... }   // Vue feature flags
 ```
+
+Ordinary `vercel` builds default to Edge. To opt into Node.js 22, export both
+`target = "vercel"` and `vercelRuntime = "node"` from
+`nifra.config.ts`, then run `nifra build` (or
+`nifra build --target vercel`) and `vercel deploy --prebuilt` from
+the project root. Both Bun and Vite builds write `.vercel/output` unless
+`--out` overrides it. Omit the selector or use `"edge"` to retain
+Edge; other values and use with a different target are refused before output is cleared.
+There is no separate runtime flag. Node functions support Node built-ins but not Bun APIs
+or a persistent server; the CLI/build still requires Bun. See
+runtime output and limitations.
 
 ### Command reference
 
@@ -7724,7 +7984,7 @@ What it does
 
 `nifra types [--check]`
 
-Each route's `./+types` module under `.nifra/types`: params, schema-typed data, and `api` typed by `backend/app.ts`. `dev`, `build` and `check` refresh them too.
+Each route's `./+types` module under `.nifra/types`: params, schema-typed data, and `api` typed by `backend/app.ts`. It also writes `routes.d.ts`, the route table `href()` reads. `dev`, `build` and `check` refresh them too.
 
 `nifra schemas [--write] [--check]`
 
@@ -7736,7 +7996,7 @@ Regenerate a committed `server-manifest.ts` from `routes/` without a full build.
 
 `nifra scaffold hole <route> <name> [--shared] [--interactive] [--timeout <ms>] [--server]`
 
-Add a hole to a [partially prerendered](/docs/partial-prerendering) route: its definition, `boundaries` entry and `Hole` in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.
+Add a hole to a partially prerendered route: its definition, `boundaries` entry and `Hole` in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.
 
 `nifra openapi [--format json | yaml] [--path <prefix>]`
 
@@ -7907,11 +8167,11 @@ install. Run from a CLI whose
 copy cannot reflect the project's app, and says so in one line.
 `nifra doctor` and
 `nifra check` (NF-D002) point here when a workspace carries more than one version;
-see [mixed nifra versions](/docs/troubleshooting#mixed-versions). A
+see mixed nifra versions. A
 `file:` package whose dependencies this upgrade moves keeps its old ones in
 `bun.lock`, where Bun never refreshes them; the plan lists each, and
 `--write` drops those entries so the next `bun install` records them
-again (see [stale file: links](/docs/troubleshooting#stale-file-links)).
+again (see stale file: links).
 
 A `link:` or `file:` dependency outside the root that installs its own
 `@nifrajs/*` at another version stops the upgrade before anything is written: its
@@ -7941,7 +8201,7 @@ fixes for data loss ship as patches of it, so move to the latest with
 
 `nifra build` defaults to a self-hosted Bun server. Use `--target node`,
 `deno`, `cloudflare`, `vercel`, or `static` for another
-complete deploy shape (see [Deployment](/docs/deployment)). Run non-Bun outputs with
+complete deploy shape (see Deployment). Run non-Bun outputs with
 the command printed by the build.
 
 ## Nifra - Coding agents
@@ -7951,7 +8211,7 @@ the command printed by the build.
 Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
 can read the project, learn the real API, run actual requests against the backend it just
 edited, and finish with a report of what the change proved. The same typed capabilities can
-power the agent inside your product through [WebMCP and predictive UI](/docs/webmcp)
+power the agent inside your product through WebMCP and predictive UI
 or stream into a product surface through AG-UI.
 
 ### One MCP, two ways to connect
@@ -8480,7 +8740,7 @@ Passing tests say the code does what its tests say. `nifra_levels` answers the
 different question of what the project _holds_, as a cumulative ladder from a typed
 contract (L0) to contract-derived invariant tests (L4). A scaffolded app starts at L1, and each
 rung it has not reached reports the specific thing missing - so the ladder doubles as the list
-of what to do next. See [the verification ladder](/docs/verification).
+of what to do next. See the verification ladder.
 
 ```bash
 # The two an agent should gate on. Both exit non-zero on failure, so they work in CI unchanged.
@@ -8985,7 +9245,7 @@ export function Counter(props: { message: string }) {
 
 `@nifrajs/devtools` is a plugin that streams what each request actually did - loader
 traces, ISR status, route metadata - over a secured SSE endpoint, with an overlay to read it
-in the browser. In an app with [keep-alive](/docs/keep-alive) routes, the overlay
+in the browser. In an app with keep-alive routes, the overlay
 also lists the pages kept hidden.
 
 ```ts
@@ -9008,12 +9268,12 @@ reads it through `nifra_errors`, `nifra_logs` and
 `nifra_inspect`, and you can read it with `nifra errors` and
 `nifra logs`. Pages get a small inline script that reports browser errors and
 hydration mismatches back to the dev server; the dev server writes `.nifra/dev-server.json`
-so the tools can find it. See [coding agents](/docs/agents).
+so the tools can find it. See coding agents.
 
 When a page reports an error, a badge appears in its corner. It lists that page's errors with
 their code, message, codeframe and fix, and a **Copy prompt** button per fix hands
 a coding agent the error, one fix and the steps to check it worked (the
-[error codes](/docs/errors) page has the same prompts). The badge lives in a closed
+error codes page has the same prompts). The badge lives in a closed
 shadow root, so the page's styles cannot reach it, and it loads under the page's CSP: by nonce,
 by its exact URL, or through `'strict-dynamic'`. A page that never errors never
 fetches it. Turn it off for one run with `nifra dev --no-indicator`, for every run
@@ -9542,7 +9802,7 @@ never reported.
 This applies to every framework with module-global render state, not just React (Preact,
 Vue, Solid, Svelte). Nifra dedupes the active adapter's runtime in build and dev; a
 `file:`-linked package shipping its own copy is the thing to fix. See
-[Dev & HMR](/docs/dev) and the `file:`-linked-package note in
+Dev & HMR and the `file:`-linked-package note in
 `AGENTS.md`.
 
 ###
@@ -9558,7 +9818,7 @@ That route's `data` infers `never` (Nifra can't see the shape). Return a
 plain object and shape the response with `c.set` - reach for `c.json` /
 `c.text` only for an error short-circuit (`throw` from a
 `derive` / `beforeHandle`), not a route's happy path. See
-[API & typed client](/docs/api).
+API & typed client.
 
 -
 **A plugin widened the app's type.** A plugin that registers routes/hooks but whose return
@@ -9567,7 +9827,7 @@ makes `.use()` return `Server<any, any>` and the client loses your
 registry. Build it with `defineRouterPlugin(name, …)` (the clearer-named
 `defineIdentityPlugin`) so `.use()` returns your server unchanged and
 routes added after it stay typed. See
-[Plugins → keep types with defineRouterPlugin](/docs/plugins).
+Plugins → keep types with defineRouterPlugin.
 
 `nifra check` flags the raw-`Response` case; the plugin case surfaces as a
 `never` client at the call site.
@@ -9633,7 +9893,7 @@ export const app = server()
 upfront**, and `implement(contract, handlers)` binds handlers to it. Nothing
 grows a registry per call, so there is **no ceiling at all** - this is the path for
 an API that will keep adding routes for years. Handlers stay checked against the contract exactly
-as inline routes are. See [Contract-first](/docs/contract).
+as inline routes are. See Contract-first.
 
 ```ts
 import { defineContract, implement } from "@nifrajs/core/contract"
@@ -9710,7 +9970,7 @@ those, whatever the workspace installs, so two live-linked repositories that eac
 version still run two), and the running CLI. When they disagree it names each version and
 where it came from. It only reads files, and it never fails the run.
 
-The fix is [`nifra upgrade <highest>`](/docs/cli#upgrade), not a
+The fix is `nifra upgrade <highest>`, not a
 hand edit of the pins: it runs
 every release's migration steps between your oldest pin and the target, then re-pins. Run it
 without `--write` first to see each planned edit. It edits files under the
@@ -9740,7 +10000,7 @@ the manifests it is about to write and leaves `bun.lock` as it is.
 
 Run `nifra check --json` as the done-gate - it surfaces the import-chain leaks,
 typed-client drift, and raw-`Response`-from-a-route issues before you ship. The
-full machine-readable contract is at [/llms-full.txt](/llms-full.txt), and each
+full machine-readable contract is at /llms-full.txt, and each
 package ships a tight `LLM.md` contract card.
 
 ## Nifra - Backends & API (dev and prod)
@@ -10382,7 +10642,7 @@ A route is two files. The page (`x.tsx`) holds the view and its head:
 `revalidate`. A `loader` runs on **GET** and feeds
 `props.data`; an `action` runs on **POST** and feeds
 `props.actionData`. A server-only export in the page file is a build error - see
-[Project structure](/docs/structure).
+Project structure.
 
 ```ts
 // routes/users/[id].tsx - the page: it ships to the browser whole. Only `default` is required.
@@ -10843,7 +11103,7 @@ file that reaches it.
 
 ### Optional server components
 
-The optional [server-components pipeline](/docs/server-components) supports
+The optional server-components pipeline supports
 React, Preact, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
 in `*.component.server.ts(x)`, register owner instances and export a named
 `componentPipeline` configuration. React uses native RSC/Flight; the other four
@@ -11016,8 +11276,8 @@ stable. The consumer still gets full end-to-end types both ways -
 `.merge()` threads the router's routes into the host app's registry, and
 `client(contract, url)` types every call from the same exported object.
 
-See [SSG & ISR](/docs/rendering) for prerendering, [Dev & HMR](/docs/dev) for the
-two dev loops and the `--port` flag, and [Loaders & actions](/docs/data) for the
+See SSG & ISR for prerendering, Dev & HMR for the
+two dev loops and the `--port` flag, and Loaders & actions for the
 data layer in depth.
 
 ## Nifra - Control APIs (one schema, every client)
@@ -11541,7 +11801,7 @@ nifra loads this app's copy for every importer:
 
 Packages duplicated the same way are reported as one finding with one combined
 `singleCopy` list. The preload this needs, and the version-skew case it cannot
-cover, are in [Troubleshooting](/docs/troubleshooting).
+cover, are in Troubleshooting.
 
 ## Nifra - Databases
 
@@ -11730,7 +11990,7 @@ CREATE POLICY tenant_isolation ON notes
 
 The policy is the source of truth; `scoped()` just supplies the identity. Pair it with a
 UUIDv7 `user_id` and an index on it. Connect `c.session.userId` from
-[@nifrajs/better-auth](/docs/auth).
+@nifrajs/better-auth.
 
 ### Postgres (Raw Driver)
 
@@ -11803,13 +12063,13 @@ Cloudflare D1, Turso/libSQL
 Neon serverless, Postgres over Hyperdrive, Prisma Accelerate
 
 On Cloudflare, bindings like D1 are **typed** through `c.env` - see
-[Edge & bindings](/docs/edge). For Workers MySQL/Postgres, Hyperdrive pools the
+Edge & bindings. For Workers MySQL/Postgres, Hyperdrive pools the
 connection so a native driver works over the binding.
 
 **Security:** always parameterize (`?` / driver placeholders or an ORM) - never
 string-build SQL from request input. Nifra validates the request body/params at the boundary
 (with `t` or any Standard Schema), so malformed input is rejected before your query
-runs. See [Security](/docs/security).
+runs. See Security.
 
 Complete runnable references - a typed CRUD API you can diff your own against:
 `examples/db-postgres` (Drizzle + Postgres, embedded PGlite - zero setup) and
@@ -11936,7 +12196,7 @@ patched the server HTML. In development the page reports it to the dev server as
 `Date.now()`, `Math.random()`, locale formatting, reads of
 `window` or `localStorage`, invalid HTML nesting. With happy-dom
 installed in the project, `nifra_hydrate` reproduces it with a stable diagnostic.
-See [hydration](/docs/hydration).
+See hydration.
 
 #### NIFRA_SCHEMA_PARSE
 
@@ -11999,7 +12259,7 @@ them. Development reports each cookie name once.
 carries the session, or in `keepAlive.ignoreCookies` if it does not. When the
 session is a token in client storage, call `identityChanged()` from
 `@nifrajs/web/client` at sign-in and sign-out. See
-[keep-alive and sign-in](/docs/keep-alive#sign-in).
+keep-alive and sign-in.
 
 #### NIFRA_KEEPALIVE_DIRECT_CHILD_CSS
 
@@ -12290,7 +12550,7 @@ reads.
 -
 **CSP and browser:** React `Activity` hydration, inline styles under a
 strict Content-Security-Policy, and WebKit's handling of streamed module scripts. Server-runtime differences are in
-[runtime differences](/docs/runtime-differences).
+runtime differences.
 
 ### Version-sensitive advice
 
@@ -12376,7 +12636,7 @@ This is the part teams hand-roll incorrectly. `verifyWebhook` reads the raw body
 bounded (DoS guard), verifies the signature in constant time, checks the timestamp
 tolerance, and only then hands you the payload. Presets exist for Stripe and GitHub, and a
 generic header/encoding form covers any other provider - including key rotation via an
-array of secrets. Details in [security](/docs/security).
+array of secrets. Details in security.
 
 #### 3. Processing exactly once
 
@@ -12396,7 +12656,7 @@ duplicate while the first is in flight.
 
 ### When to write a plugin
 
-Reach for [a plugin](/docs/plugins) only when a library should participate in
+Reach for a plugin only when a library should participate in
 the framework itself: contribute typed context to every handler (`c.stripe`, a
 session, a tenant), mount routes of its own, or hook the request lifecycle. That is
 `definePlugin` - a few lines, typed end-to-end. For everything else, an import
@@ -12467,7 +12727,7 @@ Going back and then following a link drops the pages ahead of it, as the browser
 those history entries.
 
 -
-A page left with a [route open in a modal](/docs/routing#modal-routes) over
+A page left with a route open in a modal over
 it is kept with the modal. Back to that entry shows the page and opens the modal over it
 again.
 
@@ -12490,7 +12750,7 @@ them; reset in `onPageShow` what must start fresh.
 
 -
 Each kept page holds its DOM and its components' memory, at most three per tab. In
-development, the [devtools overlay](/docs/dev#devtools) lists them with their
+development, the devtools overlay lists them with their
 path, how long each has been hidden and how many elements it renders.
 
 ### Fresh data
@@ -12501,14 +12761,14 @@ nothing below an unchanged value renders again, and form input in a list survive
 `revalidate: false` to skip the reload; an action submitted while the page was
 hidden still reloads it.
 
-A [partially prerendered](/docs/partial-prerendering) page that is kept stops its
+A partially prerendered page that is kept stops its
 holes while it is hidden: a hole still loading is cancelled on the server, and a reload on its
 way is dropped. When the page comes back each hole reloads in place, its old content marked
 `aria-busy="true"` until the new arrives, with `revalidate: false` too.
 An interactive hole keeps its state through it, in React as well, where
 `<Activity>` cleans the page's effects up while it is hidden.
 
-With [live refresh](/docs/live), a hidden page is not watched. When it comes back,
+With live refresh, a hidden page is not watched. When it comes back,
 what changed while it was hidden reloads, whatever `revalidate` says, and a grant
 that expired in the meantime is loaded again.
 
@@ -12623,7 +12883,7 @@ export const clock = defineIsland((el) => {
 })
 ```
 
-The [server components](/docs/server-components) of a kept page stay mounted too.
+The server components of a kept page stay mounted too.
 With `bindComponentRouter` installed, navigation leaves them alone while the page
 is hidden, and the reload of a page that comes back updates them.
 
@@ -12648,7 +12908,7 @@ main section { padding: 2rem; }
 
 In development, the first time a kept page is shown the client reads the page's
 same-origin stylesheets and reports each such selector once, as
-[NIFRA_KEEPALIVE_DIRECT_CHILD_CSS](/docs/errors#keepalive-direct-child-css).
+NIFRA_KEEPALIVE_DIRECT_CHILD_CSS.
 
 ### Keep-alive and sign-in
 
@@ -12669,9 +12929,9 @@ A response that renews the same visitor's session keeps the epoch: a session coo
 with a new lifetime, or an `@nifrajs/auth` session committed again with the same
 data. Any change to an `@nifrajs/auth` session's data rotates it, in either mode,
 so a sign-in or sign-out shows even when the session id stays the same. With
-[
+
 `identity`
-](/docs/auth)
+
 set on `createSessions`, only a change to the keys it names rotates it, and a write
 to a cart or a preference keeps it. An Auth.js session
 read writes a new token every time; mounted through `@nifrajs/authjs`, it keeps
@@ -12695,7 +12955,7 @@ export const keepAlive = {
 
 In development, an `HttpOnly` cookie that changes and is in neither list is
 reported once, as
-[NIFRA_KEEPALIVE_IDENTITY_COOKIE](/docs/errors#keepalive-identity-cookie). A flow
+NIFRA_KEEPALIVE_IDENTITY_COOKIE. A flow
 that changes who is signed in without changing a cookie rotates the epoch itself:
 
 ```ts
@@ -12795,7 +13055,7 @@ seed.
 is your own name for a piece of data, such as `post:42`: a letter, then up to
 127 of `A-Z a-z 0-9 . _ : / -`. A frame holds at most 64. A live load returns
 an encrypted grant for its keys beside the data. A hole of a
-[partially prerendered page](/docs/partial-prerendering) declares its own the
+partially prerendered page declares its own the
 same way, and a change reloads that hole alone.
 
 ```ts
@@ -13484,7 +13744,7 @@ Past 5.0, 5.1 adds one change a frontend on another origin sees. A route with a
 it. List that frontend's origin, or an identity provider's for a
 `form_post` callback, in the `formOrigins` server option (an array of
 exact origins or a function; `@nifrajs/edge` takes it too). JSON bodies are
-unchanged. [Security](/docs/security) covers what the check leaves to
+unchanged. Security covers what the check leaves to
 `csrf()`.
 
 ### 6. Run the release gates
@@ -13516,7 +13776,7 @@ rest needs a hand:
 longer mounted. An islets `island("id", setup)` becomes
 `bindIsland(setup)` passed to `mountIslands({ id })`, and a
 nano signal is read by calling it (`count()`). See
-[Islands](/docs/islands).
+Islands.
 
 -
 `withISR` over any store but `MemoryCacheStore` takes a
@@ -13632,8 +13892,8 @@ becomes a return.
 1:1: `.get/.post` + a `t` schema, and an Eden-style typed client. You
 gain Node / Deno / edge portability and an optional SSR frontend on five UI libraries.
 
-Then connect a database ([Database](/docs/database)) and, if you're going
-full-stack, see [Migrating a meta-framework](/docs/migrate-frontend).
+Then connect a database (Database) and, if you're going
+full-stack, see Migrating a meta-framework.
 
 ## Nifra - Migrating from Next.js, Nuxt, SvelteKit & SolidStart
 
@@ -13690,26 +13950,26 @@ Nifra's client router - `Link` + hover/focus prefetch, scroll restoration
 
 an action's `revalidate(paths, data, { tags })`, or
 `revalidateEndpoint` for a webhook - see
-[SSG & ISR](/docs/rendering)
+SSG & ISR
 
 Server Components · `"use client"`
 
-opt-in [server components](/docs/server-components) on all five adapters
+opt-in server components on all five adapters
 
 Partial prerendering (Cache Components)
 
 a `shellLoader` and holes - see
-[Partial prerendering](/docs/partial-prerendering)
+Partial prerendering
 
 Intercepting routes (`(.)photo`)
 
 a boundary with `{ intercept: "/photos/:id" }` - see
-[Opening a route in a modal](/docs/routing#modal-routes)
+Opening a route in a modal
 
 `keepalive` in `definePageMeta`
 
 `export const keepAlive = true` - see
-[Keep-alive](/docs/keep-alive)
+Keep-alive
 
 ### Data loading (Next.js → Nifra + React)
 
@@ -13764,14 +14024,14 @@ app.
 **Much faster SSR** - the current dynamic-page snapshot reports Nifra at
 15× the throughput of Next.js, 7.2× Nuxt, and
 3.9× SvelteKit / 2.2× SolidStart, with a fraction
-of the client JavaScript. See [benchmarks](/benchmarks).
+of the client JavaScript. See benchmarks.
 
 -
 **End-to-end types with no codegen**, the same app on Bun / Node / Deno / the edge, and a
-backend you can also ship on its own. Start with [Getting started](/docs).
+backend you can also ship on its own. Start with Getting started.
 
 Moving a backend (Express, Hono, Fastify, Elysia) instead? See
-[Migrating a backend](/docs/migrate-backend).
+Migrating a backend.
 
 ## Nifra - Migrate route by route
 
@@ -13799,7 +14059,7 @@ app. Mount before the plugin when the legacy app keeps its own auth.
 A mounted fetch handler carries HTTP only. A WebSocket upgrade under the mount reaches it as
 an ordinary request and never becomes a socket, so keep the legacy app's sockets on its own
 server until they move to `app.ws()` routes (see
-[WebSockets in a composed app](/docs/websockets#composed)).
+WebSockets in a composed app).
 
 ```ts
 import { Hono } from "hono"
@@ -14260,7 +14520,7 @@ or refuse, and its data reaches no response.
 
 -
 A route may declare an intercepting boundary (a
-[modal route](/docs/routing#modal-routes)) beside its holes. It is not a hole and
+modal route) beside its holes. It is not a hole and
 is not counted against the limit above. The shell carries it unresolved; a client
 navigation to its URL opens the target over the page, which stays mounted with its holes
 filled.
@@ -14763,7 +15023,7 @@ its `compatibility_date`.
 
 The browser side has the same property: the behavior belongs to React or the
 browser, and Nifra only sits on top of it. Those entries live in the
-[frontend gotchas](/docs/frontend-guidance) catalog (`nifra frontend`),
+frontend gotchas catalog (`nifra frontend`),
 next to the per-framework reactivity cases:
 
 -
@@ -14791,7 +15051,7 @@ each runtime, record the versions, and keep the cause to what the runtime does.
 Which hardening each framework actually ships. A dimension-by-dimension read of Nifra's
 security defaults against the **current releases** of Hono, Fastify, Express, and Elysia -
 what is on by default, what is opt-in, and what is left to a third-party package. For how each
-Nifra primitive works, see [Security & hardening](/docs/security).
+Nifra primitive works, see Security & hardening.
 
 ### The honest verdict
 
@@ -15198,8 +15458,8 @@ claim; Express's ubiquity means every hire already knows it. Nifra's argument is
 narrower and honest: it makes the dangerous configurations _unrepresentable_, ships the
 hardening primitives first-party, and lets `nifra assure` prove in CI that every
 route is guarded. For the full capability and throughput comparison, see
-[vs other frameworks](/docs/comparison) and the
-[per-framework pages](/compare).
+vs other frameworks and the
+per-framework pages.
 
 ## Nifra - Security testing
 
@@ -15308,9 +15568,8 @@ Reaches the browser
 `routes/x.tsx` (`.svelte`, `.vue`, `.mdx`)
 
 a page: the component, `meta`,
-[
+
 `keepAlive`
-](/docs/keep-alive)
 
 yes
 
@@ -15319,7 +15578,7 @@ yes
 that page's `loader`, `action`, `loaderOutput`,
 `actionOutput`, `hydrate`, `revalidate`,
 `shellLoader` and `boundaryLoaders` (a
-[partially prerendered](/docs/partial-prerendering) page),
+partially prerendered page),
 `middleware` (in `_layout.backend.ts`)
 
 never
@@ -15432,7 +15691,7 @@ Those commands, the contract lock and the route lints see only what
 same app from `backend/app.ts` built with stand-in dependencies, so every operation
 is visible without a database or secrets; `nifra check` names an implemented
 operation it does not serve (NF-C039). See
-[the stand-in entry](/docs/types-first#stub-entry).
+the stand-in entry.
 
 ### A route is two files
 
@@ -15627,9 +15886,9 @@ Whether it catches _undeclared extra_ fields depends on your validator, not on n
 strict schema (`@nifrajs/schema`'s `t.object`) reports them and the
 test fails, while a stripping one (Zod, Valibot) accepts them silently. To catch extras
 regardless, or to stop them reaching the wire in production, use
-[
+
 `responseContract`
-](/docs/security)
+
 .
 
 ### Opaque schemas stay validator-neutral
@@ -15904,7 +16163,7 @@ more than one service, declare it with `defineContract` and connect handlers wit
 `implement`. That keeps the contract type available without importing a server
 implementation into the client.
 
-See [Framework contract](/docs/contract) for the decoupled form and its scaling
+See Framework contract for the decoupled form and its scaling
 guidance.
 
 The tooling reads the backend `backend/app.ts` exports. An app that
@@ -15972,7 +16231,7 @@ would refuse: backend code in a page, or a server package in browser code.
 -
 Validation only covers what you put in a schema. A raw-body, file-upload, or
 bring-your-own-validation route reads the body directly - cap and validate those yourself
-(see [Security](/docs/security)'s `c.boundedBody`).
+(see Security's `c.boundedBody`).
 
 -
 The typed client infers from the server _type_, so it needs an
@@ -20280,7 +20539,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/ts-plugin
 
-A TypeScript language-service plugin for [nifra](https://github.com/nifrajs/nifra). It adds go-to-definition on route-path string literals: put your cursor on `"/orders"` in `navigate({ to: "/orders" })`, `<Link to="/orders">`, or `href="/orders"`, and jump straight to the `routes/` file that serves it.
+A TypeScript language-service plugin for [nifra](https://github.com/nifrajs/nifra). It adds go-to-definition on route-path string literals: put your cursor on `"/orders"` in `href({ to: "/orders" })`, `rawHref("/orders")`, or `<a href="/orders">`, and jump straight to the `routes/` file that serves it. A route-table pattern such as `"/users/:id"` resolves to its file too.
 
 The routing rules are nifra's own - it discovers routes with `@nifrajs/web` and matches them with `@nifrajs/core`'s pattern matcher - so a path resolves to exactly the file it would serve at runtime, dynamic segments included (`/users/42` → `routes/users/[id].tsx`).
 
@@ -20946,7 +21205,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/image
 
-`CloudflareLoaderOptions`, `HtmlImageAttrs`, `ImageFormat`, `ImageInfo`, `ImageLoader`, `ImageProps`, `OgImageOptions`, `OgImageRasterized`, `OgImageRasterizer`, `PngRenderer`, `ResolvedImage`, `ResvgConstructor`, `ResvgRenderer`, `SelfHostedLoaderOptions`, `SignImageUrlOptions`, `cloudflareLoader`, `createPngRasterizer`, `createResvgRasterizer`, `identityLoader`, `imageDimensions`, `ogImageResponse`, `readImageDimensions`, `renderOgImage`, `resolveImage`, `selfHostedLoader`, `signImageUrl`, `toHtmlAttrs`
+`CloudflareLoaderOptions`, `HtmlImageAttrs`, `ImageFormat`, `ImageInfo`, `ImageInputProps`, `ImageLoader`, `ImagePresentationProps`, `ImageProps`, `OgImageOptions`, `OgImageRasterized`, `OgImageRasterizer`, `PngRenderer`, `ResolvedImage`, `ResvgConstructor`, `ResvgRenderer`, `SelfHostedLoaderOptions`, `SignImageUrlOptions`, `StaticImageData`, `StaticImageProps`, `StaticImageVariant`, `cloudflareLoader`, `createPngRasterizer`, `createResvgRasterizer`, `identityLoader`, `imageDimensions`, `ogImageResponse`, `readImageDimensions`, `renderOgImage`, `resolveImage`, `selfHostedLoader`, `signImageUrl`, `toHtmlAttrs`
 
 ## @nifrajs/island-trigger
 

@@ -1,5 +1,9 @@
 # @nifrajs/jobs
 
+## 5.10.0
+
+No changes in this release.
+
 ## 5.9.0
 
 No changes in this release.

@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/partial-prerendering",
@@ -367,7 +368,7 @@ export default function PartialPrerendering() {
         </li>
         <li>
           A route may declare an intercepting boundary (a{" "}
-          <a href="/docs/routing#modal-routes">modal route</a>) beside its holes. It is not a hole and
+          <a href={href({ to: "/docs/routing", hash: "modal-routes" })}>modal route</a>) beside its holes. It is not a hole and
           is not counted against the limit above. The shell carries it unresolved; a client
           navigation to its URL opens the target over the page, which stays mounted with its holes
           filled.

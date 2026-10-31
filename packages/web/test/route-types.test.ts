@@ -47,6 +47,20 @@ describe("generated route types", () => {
     )
   })
 
+  test("a layout or special page carries the params of the directory it wraps", () => {
+    write("routes/[[lang]]/blog/[slug]/index.tsx", "export default () => null\n")
+    write("routes/[[lang]]/blog/[slug]/_layout.tsx", "export default () => null\n")
+    write("routes/[[lang]]/blog/[slug]/_404.tsx", "export default () => null\n")
+    write("routes/_layout.tsx", "export default () => null\n")
+    writeRouteTypes({ appRoot: app.root })
+    const params = "export type Params = { readonly lang?: string; readonly slug: string }"
+    expect(generated("routes/[[lang]]/blog/[slug]/+types/_layout.d.ts")).toContain(params)
+    expect(generated("routes/[[lang]]/blog/[slug]/+types/_404.d.ts")).toContain(params)
+    expect(generated("routes/+types/_layout.d.ts")).toContain(
+      "export type Params = Record<string, never>",
+    )
+  })
+
   test("a part-literal segment carries the params inside it", () => {
     write("routes/post-[id].tsx", "export default () => null\n")
     write("routes/[lang]-feed/[year]-[month].xml.tsx", "export default () => null\n")

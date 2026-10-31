@@ -159,6 +159,8 @@ Usage:
                                          _routes.json. The server entry is generated from your
                                          backend/framework.ts (adapter) + backend/app.ts + routes/.
                                          --report prints a per-chunk size + gzip table (biggest first).
+                                         Vercel defaults to Edge; export vercelRuntime = "node" from
+                                         nifra.config.ts for ordinary Node.js 22 serverless SSR.
                 [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
                                          (faster, Bun-native) unless your ONLY transforms are
                                          \`vitePlugins\`, which the Bun build cannot run - then Vite,
@@ -314,7 +316,8 @@ Usage:
                                          React server component for the hole.
   nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
                                          params, the data its output schemas let through, and api typed
-                                         by backend/app.ts. dev, build and check refresh them too;
+                                         by backend/app.ts, plus routes.d.ts, the table href() checks
+                                         links against. dev, build and check refresh them too;
                                          --check fails when one is stale.
   nifra schemas [--write] [--check] [--json]
                                          Draft loaderOutput/actionOutput from each loader's and
@@ -351,7 +354,7 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "5.9.0"
+const CLI_VERSION = "5.10.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
@@ -827,7 +830,9 @@ async function buildForTarget(
   flag: string | undefined,
   flags: Flags,
 ): Promise<void> {
-  const { parseBuildTarget, renderSizeReport } = await import("@nifrajs/web/build")
+  const { parseBuildTarget, renderSizeReport, validateVercelRuntime } = await import(
+    "@nifrajs/web/build"
+  )
   const target = parseBuildTarget(
     flag ?? app.framework.target ?? "bun",
     flag === undefined ? "target in nifra.config.ts" : "--target",
@@ -836,7 +841,13 @@ async function buildForTarget(
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
   const { framework: fw } = app
+  validateVercelRuntime(target, fw.vercelRuntime)
   if (fw.componentPipeline !== undefined) {
+    // The component pipeline already owns its Vercel Node handler; this selector is ordinary SSR only.
+    if (fw.vercelRuntime !== undefined)
+      throw new Error(
+        "[nifra/components] vercelRuntime selects ordinary SSR only; omit it for the component pipeline",
+      )
     if (flags.bun)
       throw new Error(
         "[nifra/components] Components require the Vite 8 pipeline; Bun remains a server runtime",
@@ -951,6 +962,7 @@ async function buildForTarget(
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
+    ...(fw.vercelRuntime !== undefined ? { vercelRuntime: fw.vercelRuntime } : {}),
     ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
     live: fw.live?.clientEntry,
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server

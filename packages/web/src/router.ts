@@ -1855,8 +1855,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       if (inflight.has(path) || freshPrefetch(path) !== undefined) return
       const matched = match(path)
       if (matched === null) return
-      const prefetchMarker = {}
-      inflight.set(path, prefetchMarker)
+      const token = {}
+      inflight.set(path, token)
       const epoch = documentEpoch()
       try {
         // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from -
@@ -1875,14 +1875,16 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (
           loaded.serverComponents === undefined &&
           !holes &&
-          inflight.get(path) === prefetchMarker &&
+          // nifra-expect NF-S002: token is an object identity marking the current prefetch generation, not a credential.
+          inflight.get(path) === token &&
           epoch === documentEpoch()
         )
           prefetched.set(path, [loaded, Date.now(), epoch])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {
-        if (inflight.get(path) === prefetchMarker) inflight.delete(path)
+        // nifra-expect NF-S002: token is an object identity marking the current prefetch generation, not a credential.
+        if (inflight.get(path) === token) inflight.delete(path)
       }
     },
     fetcher: (key) => {

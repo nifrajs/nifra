@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/routing",
@@ -116,6 +117,24 @@ export async function loader({ search, api }: Route.LoaderArgs) {
   const res = await api.reports.list(search).get() // search.page is a number
   return { rows: res.ok ? res.data : [] }
 }`
+
+const LINKS = `// doc-check: skip - routes of your own app; one line per call, before and after.
+import { href, rawHref } from "@nifrajs/web-react/router"
+
+navigate(\`/users/\${id}?tab=posts\`)
+navigate(href({ to: "/users/:id", params: { id }, search: { tab: "posts" } }))
+
+<a href="/pricing">Pricing</a>
+<a href={href({ to: "/pricing" })}>Pricing</a>
+
+<Link to="/docs#install">Install</Link>
+<Link to={href({ to: "/docs", hash: "install" })}>Install</Link>
+
+throw redirect("/login")
+throw redirect(href({ to: "/login" }))
+
+navigate(cmsLink) // a same-origin path built elsewhere
+navigate(rawHref(cmsLink))`
 
 const BLOCKER = `// routes/posts/[id]/edit.tsx - don't lose a half-finished edit to a stray click.
 import { useState } from "react"
@@ -281,7 +300,7 @@ export default function Routing() {
         <li>
           <code>x.backend.ts</code> beside a page or layout is its server half: <code>loader</code>,{" "}
           <code>action</code>, their output schemas, and the other server-only exports. It never
-          reaches the browser - see <a href="/docs/structure">Project structure</a>.
+          reaches the browser - see <a href={href({ to: "/docs/structure" })}>Project structure</a>.
         </li>
         <li>
           <code>_404.tsx</code> renders unmatched paths, and whatever a loader answers with{" "}
@@ -356,7 +375,7 @@ export default function Routing() {
         Each page default-exports a component; an optional <code>meta</code> export drives{" "}
         <code>&lt;head&gt;</code> (applied on SSR and on client navigation). Its data comes from a{" "}
         <code>loader</code> in its <code>.backend.ts</code> half - see{" "}
-        <a href="/docs/data">Loaders &amp; actions</a>.
+        <a href={href({ to: "/docs/data" })}>Loaders &amp; actions</a>.
       </p>
       <p>
         A layout's <code>meta</code> receives its own loader's data as <code>data</code>, the value its
@@ -463,12 +482,58 @@ export default function Routing() {
         or a history delta such as <code>navigate(-1)</code>; a string or a template literal is a
         compile error. So do React's <code>Link</code>, <code>NavLink</code> and <code>Navigate</code>{" "}
         (<code>{`<Link to={href({ to: "/pricing" })}>`}</code>) and the server's{" "}
-        <code>redirect()</code>; <code>Link</code> and <code>NavLink</code> also throw at render when{" "}
-        <code>to</code> is not a same-origin path, and <code>redirect</code> takes any string with{" "}
-        <code>{`{ external: true }`}</code>. For a same-origin path built elsewhere - a CMS link,{" "}
+        <code>redirect()</code>; when <code>to</code> is not a same-origin path,{" "}
+        <code>Link</code> and <code>NavLink</code> render the anchor without an <code>href</code>,
+        and <code>Navigate</code> and <code>setSearchParams</code> do not navigate; each logs a{" "}
+        <code>console.error</code> that names the call and never the value. <code>redirect</code>{" "}
+        takes an off-origin location with <code>{`{ external: true }`}</code>, which still refuses
+        one holding a line break. For a same-origin path built elsewhere - a CMS link,{" "}
         <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
         <code>/</code>, no backslash or control character) and returns the same type. A link to
-        another site is a plain <code>&lt;a href&gt;</code>.
+        another site is a plain <code>&lt;a href&gt;</code>. A path that comes from outside is
+        checked where it is read: <code>rawHref</code> throws a <code>TypeError</code> for one that is
+        not same-origin, so catch it at that call when a field cannot be trusted. A value that gets
+        past it as a forged <code>Href</code> costs only its own link.
+      </p>
+
+      <h2 id="typed-links">Moving existing links to href()</h2>
+      <p>
+        A link written as a string is not checked: <code>{`navigate("/pricng")`}</code> and{" "}
+        <code>{`<a href="/pricng">`}</code> compile and then 404. Moving one is mechanical.
+      </p>
+      <CodeBlock code={LINKS} lang="tsx" />
+      <p>
+        A leftover <code>navigate("/x")</code>, <code>{`<Link to="/x">`}</code> or{" "}
+        <code>redirect("/x")</code> is a compile error at the call, so <code>tsc</code> lists what is
+        left. A plain <code>{`<a href="/x">`}</code> is not an error, so search for{" "}
+        <code>{`href="/`}</code> and <code>{"href={`/"}</code> too; a link that opens another site stays
+        an <code>&lt;a href&gt;</code>. This site, the examples and the starters are held to it by a
+        test that fails on a literal internal anchor.
+      </p>
+      <p>
+        <code>nifra check</code> finds the plain anchors in your app too, and reads the route table to
+        tell two cases apart. <code>NF-C057</code> (a warning) is a path that no page, no backend route
+        and no file in <code>public/</code> serves: the link is a 404, and the message names the
+        nearest page when it is a typo away. <code>NF-C058</code> (info) is a path that is a page
+        today; the message gives the <code>href()</code> call that replaces it. A template literal such
+        as <code>{"`/users/${id}`"}</code> is judged by its shape and never reported as dead, since the
+        route it builds may live outside the file routes. Links in <code>.tsx</code>, <code>.vue</code>{" "}
+        and <code>.svelte</code> files are read. Raise, lower or silence either code with{" "}
+        <code>rules</code> in <code>nifra.config</code>, or keep one link as written with{" "}
+        <code>rawHref()</code> or <code>{"// nifra-expect NF-C058: <reason>"}</code> above the
+        attribute (<code>{"<!-- nifra-expect NF-C058: <reason> -->"}</code> above the anchor in a{" "}
+        <code>.vue</code> or <code>.svelte</code> template). A backend mounted under{" "}
+        <code>apiPrefix</code> counts as serving its paths, read from <code>backend/framework.ts</code>{" "}
+        or <code>nifra.config.ts</code>; when either holds a value <code>check</code> cannot read, no
+        link is reported dead. <code>.jsx</code> files and an <code>href</code> built by a function are
+        not read.
+      </p>
+      <p>
+        The table is a generated file, <code>.nifra/types/routes.d.ts</code>. A program in which no route
+        imports a <code>./+types/...</code> module does not load it, and <code>to</code> then accepts no
+        route at all, and <code>nifra check</code> warns. List <code>.nifra/types/routes.d.ts</code> under
+        the tsconfig <code>files</code>: the <code>**</code> globs skip a dot directory, and a{" "}
+        <code>files</code> entry is not filtered by <code>exclude</code>.
       </p>
 
       <h2>Prefetching</h2>

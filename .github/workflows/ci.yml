@@ -14,7 +14,7 @@ permissions: {}
 jobs:
   checks:
     name: check (${{ matrix.group }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -70,20 +70,25 @@ jobs:
         if: matrix.group == 'tests'
         run: bun run test:rest
 
-      # The live Postgres suites skip without a server. The runner image ships one with its service
-      # off; the password only guards a throwaway server bound to localhost.
-      - name: Start PostgreSQL
+      # The live Postgres suites skip without a server. The runner image's own server tracks the
+      # newest major (18 on ubuntu-26.04), so PostgreSQL 16 runs in a container; the password only
+      # guards a throwaway server bound to localhost.
+      - name: Start PostgreSQL 16
         if: matrix.group == 'postgres'
         run: |
-          sudo systemctl start postgresql.service
-          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          docker run -d --name nifra-pg16 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:5432:5432 \
+            postgres:16@sha256:1beaa3084eee2676f20a9cd9928f0bf2c5bf674f8e49f81017912183d377c61c
+          for _ in $(seq 60); do
+            pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
           # Without dblink the suite's dblink checks return early and pass.
           test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
         env:
           NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
 
-      # The runner's server is PostgreSQL 16; the grant gate and the function allowlist read catalogs
-      # that change between majors, so the same suites run against the newest one as well.
+      # The grant gate and the function allowlist read catalogs that change between majors, so the same
+      # suites run against the newest one as well.
       - name: Start PostgreSQL 18
         if: matrix.group == 'postgres-18'
         run: |
@@ -173,7 +178,7 @@ jobs:
     name: check
     needs: checks
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -186,7 +191,7 @@ jobs:
     # The browser x runtime matrix runs once per release, in release verification. This job is the
     # manual pre-release run for a branch; PRs keep the contracts step and the component unit tests.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     timeout-minutes: 45
@@ -199,7 +204,7 @@ jobs:
           bun-version: 1.4.4
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
           deno-version: 2.9.7
@@ -259,7 +264,7 @@ jobs:
         run: bun run scripts/test-windows.ts
 
   deno:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -303,7 +308,7 @@ jobs:
   # already had this job; Node and Workers did not, so two published adapters had zero coverage on
   # the runtimes they exist for. This closes the Node half.
   node:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -320,7 +325,7 @@ jobs:
       # off `packageManager`, which looks for a lockfile this Bun repo does not have.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -339,7 +344,7 @@ jobs:
   # local dev server runs the same workerd runtime used by the platform and persists the Durable Object
   # SQLite state in a temporary directory owned by the job.
   workers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -354,7 +359,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -374,7 +379,7 @@ jobs:
   # The fixed seed keeps a pull request's run repeatable; the nightly runtime-differential workflow
   # explores fresh seeds with a far larger budget.
   runtime-differential:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -389,7 +394,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
 
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
@@ -413,7 +418,7 @@ jobs:
   # files, shared CSS Modules, and a keyframe export so a dropped route or a pipeline-specific class map
   # turns this job red. Hashed filenames are intentionally ignored by the checker.
   pipeline-parity:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read

@@ -5,6 +5,16 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { collectTestResult } from "../src/test-tool.ts"
 
+/** Whether `pid` is a zombie: exited but not yet reaped. Only Linux exposes this, as `Z` in `/proc/<pid>/stat`. */
+async function isZombie(pid: number): Promise<boolean> {
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8")
+    return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) === "Z"
+  } catch {
+    return false
+  }
+}
+
 describe("collectTestResult", () => {
   test("runs bun test with a safe pattern and returns bounded structured output", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-test-tool-"))
@@ -144,14 +154,20 @@ describe("collectTestResult", () => {
         )
         expect(result.cancelled).toBe(true)
         const pid = Number(await readFile(join(dir, "grandchild.pid"), "utf8"))
-        // The group has been signalled, but an orphan's PID can remain until the OS reaps it.
-        // Observe that bounded state change instead of racing the first liveness probe.
+        // The group has been signalled, but an orphan's PID can remain until the OS reaps it, and where
+        // nothing reaps orphans (a container without an init) it stays a zombie for good: the process
+        // is dead, yet `kill(pid, 0)` still succeeds. Observe the bounded state change, and count a
+        // zombie as exited, instead of racing the first liveness probe.
         let exited = false
         for (let attempt = 0; attempt < 50; attempt++) {
           try {
             process.kill(pid, 0)
           } catch (error) {
             if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error
+            exited = true
+            break
+          }
+          if (await isZombie(pid)) {
             exited = true
             break
           }

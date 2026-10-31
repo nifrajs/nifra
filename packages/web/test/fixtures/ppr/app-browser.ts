@@ -13,7 +13,7 @@
  */
 import assert from "node:assert/strict"
 import { type Browser, type BrowserContext, chromium, firefox, type Page, webkit } from "playwright"
-import { probe, releaseHeld } from "./app/lib/probe.ts"
+import { probe, releaseHeld } from "./app/lib/probe.backend.ts"
 import type { PprApp, PprTwin } from "./app/server.ts"
 
 declare global {
@@ -237,6 +237,7 @@ async function checkEngine(name: string, browser: Browser): Promise<Record<strin
   // D: an unrelated fetch in flight when the page leaves its PPR document still completes.
   await page.goto(`${origin}/p/1?slow=5000`, { waitUntil: "commit" })
   await routed(page)
+  // nifra-expect NF-C002: deliberately tests an unrelated browser fetch surviving navigation, not an app API call.
   const unrelated = page.evaluate(() => fetch("/__unrelated").then((r) => r.text()))
   await go(page, "#to-other")
   assert.equal(await unrelated, "unrelated ok", `${name}: an unrelated fetch survives leaving`)

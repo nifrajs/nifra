@@ -1,7 +1,7 @@
 import { t } from "@nifrajs/schema"
 import { notFound } from "../../../../../../src/internal/status-page.ts"
-import { holdHole, noteSlowAbort, probe } from "../../lib/probe.ts"
-import { visitorName } from "../../lib/session.ts"
+import { holdHole, noteSlowAbort, probe } from "../../lib/probe.backend.ts"
+import { visitorName } from "../../lib/session.backend.ts"
 
 export const shellLoader = async (ctx: {
   readonly params: Readonly<Record<string, string>>

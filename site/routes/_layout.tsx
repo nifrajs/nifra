@@ -1,3 +1,4 @@
+import { href, rawHref } from "@nifrajs/web-react/router"
 import type { ReactNode } from "react"
 import fonts from "../shared/data/fonts.json"
 
@@ -1951,19 +1952,19 @@ export default function Layout(props: { children?: ReactNode }) {
       <div className="site-atmosphere" aria-hidden="true" />
       <header className="site">
         <div className="wrap">
-          <a href="/" className="logo" aria-label="Nifra home" rel="external">
+          <a href={href({ to: "/" })} className="logo" aria-label="Nifra home" rel="external">
             <img className="logo-mark" src="/assets/logo-mark.png" alt="" width={28} height={28} />
             Nifra
             <span className="logo-badge">Built in Nifra</span>
           </a>
           <nav className="top" aria-label="Primary navigation">
             <div className="nav-links" id="nav-links" popover="auto">
-              <a href="/docs">Docs</a>
-              <a href="/play">Playground</a>
-              <a href="/frameworks">Frameworks</a>
-              <a href="/benchmarks">Benchmarks</a>
-              <a href="/blog">Blog</a>
-              <a href="/docs/security">Security</a>
+              <a href={href({ to: "/docs" })}>Docs</a>
+              <a href={href({ to: "/play" })}>Playground</a>
+              <a href={href({ to: "/frameworks" })}>Frameworks</a>
+              <a href={href({ to: "/benchmarks" })}>Benchmarks</a>
+              <a href={href({ to: "/blog" })}>Blog</a>
+              <a href={href({ to: "/docs/security" })}>Security</a>
               <a
                 className="icon-link"
                 href="https://github.com/nifrajs/nifra"
@@ -2058,20 +2059,20 @@ export default function Layout(props: { children?: ReactNode }) {
         <div className="wrap">
           <span>Proudly built with Nifra - server-rendered on Cloudflare Pages.</span>
           <span className="foot-links">
-            <a href="/about">About</a>
-            <a href="/contact">Contact</a>
-            <a href="/agents.md">Agents</a>
-            <a href="/frameworks">Frameworks</a>
-            <a href="/blog">Blog</a>
-            <a href="/compare">Compare</a>
+            <a href={href({ to: "/about" })}>About</a>
+            <a href={href({ to: "/contact" })}>Contact</a>
+            <a href={rawHref("/agents.md")}>Agents</a>
+            <a href={href({ to: "/frameworks" })}>Frameworks</a>
+            <a href={href({ to: "/blog" })}>Blog</a>
+            <a href={href({ to: "/compare" })}>Compare</a>
             <a href="https://github.com/nifrajs/nifra" target="_blank" rel="noopener noreferrer">
               GitHub
             </a>
             <a href="https://www.npmjs.com/package/nifra" target="_blank" rel="noopener noreferrer">
               npm
             </a>
-            <a href="/privacy">Privacy</a>
-            <a href="/terms">Terms</a>
+            <a href={href({ to: "/privacy" })}>Privacy</a>
+            <a href={href({ to: "/terms" })}>Terms</a>
             <span>MIT</span>
           </span>
         </div>

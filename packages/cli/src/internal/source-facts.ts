@@ -36,6 +36,17 @@ export interface TextSlotBooleanCoercion {
   readonly path: string
 }
 
+/** An `<a href>` whose value is a path of this origin, from {@link SourceFacts.internalAnchors}. */
+export interface InternalAnchor {
+  /** The start of the `href` attribute. */
+  readonly position: number
+  /** The path as written; each `${...}` of a template literal is {@link ANCHOR_HOLE}. */
+  readonly path: string
+}
+
+/** Stands for one `${...}` in {@link InternalAnchor.path}. */
+export const ANCHOR_HOLE = "\u0000"
+
 /** A `serverFunctions("namespace", module)` mount of a `*.fn.ts` module, from {@link SourceFacts.serverFunctionMounts}. */
 export interface ServerFunctionMount {
   /** The start of the namespace literal. */
@@ -108,6 +119,12 @@ export interface SourceFacts {
    * (`import * as todos from "./todos.fn"`) of a `*.fn` file. A module reached any other way is left out.
    */
   serverFunctionMounts(source: TSApi.SourceFile): readonly ServerFunctionMount[]
+  /**
+   * The `<a>` elements of `source` whose `href` is a string or template literal that starts with
+   * exactly one `/`. A value that is built (`href={url}`, `href={href({ to })}`), an external URL, a
+   * `#hash` and a `//host` are left out.
+   */
+  internalAnchors(source: TSApi.SourceFile): readonly InternalAnchor[]
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -783,6 +800,40 @@ export function createSourceFacts(
     return routes.sort((a, b) => a.position - b.position)
   }
 
+  const internalAnchors = (source: TSApi.SourceFile): readonly InternalAnchor[] => {
+    const found: InternalAnchor[] = []
+    const pathOf = (node: TSApi.Expression): string | undefined => {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
+      if (!ts.isTemplateExpression(node)) return undefined
+      return (
+        node.head.text + node.templateSpans.map((span) => ANCHOR_HOLE + span.literal.text).join("")
+      )
+    }
+    const visit = (node: TSApi.Node): void => {
+      if (
+        (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+        ts.isIdentifier(node.tagName) &&
+        node.tagName.text === "a"
+      ) {
+        for (const attribute of node.attributes.properties) {
+          if (!ts.isJsxAttribute(attribute) || attribute.name.getText(source) !== "href") continue
+          const init = attribute.initializer
+          if (init === undefined) continue
+          const path = ts.isStringLiteral(init)
+            ? init.text
+            : ts.isJsxExpression(init) && init.expression !== undefined
+              ? pathOf(init.expression)
+              : undefined
+          if (path?.startsWith("/") && !path.startsWith("//"))
+            found.push({ position: attribute.getStart(source), path })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return found
+  }
+
   const textSlotBooleanCoercions = (
     source: TSApi.SourceFile,
   ): readonly TextSlotBooleanCoercion[] => {
@@ -965,6 +1016,7 @@ export function createSourceFacts(
     untypedResponseRoutes,
     undeclaredResponseRoutes,
     textSlotBooleanCoercions,
+    internalAnchors,
     serverFunctionMounts,
     exportReturnsResponse,
     isDynamicImportAt,

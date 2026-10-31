@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { cpus, platform, release } from "node:os"
 import { dirname, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { parseOha, summarize } from "./measurements.mjs"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
@@ -46,6 +46,10 @@ const integer = (key, fallback) => {
 }
 const suite = option("suite", "realworld")
 const mode = option("mode", "metrics")
+const runtime = option("runtime", "node")
+if (!["node", "bun", "deno"].includes(runtime)) throw new Error("unknown memory runtime")
+if (mode !== "memory" && runtime !== "node")
+  throw new Error("runtime selection is only supported for memory captures")
 const packaging = option("packaging", mode === "memory" ? "native" : "bundled-nifra")
 const requests = integer("requests", 100000)
 const warmup = integer("warmup", 20000)
@@ -90,6 +94,30 @@ if (mode === "memory") {
 }
 const baseline = option("baseline", "")
 if (baseline) targets.push({ name: "nifra-before", file: resolve(baseline), args: [] })
+if (mode === "memory" && runtime !== "node") {
+  const nativeServer =
+    runtime === "bun" ? "bench/http-realworld/serve.ts" : "bench/http-realworld/serve-deno.ts"
+  const fastify = { name: "fastify", file: "bench/http-realworld/serve-node.ts", args: ["fastify"] }
+  const nativeTargets =
+    runtime === "bun"
+      ? [
+          { name: "nifra", file: nativeServer, args: ["nifra"] },
+          { name: "elysia", file: nativeServer, args: ["elysia"] },
+          { name: "hono", file: nativeServer, args: ["hono"] },
+          fastify,
+          { name: "express", file: "bench/http-realworld/serve-node.ts", args: ["express"] },
+          { name: "bun-native", file: nativeServer, args: ["bun-native"] },
+        ]
+      : [
+          { name: "nifra", file: nativeServer, args: ["nifra"] },
+          { name: "hono", file: nativeServer, args: ["hono"] },
+          { name: "elysia", file: nativeServer, args: ["elysia"] },
+          fastify,
+          { name: "express", file: "bench/http-realworld/serve-node.ts", args: ["express"] },
+          { name: "deno-raw", file: nativeServer, args: ["deno-raw"] },
+        ]
+  targets.splice(0, targets.length, ...nativeTargets)
+}
 const selected = option("targets", "").split(",").filter(Boolean)
 if (selected.length > 0) {
   if (selected.some((name) => !targets.some((target) => target.name === name)))
@@ -210,7 +238,21 @@ async function ready(child, base) {
 }
 
 let id = 0
-function control(child, action) {
+async function control(server, action) {
+  if (server.controlBase !== undefined) {
+    const response = await fetch(`${server.controlBase}/`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action }),
+      signal: AbortSignal.timeout(30000),
+    })
+    const result = await response.json()
+    if (!response.ok || result.error) {
+      throw new Error(`${server.name} profiler control failed: ${result.error ?? response.status}`)
+    }
+    return result.result
+  }
+  const child = server.child
   return new Promise((accept, reject) => {
     const requestId = ++id
     const timeout = setTimeout(() => finish(new Error("profiler control timed out")), 30000)
@@ -231,6 +273,13 @@ function control(child, action) {
 
 const running = []
 const samples = []
+const runtimeVersion =
+  runtime === "node"
+    ? process.version
+    : runtime === "bun"
+      ? execFileSync("bun", ["--version"], { encoding: "utf8" }).trim()
+      : execFileSync("deno", ["--version"], { encoding: "utf8" }).match(/^deno\s+(\S+)/m)?.[1]
+if (!runtimeVersion) throw new Error(`could not determine ${runtime} version`)
 const meta = {
   suite,
   mode,
@@ -243,6 +292,8 @@ const meta = {
   connections,
   workloads: workloads.map((workload) => workload.name),
   node: process.version,
+  runtime,
+  runtimeVersion,
   platform: `${platform()} ${release()}`,
   cpu: cpus()[0]?.model,
   versions: Object.fromEntries(
@@ -258,15 +309,51 @@ const meta = {
   head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
 }
 function startTarget(target, i) {
+  const memoryCapture = mode === "memory"
+  const execPath = memoryCapture && runtime !== "node" ? runtime : process.execPath
+  const probe =
+    memoryCapture && runtime === "deno"
+      ? resolve(root, "bench/profiling/deno-probe.mjs")
+      : resolve(root, "bench/profiling/node-probe.mjs")
+  const execArgv =
+    memoryCapture && runtime === "deno"
+      ? [
+          "run",
+          "--allow-net",
+          "--allow-env",
+          "--allow-read",
+          "--no-check",
+          "--v8-flags=--expose-gc",
+          probe,
+        ]
+      : ["--expose-gc", "--import", probe]
+  if (memoryCapture && runtime === "bun") {
+    execArgv.push("--preload", resolve(root, "bench/dist-core-preload.ts"))
+  }
   const port = 3820 + i
+  const base = `http://127.0.0.1:${port}`
+  if (memoryCapture && runtime === "deno") {
+    const controlPort = port + 10000
+    const child = spawn(execPath, [...execArgv, ...target.args, String(port)], {
+      cwd: root,
+      env: {
+        ...process.env,
+        BENCH_GENERIC: suite === "generic" ? "1" : "0",
+        BENCH_CONTROL_PORT: String(controlPort),
+        BENCH_TARGET_URL: pathToFileURL(resolve(root, target.file)).href,
+      },
+      stdio: ["ignore", "ignore", "inherit"],
+    })
+    return { ...target, child, base, controlBase: `http://127.0.0.1:${controlPort}` }
+  }
   const child = fork(resolve(root, target.file), [...target.args, String(port)], {
     cwd: root,
-    execPath: process.execPath,
-    execArgv: ["--expose-gc", "--import", resolve(root, "bench/profiling/node-probe.mjs")],
+    execPath,
+    execArgv,
     env: { ...process.env, BENCH_GENERIC: suite === "generic" ? "1" : "0" },
     stdio: ["ignore", "ignore", "inherit", "ipc"],
   })
-  return { ...target, child, base: `http://127.0.0.1:${port}` }
+  return { ...target, child, base }
 }
 function stopTarget({ child }) {
   return new Promise((accept) => {
@@ -316,10 +403,10 @@ if (mode === "memory") {
       try {
         await ready(server.child, server.base)
         await probeTarget(server)
-        const snapshots = { ready: await control(server.child, "snapshot") }
+        const snapshots = { ready: await control(server, "snapshot") }
         for (const workload of workloads) {
           await load(server.base, workload, requests)
-          snapshots[workload.name] = await control(server.child, "snapshot")
+          snapshots[workload.name] = await control(server, "snapshot")
         }
         samples.push({ target: target.name, round, snapshots })
         await writeFile(
@@ -355,9 +442,9 @@ if (mode === "memory") {
         ]
         const order = Math.floor(round / running.length) % 2 ? rotated.reverse() : rotated
         for (const target of order) {
-          await control(target.child, "start")
+          await control(target, "start")
           const timing = await load(target.base, workload, requests)
-          const measurement = await control(target.child, "stop")
+          const measurement = await control(target, "stop")
           const summary = summarize(measurement.profile, mode)
           if (measurement.profile)
             await writeFile(

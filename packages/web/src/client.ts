@@ -558,6 +558,8 @@ export function installHistory(
   const inAppHref = (target: EventTarget | null): string | null => {
     const anchor = target instanceof Element ? target.closest("a") : null
     if (anchor === null) return null
+    // No href attribute, no link: `anchor.href` reads "" and would resolve to the page on screen.
+    if (!anchor.hasAttribute("href")) return null
     if (anchor.target !== "" && anchor.target !== "_self") return null
     if (anchor.hasAttribute("download")) return null
     if (anchor.getAttribute("rel")?.split(/\s+/).includes("external")) return null

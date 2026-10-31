@@ -871,5 +871,284 @@
       "from": "ts.isPropertyAssignment(experimental)",
       "reason": "A shorthand `experimental` has no `initializer`, so reading it gives the `undefined` the other branch returns."
     }
+  ],
+  "packages/core/src/router/path-codec.ts": [
+    {
+      "op": "binary <-><=",
+      "fn": "rawTable",
+      "code": "for (let i = 0; i < chars.length; i++) table[chars.charCodeAt(i)] = 1",
+      "from": "<",
+      "reason": "charCodeAt past the end is NaN, and a typed array ignores a write at that index."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "encodeWith",
+      "code": "while (i < length) {",
+      "from": "<",
+      "reason": "One more pass at i = length reads NaN, emits an empty run and leaves the same string."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "encodeWith",
+      "code": "if (code < 128 && raw[code] === 1) {",
+      "from": "<",
+      "reason": "raw[128] is undefined, so U+0080 is not a raw character either way."
+    },
+    {
+      "op": "condition->false",
+      "fn": "encodeWith",
+      "code": "if (code < 128) {",
+      "from": "code < 128",
+      "reason": "One ASCII character through encodeURIComponent gives the %XX the table spells: every ASCII character it leaves alone is in the raw set."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "encodeWith",
+      "code": "while (end < length && value.charCodeAt(end) >= 128) end++",
+      "from": "<",
+      "reason": "charCodeAt(length) is NaN, which is not >= 128."
+    },
+    {
+      "op": "binary >=->>",
+      "fn": "encodeWith",
+      "code": "while (end < length && value.charCodeAt(end) >= 128) end++",
+      "from": ">=",
+      "reason": "U+0080 then starts its own run, and the encodings of two runs concatenate to the encoding of both."
+    },
+    {
+      "op": "condition->false",
+      "fn": "encodeWith",
+      "code": "return start === 0 ? value : out + value.slice(start)",
+      "from": "start === 0",
+      "reason": "start 0 means out is empty, and out + value.slice(0) is value."
+    }
+  ],
+  "packages/core/src/router/pattern.ts": [
+    {
+      "op": "delete statement",
+      "fn": "fillRoutePath",
+      "code": "path += \"/\"",
+      "from": "path += \"/\"",
+      "reason": "A missing param makes the result not ok, and the path is dropped."
+    }
+  ],
+  "packages/core/src/router/same-origin-path.ts": [
+    {
+      "op": "binary <-><=",
+      "fn": "isSameOriginPath",
+      "code": "for (let i = 1; i < value.length; i++) {",
+      "from": "<",
+      "reason": "charCodeAt(length) is NaN and equals no rejected code."
+    }
+  ],
+  "packages/web/src/href.ts": [
+    {
+      "op": "condition->true",
+      "fn": "compiled",
+      "code": "if (entry === undefined) {",
+      "from": "entry === undefined",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "condition->true",
+      "fn": "compiled",
+      "code": "if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear()",
+      "from": "compiledPatterns.size >= MAX_COMPILED_PATTERNS",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "condition->false",
+      "fn": "compiled",
+      "code": "if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear()",
+      "from": "compiledPatterns.size >= MAX_COMPILED_PATTERNS",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "binary >=->>",
+      "fn": "compiled",
+      "code": "if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear()",
+      "from": ">=",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "delete statement",
+      "fn": "compiled",
+      "code": "if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear()",
+      "from": "compiledPatterns.clear()",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "delete statement",
+      "fn": "compiled",
+      "code": "compiledPatterns.set(pattern, entry)",
+      "from": "compiledPatterns.set(pattern, entry)",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    }
+  ],
+  "packages/web/src/route-types.ts": [
+    {
+      "op": "binary &&->||",
+      "fn": "paramsType",
+      "code": "const own = kind === \"page\" && !basename(file).startsWith(\"_\")",
+      "from": "&&",
+      "reason": "A layout's kind is always the underscore-prefixed `_layout`, so the page test and the name test agree."
+    },
+    {
+      "op": "condition->true",
+      "fn": "paramsType",
+      "code": "const owner = own ? file : dir === \".\" ? \"index.tsx\" : `${dir}/index.tsx`",
+      "from": "own",
+      "reason": "A `_layout` or `_404` file spells the same param names as its directory's index, so the owner file does not change them."
+    },
+    {
+      "op": "condition->false",
+      "fn": "paramsType",
+      "code": "const owner = own ? file : dir === \".\" ? \"index.tsx\" : `${dir}/index.tsx`",
+      "from": "dir === \".\"",
+      "reason": "`./index.tsx` and `index.tsx` are the same route."
+    }
+  ],
+  "packages/cli/src/rules/internal-links.ts": [
+    {
+      "op": "condition->true",
+      "fn": "pageRoutes",
+      "code": "if (loaded === undefined) {",
+      "from": "loaded === undefined",
+      "reason": "A per-run cache: a miss builds an equal route set."
+    },
+    {
+      "op": "condition->false",
+      "fn": "loadPageRoutes",
+      "code": "if (!existsSync(routesDir)) return undefined",
+      "from": "!existsSync(routesDir)",
+      "reason": "discoverRoutes on a folder that does not exist throws or finds nothing, and both end in the same undefined."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "commentAt",
+      "code": "if (text.startsWith(\">\", body)) return { start, bodyEnd: body, end: body + 1 }",
+      "from": "+",
+      "reason": "The characters between the shortened and the real end are not markup, so the scan from there finds the same anchors, comments and lines."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "markupEnd",
+      "code": "} else if (!expression && braces === 0 && char === \">\") return at + 1",
+      "from": "+",
+      "reason": "The end moves back onto the tag's own >, which the scan then steps over as text."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "lineLookup",
+      "code": "for (let at = text.indexOf(\"\\n\"); at !== -1; at = text.indexOf(\"\\n\", at + 1)) starts.push(at + 1)",
+      "from": "+",
+      "nth": 1,
+      "reason": "No tag or attribute starts on the last character of a line."
+    },
+    {
+      "op": "condition->true",
+      "fn": "backendMount",
+      "code": "if (read.kind === \"literal\") prefix = read.value",
+      "from": "read.kind === \"literal\"",
+      "reason": "An unreadable prefix has no value, and the mount is unknown then anyway."
+    },
+    {
+      "op": "delete statement",
+      "fn": "pageRoutes",
+      "code": "cache.set(ctx, loaded)",
+      "from": "cache.set(ctx, loaded)",
+      "reason": "A per-run cache: a miss builds an equal route set."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "loadPageRoutes",
+      "code": "apiStrip: mount?.strip ?? false,",
+      "from": "false",
+      "reason": "With the mount unknown, backendUnknown already stops every dead-link verdict, so the backend entries are never consulted."
+    },
+    {
+      "op": "return undefined",
+      "fn": "servedElsewhere",
+      "code": "return false",
+      "from": "return false",
+      "reason": "false and undefined are both falsy to the caller."
+    },
+    {
+      "op": "condition->false",
+      "fn": "judge",
+      "code": "const rest = cut < 0 ? \"\" : written.slice(cut)",
+      "from": "cut < 0",
+      "reason": "With no ? or #, written.slice(-1) is the path's last character, which is neither of them."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "commentAt",
+      "code": "if (text.startsWith(\"->\", body)) return { start, bodyEnd: body, end: body + 2 }",
+      "from": "+",
+      "reason": "The characters between the shortened and the real end are not markup, so the scan from there finds the same anchors, comments and lines."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "markupEnd",
+      "code": "for (let at = start; at < text.length; at++) {",
+      "from": "<",
+      "reason": "At text.length the character is undefined, which no branch takes."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "templateHrefs",
+      "code": "for (let at = 0; at < text.length; ) {",
+      "from": "<",
+      "reason": "At text.length the character is undefined, which no branch takes."
+    },
+    {
+      "op": "condition->false",
+      "fn": "templateHrefs",
+      "code": "if (text[at] !== \"<\") {",
+      "from": "text[at] !== \"<\"",
+      "reason": "The tag pattern below rejects every position that is not a <, and the scan steps on by one."
+    },
+    {
+      "op": "condition->false",
+      "fn": "templateFindings",
+      "code": "if (!text.includes(\"href\")) continue",
+      "from": "!text.includes(\"href\")",
+      "reason": "A file without the word href holds no href attribute, so the scan below finds nothing in it."
+    },
+    {
+      "op": "binary &&->||",
+      "fn": "mayMatch",
+      "code": "mayMatch: (text) => text.includes(\"<a\") && text.includes(\"href\"),",
+      "from": "&&",
+      "reason": "A pre-filter: find reads the real anchors, so a looser filter costs time and changes no finding."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "judge",
+      "code": "const path = cut < 0 ? written : written.slice(0, cut)",
+      "from": "<",
+      "reason": "cut is the index of ? or # in a path that begins with /, so it is never 0."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "judge",
+      "code": "const rest = cut < 0 ? \"\" : written.slice(cut)",
+      "from": "<",
+      "reason": "cut is the index of ? or # in a path that begins with /, so it is never 0."
+    },
+    {
+      "op": "condition->true",
+      "fn": "report",
+      "code": "message: note === undefined ? verdict.message : `${verdict.message} ${note}`,",
+      "from": "note === undefined",
+      "reason": "note is never set: this rule does not ask scanSources to require a reason."
+    },
+    {
+      "op": "delete statement",
+      "fn": "templateHrefs",
+      "code": "expectations += code(text.slice(previous))",
+      "from": "expectations += code(text.slice(previous))",
+      "reason": "A line past the last comment holds no comment, and the upward search stops on a missing line as it does on a line of code."
+    }
   ]
 }

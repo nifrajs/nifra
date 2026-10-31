@@ -114,6 +114,20 @@ function splitPath(path: string): { readonly pathname: string; readonly search: 
     : { pathname: path.slice(0, q), search: path.slice(q) }
 }
 
+/** `value` as an `Href`, or `undefined` after a `console.error` when it is not a same-origin path: a bad
+ * destination costs its own link, never the render. The message leaves the value out, since a CMS link
+ * can carry a token or personal data into the server log. */
+function checkedHref(value: string, where: string): Href | undefined {
+  try {
+    return rawHref(value)
+  } catch {
+    console.error(
+      `[nifra/web-react] ${where} ignored its destination: it is not a same-origin path (one beginning with "/", not "//", with no backslash or control character).`,
+    )
+    return undefined
+  }
+}
+
 /**
  * The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct:
  * `compose` provides the same value server-side (from the request match) and client-side (from router
@@ -314,7 +328,8 @@ export function useSearchParams(): readonly [URLSearchParams, SetSearchParams] {
     (next, options) => {
       const resolved = typeof next === "function" ? next(new URLSearchParams(search)) : next
       const qs = toSearchParams(resolved).toString()
-      navigate(rawHref(pathname + (qs !== "" ? `?${qs}` : "")), options)
+      const target = checkedHref(pathname + (qs !== "" ? `?${qs}` : ""), "setSearchParams")
+      if (target !== undefined) navigate(target, options)
     },
     [navigate, pathname, search],
   )
@@ -332,8 +347,9 @@ function isPlainLeftClick(event: MouseEvent, target: string | undefined): boolea
 /** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and
  * `prefetch`. */
 export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
-  /** The destination: an `Href` from `href()` or `rawHref()`. Rendered as the `<a href>`, and a render throws
-   * unless it is a same-origin path; a link to another site is a plain `<a>`. */
+  /** The destination: an `Href` from `href()` or `rawHref()`. Rendered as the `<a href>`. A value that is
+   * not a same-origin path (a forged `Href`) renders the `<a>` without an `href`, does nothing on click and
+   * logs a `console.error`; a link to another site is a plain `<a>`. */
   readonly to: Href
   /** Replace the current history entry instead of pushing. */
   readonly replace?: boolean
@@ -352,18 +368,20 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
   { to, replace, prefetch, onClick, target, ...rest },
   ref,
 ) {
+  const destination = checkedHref(to, "<Link>")
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     onClick?.(event)
     if (event.defaultPrevented) return // the app's own handler already took over
+    if (destination === undefined) return // no href, so nothing to load either
     if (!isPlainLeftClick(event, target)) return // modified / new-tab click → native
     const navigate = getBrowserNavigate()
     if (navigate === undefined) return // pre-hydration → let the native <a href> full-load
     event.preventDefault()
-    navigate(to, { replace: replace === true })
+    navigate(destination, { replace: replace === true })
   }
   return createElement("a", {
     ...rest,
-    href: rawHref(to),
+    href: destination,
     target,
     onClick: handleClick,
     ref,
@@ -464,7 +482,8 @@ export interface NavigateProps {
 export function Navigate({ to, replace }: NavigateProps): null {
   const navigate = useNavigate()
   useEffect(() => {
-    navigate(to, { replace: replace === true })
+    const destination = checkedHref(to, "<Navigate>")
+    if (destination !== undefined) navigate(destination, { replace: replace === true })
   }, [navigate, to, replace])
   return null
 }

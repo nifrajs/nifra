@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/image",
-  "version": "5.9.0",
+  "version": "5.10.0",
   "description": "Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. Zero-dependency core; optional Bun.Image-backed resize endpoint at @nifrajs/image/server.",
   "keywords": [
     "bun",
@@ -25,6 +25,21 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./build": {
+      "bun": "./src/build.ts",
+      "types": "./dist/build.d.ts",
+      "default": "./dist/build.js"
+    },
+    "./plugins": {
+      "bun": "./src/plugins.ts",
+      "types": "./dist/plugins.d.ts",
+      "default": "./dist/plugins.js"
+    },
+    "./imports": {
+      "bun": "./src/imports.ts",
+      "types": "./dist/imports.d.ts",
+      "default": "./dist/imports.js"
     },
     "./server": {
       "bun": "./src/server.ts",
@@ -55,6 +70,9 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "devDependencies": {
+    "sharp": "0.35.5"
   },
   "license": "MIT",
   "publishConfig": {

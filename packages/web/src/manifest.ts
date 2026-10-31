@@ -1170,6 +1170,11 @@ export function filePathToRoutes(file: string): FileRoutePattern[] {
   }
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!
+    if (/[#?]/.test(seg)) {
+      throw new Error(
+        `[nifra/web] "${file}" has "#" or "?" in "${seg}": a request path cannot carry either, so no URL reaches this route. Rename the file.`,
+      )
+    }
     if (seg === "index") {
       mark()
       continue

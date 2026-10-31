@@ -224,6 +224,15 @@ const RULES: readonly Rule[] = [
     scope: TESTS,
     allowed: {},
   },
+  {
+    id: "href-brand-cast",
+    why: "an Href cast onto a string skips the route table and the same-origin check that href() and rawHref() run; shipped code builds one with them",
+    pattern: /\bas\s+Href\b/g,
+    scope: SHIPPED,
+    allowed: {
+      "packages/web/src/href.ts": { count: 1, reason: "the one place the brand is applied" },
+    },
+  },
 ]
 
 function scan(rule: Rule): Map<string, number> {
@@ -262,6 +271,7 @@ test("every rule matches what it is meant to match", () => {
     // Split so this file's own source does not match the rules it declares.
     "wall-clock-deadline": `{ deadlineAt: Date.now()${" + 5"} }`,
     "sub-second-elapsed-bound": `expect(performance.now() - started)${".toBeLessThan(200)"}`,
+    "href-brand-cast": "const to = value as Href",
   }
   for (const rule of RULES) {
     const sample = samples[rule.id] ?? ""
@@ -279,4 +289,8 @@ test("every rule matches what it is meant to match", () => {
   expect(
     "decodeURIComponent(segment) // not encodeRoute".match(RULES[7]?.pattern ?? /$^/),
   ).toBeNull()
+  expect(
+    "const to = value as unknown as Href<'/a'>".match(RULES[10]?.pattern ?? /$^/),
+  ).not.toBeNull()
+  expect("import type { Href } from './navigation.ts'".match(RULES[10]?.pattern ?? /$^/)).toBeNull()
 })

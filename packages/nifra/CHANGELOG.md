@@ -1,5 +1,14 @@
 # nifra
 
+## 5.10.0
+
+### Patch Changes
+
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [1faf86c]
+  - @nifrajs/core@5.10.0
+
 ## 5.9.0
 
 ### Patch Changes

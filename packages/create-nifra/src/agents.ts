@@ -109,10 +109,14 @@ function webRules(framework: Framework): string {
   server to curl. Build features through loaders/actions + the typed client, not direct HTTP calls.
 - Swap UI frameworks by changing one import (\`@nifrajs/web-${framework}\` → another adapter); your route,
   loader, and action code do not change.
-- **Loaders \`throw redirect(url)\`, actions \`return redirect(url)\`.** Loader redirects abort the
-  render server-side; action redirects return a response so client form submits get \`X-Nifra-Redirect\`
-  and navigate without a full reload. Throwing in an action or returning in a loader is a silent bug
-  that produces a false "operation failed" error on the client.
+- **Loaders \`throw redirect(href({ to: "/login" }))\`, actions \`return redirect(href(...))\`.** Loader
+  redirects abort the render server-side; action redirects return a response so client form submits get
+  \`X-Nifra-Redirect\` and navigate without a full reload. Throwing in an action or returning in a loader is
+  a silent bug that produces a false "operation failed" error on the client.
+- **Link with \`href()\`, never a path string.** \`href({ to: "/users/:id", params: { id } })\` (from
+  \`@nifrajs/web-${framework}/router\`) checks the route and its params against \`.nifra/types/routes.d.ts\`, so
+  a renamed route breaks the build. \`navigate()\` and \`redirect()\` take only that result; \`rawHref(path)\`
+  covers a same-origin path built elsewhere (a CMS link). A link to another site is a plain \`<a href>\`.
 
 ${agentsStructureSection()}
 `

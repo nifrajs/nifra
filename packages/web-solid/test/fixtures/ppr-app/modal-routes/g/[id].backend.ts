@@ -1,5 +1,5 @@
 import { t } from "@nifrajs/schema"
-import { visitorName } from "../../../../../../web/test/fixtures/ppr/app/lib/session.ts"
+import { visitorName } from "../../../../../../web/test/fixtures/ppr/app/lib/session.backend.ts"
 
 export const shellLoader = (ctx: { readonly params: Readonly<Record<string, string>> }) => ({
   title: `Gallery ${ctx.params.id}`,

@@ -27,7 +27,7 @@ export default function Search({ data }: Route.ComponentProps) {
       >
         next page
       </button>{" "}
-      <a id="set-q" href="/search?page=1&q=preact">
+      <a id="set-q" href={href({ to: "/search", search: { page: 1, q: "preact" } })}>
         set q=preact
       </a>
     </div>

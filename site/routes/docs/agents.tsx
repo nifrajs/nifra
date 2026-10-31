@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/agents",
@@ -265,7 +266,7 @@ export default function Agents() {
         Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
         can read the project, learn the real API, run actual requests against the backend it just
         edited, and finish with a report of what the change proved. The same typed capabilities can
-        power the agent inside your product through <a href="/docs/webmcp">WebMCP and predictive UI</a>
+        power the agent inside your product through <a href={href({ to: "/docs/webmcp" })}>WebMCP and predictive UI</a>
         or stream into a product surface through AG-UI.
       </p>
 
@@ -730,7 +731,7 @@ export default function Agents() {
         different question of what the project <em>holds</em>, as a cumulative ladder from a typed
         contract (L0) to contract-derived invariant tests (L4). A scaffolded app starts at L1, and each
         rung it has not reached reports the specific thing missing - so the ladder doubles as the list
-        of what to do next. See <a href="/docs/verification">the verification ladder</a>.
+        of what to do next. See <a href={href({ to: "/docs/verification" })}>the verification ladder</a>.
       </p>
       <CodeBlock code={GATE} lang="bash" />
 

@@ -1,5 +1,5 @@
 /**
- * WORST-CASE throughput matrix - nifra vs Elysia only, on Bun/Node/Deno - driven by
+ * WORST-CASE throughput matrix - Nifra vs Elysia on Bun/Node/Deno, plus Fastify on all three - driven by
  * `oha`. The app under test combines hooks +
  * multi-param route + validated query + JSON body validation + per-request dynamic
  * response headers. BENCH_GENERIC=1 adds a second before hook (and, for nifra, an error hook) to measure the GENERIC lane
@@ -135,6 +135,10 @@ const SECTIONS: readonly Section[] = [
         framework: "elysia",
         spawn: (p) => ["bun", "bench/http/worst-case/serve.ts", "elysia", String(p)],
       },
+      {
+        framework: "fastify",
+        spawn: (p) => ["bun", "bench/http/worst-case/serve-node-fastify.ts", String(p)],
+      },
       ...(Bun.env.BENCH_BUN_BASELINE
         ? [
             {
@@ -183,19 +187,34 @@ const SECTIONS: readonly Section[] = [
   },
   {
     runtime: "deno",
-    targets: (["nifra", "elysia"] as const).map((framework) => ({
-      framework,
-      spawn: (p: number) => [
-        "deno",
-        "run",
-        "--allow-net",
-        "--allow-env",
-        "--no-check",
-        "bench/http/worst-case/serve-deno.ts",
+    targets: [
+      ...(["nifra", "elysia"] as const).map((framework) => ({
         framework,
-        String(p),
-      ],
-    })),
+        spawn: (p: number) => [
+          "deno",
+          "run",
+          "--allow-net",
+          "--allow-env",
+          "--no-check",
+          "bench/http/worst-case/serve-deno.ts",
+          framework,
+          String(p),
+        ],
+      })),
+      {
+        framework: "fastify",
+        spawn: (p: number) => [
+          "deno",
+          "run",
+          "--allow-net",
+          "--allow-env",
+          "--allow-read",
+          "--no-check",
+          "bench/http/worst-case/serve-node-fastify.ts",
+          String(p),
+        ],
+      },
+    ],
   },
 ]
 

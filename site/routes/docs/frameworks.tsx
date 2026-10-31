@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/frameworks",
@@ -186,7 +187,7 @@ export default function Frameworks() {
         loaders, actions, ISR, SSG, head management, streaming. What you give up is hydration - these
         are server-rendered documents, so set <code>export const hydrate = false</code> in the route's{" "}
         <code>.backend.ts</code> half and reach for{" "}
-        <a href="/docs/hydration">islands</a> where a page needs interactivity.
+        <a href={href({ to: "/docs/hydration" })}>islands</a> where a page needs interactivity.
       </p>
       <p>
         Worth it for the surfaces where HTML is the product: landing pages, listings, docs, comparison
@@ -207,7 +208,7 @@ export default function Frameworks() {
       <div className="caveat">
         Component <code>&lt;style scoped&gt;</code> (Vue) and <code>&lt;style&gt;</code> (Svelte -
         scoped by default) are compiled and scoped into the app stylesheet - no runtime, no FOUC - plus
-        CSS Modules and global imports. See <a href="/docs/dev">Dev &amp; HMR → Styling</a>.{" "}
+        CSS Modules and global imports. See <a href={href({ to: "/docs/dev" })}>Dev &amp; HMR → Styling</a>.{" "}
         <code>examples/routing-vue-sfc</code> is a full SSR + hydration + client-nav demo.
       </div>
 
@@ -225,13 +226,13 @@ export default function Frameworks() {
         </li>
         <li>Optimistic UI, targeted revalidation, hover-prefetch, and scroll restoration.</li>
         <li>
-          <a href="/docs/live">Live refresh</a>, <a href="/docs/keep-alive">keep-alive</a> pages,{" "}
-          <a href="/docs/server-components">server components</a>, and{" "}
-          <a href="/docs/partial-prerendering">partial prerendering</a>.
+          <a href={href({ to: "/docs/live" })}>Live refresh</a>, <a href={href({ to: "/docs/keep-alive" })}>keep-alive</a> pages,{" "}
+          <a href={href({ to: "/docs/server-components" })}>server components</a>, and{" "}
+          <a href={href({ to: "/docs/partial-prerendering" })}>partial prerendering</a>.
         </li>
         <li>
           True HMR in dev for all five (<code>@nifrajs/web/vite</code>) - see{" "}
-          <a href="/docs/dev">Dev &amp; HMR</a>.
+          <a href={href({ to: "/docs/dev" })}>Dev &amp; HMR</a>.
         </li>
       </ul>
 
@@ -279,7 +280,7 @@ export default function Frameworks() {
         Dev HMR works for all five adapters through <code>createViteDevServer</code> and the
         framework&apos;s Vite plugin. React, Preact, and Vue preserve edited component state. Solid
         and Svelte update live without a full page reload, and the edited component may remount. Full
-        matrix in <a href="/docs/dev">Dev &amp; HMR</a>.
+        matrix in <a href={href({ to: "/docs/dev" })}>Dev &amp; HMR</a>.
       </p>
 
       <h2>React Compiler</h2>

@@ -19,7 +19,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ReactNode` · from `@nifrajs/web-react/ppr`
 - **HydrationBoundary** _(function)_ - `HydrationBoundary: (props: { readonly state: DehydratedState | undefined; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => ReactNode` · from `@nifrajs/web-react/i18n`
-- **Image** _(function)_ - `Image: (props: ImageComponentProps) => ReactElement` · from `@nifrajs/web-react/image`
+- **Image** _(function)_ - `Image: (props: ImageComponentProps | StaticImageComponentProps) => ReactElement` · from `@nifrajs/web-react/image`
 - **Island** _(function)_ - `Island: ({ id, props, strategy, children }: IslandProps) => ReactNode` · from `@nifrajs/web-react/island`
 - **Navigate** _(function)_ - `Navigate: ({ to, replace }: NavigateProps) => null` · from `@nifrajs/web-react/router`
 - **NestedServerComponent** _(function)_ - `NestedServerComponent: ({ instance, html, }: { readonly instance: string; readonly html: string; }) => import("react").DOMElement<{ "data-n…` · from `@nifrajs/web-react/server-components/nested`
@@ -29,7 +29,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **createReactComponentRenderer** _(function)_ - `createReactComponentRenderer: (components: readonly ServerComponentHandle[]) => (reference: string, props: unknown, context: ComponentRende…` · from `@nifrajs/web-react/server-components/rsc`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
 
-_…and 78 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 79 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

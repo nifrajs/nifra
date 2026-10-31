@@ -1,14 +1,11 @@
 import { t } from "@nifrajs/schema"
 import type { BoundaryRequestCtx, ShellCtx } from "@nifrajs/web"
 import { defineShellLoader } from "@nifrajs/web/ppr"
+import { loadCart, loadGreeting, loadRecs, readProduct } from "../../../backend/catalog.ts"
 import {
   cartSchema,
   greetingSchema,
-  loadCart,
-  loadGreeting,
-  loadRecs,
   productSchema,
-  readProduct,
   recsSchema,
   relatedSchema,
 } from "../../../shared/catalog.ts"

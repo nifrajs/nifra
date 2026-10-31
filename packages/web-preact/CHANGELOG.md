@@ -1,5 +1,45 @@
 # @nifrajs/web-preact
 
+## 5.10.0
+
+### Minor Changes
+
+- 611a3be: Expose mutation and infinite-query bindings across the framework adapters, with request-scoped query-client providers and SSR cache hydration. Mutation functions and callbacks receive a cooperative abort signal, and identity changes cancel pending work across tabs. `dehydrate` can filter regular and infinite query values before they are serialized to the browser.
+- d2066e0: Add opt-in local `?image` metadata imports and content-hashed build-time responsive variants using the existing injectable image backends. Emit images with client, SSR and static builds, and infer imported dimensions in all five UI adapters. String image URLs retain their existing dimension requirements.
+  
+  Add explicit static translated-path mappings to i18n routing, with reciprocal URL/SEO helpers, availability-aware redirects and static-path enumeration. These mappings do not implicitly create filesystem route aliases.
+  
+  Add `vercelRuntime: "node"` for ordinary SSR Vercel builds through both bundlers, using a shared streaming Node request bridge. Vercel Edge remains the default.
+- 824a75e: Partial prerendering is no longer experimental. `createWebApp` takes it as `ppr`, where it was `experimental.ppr`, and the `experimental` option is gone: passing it throws a `TypeError` that names `ppr`, and the startup errors name `ppr.origin`, `ppr.deployment` and `ppr.store`. `nifra upgrade` moves `experimental: { ppr }` to `ppr` in a `createWebApp` options literal and lists any other `experimental` shape it finds there by line (options spread in, or built in another file, are yours to check). `nifra scaffold` is stable.
+- 1faf86c: `href({ to, params, search, hash })` builds an in-app URL from a route pattern and returns an `Href`; `rawHref(path)` returns one for a same-origin path built elsewhere (a CMS link, `/llms.txt`). `to` is a key of the generated `RouteTable`, so a misspelt route, a missing, misspelt or extra param, and a `search` that breaks the route's schema are compile errors. A route without a `searchSchema` takes any `search`. Each param is encoded as one path segment, so a value such as `a/b` or `//evil.com` cannot change where the URL goes; a param that is missing, empty, `.`, `..` or an unpaired surrogate throws a `TypeError` naming it and the pattern. `rawHref` throws a `TypeError` unless `isSameOriginPath` accepts the path. Both are exported by `@nifrajs/web` and by the `/router` entry of every adapter.
+  
+  `navigate` takes an `Href` or a history delta. A string, a template literal and the `{ to, search }` object form are compile errors, and a value forged past the types is still held to the same-origin check the browser navigate makes. `<Navigate to>` and the `useSearchParams` setter in `@nifrajs/web-react` pass their path through `rawHref`, so an off-origin `to` throws instead of doing nothing. `isSameOriginPath` is exported from `@nifrajs/core/pattern` as well as `@nifrajs/core/server`.
+  
+  Upgrade: `navigate("/users/7")` becomes `navigate(href({ to: "/users/:id", params: { id: "7" } }))`, `navigate({ to, search, replace: true })` becomes `navigate(href({ to, search }), { replace: true })`, and a path built elsewhere is `navigate(rawHref(path))`. `resolveNavigate`, `NavigateTargetInput` and `NavigateSearchOf` are removed from `@nifrajs/web`.
+
+### Patch Changes
+
+- Updated dependencies [535c4e5]
+- Updated dependencies [87e7fd9]
+- Updated dependencies [611a3be]
+- Updated dependencies [7f32bb2]
+- Updated dependencies [0aa10d0]
+- Updated dependencies [ab69ee6]
+- Updated dependencies [548bade]
+- Updated dependencies [d2066e0]
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [e465ed5]
+- Updated dependencies [683c3d6]
+- Updated dependencies [824a75e]
+- Updated dependencies [d2066e0]
+- Updated dependencies [5845e1c]
+- Updated dependencies [5d1be78]
+- Updated dependencies [1faf86c]
+- Updated dependencies [950996b]
+  - @nifrajs/web@5.10.0
+  - @nifrajs/core@5.10.0
+
 ## 5.9.0
 
 ### Patch Changes

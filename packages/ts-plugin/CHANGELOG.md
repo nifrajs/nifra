@@ -1,5 +1,31 @@
 # @nifrajs/ts-plugin
 
+## 5.10.0
+
+### Patch Changes
+
+- 16696fb: The README names `href({ to })` and `rawHref()` as the links go-to-definition follows, and a route-table pattern such as `"/users/:id"` resolves to its file.
+- Updated dependencies [535c4e5]
+- Updated dependencies [87e7fd9]
+- Updated dependencies [611a3be]
+- Updated dependencies [7f32bb2]
+- Updated dependencies [0aa10d0]
+- Updated dependencies [ab69ee6]
+- Updated dependencies [548bade]
+- Updated dependencies [d2066e0]
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [e465ed5]
+- Updated dependencies [683c3d6]
+- Updated dependencies [824a75e]
+- Updated dependencies [d2066e0]
+- Updated dependencies [5845e1c]
+- Updated dependencies [5d1be78]
+- Updated dependencies [1faf86c]
+- Updated dependencies [950996b]
+  - @nifrajs/web@5.10.0
+  - @nifrajs/core@5.10.0
+
 ## 5.9.0
 
 ### Patch Changes

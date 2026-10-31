@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/server-functions",
@@ -216,8 +217,8 @@ export default function ServerFunctions() {
       </p>
       <CodeBlock code={ASSURE} lang="bash" />
       <p>
-        See <a href="/docs/capabilities">effect provenance</a> for what the declaration is checked
-        against, and <a href="/docs/verification">the verification ladder</a> for where this sits.
+        See <a href={href({ to: "/docs/capabilities" })}>effect provenance</a> for what the declaration is checked
+        against, and <a href={href({ to: "/docs/verification" })}>the verification ladder</a> for where this sits.
       </p>
 
       <h2>Cost</h2>

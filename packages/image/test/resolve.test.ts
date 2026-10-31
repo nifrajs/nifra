@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { cloudflareLoader, identityLoader, resolveImage, selfHostedLoader } from "../src/index.ts"
+import {
+  cloudflareLoader,
+  identityLoader,
+  resolveImage,
+  selfHostedLoader,
+  signImageUrl,
+} from "../src/index.ts"
 
 describe("loaders", () => {
   test("identityLoader returns the source unchanged", () => {
@@ -33,6 +39,14 @@ describe("loaders", () => {
     expect(l({ src: "https://cdn.example/a b.png", width: 320 })).toBe(
       "/_image?src=https%3A%2F%2Fcdn.example%2Fa+b.png&w=320",
     )
+  })
+
+  test("signImageUrl without expiry matches the stable self-hosted loader", () => {
+    const options = { endpoint: "/_image", secret: "s".repeat(32) }
+    const image = { src: "/private/hero.png", width: 320, quality: 70 }
+    const signed = signImageUrl(options.endpoint, image, options)
+    expect(signed).toBe(selfHostedLoader(options)(image))
+    expect(new URL(signed, "https://example.com").searchParams.has("exp")).toBe(false)
   })
 })
 
@@ -95,5 +109,16 @@ describe("resolveImage", () => {
     )
     expect(() => resolveImage({ src: "/a", width: 10, height: -1, alt: "" })).toThrow(/CLS/)
     expect(() => resolveImage({ src: "/a", width: Number.NaN, height: 10, alt: "" })).toThrow(/CLS/)
+  })
+
+  test("string sources cannot infer either missing dimension from a URL", () => {
+    expect(() => {
+      // @ts-expect-error JavaScript callers can omit width; the runtime must reject it rather than emit NaN layout attributes.
+      return resolveImage({ src: "/a.png", height: 10, alt: "" })
+    }).toThrow(/positive width \+ height \(got NaN×10\)/)
+    expect(() => {
+      // @ts-expect-error JavaScript callers can omit height; only imported metadata can supply it.
+      return resolveImage({ src: "/a.png", width: 10, alt: "" })
+    }).toThrow(/positive width \+ height \(got 10×NaN\)/)
   })
 })

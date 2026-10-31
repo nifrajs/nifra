@@ -169,6 +169,17 @@ export default function Benchmarks() {
     denoTrail === undefined
       ? "What Nifra checks on Deno's bare GET."
       : "Why Nifra trails on Deno's bare GET."
+  const memoryGraphs = (["node", "bun", "deno"] as const).flatMap((runtime) => {
+    const capture = HTTP_MEMORY.find((candidate) => candidate.runtime === runtime)
+    return capture === undefined ? [] : [{ runtime, capture }]
+  })
+  const memoryFrameworks = [
+    ...new Set(memoryGraphs.flatMap(({ capture }) => capture.rows.map((row) => row.name))),
+  ]
+  const maxPostRssMiB = Math.max(
+    1,
+    ...memoryGraphs.flatMap(({ capture }) => capture.rows.map((row) => row.postRssMiB)),
+  )
   return (
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
@@ -194,6 +205,13 @@ export default function Benchmarks() {
         <code>server.js</code> that build generates. Nifra shows <b>Bun</b> and <b>Node</b> rows so
         the Node rows compare apples-to-apples. The headline multipliers below are Table A only:
         Nifra's Node app row vs each meta-framework.
+      </p>
+      <p className="note">
+        The dynamic Table A apps return the same catalog through per-request loader work.
+        Nifra&apos;s rows also run the <code>loaderOutput</code> projection and validation required
+        for this client-bound data; the comparator frameworks have no equivalent output boundary.
+        Table A compares complete app paths, including this Nifra contract check, rather than
+        renderers alone.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (
@@ -257,6 +275,11 @@ export default function Benchmarks() {
         that runtime. Rows are ordered by the geometric mean of the workloads, so no single column
         decides the ranking.
       </p>
+      <p className="note">
+        Fastify on Bun and Deno uses each runtime's <code>node:http</code> compatibility and the
+        same Fastify server implementation as Node; those rows do not use native Bun or Deno HTTP
+        ingress.
+      </p>
       <div className="caveat">
         <b>{denoHeading}</b> Deno hands an app the request target exactly as the client sent it,
         joined to the <code>Host</code> header as received. So on Deno, Nifra rejects a malformed{" "}
@@ -295,6 +318,11 @@ export default function Benchmarks() {
             work on a fused route, not a fallback path. The third column adds one body-observing
             middleware to the same GET.
           </p>
+          <p className="note">
+            These rows time GET/POST requests from the allowed fixture origin. They do not time CORS
+            preflight or rejected-origin policy behavior. Every target writes the same fixed CORS
+            and security headers for that origin.
+          </p>
           <div className="bench-grid">
             {HTTP_REALWORLD.map((table) => (
               <RealworldTable key={table.title} table={table} />
@@ -303,59 +331,121 @@ export default function Benchmarks() {
         </>
       )}
 
-      {HTTP_MEMORY !== undefined && (
+      {HTTP_MEMORY.length > 0 && (
         <>
-          <h2 style={{ marginTop: 48 }}>Backend - memory footprint</h2>
-          <p className="note">
-            Captured {HTTP_MEMORY.date} with Node {HTTP_MEMORY.node} on {HTTP_MEMORY.cpu},{" "}
-            {HTTP_MEMORY.platform}. Median of {HTTP_MEMORY.rounds} fresh processes per framework,
-            with {HTTP_MEMORY.requestsPerPhase.toLocaleString("en-US")} GETs and POSTs per process
-            at {HTTP_MEMORY.connections} connections. Lower is better.
-          </p>
+          <h2 style={{ marginTop: 48 }}>Backend - memory footprint across runtimes</h2>
           <p className="lead">
-            The same authenticated routes, loaded as native modules for every framework. RSS is
-            resident process memory after a forced collection; heap is retained JavaScript memory
-            after the POST phase. Peak RSS is the OS high-water mark since startup. These are
+            The same authenticated GET and POST workloads run in fresh processes on each runtime.
+            RSS is resident process memory after a forced collection; heap is retained JavaScript
+            memory after the POST phase. Peak RSS is the OS high-water mark since startup. These are
             process footprints, including the runtime, rather than bytes allocated per request.
-            Nifra is a workspace build. This capture covers Node; Bun and Deno need their own
-            measurements.
+            Nifra is a workspace build in every capture. Fastify and Express use each runtime&apos;s
+            <code>node:http</code> compatibility on Bun and Deno. The site updater captures runtimes
+            sequentially on one host; each table names its CPU, platform, and capture date.
           </p>
-          <div style={{ overflowX: "auto" }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Framework</th>
-                  <th className="num">Ready RSS</th>
-                  <th className="num">After GET</th>
-                  <th className="num">After POST</th>
-                  <th className="num">Peak RSS</th>
-                  <th className="num">POST heap</th>
-                </tr>
-              </thead>
-              <tbody>
-                {HTTP_MEMORY.rows.map((row) => (
-                  <tr key={row.name} className={row.nifra ? "hl" : undefined}>
-                    <td>
-                      <Named name={row.name} version={row.version} />
-                    </td>
-                    <td className="num">{row.readyRssMiB.toFixed(1)} MiB</td>
-                    <td className="num">{row.getRssMiB.toFixed(1)} MiB</td>
-                    <td
-                      className="num"
-                      title={`Observed range: ${row.postRssMinMiB.toFixed(1)}-${row.postRssMaxMiB.toFixed(1)} MiB`}
-                    >
-                      {row.postRssMiB.toFixed(1)} MiB
-                    </td>
-                    <td className="num">{row.peakRssMiB.toFixed(1)} MiB</td>
-                    <td className="num">{row.postHeapMiB.toFixed(1)} MiB</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <h3>Resident memory after POST</h3>
           <p className="note">
-            Reproduce with <code>bun run bench:memory</code>. Forced collection exposes retained
-            memory; it does not establish a leak-free application or measure allocation churn.
+            Grouped by framework on one shared scale. Each bar shows resident memory after the same
+            GET and POST workload; lower is better.
+          </p>
+          <section
+            aria-label="Post-request resident memory by framework and runtime"
+            style={{ display: "grid", gap: 16, maxWidth: 760, margin: "16px 0 32px" }}
+          >
+            {memoryFrameworks.map((name) => (
+              <div key={name}>
+                <strong>{name}</strong>
+                <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                  {memoryGraphs.flatMap(({ runtime, capture }) => {
+                    const row = capture.rows.find((candidate) => candidate.name === name)
+                    if (row === undefined) return []
+                    const width = Math.max(1, (row.postRssMiB / maxPostRssMiB) * 100)
+                    const color =
+                      runtime === "node" ? "#4b78a8" : runtime === "bun" ? "#cc6b45" : "#41816f"
+                    return [
+                      <div
+                        key={`${runtime}-${name}`}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "56px minmax(80px, 1fr) 80px",
+                          gap: 10,
+                          alignItems: "center",
+                        }}
+                      >
+                        <span>{`${runtime[0]?.toUpperCase()}${runtime.slice(1)}`}</span>
+                        <div
+                          aria-hidden="true"
+                          style={{ background: "#edf0f2", borderRadius: 4, height: 12 }}
+                        >
+                          <div
+                            style={{
+                              width: `${width}%`,
+                              height: "100%",
+                              background: color,
+                              borderRadius: 4,
+                            }}
+                          />
+                        </div>
+                        <span className="num">{row.postRssMiB.toFixed(1)} MiB</span>
+                      </div>,
+                    ]
+                  })}
+                </div>
+              </div>
+            ))}
+          </section>
+          {HTTP_MEMORY.map((capture) => (
+            <div key={capture.runtime}>
+              <h3 style={{ marginTop: 24 }}>
+                {capture.runtime[0]?.toUpperCase()}
+                {capture.runtime.slice(1)} {capture.runtimeVersion}
+              </h3>
+              <p className="note">
+                Captured {capture.date} on {capture.cpu}, {capture.platform}. Median of{" "}
+                {capture.rounds} fresh processes per framework, with{" "}
+                {capture.requestsPerPhase.toLocaleString("en-US")} GETs and POSTs per process at{" "}
+                {capture.connections} connections. Lower is better.
+              </p>
+              <div style={{ overflowX: "auto" }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Framework</th>
+                      <th className="num">Ready RSS</th>
+                      <th className="num">After GET</th>
+                      <th className="num">After POST</th>
+                      <th className="num">Peak RSS</th>
+                      <th className="num">POST heap</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {capture.rows.map((row) => (
+                      <tr key={row.name} className={row.nifra ? "hl" : undefined}>
+                        <td>
+                          <Named name={row.name} version={row.version} />
+                        </td>
+                        <td className="num">{row.readyRssMiB.toFixed(1)} MiB</td>
+                        <td className="num">{row.getRssMiB.toFixed(1)} MiB</td>
+                        <td
+                          className="num"
+                          title={`Observed range: ${row.postRssMinMiB.toFixed(1)}-${row.postRssMaxMiB.toFixed(1)} MiB`}
+                        >
+                          {row.postRssMiB.toFixed(1)} MiB
+                        </td>
+                        <td className="num">{row.peakRssMiB.toFixed(1)} MiB</td>
+                        <td className="num">{row.postHeapMiB.toFixed(1)} MiB</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+          <p className="note">
+            Reproduce the Node capture with <code>bun run bench:memory</code>, or capture and update
+            all three runtimes with <code>bun run bench:memory:update</code>. Forced collection
+            exposes retained memory; it does not establish a leak-free application or measure
+            allocation churn.
           </p>
         </>
       )}

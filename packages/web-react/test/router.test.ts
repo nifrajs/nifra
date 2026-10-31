@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { rawHref, setBrowserNavigate } from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
@@ -281,6 +281,37 @@ test("setSearchParams navigates with the new query - record/string/URLSearchPara
   set({ tags: ["a", "b"] }) // array value → repeated key
   set({}) // empty → no "?" suffix
   expect(calls).toEqual(["/s?q=new", "/s?q=raw&p=2", "/s?a=1", "/s?q=up", "/s?tags=a&tags=b", "/s"])
+})
+
+test("setSearchParams on a path that reads as another host logs and does not navigate", () => {
+  const calls: unknown[] = []
+  setBrowserNavigate((to) => calls.push(to))
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    // `//host/x` is a protocol-relative reference: handed to the browser it leaves the origin.
+    const set = captureSetSearchParams("//evil.example/x?q=1")
+    expect(() => set({ q: "2" })).not.toThrow()
+    expect(calls).toEqual([])
+    expect(errors).toHaveBeenCalledTimes(1)
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("evil.example")
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+test("a Link whose destination it cannot use leaves the click to the browser", () => {
+  const calls: unknown[] = []
+  setBrowserNavigate((to) => calls.push(to))
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const e = mockClick()
+    linkOnClick({ to: "//evil.example/x" })(e)
+    expect(e.defaultPrevented).toBe(false)
+    expect(calls).toEqual([])
+    expect(errors).toHaveBeenCalledTimes(1)
+  } finally {
+    errors.mockRestore()
+  }
 })
 
 // A minimal MouseEvent stand-in for driving Link's click handler without a DOM. `preventDefault`

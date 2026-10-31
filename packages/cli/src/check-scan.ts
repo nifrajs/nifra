@@ -78,7 +78,7 @@ const IGNORED_DIR =
 // legitimately drives `fetch`, hand-rolls a client, and calls a route directly. It is NOT excluded from
 // `nifra doctor`: tsc typechecks tests, so an import a test declares nowhere is a real broken build.
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
-const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
+export const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
 
 /** Paths crossing the scanner boundary are project-relative identifiers, not filesystem paths. Keep
  * them stable across runtimes so rules, diagnostics, ignore globs, and import chains have one shape. */
@@ -2150,6 +2150,14 @@ function writesTo(ts: TypeScriptApi, root: TSApi.Node, name: string): SqlWrite[]
 }
 
 function mentionsName(ts: TypeScriptApi, node: TSApi.Node, name: string): boolean {
+  // A member/key named like the variable does not read that variable (`record = client.record()`).
+  if (ts.isPropertyAccessExpression(node)) return mentionsName(ts, node.expression, name)
+  if (ts.isPropertyAssignment(node)) {
+    return (
+      mentionsName(ts, node.initializer, name) ||
+      (ts.isComputedPropertyName(node.name) && mentionsName(ts, node.name.expression, name))
+    )
+  }
   if (ts.isIdentifier(node)) return node.text === name
   return ts.forEachChild(node, (child) => mentionsName(ts, child, name) || undefined) === true
 }

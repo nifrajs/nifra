@@ -146,6 +146,18 @@ test("I3: a missing, empty or unspellable param throws a TypeError naming it and
   expect(message({ to: "/docs/*slug", params: { slug: "a/../b" } })).toContain('"slug"')
 })
 
+test("href refuses adjacent params whose values would change or become malformed", () => {
+  for (const a of ["hello", "é", " ", "%", "😀"])
+    expect(() => build({ to: "/:a:b.txt", params: { a, b: "world" } })).toThrow(TypeError)
+  const params = { a: "h", b: "é world" }
+  const path = build({ to: "/:a:b.txt", params })
+  expect(path).toBe("/h%C3%A9%20world.txt")
+  expect(createMatcher([{ pattern: "/:a:b.txt", routeId: "adjacent" }])(path)).toEqual({
+    routeId: "adjacent",
+    params,
+  })
+})
+
 test("I3: it throws in production too, because no branch of it reads the environment", () => {
   const before = process.env.NODE_ENV
   process.env.NODE_ENV = "production"

@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/cli",
@@ -85,7 +86,7 @@ export default function Cli() {
 
       <h2 id="conventions">The layout the CLI reads</h2>
       <p>
-        <code>nifra dev</code> runs the Bun-native <a href="/docs/dev">HMR dev server</a>;{" "}
+        <code>nifra dev</code> runs the Bun-native <a href={href({ to: "/docs/dev" })}>HMR dev server</a>;{" "}
         <code>nifra build</code> runs the production build (content-hashed client assets plus a
         target-specific server); <code>nifra start</code> runs the default Bun output. The generated
         server serves assets and SSR with matched-route chunks preloaded and route CSS linked in each{" "}
@@ -100,7 +101,7 @@ export default function Cli() {
         Vite-only app rather than dropping its transforms silently. Every <code>dev</code> and{" "}
         <code>build</code> run prints which bundler it picked and why, and <code>nifra check</code>{" "}
         answers the same question without starting a server - see{" "}
-        <a href="/docs/dev">which pipeline runs, when</a> for the full table.
+        <a href={href({ to: "/docs/dev" })}>which pipeline runs, when</a> for the full table.
       </p>
       <CodeBlock code={STRUCTURE} />
       <p>
@@ -114,7 +115,7 @@ export default function Cli() {
         <code>backend/app.ts</code> a composition root - merging modules, registering no routes of
         its own - so each route&apos;s capability reach stays its own module&apos;s. What goes in each
         zone, and what the builds refuse to cross, is on{" "}
-        <a href="/docs/structure">Project structure</a>.
+        <a href={href({ to: "/docs/structure" })}>Project structure</a>.
       </p>
 
       <h2 id="framework">backend/framework.ts and nifra.config.ts</h2>
@@ -127,6 +128,18 @@ export default function Cli() {
         adapter. This keeps build tooling and native dependencies out of generated server bundles.
       </p>
       <CodeBlock code={FRAMEWORK} />
+      <p>
+        Ordinary <code>vercel</code> builds default to Edge. To opt into Node.js 22, export both{" "}
+        <code>{`target = "vercel"`}</code> and <code>{`vercelRuntime = "node"`}</code> from{" "}
+        <code>nifra.config.ts</code>, then run <code>nifra build</code> (or{" "}
+        <code>nifra build --target vercel</code>) and <code>vercel deploy --prebuilt</code> from
+        the project root. Both Bun and Vite builds write <code>.vercel/output</code> unless{" "}
+        <code>--out</code> overrides it. Omit the selector or use <code>"edge"</code> to retain
+        Edge; other values and use with a different target are refused before output is cleared.
+        There is no separate runtime flag. Node functions support Node built-ins but not Bun APIs
+        or a persistent server; the CLI/build still requires Bun. See{" "}
+        <a href={href({ to: "/docs/deployment", hash: "vercel-node" })}>runtime output and limitations</a>.
+      </p>
 
       <h2 id="commands">Command reference</h2>
       <p>
@@ -338,7 +351,7 @@ export default function Cli() {
             <td>
               <code>nifra types [--check]</code>
             </td>
-            <td>Each route&apos;s <code>./+types</code> module under <code>.nifra/types</code>: params, schema-typed data, and <code>api</code> typed by <code>backend/app.ts</code>. <code>dev</code>, <code>build</code> and <code>check</code> refresh them too.</td>
+            <td>Each route&apos;s <code>./+types</code> module under <code>.nifra/types</code>: params, schema-typed data, and <code>api</code> typed by <code>backend/app.ts</code>. It also writes <code>routes.d.ts</code>, the route table <code>href()</code> reads. <code>dev</code>, <code>build</code> and <code>check</code> refresh them too.</td>
           </tr>
           <tr>
             <td>
@@ -356,7 +369,7 @@ export default function Cli() {
             <td>
               <code>nifra scaffold hole &lt;route&gt; &lt;name&gt; [--shared] [--interactive] [--timeout &lt;ms&gt;] [--server]</code>
             </td>
-            <td>Add a hole to a <a href="/docs/partial-prerendering">partially prerendered</a> route: its definition, <code>boundaries</code> entry and <code>Hole</code> in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.</td>
+            <td>Add a hole to a <a href={href({ to: "/docs/partial-prerendering" })}>partially prerendered</a> route: its definition, <code>boundaries</code> entry and <code>Hole</code> in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.</td>
           </tr>
           <tr>
             <td>
@@ -546,11 +559,11 @@ nifra migrate --from tailwind --to stylex --dir src`}
         copy cannot reflect the project&apos;s app, and says so in one line.{" "}
         <code>nifra doctor</code> and{" "}
         <code>nifra check</code> (NF-D002) point here when a workspace carries more than one version;
-        see <a href="/docs/troubleshooting#mixed-versions">mixed nifra versions</a>. A{" "}
+        see <a href={href({ to: "/docs/troubleshooting", hash: "mixed-versions" })}>mixed nifra versions</a>. A{" "}
         <code>file:</code> package whose dependencies this upgrade moves keeps its old ones in{" "}
         <code>bun.lock</code>, where Bun never refreshes them; the plan lists each, and{" "}
         <code>--write</code> drops those entries so the next <code>bun install</code> records them
-        again (see <a href="/docs/troubleshooting#stale-file-links">stale file: links</a>).
+        again (see <a href={href({ to: "/docs/troubleshooting", hash: "stale-file-links" })}>stale file: links</a>).
       </p>
       <p>
         A <code>link:</code> or <code>file:</code> dependency outside the root that installs its own{" "}
@@ -584,7 +597,7 @@ nifra migrate --from tailwind --to stylex --dir src`}
       <p>
         <code>nifra build</code> defaults to a self-hosted Bun server. Use <code>--target node</code>,{" "}
         <code>deno</code>, <code>cloudflare</code>, <code>vercel</code>, or <code>static</code> for another
-        complete deploy shape (see <a href="/docs/deployment">Deployment</a>). Run non-Bun outputs with
+        complete deploy shape (see <a href={href({ to: "/docs/deployment" })}>Deployment</a>). Run non-Bun outputs with
         the command printed by the build.
       </p>
     </div>

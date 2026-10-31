@@ -1,3 +1,4 @@
+import { href, rawHref } from "@nifrajs/web-react/router"
 import type { CSSProperties } from "react"
 import {
   BUNDLE,
@@ -698,10 +699,10 @@ export default function Home() {
             <InstallWidget command="bun create nifra my-app" label="Copy the install command" />
           </div>
           <div className="home-actions">
-            <a className="button primary" href="/docs">
+            <a className="button primary" href={href({ to: "/docs" })}>
               Read the docs
             </a>
-            <a className="button ghost" href="/play">
+            <a className="button ghost" href={href({ to: "/play" })}>
               Open the playground
             </a>
           </div>
@@ -719,7 +720,7 @@ export default function Home() {
         ))}
       </ul>
       <p className="home-proof-note">
-        <a href="/benchmarks">How these were measured</a>
+        <a href={href({ to: "/benchmarks" })}>How these were measured</a>
       </p>
 
       <section id="sec-replaces" className="home-swap" aria-labelledby="sec-replaces-title">
@@ -756,8 +757,8 @@ export default function Home() {
             label="Copy the MCP setup command"
           />
           <div className="home-band-links">
-            <a href="/docs/agents">Agent guide</a>
-            <a href="/docs/webmcp">WebMCP</a>
+            <a href={href({ to: "/docs/agents" })}>Agent guide</a>
+            <a href={href({ to: "/docs/webmcp" })}>WebMCP</a>
           </div>
         </div>
         <ol className="home-tools">
@@ -842,7 +843,7 @@ export default function Home() {
         <div className="home-play">
           <iframe src="/play?embed=1" title="Nifra playground" loading="lazy" />
         </div>
-        <a className="home-link" href="/play">
+        <a className="home-link" href={href({ to: "/play" })}>
           Open the full playground
         </a>
       </section>
@@ -870,12 +871,12 @@ export default function Home() {
         </div>
         <p className="home-bars-note">
           Node is shown for the API chart. The Bun and Deno tables, including the rows where Nifra
-          is not first, are on the <a href="/benchmarks">benchmarks page</a>.
+          is not first, are on the <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
         </p>
         <ul className="home-vs" aria-label="Nifra compared with other frameworks">
           {VERSUS.map((item) => (
             <li key={item.slug}>
-              <a href={`/compare/${item.slug}`}>
+              <a href={rawHref(`/compare/${item.slug}`)}>
                 <strong>Nifra vs {item.name}</strong>
                 <p>{item.body}</p>
                 <span className="home-vs-go">
@@ -907,7 +908,7 @@ export default function Home() {
               </li>
             ))}
           </ul>
-          <a className="home-link" href="/frameworks">
+          <a className="home-link" href={href({ to: "/frameworks" })}>
             See the five-framework demo
           </a>
         </div>
@@ -939,7 +940,7 @@ export default function Home() {
             </div>
           ))}
         </div>
-        <a className="home-link" href="/docs/integrations">
+        <a className="home-link" href={href({ to: "/docs/integrations" })}>
           Browse every package
         </a>
       </section>
@@ -952,7 +953,7 @@ export default function Home() {
           </p>
           <div className="home-actions">
             <InstallWidget command="bun create nifra my-app" label="Copy the install command" />
-            <a className="button primary" href="/docs">
+            <a className="button primary" href={href({ to: "/docs" })}>
               Read the docs
             </a>
           </div>

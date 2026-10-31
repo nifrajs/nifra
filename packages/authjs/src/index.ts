@@ -193,15 +193,10 @@ async function vouchForRenewal(
     return response
   }
   const named = config.cookies?.sessionToken?.name
+  const sessionNames = named === undefined ? [SESSION_TOKEN, `__Secure-${SESSION_TOKEN}`] : [named]
   for (const line of response.headers.getSetCookie()) {
     const name = line.slice(0, line.indexOf("=")).trim()
-    if (
-      named === undefined
-        ? name !== SESSION_TOKEN && name !== `__Secure-${SESSION_TOKEN}`
-        : name !== named
-    ) {
-      continue
-    }
+    if (!sessionNames.includes(name)) continue
     // A first sign-in or a sign-out decodes to null on one side, which matches nothing.
     try {
       const decode = config.jwt?.decode ?? (await import("@auth/core/jwt")).decode

@@ -3,11 +3,15 @@
   The <style> block is global (not scoped): @nifrajs/web-vue/plugin compiles it into the app
   stylesheet, which the document links before it renders.
 -->
+<script setup lang="ts">
+import { href } from "@nifrajs/web-vue/router"
+</script>
+
 <template>
   <div id="app">
     <header class="site">
       <div class="wrap">
-        <a href="/" class="logo"><b>nifra</b></a>
+        <a :href="href({ to: '/' })" class="logo"><b>nifra</b></a>
         <a href="https://github.com">GitHub</a>
       </div>
     </header>

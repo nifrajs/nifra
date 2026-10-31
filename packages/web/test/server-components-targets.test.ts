@@ -166,3 +166,25 @@ test("the generated Node handler takes the origin from Host, never from a target
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("component target emits image-plugin assets before sealing the generation", async () => {
+  const root = await stage(manifest)
+  try {
+    const source = Uint8Array.fromBase64(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+    )
+    const fileName = `_images/${createHash("sha256").update(source).digest("hex")}.png`
+    const plugin = { name: "image-fixture", nifraStaticAssets: () => [{ fileName, source }] }
+    const result = await assembleComponentTarget(
+      { ...options(root), target: "vercel", plugins: [plugin] },
+      "build_1",
+    )
+    expect(result.assets).toContain(`/assets/${fileName}`)
+    expect(new Uint8Array(await readFile(resolve(root, "static/assets", fileName)))).toEqual(source)
+    expect(
+      JSON.parse(await readFile(resolve(root, "component-build.json"), "utf8")).assets,
+    ).toContain(`/assets/${fileName}`)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

@@ -14,7 +14,8 @@ if (!Number.isInteger(port)) {
   throw new Error("usage: node bench/http/worst-case/serve-node-fastify.ts <port>")
 }
 
-const app = Fastify({ logger: false })
+// Keep Fastify's JSON body types strict like the other targets.
+const app = Fastify({ logger: false, ajv: { customOptions: { coerceTypes: false } } })
 
 app.get("/health", () => ({ ok: true }))
 

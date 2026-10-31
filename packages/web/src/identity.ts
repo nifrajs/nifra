@@ -43,7 +43,12 @@ const dispatchIdentityChange = (): void => {
     })
 }
 
-const identityChannel = (): BroadcastChannel | undefined => {
+/**
+ * This document's one channel for the identity signal. A tab that announces a change posts on it, not
+ * on a channel of its own: this one does not hear its post, and any other channel of the tab would,
+ * so every listener would run a second time, a task late.
+ */
+export const identityChannel = (): BroadcastChannel | undefined => {
   if (Reflect.get(globalThis, "window") === undefined) return undefined
   const existing: unknown = Reflect.get(globalThis, CHANNEL)
   if (

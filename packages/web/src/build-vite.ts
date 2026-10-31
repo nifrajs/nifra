@@ -47,6 +47,7 @@ import {
 } from "./internal/build-steps.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
+import { emitPluginImages } from "./internal/image-assets.ts"
 import { assertIdentityParity } from "./internal/parity.ts"
 import { emittedScanFiles, formatSecretFindings, scanForSecrets } from "./internal/secret-scan.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
@@ -435,6 +436,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   }
   const copyChunks = copy?.urls ?? {}
   for (const chunk of Object.values(copyChunks)) assets.add(chunk)
+  for (const image of emitPluginImages(options.vitePlugins ?? [], outDir, publicPath))
+    assets.add(image)
 
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
