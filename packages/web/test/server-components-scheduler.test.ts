@@ -256,6 +256,7 @@ test("an aborted live stream holds admission until source cleanup, then errors i
 test("a late abort notification after stream completion is ignored", async () => {
   const tasks = new BoundedComponentTasks(1, 0)
   let abortListener: (() => void) | undefined
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: This fake captures an abort callback and invokes it after completion to prove stale notifications cannot affect released work.
   const signal = {
     aborted: false,
     reason: undefined,
@@ -263,7 +264,7 @@ test("a late abort notification after stream completion is ignored", async () =>
       abortListener = listener
     },
     removeEventListener() {},
-  } as unknown as AbortSignal
+  } as AbortSignal
   const stream = await tasks.runStream(
     signal,
     () =>

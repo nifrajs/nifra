@@ -62,6 +62,11 @@ const serverComponents = createServerComponents({
       scope: "anonymous",
       instances: () => [serverComponentInstance(component, "stable", {})],
     },
+    ownerNoCachePolicy: {
+      components: [component],
+      scope: "anonymous",
+      instances: () => [serverComponentInstance(component, "stable", {})],
+    },
   },
 })
 const manifest: Manifest = {
@@ -79,6 +84,15 @@ const manifest: Manifest = {
       id: "plain",
       pattern: "/plain",
       file: "plain.ts",
+      layoutIds: [],
+      errorIds: [],
+      middlewareIds: [],
+      load: async () => ({ default: () => null, loader: () => ({}) }),
+    },
+    {
+      id: "ownerNoCachePolicy",
+      pattern: "/owner-no-cache-policy",
+      file: "owner-no-cache-policy.ts",
       layoutIds: [],
       errorIds: [],
       middlewareIds: [],
@@ -275,20 +289,22 @@ const componentSelection = componentRequestHeader({
   authEpoch: 0,
   input: {},
 })
-const componentRequest = (index: number, progressive: boolean) =>
-  new Request(`https://fixture.test/owner?component=${index}`, {
-    headers: {
-      "sec-fetch-site": "same-origin",
-      "x-nifra-component": componentSelection,
-      ...(progressive ? { accept: COMPONENT_FLIGHT_MEDIA_TYPE } : {}),
-    },
+const componentRequest = (index: number, progressive: boolean, path = "/owner") => {
+  const headers = new Headers({
+    "sec-fetch-site": "same-origin",
+    "x-nifra-component": componentSelection,
   })
+  if (progressive) headers.set("accept", COMPONENT_FLIGHT_MEDIA_TYPE)
+  return new Request(`https://fixture.test${path}?component=${index}`, { headers })
+}
 
 const modes: Record<string, (index: number) => Promise<Response>> = {
   blockingSsr: async (index: number) =>
     app.fetch(new Request(`https://fixture.test/plain?sample=${index}`)),
   bufferedComponentRecord: async (index: number) => app.fetch(componentRequest(index, false)),
   progressiveComponentFlight: async (index: number) => app.fetch(componentRequest(index, true)),
+  ownerWithoutCachePolicy: async (index: number) =>
+    app.fetch(componentRequest(index, false, "/owner-no-cache-policy")),
   ownerWithoutIsr: async (index: number) =>
     app.fetch(new Request(`https://fixture.test/owner?sample=${index}`)),
   ownerCacheMiss: (_index: number) =>
@@ -317,7 +333,7 @@ console.log(
       concurrency: 16,
       memory: "RSS sampled every 5 ms and after responses; not an allocator high-water mark",
       ownerCache:
-        "The ownerCacheMiss and ownerCacheHit modes use a synthetic ISR response with the owner cache headers and partition key; ownerWithoutIsr measures the real owner route without ISR.",
+        "ownerWithoutCachePolicy measures a real owner refresh whose route declares no cache policy; ownerWithoutIsr measures a configured cacheable owner route without the ISR wrapper. The ownerCacheMiss and ownerCacheHit modes use a synthetic ISR response with the owner cache headers and partition key.",
       ppr: "Run `bun run bench:ppr` for PPR, blocking SSR and defer() throughput/CPU measurements.",
       flightSnapshot,
       results,

@@ -29,6 +29,7 @@ function ownerApp(
     | "derive"
     | "before-handle"
     | "on-response"
+    | "response-vary"
     | undefined = undefined,
 ) {
   const component = defineServerComponent(
@@ -136,7 +137,8 @@ function ownerApp(
       readAcceptLanguage === "on-request" ||
       readAcceptLanguage === "derive" ||
       readAcceptLanguage === "before-handle" ||
-      readAcceptLanguage === "on-response"
+      readAcceptLanguage === "on-response" ||
+      readAcceptLanguage === "response-vary"
         ? (app) => {
             const read = (request: Request) => request.headers.get("accept-language")
             if (readAcceptLanguage === "on-request")
@@ -156,6 +158,16 @@ function ownerApp(
               app.onResponse((response, request) => {
                 read(request)
                 return response
+              })
+            if (readAcceptLanguage === "response-vary")
+              app.onResponse((response) => {
+                const headers = new Headers(response.headers)
+                headers.set("vary", "x-nifra-data")
+                return new Response(response.body, {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers,
+                })
               })
           }
         : undefined,
@@ -337,6 +349,21 @@ test("owner request tracking hooks run on ordinary GETs without changing the res
 
   expect(response.status).toBe(200)
   expect(await response.text()).toContain("owner")
+  expect(counts).toEqual({ page: 1, component: 1, render: 1 })
+})
+
+test("owner cache accepts framework-owned Vary keys", async () => {
+  const counts: Counts = { page: 0, component: 0, render: 0 }
+  const { app } = ownerApp("build_owner_vary", "deploy_owner_vary", counts, false, "response-vary")
+  const isr = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 0 })
+  const request = () => new Request("https://fixture.test/owner")
+
+  const first = await isr(request())
+  expect(first.headers.get("x-nifra-isr")).toBe("miss")
+  await first.arrayBuffer()
+  const warm = await isr(request())
+  expect(warm.headers.get("x-nifra-isr")).toBe("hit")
+  await warm.arrayBuffer()
   expect(counts).toEqual({ page: 1, component: 1, render: 1 })
 })
 
