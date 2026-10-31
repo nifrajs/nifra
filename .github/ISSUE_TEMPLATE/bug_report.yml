@@ -45,7 +45,7 @@ body:
     id: runtime-version
     attributes:
       label: Runtime version
-      placeholder: "bun 1.4.4 / node 26.12.0 / deno 2.9.7"
+      placeholder: "bun 1.4.4 / node 26.13.0 / deno 2.9.7"
     validations:
       required: true
   - type: dropdown
