@@ -1,20 +1,280 @@
 name: Benchmark accuracy
 
-# A longer, opt-in sampling budget. Reuse the nightly harness so its workload,
-# runtime pins, core isolation, and report format stay identical.
+# Run one serial matrix per suite. The needs chain keeps the four suite jobs from overlapping;
+# each runtime loop also runs serially on one runner so ratios share the same machine.
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: benchmark-accuracy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  accuracy:
-    # A reusable workflow called with ./ already comes from the caller's commit, not the workspace;
-    # actionlint 1.7.12 rejects $/ and would stop type-checking these inputs.
-    uses: ./.github/workflows/benchmarks.yml # zizmor: ignore[self-repository]
-    with:
-      min_runs: 7
-      max_runs: 15
-      max_ci_width: 5
-      skip_ssr: true
+  http:
+    name: HTTP (Node, Bun, Deno)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    env:
+      MIN_RUNS: "7"
+      MAX_RUNS: "15"
+      MAX_CI_WIDTH: "5"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+      - name: Install oha 1.16.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/oha" \
+            https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/oha"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - name: Measure runtimes serially
+        run: |
+          mkdir -p bench-ci/metadata
+          for runtime in node bun deno; do
+            {
+              printf 'commit=%s\nrun_id=%s\nattempt=%s\nsuite=http\nruntime=%s\nmin_runs=%s\nmax_runs=%s\nmax_ci_width=%s\n' \
+                "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$runtime" "$MIN_RUNS" "$MAX_RUNS" "$MAX_CI_WIDTH"
+              date -u +%FT%TZ
+              bun --version
+              bun --revision
+              node --version
+              deno --version
+              uname -srm
+              lscpu
+              oha --version
+            } | tee "bench-ci/metadata/http-$runtime.txt"
+            bun run bench/ci/run.ts --suite http --runtime "$runtime" \
+              --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" --max-ci-width "$MAX_CI_WIDTH" --pin \
+              --out "bench-ci/http-$runtime.json"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bench-http
+          path: |
+            bench-ci/http-*.json
+            bench-ci/metadata/http-*.txt
+          if-no-files-found: error
+          retention-days: 90
+
+  realworld:
+    name: Real-world (Node, Bun, Deno)
+    needs: http
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    env:
+      MIN_RUNS: "7"
+      MAX_RUNS: "15"
+      MAX_CI_WIDTH: "5"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+      - name: Install oha 1.16.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/oha" \
+            https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/oha"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - name: Measure runtimes serially
+        run: |
+          mkdir -p bench-ci/metadata
+          for runtime in node bun deno; do
+            {
+              printf 'commit=%s\nrun_id=%s\nattempt=%s\nsuite=realworld\nruntime=%s\nmin_runs=%s\nmax_runs=%s\nmax_ci_width=%s\n' \
+                "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$runtime" "$MIN_RUNS" "$MAX_RUNS" "$MAX_CI_WIDTH"
+              date -u +%FT%TZ
+              bun --version
+              bun --revision
+              node --version
+              deno --version
+              uname -srm
+              lscpu
+              oha --version
+            } | tee "bench-ci/metadata/realworld-$runtime.txt"
+            bun run bench/ci/run.ts --suite realworld --runtime "$runtime" \
+              --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" --max-ci-width "$MAX_CI_WIDTH" --pin \
+              --out "bench-ci/realworld-$runtime.json"
+          done
+      - name: Capture publishable real-world site data
+        env:
+          BENCH_RAW_DIR: bench-ci/realworld-site-raw
+        run: bun run bench:http:realworld:update
+      - name: Stage the updated site dataset
+        run: |
+          mkdir -p bench-ci/realworld-site
+          cp site/shared/data/benchmarks.json bench-ci/realworld-site/benchmarks.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bench-realworld
+          path: |
+            bench-ci/realworld-*.json
+            bench-ci/metadata/realworld-*.txt
+            bench-ci/realworld-site-raw/*.json
+            bench-ci/realworld-site/benchmarks.json
+          if-no-files-found: error
+          retention-days: 90
+
+  ssr:
+    name: SSR (Node, Bun)
+    needs: realworld
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    env:
+      MIN_RUNS: "7"
+      MAX_RUNS: "15"
+      MAX_CI_WIDTH: "5"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+      - name: Install oha 1.16.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/oha" \
+            https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/oha"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - name: Measure runtimes serially
+        run: |
+          mkdir -p bench-ci/metadata
+          for runtime in node bun; do
+            {
+              printf 'commit=%s\nrun_id=%s\nattempt=%s\nsuite=ssr\nruntime=%s\nmin_runs=%s\nmax_runs=%s\nmax_ci_width=%s\n' \
+                "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$runtime" "$MIN_RUNS" "$MAX_RUNS" "$MAX_CI_WIDTH"
+              date -u +%FT%TZ
+              bun --version
+              bun --revision
+              node --version
+              deno --version
+              uname -srm
+              lscpu
+              oha --version
+            } | tee "bench-ci/metadata/ssr-$runtime.txt"
+            bun run bench/ci/run.ts --suite ssr --runtime "$runtime" \
+              --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" --max-ci-width "$MAX_CI_WIDTH" --pin \
+              --out "bench-ci/ssr-$runtime.json"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bench-ssr
+          path: |
+            bench-ci/ssr-*.json
+            bench-ci/metadata/ssr-*.txt
+          if-no-files-found: error
+          retention-days: 90
+
+  memory:
+    name: Memory (Node, Bun, Deno)
+    needs: ssr
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.7
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: bench-realworld
+          path: bench-ci/realworld-artifact
+      - name: Seed site data with the real-world capture
+        run: cp bench-ci/realworld-artifact/realworld-site/benchmarks.json site/shared/data/benchmarks.json
+      - name: Runner identity
+        run: |
+          mkdir -p bench-ci/metadata
+          {
+            printf 'commit=%s\nrun_id=%s\nattempt=%s\nsuite=memory\nruntimes=node,bun,deno\nrounds=5\nrequests_per_phase=50000\n' \
+              "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            date -u +%FT%TZ
+            bun --version
+            bun --revision
+            node --version
+            deno --version
+            uname -srm
+            lscpu
+          } | tee bench-ci/metadata/memory.txt
+      - name: Capture and publish runtimes serially
+        run: bun run bench:memory:update
+      - name: Stage memory data and raw captures
+        run: |
+          mkdir -p bench-ci/memory-site bench-ci/memory-captures
+          cp site/shared/data/benchmarks.json bench-ci/memory-site/benchmarks.json
+          cp bench/profiling/results/node/realworld-memory.json bench-ci/memory-captures/node.json
+          cp bench/profiling/results/bun/realworld-memory.json bench-ci/memory-captures/bun.json
+          cp bench/profiling/results/deno/realworld-memory.json bench-ci/memory-captures/deno.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bench-memory
+          path: |
+            bench-ci/memory-captures/*.json
+            bench-ci/metadata/memory.txt
+            bench-ci/memory-site/benchmarks.json
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: bench-*
+          path: bench-ci
+          merge-multiple: true
+      - name: Combined report
+        run: bun run bench/ci/summary.ts bench-ci --suites "http,realworld,ssr" >> "$GITHUB_STEP_SUMMARY"

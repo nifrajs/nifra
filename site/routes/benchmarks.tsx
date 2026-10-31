@@ -169,6 +169,17 @@ export default function Benchmarks() {
     denoTrail === undefined
       ? "What Nifra checks on Deno's bare GET."
       : "Why Nifra trails on Deno's bare GET."
+  const memoryGraphs = (["node", "bun", "deno"] as const).flatMap((runtime) => {
+    const capture = HTTP_MEMORY.find((candidate) => candidate.runtime === runtime)
+    return capture === undefined ? [] : [{ runtime, capture }]
+  })
+  const memoryFrameworks = [
+    ...new Set(memoryGraphs.flatMap(({ capture }) => capture.rows.map((row) => row.name))),
+  ]
+  const maxPostRssMiB = Math.max(
+    1,
+    ...memoryGraphs.flatMap(({ capture }) => capture.rows.map((row) => row.postRssMiB)),
+  )
   return (
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
@@ -332,6 +343,57 @@ export default function Benchmarks() {
             <code>node:http</code> compatibility on Bun and Deno. The site updater captures runtimes
             sequentially on one host; each table names its CPU, platform, and capture date.
           </p>
+          <h3>Resident memory after POST</h3>
+          <p className="note">
+            Grouped by framework on one shared scale. Each bar shows resident memory after the same
+            GET and POST workload; lower is better.
+          </p>
+          <section
+            aria-label="Post-request resident memory by framework and runtime"
+            style={{ display: "grid", gap: 16, maxWidth: 760, margin: "16px 0 32px" }}
+          >
+            {memoryFrameworks.map((name) => (
+              <div key={name}>
+                <strong>{name}</strong>
+                <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                  {memoryGraphs.flatMap(({ runtime, capture }) => {
+                    const row = capture.rows.find((candidate) => candidate.name === name)
+                    if (row === undefined) return []
+                    const width = Math.max(1, (row.postRssMiB / maxPostRssMiB) * 100)
+                    const color =
+                      runtime === "node" ? "#4b78a8" : runtime === "bun" ? "#cc6b45" : "#41816f"
+                    return [
+                      <div
+                        key={`${runtime}-${name}`}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "56px minmax(80px, 1fr) 80px",
+                          gap: 10,
+                          alignItems: "center",
+                        }}
+                      >
+                        <span>{`${runtime[0]?.toUpperCase()}${runtime.slice(1)}`}</span>
+                        <div
+                          aria-hidden="true"
+                          style={{ background: "#edf0f2", borderRadius: 4, height: 12 }}
+                        >
+                          <div
+                            style={{
+                              width: `${width}%`,
+                              height: "100%",
+                              background: color,
+                              borderRadius: 4,
+                            }}
+                          />
+                        </div>
+                        <span className="num">{row.postRssMiB.toFixed(1)} MiB</span>
+                      </div>,
+                    ]
+                  })}
+                </div>
+              </div>
+            ))}
+          </section>
           {HTTP_MEMORY.map((capture) => (
             <div key={capture.runtime}>
               <h3 style={{ marginTop: 24 }}>
