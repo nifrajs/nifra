@@ -716,7 +716,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionStore** _(interface)_ - `interface SessionStore`
   Pluggable session backend (store mode). Reads must observe completed writes and deletes, including revocation markers, across all instances. Eventual consistency cannot provide logout guarantees. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionSto…
 - **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
-  The response a guard denies a missing session with, in place of the default `401` JSON.
+  The response a guard denies a missing session with, in place of the default `401` JSON. Every nifra auth package's guard options named `unauthenticated` takes this shape.
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions<Data>) => SessionManager<Data>`
 - **csrf** _(function)_ - `csrf: (options?: CsrfOptions) => Middleware`
 - **isAuthorized** _(function)_ - `isAuthorized: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<boolean>`
@@ -740,7 +740,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Session** _(interface)_ - `interface Session`
   The active session of the logged in user.
 - **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
-  The response a guard denies a missing session with, in place of the default `401` JSON.
+  The response a guard denies a missing session with, in place of the default `401` JSON. Every nifra auth package's guard options named `unauthenticated` takes this shape.
 - **authjs** _(function)_ - `authjs: (config: AuthJSConfig, options?: AuthJSOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Mount an Auth.js instance into a nifra app: serves `${basePath}/*` (default `/api/auth/*`) for `GET` + `POST`, so sign-in, OAuth callbacks, session, sign-out, and CSRF all run on your server through `@auth/core` itself. A type-IDENTITY plugin (see `defineIdentityPlugin`): mounting never changes the…
 - **getSession** _(function)_ - `getSession: (req: Request, config: AuthJSConfig, options?: AuthGuardOptions) => Promise<Session | null>`
@@ -813,7 +813,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SessionUserOf** _(type)_ - `type SessionUserOf<A extends BetterAuthLike> = SessionOf<A> extends { user: infer U } ? U : unknown`
   The non-null user type of a concrete better-auth instance `A` (`SessionOf<A>["user"]`). Collapses to `unknown` only for the erased structural `BetterAuthLike`; a real instance recovers the concrete user.
 - **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
-  The response a guard denies a missing session with, in place of the default `401` JSON.
+  The response a guard denies a missing session with, in place of the default `401` JSON. Every nifra auth package's guard options named `unauthenticated` takes this shape.
 - **WithPrincipal** _(type)_ - `type WithPrincipal<S extends AnyServer, P> = S extends Server<infer R, infer C> ? Server<R, C & { principal: P }> : never`
   Add `{ principal: P }` to a server's context while preserving its route registry `R` (no collapse to `any`). This is the type that makes `.use(authed(auth))` thread a NON-NULL `c.principal`.
 - **authed** _(function)_ - `authed: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant; }) => <S extends AnyServer>(app: S) => WithP…`
@@ -2481,6 +2481,15 @@ Every public export of every package and documented subpath - name, kind, signat
   Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; imports nothing, so it is edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no mag…
 - **detectFileType** _(function)_ - `detectFileType: (bytes: Uint8Array) => FileType | null`
   Detect a file's type from its magic bytes, or `null` if unrecognized.
+
+### `@nifrajs/core/guard-deny`
+
+- **UnauthenticatedResponse** _(interface)_ - `interface UnauthenticatedResponse`
+  The response a guard denies a missing session with, in place of the default `401` JSON. Every nifra auth package's guard options named `unauthenticated` takes this shape.
+- **assertUnauthenticated** _(function)_ - `assertUnauthenticated: (options: { readonly redirectTo?: string; readonly unauthenticated?: UnauthenticatedResponse; }, owner: string) => void`
+  A dev-authored denial that is not an error status, or that competes with a redirect, fails loud. A mutation-taking guard must say one thing, and `unauthenticated.status` must stay an HTTP error status. `owner` names the package in the message: `[nifra/<owner>]`.
+- **unauthenticatedResult** _(function)_ - `unauthenticatedResult: (custom: UnauthenticatedResponse | undefined) => ResponseResult`
+  The response one guard rejection carries: what the options declared, or the default `401` JSON (`{ ok: false, error: "unauthorized" }`). An explicit `body` of `undefined` sends no body.
 
 ### `@nifrajs/core/idempotency`
 
@@ -5825,7 +5834,7 @@ _No named exports (side-effect entrypoint)._
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
-  One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
+  One reviewed false positive. A file scope exempts a rule throughout that file. For `private-env-value`, an env scope exempts every finding sourced from that variable anywhere in scanned output.
 - **SecretRule** _(type)_ - `type SecretRule = | "private-key" | "credential-url" | "key-format" | "assigned-secret" | "private-env-value"`
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
@@ -6948,7 +6957,7 @@ _No named exports (side-effect entrypoint)._
 - **SERVER_PACKAGES** _(const)_ - `SERVER_PACKAGES: readonly string[]`
   Third-party packages that never belong in a browser bundle: database drivers, ORMs' server entries, mailers and server SDKs. A package reaching a `node:` builtin is caught separately; this list covers the ones that bundle "fine" and leak credentials or query code instead.
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
-  One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
+  One reviewed false positive. A file scope exempts a rule throughout that file. For `private-env-value`, an env scope exempts every finding sourced from that variable anywhere in scanned output.
 - **SecretFinding** _(interface)_ - `interface SecretFinding`
 - **SecretRule** _(type)_ - `type SecretRule = | "private-key" | "credential-url" | "key-format" | "assigned-secret" | "private-env-value"`
 - **SecretScanFile** _(interface)_ - `interface SecretScanFile`

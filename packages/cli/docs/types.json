@@ -15027,8 +15027,8 @@
     "name": "SecretExemption",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface SecretExemption {\n    readonly rule: SecretRule;\n    /** The finding's file as reported: app-relative for a source or `public/` file, output-relative for\n     * an emitted file. */\n    readonly file?: string;\n    /** For `private-env-value`: the variable whose value may ship. */\n    readonly env?: string;\n    readonly reason: string;\n}",
-    "doc": "/**\n * One reviewed false positive. It names the rule, where the finding is and why it may ship: there is\n * no exemption by value, so a credential that turns up somewhere else still fails the build.\n */"
+    "signature": "export interface SecretExemption {\n    readonly rule: SecretRule;\n    /** Exempt this rule throughout the named file. Source and `public/` paths are app-relative;\n     * emitted-file paths are output-relative. */\n    readonly file?: string;\n    /** For `private-env-value`: exempt every finding sourced from this variable across scanned output. */\n    readonly env?: string;\n    readonly reason: string;\n}",
+    "doc": "/**\n * One reviewed false positive. A file scope exempts a rule throughout that file. For\n * `private-env-value`, an env scope exempts every finding sourced from that variable anywhere in\n * scanned output.\n */"
   },
   {
     "name": "SecretFinding",
@@ -17195,21 +17195,28 @@
     "kind": "interface",
     "package": "@nifrajs/auth",
     "signature": "export interface UnauthenticatedResponse {\n    /** An error status, 400-599. Default `401`. */\n    readonly status?: number;\n    /** The body; present but `undefined` sends none. Default `{ ok: false, error: \"unauthorized\" }`. */\n    readonly body?: unknown;\n    /** Response headers, such as a `www-authenticate` challenge. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
-    "doc": "/** The response a guard denies a missing session with, in place of the default `401` JSON. */"
+    "doc": "/**\n * The response a guard denies a missing session with, in place of the default `401` JSON. Every\n * nifra auth package's guard options named `unauthenticated` takes this shape.\n */"
   },
   {
     "name": "UnauthenticatedResponse",
     "kind": "interface",
     "package": "@nifrajs/authjs",
     "signature": "export interface UnauthenticatedResponse {\n    /** An error status, 400-599. Default `401`. */\n    readonly status?: number;\n    /** The body; present but `undefined` sends none. Default `{ ok: false, error: \"unauthorized\" }`. */\n    readonly body?: unknown;\n    /** Response headers, such as a `www-authenticate` challenge. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
-    "doc": "/** The response a guard denies a missing session with, in place of the default `401` JSON. */"
+    "doc": "/**\n * The response a guard denies a missing session with, in place of the default `401` JSON. Every\n * nifra auth package's guard options named `unauthenticated` takes this shape.\n */"
   },
   {
     "name": "UnauthenticatedResponse",
     "kind": "interface",
     "package": "@nifrajs/better-auth",
     "signature": "export interface UnauthenticatedResponse {\n    /** An error status, 400-599. Default `401`. */\n    readonly status?: number;\n    /** The body; present but `undefined` sends none. Default `{ ok: false, error: \"unauthorized\" }`. */\n    readonly body?: unknown;\n    /** Response headers, such as a `www-authenticate` challenge. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
-    "doc": "/** The response a guard denies a missing session with, in place of the default `401` JSON. */"
+    "doc": "/**\n * The response a guard denies a missing session with, in place of the default `401` JSON. Every\n * nifra auth package's guard options named `unauthenticated` takes this shape.\n */"
+  },
+  {
+    "name": "UnauthenticatedResponse",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface UnauthenticatedResponse {\n    /** An error status, 400-599. Default `401`. */\n    readonly status?: number;\n    /** The body; present but `undefined` sends none. Default `{ ok: false, error: \"unauthorized\" }`. */\n    readonly body?: unknown;\n    /** Response headers, such as a `www-authenticate` challenge. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
+    "doc": "/**\n * The response a guard denies a missing session with, in place of the default `401` JSON. Every\n * nifra auth package's guard options named `unauthenticated` takes this shape.\n */"
   },
   {
     "name": "UndiciTransportOptions",
@@ -18150,6 +18157,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function assertTransportTextBounded(text: string, options: TransportDecodeOptions): void;",
     "doc": "/**\n * Enforce the transport byte cap on already-read text - the same limit (and the same error) the\n * streaming reader applies during a bounded read. Exported for callers that read a body through a\n * native, non-streaming path (the typed client's in-process branch) and still owe the cap contract.\n */"
+  },
+  {
+    "name": "assertUnauthenticated",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function assertUnauthenticated(options: {\n    readonly redirectTo?: string;\n    readonly unauthenticated?: UnauthenticatedResponse;\n}, owner: string): void;",
+    "doc": "/**\n * A dev-authored denial that is not an error status, or that competes with a redirect, fails loud.\n * A mutation-taking guard must say one thing, and `unauthenticated.status` must stay an HTTP error\n * status. `owner` names the package in the message: `[nifra/<owner>]`.\n */"
   },
   {
     "name": "assure",
@@ -25985,6 +25999,13 @@
     "package": "@nifrajs/mcp",
     "signature": "export declare function uiResourceMeta(uri: string): Record<string, unknown>;",
     "doc": "/** The MCP Apps `_meta.ui.resourceUri` link. */"
+  },
+  {
+    "name": "unauthenticatedResult",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function unauthenticatedResult(custom: UnauthenticatedResponse | undefined): ResponseResult;",
+    "doc": "/**\n * The response one guard rejection carries: what the options declared, or the default `401` JSON\n * (`{ ok: false, error: \"unauthorized\" }`). An explicit `body` of `undefined` sends no body.\n */"
   },
   {
     "name": "undiciTransport",

@@ -472,8 +472,13 @@ the root one shows instead. A navigation that settles sooner (a prefetched link,
 loader) goes straight to the new page, as does one with no eligible
 `_loading`; a change of search on the same path and a form submit keep the
 page and report `pending`. The component receives `pending` and no
-`data`. It is a browser-only convention on every adapter - the first load of a
-URL is a server render, where `defer()` streams the slow part.
+`data`. React's `NavLink` widens this to a per-link signal: its
+`className`, `style` and `children` take functions over
+`{ isActive, isPending }`, where `isPending` is
+`true` while a navigation into that link's own target is in flight; the
+other adapters expose the route-level `pending` described here only. It is a
+browser-only convention on every adapter - the first load of a URL is a server render,
+where `defer()` streams the slow part.
 
 -
 `_error.tsx` is the segment's **error boundary**. On the server - if a route's
@@ -5270,6 +5275,91 @@ const app = server({
 //   → { ...,"message":"auth failed for [REDACTED] with [REDACTED]" }
 // Add your own: { valuePatterns: [...commonSecretPatterns, /\bord_[a-z0-9]+/g] }
 ```
+
+### Credentials that reach the browser - NF-C032
+
+The zone rules keep `backend/` halves and server-only imports out of the browser
+bundle; the credential scan is the net under them - for a credential typed straight into
+browser code, one a dependency carries, and a server-only environment value that reached the
+output some other way (a `define`, a prerendered page, a copied
+`public/` file). `nifra check` (NF-C032, an error) scans each app's
+browser-zone modules and every file in `public/`; the build runs the same net on
+what it publishes - every emitted file with its inline source maps decoded, every
+`public/` copy, every prerendered page - and matches the values of the build
+environment's non-public variables there, raw and URL-, base64-, JSON- and
+HTML-encoded. A `PUBLIC_`-prefixed variable is public by declaration.
+
+Five rules:
+
+-
+**Known token formats** - AWS access keys, Stripe secret keys and webhook secrets,
+GitHub, Slack (tokens and webhook URLs), OpenAI, Anthropic, SendGrid, Twilio, Mailgun, npm,
+and a Supabase service-role JWT.
+
+-
+**PEM private keys** - a block with a body present, not a parser's bare
+`-----BEGIN PRIVATE KEY-----` constant.
+
+-
+**URLs with a password** - `postgres://user:password@host`, unless the
+password is a placeholder.
+
+-
+**Assigned secrets** - a random literal given to a secret-like name, in first-party
+source only: `apiKey: "..."`, a quoted header name including its hyphens (
+`"x-api-key": "..."`), a header set by call (
+`headers.set("x-api-key", ...)`), a pair in
+`new Headers([...])`, and `Authorization` read into its
+`Bearer` token or `Basic` credentials.
+
+-
+**Private env values** - the value of a build variable whose name says secret (
+`TOKEN`, `API_KEY`, `DATABASE_URL`, …) or that looks
+random, in any encoding above. A defined set of recognized ambient shell, OS and CI names
+is skipped unless the name itself looks secret-like. Other names are scanned when they
+look secret-like, contain a credential URL, or hold a random-looking value.
+
+Deliberate skips: keys public by design (Stripe `pk_`, Google `AIza`,
+reCAPTCHA `6L`, `G-` and `UA-` ids), placeholders (
+`changeme`, `<your-key-here>`, a whole-value stand-in such as
+`your_signing_secret` or an interpolated shell value), low-entropy and word-shaped
+values, and labels inside a message catalog (`password: "Lykilorð"`). A
+finding never prints the value: the rule, the location, and a preview of the first few
+characters plus the length. When a match sits in a content-hashed output file, the build
+names the module it came from.
+
+A reviewed false positive can be exempted in `nifra.config.ts`. A `file`
+exemption suppresses that rule throughout the named file, so the same credential in another
+file still fails. For `private-env-value`, an `env` exemption suppresses
+every finding from that variable anywhere in scanned output; use it only when publishing that
+value everywhere it appears is intended. Every exemption needs its rule and reason, or the
+build refuses:
+
+```ts
+// nifra.config.ts
+// doc-check: skip - exemptions name your own findings; there is nothing to run
+export const secretExemptions = [
+  {
+    rule: "key-format",
+    file: "routes/docs.tsx",
+    reason: "the sample literally spells an AWS access key id",
+  },
+  // A file exemption covers this rule throughout the named file. An env exemption covers every
+  // finding from that variable anywhere in scanned output; use it only when that is intended.
+  {
+    rule: "private-env-value",
+    env: "SIGNING_SALT",
+    reason: "this value is intentionally published wherever it appears; it shapes a public nonce",
+  },
+]
+```
+
+The net is a heuristic, not a guarantee. A credential spelled inside a longer string - a
+URL's query (`https://api.example.com/v1?key=...`) or a cookie header's
+value - is seen by the known-format rules alone, and a random value given to a name the scan
+does not judge secret-like is not the `assigned-secret` rule's target. Keep
+credentials in a route's backend half or under `backend/`, and rotate any
+that were ever committed.
 
 ## Nifra - Effect provenance
 

@@ -12,52 +12,21 @@
  *
  * Pairs with `@nifrajs/auth` sessions but only needs the `Session` shape, so it's framework-agnostic.
  */
+import {
+  assertUnauthenticated,
+  type UnauthenticatedResponse,
+  unauthenticatedResult,
+} from "@nifrajs/core/guard-deny"
 import { isSameOriginPath, type ResponseResult, status } from "@nifrajs/core/server"
 import type { Session } from "./session.ts"
 
-/** The response a guard denies a missing session with, in place of the default `401` JSON. */
-export interface UnauthenticatedResponse {
-  /** An error status, 400-599. Default `401`. */
-  readonly status?: number
-  /** The body; present but `undefined` sends none. Default `{ ok: false, error: "unauthorized" }`. */
-  readonly body?: unknown
-  /** Response headers, such as a `www-authenticate` challenge. */
-  readonly headers?: Readonly<Record<string, string>>
-}
+export type { UnauthenticatedResponse } from "@nifrajs/core/guard-deny"
 
 /** What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - the
  * `unauthenticated` response, by default a 401 JSON (`{ ok: false, error: "unauthorized" }`). */
 export interface GuardOptions {
   readonly redirectTo?: string
   readonly unauthenticated?: UnauthenticatedResponse
-}
-
-const UNAUTHORIZED = { ok: false, error: "unauthorized" } as const
-
-/** A dev-authored denial that is not an error status, or that competes with a redirect, fails loud. */
-function assertUnauthenticated(options: {
-  readonly redirectTo?: string
-  readonly unauthenticated?: UnauthenticatedResponse
-}): void {
-  const custom = options.unauthenticated
-  if (custom === undefined) return
-  if (options.redirectTo !== undefined) {
-    throw new Error("[nifra/auth] a guard takes redirectTo or unauthenticated, not both")
-  }
-  const code = custom.status
-  if (code !== undefined && (!Number.isInteger(code) || code < 400 || code > 599)) {
-    throw new RangeError(
-      `[nifra/auth] guard unauthenticated.status must be an integer 400-599 (got ${String(code)})`,
-    )
-  }
-}
-
-const unauthenticatedResult = (custom: UnauthenticatedResponse | undefined): ResponseResult => {
-  if (custom === undefined) return status(401, UNAUTHORIZED)
-  const body = "body" in custom ? custom.body : UNAUTHORIZED
-  return custom.headers === undefined
-    ? status(custom.status ?? 401, body)
-    : status(custom.status ?? 401, body, { headers: custom.headers })
 }
 
 const rejection = (options: GuardOptions): ResponseResult => {
@@ -87,7 +56,7 @@ export function requireSession<Data extends Record<string, unknown>>(
   session: Session<Data>,
   options: GuardOptions = {},
 ): Session<Data> {
-  assertUnauthenticated(options)
+  assertUnauthenticated(options, "auth")
   if (!session.isEmpty) return session
   throw rejection(options)
 }
@@ -102,7 +71,7 @@ export function requireUser<Data extends Record<string, unknown>, K extends keyo
   key: K,
   options: GuardOptions = {},
 ): NonNullable<Data[K]> {
-  assertUnauthenticated(options)
+  assertUnauthenticated(options, "auth")
   const value = session.get(key)
   // Narrowed by the runtime check; the generic `Data[K] | undefined` doesn't auto-narrow to NonNullable.
   if (value !== undefined && value !== null) return value as NonNullable<Data[K]>

@@ -372,6 +372,23 @@ const app = server({
 //   → { ...,"message":"auth failed for [REDACTED] with [REDACTED]" }
 // Add your own: { valuePatterns: [...commonSecretPatterns, /\\bord_[a-z0-9]+/g] }`
 
+const SECRET_EXEMPTIONS = `// nifra.config.ts
+// doc-check: skip - exemptions name your own findings; there is nothing to run
+export const secretExemptions = [
+  {
+    rule: "key-format",
+    file: "routes/docs.tsx",
+    reason: "the sample literally spells an AWS access key id",
+  },
+  // A file exemption covers this rule throughout the named file. An env exemption covers every
+  // finding from that variable anywhere in scanned output; use it only when that is intended.
+  {
+    rule: "private-env-value",
+    env: "SIGNING_SALT",
+    reason: "this value is intentionally published wherever it appears; it shapes a public nonce",
+  },
+]`
+
 export default function Security() {
   return (
     <div className="prose">
@@ -895,6 +912,78 @@ export default function Security() {
         bearer tokens, JWTs, emails, and a few well-known key formats, or supply your own:
       </p>
       <CodeBlock code={LOGGING} />
+
+      <h2>Credentials that reach the browser - NF-C032</h2>
+      <p>
+        The zone rules keep <code>backend/</code> halves and server-only imports out of the browser
+        bundle; the credential scan is the net under them - for a credential typed straight into
+        browser code, one a dependency carries, and a server-only environment value that reached the
+        output some other way (a <code>define</code>, a prerendered page, a copied{" "}
+        <code>public/</code> file). <code>nifra check</code> (NF-C032, an error) scans each app&apos;s
+        browser-zone modules and every file in <code>public/</code>; the build runs the same net on
+        what it publishes - every emitted file with its inline source maps decoded, every{" "}
+        <code>public/</code> copy, every prerendered page - and matches the values of the build
+        environment&apos;s non-public variables there, raw and URL-, base64-, JSON- and
+        HTML-encoded. A <code>PUBLIC_</code>-prefixed variable is public by declaration.
+      </p>
+      <p>Five rules:</p>
+      <ul>
+        <li>
+          <b>Known token formats</b> - AWS access keys, Stripe secret keys and webhook secrets,
+          GitHub, Slack (tokens and webhook URLs), OpenAI, Anthropic, SendGrid, Twilio, Mailgun, npm,
+          and a Supabase service-role JWT.
+        </li>
+        <li>
+          <b>PEM private keys</b> - a block with a body present, not a parser&apos;s bare{" "}
+          <code>-----BEGIN PRIVATE KEY-----</code> constant.
+        </li>
+        <li>
+          <b>URLs with a password</b> - <code>{"postgres://user:password@host"}</code>, unless the
+          password is a placeholder.
+        </li>
+        <li>
+          <b>Assigned secrets</b> - a random literal given to a secret-like name, in first-party
+          source only: <code>{`apiKey: "..."`}</code>, a quoted header name including its hyphens (
+          <code>{`"x-api-key": "..."`}</code>), a header set by call (
+          <code>{`headers.set("x-api-key", ...)`}</code>), a pair in{" "}
+          <code>new Headers([...])</code>, and <code>Authorization</code> read into its{" "}
+          <code>Bearer</code> token or <code>Basic</code> credentials.
+        </li>
+        <li>
+          <b>Private env values</b> - the value of a build variable whose name says secret (
+          <code>TOKEN</code>, <code>API_KEY</code>, <code>DATABASE_URL</code>, …) or that looks
+          random, in any encoding above. A defined set of recognized ambient shell, OS and CI names
+          is skipped unless the name itself looks secret-like. Other names are scanned when they
+          look secret-like, contain a credential URL, or hold a random-looking value.
+        </li>
+      </ul>
+      <p>
+        Deliberate skips: keys public by design (Stripe <code>pk_</code>, Google <code>AIza</code>,
+        reCAPTCHA <code>6L</code>, <code>G-</code> and <code>UA-</code> ids), placeholders (
+        <code>changeme</code>, <code>&lt;your-key-here&gt;</code>, a whole-value stand-in such as{" "}
+        <code>your_signing_secret</code> or an interpolated shell value), low-entropy and word-shaped
+        values, and labels inside a message catalog (<code>{`password: "Lykilorð"`}</code>). A
+        finding never prints the value: the rule, the location, and a preview of the first few
+        characters plus the length. When a match sits in a content-hashed output file, the build
+        names the module it came from.
+      </p>
+      <p>
+        A reviewed false positive can be exempted in <code>nifra.config.ts</code>. A <code>file</code>{" "}
+        exemption suppresses that rule throughout the named file, so the same credential in another
+        file still fails. For <code>private-env-value</code>, an <code>env</code> exemption suppresses
+        every finding from that variable anywhere in scanned output; use it only when publishing that
+        value everywhere it appears is intended. Every exemption needs its rule and reason, or the
+        build refuses:
+      </p>
+      <CodeBlock code={SECRET_EXEMPTIONS} />
+      <p>
+        The net is a heuristic, not a guarantee. A credential spelled inside a longer string - a
+        URL&apos;s query (<code>{"https://api.example.com/v1?key=..."}</code>) or a cookie header&apos;s
+        value - is seen by the known-format rules alone, and a random value given to a name the scan
+        does not judge secret-like is not the <code>assigned-secret</code> rule&apos;s target. Keep
+        credentials in a route&apos;s backend half or under <code>backend/</code>, and rotate any
+        that were ever committed.
+      </p>
     </div>
   )
 }
