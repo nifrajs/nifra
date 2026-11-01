@@ -136,8 +136,8 @@ describe("mountA2A", () => {
 
   test("returns a safe server error when the agent card is not JSON-serializable", async () => {
     const { app, callGet } = captureApp()
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: deliberately inject an unsupported runtime value to exercise the serialization failure response.
-    const invalidCard = { ...cardInfo, description: 1n } as unknown as typeof cardInfo
+    const invalidCard = { ...cardInfo }
+    Reflect.set(invalidCard, "description", 1n)
     mountA2A(app, { agent: definition(), card: invalidCard, ports: ports() })
 
     const response = await callGet(new Request("http://local/.well-known/agent-card.json"))
