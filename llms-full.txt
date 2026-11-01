@@ -7623,11 +7623,6 @@ coordinated component pipeline; unsupported combinations fail before the previou
 replaced. Set Fly's optional `healthCheckPath` only when that route returns 2xx
 while the app is ready.
 
-```sh
-bun add @nifrajs/deploy-fly @nifrajs/node
-fly apps create my-nifra-app # once, before the first deploy
-```
-
 The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
 Cloudflare and Vercel the platform serves it.
 
