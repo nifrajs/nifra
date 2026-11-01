@@ -1,0 +1,63 @@
+{
+  "name": "@nifrajs/deploy-fly",
+  "version": "5.11.0",
+  "description": "Build-time Fly.io packaging adapter for Nifra's Node target.",
+  "keywords": [
+    "nifra",
+    "fly",
+    "fly.io",
+    "deployment",
+    "adapter",
+    "node"
+  ],
+  "type": "module",
+  "nifra": {
+    "environment": "library",
+    "deploymentAdapter": {
+      "apiVersion": 1,
+      "id": "fly",
+      "baseTarget": "node"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "peerDependencies": {
+    "@nifrajs/web": "^5.11.0"
+  },
+  "devDependencies": {
+    "@nifrajs/web": "workspace:*",
+    "typescript": "^6.0.3"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/deploy-fly"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

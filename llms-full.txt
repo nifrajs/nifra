@@ -7580,6 +7580,40 @@ none (Build Output API v3)
 pages, the client bundle and `public/`, for any static host. See
 SSG & ISR.
 
+### Public build-target adapters
+
+A deployment adapter adds host packaging around an existing Nifra build target. It does not
+replace the runtime, generated server entry, or Nifra's build checks. The versioned contract
+in `@nifrajs/web/build` lets an adapter declare its base target, validate options,
+and return extra files plus deploy guidance. Nifra checks paths and collisions, scans text
+artifacts for credentials, and only swaps the output directory after the full build passes.
+
+```ts
+// nifra.config.ts - install @nifrajs/deploy-fly first
+// backend/framework.ts defines and exports the runtime adapter and clientModule.
+import { flyAdapter } from "@nifrajs/deploy-fly"
+import { adapter, clientModule } from "./backend/framework.ts"
+export { adapter, clientModule }
+
+export const target = "fly"
+export const deploymentAdapter = {
+  adapter: flyAdapter,
+  options: { app: "my-nifra-app", primaryRegion: "iad", healthCheckPath: "/healthz" },
+}
+
+// Build locally; then deploy the output directory yourself.
+// nifra build
+// cd dist && fly deploy
+```
+
+The Fly reference package wraps the ordinary `node` target and emits a Dockerfile
+plus `fly.toml`. Run `fly deploy` from the emitted output directory;
+Nifra never logs in or deploys for you. Adapter code is trusted build-time code running in
+the CLI process. Each adapter must explicitly declare whether it supports the coordinated
+component pipeline; unsupported combinations fail before the previous output is replaced.
+Set Fly's optional `healthCheckPath` only when that route returns 2xx while the app
+is ready.
+
 The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
 Cloudflare and Vercel the platform serves it.
 
@@ -7858,7 +7892,7 @@ nifra dev      # true-HMR dev server (Bun native HMR + Nifra SSR) - http://local
 nifra dev --vite   # the Vite middleware pipeline instead (automatic when vitePlugins are your ONLY transforms)
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
-nifra build --target cloudflare  # also: node | deno | vercel | static; add --report for chunk sizes
+nifra build --target cloudflare  # also: node | deno | vercel | static; installed deployment adapters work too
 
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)
@@ -18439,6 +18473,56 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
 
+## @nifrajs/deploy-fly
+
+Build-time Fly.io packaging for a Nifra app using the existing Node deployment target. It emits a
+Dockerfile and `fly.toml`; it does not deploy, contact Fly.io, or manage credentials.
+
+```sh
+bun add @nifrajs/deploy-fly
+```
+
+```ts
+// backend/framework.ts: runtime-only exports imported by the generated server.
+import { reactAdapter } from "@nifrajs/web-react"
+export const adapter = reactAdapter
+export const clientModule = "@nifrajs/web-react/client"
+```
+
+```ts
+// nifra.config.ts: CLI-only deployment configuration.
+import { flyAdapter } from "@nifrajs/deploy-fly"
+export { adapter, clientModule } from "./backend/framework.ts"
+
+export const target = "fly"
+export const deploymentAdapter = {
+  adapter: flyAdapter,
+  options: { app: "my-nifra-app", primaryRegion: "iad" },
+}
+```
+
+Then build and deploy the emitted directory:
+
+```sh
+nifra build
+cd dist
+fly deploy
+```
+
+`app` is required. `primaryRegion`, `internalPort` (default `3000`), and `forceHttps` (default
+`true`), and `healthCheckPath` are optional. Set `healthCheckPath` only when the app has a route that
+returns 2xx while ready. The adapter emits Fly service-level checks for that path; without it, no
+health endpoint is assumed. Put secrets in Fly secrets with `fly secrets set`; do not put them in
+adapter options. Nifra scans emitted adapter files for credentials before publishing the output.
+
+The adapter uses Nifra's Node target, so the built server and its static assets stay under Nifra's
+normal build and portability checks. The adapter only adds deployment metadata. It supports ordinary
+SSR; it currently declares no support for the coordinated component pipeline.
+
+Adapters execute as trusted build-time code in the Nifra CLI process. Their API is versioned, their
+output is declarative, and Nifra rejects unsafe paths, collisions, credential findings, and failed
+builds before replacing the last successful deploy directory.
+
 ## @nifrajs/devtools
 
 Interactive request-trace DevTools for `nifra dev`, with a secured SSE stream and browser overlay.
@@ -21285,6 +21369,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/deno
 
 `DenoServer`, `DenoStopOptions`, `FetchHandler`, `HashedFiles`, `ServeOptions`, `ServeStaticOptions`, `serve`, `serveStatic`
+
+## @nifrajs/deploy-fly
+
+`FlyOptions`, `flyAdapter`
 
 ## @nifrajs/devtools
 

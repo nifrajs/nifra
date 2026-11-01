@@ -15,6 +15,7 @@
     "@nifrajs/content": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/deno": "workspace:*",
+    "@nifrajs/deploy-fly": "workspace:*",
     "@nifrajs/events": "workspace:*",
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/mcp": "workspace:*",
