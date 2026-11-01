@@ -8,7 +8,6 @@ import {
   HTTP_WORKLOADS_CAPTURED,
   type HttpRealworldTable,
   type HttpWorkloadTable,
-  httpGetTrail,
   MULTIPLIERS,
   SSR_CAPTURED,
   SSR_TABLES,
@@ -49,14 +48,14 @@ function Captured({ meta }: { meta: CapturedMeta }) {
     )
   return (
     <p className="note">
-      Captured {meta.date}; source: {source}. Machine: {machines.join("; ") || "not recorded"}.
-      Toolchain: {runtimes.join(", ")} and <code>oha</code> {meta.oha} at 50 connections.
+      {meta.date} · {source} · {machines.join("; ") || "Machine not recorded"} ·{" "}
+      {runtimes.join(", ")} · <code>oha</code> {meta.oha} · 50 connections
     </p>
   )
 }
 
 function describeMachine(machine: CaptureMachine): string {
-  return `${machine.runner}, ${machine.cpu} (${machine.vcpus} vCPUs)`
+  return `${machine.runner} · ${machine.cpu} · ${machine.vcpus} vCPU`
 }
 
 function Named({ name, version }: { name: string; version: string }) {
@@ -255,44 +254,24 @@ function HttpTable({ table }: { table: RuntimeTable }) {
 }
 
 export default function Benchmarks() {
-  const denoTrail = httpGetTrail("Deno")
-  const denoHeading =
-    denoTrail === undefined
-      ? "What Nifra checks on Deno's bare GET."
-      : "Why Nifra trails on Deno's bare GET."
   return (
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
       <p className="lead">
-        Each section links its source run or identifies a local capture, names the CPU used, and
-        lists the toolchain. Every number is the median of interleaved rounds - each round measures
-        every framework in turn, so drift on the machine lands on all of them alike - and every row
-        names the version it measured. Compare ratios inside each runtime before absolute request
-        rates, because hardware and warmup move absolute throughput. Reproduce with{" "}
-        <code>bun run bench:ssr</code> and <code>bun run bench:http</code>.
+        Median results from interleaved rounds. Compare within each runtime; absolute rates vary by
+        runner.
       </p>
 
       {/* ---- Frontend: full-stack SSR vs the meta-frameworks ---- */}
       <h2 style={{ marginTop: 40 }}>Full-stack SSR - Nifra vs the meta-frameworks</h2>
       <Captured meta={SSR_CAPTURED} />
       <p className="lead">
-        One section per UI framework, each with two explicitly-labelled tables:{" "}
-        <b>A - dynamic SSR</b> (the page rendered on every request, no caching) and{" "}
-        <b>B - cacheable</b> (the same page from each framework's SSG/ISR mode). Meta-frameworks run
-        on Node through their own production server. Nifra's app rows are real apps, written the way
-        the docs teach it - file routes, a typed loader with an output schema - built by{" "}
-        <code>nifra build --target bun</code> or <code>--target node</code> and served by the{" "}
-        <code>server.js</code> that build generates. Nifra shows <b>Bun</b> and <b>Node</b> rows so
-        the Node rows compare apples-to-apples. The headline multipliers below are Table A only:
-        Nifra's Node app row vs each meta-framework. Within each table, rows are ordered by median
-        req/s, fastest first.
+        Each framework has uncached SSR and cached SSG/ISR rows. Compare Nifra's Node app with the
+        Node meta-frameworks; multipliers use the uncached rows.
       </p>
       <p className="note">
-        The dynamic Table A apps return the same catalog through per-request loader work.
-        Nifra&apos;s rows also run the <code>loaderOutput</code> projection and validation required
-        for this client-bound data; the comparator frameworks have no equivalent output boundary.
-        Table A compares complete app paths, including this Nifra contract check, rather than
-        renderers alone.
+        Nifra's loader rows include the documented <code>loaderOutput</code> projection and schema
+        check.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (
@@ -302,18 +281,8 @@ export default function Benchmarks() {
           </div>
         ))}
       </div>
-      <p className="note" style={{ margin: "14px 0 8px" }}>
-        <b>Your own server.</b> The renderer under these app rows is also a plain function:{" "}
-        <code>renderPage</code> from <code>@nifrajs/web</code> renders a page from any request
-        handler, in a <code>Bun.serve</code> or Node server you write, without Nifra&apos;s router
-        or file routes.
-      </p>
       <p className="note" style={{ margin: "0 0 8px" }}>
-        <b>SSG files on a static host.</b> The <code>nifra build --target static</code> output
-        served by a plain Bun file server that reads the file on each request. No Nifra code runs,
-        so the row measures that file server - on a CDN, the number is the CDN's. Nifra's SSG app
-        rows serve the same prerendered page through the generated app server, the way each
-        meta-framework serves its static page through its own server.
+        The static-host row is a plain Bun file server; no Nifra code runs per request.
       </p>
       {SSR_TABLES.map((table) => {
         const tableB = SSR_TABLES_B.find((b) => b.framework === table.framework)
@@ -321,16 +290,13 @@ export default function Benchmarks() {
           <div key={table.framework}>
             <h3 style={{ marginTop: 28 }}>{table.framework}</h3>
             <p className="note" style={{ margin: "6px 0 8px" }}>
-              <b>A - Dynamic SSR.</b> The page is rendered on <b>every request</b>, no caching: the
-              per-request cost, the number that matters for pages that can't be cached.
+              <b>A · Dynamic SSR</b>
             </p>
             <SsrRows rows={table.rows} />
             {tableB !== undefined && (
               <>
                 <p className="note" style={{ margin: "14px 0 8px" }}>
-                  <b>B - Cacheable.</b> The same page served from each framework's cached mode -
-                  SSG, and ISR where supported (cache warmed before measuring). A cached row is not
-                  an SSR row: compare within this table only.
+                  <b>B · Cached SSG/ISR</b> (cache warmed before measurement)
                 </p>
                 <SsrRows rows={tableB.rows} />
               </>
@@ -339,48 +305,20 @@ export default function Benchmarks() {
         )
       })}
       <div className="caveat">
-        Meta-frameworks are Node-only in this matrix; compare them against Nifra's <b>Node</b> app
-        row (the headline multipliers above do exactly that). No Preact meta-framework runs on Node
-        (Fresh is Deno-only), so Preact&apos;s table compares with{" "}
-        <code>preact-render-to-string</code> in a bare Node server: the renderer&apos;s ceiling,
-        with no router, loader or schema. Bun and Node SSR run in separate hosted jobs, whose CPU
-        models can differ; treat their raw requests/sec as separate measurements. A client-JS of{" "}
-        <code>n/a</code> means the run couldn't account that framework's payload from the SSR HTML.
+        Preact uses a renderer-only baseline because Fresh is Deno-only. Bun and Node SSR use
+        separate runners; compare rates within each runtime. <code>n/a</code> means client JS could
+        not be measured from the HTML.
       </div>
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
       <Captured meta={HTTP_WORKLOADS_CAPTURED} />
       <p className="lead">
-        Nifra is also a standalone API framework. Two core workloads - a path-param GET and a
-        validated POST - each runtime through Nifra's real adapter, next to the popular libraries on
-        that runtime. Rows are ordered by the geometric mean of the workloads, so no single column
-        decides the ranking.
+        Path-param GET and schema-validated POST, ranked by their geometric mean.
       </p>
       <p className="note">
-        Fastify on Bun and Deno uses each runtime's <code>node:http</code> compatibility and the
-        same Fastify server implementation as Node; those rows do not use native Bun or Deno HTTP
-        ingress.
+        Fastify on Bun/Deno uses <code>node:http</code> compatibility, not native ingress.
       </p>
-      <div className="caveat">
-        <b>{denoHeading}</b> Deno hands an app the request target exactly as the client sent it,
-        joined to the <code>Host</code> header as received. So on Deno, Nifra rejects a malformed{" "}
-        <code>Host</code> and resolves <code>.</code> and <code>..</code> segments before routing,
-        and routes the same path Bun, Node and Workers would. Elysia and Hono route the raw path:
-        both hand <code>..</code> to a <code>/users/:id</code> handler for{" "}
-        <code>/users/%2e%2e</code>, and Hono answers a request for <code>/users/7</code> from{" "}
-        <code>/search</code> when the <code>Host</code> is <code>x/search?q=...#</code>, which Nifra
-        refuses with a 400.
-        {denoTrail !== undefined && (
-          <>
-            {" "}
-            In this capture Nifra {denoTrail.nifra.version} is {denoTrail.behindPercent.toFixed(1)}%
-            behind {denoTrail.rival.name} {denoTrail.rival.version} on that GET (
-            {denoTrail.nifra.getUsers} vs {denoTrail.rival.getUsers} req/s): the two checks are work
-            the rows that route the raw path do not do.
-          </>
-        )}
-      </div>
       <div className="bench-grid">
         {HTTP.map((table) => (
           <HttpTable key={table.title} table={table} />
@@ -392,18 +330,11 @@ export default function Benchmarks() {
           <h2 style={{ marginTop: 48 }}>Backend - the same routes with a real route's work</h2>
           <Captured meta={HTTP_REALWORLD_CAPTURED} />
           <p className="lead">
-            The tables above are the shape every framework publishes: a bare route doing nothing but
-            routing. This is the same GET and POST after the route gains what an actual API route
-            has - security headers, CORS, a request-id hook, bearer auth through a derive, and a
-            cookie read. Nifra compiles that shape - one derive, one before hook and a query or body
-            schema - into its fused derive-and-before lane, so these numbers carry real middleware
-            work on a fused route, not a fallback path. The third column adds one body-observing
-            middleware to the same GET.
+            The same routes with security headers, CORS, request ID, bearer auth, and cookie
+            handling.
           </p>
           <p className="note">
-            These rows time GET/POST requests from the allowed fixture origin. They do not time CORS
-            preflight or rejected-origin policy behavior. Every target writes the same fixed CORS
-            and security headers for that origin.
+            Allowed-origin GET/POST only; CORS preflight and rejected origins are excluded.
           </p>
           <div className="bench-grid">
             {HTTP_REALWORLD.map((table) => (
@@ -416,26 +347,15 @@ export default function Benchmarks() {
       {HTTP_MEMORY.length > 0 && (
         <>
           <h2 style={{ marginTop: 48 }}>Backend - memory footprint across runtimes</h2>
-          <p className="lead">
-            The same authenticated GET and POST workloads run in fresh processes on each runtime.
-            RSS is resident process memory after a forced collection; heap is retained JavaScript
-            memory after the POST phase. Peak RSS is the OS high-water mark since startup. These are
-            process footprints, including the runtime, rather than bytes allocated per request.
-            Nifra is a workspace build in every capture. Fastify and Express use each runtime&apos;s
-            <code>node:http</code> compatibility on Bun and Deno. The site updater captures runtimes
-            sequentially on one host; each table names its CPU, platform, and capture date.
+          <p className="note">
+            RSS is process-wide after GC; POST heap is retained JavaScript memory.
           </p>
           <p className="note">
-            These captures come from the successful{" "}
             <a href="https://github.com/nifrajs/nifra/actions/runs/41327120547">
-              accuracy CI memory-only run
+              Accuracy CI · 2026-11-01
             </a>{" "}
-            on 2026-11-01. They replace the previous local captures; each table names the Linux
-            runner, CPU, runtime, and capture date recorded by that run.
-          </p>
-          <p className="note">
-            Each runtime table is ordered by median after-POST RSS, lowest first. The <b>Low</b>{" "}
-            marker identifies the lowest median in that column for that runtime.
+            · median of 5 fresh processes · 50k GETs + POSTs per process · 50 connections · sorted
+            by after-POST RSS; <b>Low</b> marks each column&apos;s minimum.
           </p>
           {HTTP_MEMORY.map((capture) => (
             <div key={capture.runtime}>
@@ -443,28 +363,12 @@ export default function Benchmarks() {
                 {capture.runtime[0]?.toUpperCase()}
                 {capture.runtime.slice(1)} {capture.runtimeVersion}
               </h3>
-              <p className="note">
-                Captured locally on {capture.date} on {capture.cpu}, {capture.platform}. Median of{" "}
-                {capture.rounds} fresh processes per framework, with{" "}
-                {capture.requestsPerPhase.toLocaleString("en-US")} GETs and POSTs per process at{" "}
-                {capture.connections} connections. Lower is better.
-              </p>
+              <p className="note">{capture.cpu}</p>
               <MemoryTable capture={capture} />
             </div>
           ))}
-          <p className="note">
-            Reproduce the Node capture with <code>bun run bench:memory</code>, or capture and update
-            all three runtimes with <code>bun run bench:memory:update</code>. Forced collection
-            exposes retained memory; it does not establish a leak-free application or measure
-            allocation churn.
-          </p>
         </>
       )}
-      <p className="lead" style={{ marginTop: 32 }}>
-        Reproduce locally with <code>bun run bench:http:update</code>,{" "}
-        <code>bun run bench:http:realworld:update</code>, and <code>bun run bench:ssr</code>.
-        Same-run ratios matter more than absolute req/s.
-      </p>
     </div>
   )
 }
