@@ -30,19 +30,25 @@ rules:
       - metavariable-regex:
           metavariable: $SECRET
           regex: (?i).*(token|secret|apikey|api_key|password|signature|hmac).*
-      # A comparison against a literal (`token === ""`, `expected === "none"`, `sig === null`)
-      # decides a constant against a constant - there is no per-byte oracle to time, so it is not
-      # the vulnerability this rule guards. Only variable-vs-variable secret comparisons fire.
-      - pattern-not: '$A === "$B"'
-      - pattern-not: '"$B" === $A'
-      - pattern-not: '`$B` === $A'
-      - pattern-not: '$A === `$B`'
+      # Empty/non-value sentinels are absence checks. Keep non-empty strings and templates in scope:
+      # one dynamic operand can still be secret, and comparing it to a known value can leak equality.
+      - pattern-not: '$A === ""'
+      - pattern-not: '"" === $A'
+      - pattern-not: "$A === ''"
+      - pattern-not: "'' === $A"
+      - pattern-not: '$A === ``'
+      - pattern-not: '`` === $A'
       - pattern-not: '$A === undefined'
+      - pattern-not: 'undefined === $A'
       - pattern-not: '$A === null'
+      - pattern-not: 'null === $A'
       - pattern-not: '$A === true'
+      - pattern-not: 'true === $A'
       - pattern-not: '$A === false'
+      - pattern-not: 'false === $A'
       # `name.length === 0`-style secret-list guards replace the value, they do not leak bytes.
       - pattern-not: '$A === 0'
+      - pattern-not: '0 === $A'
       - pattern-not: '$A === ts.SyntaxKind.$B'
       - pattern-not: 'ts.SyntaxKind.$B === $A'
     paths:

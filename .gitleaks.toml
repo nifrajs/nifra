@@ -6,6 +6,8 @@ useDefault = true
 # fail closed in product code.
 [[allowlists]]
 description = "Documented cryptographic, protocol, and redaction-test fixtures"
+# A finding is exempt only when both its path and its exact fixture value match.
+condition = "AND"
 regexTarget = "secret"
 paths = [
   '''(?:^|/)packages/(?:auth|authjs|cli|core|env|image|middleware|node|pi|uploads|web)/(?:test|test-node)/''',
