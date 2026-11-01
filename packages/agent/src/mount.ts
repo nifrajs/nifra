@@ -29,7 +29,9 @@
  */
 
 import {
+  boundedJsonText,
   EMPTY_RESPONSE_CONTROLS,
+  JsonByteLimitError,
   type ProtoPoisoning,
   plainError,
   type ResponseResult,
@@ -348,7 +350,19 @@ function sseSender(
   let emittedBytes = 0
   return (event, data, id) => {
     const head = id === undefined ? "" : `id: ${id}\n`
-    const frame = encoder.encode(`${head}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    const prefix = `${head}event: ${event}\ndata: `
+    const remainingBytes = maxOutputBytes - emittedBytes
+    const jsonBudget = remainingBytes - prefix.length - 2
+    if (jsonBudget < 0) throw new SseOutputLimitError("mountAgent SSE output limit exceeded")
+    let serialized: ReturnType<typeof boundedJsonText>
+    try {
+      serialized = boundedJsonText(data, jsonBudget)
+    } catch (error) {
+      if (error instanceof JsonByteLimitError)
+        throw new SseOutputLimitError("mountAgent SSE output limit exceeded")
+      throw error
+    }
+    const frame = encoder.encode(`${prefix}${serialized?.text ?? "undefined"}\n\n`)
     if (frame.byteLength > maxOutputBytes || emittedBytes > maxOutputBytes - frame.byteLength)
       throw new SseOutputLimitError("mountAgent SSE output limit exceeded")
     emittedBytes += frame.byteLength

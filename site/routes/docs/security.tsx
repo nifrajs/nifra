@@ -51,15 +51,12 @@ const BOUNDED = `import { server } from "@nifrajs/core/server"
 
 const app = server()
 
-// A schema route is ALREADY bounded - the validated read enforces \`maxBodyBytes\`.
-// But a raw-body / file / BYO-validation route reads the body directly, which
-// \`maxBodyBytes\` does not cover. \`c.boundedBody\` caps that read:
-app.post("/import", async (c) => {
-  const bytes = await c.boundedBody(5 * 1024 * 1024) // cap THIS route at 5 MiB
-  // Over-cap throws a flat 413; a malformed Content-Length a 400 - as control-flow
-  // Responses (caught by the lifecycle like \`throw redirect()\`), so a handler can't
-  // accidentally ignore the cap. The over-cap length is rejected BEFORE buffering;
-  // a chunked / length-less body is aborted mid-stream once it crosses the cap.
+// Every route is bounded, including raw-body / file / BYO-validation routes that
+// read c.req directly. Raise the route cap when this endpoint needs more than the default:
+app.post("/import", { bodyLimit: 5 * 1024 * 1024 }, async (c) => {
+  const bytes = await c.req.arrayBuffer() // the direct read is capped at 5 MiB
+  // An over-cap Content-Length is rejected BEFORE buffering; chunked bodies are
+  // aborted mid-stream. Both answer a flat 413 through the request lifecycle.
   return { received: bytes.byteLength } // a returned object is serialized as JSON 200
 })
 
@@ -171,27 +168,31 @@ app.post(
 const UPLOADS = `// doc-check: skip - fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
 import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
 
-app.post("/avatar", async (c) => {
-  const form = await c.req.formData()
-  const file = form.get("file")
-  if (!(file instanceof Blob)) { c.set.status = 400; return { ok: false, error: "no_file" } }
+app.post(
+  "/avatar",
+  { bodyLimit: 2_100_000 }, // request cap includes multipart framing around a 2 MB file
+  async (c) => {
+    const form = await c.req.formData()
+    const file = form.get("file")
+    if (!(file instanceof Blob)) { c.set.status = 400; return { ok: false, error: "no_file" } }
 
-  // Size cap + REAL type by magic bytes - a .exe renamed .png (or a spoofed
-  // Content-Type) is caught, because the bytes win. An oversized Blob is rejected
-  // by its .size BEFORE it's buffered into memory.
-  const result = await validateUpload(file, {
-    maxBytes: 2_000_000,
-    accept: ["image/png", "image/jpeg"], // exact, or "image/*"
-  })
-  if (!result.ok) { c.set.status = 400; return { ok: false, error: result.reason } }
-  //  reason: "too_large" | "empty" | "unrecognized" | "type_not_allowed"
+    // Size cap + REAL type by magic bytes - a .exe renamed .png (or a spoofed
+    // Content-Type) is caught, because the bytes win. An oversized Blob is rejected
+    // by its .size BEFORE it's buffered into memory.
+    const result = await validateUpload(file, {
+      maxBytes: 2_000_000,
+      accept: ["image/png", "image/jpeg"], // exact, or "image/*"
+    })
+    if (!result.ok) { c.set.status = 400; return { ok: false, error: result.reason } }
+    //  reason: "too_large" | "empty" | "unrecognized" | "type_not_allowed"
 
-  await save(result.bytes, \`\${id}.\${result.ext}\`) // result.mime / .ext are trustworthy
+    await save(result.bytes, \`\${id}.\${result.ext}\`) // result.mime / .ext are trustworthy
 
-  // Hand back a short-TTL, tamper-evident URL (HMAC over path + expiry):
-  const url = await signDownloadUrl(\`/files/\${id}\`, env.FILE_SECRET, { expiresInSeconds: 300 })
-  return { ok: true, url } // a returned object is serialized as JSON 200
-})`
+    // Hand back a short-TTL, tamper-evident URL (HMAC over path + expiry):
+    const url = await signDownloadUrl(\`/files/\${id}\`, env.FILE_SECRET, { expiresInSeconds: 300 })
+    return { ok: true, url } // a returned object is serialized as JSON 200
+  },
+)`
 
 const STRIP = `// doc-check: skip - fragment: continues the upload handler above (\`result.bytes\`).
 import { stripImageMetadata } from "@nifrajs/uploads"
@@ -471,18 +472,17 @@ export default function Security() {
 
       <h2>Bounded request bodies</h2>
       <p>
-        Nifra caps the body of any <b>schema-validated</b> route at <code>maxBodyBytes</code> - an over-cap{" "}
-        <code>Content-Length</code> is rejected before buffering, and a chunked body is aborted mid-stream.
-        But a route that reads the body <i>directly</i> (raw bodies, file uploads, your own validation)
-        bypasses that read path. <code>c.boundedBody(maxBytes?)</code> and{" "}
-        <code>c.boundedJson&lt;T&gt;(maxBytes?)</code> extend the <b>same</b> cap to those routes.
+        Nifra caps every route body at <code>maxBodyBytes</code> by default, including schema-less routes
+        that read <code>c.req</code> directly. Set a finite route <code>bodyLimit</code> for endpoints such
+        as file uploads that need a larger cap. <code>c.boundedBody(maxBytes)</code> sets an explicit
+        per-read cap, and <code>c.boundedJson&lt;T&gt;(maxBytes?)</code> reads and parses JSON under a cap.
       </p>
       <CodeBlock code={BOUNDED} />
       <p>
         Over-cap throws a flat <code>413</code>, a malformed <code>Content-Length</code> a <code>400</code>,
         bad JSON a <code>400</code> - thrown as control-flow <code>Response</code>s the lifecycle catches,
-        so the cap can't be silently skipped. Pass a larger <code>maxBytes</code> for an upload route, a
-        smaller one to tighten an endpoint.
+        so the cap can't be silently skipped. Use a larger finite <code>bodyLimit</code> for an upload route,
+        or pass a smaller <code>maxBytes</code> to tighten an individual read.
       </p>
       <p>
         The cap is enforced on the bytes actually <b>delivered</b>, never on the number the caller wrote in{" "}

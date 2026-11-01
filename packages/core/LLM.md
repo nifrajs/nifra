@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **assertByteLimit** _(function)_ - `assertByteLimit: (value: number, name?: string) => void` · from `@nifrajs/core/edge-kit`
 - **assertTransportTextBounded** _(function)_ - `assertTransportTextBounded: (text: string, options: TransportDecodeOptions) => void` · from `@nifrajs/core/transport-codec`
 
-_…and 815 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 817 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

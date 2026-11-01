@@ -8151,6 +8151,13 @@
     "signature": "export type JoinedRow<Left extends Record<string, unknown>, Right extends Record<string, unknown>, Cardinality extends JoinCardinality> = {\n    readonly left: Entry<Left>;\n    readonly right: Cardinality extends \"one-to-one\" ? Entry<Right> | null : ReadonlyArray<Entry<Right>>;\n};"
   },
   {
+    "name": "JsonByteLimitError",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class JsonByteLimitError extends RangeError {\n    constructor();\n}",
+    "doc": "/** A JSON value would exceed the caller's UTF-8 byte budget. */"
+  },
+  {
     "name": "JsonReplyContext",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -18357,6 +18364,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function boundaryModeKey(mode: BoundaryMode): string;",
     "doc": "/** Stable mode label for adapter registries and diagnostics. */"
+  },
+  {
+    "name": "boundedJsonText",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function boundedJsonText(value: unknown, maxBytes: number): {\n    readonly text: string;\n    readonly byteLength: number;\n} | undefined;",
+    "doc": "/**\n * Serialize a JSON value only when its exact UTF-8 size fits `maxBytes`. The preflight snapshots\n * enumerable values and `toJSON` results while counting, so an oversized output is rejected before\n * constructing the escaped JSON string or its encoded byte buffer. Returns `undefined` for a root\n * value with no JSON representation, matching `JSON.stringify`.\n */"
   },
   {
     "name": "boundedSqliteQuery",

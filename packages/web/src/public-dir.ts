@@ -10,7 +10,7 @@
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
 import { type FileHandle, realpath } from "node:fs/promises"
-import { normalize, resolve, sep } from "node:path"
+import { normalize, relative, resolve, sep } from "node:path"
 import { decodePathSegment } from "@nifrajs/core/pattern"
 import { isHiddenPath } from "@nifrajs/core/static-file"
 import { openResolved } from "./open-resolved.ts"
@@ -21,7 +21,8 @@ import { openResolved } from "./open-resolved.ts"
  * linking to `.env` is refused too.
  */
 function hiddenUnder(root: string, abs: string): boolean {
-  return abs !== root && isHiddenPath(abs.slice(root.length + 1))
+  const rel = relative(root, abs)
+  return rel !== "" && isHiddenPath(rel)
 }
 
 /**
@@ -81,7 +82,8 @@ export function prerenderedPageReader(
     if (
       resolvedRoot === undefined ||
       resolvedFile === undefined ||
-      !resolvedFile.startsWith(resolvedRoot + sep)
+      !resolvedFile.startsWith(resolvedRoot + sep) ||
+      hiddenUnder(resolvedRoot, resolvedFile)
     ) {
       return undefined
     }

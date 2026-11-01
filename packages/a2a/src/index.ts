@@ -46,7 +46,9 @@ import {
 } from "@nifrajs/agent"
 import { createAgentEvidenceStream } from "@nifrajs/agent/events"
 import {
+  boundedJsonText,
   EMPTY_RESPONSE_CONTROLS,
+  JsonByteLimitError,
   type ProtoPoisoning,
   type ResponseResult,
   readBodyFramed,
@@ -195,9 +197,9 @@ export function mountA2A<
         // A reply the mount cannot complete still answers the request it belongs to.
         const record = asRecord(parsed)
         const id = (record === undefined ? undefined : asRpcId(record.id)) ?? null
-        return dispatch(c, parsed, options, runOptions, maxOutputBytes)
-          .then((response) => boundJsonResponse(response, maxOutputBytes, id))
-          .catch(() => rpcErrorResponse(id, A2A_ERROR_CODES.internalError, "internal_error"))
+        return dispatch(c, parsed, options, runOptions, maxOutputBytes).catch(() =>
+          rpcErrorResponse(id, A2A_ERROR_CODES.internalError, "internal_error"),
+        )
       },
       (rejection) =>
         isInvalidJson(rejection)
@@ -270,8 +272,14 @@ async function dispatch<
       }
       if (method === "SendMessage") {
         try {
-          return rpcResultResponse(id, { task: projectTask(turn.turnId, await start()) })
-        } catch {
+          return rpcResultResponse(
+            id,
+            { task: projectTask(turn.turnId, await start(), maxOutputBytes) },
+            maxOutputBytes,
+          )
+        } catch (error) {
+          if (error instanceof JsonByteLimitError)
+            return rpcErrorResponse(id, A2A_ERROR_CODES.internalError, "output_limit")
           return rpcErrorResponse(id, A2A_ERROR_CODES.taskNotFound, "task_not_resumable")
         }
       }
@@ -287,7 +295,7 @@ async function dispatch<
       const state = await basePorts.state?.load(taskId)
       if (state === undefined)
         return rpcErrorResponse(id, A2A_ERROR_CODES.taskNotFound, "task_not_found")
-      return rpcResultResponse(id, { task: projectStoredTask(state) })
+      return rpcResultResponse(id, { task: projectStoredTask(state) }, maxOutputBytes)
     }
     case "ListTasks":
     case "CancelTask":
@@ -346,8 +354,6 @@ function firstTextPart(parts: unknown): unknown {
   return undefined
 }
 
-class A2AOutputLimitError extends Error {}
-
 function streamingResponse(
   id: RpcId,
   turnId: string,
@@ -368,9 +374,15 @@ function streamingResponse(
       const encoder = new TextEncoder()
       let emittedBytes = 0
       const send = (payload: unknown): void => {
-        const frame = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
+        const remainingBytes = maxOutputBytes - emittedBytes
+        const jsonBudget = remainingBytes - 8 // `data: ` + `\n\n`
+        if (jsonBudget < 0) throw new JsonByteLimitError()
+        const serialized = boundedJsonText(payload, jsonBudget)
+        if (serialized === undefined)
+          throw new TypeError("A2A SSE payload has no JSON representation")
+        const frame = encoder.encode(`data: ${serialized.text}\n\n`)
         if (frame.byteLength > maxOutputBytes || emittedBytes > maxOutputBytes - frame.byteLength)
-          throw new A2AOutputLimitError("A2A output limit exceeded")
+          throw new JsonByteLimitError()
         emittedBytes += frame.byteLength
         controller.enqueue(frame)
       }
@@ -404,13 +416,13 @@ function streamingResponse(
               artifactUpdate: {
                 taskId: turnId,
                 contextId: turnId,
-                artifact: outputArtifact(turnId, result.output),
+                artifact: outputArtifact(turnId, result.output, maxOutputBytes),
                 lastChunk: true,
               },
             }),
           )
         }
-        const task = projectTask(turnId, result)
+        const task = projectTask(turnId, result, maxOutputBytes)
         send(
           rpcResult(id, {
             statusUpdate: {
@@ -425,7 +437,7 @@ function streamingResponse(
       } catch (error) {
         // Nothing past the output budget reaches the client, so the run stops as on a disconnect
         // rather than spending model calls nobody reads.
-        if (error instanceof A2AOutputLimitError) {
+        if (error instanceof JsonByteLimitError) {
           cancelled.abort()
           stream.complete()
         }
@@ -434,7 +446,7 @@ function streamingResponse(
             rpcError(
               id,
               A2A_ERROR_CODES.internalError,
-              error instanceof A2AOutputLimitError ? "output_limit" : "run_failed",
+              error instanceof JsonByteLimitError ? "output_limit" : "run_failed",
             ),
           )
         } catch {
@@ -465,7 +477,11 @@ interface ProjectedTask {
 }
 
 /** Project a run result onto the A2A task shape. Evidence is token-only by design, so it passes through. */
-function projectTask(turnId: string, result: AgentRunResult<unknown>): ProjectedTask {
+function projectTask(
+  turnId: string,
+  result: AgentRunResult<unknown>,
+  maxOutputBytes: number,
+): ProjectedTask {
   const base = { id: turnId, contextId: turnId }
   if (result.status === "completed") {
     if (result.error !== undefined) {
@@ -478,7 +494,7 @@ function projectTask(turnId: string, result: AgentRunResult<unknown>): Projected
     return {
       ...base,
       status: { state: "TASK_STATE_COMPLETED" },
-      artifacts: [outputArtifact(turnId, result.output)],
+      artifacts: [outputArtifact(turnId, result.output, maxOutputBytes)],
       metadata: { evidence: result.evidence },
     }
   }
@@ -527,11 +543,19 @@ function projectStoredTask(state: AgentTurnState): ProjectedTask {
   }
 }
 
-function outputArtifact(turnId: string, output: unknown): Record<string, unknown> {
+function outputArtifact(
+  turnId: string,
+  output: unknown,
+  maxOutputBytes: number,
+): Record<string, unknown> {
   return {
     artifactId: `${turnId}:output`,
     name: "output",
-    parts: [typeof output === "string" ? { text: output } : { text: JSON.stringify(output) }],
+    parts: [
+      typeof output === "string"
+        ? { text: output }
+        : { text: boundedJsonText(output, maxOutputBytes)?.text },
+    ],
   }
 }
 
@@ -543,8 +567,8 @@ function rpcError(id: RpcId | null, code: number, message: string): Record<strin
   return { jsonrpc: "2.0", id, error: { code, message } }
 }
 
-function rpcResultResponse(id: RpcId, result: unknown): Response {
-  return jsonResponse(200, rpcResult(id, result), id)
+function rpcResultResponse(id: RpcId, result: unknown, maxOutputBytes: number): Response {
+  return jsonResponse(200, rpcResult(id, result), id, maxOutputBytes)
 }
 
 function rpcErrorResponse(id: RpcId | null, code: number, message: string): Response {
@@ -577,21 +601,25 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 /** With `rpcId`, the body is a JSON-RPC reply, and one that cannot be sent becomes an error for it. */
-function jsonResponse(status: number, body: unknown, rpcId?: RpcId | null): Response {
+function jsonResponse(
+  status: number,
+  body: unknown,
+  rpcId?: RpcId | null,
+  maxOutputBytes = MAX_OUTPUT_BYTES,
+): Response {
   let serialized: string | undefined
   let failure: string | undefined
   try {
-    serialized = JSON.stringify(body)
+    serialized = boundedJsonText(body, maxOutputBytes)?.text
     if (serialized === undefined) failure = "response_serialization_failed"
-  } catch {
-    failure = "response_serialization_failed"
+  } catch (error) {
+    failure =
+      error instanceof JsonByteLimitError
+        ? rpcId === undefined
+          ? "response_too_large"
+          : "output_limit"
+        : "response_serialization_failed"
   }
-  // The hard ceiling only: the mount's configured `maxOutputBytes` is applied by `boundJsonResponse`.
-  if (
-    serialized !== undefined &&
-    new TextEncoder().encode(serialized).byteLength > MAX_OUTPUT_BYTES
-  )
-    failure = rpcId === undefined ? "response_too_large" : "output_limit"
   if (failure !== undefined) {
     if (rpcId === undefined) {
       serialized = JSON.stringify({ error: failure })
@@ -602,18 +630,6 @@ function jsonResponse(status: number, body: unknown, rpcId?: RpcId | null): Resp
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   })
-}
-
-async function boundJsonResponse(
-  response: Response,
-  maxOutputBytes: number,
-  rpcId: RpcId | null,
-): Promise<Response> {
-  if (!response.headers.get("content-type")?.startsWith("application/json")) return response
-  const bytes = await response.arrayBuffer()
-  if (bytes.byteLength > maxOutputBytes)
-    return rpcErrorResponse(rpcId, A2A_ERROR_CODES.internalError, "output_limit")
-  return new Response(bytes, { status: response.status, headers: response.headers })
 }
 
 function assertOutputLimit(value: number): void {

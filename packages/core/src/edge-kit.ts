@@ -9,6 +9,7 @@
  *
  *   - {@link readBodyFramed}   read + cap + proto-guard + content-type framing (JSON / urlencoded / 415)
  *   - {@link capBodyBytes}   the same byte cap on a handler's own reads of the raw request
+ *   - {@link boundedJsonText}   preflight JSON output against an exact UTF-8 byte budget
  *   - {@link renderResult}     render a {@link ResponseResult} (e.g. a 413 / 415 rejection) to a `Response`
  *   - {@link toResponse}       render any handler result, a handler's own `Response` included
  *   - {@link plainError}       the structured rejection envelope the lane returns
@@ -24,7 +25,7 @@ export { type ErrorLogDetail, emitRequestErrorLog } from "./server/bare-error-la
 export { assertByteLimit, capBodyBytes } from "./server/body.ts"
 export { type FormOrigins, readBodyFramed } from "./server/body-lane.ts"
 export { plainError } from "./server/http.ts"
-export { jsonResponse } from "./server/json-response.ts"
+export { boundedJsonText, JsonByteLimitError, jsonResponse } from "./server/json-response.ts"
 export {
   answerNotFound,
   type NotFoundHandler,
