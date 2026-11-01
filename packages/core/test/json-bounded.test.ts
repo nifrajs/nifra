@@ -50,7 +50,9 @@ describe("boundedJsonText", () => {
     expect(boundedJsonText(new String("wrapped"), 20)?.text).toBe('"wrapped"')
     expect(boundedJsonText(new Boolean(false), 10)?.text).toBe("false")
 
-    const raw = JSON.rawJSON('"😀"')
+    const rawJSON = Object.getOwnPropertyDescriptor(JSON, "rawJSON")?.value
+    if (typeof rawJSON !== "function") throw new Error("JSON.rawJSON is unavailable")
+    const raw = Reflect.apply(rawJSON, JSON, ['"😀"'])
     expect(boundedJsonText({ raw }, 20)?.text).toBe('{"raw":"😀"}')
 
     const rawDescriptor = Object.getOwnPropertyDescriptor(JSON, "rawJSON")
