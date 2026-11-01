@@ -1187,9 +1187,11 @@ async function main(argv: readonly string[]): Promise<number> {
         }`,
       )
       for (const m of pending) results.push({ ...m, status: "not-run", killedBy: [] })
-      reports.push(
-        report(baseline.ms, baseline.cases === undefined ? [NO_REPORT] : [], baseline.exitCode),
-      )
+      const baselineFailures =
+        baseline.cases === undefined
+          ? [NO_REPORT]
+          : baseline.cases.filter((c) => c.failed).map((c) => c.id)
+      reports.push(report(baseline.ms, baselineFailures, baseline.exitCode))
       continue
     }
     const base = { cases: baseline.cases, errors: baseline.errors, exitCode: baseline.exitCode }

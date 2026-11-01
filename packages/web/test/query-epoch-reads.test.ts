@@ -5,8 +5,6 @@
 import { describe, expect, test } from "bun:test"
 import { createQueryClient, type QueryClient, type QueryHandle } from "../src/query.ts"
 
-const load = async (): Promise<string> => "loaded"
-
 // The epoch is read once per synchronous run, so a rotation takes a task of its own to be seen.
 async function afterRotation(
   run: (rotate: () => Promise<void>) => void | Promise<void>,
@@ -27,16 +25,16 @@ async function afterRotation(
   }
 }
 
-type Way = (client: QueryClient, held: QueryHandle<string>) => unknown
+type Way = (client: QueryClient, held: QueryHandle<string>, load: () => Promise<string>) => unknown
 
 const ways: Record<string, Way> = {
-  "query()": (client) => client.query(["new"], load),
+  "query()": (client, _, load) => client.query(["new"], load),
   "fetch()": (_, held) => held.fetch(),
   "refetch()": (_, held) => held.refetch(),
   "invalidateQueries()": (client) => client.invalidateQueries(["nothing", "matches"]),
   "getQueryData()": (client) => client.getQueryData(["new"]),
   "setQueryData()": (client) => client.setQueryData(["new"], "set"),
-  "prefetchQuery()": (client) => client.prefetchQuery(["new"], load),
+  "prefetchQuery()": (client, _, load) => client.prefetchQuery(["new"], load),
   "dehydrate()": (client) => client.dehydrate({ shouldDehydrateQuery: () => true }),
   "hydrate()": (client) => client.hydrate({ queries: [] }),
   "infiniteQuery()": (client) =>
@@ -51,12 +49,14 @@ describe("a new identity epoch cookie", () => {
     test(`is heard by ${name}: what the previous visitor loaded is gone`, async () => {
       await afterRotation(async (rotate) => {
         const client = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
+        let loads = 0
+        const load = async (): Promise<string> => `loaded-${++loads}`
         const held = client.query(["held"], load)
         const other = client.query(["other"], async () => "other")
         await Promise.all([held.fetch(), other.fetch()])
         expect(other.snapshot().data).toBe("other")
         await rotate()
-        const result = await way(client, held)
+        const result = await way(client, held, load)
         switch (name) {
           case "query()":
           case "infiniteQuery()":
@@ -64,7 +64,7 @@ describe("a new identity epoch cookie", () => {
             break
           case "fetch()":
           case "refetch()":
-            expect(result).toBe("loaded")
+            expect(result).toBe("loaded-2")
             break
           case "dehydrate()":
             expect(result).toMatchObject({ queries: [] })
