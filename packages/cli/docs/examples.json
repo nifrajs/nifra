@@ -492,6 +492,36 @@
     "code": "import { live } from \"@nifrajs/web/live\"\n\n// Your session lookup: a stable user id, or null for an anonymous viewer.\ndeclare function sessionUserId(request: Request): Promise<string | null>\n\nexport const liveRuntime = live({\n  secret: process.env.LIVE_SECRET, // openssl rand -base64 32; required in production\n  subject: (ctx) => sessionUserId(ctx.request),\n})"
   },
   {
+    "name": "ELYSIA",
+    "topic": "Nifra - Migrating Express, Fastify, Hono & Elysia backends",
+    "slug": "migrate-backend",
+    "code": "// Elysia\nimport { Elysia, t as elysiaT } from \"elysia\"\nconst legacy = new Elysia()\n  .get(\"/users/:id\", ({ params }) => ({ id: params.id }))\n  .post(\n    \"/users\",\n    ({ body }) => ({ id: crypto.randomUUID(), name: body.name }),\n    { body: elysiaT.Object({ name: elysiaT.String() }) },\n  )\n\n// Nifra\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .post(\"/users\", { body: t.object({ name: t.string() }) }, (c) => {\n    c.set.status = 201\n    return { id: crypto.randomUUID(), name: c.body.name }\n  })"
+  },
+  {
+    "name": "EXPRESS",
+    "topic": "Nifra - Migrating Express, Fastify, Hono & Elysia backends",
+    "slug": "migrate-backend",
+    "code": "// Express\nimport express from \"express\"\nconst expressApp = express()\nexpressApp.get(\"/users/:id\", (req, res) => res.json({ id: req.params.id }))\nexpressApp.post(\"/users\", express.json(), (req, res) =>\n  res.status(201).json({ id: crypto.randomUUID(), name: req.body.name }),\n)\n\n// Nifra\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .post(\"/users\", { body: t.object({ name: t.string() }) }, (c) => {\n    c.set.status = 201\n    return { id: crypto.randomUUID(), name: c.body.name }\n  })"
+  },
+  {
+    "name": "FASTIFY",
+    "topic": "Nifra - Migrating Express, Fastify, Hono & Elysia backends",
+    "slug": "migrate-backend",
+    "code": "// Fastify\nimport Fastify from \"fastify\"\ntype UserParams = { id: string }\ntype UserBody = { name: string }\nconst fastify = Fastify()\nfastify.get<{ Params: UserParams }>(\"/users/:id\", async (request, reply) =>\n  reply.send({ id: request.params.id }),\n)\nfastify.post<{ Body: UserBody }>(\n  \"/users\",\n  {\n    schema: {\n      body: {\n        type: \"object\",\n        required: [\"name\"],\n        properties: { name: { type: \"string\" } },\n      },\n    },\n  },\n  async (request, reply) =>\n    reply.code(201).send({ id: crypto.randomUUID(), name: request.body.name }),\n)\n\n// Nifra\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .post(\"/users\", { body: t.object({ name: t.string() }) }, (c) => {\n    c.set.status = 201\n    return { id: crypto.randomUUID(), name: c.body.name }\n  })"
+  },
+  {
+    "name": "HONO",
+    "topic": "Nifra - Migrating Express, Fastify, Hono & Elysia backends",
+    "slug": "migrate-backend",
+    "code": "// Hono\nimport { Hono } from \"hono\"\nconst legacy = new Hono()\nlegacy\n  .get(\"/users/:id\", (c) => c.json({ id: c.req.param(\"id\") }))\n  .post(\"/users\", async (c) => {\n    const body = await c.req.json<{ name: string }>()\n    return c.json({ id: crypto.randomUUID(), name: body.name }, 201)\n  })\n\n// Nifra\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .post(\"/users\", { body: t.object({ name: t.string() }) }, (c) => {\n    c.set.status = 201\n    return { id: crypto.randomUUID(), name: c.body.name }\n  })"
+  },
+  {
+    "name": "SHARED_LOADER",
+    "topic": "Nifra - Migrating React, Preact, Solid, Vue & Svelte apps",
+    "slug": "migrate-frontend",
+    "code": "// routes/users/[id].backend.ts - server-only data work, shared by every UI adapter\nimport { t } from \"@nifrajs/schema\"\nimport { notFound } from \"@nifrajs/web\"\nimport type { Route } from \"./+types/[id]\"\n\nexport const loaderOutput = t.object({ id: t.string(), name: t.string() })\nexport const loader: Route.Loader = async ({ params, api }) => {\n  const result = await api.users({ id: params.id }).get()\n  if (!result.ok) throw notFound()\n  return result.data\n}"
+  },
+  {
     "name": "HONO",
     "topic": "Nifra - Migrate route by route",
     "slug": "migrate-route-by-route",
