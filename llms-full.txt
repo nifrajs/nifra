@@ -4537,12 +4537,13 @@ left that lane. If a route looks like production, the contract costs nothing: de
 ### Bounded request bodies
 
 Every HTTP route has a body limit, defaulting to `maxBodyBytes` (1,000,000 bytes).
-Nifra enforces it when the body is read, including direct
-`c.req`/`c.request` reads such as `json()`,
-`arrayBuffer()`, `text()`, and the raw stream. A route can explicitly opt out with
-`bodyLimit: "unlimited"`.
-`c.boundedBody(maxBytes?)` sets an explicit per-read cap;
-`c.boundedJson<T>(maxBytes?)` reads under that cap and parses JSON.
+Nifra enforces it when the body is read, including direct `c.req`/`c.request` reads
+such as `json()`, `arrayBuffer()`, `text()`, and the raw stream. A route
+can explicitly opt out with `bodyLimit: "unlimited"`. Framework helpers, including
+`verifyWebhook` and `c.boundedBody(maxBytes?)`, read through their own bounded-reader
+paths. `verifyWebhook` defaults to 1 MiB, and an explicit `c.boundedBody(maxBytes)`
+value can exceed the route's `bodyLimit`. Set helper limits explicitly when the route-wide
+cap must apply to those reads. `c.boundedJson<T>(maxBytes?)` reads under that cap and parses JSON.
 
 ```ts
 import { server } from "@nifrajs/core/server"

@@ -474,12 +474,13 @@ export default function Security() {
       <h2>Bounded request bodies</h2>
       <p>
         Every HTTP route has a body limit, defaulting to <code>maxBodyBytes</code> (1,000,000 bytes).{" "}
-        Nifra enforces it when the body is read, including direct{" "}
-        <code>c.req</code>/<code>c.request</code> reads such as <code>json()</code>,{" "}
-        <code>arrayBuffer()</code>, <code>text()</code>, and the raw stream. A route can explicitly opt out with{" "}
-        <code>bodyLimit: &quot;unlimited&quot;</code>.{" "}
-        <code>c.boundedBody(maxBytes?)</code> sets an explicit per-read cap;{" "}
-        <code>c.boundedJson&lt;T&gt;(maxBytes?)</code> reads under that cap and parses JSON.
+        Nifra enforces it when the body is read, including direct <code>c.req</code>/<code>c.request</code> reads
+        such as <code>json()</code>, <code>arrayBuffer()</code>, <code>text()</code>, and the raw stream. A route
+        can explicitly opt out with <code>bodyLimit: &quot;unlimited&quot;</code>. Framework helpers, including{" "}
+        <code>verifyWebhook</code> and <code>c.boundedBody(maxBytes?)</code>, read through their own bounded-reader
+        paths. <code>verifyWebhook</code> defaults to 1 MiB, and an explicit <code>c.boundedBody(maxBytes)</code>
+        value can exceed the route&rsquo;s <code>bodyLimit</code>. Set helper limits explicitly when the route-wide
+        cap must apply to those reads. <code>c.boundedJson&lt;T&gt;(maxBytes?)</code> reads under that cap and parses JSON.
       </p>
       <CodeBlock code={BOUNDED} />
       <p>
