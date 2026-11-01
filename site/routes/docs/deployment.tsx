@@ -71,7 +71,10 @@ import { server, toFetchHandler } from "@nifrajs/core/server"
 const app = server().get("/", () => ({ ok: true }))
 export default toFetchHandler(app)`
 
-const FLY = `// nifra.config.ts - install @nifrajs/deploy-fly first
+const FLY_SETUP = `bun add @nifrajs/deploy-fly @nifrajs/node
+fly apps create my-nifra-app # once, before the first deploy`
+
+const FLY = `// nifra.config.ts - install both packages and register deploymentAdapter below
 // backend/framework.ts defines and exports the runtime adapter and clientModule.
 import { flyAdapter } from "@nifrajs/deploy-fly"
 import { adapter, clientModule } from "./backend/framework.ts"
@@ -189,15 +192,21 @@ export default function Deployment() {
         and return extra files plus deploy guidance. Nifra checks paths and collisions, scans text
         artifacts for credentials, and only swaps the output directory after the full build passes.
       </p>
+      <p>
+        Install the Fly adapter with its required Node runtime and create the named Fly app before
+        its first deploy:
+      </p>
+      <CodeBlock code={FLY_SETUP} lang="sh" />
       <CodeBlock code={FLY} lang="ts" />
       <p>
         The Fly reference package wraps the ordinary <code>node</code> target and emits a Dockerfile
-        plus <code>fly.toml</code>. Run <code>fly deploy</code> from the emitted output directory;
-        Nifra never logs in or deploys for you. Adapter code is trusted build-time code running in
-        the CLI process. Each adapter must explicitly declare whether it supports the coordinated
-        component pipeline; unsupported combinations fail before the previous output is replaced.
-        Set Fly's optional <code>healthCheckPath</code> only when that route returns 2xx while the app
-        is ready.
+        plus <code>fly.toml</code>. The <code>deploymentAdapter</code> configuration above registers
+        the custom <code>fly</code> target. Run <code>fly deploy</code> from the emitted output
+        directory; Nifra never logs in or deploys for you. Adapter code is trusted build-time code
+        running in the CLI process. Each adapter must explicitly declare whether it supports the
+        coordinated component pipeline; unsupported combinations fail before the previous output is
+        replaced. Set Fly's optional <code>healthCheckPath</code> only when that route returns 2xx
+        while the app is ready.
       </p>
       <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on

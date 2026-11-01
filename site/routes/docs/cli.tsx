@@ -12,7 +12,7 @@ const COMMANDS = `nifra dev      # true-HMR dev server (Bun native HMR + Nifra S
 nifra dev --vite   # the Vite middleware pipeline instead (automatic when vitePlugins are your ONLY transforms)
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
-nifra build --target cloudflare  # also: node | deno | vercel | static; installed deployment adapters work too
+nifra build --target cloudflare  # also: node | deno | vercel | static; configure custom adapters in nifra.config.ts first
 
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)

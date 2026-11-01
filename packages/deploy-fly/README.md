@@ -4,7 +4,7 @@ Build-time Fly.io packaging for a Nifra app using the existing Node deployment t
 Dockerfile and `fly.toml`; it does not deploy, contact Fly.io, or manage credentials.
 
 ```sh
-bun add @nifrajs/deploy-fly
+bun add @nifrajs/deploy-fly @nifrajs/node
 ```
 
 ```ts
@@ -26,9 +26,11 @@ export const deploymentAdapter = {
 }
 ```
 
-Then build and deploy the emitted directory:
+Create the Fly app once before its first deploy if it does not already exist, then build and deploy
+the emitted directory:
 
 ```sh
+fly apps create my-nifra-app
 nifra build
 cd dist
 fly deploy
@@ -47,3 +49,6 @@ SSR; it currently declares no support for the coordinated component pipeline.
 Adapters execute as trusted build-time code in the Nifra CLI process. Their API is versioned, their
 output is declarative, and Nifra rejects unsafe paths, collisions, credential findings, and failed
 builds before replacing the last successful deploy directory.
+
+For agent-oriented package guidance, see [`LLM.md`](./LLM.md) and the full
+[`llms-full.txt`](../../llms-full.txt) corpus.

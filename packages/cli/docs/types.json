@@ -5100,7 +5100,7 @@
     "name": "DeploymentAdapterBuildResult",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface DeploymentAdapterBuildResult<T> {\n    readonly result: T;\n    readonly outDir: string;\n    readonly run: string;\n    readonly adapterId: string;\n    readonly baseTarget: BuildTarget;\n}"
+    "signature": "export interface DeploymentAdapterBuildResult<T> {\n    /**\n     * The base builder's result. Paths in it may point into the temporary staging directory, which is\n     * deleted before this function returns; use the returned `DeploymentAdapterBuildResult.outDir` for\n     * published paths.\n     */\n    readonly result: T;\n    readonly outDir: string;\n    readonly run: string;\n    readonly adapterId: string;\n    readonly baseTarget: BuildTarget;\n}"
   },
   {
     "name": "DeploymentAdapterContext",

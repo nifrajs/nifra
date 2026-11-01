@@ -7588,8 +7588,16 @@ in `@nifrajs/web/build` lets an adapter declare its base target, validate option
 and return extra files plus deploy guidance. Nifra checks paths and collisions, scans text
 artifacts for credentials, and only swaps the output directory after the full build passes.
 
+Install the Fly adapter with its required Node runtime and create the named Fly app before
+its first deploy:
+
+```sh
+bun add @nifrajs/deploy-fly @nifrajs/node
+fly apps create my-nifra-app # once, before the first deploy
+```
+
 ```ts
-// nifra.config.ts - install @nifrajs/deploy-fly first
+// nifra.config.ts - install both packages and register deploymentAdapter below
 // backend/framework.ts defines and exports the runtime adapter and clientModule.
 import { flyAdapter } from "@nifrajs/deploy-fly"
 import { adapter, clientModule } from "./backend/framework.ts"
@@ -7607,12 +7615,18 @@ export const deploymentAdapter = {
 ```
 
 The Fly reference package wraps the ordinary `node` target and emits a Dockerfile
-plus `fly.toml`. Run `fly deploy` from the emitted output directory;
-Nifra never logs in or deploys for you. Adapter code is trusted build-time code running in
-the CLI process. Each adapter must explicitly declare whether it supports the coordinated
-component pipeline; unsupported combinations fail before the previous output is replaced.
-Set Fly's optional `healthCheckPath` only when that route returns 2xx while the app
-is ready.
+plus `fly.toml`. The `deploymentAdapter` configuration above registers
+the custom `fly` target. Run `fly deploy` from the emitted output
+directory; Nifra never logs in or deploys for you. Adapter code is trusted build-time code
+running in the CLI process. Each adapter must explicitly declare whether it supports the
+coordinated component pipeline; unsupported combinations fail before the previous output is
+replaced. Set Fly's optional `healthCheckPath` only when that route returns 2xx
+while the app is ready.
+
+```sh
+bun add @nifrajs/deploy-fly @nifrajs/node
+fly apps create my-nifra-app # once, before the first deploy
+```
 
 The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
 Cloudflare and Vercel the platform serves it.
@@ -7892,7 +7906,7 @@ nifra dev      # true-HMR dev server (Bun native HMR + Nifra SSR) - http://local
 nifra dev --vite   # the Vite middleware pipeline instead (automatic when vitePlugins are your ONLY transforms)
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
-nifra build --target cloudflare  # also: node | deno | vercel | static; installed deployment adapters work too
+nifra build --target cloudflare  # also: node | deno | vercel | static; configure custom adapters in nifra.config.ts first
 
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)
@@ -18479,7 +18493,7 @@ Build-time Fly.io packaging for a Nifra app using the existing Node deployment t
 Dockerfile and `fly.toml`; it does not deploy, contact Fly.io, or manage credentials.
 
 ```sh
-bun add @nifrajs/deploy-fly
+bun add @nifrajs/deploy-fly @nifrajs/node
 ```
 
 ```ts
@@ -18501,9 +18515,11 @@ export const deploymentAdapter = {
 }
 ```
 
-Then build and deploy the emitted directory:
+Create the Fly app once before its first deploy if it does not already exist, then build and deploy
+the emitted directory:
 
 ```sh
+fly apps create my-nifra-app
 nifra build
 cd dist
 fly deploy
@@ -18522,6 +18538,9 @@ SSR; it currently declares no support for the coordinated component pipeline.
 Adapters execute as trusted build-time code in the Nifra CLI process. Their API is versioned, their
 output is declarative, and Nifra rejects unsafe paths, collisions, credential findings, and failed
 builds before replacing the last successful deploy directory.
+
+For agent-oriented package guidance, see [`LLM.md`](./LLM.md) and the full
+[`llms-full.txt`](../../llms-full.txt) corpus.
 
 ## @nifrajs/devtools
 
