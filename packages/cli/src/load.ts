@@ -95,8 +95,8 @@ export interface NifraFramework {
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). With both
    * configs, `nifra.config.ts` wins and `backend/framework.ts` fills it in when left unset. */
   readonly publicEnvPrefix?: string
-  /** Reviewed false positives of `nifra build`'s secret scan, each `{ rule, file, reason }` (or
-   * `{ rule: "private-env-value", env, reason }`). There is no exemption by value. */
+  /** Reviewed false positives of `nifra build`'s secret scan. A `file` scope applies throughout that
+   * file; for `private-env-value`, an `env` scope applies to every finding from that variable. */
   readonly secretExemptions?: readonly SecretExemption[]
   /** Vite production CSS output policy. `false` emits one aggregate stylesheet for the whole client. */
   readonly cssCodeSplit?: boolean
@@ -227,7 +227,10 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
     wrong("publicEnvPrefix", 'a string such as "PUBLIC_", or "" to expose no environment variable')
   }
   if (fw.secretExemptions !== undefined && !Array.isArray(fw.secretExemptions)) {
-    wrong("secretExemptions", "an array of { rule, file, reason } entries")
+    wrong(
+      "secretExemptions",
+      'an array of { rule, file, reason } entries (or { rule: "private-env-value", env, reason })',
+    )
   }
   if (fw.target !== undefined && typeof fw.target !== "string") {
     wrong("target", 'a deploy target name such as "bun"')

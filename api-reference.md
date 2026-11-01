@@ -5834,7 +5834,7 @@ _No named exports (side-effect entrypoint)._
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
-  One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
+  One reviewed false positive. A file scope exempts a rule throughout that file. For `private-env-value`, an env scope exempts every finding sourced from that variable anywhere in scanned output.
 - **SecretRule** _(type)_ - `type SecretRule = | "private-key" | "credential-url" | "key-format" | "assigned-secret" | "private-env-value"`
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
@@ -6957,7 +6957,7 @@ _No named exports (side-effect entrypoint)._
 - **SERVER_PACKAGES** _(const)_ - `SERVER_PACKAGES: readonly string[]`
   Third-party packages that never belong in a browser bundle: database drivers, ORMs' server entries, mailers and server SDKs. A package reaching a `node:` builtin is caught separately; this list covers the ones that bundle "fine" and leak credentials or query code instead.
 - **SecretExemption** _(interface)_ - `interface SecretExemption`
-  One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
+  One reviewed false positive. A file scope exempts a rule throughout that file. For `private-env-value`, an env scope exempts every finding sourced from that variable anywhere in scanned output.
 - **SecretFinding** _(interface)_ - `interface SecretFinding`
 - **SecretRule** _(type)_ - `type SecretRule = | "private-key" | "credential-url" | "key-format" | "assigned-secret" | "private-env-value"`
 - **SecretScanFile** _(interface)_ - `interface SecretScanFile`

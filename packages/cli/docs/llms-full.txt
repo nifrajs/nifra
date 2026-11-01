@@ -5315,8 +5315,9 @@ source only: `apiKey: "..."`, a quoted header name including its hyphens (
 -
 **Private env values** - the value of a build variable whose name says secret (
 `TOKEN`, `API_KEY`, `DATABASE_URL`, …) or that looks
-random, in any encoding above; the ambient variables a shell or CI sets pass unless their
-name says otherwise.
+random, in any encoding above. A defined set of recognized ambient shell, OS and CI names
+is skipped unless the name itself looks secret-like. Other names are scanned when they
+look secret-like, contain a credential URL, or hold a random-looking value.
 
 Deliberate skips: keys public by design (Stripe `pk_`, Google `AIza`,
 reCAPTCHA `6L`, `G-` and `UA-` ids), placeholders (
@@ -5327,9 +5328,12 @@ finding never prints the value: the rule, the location, and a preview of the fir
 characters plus the length. When a match sits in a content-hashed output file, the build
 names the module it came from.
 
-A reviewed false positive is exempted in `nifra.config.ts`, one spot at a time
-and never by value - the same credential anywhere else still fails, and an exemption missing
-its rule or reason refuses the build:
+A reviewed false positive can be exempted in `nifra.config.ts`. A `file`
+exemption suppresses that rule throughout the named file, so the same credential in another
+file still fails. For `private-env-value`, an `env` exemption suppresses
+every finding from that variable anywhere in scanned output; use it only when publishing that
+value everywhere it appears is intended. Every exemption needs its rule and reason, or the
+build refuses:
 
 ```ts
 // nifra.config.ts
@@ -5340,10 +5344,12 @@ export const secretExemptions = [
     file: "routes/docs.tsx",
     reason: "the sample literally spells an AWS access key id",
   },
+  // A file exemption covers this rule throughout the named file. An env exemption covers every
+  // finding from that variable anywhere in scanned output; use it only when that is intended.
   {
     rule: "private-env-value",
     env: "SIGNING_SALT",
-    reason: "this salt shapes a public nonce; shipping it is intended",
+    reason: "this value is intentionally published wherever it appears; it shapes a public nonce",
   },
 ]
 ```

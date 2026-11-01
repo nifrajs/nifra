@@ -380,10 +380,12 @@ export const secretExemptions = [
     file: "routes/docs.tsx",
     reason: "the sample literally spells an AWS access key id",
   },
+  // A file exemption covers this rule throughout the named file. An env exemption covers every
+  // finding from that variable anywhere in scanned output; use it only when that is intended.
   {
     rule: "private-env-value",
     env: "SIGNING_SALT",
-    reason: "this salt shapes a public nonce; shipping it is intended",
+    reason: "this value is intentionally published wherever it appears; it shapes a public nonce",
   },
 ]`
 
@@ -950,8 +952,9 @@ export default function Security() {
         <li>
           <b>Private env values</b> - the value of a build variable whose name says secret (
           <code>TOKEN</code>, <code>API_KEY</code>, <code>DATABASE_URL</code>, …) or that looks
-          random, in any encoding above; the ambient variables a shell or CI sets pass unless their
-          name says otherwise.
+          random, in any encoding above. A defined set of recognized ambient shell, OS and CI names
+          is skipped unless the name itself looks secret-like. Other names are scanned when they
+          look secret-like, contain a credential URL, or hold a random-looking value.
         </li>
       </ul>
       <p>
@@ -965,9 +968,12 @@ export default function Security() {
         names the module it came from.
       </p>
       <p>
-        A reviewed false positive is exempted in <code>nifra.config.ts</code>, one spot at a time
-        and never by value - the same credential anywhere else still fails, and an exemption missing
-        its rule or reason refuses the build:
+        A reviewed false positive can be exempted in <code>nifra.config.ts</code>. A <code>file</code>{" "}
+        exemption suppresses that rule throughout the named file, so the same credential in another
+        file still fails. For <code>private-env-value</code>, an <code>env</code> exemption suppresses
+        every finding from that variable anywhere in scanned output; use it only when publishing that
+        value everywhere it appears is intended. Every exemption needs its rule and reason, or the
+        build refuses:
       </p>
       <CodeBlock code={SECRET_EXEMPTIONS} />
       <p>

@@ -15027,8 +15027,8 @@
     "name": "SecretExemption",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface SecretExemption {\n    readonly rule: SecretRule;\n    /** The finding's file as reported: app-relative for a source or `public/` file, output-relative for\n     * an emitted file. */\n    readonly file?: string;\n    /** For `private-env-value`: the variable whose value may ship. */\n    readonly env?: string;\n    readonly reason: string;\n}",
-    "doc": "/**\n * One reviewed false positive. It names the rule, where the finding is and why it may ship: there is\n * no exemption by value, so a credential that turns up somewhere else still fails the build.\n */"
+    "signature": "export interface SecretExemption {\n    readonly rule: SecretRule;\n    /** Exempt this rule throughout the named file. Source and `public/` paths are app-relative;\n     * emitted-file paths are output-relative. */\n    readonly file?: string;\n    /** For `private-env-value`: exempt every finding sourced from this variable across scanned output. */\n    readonly env?: string;\n    readonly reason: string;\n}",
+    "doc": "/**\n * One reviewed false positive. A file scope exempts a rule throughout that file. For\n * `private-env-value`, an env scope exempts every finding sourced from that variable anywhere in\n * scanned output.\n */"
   },
   {
     "name": "SecretFinding",
