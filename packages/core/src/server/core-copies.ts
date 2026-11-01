@@ -26,7 +26,7 @@ if (!copies.includes(here) && copies.push(here) > 1) {
 
 /** This copy's version: a literal like the package root's `VERSION` (no fs on the edge), which
  * `scripts/version.ts` rewrites on every release and `check:publish` asserts. */
-const COPY_VERSION = "5.10.0"
+const COPY_VERSION = "5.11.0"
 
 /** Record this copy's version beside its URL. Called by each `server()` behind the development guard,
  * so a production bundle drops it with the version; a copy that built a server has recorded one. */

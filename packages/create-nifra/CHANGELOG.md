@@ -1,5 +1,11 @@
 # create-nifra
 
+## 5.11.0
+
+### Minor Changes
+
+- 3c8024d: Add independently addressable route slots with typed targets, server allowlists, and framework bindings.
+
 ## 5.10.0
 
 ### Minor Changes
