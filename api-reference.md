@@ -5266,7 +5266,7 @@ _No named exports (side-effect entrypoint)._
 - **SignDownloadUrlOptions** _(interface)_ - `interface SignDownloadUrlOptions`
 - **StripImageMetadataOptions** _(interface)_ - `interface StripImageMetadataOptions`
 - **UploadResult** _(type)_ - `type UploadResult`
-  Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`). Pair with `c.boundedBody(maxBytes)` from `@nifrajs/core` to bound the *read* itself: read the body under the cap, then `validateUpload(bytes, …)` to confirm the size + sniff the type.
+  Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`). Direct request reads follow the configured route body limit. Use `c.boundedBody(maxBytes)` from `@nifrajs/core` for an explicit per-read cap, then `validateUpload(bytes, …)` to confirm the size and sn…
 - **ValidateUploadOptions** _(interface)_ - `interface ValidateUploadOptions`
 - **signDownloadUrl** _(function)_ - `signDownloadUrl: (url: string, secret: string, options: SignDownloadUrlOptions) => Promise<string>`
   Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended. Throws a `RangeError` for an `expiresInSeconds` or `now` that is not a whole number of seconds, since {@link verifyDownloadUrl} accepts only a whole-second expiry.

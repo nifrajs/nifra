@@ -78,6 +78,16 @@ export function ipBucket(ip: string): string {
     return ip.slice(7)
   const parsed = parseIp(ip)
   if (parsed === null) return ip
+  return bucketParsedIp(parsed)
+}
+
+/** Canonical bucket for one IP literal, or `null` when the input is not exactly one valid IP. */
+export function ipBucketForAddress(ip: string): string | null {
+  const parsed = parseIp(ip)
+  return parsed === null ? null : bucketParsedIp(parsed)
+}
+
+function bucketParsedIp(parsed: ParsedIp): string {
   const value = parsed.value
   if (parsed.version === 4) {
     return `${(value >> 24n) & 255n}.${(value >> 16n) & 255n}.${(value >> 8n) & 255n}.${value & 255n}`

@@ -255,7 +255,8 @@ const app = server()
   // X-Forwarded-For is never believed.
   .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"] }))
   // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a
-  // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)
+  // length-less body. This is the cheap pre-filter; the route's cap on direct and
+  // framework reads is the read-time guard.
   .use(bodyLimit({ maxBytes: 1_000_000 }))`
 
 const ASSURANCE = `// doc-check: skip - configuration file imports your application backend.
@@ -472,17 +473,20 @@ export default function Security() {
 
       <h2>Bounded request bodies</h2>
       <p>
-        Nifra caps every route body at <code>maxBodyBytes</code> by default, including schema-less routes
-        that read <code>c.req</code> directly. Set a finite route <code>bodyLimit</code> for endpoints such
-        as file uploads that need a larger cap. <code>c.boundedBody(maxBytes)</code> sets an explicit
-        per-read cap, and <code>c.boundedJson&lt;T&gt;(maxBytes?)</code> reads and parses JSON under a cap.
+        Every HTTP route has a body limit, defaulting to <code>maxBodyBytes</code> (1,000,000 bytes).{" "}
+        Nifra enforces it when the body is read, including direct{" "}
+        <code>c.req</code>/<code>c.request</code> reads such as <code>json()</code>,{" "}
+        <code>arrayBuffer()</code>, <code>text()</code>, and the raw stream. A route can explicitly opt out with{" "}
+        <code>bodyLimit: &quot;unlimited&quot;</code>.{" "}
+        <code>c.boundedBody(maxBytes?)</code> sets an explicit per-read cap;{" "}
+        <code>c.boundedJson&lt;T&gt;(maxBytes?)</code> reads under that cap and parses JSON.
       </p>
       <CodeBlock code={BOUNDED} />
       <p>
-        Over-cap throws a flat <code>413</code>, a malformed <code>Content-Length</code> a <code>400</code>,
-        bad JSON a <code>400</code> - thrown as control-flow <code>Response</code>s the lifecycle catches,
-        so the cap can't be silently skipped. Use a larger finite <code>bodyLimit</code> for an upload route,
-        or pass a smaller <code>maxBytes</code> to tighten an individual read.
+        An over-cap read is rejected with a flat <code>413</code>; a malformed{" "}
+        <code>Content-Length</code> gets a <code>400</code>. <code>c.boundedJson</code> also returns{" "}
+        <code>400</code> for malformed or rejected JSON. Set a larger finite route{" "}
+        <code>bodyLimit</code> for an upload, or a smaller <code>maxBytes</code> to tighten an individual read.
       </p>
       <p>
         The cap is enforced on the bytes actually <b>delivered</b>, never on the number the caller wrote in{" "}
@@ -508,12 +512,17 @@ export default function Security() {
 
       <h2>Prototype-poisoning defense</h2>
       <p>
-        Every JSON body nifra parses - the schema-validated route and <code>c.boundedJson</code>
-        alike - is screened for the prototype-pollution shape: an own <code>__proto__</code> key, or
-        a <code>constructor</code> whose value carries a <code>prototype</code>. <code>JSON.parse</code>
+        The schema body reader and <code>c.boundedJson</code> screen parsed JSON for the prototype-pollution
+        shape: an own <code>__proto__</code> key, or a <code>constructor</code> whose value carries a{" "}
+        <code>prototype</code>. <code>JSON.parse</code>
         creates these as ordinary data properties, and the damage lands later, when innocent code does{" "}
         <code>{"{ ...body }"}</code>, <code>Object.assign(target, body)</code>, or a deep merge and
-        walks that key onto a real prototype. The screen is on by default.
+        walks that key onto a real prototype. This screen is on by default for those guarded readers.
+      </p>
+      <p>
+        Direct <code>c.req.json()</code> reads are still subject to the body-size cap, but do not apply the{" "}
+        <code>protoPoisoning</code> policy. Treat their parsed object keys as untrusted before merging; use{" "}
+        <code>c.boundedJson</code> when you want Nifra to apply that policy.
       </p>
       <CodeBlock code={PROTO} lang="ts" />
       <p>
@@ -689,8 +698,9 @@ export default function Security() {
       </p>
       <CodeBlock code={UPLOADS} />
       <p>
-        Pair it with <code>c.boundedBody</code> to also bound the <i>read</i>: cap the read, then validate
-        the buffered bytes. The detection alone is <code>detectFileType(bytes)</code> from{" "}
+        Direct request reads already follow the route&rsquo;s body limit. Use <code>c.boundedBody</code> to
+        set an explicit cap for the bytes you pass to <code>validateUpload</code>. The detection alone is{" "}
+        <code>detectFileType(bytes)</code> from{" "}
         <code>@nifrajs/core/file-type</code> (returns <code>{`{ mime, ext }`}</code> or <code>null</code>),
         covering common image / A-V / archive types.
       </p>
@@ -804,8 +814,8 @@ export default function Security() {
         </li>
         <li>
           <code>bodyLimit</code> - a cheap <code>Content-Length</code> pre-filter that rejects oversized
-          bodies before routing (fails closed with <code>411</code> on a length-less body). The read-time
-          guard above (<code>c.boundedBody</code> / schema cap) remains the source of truth.
+          bodies before routing (fails closed with <code>411</code> on a length-less body). The route&rsquo;s
+          read-time body limit applies to direct reads, schema validation, and bounded readers.
         </li>
       </ul>
 

@@ -4536,10 +4536,13 @@ left that lane. If a route looks like production, the contract costs nothing: de
 
 ### Bounded request bodies
 
-Nifra caps every route body at `maxBodyBytes` by default, including schema-less routes
-that read `c.req` directly. Set a finite route `bodyLimit` for endpoints such
-as file uploads that need a larger cap. `c.boundedBody(maxBytes)` sets an explicit
-per-read cap, and `c.boundedJson<T>(maxBytes?)` reads and parses JSON under a cap.
+Every HTTP route has a body limit, defaulting to `maxBodyBytes` (1,000,000 bytes).
+Nifra enforces it when the body is read, including direct
+`c.req`/`c.request` reads such as `json()`,
+`arrayBuffer()`, `text()`, and the raw stream. A route can explicitly opt out with
+`bodyLimit: "unlimited"`.
+`c.boundedBody(maxBytes?)` sets an explicit per-read cap;
+`c.boundedJson<T>(maxBytes?)` reads under that cap and parses JSON.
 
 ```ts
 import { server } from "@nifrajs/core/server"
@@ -4562,10 +4565,10 @@ app.post("/rpc", async (c) => {
 })
 ```
 
-Over-cap throws a flat `413`, a malformed `Content-Length` a `400`,
-bad JSON a `400` - thrown as control-flow `Response`s the lifecycle catches,
-so the cap can't be silently skipped. Use a larger finite `bodyLimit` for an upload route,
-or pass a smaller `maxBytes` to tighten an individual read.
+An over-cap read is rejected with a flat `413`; a malformed
+`Content-Length` gets a `400`. `c.boundedJson` also returns
+`400` for malformed or rejected JSON. Set a larger finite route
+`bodyLimit` for an upload, or a smaller `maxBytes` to tighten an individual read.
 
 The cap is enforced on the bytes actually **delivered**, never on the number the caller wrote in
 `Content-Length`. That distinction is the whole defense: an adapter that rebuilds a
@@ -4588,12 +4591,16 @@ through the streaming guard.
 
 ### Prototype-poisoning defense
 
-Every JSON body nifra parses - the schema-validated route and `c.boundedJson`
-alike - is screened for the prototype-pollution shape: an own `__proto__` key, or
-a `constructor` whose value carries a `prototype`. `JSON.parse`
+The schema body reader and `c.boundedJson` screen parsed JSON for the prototype-pollution
+shape: an own `__proto__` key, or a `constructor` whose value carries a
+`prototype`. `JSON.parse`
 creates these as ordinary data properties, and the damage lands later, when innocent code does
 `{ ...body }`, `Object.assign(target, body)`, or a deep merge and
-walks that key onto a real prototype. The screen is on by default.
+walks that key onto a real prototype. This screen is on by default for those guarded readers.
+
+Direct `c.req.json()` reads are still subject to the body-size cap, but do not apply the
+`protoPoisoning` policy. Treat their parsed object keys as untrusted before merging; use
+`c.boundedJson` when you want Nifra to apply that policy.
 
 ```ts
 import { server } from "@nifrajs/core/server"
@@ -4870,8 +4877,9 @@ app.post(
 )
 ```
 
-Pair it with `c.boundedBody` to also bound the _read_: cap the read, then validate
-the buffered bytes. The detection alone is `detectFileType(bytes)` from
+Direct request reads already follow the route's body limit. Use `c.boundedBody` to
+set an explicit cap for the bytes you pass to `validateUpload`. The detection alone is
+`detectFileType(bytes)` from
 `@nifrajs/core/file-type` (returns `{ mime, ext }` or `null`),
 covering common image / A-V / archive types.
 
@@ -5024,7 +5032,8 @@ const app = server()
   // X-Forwarded-For is never believed.
   .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"] }))
   // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a
-  // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)
+  // length-less body. This is the cheap pre-filter; the route's cap on direct and
+  // framework reads is the read-time guard.
   .use(bodyLimit({ maxBytes: 1_000_000 }))
 ```
 
@@ -5045,8 +5054,8 @@ trustworthy client IP can be derived, and never trusts `X-Forwarded-For` unless 
 
 -
 `bodyLimit` - a cheap `Content-Length` pre-filter that rejects oversized
-bodies before routing (fails closed with `411` on a length-less body). The read-time
-guard above (`c.boundedBody` / schema cap) remains the source of truth.
+bodies before routing (fails closed with `411` on a length-less body). The route's
+read-time body limit applies to direct reads, schema validation, and bounded readers.
 
 ### Security response headers - `securityHeaders`
 
@@ -19472,9 +19481,12 @@ const app = server()
 - **`rateLimit(options)`** - `429` + `Retry-After` + `RateLimit-*` headers, with a
   pluggable `RateLimitStore`. The default bucket key is the caller IP the server resolved (the
   socket peer, or the app's `clientIp` trust declaration behind a proxy); a custom `key`, trusted
-  single-IP `header`, or `trustedProxies` overrides it. With no caller IP it fails closed (`500`)
-  instead of silently sharing one bucket. The bundled `MemoryStore` **refuses to run in production** (a per-instance
-  limiter is unsafe across instances) - provide a shared store (Redis, etc.) there.
+  single-IP `header`, or `trustedProxies` overrides it. A configured header must contain exactly one
+  valid IP; comma-separated or malformed values fall through to configured `trustedProxies` or
+  `allowGlobalKey` fallbacks. Without a usable key or explicit global fallback, requests fail closed
+  (`500`) instead of silently sharing one bucket. The bundled `MemoryStore` **refuses to run in
+  production** (a per-instance limiter is unsafe across instances) - provide a shared store (Redis,
+  etc.) there.
 - **`cache({ store, ttlMs })` / `responseCache(...)`** - full response cache with a pluggable
   store, `Vary`-aware keys, `Age`, byte caps, and `Cache-Control` / `Set-Cookie` safety defaults.
   `MemoryResponseCache` is dev/single-instance only unless explicitly allowed in production.
