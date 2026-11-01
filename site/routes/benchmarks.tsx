@@ -365,9 +365,12 @@ export default function Benchmarks() {
             sequentially on one host; each table names its CPU, platform, and capture date.
           </p>
           <p className="note">
-            These are the previous local captures, not results from the accuracy CI run. That run
-            produced no memory artifact; the tables below retain their original capture date and
-            machine for each runtime. See the <a href={SSR_CAPTURED.sourceUrl}>accuracy CI run</a>.
+            These captures come from the successful{" "}
+            <a href="https://github.com/nifrajs/nifra/actions/runs/41327120547">
+              accuracy CI memory-only run
+            </a>{" "}
+            on 2026-11-01. They replace the previous local captures; each table names the Linux
+            runner, CPU, runtime, and capture date recorded by that run.
           </p>
           <h3>Resident memory after POST</h3>
           <p className="note">
