@@ -1196,9 +1196,9 @@ function escapeHtml(value: string): string {
  * mirroring {@link serializeData}'s posture for the data-global script. Idempotent on already-safe text.
  */
 function escapeScriptContent(content: string): string {
-  // Order matters: rewrite `]]>` first (its `>` becomes `>`), then every `<` (covers `</` and
-  // `<!--` in one pass). `<` → `<`; the lone `>` of `]]>` → `>`. A bare `>` elsewhere is
-  // harmless in script data, so only the `]]>` close is targeted for `>`.
+  // Order matters: rewrite `]]>` first (its `>` becomes the literal `\u003e`), then every `<`
+  // (covers `</` and `<!--` in one pass). `<` becomes the literal `\u003c`. A bare `>` elsewhere
+  // is harmless in script data, so only the `]]>` close is escaped.
   return content.replaceAll("]]>", "]]\\u003e").replaceAll("<", "\\u003c")
 }
 

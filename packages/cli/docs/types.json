@@ -8151,6 +8151,13 @@
     "signature": "export type JoinedRow<Left extends Record<string, unknown>, Right extends Record<string, unknown>, Cardinality extends JoinCardinality> = {\n    readonly left: Entry<Left>;\n    readonly right: Cardinality extends \"one-to-one\" ? Entry<Right> | null : ReadonlyArray<Entry<Right>>;\n};"
   },
   {
+    "name": "JsonByteLimitError",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class JsonByteLimitError extends RangeError {\n    constructor();\n}",
+    "doc": "/** A JSON value would exceed the caller's UTF-8 byte budget. */"
+  },
+  {
     "name": "JsonReplyContext",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -12395,7 +12402,7 @@
     "name": "RateLimitOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface RateLimitOptions {\n    /** Where counters live. `MemoryStore` for dev; a shared store in production. */\n    readonly store: RateLimitStore;\n    /** Max requests allowed per window. */\n    readonly max: number;\n    /** Window length, in milliseconds. */\n    readonly windowMs: number;\n    /**\n     * How many trusted reverse proxies sit in front of the app and append to `X-Forwarded-For`.\n     * Default `0`. Prefer the app-level `server({ clientIp: { trustedHops } })` declaration, which the\n     * default key already honors; this option is for a limiter that must read XFF on its own.\n     *\n     * The default key reads the client IP from `X-Forwarded-For` as the address your **edge** proxy\n     * observed - the entry `trustedProxies` from the right (1 proxy → the rightmost hop; 2 → the\n     * second-from-right; …). Your proxies append on the right, so a client can only inject fake hops on\n     * the *left*, which this skips → not spoofable when `trustedProxies` matches your topology.\n     *\n     * ⚠️ With the default `0`, `X-Forwarded-For` is treated as fully client-controlled and **ignored**.\n     * Reading the\n     * *first* XFF hop - the old behavior - let any client mint a fresh bucket per request and defeat the\n     * limiter.\n     */\n    readonly trustedProxies?: number;\n    /** Exact trusted single-IP header, e.g. an infra-set `x-real-ip`. Not read unless configured. */\n    readonly header?: string;\n    /**\n     * One shared bucket for every request that {@link header}/{@link trustedProxies} cannot key. Off by\n     * default because it lets one client consume the quota for everyone. Enable only for intentional\n     * global throttles; with neither `header` nor `trustedProxies` set, every request shares the bucket.\n     */\n    readonly allowGlobalKey?: boolean;\n    /**\n     * Bucket key for a request. Overrides the default key entirely - e.g. an authenticated user id.\n     * `platform.clientIp` is the caller the app's `clientIp` trust declaration derived (the socket peer\n     * when none is declared).\n     *\n     * It may return a promise, for a key that needs async work such as verifying a signed session\n     * cookie with WebCrypto. A key that throws or rejects is charged to the client IP the default key\n     * derives, so a forged or expired credential never earns a bucket of its own; when no client IP is\n     * known either, the request is refused with a `500`, as an unkeyable request always is.\n     */\n    readonly key?: (req: Request, platform?: Platform) => string | Promise<string>;\n    /**\n     * Leave a request uncharged: it is not counted and carries no `RateLimit-*` headers. Runs before\n     * the key is derived, so a health check or an internal probe never touches the store.\n     */\n    readonly skip?: (req: Request, platform?: Platform) => boolean;\n}"
+    "signature": "export interface RateLimitOptions {\n    /** Where counters live. `MemoryStore` for dev; a shared store in production. */\n    readonly store: RateLimitStore;\n    /** Max requests allowed per window. */\n    readonly max: number;\n    /** Window length, in milliseconds. */\n    readonly windowMs: number;\n    /**\n     * How many trusted reverse proxies sit in front of the app and append to `X-Forwarded-For`.\n     * Default `0`. Prefer the app-level `server({ clientIp: { trustedHops } })` declaration, which the\n     * default key already honors; this option is for a limiter that must read XFF on its own.\n     *\n     * The default key reads the client IP from `X-Forwarded-For` as the address your **edge** proxy\n     * observed - the entry `trustedProxies` from the right (1 proxy → the rightmost hop; 2 → the\n     * second-from-right; …). Your proxies append on the right, so a client can only inject fake hops on\n     * the *left*, which this skips → not spoofable when `trustedProxies` matches your topology.\n     *\n     * ⚠️ With the default `0`, `X-Forwarded-For` is treated as fully client-controlled and **ignored**.\n     * Reading the\n     * *first* XFF hop - the old behavior - let any client mint a fresh bucket per request and defeat the\n     * limiter.\n     */\n    readonly trustedProxies?: number;\n    /**\n     * Trusted header containing exactly one IP, e.g. an infra-overwritten `x-real-ip`. A valid address is\n     * canonicalized into the same bucket as the resolved caller IP (IPv4 normalized, IPv6 grouped by\n     * `/64`). Missing, malformed, or comma-separated values fall through to `trustedProxies` /\n     * `allowGlobalKey`; without a safe fallback the request fails closed with `500`.\n     */\n    readonly header?: string;\n    /**\n     * One shared bucket for every request that {@link header}/{@link trustedProxies} cannot key. Off by\n     * default because it lets one client consume the quota for everyone. Enable only for intentional\n     * global throttles; with neither `header` nor `trustedProxies` set, every request shares the bucket.\n     */\n    readonly allowGlobalKey?: boolean;\n    /**\n     * Bucket key for a request. Overrides the default key entirely - e.g. an authenticated user id.\n     * `platform.clientIp` is the caller the app's `clientIp` trust declaration derived (the socket peer\n     * when none is declared).\n     *\n     * It may return a promise, for a key that needs async work such as verifying a signed session\n     * cookie with WebCrypto. A key that throws or rejects is charged to the client IP the default key\n     * derives, so a forged or expired credential never earns a bucket of its own; when no client IP is\n     * known either, the request is refused with a `500`, as an unkeyable request always is.\n     */\n    readonly key?: (req: Request, platform?: Platform) => string | Promise<string>;\n    /**\n     * Leave a request uncharged: it is not counted and carries no `RateLimit-*` headers. Runs before\n     * the key is derived, so a health check or an internal probe never touches the store.\n     */\n    readonly skip?: (req: Request, platform?: Platform) => boolean;\n}"
   },
   {
     "name": "RateLimitResult",
@@ -17249,7 +17256,7 @@
     "kind": "type",
     "package": "@nifrajs/uploads",
     "signature": "export type UploadResult = {\n    readonly ok: true;\n    readonly mime: string;\n    readonly ext: string;\n    readonly bytes: Uint8Array;\n} | {\n    readonly ok: false;\n    readonly reason: \"too_large\" | \"empty\" | \"unrecognized\" | \"type_not_allowed\";\n    /** The sniffed type, when one was detected (set for `type_not_allowed`). */\n    readonly detected?: FileType;\n};",
-    "doc": "/**\n * Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`).\n * Pair with `c.boundedBody(maxBytes)` from `@nifrajs/core` to bound the *read* itself: read the body\n * under the cap, then `validateUpload(bytes, …)` to confirm the size + sniff the type.\n */"
+    "doc": "/**\n * Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`).\n * Direct request reads follow the configured route body limit. Use `c.boundedBody(maxBytes)` from `@nifrajs/core`\n * for an explicit per-read cap, then `validateUpload(bytes, …)` to confirm the size and sniff the type.\n */"
   },
   {
     "name": "UrlParts",
@@ -18357,6 +18364,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function boundaryModeKey(mode: BoundaryMode): string;",
     "doc": "/** Stable mode label for adapter registries and diagnostics. */"
+  },
+  {
+    "name": "boundedJsonText",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function boundedJsonText(value: unknown, maxBytes: number): {\n    readonly text: string;\n    readonly byteLength: number;\n} | undefined;",
+    "doc": "/**\n * Serialize a JSON value only when its exact UTF-8 size fits `maxBytes`. The preflight snapshots\n * enumerable values and `toJSON` results while counting, so an oversized output is rejected before\n * constructing the escaped JSON string or its encoded byte buffer. Returns `undefined` for a root\n * value with no JSON representation, matching `JSON.stringify`.\n */"
   },
   {
     "name": "boundedSqliteQuery",

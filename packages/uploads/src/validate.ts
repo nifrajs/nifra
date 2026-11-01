@@ -2,8 +2,8 @@ import { detectFileType, type FileType } from "@nifrajs/core/file-type"
 
 /**
  * Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`).
- * Pair with `c.boundedBody(maxBytes)` from `@nifrajs/core` to bound the *read* itself: read the body
- * under the cap, then `validateUpload(bytes, …)` to confirm the size + sniff the type.
+ * Direct request reads follow the configured route body limit. Use `c.boundedBody(maxBytes)` from `@nifrajs/core`
+ * for an explicit per-read cap, then `validateUpload(bytes, …)` to confirm the size and sniff the type.
  */
 
 export type UploadResult =

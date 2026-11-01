@@ -5,7 +5,7 @@ import type {
   NodeResponseContext,
   Platform,
 } from "@nifrajs/core/server"
-import { ipBucket } from "./_ip.ts"
+import { ipBucket, ipBucketForAddress } from "./_ip.ts"
 import { guardName, setNodeHeader, withHeaders } from "./_utils.ts"
 
 export interface RateLimitResult {
@@ -153,7 +153,12 @@ export interface RateLimitOptions {
    * limiter.
    */
   readonly trustedProxies?: number
-  /** Exact trusted single-IP header, e.g. an infra-set `x-real-ip`. Not read unless configured. */
+  /**
+   * Trusted header containing exactly one IP, e.g. an infra-overwritten `x-real-ip`. A valid address is
+   * canonicalized into the same bucket as the resolved caller IP (IPv4 normalized, IPv6 grouped by
+   * `/64`). Missing, malformed, or comma-separated values fall through to `trustedProxies` /
+   * `allowGlobalKey`; without a safe fallback the request fails closed with `500`.
+   */
   readonly header?: string
   /**
    * One shared bucket for every request that {@link header}/{@link trustedProxies} cannot key. Off by
@@ -241,7 +246,8 @@ function defaultKey(
   }
   if (header !== undefined) {
     const ip = req.headers.get(header)
-    if (ip !== null && ip.trim() !== "") return ipBucket(ip.trim())
+    const key = ip === null ? null : ipBucketForAddress(ip)
+    if (key !== null) return key
   }
   if (trustedProxies > 0) {
     const xff = req.headers.get("x-forwarded-for")
@@ -273,7 +279,8 @@ function nativeKey(
   }
   if (header !== undefined) {
     const ip = req.header(header)
-    if (ip !== null && ip.trim() !== "") return ipBucket(ip.trim())
+    const key = ip === null ? null : ipBucketForAddress(ip)
+    if (key !== null) return key
   }
   if (trustedProxies > 0) {
     const xff = req.header("x-forwarded-for")

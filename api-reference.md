@@ -2363,6 +2363,8 @@ Every public export of every package and documented subpath - name, kind, signat
   How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option.
 - **FormOrigins** _(type)_ - `type FormOrigins = ReadonlyArray<string> | ((origin: string) => boolean)`
   Origins besides the request's own whose HTML forms may post a body: exact origins, or a function that receives the request's `Origin`.
+- **JsonByteLimitError** _(class)_ - `class JsonByteLimitError`
+  A JSON value would exceed the caller's UTF-8 byte budget.
 - **MaybePromise** _(type)_ - `type MaybePromise<T> = T | Promise<T>`
 - **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
   Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
@@ -2378,6 +2380,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **answerNotFound** _(function)_ - `answerNotFound: <T, Env>(handler: NotFoundHandler<Env>, input: NotFoundInput<Env>, wrap: (response: Response | ResponseResult) => T, failed: (error: unknown) => T) => MaybePromise<T>`
 - **assertByteLimit** _(function)_ - `assertByteLimit: (value: number, name?: string) => void`
   Security/resource limits must be finite byte counts. Invalid values otherwise make `> maxBytes` comparisons fail open (notably for `NaN`) and can re-enable unbounded buffering.
+- **boundedJsonText** _(function)_ - `boundedJsonText: (value: unknown, maxBytes: number) => { readonly text: string; readonly byteLength: number; } | undefined`
+  Serialize a JSON value only when its exact UTF-8 size fits `maxBytes`. The preflight snapshots enumerable values and `toJSON` results while counting, so an oversized output is rejected before constructing the escaped JSON string or its encoded byte buffer. Returns `undefined` for a root value with …
 - **capBodyBytes** _(function)_ - `capBodyBytes: (request: Request, maxBytes: number) => Request`
   A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes` arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the handler its own `R…
 - **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined) => void`
@@ -5262,7 +5266,7 @@ _No named exports (side-effect entrypoint)._
 - **SignDownloadUrlOptions** _(interface)_ - `interface SignDownloadUrlOptions`
 - **StripImageMetadataOptions** _(interface)_ - `interface StripImageMetadataOptions`
 - **UploadResult** _(type)_ - `type UploadResult`
-  Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`). Pair with `c.boundedBody(maxBytes)` from `@nifrajs/core` to bound the *read* itself: read the body under the cap, then `validateUpload(bytes, …)` to confirm the size + sniff the type.
+  Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`). Direct request reads follow the configured route body limit. Use `c.boundedBody(maxBytes)` from `@nifrajs/core` for an explicit per-read cap, then `validateUpload(bytes, …)` to confirm the size and sn…
 - **ValidateUploadOptions** _(interface)_ - `interface ValidateUploadOptions`
 - **signDownloadUrl** _(function)_ - `signDownloadUrl: (url: string, secret: string, options: SignDownloadUrlOptions) => Promise<string>`
   Sign a relative URL/path → a relative URL with `?vexp=&vsig=` appended. Throws a `RangeError` for an `expiresInSeconds` or `now` that is not a whole number of seconds, since {@link verifyDownloadUrl} accepts only a whole-second expiry.

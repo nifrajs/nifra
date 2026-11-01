@@ -134,6 +134,17 @@ describe("mountA2A", () => {
     expect(card.version).toBe("1.2.3")
   })
 
+  test("returns a safe server error when the agent card is not JSON-serializable", async () => {
+    const { app, callGet } = captureApp()
+    const invalidCard = { ...cardInfo }
+    Reflect.set(invalidCard, "description", 1n)
+    mountA2A(app, { agent: definition(), card: invalidCard, ports: ports() })
+
+    const response = await callGet(new Request("http://local/.well-known/agent-card.json"))
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: "response_serialization_failed" })
+  })
+
   test("SendMessage completes a task with a JSON output artifact", async () => {
     const { app, callPost } = captureApp()
     mountA2A(app, { agent: definition(), card: cardInfo, ports: ports() })
