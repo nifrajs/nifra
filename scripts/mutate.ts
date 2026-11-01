@@ -1152,17 +1152,19 @@ async function main(argv: readonly string[]): Promise<number> {
       baselineMs?: number,
       baselineFailures?: string[],
       baselineExitCode?: number | null,
-    ): FileReport => ({
-      file: target.file,
-      tests: relTests,
-      baselineMs,
-      baselineFailures,
-      ...(baselineExitCode === undefined ? {} : { baselineExitCode }),
-      mutants: results,
-      unusedEquivalents: target.lines === undefined && owner ? unused : [],
-      baselined: mutants.filter((m) => known.matched.has(m.id)).map((m) => m.id),
-      unusedBaseline: owner ? known.unused : [],
-    })
+    ): FileReport => {
+      const base: FileReport = {
+        file: target.file,
+        tests: relTests,
+        baselineMs,
+        baselineFailures,
+        mutants: results,
+        unusedEquivalents: target.lines === undefined && owner ? unused : [],
+        baselined: mutants.filter((m) => known.matched.has(m.id)).map((m) => m.id),
+        unusedBaseline: owner ? known.unused : [],
+      }
+      return baselineExitCode === undefined ? base : { ...base, baselineExitCode }
+    }
     const pending = mutants.filter((m) => {
       const reason = reasons.get(m.id)
       if (reason !== undefined) results.push({ ...m, status: "equivalent", killedBy: [], reason })
