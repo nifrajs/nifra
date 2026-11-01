@@ -33,7 +33,7 @@ export async function serveApp(options: {
 }> {
   const routesDir = join(options.appDir, "routes")
   const manifest = discoverRoutes(routesDir)
-  const entryPath = join(options.appDir, ".entry.ts")
+  const entryPath = join(options.appDir, `.entry-${crypto.randomUUID()}.ts`)
   const source = generateClientEntry(manifest, {
     clientModule: options.clientModule,
     resolve: (file) => `./${relative(dirname(entryPath), join(routesDir, file))}`,
