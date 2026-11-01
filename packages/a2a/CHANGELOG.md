@@ -1,5 +1,11 @@
 # @nifrajs/a2a
 
+## 5.11.0
+
+### Patch Changes
+
+- 2f99093: Bound JSON serialization before constructing A2A JSON and SSE output, and apply the same byte limits to agent SSE frames.
+
 ## 5.10.0
 
 No changes in this release.

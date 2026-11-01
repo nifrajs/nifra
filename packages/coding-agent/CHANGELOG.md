@@ -1,5 +1,20 @@
 # @nifrajs/coding-agent
 
+## 5.11.0
+
+### Patch Changes
+
+- Updated dependencies [d76f9d7]
+- Updated dependencies [9a0f0a0]
+- Updated dependencies [2f99093]
+- Updated dependencies [abf5a0b]
+  - @nifrajs/core@5.11.0
+  - @nifrajs/agent@5.11.0
+  - @nifrajs/jobs@5.11.0
+  - @nifrajs/agent-protocol@5.11.0
+  - @nifrajs/agent-review@5.11.0
+  - @nifrajs/pi@5.11.0
+
 ## 5.10.0
 
 ### Patch Changes

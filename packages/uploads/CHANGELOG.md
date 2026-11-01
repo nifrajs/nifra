@@ -1,5 +1,11 @@
 # @nifrajs/uploads
 
+## 5.11.0
+
+### Patch Changes
+
+- bcbdd4e: Reject oversized image dimensions before metadata stripping decodes the source, using the upload pixel limit and a stable `ImagePixelLimitError`.
+
 ## 5.10.0
 
 No changes in this release.

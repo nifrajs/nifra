@@ -1,5 +1,16 @@
 # @nifrajs/core
 
+## 5.11.0
+
+### Minor Changes
+
+- d76f9d7: The three auth packages' guards deny a missing session through one owner: `@nifrajs/core/guard-deny` now holds `UnauthenticatedResponse`, the default `401` it builds (`unauthenticatedResult`), and the fail-loud check `assertUnauthenticated`, which refuses a denial that both redirects and answers, and a status outside 400-599. A new argument carries the package name, so every error keeps its prefix (`[nifra/auth]`, `[nifra/authjs]`, `[nifra/better-auth]`). Each package re-exports `UnauthenticatedResponse` and keeps its own guard options and its redirect rejection; no behavior and no message changed. The new subpath imports only the status lane, so it costs nothing beyond the grammar itself.
+
+### Patch Changes
+
+- 9a0f0a0: `withIdleTimeout(c, seconds, work)` accepts the context of any route, including one that declares a `body`, `query` or `headers` schema.
+- abf5a0b: Resolve the single-copy declaration from the app root when Bun runs a filtered workspace script.
+
 ## 5.10.0
 
 ### Minor Changes

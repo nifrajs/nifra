@@ -1,5 +1,9 @@
 # @nifrajs/storage
 
+## 5.11.0
+
+No changes in this release.
+
 ## 5.10.0
 
 No changes in this release.

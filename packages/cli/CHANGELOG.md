@@ -1,5 +1,33 @@
 # @nifrajs/cli
 
+## 5.11.0
+
+### Minor Changes
+
+- e7660e3: When the project installs a different `@nifrajs/cli` during an MCP session, `nifra mcp` starts that CLI, replays the handshake to it, and serves the rest of the session from it, then sends `notifications/tools/list_changed`. Before, the server went on listing and running the tools of the release it started with until it was restarted. A project CLI that does not answer the handshake leaves the session where it was.
+- 0c9ce18: `nifra upgrade --from <version>` names the version to upgrade from. Without it the starting version is the lowest one a `package.json` pins, so a workspace whose pins were bumped by hand has no recipe left to apply; with it, the recipes after that version apply. An option or extra argument `nifra upgrade` does not know is refused instead of ignored, and `nifra upgrade --help` prints the usage. The `servePublicDir` rewrite writes the quote style of the file it edits.
+- 0c9ce18: The 5.10 upgrade wraps a string path given to `navigate()`, `redirect()` and React's `Link`, `NavLink` and `Navigate` in `rawHref(path)`, which sends the request the string did, and imports `rawHref` beside the name the file already takes from `@nifrajs/web` or an adapter's `/router` entry. A destination built from a template literal or a concatenation, a `navigate({ to })` object, and a path `rawHref` refuses are listed by their line in the rewritten file. `.vue` and `.svelte` templates are left for `tsc`.
+
+### Patch Changes
+
+- 9a76620: `nifra doctor` reports a renamed session cookie only where `name` is given a string, so a type such as `sessionToken: { name: string }` in a wrapper package no longer asks for `identityCookies`.
+- Updated dependencies [3c8024d]
+- Updated dependencies [d76f9d7]
+- Updated dependencies [9a0f0a0]
+- Updated dependencies [bc40a1d]
+- Updated dependencies [97a55bf]
+- Updated dependencies [abf5a0b]
+  - @nifrajs/web@5.11.0
+  - @nifrajs/core@5.11.0
+  - @nifrajs/client@5.11.0
+  - @nifrajs/i18n@5.11.0
+  - @nifrajs/mcp@5.11.0
+  - @nifrajs/schema@5.11.0
+  - @nifrajs/testing@5.11.0
+  - @nifrajs/agent-review@5.11.0
+  - @nifrajs/mcp-db@5.11.0
+  - @nifrajs/runner@5.11.0
+
 ## 5.10.0
 
 ### Minor Changes
