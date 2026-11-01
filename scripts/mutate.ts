@@ -1157,7 +1157,7 @@ async function main(argv: readonly string[]): Promise<number> {
       tests: relTests,
       baselineMs,
       baselineFailures,
-      baselineExitCode,
+      ...(baselineExitCode === undefined ? {} : { baselineExitCode }),
       mutants: results,
       unusedEquivalents: target.lines === undefined && owner ? unused : [],
       baselined: mutants.filter((m) => known.matched.has(m.id)).map((m) => m.id),
