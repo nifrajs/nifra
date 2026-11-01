@@ -121,6 +121,17 @@ const supersedes: Supersede[] = [
 
 describe("a superseded navigation", () => {
   for (const later of supersedes) {
+    test(`drops an older navigation once ${later.name} supersedes it`, async () => {
+      const about = slowAbout()
+      const router = later.router(about.fetchData)
+      const supersede = await later.run(router)
+      const first = router.navigate("/about")
+      await supersede()
+      about.release(1)
+      await first
+      expect(router.snapshot().routeId).not.toBe("about")
+    })
+
     test(`stays dropped after ${later.name}, and a navigation after that still lands`, async () => {
       const about = slowAbout()
       const router = later.router(about.fetchData)

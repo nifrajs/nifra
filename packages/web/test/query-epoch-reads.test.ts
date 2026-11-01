@@ -56,7 +56,22 @@ describe("a new identity epoch cookie", () => {
         await Promise.all([held.fetch(), other.fetch()])
         expect(other.snapshot().data).toBe("other")
         await rotate()
-        await way(client, held)
+        const result = await way(client, held)
+        switch (name) {
+          case "query()":
+          case "infiniteQuery()":
+            expect(result).toHaveProperty("snapshot")
+            break
+          case "fetch()":
+          case "refetch()":
+            expect(result).toBe("loaded")
+            break
+          case "dehydrate()":
+            expect(result).toMatchObject({ queries: [] })
+            break
+          default:
+            expect(result).toBeUndefined()
+        }
         expect(other.snapshot().data).toBeUndefined()
       })
     })
@@ -72,7 +87,7 @@ describe("a new identity epoch cookie", () => {
       const other = client.query(["other"], async () => "other")
       await Promise.all([paged.fetchNextPage(), other.fetch()])
       await rotate()
-      paged.hasNextPage()
+      expect(paged.hasNextPage()).toBe(false)
       expect(other.snapshot().data).toBeUndefined()
       await other.fetch()
       await rotate()

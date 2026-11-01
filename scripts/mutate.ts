@@ -905,6 +905,8 @@ export interface FileReport {
   readonly tests: ReadonlyArray<{ readonly file: string; readonly depth: number }>
   readonly baselineMs: number | undefined
   readonly baselineFailures: readonly string[] | undefined
+  /** The unmutated test process exit code, when a baseline run was attempted. */
+  readonly baselineExitCode?: number | null
   readonly mutants: readonly MutantResult[]
   readonly unusedEquivalents: readonly EquivalentEntry[]
   /** Ids of the mutants `mutation-baseline.json` lists as known survivors. */
@@ -926,7 +928,9 @@ export function gateFailures(reports: readonly FileReport[]): string[] {
   const failures: string[] = []
   for (const r of reports) {
     const known = new Set(r.baselined ?? [])
-    const broken = (r.baselineFailures ?? []).length > 0
+    const broken =
+      (r.baselineFailures ?? []).length > 0 ||
+      (r.baselineExitCode !== undefined && r.baselineExitCode !== 0)
     if (broken) failures.push(`${r.file}: the tests fail with no mutant in place`)
     for (const m of r.mutants) {
       const at = `${r.file}:${m.line} ${m.op} \`${m.from}\``
@@ -1144,11 +1148,16 @@ async function main(argv: readonly string[]): Promise<number> {
       continue
     }
     const results: MutantResult[] = []
-    const report = (baselineMs?: number, baselineFailures?: string[]): FileReport => ({
+    const report = (
+      baselineMs?: number,
+      baselineFailures?: string[],
+      baselineExitCode?: number | null,
+    ): FileReport => ({
       file: target.file,
       tests: relTests,
       baselineMs,
       baselineFailures,
+      baselineExitCode,
       mutants: results,
       unusedEquivalents: target.lines === undefined && owner ? unused : [],
       baselined: mutants.filter((m) => known.matched.has(m.id)).map((m) => m.id),
@@ -1167,10 +1176,18 @@ async function main(argv: readonly string[]): Promise<number> {
     }
     const files = relTests.map((t) => t.file)
     const baseline = await runTests(root, files, junit, 15 * 60_000, false)
-    if (baseline.cases === undefined) {
-      console.error(`${target.file}: the run without a mutant produced no report`)
+    if (baseline.cases === undefined || baseline.exitCode !== 0) {
+      console.error(
+        `${target.file}: the run without a mutant ${
+          baseline.cases === undefined
+            ? "produced no report"
+            : `exited ${String(baseline.exitCode)}`
+        }`,
+      )
       for (const m of pending) results.push({ ...m, status: "not-run", killedBy: [] })
-      reports.push(report(baseline.ms, [NO_REPORT]))
+      reports.push(
+        report(baseline.ms, baseline.cases === undefined ? [NO_REPORT] : [], baseline.exitCode),
+      )
       continue
     }
     const base = { cases: baseline.cases, errors: baseline.errors, exitCode: baseline.exitCode }
@@ -1202,7 +1219,7 @@ async function main(argv: readonly string[]): Promise<number> {
       restore = undefined
     }
     results.sort((a, b) => a.id - b.id)
-    reports.push(report(baseline.ms, baselineFailures))
+    reports.push(report(baseline.ms, baselineFailures, baseline.exitCode))
   }
   rmSync(junit, { force: true })
 

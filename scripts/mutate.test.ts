@@ -320,6 +320,7 @@ describe("baseline and targets", () => {
       tests: [],
       baselineMs: 1,
       baselineFailures: [],
+      baselineExitCode: 0,
       mutants: [],
       unusedEquivalents: [],
       ...patch,
@@ -362,6 +363,11 @@ describe("baseline and targets", () => {
     ])
     expect(
       gateFailures([report({ baselineFailures: ["x"], mutants: [mutant(0, "not-run")] })]),
+    ).toEqual(["f.ts: the tests fail with no mutant in place"])
+    expect(
+      gateFailures([
+        report({ baselineFailures: [], baselineExitCode: 1, mutants: [mutant(0, "not-run")] }),
+      ]),
     ).toEqual(["f.ts: the tests fail with no mutant in place"])
   })
 })
