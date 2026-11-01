@@ -177,7 +177,9 @@ const HTTP: ReadonlyArray<RuntimeTable> = HTTP_WORKLOADS
 /** Rank rows by geometric mean across the workloads - a single strong column (or a single weak
  * one) can't decide the order the way sorting by one workload alone would. */
 function geoMean(row: HttpRow): number {
-  const values = [row.getUsers, row.postUsers].map((v) => Number(v.replaceAll(",", "")))
+  const values = [row.getRoot, row.getUsers, row.getSearch, row.postUsers]
+    .filter((value): value is string => value !== undefined)
+    .map((value) => Number(value.replaceAll(",", "")))
   return Math.exp(values.reduce((sum, v) => sum + Math.log(v), 0) / values.length)
 }
 
@@ -233,7 +235,9 @@ function HttpTable({ table }: { table: RuntimeTable }) {
         <thead>
           <tr>
             <th>Framework</th>
+            <th className="num">GET /</th>
             <th className="num">GET /users/:id</th>
+            <th className="num">GET /search?query</th>
             <th className="num">POST /users</th>
           </tr>
         </thead>
@@ -243,7 +247,9 @@ function HttpTable({ table }: { table: RuntimeTable }) {
               <td>
                 <Named name={row.name} version={row.version} />
               </td>
+              <td className="num">{row.getRoot ?? "-"}</td>
               <td className="num">{row.getUsers}</td>
+              <td className="num">{row.getSearch ?? "-"}</td>
               <td className="num">{row.postUsers}</td>
             </tr>
           ))}
@@ -270,8 +276,8 @@ export default function Benchmarks() {
         Node meta-frameworks; multipliers use the uncached rows.
       </p>
       <p className="note">
-        Nifra's loader rows include the documented <code>loaderOutput</code> projection and schema
-        check.
+        Nifra also projects and validates <code>loaderOutput</code> for the client; comparator rows
+        have no equivalent output boundary.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (
@@ -313,9 +319,7 @@ export default function Benchmarks() {
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
       <Captured meta={HTTP_WORKLOADS_CAPTURED} />
-      <p className="lead">
-        Path-param GET and schema-validated POST, ranked by their geometric mean.
-      </p>
+      <p className="lead">Four workloads, ranked by their geometric mean.</p>
       <p className="note">
         Fastify on Bun/Deno uses <code>node:http</code> compatibility, not native ingress.
       </p>

@@ -65,7 +65,9 @@ export interface CapturedMeta {
 export interface HttpWorkloadRow {
   readonly name: string
   readonly version: string
+  readonly getRoot?: string
   readonly getUsers: string
+  readonly getSearch?: string
   readonly postUsers: string
   readonly nifra?: boolean
 }
@@ -383,7 +385,7 @@ export function httpSliceFromNode(
   return rows.sort((a, b) => b.reqs - a.reqs)
 }
 
-/** Convert the complete core GET/POST matrix to the canonical article/page slice. A partial runtime
+/** Convert the complete four-workload matrix to the canonical article/page slice. A partial runtime
  * result omits its table; the aggregate writer only publishes this slice when all runtimes ran. */
 export function httpWorkloadsFromResults(
   results: Record<
@@ -415,7 +417,9 @@ export function httpWorkloadsFromResults(
     if (source === undefined) continue
     const rows: HttpWorkloadRow[] = []
     for (const framework of runtime.frameworks) {
+      const root = source[framework]?.["GET /"]?.rps
       const get = source[framework]?.["GET /users/:id"]?.rps
+      const search = source[framework]?.["GET /search?query"]?.rps
       const post = source[framework]?.["POST /users"]?.rps
       if (
         get === undefined ||
@@ -429,7 +433,13 @@ export function httpWorkloadsFromResults(
       rows.push({
         name: display[framework] ?? framework,
         version: httpFrameworkVersion(framework),
+        ...(root !== undefined && Number.isFinite(root) && root >= 0
+          ? { getRoot: format(root) }
+          : {}),
         getUsers: format(get),
+        ...(search !== undefined && Number.isFinite(search) && search >= 0
+          ? { getSearch: format(search) }
+          : {}),
         postUsers: format(post),
         ...(framework === "nifra" ? { nifra: true } : {}),
       })

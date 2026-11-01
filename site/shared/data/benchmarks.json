@@ -165,26 +165,34 @@
         {
           "name": "Nifra",
           "version": "5.10.0",
+          "getRoot": "118,445",
           "getUsers": "116,778",
+          "getSearch": "108,239",
           "postUsers": "89,970",
           "nifra": true
         },
         {
           "name": "Fastify",
           "version": "5.12.7",
+          "getRoot": "80,833",
           "getUsers": "79,852",
+          "getSearch": "74,333",
           "postUsers": "62,231"
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
+          "getRoot": "117,835",
           "getUsers": "118,182",
+          "getSearch": "108,511",
           "postUsers": "88,766"
         },
         {
           "name": "Hono",
           "version": "4.13.13",
+          "getRoot": "108,818",
           "getUsers": "105,449",
+          "getSearch": "85,400",
           "postUsers": "78,569"
         }
       ]
@@ -196,32 +204,42 @@
         {
           "name": "Nifra",
           "version": "5.10.0",
+          "getRoot": "78,587",
           "getUsers": "76,882",
+          "getSearch": "73,692",
           "postUsers": "54,507",
           "nifra": true
         },
         {
           "name": "Fastify",
           "version": "5.12.7",
+          "getRoot": "74,968",
           "getUsers": "72,418",
+          "getSearch": "70,404",
           "postUsers": "51,849"
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
+          "getRoot": "60,204",
           "getUsers": "58,149",
+          "getSearch": "56,330",
           "postUsers": "27,517"
         },
         {
           "name": "Express",
           "version": "5.3.0",
+          "getRoot": "38,123",
           "getUsers": "36,419",
+          "getSearch": "35,693",
           "postUsers": "23,526"
         },
         {
           "name": "Hono",
           "version": "4.13.13",
+          "getRoot": "72,122",
           "getUsers": "68,805",
+          "getSearch": "52,872",
           "postUsers": "42,696"
         }
       ]
@@ -233,26 +251,34 @@
         {
           "name": "Nifra",
           "version": "5.10.0",
+          "getRoot": "115,332",
           "getUsers": "113,378",
+          "getSearch": "109,484",
           "postUsers": "86,949",
           "nifra": true
         },
         {
           "name": "Fastify",
           "version": "5.12.7",
+          "getRoot": "51,855",
           "getUsers": "50,262",
+          "getSearch": "49,888",
           "postUsers": "45,205"
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
+          "getRoot": "110,786",
           "getUsers": "108,067",
+          "getSearch": "104,679",
           "postUsers": "68,011"
         },
         {
           "name": "Hono",
           "version": "4.13.13",
+          "getRoot": "115,056",
           "getUsers": "109,044",
+          "getSearch": "84,524",
           "postUsers": "78,267"
         }
       ]
