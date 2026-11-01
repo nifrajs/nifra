@@ -1,20 +1,13 @@
 [extend]
 useDefault = true
 
-# Exact, non-secret fixtures used to exercise signing and server-only leak prevention. Restrict the
-# allowlist to test sources and the repo's dev-tool fixtures, so the same token-shaped values still
-# fail closed in product code.
+# Exact, non-secret fixtures used to exercise signing and server-only leak prevention. These values
+# are harmless wherever they appear; never path-allowlist test directories, so real credentials in
+# fixtures and dev-tool code remain detectable.
 [[allowlists]]
 description = "Documented cryptographic, protocol, and redaction-test fixtures"
-# A finding is exempt only when both its path and its exact fixture value match.
-condition = "AND"
+condition = "OR"
 regexTarget = "secret"
-paths = [
-  '''(?:^|/)packages/(?:auth|authjs|cli|core|env|image|middleware|node|pi|uploads|web)/(?:test|test-node)/''',
-  '''^(?:auth|authjs|cli|core|env|image|middleware|node|pi|uploads|web)/(?:test|test-node)/''',
-  '''(?:^|/)scripts/runtime-differential/''',
-  '''^scripts/runtime-differential/''',
-]
 regexes = [
   '''^0123456789abcdef0123456789abcdef$''',
   '''^integration-secret-at-least-32by$''',
@@ -28,4 +21,190 @@ regexes = [
   '''^sk_live_(?:abcdefghijklmnop|supersecret_value)$''',
   '''^sk-proj-abcdefghijklmnop1234\.$''',
   '''^test-secret-32-bytes-long-abcdef$''',
+]
+
+# These exact findings are test fixtures. Each path exception is attached only to its rule and
+# exact source file, and requires an exact fixture value as well as that path.
+
+[[allowlists]]
+description = "aws-access-token fixtures in packages/web/test/dev-feed.test.ts"
+targetRules = ["aws-access-token"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/dev-feed\\.test\\.ts$"]
+regexes = [
+  "^AKIAABCDEFGHIJKLMNOP$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/cli/test/check.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/check\\.test\\.ts$"]
+regexes = [
+  "^Zq8mW2vX9pLr4TbN7yKc3HdF$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/cli/test/db-tool.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/db-tool\\.test\\.ts$"]
+regexes = [
+  "^0123456789abcdef0123$",
+  "^abcdef0123456789abcd$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/cli/test/mcp-project-isolation.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/mcp-project-isolation\\.test\\.ts$"]
+regexes = [
+  "^0123456789abcdef0123$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/cli/test/mcp-run-capture.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/mcp-run-capture\\.test\\.ts$"]
+regexes = [
+  "^zyxwvutsrqponmlkjihgfedcba-98765$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/web/test/dev-ingest.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/dev-ingest\\.test\\.ts$"]
+regexes = [
+  "^zyxwvutsrqponmlkjihgfedcba-9876543210$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/web/test/live-invalidation.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/live-invalidation\\.test\\.ts$"]
+regexes = [
+  "^invalidation-test-secret-0123456789ab$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/web/test/secret-scan.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/secret-scan\\.test\\.ts$"]
+regexes = [
+  "^Zq8mW2vX9pLr4TbN7yKc3HdF$",
+  "^yourselfZq8mW2vX9pLr4Tb$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/web/test/server-components-build.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/server-components-build\\.test\\.ts$"]
+regexes = [
+  "^pg-prod-pass-7f3k2xQ9wLm4$",
+  "^tok-9f8e7d6c5b4a3z2y1x$",
+]
+
+[[allowlists]]
+description = "jwt fixtures in packages/cli/test/db-tool.test.ts"
+targetRules = ["jwt"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/db-tool\\.test\\.ts$"]
+regexes = [
+  "^eyJhbGciOiJIUzI1NiJ9\\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\\.c2lnbmF0dXJlLXNpZ25hdHVyZQ$",
+]
+
+[[allowlists]]
+description = "jwt fixtures in packages/web/test/dev-feed.test.ts"
+targetRules = ["jwt"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/dev-feed\\.test\\.ts$"]
+regexes = [
+  "^eyJhbGciOiJIUzI1NiJ9\\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\\.abcdefghijklmnopqrstuv$",
+]
+
+[[allowlists]]
+description = "stripe-access-token fixtures in packages/cli/test/check-script-surface.test.ts"
+targetRules = ["stripe-access-token"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/check-script-surface\\.test\\.ts$"]
+regexes = [
+  "^sk_live_51HcQ2eLkdIwHu7ixA9bC0dEfGhIjKlMnOpQr$",
+]
+
+[[allowlists]]
+description = "stripe-access-token fixtures in packages/cli/test/typescript-import.test.ts"
+targetRules = ["stripe-access-token"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/typescript-import\\.test\\.ts$"]
+regexes = [
+  "^sk_live_51HcQ2eLkdIwHu7ixA9bC0dEfGhIjKlMnOpQr$",
+]
+
+[[allowlists]]
+description = "stripe-access-token fixtures in packages/core/test/logger.test.ts"
+targetRules = ["stripe-access-token"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/core/test/logger\\.test\\.ts$"]
+regexes = [
+  "^sk_live_0123456789abcdef$",
+]
+
+[[allowlists]]
+description = "stripe-access-token fixtures in packages/web/test/dev-feed.test.ts"
+targetRules = ["stripe-access-token"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/dev-feed\\.test\\.ts$"]
+regexes = [
+  "^sk_live_0123456789abcdefABCDEF$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/cli/test/check-script-surface.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/check-script-surface\\.test\\.ts$"]
+regexes = [
+  "^sk_live_51HcQ2eLkdIwHu7ixA9bC0dEfGhIjKlMnOpQr$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/cli/test/typescript-import.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/cli/test/typescript-import\\.test\\.ts$"]
+regexes = [
+  "^sk_live_51HcQ2eLkdIwHu7ixA9bC0dEfGhIjKlMnOpQr$",
+]
+
+[[allowlists]]
+description = "generic-api-key fixtures in packages/web/test/dev-feed.test.ts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/dev-feed\\.test\\.ts$"]
+regexes = [
+  "^sk_live_0123456789abcdefABCDEF$",
 ]
