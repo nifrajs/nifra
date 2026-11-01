@@ -1,6 +1,17 @@
 import { formatBuildLog } from "./diagnostic.ts"
 import { publicEnvDefines } from "./internal/public-env.ts"
 
+export {
+  buildWithDeploymentAdapter,
+  DEPLOYMENT_ADAPTER_API_VERSION,
+  type DeploymentAdapterBuildInput,
+  type DeploymentAdapterBuildResult,
+  type DeploymentAdapterContext,
+  type DeploymentAdapterFile,
+  type DeploymentAdapterOutput,
+  type DeploymentTargetAdapter,
+} from "./deployment-adapter.ts"
+
 export { publicEnvDefines } from "./internal/public-env.ts"
 
 /**

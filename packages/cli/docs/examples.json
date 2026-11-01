@@ -288,6 +288,12 @@
     "code": "// worker.ts - any nifra app as a Workers fetch handler\nimport { server, toFetchHandler } from \"@nifrajs/core/server\"\n\nconst app = server().get(\"/\", () => ({ ok: true }))\nexport default toFetchHandler(app)"
   },
   {
+    "name": "FLY",
+    "topic": "Nifra - Deployment",
+    "slug": "deployment",
+    "code": "// nifra.config.ts - install both packages and register deploymentAdapter below\n// backend/framework.ts defines and exports the runtime adapter and clientModule.\nimport { flyAdapter } from \"@nifrajs/deploy-fly\"\nimport { adapter, clientModule } from \"./backend/framework.ts\"\nexport { adapter, clientModule }\n\nexport const target = \"fly\"\nexport const deploymentAdapter = {\n  adapter: flyAdapter,\n  options: { app: \"my-nifra-app\", primaryRegion: \"iad\", healthCheckPath: \"/healthz\" },\n}\n\n// Build locally; then deploy the output directory yourself.\n// nifra build\n// cd dist && fly deploy"
+  },
+  {
     "name": "HTTPS",
     "topic": "Nifra - Deployment",
     "slug": "deployment",

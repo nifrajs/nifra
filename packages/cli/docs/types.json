@@ -4568,6 +4568,12 @@
     "signature": "export declare const DEFAULT_WIRE_DECODE_LIMITS: Readonly<Required<WireDecodeLimits>>;"
   },
   {
+    "name": "DEPLOYMENT_ADAPTER_API_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEPLOYMENT_ADAPTER_API_VERSION: 1;"
+  },
+  {
     "name": "DEPLOYMENT_REFERENCE_PROFILES",
     "kind": "const",
     "package": "@nifrajs/coding-agent",
@@ -5085,6 +5091,39 @@
     "signature": "export interface DeploymentActivationOptions {\n    /** Host-owned approval obtained from a separately reviewed/certified isolation decision. */\n    readonly approved?: boolean;\n}"
   },
   {
+    "name": "DeploymentAdapterBuildInput",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DeploymentAdapterBuildInput<T> {\n    readonly adapter: DeploymentTargetAdapter;\n    readonly appRoot: string;\n    readonly outDir: string;\n    readonly options?: unknown;\n    readonly secretExemptions?: readonly SecretExemption[];\n    /** External source paths the final output must never replace, especially an external `publicDir`. */\n    readonly protectedPaths: readonly string[];\n    readonly componentPipeline?: boolean;\n    /** The existing target builder, called with a fresh sibling staging directory. */\n    readonly build: (stagingOutDir: string) => Promise<T>;\n}"
+  },
+  {
+    "name": "DeploymentAdapterBuildResult",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DeploymentAdapterBuildResult<T> {\n    /**\n     * The base builder's result. Paths in it may point into the temporary staging directory, which is\n     * deleted before this function returns; use the returned `DeploymentAdapterBuildResult.outDir` for\n     * published paths.\n     */\n    readonly result: T;\n    readonly outDir: string;\n    readonly run: string;\n    readonly adapterId: string;\n    readonly baseTarget: BuildTarget;\n}"
+  },
+  {
+    "name": "DeploymentAdapterContext",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DeploymentAdapterContext {\n    readonly adapterId: string;\n    readonly appRoot: string;\n    readonly baseTarget: BuildTarget;\n    /** Staged, completed build output. Treat it as read-only; Nifra publishes it after validation. */\n    readonly outDir: string;\n    /** The adapter's validated and normalized options. */\n    readonly options: Readonly<Record<string, unknown>>;\n    /** The base builder's result. Its shape depends on whether the app uses ordinary SSR or components. */\n    readonly result: unknown;\n}",
+    "doc": "/** Stable facts passed to an adapter after the selected built-in target has been assembled. */"
+  },
+  {
+    "name": "DeploymentAdapterFile",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DeploymentAdapterFile {\n    /** POSIX path relative to the deploy directory, such as `Dockerfile` or `.well-known/host.txt`. */\n    readonly path: string;\n    /** Text or bytes. Text files and decodable byte files are scanned for credentials before publish. */\n    readonly contents: string | Uint8Array;\n}",
+    "doc": "/** A portable file an adapter wants to add to the finished deploy directory. */"
+  },
+  {
+    "name": "DeploymentAdapterOutput",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DeploymentAdapterOutput {\n    readonly files: readonly DeploymentAdapterFile[];\n    readonly run: string;\n}",
+    "doc": "/** Files and deploy/run guidance emitted by a deployment adapter. */"
+  },
+  {
     "name": "DeploymentAuthority",
     "kind": "interface",
     "package": "@nifrajs/agent",
@@ -5222,6 +5261,13 @@
     "kind": "type",
     "package": "@nifrajs/agent",
     "signature": "export type DeploymentState = \"prepared\" | \"running\" | \"cancelled\" | \"disposed\";"
+  },
+  {
+    "name": "DeploymentTargetAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DeploymentTargetAdapter {\n    readonly apiVersion: typeof DEPLOYMENT_ADAPTER_API_VERSION;\n    /** Stable lowercase target key used by `nifra build --target <id>` and `nifra target <id>`. */\n    readonly id: string;\n    readonly baseTarget: BuildTarget;\n    readonly capabilities: {\n        /** Whether this adapter knows how to package the coordinated component pipeline output. */\n        readonly componentPipeline: boolean;\n    };\n    /** Validate and normalize untrusted config data before Nifra starts a build or clears output. */\n    readonly validateOptions: (input: unknown) => Readonly<Record<string, unknown>>;\n    /** Return additional files and the provider-specific deployment instruction. No filesystem writes. */\n    readonly emit: (context: DeploymentAdapterContext) => DeploymentAdapterOutput | Promise<DeploymentAdapterOutput>;\n}",
+    "doc": "/**\n * A versioned public deployment adapter. `baseTarget` selects Nifra's runtime/build semantics; the\n * adapter only describes packaging metadata and files. `componentPipeline` must be true for an\n * adapter to opt into Nifra's separate coordinated component pipeline.\n */"
   },
   {
     "name": "DescriptorInput",
@@ -6536,6 +6582,12 @@
     "kind": "interface",
     "package": "@nifrajs/cli",
     "signature": "export interface FixRecipe {\n    readonly id: string;\n    readonly description: string;\n    /** Run only by `nifra fix --code <code>`: the change it makes is a decision a person reviews first. */\n    readonly onlyWhenNamed?: true;\n    apply(root: string, diagnostic: Diagnostic): Promise<readonly string[]>;\n    readonly verify: string;\n}"
+  },
+  {
+    "name": "FlyOptions",
+    "kind": "interface",
+    "package": "@nifrajs/deploy-fly",
+    "signature": "interface FlyOptions {\n    readonly [key: string]: unknown;\n    readonly app: string;\n    readonly primaryRegion?: string;\n    readonly internalPort: number;\n    readonly forceHttps: boolean;\n    readonly healthCheckPath?: string;\n}"
   },
   {
     "name": "FontAsset",
@@ -18532,6 +18584,13 @@
     "doc": "/**\n * The bundler-agnostic deploy orchestrator: everything `buildTarget` does EXCEPT the two bundling steps,\n * which come from `bundler`. `buildTarget` passes {@link bunBundler}; `buildTargetVite`\n * (`@nifrajs/web/build-vite`) passes the Vite strategy. One orchestrator, so the deploy-dir shape,\n * server-entry codegen, prerender and size report are identical across pipelines.\n */"
   },
   {
+    "name": "buildWithDeploymentAdapter",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildWithDeploymentAdapter<T>(input: DeploymentAdapterBuildInput<T>): Promise<DeploymentAdapterBuildResult<T>>;",
+    "doc": "/**\n * Build a base target and publish adapter additions as one transaction. A failed base build, adapter,\n * validation, secret scan or publish leaves the prior output directory in place.\n */"
+  },
+  {
     "name": "buildWorkGraph",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -20905,6 +20964,12 @@
     "package": "@nifrajs/jobs",
     "signature": "export declare const fixedBackoff: (ms: number) => Backoff;",
     "doc": "/** Fixed delay before every retry. */"
+  },
+  {
+    "name": "flyAdapter",
+    "kind": "const",
+    "package": "@nifrajs/deploy-fly",
+    "signature": "export declare const flyAdapter: DeploymentTargetAdapter;"
   },
   {
     "name": "fontFace",

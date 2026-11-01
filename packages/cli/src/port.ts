@@ -18,6 +18,7 @@ import { join } from "node:path"
 import { Glob } from "bun"
 import { stripComments } from "./check.ts"
 import { readConfigTarget } from "./config-target.ts"
+import { readDeploymentAdapterMetadata } from "./deployment-adapters.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { lineAt } from "./internal/line-at.ts"
 
@@ -357,10 +358,13 @@ export async function detectFeatures(cwd: string): Promise<DetectedFeature[]> {
 
 export interface ResolvedTarget {
   readonly target: Target
+  /** The custom deployment key when its package declares the wrapped runtime statically. */
+  readonly adapterId?: string
   /** How the target was determined - surfaced so the report explains itself. */
   readonly source:
     | "flag"
     | "config"
+    | "adapter"
     | "package-json-build"
     | "package-json-deploy"
     | "wrangler"
@@ -390,25 +394,32 @@ interface PackageJsonScripts {
  * Resolve the app's deploy target. `--target` (validated) always wins, then the `target` that
  * `nifra.config.ts` exports. Otherwise infer it, in priority order, from: the canonical `build` script
  * (an older create-nifra's `build-<target>.ts`), the `deploy` script
- * (the vendor CLI it shells out to), a `wrangler.toml` (Cloudflare Pages), or a `vercel.json`. Returns
- * `undefined` when nothing signals a target (the matrix still prints; CI gating needs an explicit one).
+ * (the vendor CLI it shells out to), a `wrangler.toml` (Cloudflare Pages), a `vercel.json`, or installed
+ * adapter metadata. Returns `undefined` when nothing signals a target (the matrix still prints; CI
+ * gating needs an explicit one).
  */
 export async function resolveTarget(
   cwd: string,
   override?: string,
 ): Promise<ResolvedTarget | undefined> {
-  const checked = (value: string, label: string): Target => {
-    if (isTarget(value)) return value
+  /** Map a built-in target directly or a custom adapter ID to its declared runtime. */
+  const checked = (value: string, label: string): ResolvedTarget => {
+    if (isTarget(value)) return { target: value, source: label === "--target" ? "flag" : "config" }
+    const metadata = readDeploymentAdapterMetadata(cwd, value)
+    if (metadata !== undefined && metadata.baseTarget !== "static")
+      return { target: metadata.baseTarget, source: "adapter", adapterId: metadata.id }
     throw new Error(
       value === "cf-pages"
         ? `[nifra] the ${label} "cf-pages" is now "cloudflare"`
-        : `[nifra] invalid ${label} "${value}". options: ${TARGETS.join(", ")}`,
+        : metadata?.baseTarget === "static"
+          ? `[nifra] ${label} "${value}" is a static adapter; nifra port checks runtime targets (${TARGETS.join(", ")})`
+          : `[nifra] invalid ${label} "${value}". options: ${TARGETS.join(", ")} or an installed deployment adapter with Nifra metadata`,
     )
   }
-  if (override !== undefined) return { target: checked(override, "--target"), source: "flag" }
+  if (override !== undefined) return checked(override, "--target")
   const configured = readConfigTarget(cwd)
   if (configured !== undefined && configured !== "static") {
-    return { target: checked(configured, "target in nifra.config.ts"), source: "config" }
+    return checked(configured, "target in nifra.config.ts")
   }
 
   const pkg = await readJson<PackageJsonScripts>(join(cwd, "package.json"))
@@ -546,7 +557,11 @@ export function renderReport(result: PortResult, opts: { readonly strict?: boole
   const out: string[] = ["nifra port - portability matrix", ""]
 
   if (resolved !== undefined) {
-    out.push(`target: ${resolved.target} (detected from ${describeSource(resolved.source)})`)
+    out.push(
+      resolved.adapterId === undefined
+        ? `target: ${resolved.target} (detected from ${describeSource(resolved.source)})`
+        : `target: ${resolved.adapterId} (base runtime ${resolved.target}; detected from ${describeSource(resolved.source)})`,
+    )
   } else {
     out.push(
       "target: not detected - pass --target <bun|node|deno|cloudflare|vercel> to gate against one",
@@ -631,6 +646,8 @@ function describeSource(source: ResolvedTarget["source"]): string {
       return "--target"
     case "config":
       return "nifra.config.ts"
+    case "adapter":
+      return "installed adapter package metadata"
     case "package-json-build":
       return "the package.json build script"
     case "package-json-deploy":

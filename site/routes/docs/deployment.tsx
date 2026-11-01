@@ -71,6 +71,25 @@ import { server, toFetchHandler } from "@nifrajs/core/server"
 const app = server().get("/", () => ({ ok: true }))
 export default toFetchHandler(app)`
 
+const FLY_SETUP = `bun add @nifrajs/deploy-fly @nifrajs/node
+fly apps create my-nifra-app # once, before the first deploy`
+
+const FLY = `// nifra.config.ts - install both packages and register deploymentAdapter below
+// backend/framework.ts defines and exports the runtime adapter and clientModule.
+import { flyAdapter } from "@nifrajs/deploy-fly"
+import { adapter, clientModule } from "./backend/framework.ts"
+export { adapter, clientModule }
+
+export const target = "fly"
+export const deploymentAdapter = {
+  adapter: flyAdapter,
+  options: { app: "my-nifra-app", primaryRegion: "iad", healthCheckPath: "/healthz" },
+}
+
+// Build locally; then deploy the output directory yourself.
+// nifra build
+// cd dist && fly deploy`
+
 export default function Deployment() {
   return (
     <div className="prose">
@@ -164,6 +183,30 @@ export default function Deployment() {
         <code>nifra build --target static</code> also builds a site with no server: the prerendered
         pages, the client bundle and <code>public/</code>, for any static host. See{" "}
         <a href={href({ to: "/docs/rendering" })}>SSG &amp; ISR</a>.
+      </p>
+      <h2>Public build-target adapters</h2>
+      <p>
+        A deployment adapter adds host packaging around an existing Nifra build target. It does not
+        replace the runtime, generated server entry, or Nifra's build checks. The versioned contract
+        in <code>@nifrajs/web/build</code> lets an adapter declare its base target, validate options,
+        and return extra files plus deploy guidance. Nifra checks paths and collisions, scans text
+        artifacts for credentials, and only swaps the output directory after the full build passes.
+      </p>
+      <p>
+        Install the Fly adapter with its required Node runtime and create the named Fly app before
+        its first deploy:
+      </p>
+      <CodeBlock code={FLY_SETUP} lang="sh" />
+      <CodeBlock code={FLY} lang="ts" />
+      <p>
+        The Fly reference package wraps the ordinary <code>node</code> target and emits a Dockerfile
+        plus <code>fly.toml</code>. The <code>deploymentAdapter</code> configuration above registers
+        the custom <code>fly</code> target. Run <code>fly deploy</code> from the emitted output
+        directory; Nifra never logs in or deploys for you. Adapter code is trusted build-time code
+        running in the CLI process. Each adapter must explicitly declare whether it supports the
+        coordinated component pipeline; unsupported combinations fail before the previous output is
+        replaced. Set Fly's optional <code>healthCheckPath</code> only when that route returns 2xx
+        while the app is ready.
       </p>
       <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on

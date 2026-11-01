@@ -3513,6 +3513,11 @@ _No named exports (side-effect entrypoint)._
 - **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
   The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. A request no mount takes returns `undefined` synchronously and reaches the app. The same mounts work with Bun's `@n…
 
+## @nifrajs/deploy-fly
+
+- **FlyOptions** _(interface)_ - `interface FlyOptions`
+- **flyAdapter** _(const)_ - `flyAdapter: DeploymentTargetAdapter`
+
 ## @nifrajs/devtools
 
 ### `@nifrajs/devtools`
@@ -5818,6 +5823,17 @@ _No named exports (side-effect entrypoint)._
   A Cloudflare Pages `_routes.json` document. `exclude`d paths are served straight from the CDN (the Function/worker is NOT invoked); everything else in `include` hits the worker.
 - **CloudflarePagesRoutesOptions** _(interface)_ - `interface CloudflarePagesRoutesOptions`
 - **CloudflareRouteRules** _(interface)_ - `interface CloudflareRouteRules`
+- **DEPLOYMENT_ADAPTER_API_VERSION** _(const)_ - `DEPLOYMENT_ADAPTER_API_VERSION: 1`
+- **DeploymentAdapterBuildInput** _(interface)_ - `interface DeploymentAdapterBuildInput<T>`
+- **DeploymentAdapterBuildResult** _(interface)_ - `interface DeploymentAdapterBuildResult<T>`
+- **DeploymentAdapterContext** _(interface)_ - `interface DeploymentAdapterContext`
+  Stable facts passed to an adapter after the selected built-in target has been assembled.
+- **DeploymentAdapterFile** _(interface)_ - `interface DeploymentAdapterFile`
+  A portable file an adapter wants to add to the finished deploy directory.
+- **DeploymentAdapterOutput** _(interface)_ - `interface DeploymentAdapterOutput`
+  Files and deploy/run guidance emitted by a deployment adapter.
+- **DeploymentTargetAdapter** _(interface)_ - `interface DeploymentTargetAdapter`
+  A versioned public deployment adapter. `baseTarget` selects Nifra's runtime/build semantics; the adapter only describes packaging metadata and files. `componentPipeline` must be true for an adapter to opt into Nifra's separate coordinated component pipeline.
 - **HostReachOptions** _(interface)_ - `interface HostReachOptions`
 - **HostReachReport** _(interface)_ - `interface HostReachReport`
 - **HostReachResult** _(interface)_ - `interface HostReachResult`
@@ -5872,6 +5888,8 @@ _No named exports (side-effect entrypoint)._
   Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}.
 - **buildTargetWith** _(function)_ - `buildTargetWith: (target: BuildTarget, options: BuildTargetOptions, bundler: Bundler) => Promise<BuildTargetResult>`
   The bundler-agnostic deploy orchestrator: everything `buildTarget` does EXCEPT the two bundling steps, which come from `bundler`. `buildTarget` passes {@link bunBundler}; `buildTargetVite` (`@nifrajs/web/build-vite`) passes the Vite strategy. One orchestrator, so the deploy-dir shape, server-entry …
+- **buildWithDeploymentAdapter** _(function)_ - `buildWithDeploymentAdapter: <T>(input: DeploymentAdapterBuildInput<T>) => Promise<DeploymentAdapterBuildResult<T>>`
+  Build a base target and publish adapter additions as one transaction. A failed base build, adapter, validation, secret scan or publish leaves the prior output directory in place.
 - **bunBundler** _(const)_ - `bunBundler: Bundler`
   The default (Bun) strategy - `buildClient`/`buildServer` from this module.
 - **checkHostReach** _(function)_ - `checkHostReach: (options: HostReachOptions) => Promise<HostReachReport>`
