@@ -14,6 +14,7 @@ export interface DeploymentAdapterMetadata {
   readonly packageName: string
 }
 
+/** Parse package JSON as a record and treat unreadable or malformed manifests as absent. */
 function readRecord(path: string): Record<string, unknown> | undefined {
   try {
     const value: unknown = JSON.parse(readFileSync(path, "utf8"))

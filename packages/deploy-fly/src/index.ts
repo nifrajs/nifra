@@ -9,28 +9,28 @@ interface FlyOptions {
   readonly healthCheckPath?: string
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-
+/** Parse the Fly-specific settings and fill defaults before Nifra begins a build. */
 function parseOptions(input: unknown): FlyOptions {
-  if (!isRecord(input))
+  if (typeof input !== "object" || input === null || Array.isArray(input))
     throw new Error("[nifra/deploy-fly] options must be an object with an `app` name")
+  const values = new Map<string, unknown>()
+  for (const [key, value] of Object.entries(input)) values.set(key, value)
   const allowed = new Set(["app", "primaryRegion", "internalPort", "forceHttps", "healthCheckPath"])
-  const unknown = Object.keys(input).filter((key) => !allowed.has(key))
+  const unknown = [...values.keys()].filter((key) => !allowed.has(key))
   if (unknown.length > 0)
     throw new Error(`[nifra/deploy-fly] unknown option(s): ${unknown.join(", ")}`)
-  const app = input.app
+  const app = values.get("app")
   if (typeof app !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(app))
     throw new Error(
       "[nifra/deploy-fly] `app` must be a Fly app name using lowercase letters, digits, and hyphens",
     )
-  const primaryRegion = input.primaryRegion
+  const primaryRegion = values.get("primaryRegion")
   if (
     primaryRegion !== undefined &&
     (typeof primaryRegion !== "string" || !/^[a-z0-9-]{2,16}$/.test(primaryRegion))
   )
     throw new Error("[nifra/deploy-fly] `primaryRegion` must be a Fly region code such as `iad`")
-  const internalPort = input.internalPort ?? 3000
+  const internalPort = values.get("internalPort") ?? 3000
   if (
     typeof internalPort !== "number" ||
     !Number.isInteger(internalPort) ||
@@ -38,10 +38,10 @@ function parseOptions(input: unknown): FlyOptions {
     internalPort > 65535
   )
     throw new Error("[nifra/deploy-fly] `internalPort` must be an integer between 1 and 65535")
-  const forceHttps = input.forceHttps ?? true
+  const forceHttps = values.get("forceHttps") ?? true
   if (typeof forceHttps !== "boolean")
     throw new Error("[nifra/deploy-fly] `forceHttps` must be a boolean")
-  const healthCheckPath = input.healthCheckPath
+  const healthCheckPath = values.get("healthCheckPath")
   if (healthCheckPath !== undefined) {
     let parsed: URL | undefined
     try {
@@ -62,19 +62,23 @@ function parseOptions(input: unknown): FlyOptions {
         "[nifra/deploy-fly] `healthCheckPath` must be a same-origin path such as `/healthz`",
       )
   }
-  return {
+  const normalized: {
+    app: string
+    primaryRegion?: string
+    internalPort: number
+    forceHttps: boolean
+    healthCheckPath?: string
+  } = {
     app,
-    ...(primaryRegion !== undefined ? { primaryRegion } : {}),
     internalPort,
     forceHttps,
-    ...(healthCheckPath !== undefined ? { healthCheckPath } : {}),
   }
+  if (primaryRegion !== undefined) normalized.primaryRegion = primaryRegion
+  if (healthCheckPath !== undefined) normalized.healthCheckPath = healthCheckPath
+  return normalized
 }
 
-function optionsOf(options: Readonly<Record<string, unknown>>): FlyOptions {
-  return parseOptions(options)
-}
-
+/** Render validated options as a Fly HTTP service manifest. */
 function flyToml(options: FlyOptions): string {
   return [
     `app = ${JSON.stringify(options.app)}`,
@@ -100,6 +104,7 @@ function flyToml(options: FlyOptions): string {
   ].join("\n")
 }
 
+/** Render a non-root Node image whose listener port matches the Fly service configuration. */
 function dockerfile(options: FlyOptions): string {
   return [
     "FROM node:22-slim",
@@ -120,8 +125,9 @@ export const flyAdapter: DeploymentTargetAdapter = {
   baseTarget: "node",
   capabilities: { componentPipeline: false },
   validateOptions: parseOptions,
+  /** Return deploy files and guidance without performing provider I/O. */
   emit(context: DeploymentAdapterContext) {
-    const options = optionsOf(context.options)
+    const options = parseOptions(context.options)
     return {
       files: [
         { path: "Dockerfile", contents: dockerfile(options) },

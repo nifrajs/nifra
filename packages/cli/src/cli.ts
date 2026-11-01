@@ -829,6 +829,7 @@ async function assertFreshWorkspaceDists(cwd: string): Promise<void> {
   )
 }
 
+/** Build the requested runtime and transactionally add files from a selected deployment adapter. */
 async function buildForTarget(
   app: LoadedApp,
   flag: string | undefined,

@@ -1751,6 +1751,7 @@ const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
       { name: "dir", field: "dir", type: "string" },
     ],
   },
+  /** Show or switch built-in targets and configured adapter IDs without importing adapter code. */
   async run(value, ctx) {
     const dir = resolve(ctx.cwd, value.dir ?? ".")
     const { isBuildTarget, parseBuildTarget, planBuildTarget } = await import("@nifrajs/web/build")

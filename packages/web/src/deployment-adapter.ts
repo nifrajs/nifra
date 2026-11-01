@@ -88,6 +88,11 @@ export interface DeploymentAdapterBuildInput<T> {
 }
 
 export interface DeploymentAdapterBuildResult<T> {
+  /**
+   * The base builder's result. Paths in it may point into the temporary staging directory, which is
+   * deleted before this function returns; use the returned `DeploymentAdapterBuildResult.outDir` for
+   * published paths.
+   */
   readonly result: T
   readonly outDir: string
   readonly run: string
@@ -100,6 +105,7 @@ const MAX_ADAPTER_FILES = 256
 const MAX_ADAPTER_FILE_BYTES = 2 * 1024 * 1024
 const MAX_ADAPTER_TOTAL_BYTES = 8 * 1024 * 1024
 
+/** Read a path without following symlinks and treat only missing path components as absent. */
 function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
   try {
     return lstatSync(path)
@@ -140,6 +146,7 @@ function snapshotOutput(root: string): ReadonlyMap<string, string> {
   return snapshot
 }
 
+/** Refuse an adapter that mutated the base output instead of returning declarative additions. */
 function assertOutputUnchanged(
   before: ReadonlyMap<string, string>,
   after: ReadonlyMap<string, string>,
@@ -152,6 +159,7 @@ function assertOutputUnchanged(
   )
 }
 
+/** Reject control bytes from paths and guidance that Nifra will persist or print. */
 function hasForbiddenControlCharacter(value: string, allowWhitespace = false): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index)
@@ -161,6 +169,7 @@ function hasForbiddenControlCharacter(value: string, allowWhitespace = false): b
   return false
 }
 
+/** Check adapter identity and callable shape before running trusted build-time adapter code. */
 function validateAdapter(adapter: DeploymentTargetAdapter): void {
   if (typeof adapter !== "object" || adapter === null)
     throw new TypeError("[nifra/web] deployment adapter must be an object")
@@ -194,6 +203,7 @@ function validateAdapter(adapter: DeploymentTargetAdapter): void {
     )
 }
 
+/** Accept portable relative POSIX paths and reject traversal or platform-specific names. */
 function portableRelativePath(path: string): boolean {
   if (
     path.length === 0 ||
@@ -217,6 +227,7 @@ function portableRelativePath(path: string): boolean {
   )
 }
 
+/** Validate, scan, and write the adapter's declarative files into the staged base output. */
 function writeAdapterFiles(
   outDir: string,
   files: readonly DeploymentAdapterFile[],
@@ -278,11 +289,12 @@ function writeAdapterFiles(
     const text = typeof file.contents === "string" ? file.contents : textOf(bytes)
     if (text !== undefined) scanArtifacts.push(...emittedScanFiles(file.path, text))
   }
-  assertNoSecrets({
+  const secretScan = {
     env: buildEnvironment(),
-    ...(secretExemptions !== undefined ? { exemptions: secretExemptions } : {}),
     artifacts: [...scanArtifacts, ...emittedScanFiles("deployment-adapter-run", run)],
-  })
+  }
+  if (secretExemptions === undefined) assertNoSecrets(secretScan)
+  else assertNoSecrets({ ...secretScan, exemptions: secretExemptions })
 
   for (const file of files) {
     const destination = resolve(outDir, ...file.path.split("/"))
@@ -412,12 +424,17 @@ export async function buildWithDeploymentAdapter<T>(
     if (previousMoved && !published && lstatIfPresent(outDir) === undefined) {
       try {
         renameSync(previousOutDir, outDir)
-        previousMoved = false
       } catch {
         // Preserve the original failure; the backup remains in stageRoot for manual recovery.
         preserveStage = true
       }
     }
-    if (!preserveStage) rmSync(stageRoot, { recursive: true, force: true })
+    if (!preserveStage) {
+      try {
+        rmSync(stageRoot, { recursive: true, force: true })
+      } catch {
+        // Cleanup is best-effort; never fail a published build or replace the original error.
+      }
+    }
   }
 }

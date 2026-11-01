@@ -394,13 +394,15 @@ interface PackageJsonScripts {
  * Resolve the app's deploy target. `--target` (validated) always wins, then the `target` that
  * `nifra.config.ts` exports. Otherwise infer it, in priority order, from: the canonical `build` script
  * (an older create-nifra's `build-<target>.ts`), the `deploy` script
- * (the vendor CLI it shells out to), a `wrangler.toml` (Cloudflare Pages), or a `vercel.json`. Returns
- * `undefined` when nothing signals a target (the matrix still prints; CI gating needs an explicit one).
+ * (the vendor CLI it shells out to), a `wrangler.toml` (Cloudflare Pages), a `vercel.json`, or installed
+ * adapter metadata. Returns `undefined` when nothing signals a target (the matrix still prints; CI
+ * gating needs an explicit one).
  */
 export async function resolveTarget(
   cwd: string,
   override?: string,
 ): Promise<ResolvedTarget | undefined> {
+  /** Map a built-in target directly or a custom adapter ID to its declared runtime. */
   const checked = (value: string, label: string): ResolvedTarget => {
     if (isTarget(value)) return { target: value, source: label === "--target" ? "flag" : "config" }
     const metadata = readDeploymentAdapterMetadata(cwd, value)
