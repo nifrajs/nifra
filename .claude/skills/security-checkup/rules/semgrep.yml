@@ -51,6 +51,9 @@ rules:
       - pattern-not: '0 === $A'
       - pattern-not: '$A === ts.SyntaxKind.$B'
       - pattern-not: 'ts.SyntaxKind.$B === $A'
+      # `typeof` returns a type label, not the secret value being compared.
+      - pattern-not: 'typeof $A === $B'
+      - pattern-not: '$B === typeof $A'
     paths:
       # Lexers, scanners, and pattern matchers whose variables say "token" but hold TYPE-SCRIPT
       # lexer items, SQL tokens, route-pattern tokens, or their own scanner plumbing - not secret
