@@ -46,8 +46,8 @@ export interface Flags {
   /** `--out <dir>`; without it `dist`, or `.vercel/output` for a Vercel build. */
   readonly out: string | undefined
   readonly poll: boolean
-  /** `nifra build --target <t>`: emit a full deploy dir for this target. Without it, the `target` that
-   * `nifra.config.ts` exports, else `bun`. */
+  /** `nifra build --target <t>`: emit a full deploy dir for this target. Without it, use `target` from
+   * `nifra.config.ts`, else `bun`; a configured adapter must be selected by its id. */
   readonly target: string | undefined
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
@@ -152,7 +152,8 @@ Usage:
   nifra db audit [--limit <n>]           What nifra db ran (.nifra/db-audit.jsonl), never the rows.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
-                                         bun | node | deno | cloudflare | vercel | static. Packages
+                                         bun | node | deno | cloudflare | vercel | static, or an installed
+                                         public adapter selected by deploymentAdapter in nifra.config.ts. Packages
                                          buildClient + buildServer (+ prerender for static, bun and
                                          node, whose server answers those pages from file) so an app
                                          no longer hand-writes build-<target>.ts + _worker.ts +
@@ -330,7 +331,8 @@ Usage:
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
-                                         detected from build/deploy scripts, wrangler.toml, or vercel config;
+                                         detected from build/deploy scripts, wrangler.toml, vercel config,
+                                         or installed adapter metadata (base runtime only);
                                          --ci (or any --target) exits nonzero when a used feature is
                                          unsupported on the target; --strict also fails on caveats.
   nifra i18n check [entry]               Check i18n catalogs: coverage, missing + unused keys, ICU syntax,
@@ -832,19 +834,51 @@ async function buildForTarget(
   flag: string | undefined,
   flags: Flags,
 ): Promise<void> {
-  const { parseBuildTarget, renderSizeReport, validateVercelRuntime } = await import(
-    "@nifrajs/web/build"
-  )
-  const target = parseBuildTarget(
-    flag ?? app.framework.target ?? "bun",
-    flag === undefined ? "target in nifra.config.ts" : "--target",
-  )
+  const {
+    buildWithDeploymentAdapter,
+    isBuildTarget,
+    parseBuildTarget,
+    renderSizeReport,
+    validateVercelRuntime,
+  } = await import("@nifrajs/web/build")
+  const { framework: fw } = app
+  const configuredAdapter = fw.deploymentAdapter
+  const adapter = configuredAdapter?.adapter
+  if (adapter !== undefined && flag === undefined && fw.target === undefined) {
+    throw new Error(
+      `[nifra] deploymentAdapter "${adapter.id}" is configured; set target = "${adapter.id}" or pass --target ${adapter.id} to select it`,
+    )
+  }
+  const requestedTarget = flag ?? fw.target ?? "bun"
+  const adapterSelected = adapter !== undefined && requestedTarget === adapter.id
+  if (!isBuildTarget(requestedTarget) && !adapterSelected) {
+    if (adapter === undefined) {
+      throw new Error(
+        `[nifra] target "${requestedTarget}" is not built in and no deploymentAdapter is configured in nifra.config.ts`,
+      )
+    }
+    throw new Error(
+      `[nifra] target "${requestedTarget}" does not match the configured deployment adapter "${adapter.id}"`,
+    )
+  }
+  const target = adapterSelected
+    ? adapter.baseTarget
+    : parseBuildTarget(
+        requestedTarget,
+        flag === undefined ? "target in nifra.config.ts" : "--target",
+      )
+  if (adapterSelected && app.configPath === adapterFile(app.cwd)) {
+    throw new Error(
+      "[nifra] deploymentAdapter is build-time config, but this file is also the generated server's runtime import. " +
+        "Add backend/framework.ts for adapter and clientModule, keep deploymentAdapter in nifra.config.ts, and re-export the runtime fields there.",
+    )
+  }
   if (flags.vite && flags.bun) {
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
-  const { framework: fw } = app
   validateVercelRuntime(target, fw.vercelRuntime)
   if (fw.componentPipeline !== undefined) {
+    const componentPipeline = fw.componentPipeline
     // The component pipeline already owns its Vercel Node handler; this selector is ordinary SSR only.
     if (fw.vercelRuntime !== undefined)
       throw new Error(
@@ -870,16 +904,45 @@ async function buildForTarget(
       target === "vercel" && flags.out === undefined
         ? resolve(app.cwd, ".vercel/output")
         : app.outDir
-    const result = await buildServerComponents({
-      ...fw.componentPipeline,
-      target,
-      root: app.cwd,
-      outDir,
-      plugins: asComponentPlugins(app.resolvedPlugins.vitePlugins),
-    })
-    await assertFreshWorkspaceDists(app.cwd)
+    const buildComponents = (output: string) =>
+      buildServerComponents({
+        ...componentPipeline,
+        target,
+        root: app.cwd,
+        outDir: output,
+        plugins: asComponentPlugins(app.resolvedPlugins.vitePlugins),
+      })
+    let result: Awaited<ReturnType<typeof buildComponents>>
+    let adapterRun: string | undefined
+    if (adapterSelected && adapter !== undefined) {
+      const packaged = await buildWithDeploymentAdapter({
+        adapter,
+        appRoot: app.cwd,
+        outDir,
+        options: configuredAdapter?.options,
+        componentPipeline: true,
+        protectedPaths: [
+          app.routesDir,
+          resolve(app.cwd, BACKEND_APP_FILE),
+          adapterFile(app.cwd),
+          ...(fw.publicDir === false ? [] : [resolve(fw.publicDir ?? resolve(app.cwd, "public"))]),
+        ],
+        build: async (stagingOutDir) => {
+          const built = await buildComponents(stagingOutDir)
+          await assertFreshWorkspaceDists(app.cwd)
+          return built
+        },
+      })
+      result = packaged.result
+      adapterRun = packaged.run
+    } else {
+      result = await buildComponents(outDir)
+      await assertFreshWorkspaceDists(app.cwd)
+    }
     console.log(
-      `[nifra/components] Built ${fw.componentPipeline.adapter} for ${target} (${result.build}) in ${outDir}`,
+      adapterRun === undefined
+        ? `[nifra/components] Built ${fw.componentPipeline.adapter} for ${target} (${result.build}) in ${outDir}`
+        : `[nifra/components] Built ${componentPipeline.adapter} for ${adapter!.id} (base ${target}, ${result.build}) in ${outDir}\n  from output directory: ${adapterRun}`,
     )
     return
   }
@@ -946,10 +1009,10 @@ async function buildForTarget(
         clientPlugins: asBunPlugins(app.resolvedPlugins.clientPlugins),
         serverPlugins: asBunPlugins(app.resolvedPlugins.serverPlugins),
       }
-  const result = await buildTarget(target, {
+  const workDir = resolve(cwd, ".nifra-build")
+  const buildOptions = {
     routesDir,
-    outDir,
-    workDir: resolve(cwd, ".nifra-build"),
+    workDir,
     clientModule: fw.clientModule,
     adapterImport: frameworkFile,
     ...(fw.use ? { useImport: frameworkFile } : {}),
@@ -973,13 +1036,44 @@ async function buildForTarget(
     ...(target === "static" || (!useVite && (target === "bun" || target === "node"))
       ? { prerenderApp: await buildPrerenderApp(app) }
       : {}),
-  })
+  }
+  let result: Awaited<ReturnType<typeof buildTarget>>
+  let adapterRun: string | undefined
+  if (adapterSelected && adapter !== undefined) {
+    const packaged = await buildWithDeploymentAdapter({
+      adapter,
+      appRoot: cwd,
+      outDir,
+      options: configuredAdapter?.options,
+      ...(fw.secretExemptions !== undefined ? { secretExemptions: fw.secretExemptions } : {}),
+      protectedPaths: [
+        routesDir,
+        workDir,
+        frameworkFile,
+        backendFile,
+        ...(fw.publicDir === false ? [] : [resolve(fw.publicDir ?? resolve(cwd, "public"))]),
+      ],
+      build: async (stagingOutDir) => {
+        const built = await buildTarget(target, { ...buildOptions, outDir: stagingOutDir })
+        await assertFreshWorkspaceDists(cwd)
+        return built
+      },
+    })
+    result = packaged.result
+    adapterRun = packaged.run
+  } else {
+    result = await buildTarget(target, { ...buildOptions, outDir })
+    await assertFreshWorkspaceDists(cwd)
+  }
   // A production build must not certify itself green while a workspace-linked dependency ships a dist
   // artifact older than (or absent next to) its source: the `bun`->src condition let this compile read
   // live source, but the deployed app and every node consumer read `dist/`. Gate here, after the compile
   // proved the source is buildable, so the failure names the package to rebuild rather than a bundle error.
-  await assertFreshWorkspaceDists(cwd)
-  console.log(`nifra build (${target}, ${decision.pipeline}) → ${result.run}`)
+  console.log(
+    adapterRun === undefined
+      ? `nifra build (${target}, ${decision.pipeline}) → ${result.run}`
+      : `nifra build (${adapter!.id}, base ${target}, ${decision.pipeline}) → ${outDir}\n  from output directory: ${adapterRun}`,
+  )
   // The pipeline is stated on every build, not only the surprising ones - an auto-selected Vite build
   // must never look like the default, and a default Bun build must not leave the question open either.
   console.log(`  ${describePipeline(decision)}`)

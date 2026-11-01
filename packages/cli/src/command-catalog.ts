@@ -17,6 +17,7 @@ import { cdnCheckSpec } from "./cdn-check.ts"
 import { type CheckResult, checkDiagnostics, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
 import { dbAuditSpec, dbQuerySpec, dbRoleSpec, dbSchemaSpec } from "./db-tool.ts"
+import { readDeploymentAdapterMetadata } from "./deployment-adapters.ts"
 import { errorsSpec, explainSpec, logsSpec } from "./dev-feed-tool.ts"
 import { toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
@@ -1728,7 +1729,7 @@ const scaffoldSpec: CommandSpec<ScaffoldInput, HoleScaffoldResult> = {
 const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
   name: "target",
   summary:
-    "Show the app's deploy target, or switch it (`nifra target cloudflare`): the `target` `nifra build` emits, kept in nifra.config.ts.",
+    "Show or switch the build target. Besides built-ins, an installed deploymentAdapter can select its custom target id.",
   input: TARGET_SCHEMA,
   output: output({
     type: "object",
@@ -1752,21 +1753,40 @@ const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
   },
   async run(value, ctx) {
     const dir = resolve(ctx.cwd, value.dir ?? ".")
-    const { parseBuildTarget, planBuildTarget } = await import("@nifrajs/web/build")
+    const { isBuildTarget, parseBuildTarget, planBuildTarget } = await import("@nifrajs/web/build")
     const { readConfigTarget, writeConfigTarget } = await import("./config-target.ts")
     const current = readConfigTarget(dir)
-    const target = parseBuildTarget(
-      value.target ?? current ?? "bun",
-      value.target === undefined ? "target in nifra.config.ts" : "target",
-    )
+    const requested = value.target ?? current ?? "bun"
+    const target =
+      requested === "cf-pages"
+        ? parseBuildTarget(
+            requested,
+            value.target === undefined ? "target in nifra.config.ts" : "target",
+          )
+        : isBuildTarget(requested)
+          ? parseBuildTarget(
+              requested,
+              value.target === undefined ? "target in nifra.config.ts" : "target",
+            )
+          : /^[a-z][a-z0-9-]{1,62}$/.test(requested)
+            ? requested
+            : (() => {
+                throw new Error(`[nifra] invalid target "${requested}"`)
+              })()
     const changed = value.target !== undefined && value.target !== current
     if (changed) writeConfigTarget(dir, target)
+    const adapterMetadata = isBuildTarget(target)
+      ? undefined
+      : readDeploymentAdapterMetadata(dir, target)
+    const run = isBuildTarget(target)
+      ? planBuildTarget(target, "dist").run
+      : `custom deployment adapter "${target}"${adapterMetadata === undefined ? "" : ` (base ${adapterMetadata.baseTarget})`}; configure deploymentAdapter in nifra.config.ts`
     return {
       ok: true,
       target,
       ...(changed && current !== undefined ? { previous: current } : {}),
       changed,
-      run: planBuildTarget(target, "dist").run,
+      run,
     }
   },
   render: (out) => [
