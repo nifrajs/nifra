@@ -79,6 +79,7 @@ function normalizedJsonValue(
 ): unknown | typeof OMIT_JSON_VALUE {
   if (typeof value === "object" && value !== null && isRawJson?.(value) === true) {
     const raw = Reflect.get(value, "rawJSON")
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The runtime guard below verifies this optional JSON.rawJSON extension is callable before use.
     const rawJSON = (JSON as JSON & { readonly rawJSON?: (text: string) => unknown }).rawJSON
     if (typeof raw !== "string" || typeof rawJSON !== "function")
       throw new TypeError("Could not serialize JSON.rawJSON")
