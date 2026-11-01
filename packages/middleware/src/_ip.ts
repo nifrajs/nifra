@@ -83,8 +83,37 @@ export function ipBucket(ip: string): string {
 
 /** Canonical bucket for one IP literal, or `null` when the input is not exactly one valid IP. */
 export function ipBucketForAddress(ip: string): string | null {
+  const canonicalV4 = canonicalIPv4Literal(ip)
+  if (canonicalV4 !== null) return canonicalV4
   const parsed = parseIp(ip)
   return parsed === null ? null : bucketParsedIp(parsed)
+}
+
+/** Keep the common canonical IPv4 case allocation-light; unusual valid forms use the full parser. */
+function canonicalIPv4Literal(input: string): string | null {
+  let octets = 0
+  let digits = 0
+  let value = 0
+  let firstDigit = 0
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index)
+    if (code === 46) {
+      if (digits === 0 || (digits > 1 && firstDigit === 48) || octets === 3) return null
+      octets += 1
+      digits = 0
+      value = 0
+      firstDigit = 0
+      continue
+    }
+    if (code < 48 || code > 57 || digits === 3) return null
+    if (digits === 0) firstDigit = code
+    else if (digits === 1 && firstDigit === 48) return null
+    value = value * 10 + code - 48
+    if (value > 255) return null
+    digits += 1
+  }
+  if (octets !== 3 || digits === 0 || (digits > 1 && firstDigit === 48)) return null
+  return input
 }
 
 function bucketParsedIp(parsed: ParsedIp): string {
