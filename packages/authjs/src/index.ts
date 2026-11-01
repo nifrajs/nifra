@@ -25,10 +25,16 @@
 
 import type { AuthConfig, setEnvDefaults } from "@auth/core"
 import type { Session } from "@auth/core/types"
+import {
+  assertUnauthenticated,
+  type UnauthenticatedResponse,
+  unauthenticatedResult,
+} from "@nifrajs/core/guard-deny"
 import type { AnyServer, Platform, ResponseResult } from "@nifrajs/core/server"
 import { defineIdentityPlugin, isSameOriginPath, parseCookies, status } from "@nifrajs/core/server"
 
 export type { Session } from "@auth/core/types"
+export type { UnauthenticatedResponse } from "@nifrajs/core/guard-deny"
 
 /** The Auth.js config this integration drives - everything `@auth/core` accepts except `raw`. */
 export type AuthJSConfig = Omit<AuthConfig, "raw">
@@ -312,16 +318,6 @@ export function authjs(config: AuthJSConfig, options: AuthJSOptions = {}) {
   })
 }
 
-/** The response a guard denies a missing session with, in place of the default `401` JSON. */
-export interface UnauthenticatedResponse {
-  /** An error status, 400-599. Default `401`. */
-  readonly status?: number
-  /** The body; present but `undefined` sends none. Default `{ ok: false, error: "unauthorized" }`. */
-  readonly body?: unknown
-  /** Response headers, such as a `www-authenticate` challenge. */
-  readonly headers?: Readonly<Record<string, string>>
-}
-
 /** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else the
  * `unauthenticated` response, by default a 401 JSON. Pass the `basePath`, `authUrl` and `trustProxy`
  * the mount was given, so the session is read on the origin and path the mount serves it from. */
@@ -335,34 +331,6 @@ export interface AuthGuardOptions
   readonly env?: unknown
   /** Secret key in `env`; defaults to `AUTH_SECRET`. */
   readonly secretEnv?: string
-}
-
-const UNAUTHORIZED = { ok: false, error: "unauthorized" } as const
-
-/** A dev-authored denial that is not an error status, or that competes with a redirect, fails loud. */
-function assertUnauthenticated(options: {
-  readonly redirectTo?: string
-  readonly unauthenticated?: UnauthenticatedResponse
-}): void {
-  const custom = options.unauthenticated
-  if (custom === undefined) return
-  if (options.redirectTo !== undefined) {
-    throw new Error("[nifra/authjs] a guard takes redirectTo or unauthenticated, not both")
-  }
-  const code = custom.status
-  if (code !== undefined && (!Number.isInteger(code) || code < 400 || code > 599)) {
-    throw new RangeError(
-      `[nifra/authjs] guard unauthenticated.status must be an integer 400-599 (got ${String(code)})`,
-    )
-  }
-}
-
-const unauthenticatedResult = (custom: UnauthenticatedResponse | undefined): ResponseResult => {
-  if (custom === undefined) return status(401, UNAUTHORIZED)
-  const body = "body" in custom ? custom.body : UNAUTHORIZED
-  return custom.headers === undefined
-    ? status(custom.status ?? 401, body)
-    : status(custom.status ?? 401, body, { headers: custom.headers })
 }
 
 const guardRejection = (options: AuthGuardOptions): ResponseResult => {
@@ -418,7 +386,7 @@ export async function requireAuthUser(
   config: AuthJSConfig,
   options: AuthGuardOptions = {},
 ): Promise<NonNullable<Session["user"]>> {
-  assertUnauthenticated(options)
+  assertUnauthenticated(options, "authjs")
   const session = await getSession(req, config, options)
   if (session?.user) return session.user
   throw guardRejection(options)

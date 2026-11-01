@@ -1,5 +1,10 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import {
+  assertUnauthenticated,
+  type UnauthenticatedResponse,
+  unauthenticatedResult,
+} from "@nifrajs/core/guard-deny"
+import {
   type AnyServer,
   type AuthenticationInput,
   type AuthHeaders,
@@ -116,15 +121,9 @@ export function getSession<A extends BetterAuthLike>(
   return result.then((session) => (session == null ? null : session))
 }
 
-/** The response a guard denies a missing session with, in place of the default `401` JSON. */
-export interface UnauthenticatedResponse {
-  /** An error status, 400-599. Default `401`. */
-  readonly status?: number
-  /** The body; present but `undefined` sends none. Default `{ ok: false, error: "unauthorized" }`. */
-  readonly body?: unknown
-  /** Response headers, such as a `www-authenticate` challenge. */
-  readonly headers?: Readonly<Record<string, string>>
-}
+/** The response a guard denies a missing session with, from `@nifrajs/core/guard-deny`, the owner
+ * the three auth packages' guards share. */
+export type { UnauthenticatedResponse } from "@nifrajs/core/guard-deny"
 
 /**
  * What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path),
@@ -134,34 +133,6 @@ export interface UnauthenticatedResponse {
 export interface RequireSessionOptions {
   readonly redirectTo?: string
   readonly unauthenticated?: UnauthenticatedResponse
-}
-
-const UNAUTHORIZED = { ok: false, error: "unauthorized" } as const
-
-/** A dev-authored denial that is not an error status, or that competes with a redirect, fails loud. */
-function assertUnauthenticated(options: {
-  readonly redirectTo?: string
-  readonly unauthenticated?: UnauthenticatedResponse
-}): void {
-  const custom = options.unauthenticated
-  if (custom === undefined) return
-  if (options.redirectTo !== undefined) {
-    throw new Error("[nifra/better-auth] a guard takes redirectTo or unauthenticated, not both")
-  }
-  const code = custom.status
-  if (code !== undefined && (!Number.isInteger(code) || code < 400 || code > 599)) {
-    throw new RangeError(
-      `[nifra/better-auth] guard unauthenticated.status must be an integer 400-599 (got ${String(code)})`,
-    )
-  }
-}
-
-const unauthenticatedResult = (custom: UnauthenticatedResponse | undefined): ResponseResult => {
-  if (custom === undefined) return status(401, UNAUTHORIZED)
-  const body = "body" in custom ? custom.body : UNAUTHORIZED
-  return custom.headers === undefined
-    ? status(custom.status ?? 401, body)
-    : status(custom.status ?? 401, body, { headers: custom.headers })
 }
 
 const rejection = (options: RequireSessionOptions): ResponseResult => {
@@ -195,7 +166,7 @@ export async function requireSession<A extends BetterAuthLike>(
   options: RequireSessionOptions = {},
 ): Promise<SessionOf<A>> {
   assertSafeRedirectTo(options.redirectTo, "requireSession")
-  assertUnauthenticated(options)
+  assertUnauthenticated(options, "better-auth")
   const session = await getSession(auth, request)
   if (session !== null) return session
   throw rejection(options)
@@ -385,7 +356,7 @@ export function authed<A extends BetterAuthLike, const RequireTenant extends boo
   app: S,
 ) => WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>> {
   assertSafeRedirectTo(options?.redirectTo, "authed")
-  assertUnauthenticated(options ?? {})
+  assertUnauthenticated(options ?? {}, "better-auth")
   const plugin = <S extends AnyServer>(app: S) =>
     app.authenticate({
       id: "better-auth",
