@@ -845,6 +845,27 @@
       "code": "cachePut(pagePath, reloaded)",
       "from": "cachePut(pagePath, reloaded)",
       "reason": "Cache entries are only marked stale and their keys only pick which fetchers invalidate() refreshes; a fetcher's own load already caches the path it shows."
+    },
+    {
+      "op": "condition->false",
+      "fn": "dataUrlFor",
+      "code": "pathname === \"/\" ? \"/_data.json\" : `${trimTrailingSlashes(pathname)}/_data.json`",
+      "from": "pathname === \"/\"",
+      "reason": "The root takes the other branch to the same URL: trimming \"/\" leaves \"\", and \"\" + \"/_data.json\" is \"/_data.json\"."
+    },
+    {
+      "op": "delete statement",
+      "fn": "interceptionFor",
+      "code": "void target",
+      "from": "void target",
+      "reason": "The statement only marks the parameter as used; it has no effect to remove."
+    },
+    {
+      "op": "condition->true",
+      "fn": "loadRouteData",
+      "code": "...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),",
+      "from": "payload.boundaries !== undefined",
+      "reason": "Passes boundaries: undefined instead of no key; dataFields, cachePut and shareShown all treat an undefined boundaries as absent."
     }
   ],
   "packages/mcp-db/src/internal/pg-exec.ts": [

@@ -423,7 +423,10 @@ export function mergeSurvivors(
 /** A nightly target in `mutation-targets.json`: whole files, the tests that guard them, and the variables those tests need. */
 export interface MutationTarget {
   readonly files: readonly string[]
+  /** Tests run beyond the ones that import a target file directly, which every run adds itself. */
   readonly tests: readonly string[]
+  /** Tests that import a target file directly but are left out of its runs, such as a suite too slow per mutant. */
+  readonly exclude: readonly string[]
   /** Variables a test skips without, such as a live server's URL: the run refuses to start unset. */
   readonly env: readonly string[]
 }
@@ -443,8 +446,14 @@ export function loadTargets(path: string): Readonly<Record<string, MutationTarge
     const files = strings(fieldOf(target, "files"), `${where} files`)
     const tests = strings(fieldOf(target, "tests"), `${where} tests`)
     if (files.length === 0 || tests.length === 0) throw new Error(`${where} needs files and tests`)
+    const exclude = fieldOf(target, "exclude")
     const env = fieldOf(target, "env")
-    targets[name] = { files, tests, env: env === undefined ? [] : strings(env, `${where} env`) }
+    targets[name] = {
+      files,
+      tests,
+      exclude: exclude === undefined ? [] : strings(exclude, `${where} exclude`),
+      env: env === undefined ? [] : strings(env, `${where} env`),
+    }
   }
   return targets
 }
@@ -589,6 +598,26 @@ export function selectTests(
     .filter(([file]) => tests.has(file))
     .map(([file, d]) => ({ file, depth: d }))
     .sort((a, b) => a.depth - b.depth || codeUnitOrder(a.file, b.file))
+}
+
+/**
+ * What a target runs: its listed tests, then every test that imports one of its files directly. A list
+ * kept by hand went stale as suites were added, and every mutant only a missing suite kills survived.
+ */
+export function targetTests(
+  root: string,
+  target: Pick<MutationTarget, "files" | "tests" | "exclude">,
+  graph: ReadonlyMap<string, readonly string[]>,
+  tests: ReadonlySet<string>,
+): string[] {
+  const within = (file: string, listed: readonly string[]): boolean =>
+    listed.some((entry) => file === join(root, entry) || file.startsWith(join(root, entry) + sep))
+  const direct = new Set<string>()
+  for (const file of target.files)
+    for (const t of selectTests(graph, tests, join(root, file)))
+      if (t.depth === 1 && !within(t.file, target.tests) && !within(t.file, target.exclude))
+        direct.add(relative(root, t.file).split(sep).join("/"))
+  return [...target.tests, ...[...direct].sort(codeUnitOrder)]
 }
 
 const TEST_FILE = /(\.|_)(test|spec)\.[cm]?[jt]sx?$/
@@ -766,6 +795,8 @@ interface Run {
   readonly cases: readonly TestCase[] | undefined
   readonly errors: number
   readonly timedOut: boolean
+  /** How `bun test` ended: null when a signal ended it. */
+  readonly exitCode: number | null
   readonly ms: number
 }
 
@@ -815,7 +846,13 @@ async function runTests(
     killChild()
   }, timeout)
   const closed = new Promise<void>((done) => proc.on("close", () => done()))
-  await new Promise<void>((done) => proc.on("exit", () => done()))
+  let exitCode: number | null = null
+  await new Promise<void>((done) =>
+    proc.on("exit", (code) => {
+      exitCode = code
+      done()
+    }),
+  )
   clearTimeout(timer)
   // A server a test left running would hold the output pipes open; the group goes before reading on.
   killChild()
@@ -826,13 +863,18 @@ async function runTests(
     cases,
     errors: errorCount(output),
     timedOut,
+    exitCode,
     ms: Math.round(performance.now() - started),
   }
 }
 
 /** What a mutant run says against the unmutated baseline: a test that already failed there cannot kill. */
 export function classify(
-  baseline: { readonly cases: readonly TestCase[]; readonly errors: number },
+  baseline: {
+    readonly cases: readonly TestCase[]
+    readonly errors: number
+    readonly exitCode?: number | null
+  },
   run: Run,
   bail: boolean,
 ): { readonly status: Status; readonly killedBy: string[] } {
@@ -850,6 +892,10 @@ export function classify(
   if (killedBy.length > 0) return { status: "killed", killedBy }
   if (run.errors > baseline.errors)
     return { status: "killed", killedBy: ["(error outside a test)"] }
+  // A test file that fails to load ends the run non-zero with no case in the report and, under --bail,
+  // no error count: only the exit code says so.
+  if (baseline.exitCode === 0 && run.exitCode !== 0)
+    return { status: "killed", killedBy: ["(test run failed)"] }
   if (run.cases.length === 0 && passing.size > 0) return { status: "error", killedBy: [] }
   return { status: "survived", killedBy: [] }
 }
@@ -859,6 +905,8 @@ export interface FileReport {
   readonly tests: ReadonlyArray<{ readonly file: string; readonly depth: number }>
   readonly baselineMs: number | undefined
   readonly baselineFailures: readonly string[] | undefined
+  /** The unmutated test process exit code, when a baseline run was attempted. */
+  readonly baselineExitCode?: number | null
   readonly mutants: readonly MutantResult[]
   readonly unusedEquivalents: readonly EquivalentEntry[]
   /** Ids of the mutants `mutation-baseline.json` lists as known survivors. */
@@ -880,7 +928,9 @@ export function gateFailures(reports: readonly FileReport[]): string[] {
   const failures: string[] = []
   for (const r of reports) {
     const known = new Set(r.baselined ?? [])
-    const broken = (r.baselineFailures ?? []).length > 0
+    const broken =
+      (r.baselineFailures ?? []).length > 0 ||
+      (r.baselineExitCode !== undefined && r.baselineExitCode !== 0)
     if (broken) failures.push(`${r.file}: the tests fail with no mutant in place`)
     for (const m of r.mutants) {
       const at = `${r.file}:${m.line} ${m.op} \`${m.from}\``
@@ -1002,16 +1052,16 @@ async function main(argv: readonly string[]): Promise<number> {
 
   let targets: Array<{ readonly file: string; readonly lines: ReadonlySet<number> | undefined }>
   let heading: string
-  let fixedTests: string[] | undefined
+  let chosen: MutationTarget | undefined
   if (options.target !== undefined) {
     const target = loadTargets(resolve(root, options.targets))[options.target]
     if (target === undefined) usage(`${options.targets} has no target ${options.target}`)
     const unset = target.env.filter((name) => (process.env[name] ?? "") === "")
     if (unset.length > 0) usage(`target ${options.target} needs ${unset.join(", ")} set`)
-    for (const file of [...target.files, ...target.tests])
+    for (const file of [...target.files, ...target.tests, ...target.exclude])
       if (!existsSync(join(root, file))) usage(`target ${options.target} names a missing ${file}`)
     targets = target.files.map((file) => ({ file, lines: undefined }))
-    fixedTests = [...target.tests]
+    chosen = target
     const shard = options.shard
     heading = `Target \`${options.target}\`${shard === undefined ? "" : `, shard ${shard.index + 1} of ${shard.count}`}: whole files.`
   } else if (options.changed !== undefined) {
@@ -1047,9 +1097,9 @@ async function main(argv: readonly string[]): Promise<number> {
   const equivalents = loadEquivalents(resolve(root, options.equivalents))
   const knownSurvivors = loadBaseline(resolve(root, options.baseline))
   const tests = discoverTests(root)
-  const graph =
-    targets.length === 0 || fixedTests !== undefined ? new Map() : buildImportGraph(root, tests)
+  const graph = targets.length === 0 ? new Map() : buildImportGraph(root, tests)
   const testSet = new Set(tests)
+  const fixedTests = chosen === undefined ? undefined : targetTests(root, chosen, graph, testSet)
   const deadline =
     options.maxMinutes === undefined ? Infinity : Date.now() + options.maxMinutes * 60_000
   const junit = join(out, `junit-${process.pid}.xml`)
@@ -1098,16 +1148,23 @@ async function main(argv: readonly string[]): Promise<number> {
       continue
     }
     const results: MutantResult[] = []
-    const report = (baselineMs?: number, baselineFailures?: string[]): FileReport => ({
-      file: target.file,
-      tests: relTests,
-      baselineMs,
-      baselineFailures,
-      mutants: results,
-      unusedEquivalents: target.lines === undefined && owner ? unused : [],
-      baselined: mutants.filter((m) => known.matched.has(m.id)).map((m) => m.id),
-      unusedBaseline: owner ? known.unused : [],
-    })
+    const report = (
+      baselineMs?: number,
+      baselineFailures?: string[],
+      baselineExitCode?: number | null,
+    ): FileReport => {
+      const base: FileReport = {
+        file: target.file,
+        tests: relTests,
+        baselineMs,
+        baselineFailures,
+        mutants: results,
+        unusedEquivalents: target.lines === undefined && owner ? unused : [],
+        baselined: mutants.filter((m) => known.matched.has(m.id)).map((m) => m.id),
+        unusedBaseline: owner ? known.unused : [],
+      }
+      return baselineExitCode === undefined ? base : { ...base, baselineExitCode }
+    }
     const pending = mutants.filter((m) => {
       const reason = reasons.get(m.id)
       if (reason !== undefined) results.push({ ...m, status: "equivalent", killedBy: [], reason })
@@ -1121,13 +1178,23 @@ async function main(argv: readonly string[]): Promise<number> {
     }
     const files = relTests.map((t) => t.file)
     const baseline = await runTests(root, files, junit, 15 * 60_000, false)
-    if (baseline.cases === undefined) {
-      console.error(`${target.file}: the run without a mutant produced no report`)
+    if (baseline.cases === undefined || baseline.exitCode !== 0) {
+      console.error(
+        `${target.file}: the run without a mutant ${
+          baseline.cases === undefined
+            ? "produced no report"
+            : `exited ${String(baseline.exitCode)}`
+        }`,
+      )
       for (const m of pending) results.push({ ...m, status: "not-run", killedBy: [] })
-      reports.push(report(baseline.ms, [NO_REPORT]))
+      const baselineFailures =
+        baseline.cases === undefined
+          ? [NO_REPORT]
+          : baseline.cases.filter((c) => c.failed).map((c) => c.id)
+      reports.push(report(baseline.ms, baselineFailures, baseline.exitCode))
       continue
     }
-    const base = { cases: baseline.cases, errors: baseline.errors }
+    const base = { cases: baseline.cases, errors: baseline.errors, exitCode: baseline.exitCode }
     const baselineFailures = baseline.cases.filter((c) => c.failed).map((c) => c.id)
     const timeout = options.timeout ?? Math.max(10_000, baseline.ms * 3)
     console.log(
@@ -1156,7 +1223,7 @@ async function main(argv: readonly string[]): Promise<number> {
       restore = undefined
     }
     results.sort((a, b) => a.id - b.id)
-    reports.push(report(baseline.ms, baselineFailures))
+    reports.push(report(baseline.ms, baselineFailures, baseline.exitCode))
   }
   rmSync(junit, { force: true })
 
