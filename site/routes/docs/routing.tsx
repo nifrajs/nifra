@@ -345,8 +345,13 @@ export default function Routing() {
           loader) goes straight to the new page, as does one with no eligible{" "}
           <code>_loading</code>; a change of search on the same path and a form submit keep the
           page and report <code>pending</code>. The component receives <code>pending</code> and no{" "}
-          <code>data</code>. It is a browser-only convention on every adapter - the first load of a
-          URL is a server render, where <code>defer()</code> streams the slow part.
+          <code>data</code>. React&apos;s <code>NavLink</code> widens this to a per-link signal: its{" "}
+          <code>className</code>, <code>style</code> and <code>children</code> take functions over{" "}
+          <code>{`{ isActive, isPending }`}</code>, where <code>isPending</code> is{" "}
+          <code>true</code> while a navigation into that link&apos;s own target is in flight; the
+          other adapters expose the route-level <code>pending</code> described here only. It is a
+          browser-only convention on every adapter - the first load of a URL is a server render,
+          where <code>defer()</code> streams the slow part.
         </li>
         <li>
           <code>_error.tsx</code> is the segment's <b>error boundary</b>. On the server - if a route's
