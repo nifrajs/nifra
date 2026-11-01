@@ -82,13 +82,11 @@ describe("published HTTP slices", () => {
       node: "26.12.0",
       deno: "2.9.7",
       oha: "1.16.0",
-      source: expect.any(String),
-      machine: {
-        runner: expect.any(String),
-        cpu: expect.any(String),
-        vcpus: expect.any(Number),
-      },
     })
+    expect(typeof allRuntimes.source).toBe("string")
+    expect(typeof allRuntimes.machine?.runner).toBe("string")
+    expect(typeof allRuntimes.machine?.cpu).toBe("string")
+    expect(typeof allRuntimes.machine?.vcpus).toBe("number")
     expect(allRuntimes.source?.length).toBeGreaterThan(0)
     // The SSR suite runs no Deno target, so its record names none.
     const ssr = capturedMeta({ bun: "1.4.3", node: "v26.12.0", oha: "1.16.0" })
@@ -97,13 +95,11 @@ describe("published HTTP slices", () => {
       bun: "1.4.3",
       node: "26.12.0",
       oha: "1.16.0",
-      source: expect.any(String),
-      machine: {
-        runner: expect.any(String),
-        cpu: expect.any(String),
-        vcpus: expect.any(Number),
-      },
     })
+    expect(typeof ssr.source).toBe("string")
+    expect(typeof ssr.machine?.runner).toBe("string")
+    expect(typeof ssr.machine?.cpu).toBe("string")
+    expect(typeof ssr.machine?.vcpus).toBe("number")
     expect(ssr).not.toHaveProperty("deno")
     expect(ssr.source?.length).toBeGreaterThan(0)
   })

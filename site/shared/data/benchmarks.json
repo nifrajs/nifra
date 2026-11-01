@@ -494,7 +494,7 @@
           "name": "Nifra + React SSG files on a static host",
           "version": "5.10.0",
           "runtime": "bun",
-          "rps": 17918,
+          "rps": 42778,
           "p50ms": 2.75,
           "p99ms": 3.29,
           "jsGzKb": 89.3,
