@@ -446,6 +446,16 @@ const css = `
   .bench-block table { font-size: 13px; }
   tr:last-child td { border-bottom: none; }
   tr.hl td { background: var(--green-soft); color: var(--fg); font-weight: 700; }
+  .bench td.memory-best {
+    background: color-mix(in oklch, var(--color-ok) 11%, var(--surface));
+    color: var(--color-ink); font-weight: 700; white-space: nowrap;
+  }
+  .bench .memory-best-label {
+    display: inline-block; margin-left: 7px; padding: 2px 5px;
+    border-radius: 999px; background: color-mix(in oklch, var(--color-ok) 13%, transparent);
+    color: var(--color-ok); font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
+    line-height: 1.2; text-transform: uppercase; vertical-align: 1px;
+  }
   .bench-version { display: block; margin-top: 2px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; color: var(--muted); }
   .caveat {
     background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--green);
@@ -1662,37 +1672,80 @@ ${demoAutoplay("demo-auto", "a")}${demoAutoplay("demo-auto-b", "b")}${demoManual
   }
 
   /* ---- proof numbers ---- */
-  .home-proof {
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-    margin: 0; padding: 0; list-style: none; overflow: hidden;
-    border: 1px solid var(--line); border-radius: var(--radius-lg);
-    background: color-mix(in oklch, var(--surface) 84%, transparent);
-    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-    box-shadow: var(--shadow);
+  .home-proof-section {
+    position: relative; isolation: isolate; overflow: hidden;
+    margin: 0 0 72px; padding: 22px 28px 12px;
+    border: 1px solid var(--color-graphite-rule); border-radius: 20px;
+    background:
+      radial-gradient(ellipse 62% 130% at 0% 0%, color-mix(in oklch, var(--color-graphite-accent) 20%, transparent), transparent 72%),
+      linear-gradient(125deg, var(--color-graphite), var(--color-band));
+    color: var(--color-graphite-ink); box-shadow: var(--shadow-lg);
   }
-  .home-proof li { padding: 28px 24px; border-left: 1px solid var(--line); min-width: 0; }
-  .home-proof li:first-child { border-left: 0; }
+  .home-proof-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    padding: 0 0 16px; border-bottom: 1px solid var(--color-graphite-rule);
+  }
+  .home-proof-eyebrow {
+    margin: 0; color: var(--color-graphite-accent-2); font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .home-proof-head a {
+    color: var(--color-graphite-muted); font-size: 13px; text-decoration: none; white-space: nowrap;
+  }
+  .home-proof-head a:hover { color: var(--color-graphite-ink); }
+  .home-proof-head a:focus-visible { outline: 2px solid var(--color-graphite-accent); outline-offset: 4px; }
+  .home-proof {
+    display: grid; grid-template-columns: 1.12fr repeat(3, minmax(0, 1fr));
+    margin: 0; padding: 0; list-style: none;
+  }
+  .home-proof li { padding: 26px 20px 22px; border-left: 1px solid var(--color-graphite-rule); min-width: 0; }
+  .home-proof li:first-child { border-left: 0; padding-left: 0; }
   .home-proof strong {
-    display: block; font-family: var(--font-display); font-size: clamp(28px, 3.2vw, 40px);
-    font-weight: 600; line-height: 1; letter-spacing: -0.03em; color: var(--fg);
+    display: block; font-family: var(--font-display); font-size: clamp(30px, 3.3vw, 42px);
+    font-weight: 600; line-height: 1; letter-spacing: -0.04em; color: var(--color-graphite-ink);
     font-variant-numeric: tabular-nums;
   }
-  .home-proof span { display: block; margin-top: 12px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
-  .home-proof-note { margin: 16px 0 40px; font-size: 13.5px; }
+  .home-proof li.is-featured strong { font-size: clamp(44px, 5.2vw, 66px); }
+  .home-proof span { display: block; margin-top: 12px; color: var(--color-graphite-muted); font-size: 13px; line-height: 1.55; }
+  .home-proof li.is-featured span { max-width: 30ch; }
 
-  /* ---- what it replaces: one row per category, the full table is further down ---- */
-  .home-swap { margin: 0 0 96px; }
-  .home-swap-title { margin: 0 0 16px; font-size: 15px; font-weight: 600; color: var(--fg); }
+  /* ---- what it replaces: an editorial introduction beside one ordered stack ---- */
+  .home-swap {
+    display: grid; grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+    gap: clamp(36px, 6vw, 80px); align-items: center; margin: 0 0 96px;
+  }
+  .home-swap-copy { min-width: 0; }
+  .home-swap-copy h2 {
+    margin: 0; font-size: clamp(30px, 3.6vw, 44px); font-weight: 600;
+    line-height: 1.08; letter-spacing: -0.035em; text-wrap: balance;
+  }
+  .home-swap-copy > p:not(.kicker) {
+    margin: 18px 0 0; max-width: 38ch; color: var(--muted); font-size: 15px; line-height: 1.7;
+  }
   .home-swap-list {
-    list-style: none; margin: 0; padding: 0;
-    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
+    list-style: none; margin: 0; padding: 8px 22px;
+    display: grid; grid-template-columns: minmax(0, 1fr);
+    border: 1px solid var(--line); border-radius: 18px; background: var(--surface);
+    box-shadow: var(--shadow-lg); min-width: 0;
   }
   .home-swap-list li {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0;
-    padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius);
-    background: color-mix(in oklch, var(--surface) 84%, transparent);
+    display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 14px;
+    align-items: center; min-width: 0; padding: 16px 0; border-bottom: 1px solid var(--line);
   }
-  .home-swap-list .replace-arrow { margin-left: 0; }
+  .home-swap-list li:last-child { border-bottom: 0; }
+  .replace-index {
+    color: var(--color-accent-ink); font-family: var(--font-mono); font-size: 11px;
+    font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  .replace-body { min-width: 0; }
+  .replace-category {
+    display: block; margin-bottom: 5px; color: var(--muted); font-size: 10.5px;
+    font-weight: 600; letter-spacing: 0.075em; text-transform: uppercase;
+  }
+  .replace-flow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 10px; min-width: 0; }
+  .replace-old { color: var(--soft); font-size: 13px; overflow-wrap: anywhere; }
+  .replace-arrow { color: var(--color-accent-ink); font-size: 16px; }
+  .replace-pkg { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 
   /* ---- sections ---- */
   .home-section { margin: 0 0 96px; }
@@ -1903,20 +1956,28 @@ ${homeFwRules}
     .home-end { padding: 40px; }
     .home-proof { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .home-proof li:nth-child(odd) { border-left: 0; }
-    .home-proof li:nth-child(n + 3) { border-top: 1px solid var(--line); }
-    .home-swap-list, .home-vs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .home-proof li:nth-child(n + 3) { border-top: 1px solid var(--color-graphite-rule); }
+    .home-swap { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+    .home-vs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .home-bars-grid { grid-template-columns: minmax(0, 1fr); }
     .home-play iframe { height: 880px; }
   }
   @media (max-width: 620px) {
     .home-section, .home-band, .home-swap { margin-bottom: 64px; }
-    .home-proof-note { margin-bottom: 32px; }
-    .home-swap-list, .home-vs { grid-template-columns: minmax(0, 1fr); }
+    .home-proof-section { margin-bottom: 56px; padding: 20px 18px 8px; border-radius: 16px; }
+    .home-proof-head { align-items: flex-start; }
+    .home-proof-head a { font-size: 12px; text-align: right; }
+    .home-vs { grid-template-columns: minmax(0, 1fr); }
     .home-bars { padding: 20px 16px; }
     .home-band { padding: 56px 0; }
     .home-end { padding: 28px 20px; margin-bottom: 32px; }
     .home-actions .install-widget, .home-actions .button { width: 100%; }
-    .home-proof li { padding: 20px 16px; }
+    .home-proof li { padding: 20px 14px; }
+    .home-proof li.is-featured strong { font-size: clamp(38px, 11vw, 54px); }
+    .home-proof span { font-size: 12px; }
+    .home-swap-list { padding: 5px 16px; border-radius: 15px; }
+    .home-swap-list li { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; padding: 14px 0; }
+    .replace-flow { gap: 4px 8px; }
     .demo-screen { padding: 16px; }
     .demo-line { margin: 0 -16px; padding: 0 16px; font-size: 12px; }
     .demo-step, .demo-replay { padding: 0 12px; }

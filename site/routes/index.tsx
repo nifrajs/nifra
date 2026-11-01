@@ -199,7 +199,9 @@ const REPLACE_GROUPS: ReadonlyArray<{
 ]
 
 // One row per category for the strip under the hero; the full table is the ecosystem section.
-const REPLACE_TOP = REPLACE_GROUPS.flatMap((group) => group.rows.slice(0, 1))
+const REPLACE_TOP = REPLACE_GROUPS.flatMap((group) =>
+  group.rows.slice(0, 1).map(([old, pkg]) => ({ category: group.title, old, pkg })),
+)
 const REPLACE_TOTAL = REPLACE_GROUPS.reduce((total, group) => total + group.rows.length, 0)
 
 // The proof strip reads its two measured numbers from the benchmark dataset, so a re-run moves them.
@@ -721,36 +723,54 @@ export default function Home() {
         <HeroDemo />
       </section>
 
-      <ul className="home-proof" aria-label="Measured results">
-        {PROOF_STATS.map((item) => (
-          <li key={item.label}>
-            <strong>{item.value}</strong>
-            <span>{item.label}</span>
-          </li>
-        ))}
-      </ul>
-      <p className="home-proof-note">
-        <a href={href({ to: "/benchmarks" })}>How these were measured</a>
-      </p>
-
-      <section id="sec-replaces" className="home-swap" aria-labelledby="sec-replaces-title">
-        <h2 id="sec-replaces-title" className="home-swap-title">
-          One framework in place of a stack you wire together.
-        </h2>
-        <ul className="home-swap-list">
-          {REPLACE_TOP.map(([old, pkg]) => (
-            <li key={old}>
-              <span className="replace-old">{old}</span>
-              <span className="replace-arrow" aria-hidden="true">
-                →
-              </span>
-              <code className="replace-pkg">{pkg}</code>
+      <section className="home-proof-section" aria-label="Measured results and framework facts">
+        <div className="home-proof-head">
+          <p className="home-proof-eyebrow">Proof, in numbers</p>
+          <a href={href({ to: "/benchmarks" })}>
+            Benchmark method <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <ul className="home-proof">
+          {PROOF_STATS.map((item, index) => (
+            <li key={item.label} className={index === 0 ? "is-featured" : undefined}>
+              <strong>{item.value}</strong>
+              <span>{item.label}</span>
             </li>
           ))}
         </ul>
-        <a className="home-link" href="#sec-ecosystem">
-          All {REPLACE_TOTAL} replacements
-        </a>
+      </section>
+
+      <section id="sec-replaces" className="home-swap" aria-labelledby="sec-replaces-title">
+        <div className="home-swap-copy">
+          <p className="kicker">One typed stack</p>
+          <h2 id="sec-replaces-title">One framework in place of a stack you wire together.</h2>
+          <p>
+            Keep the pieces your app needs. Nifra&apos;s optional packages cover the glue between
+            your API, UI, jobs, files, and tests.
+          </p>
+          <a className="home-link" href="#sec-ecosystem">
+            Browse all {REPLACE_TOTAL} replacements <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <ol className="home-swap-list" aria-label="Examples of stack replacements">
+          {REPLACE_TOP.map(({ category, old, pkg }, index) => (
+            <li key={category}>
+              <span className="replace-index" aria-hidden="true">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <div className="replace-body">
+                <span className="replace-category">{category}</span>
+                <div className="replace-flow">
+                  <span className="replace-old">{old}</span>
+                  <span className="replace-arrow" aria-hidden="true">
+                    →
+                  </span>
+                  <code className="replace-pkg">{pkg}</code>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
       </section>
 
       <section id="sec-agent" className="home-band">

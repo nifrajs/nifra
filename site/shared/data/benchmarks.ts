@@ -48,7 +48,9 @@ export interface CapturedMeta {
 export interface HttpWorkloadRow {
   readonly name: string
   readonly version: string
+  readonly getRoot?: string
   readonly getUsers: string
+  readonly getSearch?: string
   readonly postUsers: string
   readonly nifra?: boolean
 }

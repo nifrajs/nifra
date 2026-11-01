@@ -13907,235 +13907,398 @@ tag name or inside `<script>`.
 A Svelte page receives `data` as the router published it, not a deep reactive
 proxy: copy what you edit into the page's own state.
 
-## Nifra - Migrating from Express, Hono, Fastify & Elysia
+## Nifra - Migrating Express, Fastify, Hono & Elysia backends
 
-> Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia - and you gain a typed client, multi-runtime deploy, and optional SSR.
+> Move an Express, Fastify, Hono, or Elysia API to Nifra with direct route examples for routing, validation, responses, and deployment.
 
-Nifra's `server()` is a chainable, Web-standard router - the move from Express, Hono,
-Fastify, or Elysia is mostly mechanical renames. What you gain: an end-to-end-typed client with
-zero codegen, schema validation built into the route, the same app on Bun / Node / Deno / the
-edge, and an SSR frontend whenever you want one.
+Migrate an API from Express, Fastify, Hono, or Elysia. The route handlers become chainable
+Nifra routes; request validation becomes part of the route contract; and the same app can
+serve a typed client on Bun, Node, Deno, or an edge runtime.
 
-### How the concepts map
+Keep your database, service layer, and domain logic. Move one endpoint at a time, translate
+its request and response shape, then point the existing frontend at the new endpoint. Nifra
+can stay backend-only or mount under a full-stack app.
 
-Express / Hono / Fastify
+### Map the backend primitives
+
+Express / Fastify / Hono / Elysia
 Nifra
 
 `app.get(path, handler)`
+`server().get(path, handler)`; path params are inferred from the path
 
-`server().get(path, handler)` - chainable, fully type-inferred
+`req` / `reply` / framework context
+`c`, with `c.params`, `c.query`, `c.body`, and the Web Request
 
-`req` / `res` · Hono `Context`
+`res.json(x)`, `reply.send(x)`, `c.json(x)`
+Return `x` for JSON, or return a Web `Response`
 
-`c` - `c.req`, `c.params`, `c.query`; **return** a value (JSON) or a
-`Response`
+JSON Schema, TypeBox, or validator middleware
+Declare `body`, `query`, or `params` with `t`; validated values are typed in the handler
 
-`app.use(mw)` · Hono middleware
+Set a status or response header
+`c.set.status` and `c.set.headers`, or return a `Response`
 
-`.use()` + the `@nifrajs/middleware` pack (CORS, auth, rate limit, …)
+Middleware and plugins
+`.use()` and the optional `@nifrajs/middleware` packages
 
-`express.json()` / body parsing
-built in - declare a schema and the parsed body is typed
+Generated client types or a separate SDK
+`client<typeof app>()` from `@nifrajs/client`, no codegen
 
-Fastify JSON schema · `zod` middleware · Elysia `t`
+OpenAPI and interactive API docs
+Generate a document from the route schemas with `nifra openapi`
 
-`{ body, query, params }` validated by `t` (TypeBox) or any
-[Standard Schema](https://standardschema.dev)
+### Express to Nifra
 
-`res.json(x)` / `reply.send(x)` / `c.json(x)`
-
-`return x`
-
-`app.listen(3000)`
-
-`app.listen()` (Bun) · `@nifrajs/node` · `@nifrajs/deno` ·
-`toFetchHandler` (edge)
-
-OpenAPI plugins / swagger
-generated from the same `t` schemas - no second source of truth
-
-### Express → Nifra
-
-The handler returns its result instead of calling `res.json`, and validation moves
-onto the route. The client then infers all of this for free.
+Replace `req.params` with `c.params`, body-parser middleware with a
+route schema, and `res.status().json()` with `c.set.status` plus a
+returned value. Keep Express middleware only where it is still needed during a staged
+migration.
 
 ```ts
 // Express
-app.get("/users/:id", (req, res) => res.json({ id: req.params.id }))
-app.post("/users", express.json(), (req, res) => res.status(201).json(create(req.body)))
+import express from "express"
+const expressApp = express()
+expressApp.get("/users/:id", (req, res) => res.json({ id: req.params.id }))
+expressApp.post("/users", express.json(), (req, res) =>
+  res.status(201).json({ id: crypto.randomUUID(), name: req.body.name }),
+)
 
-// Nifra - return the value (or a Response); c is Web-standard; the body is parsed + validated
-server()
+// Nifra
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+export const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
-  .post("/users", { body: t.object({ name: t.string() }) }, (c) => create(c.body))
+  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
+    c.set.status = 201
+    return { id: crypto.randomUUID(), name: c.body.name }
+  })
 ```
 
-### Hono → Nifra
+### Fastify to Nifra
 
-The closest of the routers - `c.req.param("id")` becomes a typed
-`c.params.id`, and you return the value rather than `c.json(...)`. Nifra
-adds the typed client, schema validation, multi-runtime deploy, and (if you want it) SSR.
+Move Fastify JSON Schema onto the route as Nifra's `body`,
+`query`, or `params` schema. Replace `reply.code().send()`
+with the response status and return value; move Fastify plugins to a Nifra plugin or
+`.use()` middleware where the behavior fits.
+
+```ts
+// Fastify
+import Fastify from "fastify"
+type UserParams = { id: string }
+type UserBody = { name: string }
+const fastify = Fastify()
+fastify.get<{ Params: UserParams }>("/users/:id", async (request, reply) =>
+  reply.send({ id: request.params.id }),
+)
+fastify.post<{ Body: UserBody }>(
+  "/users",
+  {
+    schema: {
+      body: {
+        type: "object",
+        required: ["name"],
+        properties: { name: { type: "string" } },
+      },
+    },
+  },
+  async (request, reply) =>
+    reply.code(201).send({ id: crypto.randomUUID(), name: request.body.name }),
+)
+
+// Nifra
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+export const app = server()
+  .get("/users/:id", (c) => ({ id: c.params.id }))
+  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
+    c.set.status = 201
+    return { id: crypto.randomUUID(), name: c.body.name }
+  })
+```
+
+### Hono to Nifra
+
+The handler shape is close: `c.req.param("id")` becomes the typed
+`c.params.id`, and `c.json()` becomes a return. Move body parsing and
+validation into the route declaration so invalid input is rejected before the handler runs.
 
 ```ts
 // Hono
-app.get("/users/:id", (c) => c.json({ id: c.req.param("id") }))
+import { Hono } from "hono"
+const legacy = new Hono()
+legacy
+  .get("/users/:id", (c) => c.json({ id: c.req.param("id") }))
+  .post("/users", async (c) => {
+    const body = await c.req.json<{ name: string }>()
+    return c.json({ id: crypto.randomUUID(), name: body.name }, 201)
+  })
 
-// Nifra - nearly identical; params are a typed object, you return the value
-server().get("/users/:id", (c) => ({ id: c.params.id }))
+// Nifra
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+export const app = server()
+  .get("/users/:id", (c) => ({ id: c.params.id }))
+  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
+    c.set.status = 201
+    return { id: crypto.randomUUID(), name: c.body.name }
+  })
 ```
 
-### Fastify & Elysia
+### Elysia to Nifra
 
--
-**Fastify** - its per-route JSON-schema validation maps directly to Nifra's
-`{ body, query, params }`; plugins become Nifra plugins; `reply.send`
-becomes a return.
+Both use a chainable route API and TypeBox-shaped schemas. In Nifra, import `t`
+from `@nifrajs/schema` and declare the schema beside the handler; the handler
+receives a typed context and returns its response. This keeps the route contract available
+to Nifra's inferred client and other adapters.
 
--
-**Elysia** - the closest peer (Bun, typed, TypeBox `t`). The shapes are nearly
-1:1: `.get/.post` + a `t` schema, and an Eden-style typed client. You
-gain Node / Deno / edge portability and an optional SSR frontend on five UI libraries.
+```ts
+// Elysia
+import { Elysia, t as elysiaT } from "elysia"
+const legacy = new Elysia()
+  .get("/users/:id", ({ params }) => ({ id: params.id }))
+  .post(
+    "/users",
+    ({ body }) => ({ id: crypto.randomUUID(), name: body.name }),
+    { body: elysiaT.Object({ name: elysiaT.String() }) },
+  )
 
-Then connect a database (Database) and, if you're going
-full-stack, see Migrating a meta-framework.
+// Nifra
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
 
-## Nifra - Migrating from Next.js, Nuxt, SvelteKit & SolidStart
+export const app = server()
+  .get("/users/:id", (c) => ({ id: c.params.id }))
+  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
+    c.set.status = 201
+    return { id: crypto.randomUUID(), name: c.body.name }
+  })
+```
 
-> Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).
+### Connect the API to a frontend or another runtime
 
-Nifra is framework-agnostic, so you keep your UI library and replace the meta-framework around
-it: Next.js → Nifra + React, Nuxt → Nifra + Vue, SvelteKit → Nifra + Svelte, SolidStart → Nifra +
-Solid. The concepts map one-to-one, and you can migrate incrementally - stand up Nifra's API
-first, point your existing app at it, then move routes over.
+The backend app itself is fetch-compatible. A frontend can call it in-process during SSR
+with `inProcessClient(app)`, while `apiPrefix: "/api"` also mounts the
+routes at `/api/*` over HTTP. The same app can be served through Bun,
+`@nifrajs/node`, `@nifrajs/deno`, or an edge fetch handler.
 
-### How the concepts map
+For the UI migration, see
+Migrate a frontend. For route schemas,
+middleware, and deployment details, continue to
+API & typed client,
+Plugins & middleware, and
+Deployment.
 
-Meta-framework concept
-Nifra
+## Nifra - Migrating React, Preact, Solid, Vue & Svelte apps
 
-File routes (`pages/`, `app/`, `routes/`)
+> Migrate a Next.js, Remix, Preact, SolidStart, Nuxt, or SvelteKit frontend to Nifra while keeping React, Preact, Solid, Vue, or Svelte.
 
-`routes/` - `.tsx` / `.vue` / `.svelte` / `.mdx`, same dynamic
-`[param]` / `[...catch-all]` conventions
+Keep your UI framework and replace the meta-framework around it. Nifra has adapters for
+React, Preact, Solid, Vue, and Svelte; the routes, loaders, actions, and rendering features
+work the same across all five.
 
-`getServerSideProps` · `load` · `createAsync` · `asyncData`
+This guide covers React apps from Next.js or Remix / React Router, Preact SSR apps, SolidStart,
+Nuxt, and SvelteKit. Move one route at a time: copy the view, move its server data work into
+the matching `.backend.ts` file, and let the loader schema define what reaches the
+browser.
 
-`export async function loader()` in the route's `.backend.ts`
-half - runs on the server, typed into the page through `loaderOutput`
+Scaffold the adapter you want with
+`bun create nifra my-app --framework react` (replace `react` with
+`preact`, `solid`, `vue`, or `svelte`). See
+Frameworks for adapter setup and file formats.
 
-API routes (`pages/api`, `+server.ts`, route handlers)
+### Map the route and data model
 
-a `server()` backend + the typed client - no `fetch()` wrappers
+Starting point
+Nifra adapter and page
+Move server data to
 
-Layouts (`layout.tsx`, `+layout`, `app.vue`)
+Next.js, Remix, React Router
+React, `routes/example.tsx`
+route `.backend.ts`
 
-`_layout.tsx` - nested layout chains
+Preact SSR / Fresh
+Preact, `routes/example.tsx`
+route `.backend.ts`
 
-Form actions / route handlers for mutations
+SolidStart
+Solid, `routes/example.tsx`
+route `.backend.ts`
 
-`export async function action()` - typed, progressive-enhancement forms
+Nuxt
+Vue, `routes/example.vue`
+route `.backend.ts`
 
-`getStaticProps` / `prerender` / `export const prerender`
+SvelteKit
+Svelte, `routes/example.svelte`
+route `.backend.ts`
 
-`export const prerender = true` (SSG) + ISR via `withISR`
+A route is a view file plus its server half: for example
+`routes/users/[id].tsx` and `routes/users/[id].backend.ts`. Dynamic
+segments keep the `[param]` convention. Layouts move to
+`_layout.tsx` (or the matching adapter format); API handlers move to a
+`server()` backend and can be called in-process by loaders.
 
-`<Link>` · `<NuxtLink>` · `<a data-sveltekit-preload>`
-Nifra's client router - `Link` + hover/focus prefetch, scroll restoration
+### Move data loading and mutations once
 
-`next/image` · `nuxt/image`
+Replace `getServerSideProps`, route `loader` functions,
+`useAsyncData`, and `+page.server.ts` with the same Nifra loader. It
+runs on the server, calls your API in-process during SSR, and returns only fields allowed by
+`loaderOutput`. Put mutations in `action`; native forms still work
+without JavaScript and client submissions revalidate the page data.
 
-`<Image>` from `@nifrajs/web-<fw>/image`
+```ts
+// routes/users/[id].backend.ts - server-only data work, shared by every UI adapter
+import { t } from "@nifrajs/schema"
+import { notFound } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
 
-`metadata` / `<Head>` / `definePageMeta`
+export const loaderOutput = t.object({ id: t.string(), name: t.string() })
+export const loader: Route.Loader = async ({ params, api }) => {
+  const result = await api.users({ id: params.id }).get()
+  if (!result.ok) throw notFound()
+  return result.data
+}
+```
 
-`export const meta` (or a `meta()` function of the loader data)
+### React - Next.js, Remix, and React Router
 
-`revalidatePath` · `revalidateTag`
-
-an action's `revalidate(paths, data, { tags })`, or
-`revalidateEndpoint` for a webhook - see
-SSG & ISR
-
-Server Components · `"use client"`
-
-opt-in server components on all five adapters
-
-Partial prerendering (Cache Components)
-
-a `shellLoader` and holes - see
-Partial prerendering
-
-Intercepting routes (`(.)photo`)
-
-a boundary with `{ intercept: "/photos/:id" }` - see
-Opening a route in a modal
-
-`keepalive` in `definePageMeta`
-
-`export const keepAlive = true` - see
-Keep-alive
-
-### Data loading (Next.js → Nifra + React)
-
-The biggest change: data fetching becomes a typed `loader` that calls your backend
-in-process during SSR - no `fetch` to your own API, no untyped JSON.
+Keep the React component. Move server fetching from a Next page, Server Component, or
+framework route loader into the paired backend file above. A route component receives typed
+`data` as a prop. Nifra does not require React Server Components; if you need them,
+they are an opt-in feature on the shared route model; see
+Server components.
 
 ```tsx
-// Next.js - app/users/[id]/page.tsx
-export default async function Page({ params }) {
-  const res = await fetch(`https://api/users/${params.id}`)
-  const user = await res.json()
-  return <h1>{user.name}</h1>
-}
+// routes/users/[id].tsx - React page, data is inferred from loaderOutput
+import type { Route } from "./+types/[id]"
 
-// Nifra - routes/users/[id].backend.ts: the loader, which never reaches the browser
-export const loaderOutput = t.object({ name: t.string() })   // the only fields the page receives
-export async function loader({ params, api }: Route.LoaderArgs) {
-  const res = await api.users({ id: params.id }).get()   // typed, in-process during SSR
-  if (!res.ok) throw notFound()
-  return res.data
-}
-
-// Nifra - routes/users/[id].tsx: the page
 export default function User({ data }: Route.ComponentProps) {
   return <h1>{data.name}</h1>
 }
 ```
 
-### Svelte / Solid / Vue
+### Preact - Preact SSR and Fresh
 
-Identical shape - only the page file's extension and component syntax change. The route's
-`.backend.ts` half (`loader`, `action`,
-`loaderOutput`) is the same file on every framework (that's Nifra's render seam).
-SvelteKit's `+page.server.ts` maps onto it one to one:
+Keep Preact JSX and component state. Replace Fresh or custom SSR route data with the shared
+backend loader, then author the page as a `.tsx` route using the Preact adapter.
+Fresh-specific middleware and route conventions move to Nifra's backend and file routes.
 
-```ts
-// SvelteKit - +page.server.ts + +page.svelte
-export async function load({ params }) { return { post: await getPost(params.slug) } }
+```tsx
+/** @jsxImportSource preact */
+// routes/users/[id].tsx - Preact uses the same route and loader shape
+import type { Route } from "./+types/[id]"
 
-// Nifra - routes/blog/[slug].backend.ts + routes/blog/[slug].svelte
-export const loaderOutput = t.object({ post: t.object({ title: t.string(), html: t.string() }) })
-export async function loader({ params }: Route.LoaderArgs) { return { post: await getPost(params.slug) } }
+export default function User({ data }: Route.ComponentProps) {
+  return <h1>{data.name}</h1>
+}
 ```
 
-### What Nifra adds
+### Solid - SolidStart
 
--
-**One model, any UI library** - switch React→Solid later by changing one import, not your
-app.
+Keep Solid components and signals. Move SolidStart route data into the shared loader; the
+page stays a `.tsx` file, with the loader result passed through props.
 
--
-**Much faster SSR** - the current dynamic-page snapshot reports Nifra at
-15× the throughput of Next.js, 6.9× Nuxt, and
-4.1× SvelteKit / 2.6× SolidStart, with a fraction
-of the client JavaScript. See benchmarks.
+```tsx
+// routes/users/[id].tsx - keep Solid components and JSX
+import type { Route } from "./+types/[id]"
 
--
-**End-to-end types with no codegen**, the same app on Bun / Node / Deno / the edge, and a
-backend you can also ship on its own. Start with Getting started.
+export default function User(props: Route.ComponentProps) {
+  return <h1>{props.data.name}</h1>
+}
+```
 
-Moving a backend (Express, Hono, Fastify, Elysia) instead? See
-Migrating a backend.
+### Vue - Nuxt
+
+Move `useAsyncData` and server-only calls from Nuxt pages into the backend loader.
+Keep the template and author the Nifra route as a Vue Single-File Component. Its frontmatter
+exports live in the plain `<script>`; component props and markup live in
+`<script setup>` and `<template>`.
+
+```vue
+<!-- routes/users/[id].vue - the view stays a Vue Single-File Component -->
+<script setup lang="ts">
+const props = defineProps<{ data: { id: string; name: string } }>()
+</script>
+
+<template>
+  <h1>{{ props.data.name }}</h1>
+</template>
+```
+
+### Svelte - SvelteKit
+
+Move `+page.server.ts` data loading to the paired backend file. Keep the
+`+page.svelte` markup and component logic in a Nifra `.svelte` route;
+Svelte 5 receives route data through `$props()`.
+
+```svelte
+<!-- routes/users/[id].svelte - Svelte 5 props -->
+<script lang="ts">
+  let { data }: { data: { id: string; name: string } } = $props()
+</script>
+
+<h1>{data.name}</h1>
+```
+
+### Map the rest of your frontend
+
+Existing feature
+Nifra equivalent
+
+Nested layouts
+`_layout.tsx` or the adapter's layout format; parent data is shared with child routes
+
+API route handlers
+A `server()` backend; loaders can use its typed client directly during SSR
+
+Form actions and mutations
+Route `action` plus native form POST; client submissions revalidate loader data
+
+Static generation and ISR
+`prerender = true` for SSG; `withISR` for revalidation
+
+Metadata and document head
+Named `meta` export, or a function of the loader data
+
+Link prefetch and scroll restore
+Nifra's client router and `Link`, with hover/focus prefetch and scroll restoration
+
+Image components
+`Image` from `@nifrajs/web-<framework>/image`
+
+Tag or path revalidation
+An action's `revalidate(paths, data, { tags })` or `revalidateEndpoint` for a webhook
+
+Partial prerendering
+`shellLoader` and boundary loaders; see Partial prerendering
+
+Intercepted modal routes
+A route boundary with an `intercept` target; see Modal routes
+
+Keep-alive pages
+`keepAlive = true`; see Keep-alive
+
+### What stays the same across adapters
+
+- Nested routes, layouts, metadata, forms, streaming, SSG, and ISR use the shared route model.
+
+- Route loaders and actions stay server-only; output schemas bound the data sent to the browser.
+
+- Switching among React, Preact, Solid, Vue, and Svelte changes the adapter and view syntax, not your backend contract.
+
+Moving an API server too? See
+Migrate a backend. For the full
+rendering and route model, see Loaders & actions
+and Routing.
+
+The current dynamic SSR snapshot reports Nifra at 15× the throughput
+of Next.js, 6.9× Nuxt, 4.1× SvelteKit, and
+2.6× SolidStart on the measured pages. See the
+benchmark methodology and full results.
 
 ## Nifra - Migrate route by route
 
