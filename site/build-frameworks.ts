@@ -19,7 +19,7 @@
  *   bun run site/build-frameworks.ts   # standalone: refresh shared/data/frameworks-demo.json + print sizes
  * Normally invoked by site/build.ts with the real `dist/assets` outDir.
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { svelteDedupePlugin } from "@nifrajs/web/build"
@@ -35,6 +35,11 @@ import { App as PreactApp } from "../bench/ssr/nifra-preact/app.ts"
 import { type CatalogPageData, catalogItems } from "./shared/frameworks/data.ts"
 
 const DIR = import.meta.dir
+const NIFRA_VERSION = (
+  JSON.parse(readFileSync(join(DIR, "..", "packages", "core", "package.json"), "utf8")) as {
+    version: string
+  }
+).version
 
 // React ships its prod build only under NODE_ENV=production; Vue needs its feature flags defined or it
 // warns + bloats. Each set matches the corresponding bench app's build so the measured sizes are real.
@@ -288,6 +293,8 @@ export async function buildFrameworks(
 /** The serialized artifact `site/frameworks/generated.ts` re-exports (typed). Plain JSON-safe data only
  * - fragments are strings, sizes are numbers - so it round-trips through the committed `.json` cleanly. */
 export interface FrameworksDemoArtifact {
+  /** Release whose web adapter code generated these bundles and server-rendered fragments. */
+  readonly nifraVersion: string
   readonly entries: readonly FrameworkDemoEntry[]
   readonly data: CatalogPageData
   readonly itemCount: number
@@ -303,7 +310,7 @@ export async function writeFrameworksArtifact(
   options: BuildFrameworksOptions & { readonly artifactPath?: string },
 ): Promise<FrameworksDemoArtifact> {
   const { entries, data, itemCount } = await buildFrameworks(options)
-  const artifact: FrameworksDemoArtifact = { entries, data, itemCount }
+  const artifact: FrameworksDemoArtifact = { nifraVersion: NIFRA_VERSION, entries, data, itemCount }
   writeFileSync(
     options.artifactPath ?? FRAMEWORKS_ARTIFACT_PATH,
     `${JSON.stringify(artifact, null, 2)}\n`,

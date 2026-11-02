@@ -457,6 +457,134 @@ jobs:
       - name: Read back the published tarballs
         run: bun scripts/verify-published.ts --wait 900
 
+  # Publish the versioned remote MCP server entry only after npm has served every package. The
+  # registry trusts GitHub OIDC, so this job has no long-lived registry credential to rotate.
+  publish-mcp-registry:
+    name: publish-mcp-registry
+    needs: [prove-release, publish, verify-published]
+    if: needs.prove-release.outputs.is_release == 'true'
+    concurrency:
+      group: nifra-official-mcp-registry
+      cancel-in-progress: false
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.7
+    steps:
+      - name: Checkout the validated merge
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          persist-credentials: false
+
+      - name: Confirm the MCP manifest matches the npm release
+        id: manifest
+        run: |
+          set -euo pipefail
+          package_version="$(jq -r '.version' packages/core/package.json)"
+          manifest_version="$(jq -r '.version' server.json)"
+          name="$(jq -r '.name' server.json)"
+          [[ "$manifest_version" == "$package_version" ]] || {
+            echo "server.json is ${manifest_version}; @nifrajs/core is ${package_version}." >&2
+            exit 1
+          }
+          [[ "$name" == "io.github.nifrajs/"* ]] || {
+            echo "Unexpected MCP Registry namespace: ${name}." >&2
+            exit 1
+          }
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$manifest_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          archive="mcp-publisher_${os}_${arch}.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate server.json
+
+      - name: Check whether this version is already published
+        id: registry-version
+        env:
+          SERVER_NAME: ${{ steps.manifest.outputs.name }}
+          SERVER_VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          encoded_name="$(jq -rn --arg name "$SERVER_NAME" '$name | @uri')"
+          endpoint="https://registry.modelcontextprotocol.io/v0.1/servers/${encoded_name}/versions/${SERVER_VERSION}"
+          status="$(curl --location --silent --show-error --output "$RUNNER_TEMP/mcp-registry-version.json" --write-out '%{http_code}' "$endpoint")"
+          case "$status" in
+            200)
+              jq -e --arg name "$SERVER_NAME" --arg version "$SERVER_VERSION" \
+                '.server.name == $name and .server.version == $version' \
+                "$RUNNER_TEMP/mcp-registry-version.json" > /dev/null
+              echo "present=true" >> "$GITHUB_OUTPUT"
+              echo "${SERVER_NAME}@${SERVER_VERSION} is already in the official registry; the final step will verify it is latest."
+              ;;
+            404)
+              echo "present=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Registry lookup returned HTTP ${status}." >&2
+              cat "$RUNNER_TEMP/mcp-registry-version.json" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Authenticate with GitHub OIDC and publish
+        if: steps.registry-version.outputs.present != 'true'
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.json
+
+      - name: Verify the official registry serves this release as latest
+        env:
+          SERVER_NAME: ${{ steps.manifest.outputs.name }}
+          SERVER_VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          encoded_name="$(jq -rn --arg name "$SERVER_NAME" '$name | @uri')"
+          endpoint="https://registry.modelcontextprotocol.io/v0.1/servers/${encoded_name}/versions/latest"
+          for attempt in $(seq 1 20); do
+            status="$(curl --location --silent --show-error --output "$RUNNER_TEMP/mcp-registry-latest.json" --write-out '%{http_code}' "$endpoint")"
+            if [[ "$status" == "200" ]] && jq -e \
+              --arg name "$SERVER_NAME" --arg version "$SERVER_VERSION" \
+              '.server.name == $name and .server.version == $version and ._meta["io.modelcontextprotocol.registry/official"].isLatest == true' \
+              "$RUNNER_TEMP/mcp-registry-latest.json" > /dev/null; then
+              echo "Verified ${SERVER_NAME}@${SERVER_VERSION} is latest in the official MCP Registry."
+              exit 0
+            fi
+            if [[ "$status" != "200" && "$status" != "404" ]]; then
+              echo "Registry lookup returned HTTP ${status}." >&2
+              cat "$RUNNER_TEMP/mcp-registry-latest.json" >&2
+              exit 1
+            fi
+            echo "Waiting for ${SERVER_NAME}@${SERVER_VERSION} to become the registry's latest version (${attempt}/20)."
+            sleep 15
+          done
+          echo "The official MCP Registry does not serve ${SERVER_NAME}@${SERVER_VERSION} as latest." >&2
+          cat "$RUNNER_TEMP/mcp-registry-latest.json" >&2
+          exit 1
+
   # The smoke test installs from the registry and the deploy runs wrangler: third-party code, kept out
   # of the job that can publish. site.yml deploys from main without a release, with the same steps.
   deploy-site:

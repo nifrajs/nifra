@@ -64,6 +64,7 @@ export interface SsrOutputGuardCostCapture {
 /** When, where, and with which toolchain a slice was measured. */
 export interface CapturedMeta {
   readonly date: string
+  readonly nifraVersion: string
   readonly bun: string
   readonly node: string
   readonly deno?: string

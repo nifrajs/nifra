@@ -167,6 +167,19 @@ Prepare every release on a `release/<name>` branch. Run `bun run release:prepare
 release pull request contains package versions, changelogs, lockfile, and generated artifacts. Never
 stage versioning on `main`, push directly to `main`, or create a second Version Packages pull request.
 
+`release:prepare` syncs the docs and issue form, regenerates the API/LLM docs, and refreshes the
+frameworks demo and deterministic server bundle row. Before the release pull request, run
+`bun run bench:site:update` to capture the measured public benchmark tables, then run
+`bun run check:public-release-freshness`. The release checks reject public data whose Nifra version
+does not match `@nifrajs/core`. After npm packages publish, the release workflow publishes the matching
+`server.json` version to the official MCP Registry with GitHub OIDC.
+
+If the local host cannot pass the benchmark publish guard, download all artifacts from one successful
+`benchmark-accuracy.yml` run and import them with `bun run bench:site:import-ci <artifact-dir>
+<ssr-payloads.json>`. The SSR payload file comes from `BENCH_SSR_RESULTS_JSON`; its build must use the
+same Nifra release as the CI artifacts. The importer checks the artifact commit's core version before
+writing the site tables.
+
 `release:prepare` also rebuilds and rewrites `packed-files.json`, the list of files each package
 publishes, so the pull request shows every file a package gained or lost since the last release.
 `bun run check:packed` (part of `check:publish`) packs every package and refuses a missing LICENSE,
