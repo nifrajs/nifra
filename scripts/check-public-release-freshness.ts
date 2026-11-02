@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { isJsonRecord, readJsonRecord } from "./read-json.ts"
 
 interface VersionedRow {
   readonly name?: unknown
@@ -7,27 +9,23 @@ interface VersionedRow {
   readonly you?: unknown
 }
 
-function parseJson<T>(path: string): T {
-  return JSON.parse(readFileSync(path, "utf8")) as T
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
 function versionRows(value: unknown): VersionedRow[] {
-  return Array.isArray(value) ? value.filter(isRecord) : []
+  return Array.isArray(value) ? value.filter(isJsonRecord) : []
 }
 
-export function checkPublicReleaseFreshness(): string[] {
+function tableRows(value: unknown): VersionedRow[] {
+  return Array.isArray(value)
+    ? value.flatMap((table) => (isJsonRecord(table) ? versionRows(table.rows) : []))
+    : []
+}
+
+export function checkPublicReleaseFreshness(root = process.cwd()): string[] {
   const failures: string[] = []
-  const core = parseJson<{ version?: unknown }>("packages/core/package.json")
+  const core = readJsonRecord(join(root, "packages/core/package.json"))
   const expected = typeof core.version === "string" ? core.version : undefined
-  const manifest = parseJson<{ version?: unknown }>("server.json")
-  const benchmarks = parseJson<Record<string, unknown>>("site/shared/data/benchmarks.json")
-  const frameworksDemo = parseJson<{ nifraVersion?: unknown }>(
-    "site/shared/data/frameworks-demo.json",
-  )
+  const manifest = readJsonRecord(join(root, "server.json"))
+  const benchmarks = readJsonRecord(join(root, "site/shared/data/benchmarks.json"))
+  const frameworksDemo = readJsonRecord(join(root, "site/shared/data/frameworks-demo.json"))
 
   if (expected === undefined) failures.push("packages/core/package.json has no version")
   if (manifest.version !== expected) {
@@ -41,7 +39,7 @@ export function checkPublicReleaseFreshness(): string[] {
     )
   }
   for (const file of ["site/routes/docs/cli.tsx", "site/routes/docs/migrate-5.tsx"] as const) {
-    const source = readFileSync(file, "utf8")
+    const source = readFileSync(join(root, file), "utf8")
     const docVersion = /const NIFRA_VERSION\s*=\s*"([^"]+)"/.exec(source)?.[1]
     if (docVersion !== expected) {
       failures.push(
@@ -49,7 +47,7 @@ export function checkPublicReleaseFreshness(): string[] {
       )
     }
   }
-  const bugTemplate = readFileSync(".github/ISSUE_TEMPLATE/bug_report.yml", "utf8")
+  const bugTemplate = readFileSync(join(root, ".github/ISSUE_TEMPLATE/bug_report.yml"), "utf8")
   const bugTemplateVersion =
     /id: version\s+attributes:[\s\S]*?placeholder:\s*"(\d+\.\d+\.\d+)"/.exec(bugTemplate)?.[1]
   if (bugTemplateVersion !== expected) {
@@ -64,35 +62,15 @@ export function checkPublicReleaseFreshness(): string[] {
       ["frontend", benchmarks.frontend],
       ["http", benchmarks.http],
       ["bundle", benchmarks.bundle],
-      [
-        "httpWorkloads",
-        (benchmarks.httpWorkloads as { rows?: unknown }[] | undefined)?.flatMap((t) =>
-          versionRows(t.rows),
-        ),
-      ],
-      [
-        "httpRealworld",
-        (benchmarks.httpRealworld as { rows?: unknown }[] | undefined)?.flatMap((t) =>
-          versionRows(t.rows),
-        ),
-      ],
-      [
-        "ssrTables",
-        (benchmarks.ssrTables as { rows?: unknown }[] | undefined)?.flatMap((t) =>
-          versionRows(t.rows),
-        ),
-      ],
-      [
-        "ssrTablesB",
-        (benchmarks.ssrTablesB as { rows?: unknown }[] | undefined)?.flatMap((t) =>
-          versionRows(t.rows),
-        ),
-      ],
+      ["httpWorkloads", tableRows(benchmarks.httpWorkloads)],
+      ["httpRealworld", tableRows(benchmarks.httpRealworld)],
+      ["ssrTables", tableRows(benchmarks.ssrTables)],
+      ["ssrTablesB", tableRows(benchmarks.ssrTablesB)],
       [
         "httpMemory",
-        isRecord(benchmarks.httpMemory)
+        isJsonRecord(benchmarks.httpMemory)
           ? Object.entries(benchmarks.httpMemory).flatMap(([runtime, capture]) =>
-              isRecord(capture)
+              isJsonRecord(capture)
                 ? versionRows(capture.rows).map((row) => ({
                     ...row,
                     name: `${runtime}/${String(row.name)}`,
@@ -121,7 +99,7 @@ export function checkPublicReleaseFreshness(): string[] {
   for (const key of ["ssrCaptured", "httpWorkloadsCaptured", "httpRealworldCaptured"] as const) {
     const capture = benchmarks[key]
     if (
-      !isRecord(capture) ||
+      !isJsonRecord(capture) ||
       typeof capture.date !== "string" ||
       typeof capture.source !== "string" ||
       typeof capture.sourceUrl !== "string" ||
@@ -136,16 +114,18 @@ export function checkPublicReleaseFreshness(): string[] {
   return failures
 }
 
-const failures = checkPublicReleaseFreshness()
-if (failures.length > 0) {
-  console.error("✗ public release data is stale:")
-  for (const failure of failures) console.error(`  ${failure}`)
-  console.error(
-    "Run `bun run bench:site:update` after `bun run release:prepare`, then commit the measured data.",
-  )
-  process.exitCode = 1
-} else {
-  console.log(
-    "✓ MCP manifest, docs, issue template, demo, and public benchmark captures match the core release version",
-  )
+if (import.meta.main) {
+  const failures = checkPublicReleaseFreshness()
+  if (failures.length > 0) {
+    console.error("✗ public release data is stale:")
+    for (const failure of failures) console.error(`  ${failure}`)
+    console.error(
+      "Run `bun run bench:site:update` after `bun run release:prepare`, then commit the measured data.",
+    )
+    process.exitCode = 1
+  } else {
+    console.log(
+      "✓ MCP manifest, docs, issue template, demo, and public benchmark captures match the core release version",
+    )
+  }
 }

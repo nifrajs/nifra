@@ -35,11 +35,18 @@ import { App as PreactApp } from "../bench/ssr/nifra-preact/app.ts"
 import { type CatalogPageData, catalogItems } from "./shared/frameworks/data.ts"
 
 const DIR = import.meta.dir
-const NIFRA_VERSION = (
-  JSON.parse(readFileSync(join(DIR, "..", "packages", "core", "package.json"), "utf8")) as {
-    version: string
-  }
-).version
+const coreManifest: unknown = JSON.parse(
+  readFileSync(join(DIR, "..", "packages", "core", "package.json"), "utf8"),
+)
+if (
+  typeof coreManifest !== "object" ||
+  coreManifest === null ||
+  !("version" in coreManifest) ||
+  typeof coreManifest.version !== "string"
+) {
+  throw new Error("packages/core/package.json has no string version")
+}
+const NIFRA_VERSION = coreManifest.version
 
 // React ships its prod build only under NODE_ENV=production; Vue needs its feature flags defined or it
 // warns + bloats. Each set matches the corresponding bench app's build so the measured sizes are real.
@@ -238,9 +245,9 @@ async function renderFragment(
           `[nifra/site] ${spec.id} SSR build failed:\n${built.logs.map((l) => String(l)).join("\n")}`,
         )
       }
-      const mod = (await import(join(scratchDir, spec.id, "ssr.js"))) as {
-        renderFragment(): Promise<string>
-        hydrationHead(): string
+      const mod = await import(join(scratchDir, spec.id, "ssr.js"))
+      if (typeof mod.renderFragment !== "function" || typeof mod.hydrationHead !== "function") {
+        throw new Error(`[nifra/site] ${spec.id} SSR bundle is missing its render exports`)
       }
       return { fragmentHtml: await mod.renderFragment(), hydrationHead: mod.hydrationHead() }
     }

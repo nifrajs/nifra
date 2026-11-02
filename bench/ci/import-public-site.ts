@@ -8,9 +8,11 @@
 import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { isJsonRecord, parseJson, readJson, readJsonRecord } from "../../scripts/read-json.ts"
 import { type Matrix, type MatrixCell, median, mergeRuns } from "../rounds.ts"
 import {
   type CapturedMeta,
+  type CaptureMachine,
   httpRealworldFromResults,
   httpSliceFromNode,
   httpWorkloadsFromResults,
@@ -47,12 +49,36 @@ interface PayloadArtifact {
   readonly tableB: readonly PayloadRow[]
 }
 
-function readJson<T>(path: string): T {
-  return JSON.parse(readFileSync(path, "utf8")) as T
-}
-
 function fail(message: string): never {
   throw new Error(message)
+}
+
+function isPayloadRow(value: unknown): value is PayloadRow {
+  return (
+    isJsonRecord(value) &&
+    isJsonRecord(value.target) &&
+    typeof value.target.name === "string" &&
+    isJsonRecord(value.result) &&
+    typeof value.result.payloadRaw === "number" &&
+    typeof value.result.payloadGzip === "number"
+  )
+}
+
+function payloadArtifact(value: unknown): PayloadArtifact {
+  if (
+    !isJsonRecord(value) ||
+    typeof value.nifraVersion !== "string" ||
+    !Array.isArray(value.tableA) ||
+    !Array.isArray(value.tableB)
+  ) {
+    return fail("SSR payload artifact has an invalid shape")
+  }
+  const tableA = value.tableA.filter(isPayloadRow)
+  const tableB = value.tableB.filter(isPayloadRow)
+  if (tableA.length !== value.tableA.length || tableB.length !== value.tableB.length) {
+    return fail("SSR payload artifact contains an invalid row")
+  }
+  return { nifraVersion: value.nifraVersion, tableA, tableB }
 }
 
 function metadata(path: string): RunIdentity {
@@ -68,7 +94,7 @@ function metadata(path: string): RunIdentity {
 }
 
 function readReport(path: string, suite: Suite, runtime: Runtime): CiReport {
-  const report = parseCiReport(readJson<unknown>(path))
+  const report = parseCiReport(readJson(path))
   if (report.suite !== suite || report.runtime !== runtime) {
     return fail(`${path} contains ${report.suite}/${report.runtime}; expected ${suite}/${runtime}`)
   }
@@ -91,17 +117,18 @@ function captureIdentity(artifactRoot: string): RunIdentity {
   if (identities.some((item) => item.commit !== first.commit || item.runId !== first.runId)) {
     return fail("benchmark artifacts came from different commits or workflow runs")
   }
-  const measuredVersion = JSON.parse(
+  const measuredPackage = parseJson(
     execFileSync("git", ["show", `${first.commit}:packages/core/package.json`], {
       encoding: "utf8",
     }),
-  ).version as unknown
+  )
+  const measuredVersion = isJsonRecord(measuredPackage) ? measuredPackage.version : undefined
   if (measuredVersion !== NIFRA_VERSION) {
     return fail(
       `benchmark source ${first.commit} has @nifrajs/core ${String(measuredVersion)}; this checkout is ${NIFRA_VERSION}`,
     )
   }
-  const manifestVersion = readJson<{ version?: unknown }>("server.json").version
+  const manifestVersion = readJsonRecord("server.json").version
   if (manifestVersion !== NIFRA_VERSION) {
     return fail(`server.json is ${String(manifestVersion)}; expected ${NIFRA_VERSION}`)
   }
@@ -115,7 +142,7 @@ function combined(reports: readonly CiReport[]): Matrix<MatrixCell> {
   )
 }
 
-function machine(report: CiReport): CapturedMeta["machine"] {
+function machine(report: CiReport): CaptureMachine {
   return {
     runner: "ubuntu-26.04",
     cpu: report.host.cpuModel ?? "unknown",
@@ -228,10 +255,10 @@ const ssrReports = {
   bun: readReport(join(artifactRoot, "bench-ssr-bun", "ssr-bun.json"), "ssr", "bun"),
   node: readReport(join(artifactRoot, "bench-ssr-node", "ssr-node.json"), "ssr", "node"),
 }
-const memorySite = readJson<{ httpMemory?: unknown }>(
+const memorySite = readJsonRecord(
   join(artifactRoot, "bench-memory", "memory-site", "benchmarks.json"),
 )
-const payloads = readJson<PayloadArtifact>(payloadPath)
+const payloads = payloadArtifact(readJson(payloadPath))
 if (payloads.nifraVersion !== NIFRA_VERSION) {
   fail(`SSR payload artifact is for ${payloads.nifraVersion}; this checkout is ${NIFRA_VERSION}`)
 }
@@ -247,16 +274,16 @@ const machines = {
   deno: machine(httpReports.find((report) => report.runtime === "deno")!),
 }
 
-await writeSiteBench({
-  http: httpSliceFromNode(httpResults.node as never),
-  httpWorkloads: httpWorkloadsFromResults(httpResults as never, versions),
+const updatedSite: Parameters<typeof writeSiteBench>[0] = {
+  http: httpSliceFromNode(httpResults.node),
+  httpWorkloads: httpWorkloadsFromResults(httpResults, versions),
   httpWorkloadsCaptured: captureMeta(identity, ciSourceLabel, versions, {
     bun: machine(httpReports.find((report) => report.runtime === "bun")!),
     node: machine(httpReports.find((report) => report.runtime === "node")!),
     deno: machines.deno,
   }),
   httpRealworld: httpRealworldFromResults(
-    realworldResults as never,
+    realworldResults,
     {
       get: "GET /api/orders (auth + 3 middleware)",
       post: "POST /api/orders (auth + 3 middleware)",
@@ -278,7 +305,13 @@ await writeSiteBench({
     bun: machine(ssrReports.bun),
     node: machine(ssrReports.node),
   }),
-  ...(memorySite.httpMemory !== undefined ? { httpMemory: memorySite.httpMemory as never } : {}),
-})
+}
+
+if (memorySite.httpMemory === undefined) {
+  await writeSiteBench(updatedSite)
+} else {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: writeSiteBench passes this persisted artifact through normalizeHttpMemory, which validates every capture and row before writing.
+  await writeSiteBench({ ...updatedSite, httpMemory: memorySite.httpMemory as never })
+}
 
 console.log(`Updated public benchmark data from ${NIFRA_VERSION} accuracy run #${identity.runId}.`)

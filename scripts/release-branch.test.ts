@@ -97,7 +97,15 @@ test("a release PR run skips the publish queue and a newer push cancels its veri
   const jobs: unknown =
     typeof workflow === "object" && workflow !== null ? Reflect.get(workflow, "jobs") : undefined
   const cancelling = Object.entries(typeof jobs === "object" && jobs !== null ? jobs : {})
-    .filter(([, job]) => typeof job === "object" && job !== null && "concurrency" in job)
+    .filter(([, job]) => {
+      const concurrency =
+        typeof job === "object" && job !== null ? Reflect.get(job, "concurrency") : undefined
+      return (
+        typeof concurrency === "object" &&
+        concurrency !== null &&
+        Reflect.get(concurrency, "cancel-in-progress") === true
+      )
+    })
     .map(([name]) => name)
   expect(cancelling).toEqual(["verify-release-pr"])
 })
@@ -178,18 +186,23 @@ test("npm publishes through trusted publishing, and only a proven release holds 
   expect(workflowText("release.yml")).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|_authToken/)
   const jobs = workflowJobs("release.yml")
   const { publish } = jobs
+  const registry = jobs["publish-mcp-registry"]
   expect(publish?.needs).toEqual(["prove-release", "build-release"])
   expect(publish?.if).toBe("needs.prove-release.outputs.is_release == 'true'")
   expect(publish?.environment).toBe("npm-publish")
   expect(publish?.permissions).toEqual({ contents: "read", "id-token": "write" })
   for (const [id, job] of Object.entries(jobs)) {
-    if (id === "publish") continue
+    if (id === "publish" || id === "publish-mcp-registry") continue
     expect({ id, environment: job?.environment, idToken: job?.permissions?.["id-token"] }).toEqual({
       id,
       environment: undefined,
       idToken: undefined,
     })
   }
+  expect(registry?.needs).toEqual(["prove-release", "publish", "verify-published"])
+  expect(registry?.if).toBe(publish?.if)
+  expect(registry?.permissions).toEqual({ contents: "read", "id-token": "write" })
+  expect(registry?.environment).toBeUndefined()
   const node = setupNode(publish)
   const ciNode = Object.values(workflowJobs("ci.yml")).map(setupNode).find(Boolean)
   expect(node?.uses).toBe(ciNode?.uses ?? "missing from ci.yml")
