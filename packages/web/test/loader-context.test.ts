@@ -10,6 +10,7 @@ test("ordinary loader contexts use the shallow-copy path", () => {
   const context = { request: "request", req: "request", search: "" }
   const fork = (() => {
     try {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the wrapper keeps Object's descriptor-copy signature and delegates unchanged.
       Object.getOwnPropertyDescriptors = ((target: object) => {
         descriptorCopies++
         return getOwnPropertyDescriptors(target)
@@ -29,6 +30,7 @@ test("ordinary loader contexts use the shallow-copy path", () => {
 test("lazy request accessors stay lazy across loader-context forks", () => {
   let reads = 0
   const request = new Request("https://fixture.test/")
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: defineProperties adds getters matching the declared Request-valued context shape.
   const context = Object.defineProperties(
     { search: "" },
     {
