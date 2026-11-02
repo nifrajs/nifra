@@ -700,3 +700,66 @@ describe("typed tool contracts", () => {
     expect(result.checks).toEqual(["capability denial", "approval admission", "dry-run"])
   })
 })
+
+describe("a tool's default capability", () => {
+  // Every name up to four characters over letters, digits and the three separators.
+  const ALPHABET = ["a", "0", ".", "-", "_"]
+  const names: string[] = []
+  let layer = [""]
+  for (let length = 1; length <= 4; length++) {
+    layer = layer.flatMap((prefix) => ALPHABET.map((next) => prefix + next))
+    names.push(...layer)
+  }
+  const define = (name: string, capability?: string) => {
+    const options = {
+      name,
+      description: "Default capability fixture.",
+      input,
+      output,
+      execute: () => ({ ok: true }),
+    }
+    return defineTool(capability === undefined ? options : { ...options, capability })
+  }
+  const isName = (name: string): boolean => {
+    try {
+      define(name, "fixture.read")
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  test("a snake_case name derives a capability that a grant of it runs", async () => {
+    const tool = define("archive_notes")
+    expect(tool.capability).toBe("tool.execute.archive_notes")
+    const result = await executeTool(tool, { name: "n" }, { capabilities: [tool.capability] })
+    expect(result.ok).toBe(true)
+  })
+
+  test("every name derives a distinct runnable capability or is refused for an empty segment", async () => {
+    const valid = names.filter(isName)
+    // A name starts with a letter: 1 + 5 + 25 + 125 of them.
+    expect(valid.length).toBe(156)
+    const derived = new Map<string, string>()
+    for (const name of valid) {
+      const derivesNone = /[._-]{2}|[._-]$/.test(name)
+      if (derivesNone) {
+        expect(() => define(name)).toThrow(
+          `tool contract: name ${JSON.stringify(name)} derives no valid capability; pass \`capability\``,
+        )
+        continue
+      }
+      const tool = define(name)
+      const granted = await executeTool(tool, { name: "n" }, { capabilities: [tool.capability] })
+      const denied = await executeTool(tool, { name: "n" }, { capabilities: [] })
+      expect({ name, granted: granted.ok, denied: denied.ok }).toEqual({
+        name,
+        granted: true,
+        denied: false,
+      })
+      expect(derived.get(tool.capability)).toBeUndefined()
+      derived.set(tool.capability, name)
+    }
+    expect([...derived.values()].filter((name) => name.includes("_"))).toContain("a_0a")
+  })
+})

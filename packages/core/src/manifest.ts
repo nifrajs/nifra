@@ -15,6 +15,7 @@ import {
   type RouteSnapshotSchema,
 } from "./diff.ts"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "./evidence.ts"
+import { validCapabilityId } from "./internal/capability-runtime.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { hasControlCharacter } from "./internal/control-character.ts"
 import { sha256Hex } from "./internal/hex.ts"
@@ -368,7 +369,7 @@ export async function parseNifraManifest(
         !Array.isArray(capabilities.unproven) ||
         typeof capabilities.covered !== "boolean" ||
         [...capabilities.declared, ...capabilities.evidenced, ...capabilities.unproven].some(
-          (value) => typeof value !== "string" || !/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(value),
+          (value) => typeof value !== "string" || !validCapabilityId(value),
         )
       ) {
         throw new Error(`nifra manifest: ${source} contains invalid capability material`)
