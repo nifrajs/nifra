@@ -170,4 +170,30 @@ describe("flat coercion plan vs Value.Convert parity", () => {
     const lit = nifra["~standard"].validate({ v: "all" })
     expect("value" in lit && lit.value).toEqual({ v: "all" })
   })
+
+  test("flat literal and scalar-array plans match TypeBox conversion", () => {
+    const schema = Type.Object({
+      name: Type.Union([Type.Literal("red"), Type.Literal("blue")]),
+      count: Type.Union([Type.Literal(1), Type.Literal(2)]),
+      flags: Type.Array(Type.Boolean()),
+      levels: Type.Array(Type.Integer()),
+    })
+    const nifra = fromTypeBox(schema, { coerce: true })
+
+    for (const input of [
+      { name: "red", count: "2", flags: ["true", "0"], levels: ["3", "4"] },
+      { name: "blue", count: 1, flags: "false", levels: "5" },
+    ]) {
+      const expected = structuredClone(input)
+      const actual = structuredClone(input)
+      const converted = Value.Convert(schema, expected)
+      const result = nifra["~standard"].validate(actual)
+
+      expect("value" in result).toBe(Value.Check(schema, converted))
+      if ("value" in result) expect(result.value).toEqual(converted)
+      expect(actual).toEqual(expected)
+    }
+
+    expect("issues" in nifra["~standard"].validate({ name: "green", count: "2" })).toBe(true)
+  })
 })
