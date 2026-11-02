@@ -65,7 +65,9 @@ export interface CapturedMeta {
 export interface HttpWorkloadRow {
   readonly name: string
   readonly version: string
+  readonly getRoot?: string
   readonly getUsers: string
+  readonly getSearch?: string
   readonly postUsers: string
   readonly nifra?: boolean
 }
@@ -118,6 +120,38 @@ export interface SsrSiteTable {
   readonly rows: readonly SsrSiteRow[]
 }
 
+export interface SsrOutputGuardCostResult {
+  readonly runtimeVersion: string
+  readonly guardRounds: number
+  readonly iterationsPerRound: number
+  readonly rps: number
+  readonly p50ms: number
+  readonly guardUsPerRequest: number
+  readonly identityUsPerRequest: number
+  /** Paired median of guard time minus the identity control, in microseconds per result. */
+  readonly addedUsPerRequest: number
+  /** The added guard time as a fraction of this route's observed end-to-end p50. */
+  readonly guardShareOfP50Percent: number
+  readonly guardSamplesUs: readonly number[]
+  readonly identitySamplesUs: readonly number[]
+}
+
+export interface SsrOutputGuardCostCapture {
+  readonly date: string
+  readonly source: string
+  readonly machine: string
+  readonly bun: string
+  readonly node: string
+  readonly oha: string
+  readonly items: number
+  readonly connections: number
+  readonly durationS: number
+  readonly warmupS: number
+  readonly guardRounds: number
+  readonly iterationsPerRound: number
+  readonly results: Readonly<Record<"bun" | "node", SsrOutputGuardCostResult>>
+}
+
 export interface SiteBench {
   readonly httpMemory?: Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>>
   readonly _note?: string
@@ -126,6 +160,7 @@ export interface SiteBench {
   readonly httpWorkloadsCaptured?: CapturedMeta
   readonly httpRealworldCaptured?: CapturedMeta
   readonly ssrCaptured?: CapturedMeta
+  readonly ssrOutputGuardCost?: SsrOutputGuardCostCapture
   readonly heroSsr: readonly BenchRow[]
   readonly frontend: readonly BenchRow[]
   readonly multipliers: readonly Multiplier[]
@@ -178,6 +213,7 @@ function isMemoryCaptureBase(value: unknown): value is LegacyNodeHttpMemoryCaptu
     typeof value.cpu === "string" &&
     typeof value.revision === "string" &&
     typeof value.workspaceArtifactSHA256 === "string" &&
+    (!("sourceUrl" in value) || typeof value.sourceUrl === "string") &&
     (value.protocol === "fresh-native-node-v1" ||
       value.protocol === "fresh-native-bun-v1" ||
       value.protocol === "fresh-native-deno-v1") &&
@@ -302,16 +338,12 @@ export function capturedMeta(versions: {
 }): CapturedMeta {
   const bare = (version: string): string => version.trim().replace(/^v/, "")
   const runId = process.env.GITHUB_RUN_ID
-  const repository = process.env.GITHUB_REPOSITORY
   const githubRun = process.env.GITHUB_ACTIONS === "true" && runId !== undefined
   const runner = githubRun
     ? `GitHub Actions (${process.env.RUNNER_OS ?? platform()} ${process.env.RUNNER_ARCH ?? arch()})`
     : "Local"
   const cpu = cpus()[0]?.model.trim() || `${platform()} ${arch()}`
-  const sourceUrl =
-    githubRun && repository !== undefined
-      ? `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repository}/actions/runs/${runId}`
-      : undefined
+  const sourceUrl = benchmarkSourceUrl()
   const captured: CapturedMeta = {
     date: new Date().toISOString().slice(0, 10),
     bun: bare(versions.bun),
@@ -326,6 +358,17 @@ export function capturedMeta(versions: {
   const withDeno =
     versions.deno === undefined ? captured : { ...captured, deno: bare(versions.deno) }
   return sourceUrl === undefined ? withDeno : { ...withDeno, sourceUrl }
+}
+
+/** The current GitHub Actions run, when a capture is being published from Actions. */
+export function benchmarkSourceUrl(): string | undefined {
+  const runId = process.env.GITHUB_RUN_ID
+  const repository = process.env.GITHUB_REPOSITORY
+  if (process.env.GITHUB_ACTIONS !== "true" || runId === undefined || repository === undefined) {
+    return undefined
+  }
+  const server = (process.env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/$/, "")
+  return `${server}/${repository}/actions/runs/${runId}`
 }
 
 /** The installed `oha`'s version; a published slice names it, so a missing `oha` throws. */
@@ -383,7 +426,7 @@ export function httpSliceFromNode(
   return rows.sort((a, b) => b.reqs - a.reqs)
 }
 
-/** Convert the complete core GET/POST matrix to the canonical article/page slice. A partial runtime
+/** Convert the complete four-workload matrix to the canonical article/page slice. A partial runtime
  * result omits its table; the aggregate writer only publishes this slice when all runtimes ran. */
 export function httpWorkloadsFromResults(
   results: Record<
@@ -415,7 +458,9 @@ export function httpWorkloadsFromResults(
     if (source === undefined) continue
     const rows: HttpWorkloadRow[] = []
     for (const framework of runtime.frameworks) {
+      const root = source[framework]?.["GET /"]?.rps
       const get = source[framework]?.["GET /users/:id"]?.rps
+      const search = source[framework]?.["GET /search?query"]?.rps
       const post = source[framework]?.["POST /users"]?.rps
       if (
         get === undefined ||
@@ -429,7 +474,13 @@ export function httpWorkloadsFromResults(
       rows.push({
         name: display[framework] ?? framework,
         version: httpFrameworkVersion(framework),
+        ...(root !== undefined && Number.isFinite(root) && root >= 0
+          ? { getRoot: format(root) }
+          : {}),
         getUsers: format(get),
+        ...(search !== undefined && Number.isFinite(search) && search >= 0
+          ? { getSearch: format(search) }
+          : {}),
         postUsers: format(post),
         ...(framework === "nifra" ? { nifra: true } : {}),
       })

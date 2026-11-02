@@ -165,26 +165,34 @@
         {
           "name": "Nifra",
           "version": "5.10.0",
+          "getRoot": "118,445",
           "getUsers": "116,778",
+          "getSearch": "108,239",
           "postUsers": "89,970",
           "nifra": true
         },
         {
           "name": "Fastify",
           "version": "5.12.7",
+          "getRoot": "80,833",
           "getUsers": "79,852",
+          "getSearch": "74,333",
           "postUsers": "62,231"
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
+          "getRoot": "117,835",
           "getUsers": "118,182",
+          "getSearch": "108,511",
           "postUsers": "88,766"
         },
         {
           "name": "Hono",
           "version": "4.13.13",
+          "getRoot": "108,818",
           "getUsers": "105,449",
+          "getSearch": "85,400",
           "postUsers": "78,569"
         }
       ]
@@ -196,32 +204,42 @@
         {
           "name": "Nifra",
           "version": "5.10.0",
+          "getRoot": "78,587",
           "getUsers": "76,882",
+          "getSearch": "73,692",
           "postUsers": "54,507",
           "nifra": true
         },
         {
           "name": "Fastify",
           "version": "5.12.7",
+          "getRoot": "74,968",
           "getUsers": "72,418",
+          "getSearch": "70,404",
           "postUsers": "51,849"
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
+          "getRoot": "60,204",
           "getUsers": "58,149",
+          "getSearch": "56,330",
           "postUsers": "27,517"
         },
         {
           "name": "Express",
           "version": "5.3.0",
+          "getRoot": "38,123",
           "getUsers": "36,419",
+          "getSearch": "35,693",
           "postUsers": "23,526"
         },
         {
           "name": "Hono",
           "version": "4.13.13",
+          "getRoot": "72,122",
           "getUsers": "68,805",
+          "getSearch": "52,872",
           "postUsers": "42,696"
         }
       ]
@@ -233,26 +251,34 @@
         {
           "name": "Nifra",
           "version": "5.10.0",
+          "getRoot": "115,332",
           "getUsers": "113,378",
+          "getSearch": "109,484",
           "postUsers": "86,949",
           "nifra": true
         },
         {
           "name": "Fastify",
           "version": "5.12.7",
+          "getRoot": "51,855",
           "getUsers": "50,262",
+          "getSearch": "49,888",
           "postUsers": "45,205"
         },
         {
           "name": "Elysia",
           "version": "1.4.30",
+          "getRoot": "110,786",
           "getUsers": "108,067",
+          "getSearch": "104,679",
           "postUsers": "68,011"
         },
         {
           "name": "Hono",
           "version": "4.13.13",
+          "getRoot": "115,056",
           "getUsers": "109,044",
+          "getSearch": "84,524",
           "postUsers": "78,267"
         }
       ]
@@ -868,6 +894,63 @@
         "runner": "ubuntu-26.04",
         "cpu": "Intel Xeon Platinum 8573C",
         "vcpus": 4
+      }
+    }
+  },
+  "ssrOutputGuardCost": {
+    "date": "2026-11-02",
+    "source": "Local direct output-guard timing + SSR request context",
+    "machine": "Apple M3 Max",
+    "bun": "1.4.4",
+    "node": "v26.12.1",
+    "oha": "1.16.0",
+    "items": 50,
+    "connections": 50,
+    "durationS": 5,
+    "warmupS": 3,
+    "guardRounds": 15,
+    "iterationsPerRound": 10000,
+    "results": {
+      "node": {
+        "runtimeVersion": "v26.12.1",
+        "guardRounds": 15,
+        "iterationsPerRound": 10000,
+        "rps": 26978,
+        "p50ms": 1.782875,
+        "guardUsPerRequest": 1.2053208,
+        "identityUsPerRequest": 0.0043708,
+        "addedUsPerRequest": 1.2011458,
+        "guardShareOfP50Percent": 0.06737128514337797,
+        "guardSamplesUs": [
+          1.1350458, 1.1145042, 1.3985042, 1.2053208, 1.2512292, 1.3360708, 1.4133291, 1.4236125,
+          1.1646334, 1.1959375, 1.1635083, 1.3562542000000002, 1.4203333, 1.1458958, 1.1770208
+        ],
+        "identitySamplesUs": [
+          0.02125, 0.0052958, 0.0044125, 0.004175, 0.0044875, 0.004787499999999999, 0.0043542,
+          0.0047959, 0.0043708, 0.0042125, 0.0041624999999999995, 0.0041624999999999995, 0.0042333,
+          0.0046459000000000006, 0.0042709
+        ]
+      },
+      "bun": {
+        "runtimeVersion": "1.4.4",
+        "guardRounds": 15,
+        "iterationsPerRound": 10000,
+        "rps": 34228,
+        "p50ms": 1.3366660000000001,
+        "guardUsPerRequest": 0.5227542,
+        "identityUsPerRequest": 0.0038208,
+        "addedUsPerRequest": 0.5189834,
+        "guardShareOfP50Percent": 0.0388267076442432,
+        "guardSamplesUs": [
+          0.5912417000000001, 0.5134417, 0.492875, 0.5255584, 0.49201249999999996,
+          0.5039750000000001, 0.5039833, 0.5227542, 0.49367500000000003, 0.5845499999999999,
+          0.5389459000000001, 0.5386417, 0.5307458, 0.7348209, 0.5027125
+        ],
+        "identitySamplesUs": [
+          0.0094084, 0.0028541, 0.0037833000000000003, 0.0037332999999999997, 0.0038250000000000003,
+          0.0042584, 0.0038708, 0.0037708, 0.0037791, 0.0037458, 0.0039167, 0.0038666, 0.0044833,
+          0.0038208, 0.0019333
+        ]
       }
     }
   },

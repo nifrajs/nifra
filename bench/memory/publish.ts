@@ -1,6 +1,6 @@
 import type { HttpMemoryRuntime } from "../../site/shared/data/memory-types.ts"
 import { activeBenchRuntimeVersions, assertBenchmarkPublishable } from "../publish-guard.ts"
-import { writeSiteBench } from "../site-bench.ts"
+import { benchmarkSourceUrl, writeSiteBench } from "../site-bench.ts"
 import { memoryCapture } from "./results.ts"
 
 export type MemoryCapture = ReturnType<typeof memoryCapture>
@@ -84,7 +84,7 @@ export function fullMemoryBatch(
 }
 
 export async function publishMemory(path: string): Promise<void> {
-  const capture = memoryCapture(await Bun.file(path).json())
+  const capture = addSourceUrl(memoryCapture(await Bun.file(path).json()))
   assertPartialMemoryHost(capture, await storedMemory())
   await assertBenchmarkPublishable({
     ...activeBenchRuntimeVersions(),
@@ -97,12 +97,22 @@ export async function publishMemoryBatch(paths: readonly string[]): Promise<void
   const captures = await Promise.all(
     paths.map(async (path) => memoryCapture(await Bun.file(path).json())),
   )
-  const httpMemory = fullMemoryBatch(captures)
+  const batch = fullMemoryBatch(captures)
+  const httpMemory: Partial<Record<HttpMemoryRuntime, MemoryCapture>> = {}
+  for (const runtime of MEMORY_RUNTIMES) {
+    const capture = batch[runtime]
+    if (capture !== undefined) httpMemory[runtime] = addSourceUrl(capture)
+  }
   const runtimeVersions: Partial<Record<HttpMemoryRuntime, string>> = {}
   for (const capture of captures) runtimeVersions[capture.runtime] = capture.runtimeVersion
 
   await assertBenchmarkPublishable({ ...activeBenchRuntimeVersions(), ...runtimeVersions })
   await writeSiteBench({ httpMemory })
+}
+
+function addSourceUrl(capture: MemoryCapture): MemoryCapture {
+  const sourceUrl = benchmarkSourceUrl()
+  return sourceUrl === undefined ? capture : { ...capture, sourceUrl }
 }
 
 if (import.meta.main) {
