@@ -17,6 +17,7 @@ import {
   answerNotFound,
   assertByteLimit,
   capBodyBytes,
+  DEFAULT_MAX_BODY_BYTES,
   type FormOrigins,
   jsonResponse,
   type NotFoundHandler,
@@ -41,9 +42,6 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "@nifrajs/core/server"
-
-/** The full Server's `DEFAULT_MAX_BODY_BYTES` - the same 1 MB cap, so the two agree on `413`. */
-const DEFAULT_MAX_BODY_BYTES = 1_000_000
 
 /** The request handed to a route. Compact by design: no cookies, no response builder - return a
  * value (rendered as JSON) or a `Response` for full control. */
