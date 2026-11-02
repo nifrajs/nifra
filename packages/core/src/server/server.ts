@@ -1530,11 +1530,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly mcpPromptList: McpPromptDescriptor[]
   /** Kept so a {@link group} scope is built with exactly this server's settings: fused lanes read
    * several of them at request time, so a group route must never run under different ones. */
-  private readonly options: ServerOptions
+  private readonly serverOptions: ServerOptions
   /** Static prefix joined onto every route this server registers; non-empty only on a group scope. */
   private routePrefix: string
   constructor(options: ServerOptions = {}) {
-    this.options = options
+    this.serverOptions = options
     this.routePrefix = ""
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
@@ -2457,6 +2457,35 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   /**
+   * Register an `OPTIONS` route. Without one, an `OPTIONS` request to a path that only has other verbs
+   * gets a 405. Register this verb when the handler needs to answer a browser CORS preflight.
+   */
+  options<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(
+    path: Path,
+    schema: S,
+    handler: H,
+  ): Server<
+    AddRoute<R, "OPTIONS", Path, RouteInfoFor<Path, S, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
+  options<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(
+    path: Path,
+    handler: H,
+  ): Server<
+    AddRoute<R, "OPTIONS", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
+  options(
+    path: string,
+    schemaOrHandler: RouteSchema | ErasedHandler,
+    handler?: ErasedHandler,
+  ): Server<Registry, Ctx, HookOutput> {
+    return this.route("OPTIONS", path, schemaOrHandler, handler)
+  }
+
+  /**
    * Declare an **MCP tool** an agent can call (via `nifra mcp`, or a mounted MCP endpoint): a typed
    * `POST /_nifra/tool/<name>` route whose `input`/`output` schemas contract the call and surface in
    * `tools/list`. Requires `.use(mcp())` - without it, `.tool()` is a registration error, so an
@@ -3177,7 +3206,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     const fullPrefix = this.routePrefix + prefix
-    const scope = new Server<Registry, EmptyContext>(this.options)
+    const scope = new Server<Registry, EmptyContext>(this.serverOptions)
     scope.routePrefix = fullPrefix
     scope.inheritedStatics = { ...this.inheritedStatics, ...this.staticResponseHeaders?.record }
     for (const key of GROUP_CHAIN) (scope[key] as unknown[]).push(...this[key])
