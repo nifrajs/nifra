@@ -27,6 +27,8 @@ export interface HttpMemoryCapture {
   readonly cpu: string
   readonly revision: string
   readonly workspaceArtifactSHA256: string
+  /** Actions run that published this capture, when available. */
+  readonly sourceUrl?: string
   readonly protocol: HttpMemoryProtocol
   readonly rounds: number
   readonly requestsPerPhase: number

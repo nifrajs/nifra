@@ -11,7 +11,7 @@ export const meta = docsMeta(
 const EXPRESS = `// Express
 import express from "express"
 const expressApp = express()
-expressApp.get("/users/:id", (req, res) => res.json({ id: req.params.id }))
+expressApp.get("/users/:id", (req, res) => res.json({ id: req.params.id, name: "Ada" }))
 expressApp.post("/users", express.json(), (req, res) =>
   res.status(201).json({ id: crypto.randomUUID(), name: req.body.name }),
 )
@@ -21,8 +21,8 @@ import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()
-  .get("/users/:id", (c) => ({ id: c.params.id }))
-  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
+  .get("/users/:id", (c) => ({ id: c.params.id, name: "Ada" }))
+  .post("/users", { body: t.looseObject({ name: t.string() }) }, (c) => {
     c.set.status = 201
     return { id: crypto.randomUUID(), name: c.body.name }
   })`
@@ -33,7 +33,7 @@ type UserParams = { id: string }
 type UserBody = { name: string }
 const fastify = Fastify()
 fastify.get<{ Params: UserParams }>("/users/:id", async (request, reply) =>
-  reply.send({ id: request.params.id }),
+  reply.send({ id: request.params.id, name: "Ada" }),
 )
 fastify.post<{ Body: UserBody }>(
   "/users",
@@ -55,8 +55,8 @@ import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()
-  .get("/users/:id", (c) => ({ id: c.params.id }))
-  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
+  .get("/users/:id", (c) => ({ id: c.params.id, name: "Ada" }))
+  .post("/users", { body: t.looseObject({ name: t.string() }) }, (c) => {
     c.set.status = 201
     return { id: crypto.randomUUID(), name: c.body.name }
   })`
@@ -65,7 +65,7 @@ const HONO = `// Hono
 import { Hono } from "hono"
 const legacy = new Hono()
 legacy
-  .get("/users/:id", (c) => c.json({ id: c.req.param("id") }))
+  .get("/users/:id", (c) => c.json({ id: c.req.param("id"), name: "Ada" }))
   .post("/users", async (c) => {
     const body = await c.req.json<{ name: string }>()
     return c.json({ id: crypto.randomUUID(), name: body.name }, 201)
@@ -76,8 +76,8 @@ import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()
-  .get("/users/:id", (c) => ({ id: c.params.id }))
-  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
+  .get("/users/:id", (c) => ({ id: c.params.id, name: "Ada" }))
+  .post("/users", { body: t.looseObject({ name: t.string() }) }, (c) => {
     c.set.status = 201
     return { id: crypto.randomUUID(), name: c.body.name }
   })`
@@ -85,7 +85,7 @@ export const app = server()
 const ELYSIA = `// Elysia
 import { Elysia, t as elysiaT } from "elysia"
 const legacy = new Elysia()
-  .get("/users/:id", ({ params }) => ({ id: params.id }))
+  .get("/users/:id", ({ params }) => ({ id: params.id, name: "Ada" }))
   .post(
     "/users",
     ({ body }) => ({ id: crypto.randomUUID(), name: body.name }),
@@ -97,9 +97,8 @@ import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()
-  .get("/users/:id", (c) => ({ id: c.params.id }))
-  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
-    c.set.status = 201
+  .get("/users/:id", (c) => ({ id: c.params.id, name: "Ada" }))
+  .post("/users", { body: t.looseObject({ name: t.string() }) }, (c) => {
     return { id: crypto.randomUUID(), name: c.body.name }
   })`
 
@@ -115,7 +114,8 @@ export default function MigrateBackend() {
       <p>
         Keep your database, service layer, and domain logic. Move one endpoint at a time, translate
         its request and response shape, then point the existing frontend at the new endpoint. Nifra
-        can stay backend-only or mount under a full-stack app.
+        can stay backend-only or mount under a full-stack app. Use <code>t.looseObject</code> when
+        you need to keep accepting undeclared body fields; <code>t.object</code> rejects them.
       </p>
 
       <h2 id="map">Map the backend primitives</h2>
@@ -201,7 +201,9 @@ export default function MigrateBackend() {
       <p>
         The backend app itself is fetch-compatible. A frontend can call it in-process during SSR
         with <code>inProcessClient(app)</code>, while <code>apiPrefix: "/api"</code> also mounts the
-        routes at <code>/api/*</code> over HTTP. The same app can be served through Bun,{" "}
+        routes at <code>/api/*</code> over HTTP. The prefix is passed through by default: set{" "}
+        <code>apiStrip: true</code> to mount backend routes declared as <code>/users/*</code>, or
+        declare their full <code>/api/users/*</code> paths. The same app can be served through Bun,{" "}
         <code>@nifrajs/node</code>, <code>@nifrajs/deno</code>, or an edge fetch handler.
       </p>
       <p>

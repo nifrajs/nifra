@@ -1690,7 +1690,7 @@ ${demoAutoplay("demo-auto", "a")}${demoAutoplay("demo-auto-b", "b")}${demoManual
     font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
   }
   .home-proof-head a {
-    color: var(--color-graphite-muted); font-size: 13px; text-decoration: none; white-space: nowrap;
+    color: var(--color-graphite-muted); font-size: 13px; text-decoration: none;
   }
   .home-proof-head a:hover { color: var(--color-graphite-ink); }
   .home-proof-head a:focus-visible { outline: 2px solid var(--color-graphite-accent); outline-offset: 4px; }

@@ -31,27 +31,34 @@ export interface CaptureMachine {
   readonly vcpus: number
 }
 
-export interface SsrSchemaImpactResult {
-  readonly detailedSchemaRps: number
-  readonly genericJsonSchemaRps: number
-  /** Paired median throughput change with the detailed schema, relative to generic JSON validation. */
-  readonly throughputDeltaPercent: number
-  readonly detailedSchemaSamples: readonly number[]
-  readonly genericJsonSchemaSamples: readonly number[]
+export interface SsrOutputGuardCostResult {
+  readonly runtimeVersion: string
+  readonly guardRounds: number
+  readonly iterationsPerRound: number
+  readonly rps: number
+  readonly p50ms: number
+  readonly guardUsPerRequest: number
+  readonly identityUsPerRequest: number
+  readonly addedUsPerRequest: number
+  readonly guardShareOfP50Percent: number
+  readonly guardSamplesUs: readonly number[]
+  readonly identitySamplesUs: readonly number[]
 }
 
-export interface SsrSchemaImpactCapture {
+export interface SsrOutputGuardCostCapture {
   readonly date: string
   readonly source: string
   readonly machine: string
   readonly bun: string
   readonly node: string
   readonly oha: string
-  readonly rounds: number
+  readonly items: number
   readonly connections: number
   readonly durationS: number
   readonly warmupS: number
-  readonly results: Readonly<Record<"bun" | "node", SsrSchemaImpactResult>>
+  readonly guardRounds: number
+  readonly iterationsPerRound: number
+  readonly results: Readonly<Record<"bun" | "node", SsrOutputGuardCostResult>>
 }
 
 /** When, where, and with which toolchain a slice was measured. */
@@ -171,7 +178,7 @@ export const HTTP_MEMORY = Object.values(data.httpMemory ?? {}).sort(
   (a, b) => ["node", "bun", "deno"].indexOf(a.runtime) - ["node", "bun", "deno"].indexOf(b.runtime),
 )
 export const SSR_CAPTURED: CapturedMeta = data.ssrCaptured
-export const SSR_SCHEMA_IMPACT: SsrSchemaImpactCapture = data.ssrSchemaImpact
+export const SSR_OUTPUT_GUARD_COST: SsrOutputGuardCostCapture = data.ssrOutputGuardCost
 
 export type HttpWorkloadMetric = "getUsers" | "postUsers"
 export type HttpRealworldMetric = "get" | "post" | "body"

@@ -10,7 +10,7 @@ import {
   type HttpWorkloadTable,
   MULTIPLIERS,
   SSR_CAPTURED,
-  SSR_SCHEMA_IMPACT,
+  SSR_OUTPUT_GUARD_COST,
   SSR_TABLES,
   SSR_TABLES_B,
   type SsrTableRow,
@@ -100,22 +100,18 @@ function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
   )
 }
 
-function schemaDelta(value: number): string {
-  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`
-}
-
-function SsrSchemaImpact() {
-  const capture = SSR_SCHEMA_IMPACT
+function SsrOutputGuardCost() {
+  const capture = SSR_OUTPUT_GUARD_COST
   return (
     <section className="bench-block" style={{ marginTop: 24 }}>
-      <h3>Loader output schema A/B (local)</h3>
+      <h3>Loader output work per request (local)</h3>
       <table>
         <thead>
           <tr>
             <th>Runtime</th>
-            <th className="num">Detailed t.object</th>
-            <th className="num">Generic t.json()</th>
-            <th className="num">Paired median Δ</th>
+            <th className="num">Added per request</th>
+            <th className="num">Local SSR p50</th>
+            <th className="num">Share of p50</th>
           </tr>
         </thead>
         <tbody>
@@ -123,22 +119,22 @@ function SsrSchemaImpact() {
             const result = capture.results[runtime]
             return (
               <tr key={runtime}>
-                <td>{`${runtime === "node" ? "Node" : "Bun"} ${capture[runtime]}`}</td>
-                <td className="num">{result.detailedSchemaRps.toLocaleString("en-US")}</td>
-                <td className="num">{result.genericJsonSchemaRps.toLocaleString("en-US")}</td>
-                <td className="num">{schemaDelta(result.throughputDeltaPercent)}</td>
+                <td>{`${runtime === "node" ? "Node" : "Bun"} ${result.runtimeVersion}`}</td>
+                <td className="num">{result.addedUsPerRequest.toFixed(2)} µs</td>
+                <td className="num">{result.p50ms.toFixed(2)} ms</td>
+                <td className="num">{result.guardShareOfP50Percent.toFixed(2)}%</td>
               </tr>
             )
           })}
         </tbody>
       </table>
       <p className="note" style={{ marginTop: 8 }}>
-        Same 50-item React route · {capture.machine} · {capture.date} · oha {capture.oha} ·{" "}
-        {capture.rounds} paired rounds × {capture.durationS}s ({capture.warmupS}s warmup) ·{" "}
-        {capture.connections} connections. <code>t.json()</code> checks JSON safety;{" "}
-        <code>t.object</code> also validates and projects fields. Both keep Nifra's required{" "}
-        <code>loaderOutput</code> boundary; schema-free loader data is rejected. Δ is the median
-        paired RPS ratio; positive values favor the detailed schema.
+        Direct timing of the compiled <code>loaderOutput</code> guard on a {capture.items}-item
+        result; the added time subtracts an identity control. {capture.guardRounds} paired rounds ×{" "}
+        {capture.iterationsPerRound.toLocaleString("en-US")} calls on {capture.machine} (
+        {capture.date}). Local p50 comes from the same Nifra + React route ({capture.durationS}s
+        samples, {capture.warmupS}s warmup, {capture.connections} connections, oha {capture.oha}).
+        This is latency context, not a throughput uplift.
       </p>
     </section>
   )
@@ -364,7 +360,7 @@ export default function Benchmarks() {
         separate runners; compare rates within each runtime. <code>n/a</code> means client JS could
         not be measured from the HTML.
       </div>
-      <SsrSchemaImpact />
+      <SsrOutputGuardCost />
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
@@ -405,22 +401,34 @@ export default function Benchmarks() {
             RSS is process-wide after GC; POST heap is retained JavaScript memory.
           </p>
           <p className="note">
-            <a href="https://github.com/nifrajs/nifra/actions/runs/41327120547">
-              Accuracy CI · 2026-11-01
-            </a>{" "}
-            · median of 5 fresh processes · 50k GETs + POSTs per process · 50 connections · sorted
-            by after-POST RSS; <b>Low</b> marks each column&apos;s minimum.
+            Median of 5 fresh processes · 50k GETs + POSTs per process · 50 connections · sorted by
+            after-POST RSS; <b>Low</b> marks each column&apos;s minimum.
           </p>
-          {HTTP_MEMORY.map((capture) => (
-            <div key={capture.runtime}>
-              <h3 style={{ marginTop: 24 }}>
-                {capture.runtime[0]?.toUpperCase()}
-                {capture.runtime.slice(1)} {capture.runtimeVersion}
-              </h3>
-              <p className="note">{capture.cpu}</p>
-              <MemoryTable capture={capture} />
-            </div>
-          ))}
+          {HTTP_MEMORY.map((capture) => {
+            const sourceUrl =
+              "sourceUrl" in capture && typeof capture.sourceUrl === "string"
+                ? capture.sourceUrl
+                : undefined
+            return (
+              <div key={capture.runtime}>
+                <h3 style={{ marginTop: 24 }}>
+                  {capture.runtime[0]?.toUpperCase()}
+                  {capture.runtime.slice(1)} {capture.runtimeVersion}
+                </h3>
+                <p className="note">
+                  {capture.date}
+                  {sourceUrl === undefined ? null : (
+                    <>
+                      {" "}
+                      · <a href={sourceUrl}>Capture run</a>
+                    </>
+                  )}{" "}
+                  · {capture.cpu}
+                </p>
+                <MemoryTable capture={capture} />
+              </div>
+            )
+          })}
         </>
       )}
     </div>

@@ -6,7 +6,7 @@
 ```sh
 bun run build                                # node bundles and client builds read packages/*/dist
 bun run bench:ssr                            # every table
-bun run bench:ssr:schema --write           # detailed loaderOutput vs generic JSON validation
+bun run bench:ssr:output-cost --write      # per-request loaderOutput guard cost
 bun run bench/ssr/run.ts react vue:A         # React (both tables) + Vue Table A
 BENCH_ROUNDS=3 BENCH_SSR_JSON=out.json bun run bench/ssr/run.ts svelte
 bun run bench/ssr/run.ts --runtime node vue  # nifra's Vue rows on Node only, with every rival
@@ -24,11 +24,11 @@ Duration-bounded samples finish outstanding requests instead of cancelling them 
 A row that fails to build or to measure a round fails the run once every selected table has run:
 it exits non-zero and writes no results.
 
-`bench:ssr:schema` runs a paired Node and Bun A/B on the same 50-item React app. It compares the
-normal detailed `loaderOutput` with `t.json()`, which still validates JSON safety but has no
-field-level shape to project. Nifra rejects browser-bound loader data with no output schema, so a
-schema-free server cannot provide a valid comparison. Pass `--write` to save the local capture to
-`site/shared/data/benchmarks.json`.
+`bench:ssr:output-cost` times the actual compiled `outputGuard` + per-request `guardValue` path for
+the detailed 50-item React `loaderOutput`, subtracting an identity function control. It also measures
+that route's end-to-end p50 in the same local run to show the guard time in context. The ratio is a
+latency reference, not a throughput uplift. It needs the built `packages/web/dist`; pass `--write` to
+save the capture to `site/shared/data/benchmarks.json`.
 
 Runtime versions are pinned in `.tool-versions`. Comparator apps have isolated installs;
 after changing their dependencies, run `bun install` in each changed app before measuring,

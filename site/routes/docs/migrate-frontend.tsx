@@ -17,7 +17,10 @@ import type { Route } from "./+types/[id]"
 export const loaderOutput = t.object({ id: t.string(), name: t.string() })
 export const loader: Route.Loader = async ({ params, api }) => {
   const result = await api.users({ id: params.id }).get()
-  if (!result.ok) throw notFound()
+  if (!result.ok) {
+    if (result.status === 404) throw notFound()
+    throw new Error("User API request failed (" + result.status + ")")
+  }
   return result.data
 }`
 
