@@ -81,6 +81,7 @@ import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
   assertByteLimit,
   clientBodyErrorCode,
+  DEFAULT_MAX_BODY_BYTES,
   hasTrustedBodyFraming,
   markTransportCap,
   markTrustedBodyFraming,
@@ -648,7 +649,6 @@ export {
 } from "./plugin.ts"
 export type { IdentityPlugin }
 
-const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const BODY_RESPONSE = (response: Response | ResponseResult): Response | ResponseResult => response
 const BODY_ERROR = (error: unknown): Promise<never> => Promise.reject(error)
 const DEFAULT_DRAIN_MS = 10_000

@@ -2360,6 +2360,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string>; _cookies?: string[] }`
   `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
+- **DEFAULT_MAX_BODY_BYTES** _(const)_ - `DEFAULT_MAX_BODY_BYTES: 1000000`
+  Default request-body cap shared by the full Server and the compact edge server.
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
 - **ErrorLogDetail** _(type)_ - `type ErrorLogDetail = "full" | "message" | "none"`
   How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option.
