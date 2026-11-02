@@ -78,7 +78,7 @@ const IGNORED_DIR =
 // legitimately drives `fetch`, hand-rolls a client, and calls a route directly. It is NOT excluded from
 // `nifra doctor`: tsc typechecks tests, so an import a test declares nowhere is a real broken build.
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
-const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
+export const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
 
 /** Paths crossing the scanner boundary are project-relative identifiers, not filesystem paths. Keep
  * them stable across runtimes so rules, diagnostics, ignore globs, and import chains have one shape. */
@@ -252,59 +252,51 @@ function parseQuotedLiteral(raw: string): string | undefined {
   }
 }
 
-function findMatchingParen(src: string, openIndex: number): number | undefined {
-  let depth = 0
+/**
+ * Calls `visit` with each index from `from` whose character sits outside a string literal, until it
+ * returns true. Returns that index, `src.length` when the scan ran out, or -1 when it ran out inside a
+ * literal left open.
+ */
+function scanOutsideStrings(src: string, from: number, visit: (index: number) => boolean): number {
   let quote: '"' | "'" | "`" | undefined
-  for (let i = openIndex; i < src.length; i++) {
+  for (let i = from; i < src.length; i++) {
     const c = src[i]
     if (quote !== undefined) {
-      if (c === "\\") {
-        i++
-        continue
-      }
-      if (c === quote) quote = undefined
+      if (c === "\\") i++
+      else if (c === quote) quote = undefined
       continue
     }
-    if (c === '"' || c === "'" || c === "`") {
-      quote = c
-      continue
-    }
-    if (c === "(") depth++
-    else if (c === ")") {
-      depth--
-      if (depth === 0) return i
-    }
+    if (c === '"' || c === "'" || c === "`") quote = c
+    else if (visit(i)) return i
   }
-  return undefined
+  return quote === undefined ? src.length : -1
+}
+
+function findMatchingParen(src: string, openIndex: number): number | undefined {
+  let depth = 0
+  const end = scanOutsideStrings(src, openIndex, (i) => {
+    if (src[i] === "(") depth++
+    else if (src[i] === ")") return --depth === 0
+    return false
+  })
+  return end >= 0 && end < src.length ? end : undefined
 }
 
 function splitTopLevelArgs(src: string): string[] | undefined {
   const args: string[] = []
   let start = 0
   let depth = 0
-  let quote: '"' | "'" | "`" | undefined
-  for (let i = 0; i < src.length; i++) {
+  const end = scanOutsideStrings(src, 0, (i) => {
     const c = src[i]
-    if (quote !== undefined) {
-      if (c === "\\") {
-        i++
-        continue
-      }
-      if (c === quote) quote = undefined
-      continue
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      quote = c
-      continue
-    }
     if (c === "(" || c === "{" || c === "[") depth++
     else if (c === ")" || c === "}" || c === "]") depth--
     else if (c === "," && depth === 0) {
       args.push(src.slice(start, i).trim())
       start = i + 1
     }
-  }
-  if (quote !== undefined || depth !== 0) return undefined
+    return false
+  })
+  if (end < 0 || depth !== 0) return undefined
   const tail = src.slice(start).trim()
   if (tail !== "") args.push(tail)
   return args
@@ -642,26 +634,14 @@ function matchesExternalMount(content: string, start: number, mounts: readonly s
 
 function findTopLevelPropertyColon(src: string): number | undefined {
   let depth = 0
-  let quote: '"' | "'" | "`" | undefined
-  for (let i = 0; i < src.length; i++) {
+  const end = scanOutsideStrings(src, 0, (i) => {
     const c = src[i]
-    if (quote !== undefined) {
-      if (c === "\\") {
-        i++
-        continue
-      }
-      if (c === quote) quote = undefined
-      continue
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      quote = c
-      continue
-    }
     if (c === "(" || c === "{" || c === "[") depth++
     else if (c === ")" || c === "}" || c === "]") depth--
-    else if (c === ":" && depth === 0) return i
-  }
-  return undefined
+    else return c === ":" && depth === 0
+    return false
+  })
+  return end >= 0 && end < src.length ? end : undefined
 }
 
 function parseStaticPropertyName(raw: string): string | undefined {
@@ -711,17 +691,32 @@ export function scanFetchText(
   content: string,
   externalMounts: readonly string[] = [],
 ): TypedClientFinding[] {
+  return ownPathCalls(file, content, GLOBAL_FETCH_CALL, externalMounts, (m) =>
+    hasLiteralNifraDataHeader(content, m.index + m[0].lastIndexOf("(")),
+  )
+}
+
+/**
+ * A finding for each `pattern` match in code whose first argument is a literal own-API path (`"/…"`,
+ * not `"//…"`), unless it falls under one of `externalMounts` or `skip` passes it.
+ */
+function ownPathCalls(
+  file: string,
+  content: string,
+  pattern: RegExp,
+  externalMounts: readonly string[],
+  skip?: (match: RegExpExecArray) => boolean,
+): TypedClientFinding[] {
   const out: TypedClientFinding[] = []
   const lines = content.split("\n")
   const code = codePositionMask(content)
-  GLOBAL_FETCH_CALL.lastIndex = 0
-  for (let m = GLOBAL_FETCH_CALL.exec(code); m !== null; m = GLOBAL_FETCH_CALL.exec(code)) {
+  pattern.lastIndex = 0
+  for (let m = pattern.exec(code); m !== null; m = pattern.exec(code)) {
     const argument = firstArgumentIndex(content, m.index + m[0].length)
     const quote = content[argument]
     if (quote !== "'" && quote !== '"' && quote !== "`") continue
     if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
-    const openParen = m.index + m[0].lastIndexOf("(")
-    if (hasLiteralNifraDataHeader(content, openParen)) continue
+    if (skip?.(m) === true) continue
     if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
       continue
     out.push(typedClientFinding(file, lines, lineAt(content, m.index)))
@@ -748,20 +743,7 @@ export function scanStreamText(
   content: string,
   externalMounts: readonly string[] = [],
 ): TypedClientFinding[] {
-  const out: TypedClientFinding[] = []
-  const lines = content.split("\n")
-  const code = codePositionMask(content)
-  STREAM_CONSTRUCT.lastIndex = 0
-  for (let m = STREAM_CONSTRUCT.exec(code); m !== null; m = STREAM_CONSTRUCT.exec(code)) {
-    const argument = firstArgumentIndex(content, m.index + m[0].length)
-    const quote = content[argument]
-    if (quote !== "'" && quote !== '"' && quote !== "`") continue
-    if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
-    if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
-      continue
-    out.push(typedClientFinding(file, lines, lineAt(content, m.index)))
-  }
-  return out
+  return ownPathCalls(file, content, STREAM_CONSTRUCT, externalMounts)
 }
 
 /** Statically collect simple Nifra route registrations from source, without importing app code. */
@@ -2168,6 +2150,14 @@ function writesTo(ts: TypeScriptApi, root: TSApi.Node, name: string): SqlWrite[]
 }
 
 function mentionsName(ts: TypeScriptApi, node: TSApi.Node, name: string): boolean {
+  // A member/key named like the variable does not read that variable (`record = client.record()`).
+  if (ts.isPropertyAccessExpression(node)) return mentionsName(ts, node.expression, name)
+  if (ts.isPropertyAssignment(node)) {
+    return (
+      mentionsName(ts, node.initializer, name) ||
+      (ts.isComputedPropertyName(node.name) && mentionsName(ts, node.name.expression, name))
+    )
+  }
   if (ts.isIdentifier(node)) return node.text === name
   return ts.forEachChild(node, (child) => mentionsName(ts, child, name) || undefined) === true
 }
@@ -3489,6 +3479,8 @@ export async function walkSource(
      * files in a zone. A `.svelte`/`.vue` file is visited as {@link componentScripts}.
      */
     readonly scripts?: boolean
+    /** With `scripts`, every `.js` file too: in a library package, plain `.js` is its code, not tooling. */
+    readonly library?: boolean
   } = {},
 ): Promise<void> {
   const skip = opts.includeTests === true ? IGNORED_DIR : IGNORED
@@ -3503,7 +3495,13 @@ export async function walkSource(
     // A backslash is a filename character on POSIX; only Windows separators need normalizing.
     const rel = sep === "\\" ? normalizeProjectPath(rawRel) : rawRel
     // A `.js` file outside a zone is tooling (a bundler config, a script, a vendored asset), not app code.
-    if (PLAIN_SCRIPT_FILE.test(rel) && !ZONE_DIRECTORY.test(rel) && !ZONE_SUFFIX.test(rel)) continue
+    if (
+      opts.library !== true &&
+      PLAIN_SCRIPT_FILE.test(rel) &&
+      !ZONE_DIRECTORY.test(rel) &&
+      !ZONE_SUFFIX.test(rel)
+    )
+      continue
     if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)

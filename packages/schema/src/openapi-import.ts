@@ -25,6 +25,8 @@
  *   the caps throws rather than allocating.
  */
 
+import { isRecord } from "./internal/record.ts"
+
 export class OpenAPIImportError extends Error {
   constructor(message: string) {
     super(`openapi import: ${message}`)
@@ -92,10 +94,6 @@ const RESPONSE_KEY = /^(?:[1-5][0-9]{2}|default)$/
 const TEMPLATE_EXPRESSION = /\{([^{}]*)\}/g
 const NIFRA_PARAM = /^[A-Za-z_][A-Za-z0-9_]*$/
 const RESERVED_PARAM_NAMES = new Set(["__proto__", "constructor", "prototype"])
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
 
 function normalizedLimit(value: number | undefined, fallback: number, label: string): number {
   const max = value ?? fallback

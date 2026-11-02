@@ -10,6 +10,7 @@ import {
   silentLogger,
   status,
 } from "../src/index.ts"
+import { INSTALL_RESPONSE_CONTRACT } from "../src/server/install.ts"
 import {
   checkResponseContract,
   type ResponseContractReport,
@@ -435,6 +436,235 @@ describe('responseContract: "enforce"', () => {
       expect(res.status).toBe(code)
       expect(await res.json()).toEqual(LEAK)
     }
+  })
+})
+
+// A database driver hands back a `Date` for a timestamp column, and JSON writes it as its ISO string,
+// which is what a backend route declares: `t.string({ format: "date-time" })`.
+describe("a Date in the payload", () => {
+  const AT = new Date("2026-10-25T12:00:00.000Z")
+  const ISO = AT.toISOString()
+  const STAMP = t.string({ format: "date-time" })
+  const ROW = t.object({ id: t.string(), createdAt: STAMP })
+  const PAGE = t.object({ items: t.array(ROW), meta: t.object({ at: STAMP }) })
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a `Date` is written as the declared ISO string, which no static type can say.
+  const stamp = (date: Date): string => date as never
+  const row = () => ({ id: "a", createdAt: stamp(AT) })
+  const SENT_ROW = { id: "a", createdAt: ISO }
+
+  const routes = (contract: ReturnType<typeof responseContract>, logger: Logger = silentLogger) =>
+    server({ logger })
+      .use(contract)
+      .get("/top", { response: STAMP }, () => stamp(AT))
+      .get("/row", { response: ROW }, row)
+      .get("/page", { response: PAGE }, () => ({ items: [row(), row()], meta: { at: stamp(AT) } }))
+      .get("/reply", { response: ROW }, (c) => c.json(row()))
+      .get("/status", { response: ROW }, () => status(201, row()))
+  const SENT: ReadonlyArray<readonly [string, number, unknown]> = [
+    ["/top", 200, ISO],
+    ["/row", 200, SENT_ROW],
+    ["/page", 200, { items: [SENT_ROW, SENT_ROW], meta: { at: ISO } }],
+    ["/reply", 200, SENT_ROW],
+    ["/status", 201, SENT_ROW],
+  ]
+
+  test("enforce judges a string field by the ISO string it is written as, at the top, nested and in a list", async () => {
+    for (const extra of ["reject", "strip"] as const) {
+      const app = routes(responseContract("enforce", { extra }))
+      for (const [path, code, body] of SENT) {
+        const res = await app.fetch(new Request(`http://t${path}`))
+        expect(res.status).toBe(code)
+        expect(await res.json()).toEqual(body)
+      }
+    }
+  })
+
+  test("warn reports nothing and sends the payload as it came", async () => {
+    const { logger, records } = recorder()
+    const reports: ResponseContractReport[] = []
+    const app = routes(
+      responseContract("warn", { onReport: (report) => void reports.push(report) }),
+      logger,
+    )
+    for (const [path, code, body] of SENT) {
+      const res = await app.fetch(new Request(`http://t${path}`))
+      expect(res.status).toBe(code)
+      expect(await res.json()).toEqual(body)
+    }
+    expect(records.filter((r) => r.message === "response contract")).toEqual([])
+    expect(reports).toEqual([])
+  })
+
+  test("each mode calls every toJSON hook once, a Date's included, in a c.json reply too", async () => {
+    let dates = 0
+    let hooks = 0
+    const sentRow = () => {
+      const date = new Date(AT)
+      // `Date.prototype.toJSON` writes through `toISOString`.
+      date.toISOString = () => {
+        dates++
+        return ISO
+      }
+      const id = {
+        toJSON: () => {
+          hooks++
+          return "a"
+        },
+      }
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the hook writes the declared string, which no static type can say.
+      return { id: id as never, createdAt: stamp(date) }
+    }
+    for (const mode of ["warn", "enforce"] as const) {
+      const app = server({ logger: silentLogger })
+        .use(responseContract(mode))
+        .get("/row", { response: ROW }, sentRow)
+        .get("/status", { response: ROW }, () => status(201, sentRow()))
+        .get("/reply", { response: ROW }, (c) => c.json(sentRow()))
+        .get("/missing", { errors: { 404: ROW } }, (c) => c.json(sentRow(), 404))
+      for (const path of ["/row", "/status", "/reply", "/missing"]) {
+        dates = 0
+        hooks = 0
+        const res = await app.fetch(new Request(`http://t${path}`))
+        expect(await res.json()).toEqual(SENT_ROW)
+        expect({ mode, path, dates, hooks }).toEqual({ mode, path, dates: 1, hooks: 1 })
+      }
+    }
+  })
+
+  test("a Date is written as its toJSON writes it, whichever method it overrides and where", async () => {
+    let at = AT
+    const app = server({ logger: silentLogger })
+      .use(responseContract("enforce"))
+      .get("/at", { response: t.object({ at: t.union([t.string(), t.null()]) }) }, () => ({
+        at: stamp(at),
+      }))
+    const sent = async (date: Date) => {
+      at = date
+      const expected = JSON.stringify({ at: date })
+      return { text: await (await app.fetch(new Request("http://t/at"))).text(), expected }
+    }
+    for (const date of [AT, new Date(Number.NaN), new Date(8.64e15), new Date(-8.64e15)]) {
+      const { text, expected } = await sent(date)
+      expect(text).toBe(expected)
+    }
+    // Each method `Date.prototype.toJSON` calls, overridden on the instance, a subclass and
+    // `Date.prototype` itself, with answers that change what it writes: a time value that is not
+    // finite, and a `valueOf` whose string or object answer `toJSON` reads past to `toISOString`.
+    const overrides: ReadonlyArray<readonly [PropertyKey, () => unknown]> = [
+      [Symbol.toPrimitive, () => Number.NaN],
+      ["valueOf", () => Number.NaN],
+      ["valueOf", () => "text"],
+      ["valueOf", () => ({})],
+      ["toISOString", () => "custom"],
+    ]
+    for (const [method, answer] of overrides) {
+      for (const where of ["own", "class", "global"] as const) {
+        const override = { value: answer, configurable: true, writable: true }
+        const shipped = Object.getOwnPropertyDescriptor(Date.prototype, method)
+        let date = new Date(AT)
+        if (where === "own") Object.defineProperty(date, method, override)
+        if (where === "class") {
+          class Stamp extends Date {}
+          Object.defineProperty(Stamp.prototype, method, override)
+          date = new Stamp(AT.getTime())
+        }
+        if (where === "global") Object.defineProperty(Date.prototype, method, override)
+        try {
+          const { text, expected } = await sent(date)
+          expect({ method: String(method), answer: String(answer()), where, text }).toEqual({
+            method: String(method),
+            answer: String(answer()),
+            where,
+            text: expected,
+          })
+        } finally {
+          if (where === "global" && shipped !== undefined)
+            Object.defineProperty(Date.prototype, method, shipped)
+        }
+      }
+    }
+  })
+
+  test("strip drops an undeclared field beside a Date, and names it", async () => {
+    const reports: ResponseContractReport[] = []
+    const app = server({ logger: silentLogger })
+      .use(
+        responseContract("enforce", {
+          extra: "strip",
+          onReport: (report) => void reports.push(report),
+        }),
+      )
+      .get("/page", { response: PAGE }, () => ({
+        items: [{ ...row(), passwordHash: "SECRET" }],
+        meta: { at: stamp(AT), deletedAt: AT },
+      }))
+    const res = await app.fetch(new Request("http://t/page"))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ items: [SENT_ROW], meta: { at: ISO } })
+    expect(reports).toMatchObject([
+      { kind: "stripped", fields: ["items[].passwordHash", "meta.deletedAt"] },
+    ])
+  })
+
+  test("a t.date() field keeps the Date beside a string field that is written", async () => {
+    const MIXED = t.object({
+      at: t.date(),
+      createdAt: STAMP,
+      maybe: t.union([t.date(), t.null()]),
+      items: t.array(t.object({ when: t.date(), createdAt: STAMP })),
+      byName: t.record(t.object({ when: t.date(), createdAt: STAMP })),
+    })
+    for (const extra of ["reject", "strip"] as const) {
+      const app = server({ logger: silentLogger })
+        .use(responseContract("enforce", { extra }))
+        .get("/mixed", { response: MIXED }, () => ({
+          at: AT,
+          createdAt: stamp(AT),
+          maybe: AT,
+          items: [{ when: AT, createdAt: stamp(AT) }],
+          byName: { ada: { when: AT, createdAt: stamp(AT) } },
+        }))
+      const res = await app.fetch(new Request("http://t/mixed"))
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        at: ISO,
+        createdAt: ISO,
+        maybe: ISO,
+        items: [{ when: ISO, createdAt: ISO }],
+        byName: { ada: { when: ISO, createdAt: ISO } },
+      })
+    }
+  })
+
+  test("a Date is still refused where what it writes does not fit", async () => {
+    const { logger, records } = recorder()
+    const app = server({ logger })
+      .use(responseContract("enforce", { extra: "strip" }))
+      .get("/number", { response: t.object({ at: t.number() }) }, () => ({ at: AT.getTime() }))
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the wrong type is the point of this route.
+      .get("/wrong", { response: t.object({ at: t.number() }) }, () => ({ at: AT as never }))
+      // An invalid `Date` is written as `null`.
+      .get("/invalid", { response: ROW }, () => ({
+        id: "a",
+        createdAt: stamp(new Date(Number.NaN)),
+      }))
+    expect((await app.fetch(new Request("http://t/number"))).status).toBe(200)
+    for (const path of ["/wrong", "/invalid"])
+      expect((await app.fetch(new Request(`http://t${path}`))).status).toBe(500)
+    const violations = records.filter((r) => r.message === "response contract violation")
+    expect(violations.map((r) => String(r.detail))).toEqual([
+      expect.stringContaining("at: Expected number"),
+      expect.stringContaining("createdAt: Expected string"),
+    ])
+  })
+
+  test("a schema without its JSON Schema is shown the Date, so z.date() still passes", async () => {
+    const app = server({ logger: silentLogger })
+      .use(responseContract("enforce"))
+      .get("/z", { response: z.object({ at: z.date() }) }, () => ({ at: AT }))
+    const res = await app.fetch(new Request("http://t/z"))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ at: ISO })
   })
 })
 
@@ -1183,6 +1413,45 @@ describe("checkResponseContract", () => {
       value: undefined,
     })
   })
+
+  test("a schema with a JSON Schema is shown each Date as the string it writes", () => {
+    const AT = new Date(0)
+    const ISO = AT.toISOString()
+    // A schema that accepts anything shows what it was handed.
+    const spy: StandardSchemaV1 = {
+      "~standard": { version: 1, vendor: "test", validate: (input) => ({ value: input }) },
+    }
+    const judged = (schema: StandardSchemaV1, value: unknown): unknown => {
+      const outcome = checkResponseContract(schema, value, "enforce")
+      return "value" in outcome ? outcome.value : outcome
+    }
+    const described = { ...spy, jsonSchema: { type: "object" } }
+    expect(judged(described, { a: AT, b: [AT], c: { d: AT } })).toEqual({
+      a: ISO,
+      b: [ISO],
+      c: { d: ISO },
+    })
+    const text = { ...spy, jsonSchema: { type: "string" } }
+    expect(judged(text, AT)).toBe(ISO)
+    // Nothing says how a schema without one reads a Date, so it is handed the Date.
+    expect(judged(spy, { a: AT })).toEqual({ a: AT })
+  })
+
+  test("a t.date() place takes the RFC 3339 string a Date is written as, and sends it on", async () => {
+    const schema = t.object({ at: t.date(), maybe: t.union([t.date(), t.null()]) })
+    for (const sent of [
+      { at: "2026-10-25T12:00:00.000Z", maybe: null },
+      { at: "2026-10-25T14:00:00+02:00", maybe: "2026-10-25T12:00:00Z" },
+    ])
+      expect(await checkResponseContract(schema, sent, "enforce")).toEqual({
+        kind: "ok",
+        value: sent,
+      })
+    for (const at of ["2026-02-30T00:00:00Z", "2026-10-25 12:00:00Z", "2026-10-25T12:00:00", "1"])
+      expect(await checkResponseContract(schema, { at, maybe: null }, "enforce")).toMatchObject({
+        kind: "violation",
+      })
+  })
 })
 
 /**
@@ -1222,4 +1491,38 @@ describe("the Bun native lane cannot bypass the contract", () => {
       await running.stop()
     }
   })
+})
+
+test("a runtime without write, as an older copy of the plugin installs, still serves c.json", async () => {
+  const bodies: unknown[] = []
+  const app = server()
+  app[INSTALL_RESPONSE_CONTRACT]({
+    mode: "warn",
+    check: (_definition, result, context) => {
+      bodies.push(context?.jsonBody)
+      return { kind: "ok", value: result }
+    },
+  })
+  const routed = app.get("/r", { response: t.object({ id: t.number() }) }, (c) => c.json({ id: 1 }))
+  const res = await routed.fetch(new Request("http://x/r"))
+  expect([res.status, await res.json(), bodies]).toEqual([200, { id: 1 }, [{ id: 1 }]])
+})
+
+test("a route without a contract leaves no contract field on its context", async () => {
+  let own: boolean | undefined
+  // An onError hook puts the route on the general execution lane, where a contract is attached.
+  const app = server()
+    .onError(() => undefined)
+    .post("/p", { body: t.object({ n: t.number() }) }, (c) => {
+      own = Object.hasOwn(c, "jsonContract")
+      return c.json({ ok: true })
+    })
+  const res = await app.fetch(
+    new Request("http://x/p", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"n":1}',
+    }),
+  )
+  expect([res.status, own]).toEqual([200, false])
 })

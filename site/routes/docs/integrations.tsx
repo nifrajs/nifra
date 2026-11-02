@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/integrations",
@@ -86,7 +87,7 @@ export default function Integrations() {
         bounded (DoS guard), verifies the signature in constant time, checks the timestamp
         tolerance, and only then hands you the payload. Presets exist for Stripe and GitHub, and a
         generic header/encoding form covers any other provider - including key rotation via an
-        array of secrets. Details in <a href="/docs/security">security</a>.
+        array of secrets. Details in <a href={href({ to: "/docs/security" })}>security</a>.
       </p>
 
       <h3>3. Processing exactly once</h3>
@@ -99,7 +100,7 @@ export default function Integrations() {
 
       <h2>When to write a plugin</h2>
       <p>
-        Reach for <a href="/docs/plugins">a plugin</a> only when a library should participate in
+        Reach for <a href={href({ to: "/docs/plugins" })}>a plugin</a> only when a library should participate in
         the framework itself: contribute typed context to every handler (<code>c.stripe</code>, a
         session, a tenant), mount routes of its own, or hook the request lifecycle. That is{" "}
         <code>definePlugin</code> - a few lines, typed end-to-end. For everything else, an import

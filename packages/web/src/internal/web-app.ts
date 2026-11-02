@@ -12,8 +12,20 @@ import {
 } from "@nifrajs/core/mount"
 import { withResponseObserver } from "@nifrajs/core/response-observer"
 import type { MountableApp, MountOptions } from "@nifrajs/core/server"
-import { replacedRequestOf, type ServerOptions, server } from "@nifrajs/core/server"
-import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
+import {
+  isAuthenticatedRequest,
+  replacedRequestOf,
+  type ServerOptions,
+  server,
+} from "@nifrajs/core/server"
+import {
+  type CspHeaderContext,
+  type CspPolicy,
+  cspNonceResolver,
+  DOCUMENT_POLICY,
+  isCspPolicy,
+  nonceCspPolicy,
+} from "../csp.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
 import {
   type BuildAssetSet,
@@ -21,10 +33,23 @@ import {
   hostPolicyGate,
   isHostPolicy,
 } from "../host-policy.ts"
-import { CACHE_CHANNEL } from "../isr.ts"
+import {
+  CACHE_CHANNEL,
+  ISR_REVALIDATE_HEADER,
+  ISR_REVALIDATE_TAGS_HEADER,
+  OWNER_CACHEABLE_HEADER,
+  OWNER_NONCE_USED_HEADER,
+  SERVER_COMPONENT_CACHE_PARTITION,
+} from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
+import {
+  normalizeRouteSlotRegistry,
+  parseRouteSlots,
+  RouteSlotStateError,
+  validateRouteSlotTargets,
+} from "../route-slots.ts"
 import { createMatcher, PRERENDERED_LIST_PATH } from "../router.ts"
 import type { EvidenceAncestry } from "./evidence-traversal.ts"
 import { identityEpochHook, type KeepAliveServerOptions } from "./identity-epoch.ts"
@@ -35,7 +60,12 @@ import { createPageRequestExecutor, type NonceResolver, type PageI18n } from "./
 import { PPR_SERVER, PPR_SETUP, type PprSetup } from "./ppr/contract.ts"
 import { type PrerenderedPages, servePrerenderedPages } from "./prerendered-pages.ts"
 import type { RevalidateResult } from "./render-document.ts"
-import { requestPattern } from "./route-path.ts"
+import {
+  finishRequestHeaderTrackingInPlace,
+  OWNER_REQUEST_HEADER_DEPENDENCY_HEADER,
+  requestHeadersWereRead,
+  trackRequestHeaderReadsInPlace,
+} from "./request-header-tracker.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 
@@ -96,10 +126,25 @@ export interface CreateWebAppOptions<Env = unknown> {
    * Resolve a fresh CSP nonce for each document request. The value is applied to every
    * framework-owned executable script; return `undefined` to keep the default nonce-free output.
    * Nonce-bearing documents are marked `private, no-store` so the request-specific value is not
-   * replayed by browser, CDN, or ISR caches. The resolver does not declare a CSP header because the
-   * policy's allowed sources are app-specific.
+   * replayed by browser, CDN, or ISR caches. Pass {@link cspHeader} to have nifra write the
+   * Content-Security-Policy header from the same value.
    */
   readonly nonce?: NonceResolver<Env>
+  /**
+   * Build the Content-Security-Policy value for each document a {@link nonce} app renders, or return
+   * `undefined` to send none. nifra sets it on every document it renders - pages, status pages,
+   * `_error`, streamed and deferred documents - from the nonce it put on that document's scripts, so
+   * the header never depends on which `Request` object a wrapper holds. `sources` is the
+   * `script-src` list the document needs: `'nonce-…'` plus a `'sha256-…'` hash for each constant
+   * inline script nifra writes, which covers a document the resolver left nonce-free.
+   *
+   * ```ts
+   * cspHeader: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`
+   * ```
+   *
+   * Needs `nonce`; `csp` writes its own header, so the two are refused together.
+   */
+  readonly cspHeader?: (context: CspHeaderContext) => string | undefined
   /**
    * A hash-based Content-Security-Policy from `createCspPolicy`, instead of `nonce`. A document then
    * carries a nonce only when it needs one (it `defer()`s a value, or `meta` names the nonce in
@@ -107,15 +152,13 @@ export interface CreateWebAppOptions<Env = unknown> {
    * and stays cacheable by `withISR` or a CDN. `meta` still receives a nonce to name.
    */
   readonly csp?: CspPolicy
-  /** Experimental and unstable: features whose API may change in any release. */
-  readonly experimental?: {
-    /**
-     * Partial prerendering, from `partialPrerendering()` in `@nifrajs/web/ppr`. A route whose backend
-     * half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary
-     * as it settles. Needs `csp` (hashes), not `nonce`.
-     */
-    readonly ppr?: PprSetup
-  }
+  /**
+   * Partial prerendering, from `partialPrerendering()` in `@nifrajs/web/ppr`. A route whose backend
+   * half exports `shellLoader` streams a shell shared by every visitor, then each `dynamic` boundary
+   * as it settles. `csp` (hashes) is optional; `nonce` is refused, since a per-request nonce would
+   * make every shell unique.
+   */
+  readonly ppr?: PprSetup
   /**
    * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
    * the rest of {@link ServerOptions}.
@@ -443,16 +486,63 @@ export function createWebApp<Env = unknown>(
   options: CreateWebAppOptions<Env>,
 ): ReturnType<typeof server<Env>> {
   const { adapter, manifest, clientEntry, title, api } = options
+  if ("experimental" in options) {
+    throw new TypeError(
+      "[nifra/web] createWebApp `experimental.ppr` is now `ppr`: pass partialPrerendering() as createWebApp({ ppr })",
+    )
+  }
   if (options.csp !== undefined && options.nonce !== undefined) {
     throw new TypeError("[nifra/web] createWebApp takes `csp` or `nonce`, not both")
   }
   if (options.csp !== undefined && !isCspPolicy(options.csp)) {
     throw new TypeError("[nifra/web] createWebApp `csp` must come from createCspPolicy()")
   }
+  if (options.cspHeader !== undefined) {
+    if (typeof options.cspHeader !== "function") {
+      throw new TypeError("[nifra/web] createWebApp `cspHeader` must be a function")
+    }
+    if (options.csp !== undefined) {
+      throw new TypeError(
+        "[nifra/web] createWebApp takes `csp` or `cspHeader`, not both: `csp` writes its own header",
+      )
+    }
+    if (options.nonce === undefined) {
+      throw new TypeError(
+        "[nifra/web] createWebApp `cspHeader` writes the header of `nonce` documents: pass `nonce`, or use `csp: createCspPolicy(...)`",
+      )
+    }
+    if (options.nonce.onResponse !== undefined) {
+      throw new TypeError(
+        "[nifra/web] createWebApp `cspHeader` and a createNonceResolver({ header }) both write the CSP header: keep one",
+      )
+    }
+  }
+  const nonceCsp = options.cspHeader === undefined ? undefined : nonceCspPolicy(options.cspHeader)
   // Seed the context with the declared `Env` so `app.fetch(req, { env })` / `toFetchHandler(app)` type
   // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via
   // `app.fetch(req, { env })`; this is a compile-time-only seed (`server<Env>()` casts, doesn't store).
   const app = server<Env>(options.server)
+  const ownerRequestMatcher =
+    options.serverComponents === undefined
+      ? undefined
+      : createMatcher(
+          manifest.routes
+            .filter((route) => options.serverComponents?.owns(route.id) === true)
+            .map((route) => ({ routeId: route.id, pattern: route.pattern })),
+        )
+  if (ownerRequestMatcher !== undefined) {
+    // Observe app-level request hooks before their first header read.
+    app.onRequest((request) => {
+      if (request.method === "GET" && ownerRequestMatcher(new URL(request.url).pathname) !== null)
+        trackRequestHeaderReadsInPlace(request)
+    })
+    // Observe app-level response hooks; this runs before the hooks registered by options.use.
+    app.onResponse((response, request) => {
+      if (request.method === "GET" && ownerRequestMatcher(new URL(request.url).pathname) !== null)
+        trackRequestHeaderReadsInPlace(request)
+      return response
+    })
+  }
   // First of all: a host's refused path must not reach a rate limiter, a mount or a page.
   if (options.hostPolicy !== undefined) {
     if (!isHostPolicy(options.hostPolicy)) {
@@ -471,6 +561,16 @@ export function createWebApp<Env = unknown>(
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.
   options.use?.(app)
+  if (ownerRequestMatcher !== undefined) {
+    // Snapshot app derives/auth/beforeHandle reads before the page handler's framework work.
+    app.beforeHandle((context) => {
+      if (
+        context.req.method === "GET" &&
+        ownerRequestMatcher(new URL(context.req.url).pathname) !== null
+      )
+        finishRequestHeaderTrackingInPlace(context.req)
+    })
+  }
   if (options.serverComponents !== undefined) {
     const runtime = options.serverComponents
     // A route whose holes show server components is one visitor's too.
@@ -479,12 +579,48 @@ export function createWebApp<Env = unknown>(
         .filter((route) => runtime.owns(route.id) || runtime.hosts?.(route.id) === true)
         .map((route) => ({ routeId: route.id, pattern: route.pattern })),
     )
+    const componentCachePartition = (request: Request): string | null | undefined => {
+      const matched = match(new URL(request.url).pathname)
+      return matched === null ? undefined : runtime.cacheIdentity?.(matched.routeId)
+    }
+    Object.defineProperty(app, SERVER_COMPONENT_CACHE_PARTITION, { value: componentCachePartition })
     const privateRoute = (request: Request): boolean =>
-      request.headers.has("x-nifra-component") || match(new URL(request.url).pathname) !== undefined
+      request.headers.has("x-nifra-component") || match(new URL(request.url).pathname) !== null
     Object.defineProperty(app, Symbol.for("nifra.web.private-route"), { value: privateRoute })
     app.onResponse((response, request) => {
+      const requestHeadersReadByHooks = requestHeadersWereRead(request)
       if (!privateRoute(request)) return response
+      const matched = match(new URL(request.url).pathname)
+      const cacheableOwner =
+        matched !== null && runtime.cacheIdentity?.(matched.routeId) !== undefined
+      const cachePolicy = matched === null ? undefined : runtime.cachePolicy?.(matched.routeId)
       const headers = new Headers(response.headers)
+      const originalVary = (headers.get("vary") ?? "")
+        .split(",")
+        .map((part) => part.trim().toLowerCase())
+        .filter(Boolean)
+      const requestHeaderDependent =
+        headers.get(OWNER_REQUEST_HEADER_DEPENDENCY_HEADER) === "1" || requestHeadersReadByHooks
+      headers.delete(OWNER_REQUEST_HEADER_DEPENDENCY_HEADER)
+      const ownerDocumentUsedNonce = headers.get(OWNER_NONCE_USED_HEADER) === "1"
+      headers.delete(OWNER_NONCE_USED_HEADER)
+      const cacheableOwnerDocument =
+        cacheableOwner &&
+        cacheChannel.enabled &&
+        options.nonce === undefined &&
+        !ownerDocumentUsedNonce &&
+        request.method === "GET" &&
+        !request.headers.has("x-nifra-component") &&
+        !request.headers.has("x-nifra-data") &&
+        !request.headers.has("authorization") &&
+        !request.headers.has("cookie") &&
+        !requestHeaderDependent &&
+        !isAuthenticatedRequest(request) &&
+        response.status === 200 &&
+        (headers.get("content-type") ?? "").toLowerCase().includes("text/html") &&
+        !headers.has("set-cookie") &&
+        (headers.getSetCookie?.().length ?? 0) === 0 &&
+        originalVary.every((name) => name === "x-nifra-component" || name === "x-nifra-data")
       headers.set("cache-control", "private, no-store")
       const vary = new Set(
         (headers.get("vary") ?? "")
@@ -495,8 +631,19 @@ export function createWebApp<Env = unknown>(
       vary.add("x-nifra-component")
       vary.add("x-nifra-data")
       headers.set("vary", [...vary].join(", "))
-      headers.delete("x-nifra-isr-revalidate")
-      headers.delete("x-nifra-isr-tags")
+      headers.delete(OWNER_CACHEABLE_HEADER)
+      if (cacheableOwnerDocument) headers.set(OWNER_CACHEABLE_HEADER, "1")
+      if (cacheableOwner && cacheChannel.enabled && cachePolicy !== undefined) {
+        headers.set(ISR_REVALIDATE_HEADER, String(cachePolicy.revalidate))
+        if (cachePolicy.tags === undefined || cachePolicy.tags.length === 0) {
+          headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+        } else {
+          headers.set(ISR_REVALIDATE_TAGS_HEADER, cachePolicy.tags.join(","))
+        }
+      } else {
+        headers.delete(ISR_REVALIDATE_HEADER)
+        headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+      }
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -593,10 +740,11 @@ export function createWebApp<Env = unknown>(
   const shadowed = shadowedPages(manifest, preRouteMountPaths(app))
   if (shadowed.length > 0) throw new Error(`[nifra/web] ${formatShadowedPages(shadowed)}`)
   const ownPatterns = new Set(manifest.routes.map((route) => route.pattern))
+  const routePatternById = new Map(manifest.routes.map((route) => [route.id, route.pattern]))
   const prerenderedList = ownPatterns.has(PRERENDERED_LIST_PATH)
     ? undefined
     : servedPrerenderedList(options.prerenderedPaths)
-  const ppr = options.experimental?.ppr?.[PPR_SETUP]({
+  const ppr = options.ppr?.[PPR_SETUP]({
     adapter,
     // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: partial prerendering lists its scripts by hash only under an app's own policy.
     ...(options.csp === undefined ? {} : { csp: options.csp }),
@@ -644,14 +792,17 @@ export function createWebApp<Env = unknown>(
     ...(options.staticBoundaryCache === undefined
       ? {}
       : { staticBoundaryCache: options.staticBoundaryCache }),
-    ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
+    ...(options.nonce === undefined
+      ? {}
+      : nonceCsp === undefined
+        ? { nonce: options.nonce }
+        : { nonce: options.nonce, csp: nonceCsp }),
     ...(options.csp === undefined
       ? {}
       : { nonce: cspNonceResolver(options.csp) as NonceResolver<Env>, csp: options.csp }),
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,
-    // biome-ignore lint/plugin/noConditionalEmptyObjectSpread: the executor takes a route's shell path only when partial prerendering is set up.
     ...(ppr === undefined ? {} : { ppr }),
     invalidate,
     liveLoadOf: liveAttachment?.loadOf,
@@ -671,9 +822,31 @@ export function createWebApp<Env = unknown>(
       : servePrerenderedPages(options.prerenderedPages, options.draftSecret)
   let ownsRootCatchAll = false
   for (const route of manifest.routes) {
-    const pattern = requestPattern(route.pattern)
+    const pattern = route.pattern
     if (pattern.startsWith("/*")) ownsRootCatchAll = true
     const render = pageExecutor.get(route)
+    const renderCached = prerendered === undefined ? render : prerendered(render)
+    const renderWithValidatedSlots = async (ctx: Parameters<typeof render>[0]) => {
+      try {
+        if (ctx.req.url.includes("?")) {
+          const targets = parseRouteSlots(ctx.req.url)
+          if (Object.keys(targets).length > 0) {
+            const module = await route.load()
+            const registry = normalizeRouteSlotRegistry(module.routeSlots, ownPatterns)
+            validateRouteSlotTargets(targets, registry, (path) => {
+              const matched = pageExecutor.matchRoute(path)
+              const targetPattern =
+                matched === null ? undefined : routePatternById.get(matched.routeId)
+              return targetPattern === undefined ? null : { pattern: targetPattern }
+            })
+          }
+        }
+      } catch (error) {
+        if (error instanceof RouteSlotStateError) return new Response(null, { status: 400 })
+        throw error
+      }
+      return renderCached(ctx)
+    }
     app.register(
       "GET",
       pattern,
@@ -681,7 +854,7 @@ export function createWebApp<Env = unknown>(
         options.serverComponents?.hosts?.(route.id) === true
         ? { capabilities: options.serverComponents.capabilities(route.id) }
         : undefined,
-      prerendered === undefined ? render : prerendered(render),
+      renderWithValidatedSlots,
     )
     app.register("POST", pattern, undefined, pageExecutor.post(route))
   }
@@ -801,6 +974,21 @@ export function createWebApp<Env = unknown>(
   })
   // Core's dev-time hook audit reads this: an order-scoped hook added from here on skips every page.
   Object.defineProperty(app, Symbol.for("nifra.web.pagesDeclared"), { value: true })
+
+  // The nonce marker is an internal handoff to the owner-cache check. Strip it after that check so
+  // it never becomes part of a public response, including on apps without server components.
+  if (options.csp !== undefined || options.nonce !== undefined) {
+    app.onResponse((response) => {
+      if (!response.headers.has(OWNER_NONCE_USED_HEADER)) return response
+      const headers = new Headers(response.headers)
+      headers.delete(OWNER_NONCE_USED_HEADER)
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      })
+    })
+  }
 
   return app
 }

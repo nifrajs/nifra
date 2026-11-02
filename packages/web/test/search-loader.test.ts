@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test"
+import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
+import { searchOfRequest } from "../src/internal/request-search.ts"
 import type { LoaderContext } from "../src/manifest.ts"
 
 // Renders the loader data between markers so a test can read ctx.search back out of the HTML.
@@ -29,7 +31,7 @@ const searchSchema = {
       return { value: { page, q } }
     },
   },
-}
+} as const
 
 // A stub that renders RenderProps.search between markers, so a test can assert the SERVER threads the
 // validated search into the adapter's render input (RenderProps), not just into the loader's ctx.
@@ -114,7 +116,7 @@ const layoutSchema = {
       return { value: { org: typeof raw.org === "string" ? raw.org : "none" } }
     },
   },
-}
+} as const
 
 test("a layout's searchSchema merges with the page's (page-wins) in ctx.search", async () => {
   const app = createWebApp({
@@ -146,5 +148,77 @@ test("a layout's searchSchema merges with the page's (page-wins) in ctx.search",
   // `org` (layout) + `page`/`q` (page), each validated, merged into one object the loader receives.
   expect(await bodyOf(app, "/reports?org=acme&page=2&q=hi")).toContain(
     '[[{"org":"acme","page":2,"q":"hi"}]]',
+  )
+})
+
+// The query codec builds one URLSearchParams per parse, so counting them counts a request's parses.
+const parsesOf = async (run: () => unknown): Promise<number> => {
+  const Real = globalThis.URLSearchParams
+  let parses = 0
+  class Counted extends Real {
+    constructor(...args: ConstructorParameters<typeof Real>) {
+      super(...args)
+      parses += 1
+    }
+  }
+  Object.defineProperty(globalThis, "URLSearchParams", {
+    value: Counted,
+    configurable: true,
+    writable: true,
+  })
+  try {
+    await run()
+  } finally {
+    Object.defineProperty(globalThis, "URLSearchParams", {
+      value: Real,
+      configurable: true,
+      writable: true,
+    })
+  }
+  return parses
+}
+
+// Hands its input back as the output, the way a hand-rolled schema may.
+const passthrough = {
+  "~standard": { version: 1, vendor: "test", validate: (input: unknown) => ({ value: input }) },
+} as const
+
+test("a request parses its query once, however many places read the search", async () => {
+  const withSchema = appWith(() => null, searchSchema, searchStub)
+  expect(await parsesOf(() => bodyOf(withSchema, "/reports?page=3&q=hi"))).toBe(1)
+  const withoutSchema = appWith(() => null, undefined, searchStub)
+  expect(await parsesOf(() => bodyOf(withoutSchema, "/reports?page=3&q=hi"))).toBe(1)
+})
+
+test("a loader that edits its ctx.search leaves the render's search alone", async () => {
+  const edit = (ctx: LoaderContext) => {
+    ctx.search.page = 99
+    const tags = ctx.search.tags
+    if (Array.isArray(tags)) tags.sort()
+    return null
+  }
+  for (const schema of [undefined, searchSchema, passthrough]) {
+    const body = await bodyOf(appWith(edit, schema, searchStub), "/reports?page=3&tags=b&tags=a")
+    expect(body).toContain('"page":3')
+    if (schema !== searchSchema) expect(body).toContain('"tags":["b","a"]')
+  }
+})
+
+test("searchOfRequest parses a request's query once, again when its text changed, and refuses a non-object output", async () => {
+  const request = new Request("http://x/reports")
+  const twice = () => {
+    searchOfRequest(request, [searchSchema], "?page=2")
+    return searchOfRequest(request, [undefined, searchSchema], "?page=2")
+  }
+  expect(await parsesOf(twice)).toBe(1)
+  expect(twice()).toEqual({ page: 2, q: "" })
+  expect(await parsesOf(() => searchOfRequest(request, [undefined], "?q=a"))).toBe(1)
+  expect(searchOfRequest(request, [undefined], "?q=a")).toEqual({ q: "a" })
+  expect(searchOfRequest(new Request("http://x/"), [undefined], "")).toEqual({})
+  const array: StandardSchemaV1 = {
+    "~standard": { version: 1, vendor: "test", validate: () => ({ value: [] }) },
+  }
+  expect(() => searchOfRequest(new Request("http://x/"), [array], "?q=a")).toThrow(
+    "a search schema must produce an object",
   )
 })

@@ -15,17 +15,23 @@ import {
   buildImportGraph,
   classify,
   equivalentEntry,
+  type FileReport,
   formatSummary,
+  gateFailures,
   generateMutants,
   importsOf,
+  loadBaseline,
   loadEquivalents,
+  loadTargets,
   type Mutant,
   type MutantResult,
   matchEquivalents,
+  mergeSurvivors,
   onLines,
   parseChangedLines,
   parseJunit,
   selectTests,
+  targetTests,
 } from "./mutate.ts"
 
 const SCRIPT = join(import.meta.dir, "mutate.ts")
@@ -54,6 +60,54 @@ describe("generateMutants", () => {
       "4 binary +->- +",
       "5 delete statement x++",
       "5 x++->x-- x++",
+    ])
+  })
+
+  test("swaps SQL in a tagged template that holds a SELECT, never inside quotes or comments", () => {
+    const source = [
+      "export const q = (db: Db, v: string) => db`",
+      "  SELECT a FROM t WHERE t.kind = 'r' AND NOT t.hidden -- a = b AND c",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: source text whose template interpolates
+      "    AND t.id IN (${v}) OR t.n > 0",
+      "`",
+      "export const write = (db: Db) => db`UPDATE t SET a = 1 AND b`",
+      "export const text = `SELECT a FROM t WHERE x = 1`",
+    ].join("\n")
+    expect(ops(generateMutants("q.ts", source).filter((m) => m.op.startsWith("sql")))).toEqual([
+      "2 sql =-><> =",
+      "2 sql literal 'r'",
+      "2 sql AND->OR AND",
+      "2 sql drop NOT NOT",
+      "3 sql AND->OR AND",
+      "3 sql IN->NOT IN IN (",
+      "3 sql OR->AND OR",
+      "3 sql >->>= >",
+    ])
+    const literal = generateMutants("q.ts", source).find((m) => m.op === "sql literal")
+    expect(literal?.to).toBe("'~r'")
+  })
+
+  test("a SQL comparison swap never lands inside a longer Postgres operator", () => {
+    // Every Postgres operator built from <, > or =: a swap inside one makes SQL that does not parse.
+    const LONGER = [
+      ...["<=", ">=", "!=", "<<", ">>", "<<=", ">>=", "->", "->>", "#>", "#>>", "@>", "<@"],
+      ...["&<", "&>", "<<|", "|>>", "&<|", "|&>", "<^", ">^", "~=", "<->", "<#>", "<=>"],
+      ...["<+>", "<~>", "<%>", "~>=~", "~<=~", "~>~", "~<~"],
+    ]
+    const COMPARISON = /^sql (?:=-><>|<>->=|>->>=|<-><=)$/
+    const swaps = (op: string): string[] =>
+      generateMutants(
+        "o.ts",
+        `export const q = (db: Db) => db\`SELECT a FROM t WHERE a ${op} b\`\n`,
+      )
+        .filter((m) => COMPARISON.test(m.op))
+        .map((m) => m.op)
+    expect(LONGER.map((op) => [op, swaps(op)])).toEqual(LONGER.map((op) => [op, []]))
+    expect(["=", "<>", ">", "<"].map((op) => [op, swaps(op)])).toEqual([
+      ["=", ["sql =-><>"]],
+      ["<>", ["sql <>->="]],
+      [">", ["sql >->>="]],
+      ["<", ["sql <-><="]],
     ])
   })
 
@@ -202,6 +256,222 @@ describe("equivalents", () => {
   })
 })
 
+describe("baseline and targets", () => {
+  const known = { op: "binary >->>=", fn: "f", code: "if (a > 0) return a * 2", from: ">" }
+
+  test("survivors from every shard merge once each, in a stable order, without reasons", () => {
+    const other = { op: "return undefined", fn: "f", code: "return 0", from: "return 0" }
+    const merged = mergeSurvivors([
+      { "z.ts": [{ ...other, reason: "" }], "a.ts": [{ ...known, nth: 1, reason: "" }] },
+      {
+        "a.ts": [
+          { ...known, reason: "" },
+          { ...known, nth: 1, reason: "" },
+        ],
+      },
+    ])
+    expect(merged).toEqual({ "a.ts": [known, { ...known, nth: 1 }], "z.ts": [other] })
+  })
+
+  test("a baseline entry needs no reason; a target needs files and tests", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mutate-targets-"))
+    try {
+      const path = join(dir, "x.json")
+      writeFileSync(path, JSON.stringify({ "f.ts": [known] }))
+      expect(loadBaseline(path)).toEqual({ "f.ts": [known] })
+      writeFileSync(path, JSON.stringify({ "f.ts": [{ ...known, nth: 0 }] }))
+      expect(() => loadBaseline(path)).toThrow("not a positive integer")
+      writeFileSync(path, JSON.stringify({ t: { files: ["a.ts"], tests: ["a.test.ts"] } }))
+      expect(loadTargets(path)).toEqual({
+        t: { files: ["a.ts"], tests: ["a.test.ts"], exclude: [], env: [] },
+      })
+      for (const bad of [
+        { files: [], tests: ["a"] },
+        { files: ["a"], tests: [1] },
+        { files: ["a"], tests: ["a"], exclude: [1] },
+        { files: "a" },
+      ]) {
+        writeFileSync(path, JSON.stringify({ t: bad }))
+        expect(() => loadTargets(path)).toThrow(`${path}: t`)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("the gate fails a new survivor, a listed one now killed, a stale entry or an unrun mutant", () => {
+    const mutant = (id: number, status: MutantResult["status"]): MutantResult => ({
+      id,
+      op: "binary >->>=",
+      line: id + 1,
+      endLine: id + 1,
+      start: 0,
+      end: 1,
+      to: ">=",
+      fn: "f",
+      code: "a > b",
+      from: ">",
+      nth: id,
+      status,
+      killedBy: [],
+    })
+    const report = (patch: Partial<FileReport>): FileReport => ({
+      file: "f.ts",
+      tests: [],
+      baselineMs: 1,
+      baselineFailures: [],
+      baselineExitCode: 0,
+      mutants: [],
+      unusedEquivalents: [],
+      ...patch,
+    })
+    expect(
+      gateFailures([
+        report({
+          mutants: [mutant(0, "survived"), mutant(1, "killed"), mutant(2, "equivalent")],
+          baselined: [0],
+        }),
+      ]),
+    ).toEqual([])
+    expect(
+      gateFailures([
+        report({
+          mutants: [mutant(0, "survived"), mutant(1, "timeout"), mutant(2, "not-run")],
+          baselined: [1],
+          unusedBaseline: [known],
+          unusedEquivalents: [{ ...known, reason: "r" }],
+        }),
+      ]),
+    ).toEqual([
+      "f.ts:1 binary >->>= `>` survives",
+      "f.ts:2 binary >->>= `>` is caught (timeout) now: drop it from the baseline",
+      "f.ts:3 binary >->>= `>` did not run",
+      "f.ts: baseline binary >->>= `>` in f matches no mutant",
+      "f.ts: equivalent binary >->>= `>` in f matches no mutant",
+    ])
+    expect(
+      gateFailures([
+        report({
+          mutants: [mutant(0, "killed"), mutant(1, "timeout"), mutant(2, "error")],
+          baselined: [0, 1, 2],
+        }),
+      ]),
+    ).toEqual([
+      "f.ts:1 binary >->>= `>` is killed now: drop it from the baseline",
+      "f.ts:2 binary >->>= `>` is caught (timeout) now: drop it from the baseline",
+      "f.ts:3 binary >->>= `>` is caught (error) now: drop it from the baseline",
+    ])
+    expect(
+      gateFailures([report({ baselineFailures: ["x"], mutants: [mutant(0, "not-run")] })]),
+    ).toEqual(["f.ts: the tests fail with no mutant in place"])
+    expect(
+      gateFailures([
+        report({ baselineFailures: [], baselineExitCode: 1, mutants: [mutant(0, "not-run")] }),
+      ]),
+    ).toEqual(["f.ts: the tests fail with no mutant in place"])
+  })
+})
+
+describe("the tests a target runs", () => {
+  const root = "/r"
+  const at = (path: string) => join(root, path)
+  const graph = new Map<string, string[]>([
+    [at("t/a.test.ts"), [at("src/a.ts")]],
+    [at("t/b.test.ts"), [at("src/b.ts"), at("src/other.ts")]],
+    [at("t/slow.test.ts"), [at("src/a.ts")]],
+    [at("t/deep.test.ts"), [at("t/helper.ts")]],
+    [at("t/helper.ts"), [at("src/a.ts")]],
+    [at("x/listed/in-dir.test.ts"), [at("src/a.ts")]],
+    [at("src/a.ts"), []],
+    [at("src/b.ts"), []],
+    [at("src/other.ts"), []],
+  ])
+  const tests = new Set([...graph.keys()].filter((file) => file.endsWith(".test.ts")))
+
+  test("are its listed tests, then each test importing one of its files directly, in a stable order", () => {
+    expect(
+      targetTests(
+        root,
+        { files: ["src/b.ts", "src/a.ts"], tests: ["internal/inv.test.ts"], exclude: [] },
+        graph,
+        tests,
+      ),
+    ).toEqual([
+      "internal/inv.test.ts",
+      "t/a.test.ts",
+      "t/b.test.ts",
+      "t/slow.test.ts",
+      "x/listed/in-dir.test.ts",
+    ])
+  })
+
+  test("skip a test already listed, one inside a listed directory, and one excluded", () => {
+    expect(
+      targetTests(
+        root,
+        { files: ["src/a.ts"], tests: ["t/a.test.ts", "x/listed"], exclude: ["t/slow.test.ts"] },
+        graph,
+        tests,
+      ),
+    ).toEqual(["t/a.test.ts", "x/listed"])
+  })
+
+  test("leave out a test that reaches a file only through a helper", () => {
+    expect(
+      targetTests(root, { files: ["src/a.ts"], tests: [], exclude: [] }, graph, tests),
+    ).not.toContain("t/deep.test.ts")
+  })
+})
+
+describe("the nightly targets", () => {
+  const root = join(import.meta.dir, "..")
+  const targets = loadTargets(join(root, "mutation-targets.json"))
+
+  test("name files and tests that exist", () => {
+    for (const [name, target] of Object.entries(targets))
+      for (const file of [...target.files, ...target.tests, ...target.exclude])
+        expect({ name, file, exists: existsSync(join(root, file)) }).toEqual({
+          name,
+          file,
+          exists: true,
+        })
+  })
+
+  test("each run in the nightly matrix, every shard once, with Postgres where its tests need it", () => {
+    const workflow: unknown = Bun.YAML.parse(
+      readFileSync(join(root, ".github/workflows/mutation-nightly.yml"), "utf8"),
+    )
+    const rows: unknown = JSON.parse(JSON.stringify(workflow)).jobs.target.strategy.matrix.include
+    if (!Array.isArray(rows)) throw new Error("the nightly matrix lists no runs")
+    const runs = new Map<
+      string,
+      { shards: Set<number>; counts: Set<number>; postgres: Set<boolean> }
+    >()
+    for (const row of rows) {
+      const run = runs.get(row.target) ?? {
+        shards: new Set(),
+        counts: new Set(),
+        postgres: new Set(),
+      }
+      runs.set(row.target, run)
+      run.shards.add(row.shard)
+      run.counts.add(row.shards)
+      run.postgres.add(row.postgres)
+    }
+    expect([...runs.keys()].sort()).toEqual(Object.keys(targets).sort())
+    for (const [name, run] of runs) {
+      const [count] = run.counts
+      expect({ name, counts: run.counts.size, shards: [...run.shards].sort() }).toEqual({
+        name,
+        counts: 1,
+        shards: Array.from({ length: count ?? 0 }, (_, i) => i),
+      })
+      const needs = targets[name]?.env.includes("NIFRA_TEST_POSTGRES_URL") ?? false
+      expect({ name, postgres: [...run.postgres] }).toEqual({ name, postgres: [needs] })
+    }
+  })
+})
+
 describe("parseJunit and classify", () => {
   const xml = [
     '<testsuites name="bun test" tests="3">',
@@ -219,14 +489,16 @@ describe("parseJunit and classify", () => {
       { id: "u.test.ts:1 elsewhere", failed: false },
     ],
     errors: 0,
+    exitCode: 0,
   }
   const run = (
     cases: ReturnType<typeof parseJunit> | undefined,
-    extra: { errors?: number; timedOut?: boolean } = {},
+    extra: { errors?: number; timedOut?: boolean; exitCode?: number | null } = {},
   ) => ({
     cases,
     errors: extra.errors ?? 0,
     timedOut: extra.timedOut ?? false,
+    exitCode: extra.exitCode === undefined ? 0 : extra.exitCode,
     ms: 1,
   })
 
@@ -249,6 +521,31 @@ describe("parseJunit and classify", () => {
     })
     const green = baseline.cases.map((c) => ({ ...c }))
     expect(classify(baseline, run(green), false)).toEqual({ status: "survived", killedBy: [] })
+  })
+
+  test("a hook that breaks under the mutant kills, and the same hook already red does not", () => {
+    const hooked = `<testsuites><testsuite file="h.test.ts"><testcase name="(unnamed)" classname="a" file="h.test.ts" line="2"><failure /></testcase></testsuite></testsuites>`
+    expect(classify(baseline, run(parseJunit(hooked)), true)).toEqual({
+      status: "killed",
+      killedBy: ["h.test.ts:2 (unnamed)"],
+    })
+    const red = {
+      ...baseline,
+      cases: [...baseline.cases, { id: "h.test.ts:2 (unnamed)", failed: true }],
+    }
+    expect(classify(red, run(parseJunit(hooked)), true).status).toBe("survived")
+  })
+
+  test("a run that ends non-zero kills though its report lists no failing case", () => {
+    const green = baseline.cases.map((c) => ({ ...c }))
+    for (const exitCode of [1, null])
+      expect(classify(baseline, run(green, { exitCode }), true)).toEqual({
+        status: "killed",
+        killedBy: ["(test run failed)"],
+      })
+    // A baseline that already ended non-zero says nothing about the mutant.
+    const red = { ...baseline, exitCode: 1 }
+    expect(classify(red, run(green, { exitCode: 1 }), true).status).toBe("survived")
   })
 
   test("a timeout, a missing report and a new error outside a test are detections", () => {
@@ -427,7 +724,11 @@ describe.skipIf(process.platform === "win32")("a run", () => {
     "",
   ].join("\n")
 
-  function fixture(testBody: string, equivalents?: object): void {
+  function fixture(
+    testBody: string,
+    equivalents?: object,
+    extra: Record<string, string> = {},
+  ): void {
     repo = realpathSync(mkdtempSync(join(tmpdir(), "mutate-run-")))
     const files: Record<string, string> = {
       "package.json": JSON.stringify({
@@ -447,6 +748,7 @@ describe.skipIf(process.platform === "win32")("a run", () => {
       ".gitignore": ".mutation/\n.mutation-step-summary.md\n",
     }
     if (equivalents !== undefined) files["mutation-equivalents.json"] = JSON.stringify(equivalents)
+    Object.assign(files, extra)
     for (const [file, text] of Object.entries(files)) {
       mkdirSync(dirname(join(repo, file)), { recursive: true })
       writeFileSync(join(repo, file), text)
@@ -460,15 +762,16 @@ describe.skipIf(process.platform === "win32")("a run", () => {
     git("commit", "-qm", "fixture")
   }
 
-  const mutate = (...args: string[]) => {
+  const mutateWith = (env: Record<string, string>, ...args: string[]) => {
     const summary = join(repo, ".mutation-step-summary.md")
     const result = spawnSync(process.execPath, [SCRIPT, ...args], {
       cwd: repo,
       encoding: "utf8",
-      env: { ...process.env, GITHUB_STEP_SUMMARY: summary },
+      env: { ...process.env, GITHUB_STEP_SUMMARY: summary, ...env },
     })
     return { ...result, summary: existsSync(summary) ? readFileSync(summary, "utf8") : "" }
   }
+  const mutate = (...args: string[]) => mutateWith({}, ...args)
 
   const matrix = (): { tests: Array<{ file: string }>; mutants: MutantResult[] } =>
     JSON.parse(readFileSync(join(repo, ".mutation/kill-matrix.json"), "utf8")).files[0]
@@ -537,6 +840,82 @@ describe.skipIf(process.platform === "win32")("a run", () => {
         from: "return value + 0",
         reason: "",
       })
+    },
+    RUN_TIMEOUT,
+  )
+
+  const TARGETS = {
+    "mutation-targets.json": JSON.stringify({
+      math: {
+        files: ["packages/a/src/math.ts"],
+        tests: ["packages/a/test/math.test.ts"],
+        env: ["MUTATE_FIXTURE_URL"],
+      },
+    }),
+  }
+  const EVENS = 'test("evens", () => { expect(isEven(2)).toBe(true) })'
+  const CLAMPS =
+    'test("clamps", () => { expect(clamp(5, 3)).toBe(3); expect(clamp(1, 3)).toBe(1) })'
+  const ENV = { MUTATE_FIXTURE_URL: "set" }
+
+  test(
+    "a target refuses to start without the variables its tests need",
+    () => {
+      fixture(EVENS, undefined, TARGETS)
+      const result = mutateWith({ MUTATE_FIXTURE_URL: "" }, "--target", "math")
+      expect(result.status).toBe(2)
+      expect(result.stderr).toContain("target math needs MUTATE_FIXTURE_URL set")
+      expect(existsSync(join(repo, ".mutation/kill-matrix.json"))).toBe(false)
+    },
+    RUN_TIMEOUT,
+  )
+
+  test(
+    "the gate fails a survivor the baseline lacks, passes once it lists it, and fails once a test kills it",
+    () => {
+      fixture(EVENS, undefined, TARGETS)
+      const red = mutateWith(ENV, "--target", "math", "--gate")
+      expect(red.status).toBe(1)
+      const failures: string[] = JSON.parse(readFileSync(join(repo, ".mutation/gate.json"), "utf8"))
+      expect(failures).toHaveLength(3)
+      expect(failures.every((failure) => failure.endsWith("survives"))).toBe(true)
+      expect(red.summary).toContain("### Gate: 3 failures")
+      expect(mutate("--baseline-from", ".mutation").status).toBe(0)
+      expect(Object.keys(loadBaseline(join(repo, "mutation-baseline.json")))).toEqual([
+        "packages/a/src/math.ts",
+      ])
+      const green = mutateWith(ENV, "--target", "math", "--gate")
+      expect(green.status).toBe(0)
+      expect(green.summary).toContain("Every survivor is in `mutation-baseline.json`")
+      writeFileSync(
+        join(repo, "packages/a/test/math.test.ts"),
+        readFileSync(join(repo, "packages/a/test/math.test.ts"), "utf8").replace(
+          EVENS,
+          `${EVENS}\n${CLAMPS}`,
+        ),
+      )
+      const ratchet = mutateWith(ENV, "--target", "math", "--gate")
+      expect(ratchet.status).toBe(1)
+      expect(ratchet.summary).toContain("is killed now: drop it from the baseline")
+    },
+    RUN_TIMEOUT,
+  )
+
+  test(
+    "shards run every mutant once between them",
+    () => {
+      fixture(EVENS, undefined, TARGETS)
+      const ids = (shard: string) => {
+        const out = `.mutation/${shard.replace("/", "-")}`
+        expect(mutateWith(ENV, "--target", "math", "--shard", shard, "--out", out).status).toBe(0)
+        const files = JSON.parse(readFileSync(join(repo, out, "kill-matrix.json"), "utf8")).files
+        return files[0].mutants.map((m: MutantResult) => m.id)
+      }
+      const [first, second] = [ids("0/2"), ids("1/2")]
+      expect([...first, ...second].sort()).toEqual([0, 1, 2, 3])
+      expect(first).toEqual([0, 2])
+      expect(mutate("--target", "math", "--shard", "2/2").status).toBe(2)
+      expect(mutate("--files", "packages/a/src/math.ts", "--gate").status).toBe(2)
     },
     RUN_TIMEOUT,
   )

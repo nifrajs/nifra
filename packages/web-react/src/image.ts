@@ -5,7 +5,12 @@
  * (`className`, `style`, `id`, event handlers, `data-*`, …). Resizing is delegated to the `loader`
  * (an image CDN); nifra bundles no codec. Imports only `react` + `@nifrajs/image`; no JSX.
  */
-import { type ImageLoader, type ImageProps, resolveImage } from "@nifrajs/image"
+import {
+  type ImageLoader,
+  type ImageProps,
+  resolveImage,
+  type StaticImageProps,
+} from "@nifrajs/image"
 import { type ComponentPropsWithoutRef, createElement, type ReactElement } from "react"
 
 /** Attributes `resolveImage` computes - callers can't override them via DOM passthrough. */
@@ -30,11 +35,14 @@ export interface ImageComponentProps
   readonly [key: `data-${string}`]: string | number | boolean | undefined
 }
 
+export type StaticImageComponentProps = StaticImageProps &
+  Omit<ImageComponentProps, "src" | "width" | "height">
+
 /**
- * Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space);
+ * Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them;
  * `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
  */
-export function Image(props: ImageComponentProps): ReactElement {
+export function Image(props: ImageComponentProps | StaticImageComponentProps): ReactElement {
   // Strip the nifra-only props (not valid DOM attributes) before forwarding the rest to <img>.
   const { loader, widths, quality, priority, ...rest } = props
   const resolved = resolveImage(props, loader)

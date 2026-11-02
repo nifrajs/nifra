@@ -1,10 +1,8 @@
 /**
- * A Postgres tokenizer for the parser layer of `@nifrajs/mcp-db/postgres`. It is the SECOND layer: the
- * server already refuses several statements (extended protocol), anything but a query (the cursor),
- * and writes (the read-only transaction). This layer adds what the server allows but a dev agent must
- * not do: call a function that reaches outside the query (server files, locks, other sessions,
- * settings, notifications, another database), or one that runs SQL from a string where the plan check
- * cannot see it (`query_to_xml`).
+ * A Postgres tokenizer for the parser layer of `@nifrajs/mcp-db/postgres`. It refuses, before the
+ * statement reaches the server, what it can see without the catalog: several statements, anything but a
+ * query, row locks, and text it cannot read safely. It also names the functions a statement calls, which
+ * the function allowlist then looks up in `pg_proc`; it decides nothing about them itself.
  *
  * The lexer follows Postgres with `standard_conforming_strings = on`, which the engine sets on every
  * connection so the server reads string boundaries exactly as this lexer does.
@@ -166,74 +164,32 @@ export function lexPostgres(sql: string): PgLexResult {
   return { tokens, unterminated, unicodeIdentifier }
 }
 
-/**
- * Function-name prefixes the parser layer refuses. Each reaches outside a read-only query or runs SQL
- * from a string the plan check cannot see; the server lets a read-only transaction call most of them.
- */
-export const DENIED_FUNCTION_PREFIXES: readonly string[] = [
-  "dblink",
-  "lo_",
-  "pg_read_",
-  "pg_ls_",
-  "pg_stat_file",
-  "pg_terminate_backend",
-  "pg_cancel_backend",
-  "pg_reload_conf",
-  "set_config",
-  "pg_advisory",
-  "pg_try_advisory",
-  "pg_notify",
-  "query_to_xml",
-  "ts_stat",
-  "ts_rewrite",
-  "crosstab",
-  "connectby",
-  "table_to_xml",
-  "cursor_to_xml",
-  "schema_to_xml",
-  "database_to_xml",
-  "pg_file_",
-  "pg_logical_emit_message",
-  "pg_stat_reset",
-  "pg_stat_get_",
-  "pg_switch_wal",
-  "pg_create_restore_point",
-  "pg_promote",
-  "pg_rotate_logfile",
-  "nextval",
-  "setval",
-]
-
 const READ_HEADS = new Set(["select", "with", "values", "table"])
 const LOCKING_STRENGTHS = new Set(["update", "share", "no", "key"])
 
 /** Why the parser layer refused a statement. */
-export type PgLintRefusal =
-  | { readonly kind: "statement"; readonly message: string }
-  | { readonly kind: "function"; readonly message: string; readonly name: string }
+export interface PgLintRefusal {
+  readonly message: string
+}
 
 /**
- * Lint one statement: a single read-only query with balanced parentheses, no unicode-escaped
- * identifier and no denied function call. `undefined` when it passes.
+ * Lint one statement: a single read-only query with balanced parentheses, no row-locking clause and
+ * no unicode-escaped identifier. `undefined` when it passes.
  */
 export function lintPostgres(sql: string): PgLintRefusal | undefined {
   const { tokens, unterminated, unicodeIdentifier } = lexPostgres(sql)
-  if (unterminated) {
-    return { kind: "statement", message: "the statement has an unterminated string or comment" }
-  }
-  if (unicodeIdentifier) {
-    return { kind: "statement", message: 'unicode-escaped identifiers (U&"...") are not accepted' }
-  }
+  if (unterminated) return { message: "the statement has an unterminated string or comment" }
+  if (unicodeIdentifier)
+    return { message: 'unicode-escaped identifiers (U&"...") are not accepted' }
   const terminator = tokens.findIndex((token) => token.kind === "punct" && token.value === ";")
   if (terminator !== -1 && tokens.slice(terminator + 1).length > 0) {
-    return { kind: "statement", message: "only a single statement is allowed" }
+    return { message: "only a single statement is allowed" }
   }
   const body = terminator === -1 ? tokens : tokens.slice(0, terminator)
   const head = body.find((token) => !(token.kind === "punct" && token.value === "("))
-  if (head === undefined) return { kind: "statement", message: "empty query" }
+  if (head === undefined) return { message: "empty query" }
   if (!head.bare || !READ_HEADS.has(head.value.toLowerCase())) {
     return {
-      kind: "statement",
       message: `only a read-only query (SELECT, WITH, VALUES or TABLE) is allowed, not ${head.value.toUpperCase()}`,
     }
   }
@@ -247,32 +203,15 @@ export function lintPostgres(sql: string): PgLintRefusal | undefined {
       next?.bare === true &&
       LOCKING_STRENGTHS.has(next.value.toLowerCase())
     ) {
-      return {
-        kind: "statement",
-        message: "row-locking clauses (FOR UPDATE, FOR SHARE) are refused: they take locks",
-      }
+      return { message: "row-locking clauses (FOR UPDATE, FOR SHARE) are refused: they take locks" }
     }
-    if (token.value === "(" && token.kind === "punct") {
-      depth++
-      const callee = body[index - 1]
-      if (callee?.kind === "word") {
-        const name = callee.value.toLowerCase()
-        if (DENIED_FUNCTION_PREFIXES.some((prefix) => name.startsWith(prefix))) {
-          return {
-            kind: "function",
-            name,
-            message: `${name}() is refused: it reaches outside a read-only query`,
-          }
-        }
-      }
-    } else if (token.value === ")" && token.kind === "punct") {
+    if (token.value === "(" && token.kind === "punct") depth++
+    else if (token.value === ")" && token.kind === "punct") {
       depth--
-      if (depth < 0) {
-        return { kind: "statement", message: "the statement closes a parenthesis it never opened" }
-      }
+      if (depth < 0) return { message: "the statement closes a parenthesis it never opened" }
     }
   }
-  if (depth !== 0) return { kind: "statement", message: "the statement leaves a parenthesis open" }
+  if (depth !== 0) return { message: "the statement leaves a parenthesis open" }
   return undefined
 }
 
@@ -374,6 +313,51 @@ export function tableAliasLists(
     }
   }
   return found
+}
+
+const NAME_BYTES = 63
+const encoder = new TextEncoder()
+
+/** An identifier as Postgres stores it: a bare word downcased (ASCII only), any name cut to 63 bytes. */
+function identifier(token: PgToken): string {
+  const value = token.bare
+    ? token.value.replace(/[A-Z]+/g, (upper) => upper.toLowerCase())
+    : token.value
+  if (encoder.encode(value).byteLength <= NAME_BYTES) return value
+  let cut = ""
+  let bytes = 0
+  for (const char of value) {
+    bytes += encoder.encode(char).byteLength
+    if (bytes > NAME_BYTES) break
+    cut += char
+  }
+  return cut
+}
+
+/** A function a statement may call: the name before a `(`, with the schema that qualifies it. */
+export interface PgCall {
+  readonly schema: string | null
+  readonly name: string
+}
+
+/**
+ * Every `name(` and `schema.name(` in `sql`, named as the server resolves the identifiers. A keyword
+ * or an alias list before a parenthesis is listed too; no function has its name, so a lookup drops it.
+ */
+export function functionCalls(sql: string): readonly PgCall[] {
+  const { tokens } = lexPostgres(sql)
+  const calls = new Map<string, PgCall>()
+  for (const [index, token] of tokens.entries()) {
+    const callee = tokens[index - 1]
+    if (!isPunct(token, "(") || callee?.kind !== "word") continue
+    const qualifier = isPunct(tokens[index - 2], ".") ? tokens[index - 3] : undefined
+    const call = {
+      schema: qualifier?.kind === "word" ? identifier(qualifier) : null,
+      name: identifier(callee),
+    }
+    calls.set(JSON.stringify([call.schema, call.name]), call)
+  }
+  return [...calls.values()]
 }
 
 /** The statement without a final `;` (comments after it included), ready to wrap in a subquery. */

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-svelte",
-  "version": "5.8.0",
+  "version": "5.11.0",
   "description": "Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte compiler Bun plugin (@nifrajs/web-svelte/plugin).",
   "keywords": [
     "bun",
@@ -52,6 +52,12 @@
       "bun": "./src/Hole.svelte",
       "svelte": "./dist/Hole.svelte",
       "default": "./dist/Hole.svelte"
+    },
+    "./route-slot": {
+      "types": "./dist/RouteSlot.svelte.d.ts",
+      "bun": "./src/RouteSlot.svelte",
+      "svelte": "./dist/RouteSlot.svelte",
+      "default": "./dist/RouteSlot.svelte"
     },
     "./ppr": {
       "bun": "./src/ppr.ts",

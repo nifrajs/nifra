@@ -1,4 +1,6 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { setRouteSlotRuntime } from "@nifrajs/web/client"
+import { assuranceHook } from "@nifrajs/web/internal/hydration-assurance"
 import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 /**
  * @nifrajs/web-vue/client - Vue client runtime. `hydrate` hydrates a single SSR'd route; `mountRouter`
@@ -32,15 +34,6 @@ export { errorBoundary } from "./error.ts"
 const rootFor = (render: () => unknown): Component =>
   defineComponent({ setup: () => () => render() })
 
-function assuranceWarning(): ((message: string) => void) | undefined {
-  const value = (globalThis as unknown as Record<PropertyKey, unknown>)[
-    Symbol.for("nifra.hydration.assurance")
-  ]
-  if (typeof value !== "object" || value === null) return undefined
-  const callback = (value as { onWarning?: unknown }).onWarning
-  return typeof callback === "function" ? (callback as (message: string) => void) : undefined
-}
-
 /** Hydrate a server-rendered Vue layout `chain` (with the loader `props`) inside `container`. */
 export interface HydrationAssuranceOptions {
   readonly onWarning?: (message: string) => void
@@ -52,7 +45,7 @@ export function hydrate(
   container: unknown,
   options?: HydrationAssuranceOptions,
 ): void {
-  const warning = options?.onWarning ?? assuranceWarning()
+  const warning = options?.onWarning ?? assuranceHook("onWarning")
   const app = createSSRApp(rootFor(() => compose(chain, props)))
   if (warning !== undefined) app.config.warnHandler = (message) => warning(message)
   app.mount(container as Element)
@@ -137,6 +130,7 @@ const levelOf = (component: unknown): Component => {
  */
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, matchChains, container } = options
+  setRouteSlotRuntime({ router, routes, searchSchemas, matchChains })
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Root = defineComponent({
     setup() {
@@ -162,7 +156,7 @@ export function mountRouter(options: MountRouterOptions): void {
     },
   })
   const app = createSSRApp(Root)
-  const warning = assuranceWarning()
+  const warning = assuranceHook("onWarning")
   if (warning !== undefined) app.config.warnHandler = (message) => warning(message)
   app.mount(container as Element)
 }

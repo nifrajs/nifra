@@ -21,7 +21,7 @@ concurrency:
 jobs:
   changed-lines:
     name: mutation (changed lines)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -45,10 +45,25 @@ jobs:
         continue-on-error: true
         run: bun run build
 
+      # Without a server the live Postgres suites skip, and every mutant only they kill survives. The
+      # runner image's own server tracks the newest major, so PostgreSQL 16 runs in a container; the
+      # password guards a localhost throwaway.
+      - name: Start PostgreSQL 16
+        continue-on-error: true
+        run: |
+          docker run -d --name nifra-pg16 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:5432:5432 \
+            postgres:16@sha256:1beaa3084eee2676f20a9cd9928f0bf2c5bf674f8e49f81017912183d377c61c
+          for _ in $(seq 60); do
+            pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
+
       # --bail stops each test run at its first failure, so the kill matrix names one killer per mutant.
       - name: Mutate the changed lines
         continue-on-error: true
         run: bun scripts/mutate.ts --changed origin/main --bail --max-minutes 25
+        env:
+          NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
@@ -56,4 +71,5 @@ jobs:
         with:
           name: mutation-report
           path: .mutation/
+          include-hidden-files: true
           if-no-files-found: ignore

@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/keep-alive",
@@ -153,7 +154,7 @@ export default function KeepAlive() {
           those history entries.
         </li>
         <li>
-          A page left with a <a href="/docs/routing#modal-routes">route open in a modal</a> over
+          A page left with a <a href={href({ to: "/docs/routing", hash: "modal-routes" })}>route open in a modal</a> over
           it is kept with the modal. Back to that entry shows the page and opens the modal over it
           again.
         </li>
@@ -178,7 +179,7 @@ export default function KeepAlive() {
         </li>
         <li>
           Each kept page holds its DOM and its components' memory, at most three per tab. In
-          development, the <a href="/docs/dev#devtools">devtools overlay</a> lists them with their
+          development, the <a href={href({ to: "/docs/dev", hash: "devtools" })}>devtools overlay</a> lists them with their
           path, how long each has been hidden and how many elements it renders.
         </li>
       </ul>
@@ -192,7 +193,7 @@ export default function KeepAlive() {
         hidden still reloads it.
       </p>
       <p>
-        A <a href="/docs/partial-prerendering">partially prerendered</a> page that is kept stops its
+        A <a href={href({ to: "/docs/partial-prerendering" })}>partially prerendered</a> page that is kept stops its
         holes while it is hidden: a hole still loading is cancelled on the server, and a reload on its
         way is dropped. When the page comes back each hole reloads in place, its old content marked{" "}
         <code>aria-busy="true"</code> until the new arrives, with <code>revalidate: false</code> too.
@@ -200,7 +201,7 @@ export default function KeepAlive() {
         <code>&lt;Activity&gt;</code> cleans the page's effects up while it is hidden.
       </p>
       <p>
-        With <a href="/docs/live">live refresh</a>, a hidden page is not watched. When it comes back,
+        With <a href={href({ to: "/docs/live" })}>live refresh</a>, a hidden page is not watched. When it comes back,
         what changed while it was hidden reloads, whatever <code>revalidate</code> says, and a grant
         that expired in the meantime is loaded again.
       </p>
@@ -274,7 +275,7 @@ export default function KeepAlive() {
       </p>
       <CodeBlock code={ISLAND} />
       <p>
-        The <a href="/docs/server-components">server components</a> of a kept page stay mounted too.
+        The <a href={href({ to: "/docs/server-components" })}>server components</a> of a kept page stay mounted too.
         With <code>bindComponentRouter</code> installed, navigation leaves them alone while the page
         is hidden, and the reload of a page that comes back updates them.
       </p>
@@ -293,7 +294,7 @@ export default function KeepAlive() {
       <p>
         In development, the first time a kept page is shown the client reads the page's
         same-origin stylesheets and reports each such selector once, as{" "}
-        <a href="/docs/errors#keepalive-direct-child-css">NIFRA_KEEPALIVE_DIRECT_CHILD_CSS</a>.
+        <a href={href({ to: "/docs/errors", hash: "keepalive-direct-child-css" })}>NIFRA_KEEPALIVE_DIRECT_CHILD_CSS</a>.
       </p>
 
       <h2 id="sign-in">Keep-alive and sign-in</h2>
@@ -305,7 +306,25 @@ export default function KeepAlive() {
         tells the other tabs of the origin to do the same. A sign-out by a native form post, or a
         session that expires while the visitor is away, is covered the same way: back compares the
         epoch before it shows a kept page. The page on screen reloads in place at the next render or
-        navigation that reads the new epoch, and shows as it was, pending, until the reload lands.
+        navigation that reads the new epoch, and shows as it was, pending, until the reload lands. If
+        that reload fails, or a navigation or submit away from the page does, the browser loads the
+        URL as a document in its place, replacing the history entry. Without{" "}
+        <code>installHistory</code>, the router names that URL in <code>documentLoad</code> and
+        keeps what it shows.
+      </p>
+      <p>
+        A response that renews the same visitor's session keeps the epoch: a session cookie re-sent
+        with a new lifetime, or an <code>@nifrajs/auth</code> session committed again with the same
+        data. Any change to an <code>@nifrajs/auth</code> session's data rotates it, in either mode,
+        so a sign-in or sign-out shows even when the session id stays the same. With{" "}
+        <a href={href({ to: "/docs/auth" })}>
+          <code>identity</code>
+        </a>{" "}
+        set on <code>createSessions</code>, only a change to the keys it names rotates it, and a write
+        to a cart or a preference keeps it. An Auth.js session
+        read writes a new token every time; mounted through <code>@nifrajs/authjs</code>, it keeps
+        the epoch when both tokens decrypt and every claim but the times Auth.js renews matches.
+        Auth.js mounted any other way rotates it on each read.
       </p>
       <p>
         The session cookies of <code>@nifrajs/auth</code> and Auth.js count under their default
@@ -319,20 +338,30 @@ export default function KeepAlive() {
       <p>
         In development, an <code>HttpOnly</code> cookie that changes and is in neither list is
         reported once, as{" "}
-        <a href="/docs/errors#keepalive-identity-cookie">NIFRA_KEEPALIVE_IDENTITY_COOKIE</a>. A flow
+        <a href={href({ to: "/docs/errors", hash: "keepalive-identity-cookie" })}>NIFRA_KEEPALIVE_IDENTITY_COOKIE</a>. A flow
         that changes who is signed in without changing a cookie rotates the epoch itself:
       </p>
       <CodeBlock code={ROTATE} />
       <p>
         When identity lives in client storage, as a bearer token, call <code>identityChanged()</code>{" "}
         at sign-in and sign-out. It also clears every query client, returns every fetcher to idle,
-        and reloads the page on screen in place. A navigation still loading loads once more for the
-        new visitor before it settles, and a submit still posting finishes first:
+        and reloads the page on screen in place. A navigation, fetcher load or query fetch still
+        loading loads once more for the new visitor before it settles, and a submit still posting
+        finishes first:
       </p>
       <CodeBlock code={TOKEN} />
       <p>
         A document the browser puts in its back/forward cache drops its kept pages first, so a
         cached document never carries them.
+      </p>
+      <p>
+        <code>nifra doctor</code> warns about <code>keepAlive</code> routes in an app where nothing
+        names the sign-in cookie: no <code>identityCookies</code>, no <code>identityChanged()</code>,
+        and no <code>@nifrajs/auth</code>, Better Auth or Auth.js reachable. It follows the app&apos;s
+        installed and linked dependencies, so an app that reaches Better Auth through a workspace
+        package of its own gets a note naming the chain instead: the default names and Better
+        Auth&apos;s <code>&lt;prefix&gt;.session_token</code> suffix still cover it, unless that
+        package renames the cookie outright.
       </p>
 
       <h2>Limits</h2>

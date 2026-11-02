@@ -51,6 +51,34 @@ declare namespace Deno {
 
   function addSignalListener(signal: string, handler: () => void): void
   function removeSignalListener(signal: string, handler: () => void): void
+
+  /** The slice of a stat `serveStatic` reads. */
+  interface FileInfo {
+    readonly isFile: boolean
+    readonly size: number
+    readonly mtime: Date | null
+    readonly ctime: Date | null
+    readonly dev: number
+    readonly ino: number | null
+  }
+
+  enum SeekMode {
+    Start = 0,
+    Current = 1,
+    End = 2,
+  }
+
+  interface FsFile {
+    readonly readable: ReadableStream<Uint8Array<ArrayBuffer>>
+    read(p: Uint8Array): Promise<number | null>
+    seek(offset: number | bigint, whence: SeekMode): Promise<number>
+    stat(): Promise<FileInfo>
+    close(): void
+  }
+
+  function realPath(path: string | URL): Promise<string>
+  function open(path: string | URL): Promise<FsFile>
+  function stat(path: string | URL): Promise<FileInfo>
 }
 
 /**

@@ -13,8 +13,8 @@ One package, the same on React, Preact, Vue, Solid and Svelte (pick the renderer
 - Streaming SSR with `defer()`, SSG, and ISR with tag purges - [rendering](https://nifra.dev/docs/rendering).
 - [Live refresh](https://nifra.dev/docs/live) (`@nifrajs/web/live`, `/live-client`, `/live-redis`):
   loaders declare keys, a publish reloads only what read them.
-- [Partial prerendering](https://nifra.dev/docs/partial-prerendering) (`@nifrajs/web/ppr`,
-  experimental): a cached shell, with per-visitor holes streamed in.
+- [Partial prerendering](https://nifra.dev/docs/partial-prerendering) (`@nifrajs/web/ppr`): a cached
+  shell, with per-visitor holes streamed in.
 - [Keep-alive](https://nifra.dev/docs/keep-alive) pages, a query cache, optimistic fetchers, and
   [islands](https://nifra.dev/docs/islands) (`@nifrajs/web/islands`) for pages with no framework runtime.
 - Optional [server components](https://nifra.dev/docs/server-components) on all five adapters:

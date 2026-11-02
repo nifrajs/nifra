@@ -1,27 +1,21 @@
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 // `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
 // bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
-// Vite's dev server. Sourced from the ROOT so the generated `RouteSearch` augmentation applies.
+// Vite's dev server. Sourced from the ROOT so the generated `RouteTable` augmentation applies.
 import type {
   Blocker,
   BlockerFunction,
   BlockerState,
   NavigateFunction,
-  NavigateOptions,
-  NavigateTargetInput,
   RenderProps,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
-import {
-  getBrowserNavigate,
-  IDLE_BLOCKER,
-  registerBlocker,
-  resolveNavigate,
-} from "@nifrajs/web/client"
+import { IDLE_BLOCKER, registerBlocker } from "@nifrajs/web/client"
 // Its own subpath, so an app that never calls `useMatches` never bundles it.
 import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
+import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
 /**
  * `@nifrajs/web-preact/router` - Preact routing bindings over the agnostic `@nifrajs/web` history layer:
  * `useNavigate` (programmatic navigation), `useBlocker` (the unsaved-changes guard), and `useSearch`
@@ -30,10 +24,13 @@ import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
  * `compose` provides on SSR + client mount alike. Client-safe (no `preact-render-to-string`). No JSX.
  */
 import { createContext } from "preact"
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/compat"
+import { useContext, useEffect, useMemo, useRef, useState } from "preact/compat"
 import { usePageVisibility } from "./page-visibility.ts"
 
+export { href, rawHref } from "@nifrajs/web/client"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
+export type { RouteSlotController, RouteSlotProps } from "./route-slot.ts"
+export { RouteSlot, useRouteSlot } from "./route-slot.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search so the default context value has a stable reference.
@@ -101,16 +98,11 @@ export function useSearch<
     : Record<string, unknown>
 }
 
-/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).
+/** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta).
  * Stable across renders; resolves the browser navigate at call time, so it works as soon as
  * `installHistory` has run and no-ops before then / on the server. */
 export function useNavigate(): NavigateFunction {
-  return useCallback((to: string | number | NavigateTargetInput, options?: NavigateOptions) => {
-    const navigate = getBrowserNavigate()
-    if (navigate === undefined) return
-    const resolved = resolveNavigate(to, options)
-    navigate(resolved.to, resolved.options)
-  }, []) as NavigateFunction
+  return navigateNow
 }
 
 /**

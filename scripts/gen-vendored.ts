@@ -47,10 +47,22 @@ export const VENDORED: readonly VendoredCopy[] = [
     why: "Copied so @nifrajs/node keeps the body and framing headers core keeps, without depending on it.",
   },
   {
+    source: "packages/core/src/server/runtime-core.ts",
+    targets: ["packages/node/src/generated/render-headers.ts"],
+    symbols: ["plainRenderHeaders"],
+    why: "Copied so @nifrajs/node layers a plain render's headers as core does, without depending on it.",
+  },
+  {
     source: "packages/core/src/server/websocket.ts",
-    targets: ["packages/deno/src/generated/ws-close.ts"],
-    symbols: ["exceedsPayloadCap", "assertCloseArgs"],
-    why: "Copied so @nifrajs/deno refuses the closes and messages core refuses, without depending on it.",
+    targets: ["packages/deno/src/generated/ws-close.ts", "packages/node/src/generated/ws-close.ts"],
+    symbols: ["UTF8_BUFFER", "exceedsPayloadCap", "utf8ExceedsCap", "assertCloseArgs"],
+    why: "Copied so each adapter refuses the closes and messages core refuses, without depending on it.",
+  },
+  {
+    source: "packages/core/src/server/ws-adapter-view.ts",
+    targets: ["packages/deno/src/generated/ws-types.ts", "packages/node/src/generated/ws-types.ts"],
+    symbols: ["NifraWsData", "NifraWs", "WsPubSub", "NifraWsHandler", "WsUpgradeOutcome"],
+    why: "This file is type-only so each adapter reads core's WebSocket outcome without depending on it.",
   },
   {
     source: "packages/core/src/server/request-target.ts",
@@ -59,13 +71,16 @@ export const VENDORED: readonly VendoredCopy[] = [
   },
   {
     source: "packages/core/src/static-file.ts",
-    targets: ["packages/node/src/generated/static-file.ts"],
-    why: "Copied so @nifrajs/node types and hides served files exactly as core does, without depending on it.",
+    targets: [
+      "packages/node/src/generated/static-file.ts",
+      "packages/deno/src/generated/static-file.ts",
+    ],
+    why: "Copied so each adapter matches, types and answers served files exactly as core does, without depending on it.",
   },
   {
     source: "packages/core/src/range.ts",
-    targets: ["packages/node/src/generated/range.ts"],
-    why: "Copied so @nifrajs/node parses byte ranges exactly as core does, without depending on it.",
+    targets: ["packages/node/src/generated/range.ts", "packages/deno/src/generated/range.ts"],
+    why: "Copied so each adapter parses byte ranges exactly as core does, without depending on it.",
   },
   {
     source: "packages/core/src/server/json-text.ts",
@@ -73,9 +88,13 @@ export const VENDORED: readonly VendoredCopy[] = [
     why: "Copied so @nifrajs/node writes JSON exactly as core does, without depending on it.",
   },
   {
-    source: "packages/web/src/open-resolved.ts",
-    targets: ["packages/node/src/open-resolved.ts", "packages/image/src/open-resolved.ts"],
-    why: "Copied so every static-file server opens a resolved name the same way, without depending on @nifrajs/web.",
+    source: "packages/core/src/open-resolved.ts",
+    targets: [
+      "packages/web/src/open-resolved.ts",
+      "packages/node/src/open-resolved.ts",
+      "packages/image/src/open-resolved.ts",
+    ],
+    why: "Copied so every static-file server opens a resolved name the same way, without a public export for it.",
   },
   {
     source: "packages/create-nifra/src/agent-files.ts",
@@ -89,10 +108,15 @@ export const VENDORED: readonly VendoredCopy[] = [
   },
 ]
 
+/** A file's text with CRLF folded to LF: a Windows checkout under core.autocrlf holds CRLF copies. */
+export function readText(path: string): string {
+  return readFileSync(path, "utf8").replaceAll("\r\n", "\n")
+}
+
 function parse(root: string, path: string): ts.SourceFile {
   return ts.createSourceFile(
     path,
-    readFileSync(resolve(root, path), "utf8"),
+    readText(resolve(root, path)),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,
@@ -156,7 +180,7 @@ export function staleCopies(
     const expected = renderCopy(root, copy)
     for (const target of copy.targets) {
       const path = resolve(root, target)
-      if ((existsSync(path) ? readFileSync(path, "utf8") : "") !== expected)
+      if ((existsSync(path) ? readText(path) : "") !== expected)
         stale.push({ target, source: copy.source })
     }
   }
@@ -171,7 +195,8 @@ export function orphanCopies(
 ): string[] {
   const targets = new Set(manifest.flatMap((copy) => copy.targets))
   const orphans: string[] = []
-  for (const path of new Bun.Glob("packages/*/src/**/*.ts").scanSync({ cwd: root })) {
+  for (const scanned of new Bun.Glob("packages/*/src/**/*.ts").scanSync({ cwd: root })) {
+    const path = scanned.replaceAll("\\", "/")
     if (targets.has(path)) continue
     if (readFileSync(resolve(root, path), "utf8").startsWith(HEADER)) orphans.push(path)
   }

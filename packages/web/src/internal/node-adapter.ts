@@ -35,21 +35,23 @@ export function installedPackage(name: string, fromDir: string): InstalledPackag
 }
 
 /**
- * Why a `--target node` build whose server entry is generated in `workDir` must stop before
- * bundling, or `undefined`. The entry is written for the `@nifrajs/node` of this package's release and
- * the bundle inlines whichever copy is installed: a 5.3 adapter built cleanly, then threw at startup
- * on the static mounts.
+ * Why a `--target node` or `--target deno` build whose server entry is generated in `workDir` must
+ * stop before bundling, or `undefined`. The entry is written for the adapter of this package's release
+ * and the bundle inlines whichever copy is installed: a 5.3 `@nifrajs/node` built cleanly, then threw
+ * at startup on the static mounts.
  */
-export function nodeAdapterRefusal(
+export function adapterRefusal(
+  target: "node" | "deno",
   workDir: string,
   // src/internal/ and dist/internal/ both sit two levels below the package root.
   webVersion = manifestVersion(new URL("../../package.json", import.meta.url)),
 ): string | undefined {
-  const adapter = installedPackage("@nifrajs/node", workDir)
+  const name = `@nifrajs/${target}`
+  const adapter = installedPackage(name, workDir)
   if (adapter === undefined || webVersion === undefined) return undefined
   if (Bun.semver.order(adapter.version, webVersion) >= 0) return undefined
   return (
-    `[nifra/web] --target node would bundle @nifrajs/node ${adapter.version} (${adapter.dir}), older ` +
+    `[nifra/web] --target ${target} would bundle ${name} ${adapter.version} (${adapter.dir}), older ` +
     `than @nifrajs/web ${webVersion}. The server entry is generated for the adapter of the same ` +
     "release, and an older one can fail when the server starts. Upgrade the nifra packages " +
     `together: nifra upgrade ${webVersion}`

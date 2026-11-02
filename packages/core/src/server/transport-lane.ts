@@ -7,6 +7,7 @@ import {
 import { readBoundedBytes } from "./body.ts"
 import { jsonError } from "./http.ts"
 import { guardDecodedValue, type ProtoPoisoning } from "./proto-guard.ts"
+import { carryToCopy } from "./request-local.ts"
 import { isResponseResult, PRE_DECODED_BODY, type PreDecodedBody } from "./runtime-core.ts"
 import type { AnyServer, IdentityPlugin } from "./server.ts"
 
@@ -154,6 +155,7 @@ export function transportCodecs(
         contentType,
       }
       Object.defineProperty(normalized, PRE_DECODED_BODY, { value: stash })
+      carryToCopy(request, normalized)
       return normalized
     })
     app.afterHandle((result, context) => {

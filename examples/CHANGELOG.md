@@ -1,5 +1,184 @@
 # @nifrajs/examples
 
+## 5.11.0
+
+### Patch Changes
+
+- Updated dependencies [9a76620]
+- Updated dependencies [3c8024d]
+- Updated dependencies [d76f9d7]
+- Updated dependencies [9a0f0a0]
+- Updated dependencies [e7660e3]
+- Updated dependencies [dae70f8]
+- Updated dependencies [bc40a1d]
+- Updated dependencies [97a55bf]
+- Updated dependencies [0c9ce18]
+- Updated dependencies [0c9ce18]
+- Updated dependencies [abf5a0b]
+  - @nifrajs/cli@5.11.0
+  - @nifrajs/web@5.11.0
+  - @nifrajs/web-preact@5.11.0
+  - @nifrajs/web-react@5.11.0
+  - @nifrajs/web-solid@5.11.0
+  - @nifrajs/web-svelte@5.11.0
+  - @nifrajs/web-vue@5.11.0
+  - @nifrajs/core@5.11.0
+  - @nifrajs/auth@5.11.0
+  - @nifrajs/middleware@5.11.0
+  - @nifrajs/client@5.11.0
+  - @nifrajs/deno@5.11.0
+  - @nifrajs/i18n@5.11.0
+  - @nifrajs/mcp@5.11.0
+  - @nifrajs/schema@5.11.0
+  - @nifrajs/webmcp@5.11.0
+  - @nifrajs/workers@5.11.0
+  - @nifrajs/content@5.11.0
+  - @nifrajs/image@5.11.0
+  - @nifrajs/node@5.11.0
+  - @nifrajs/web-vanilla@5.11.0
+
+## 5.10.0
+
+### Patch Changes
+
+- Updated dependencies [535c4e5]
+- Updated dependencies [15fe870]
+- Updated dependencies [fb0a18b]
+- Updated dependencies [87e7fd9]
+- Updated dependencies [611a3be]
+- Updated dependencies [be02893]
+- Updated dependencies [7f32bb2]
+- Updated dependencies [0aa10d0]
+- Updated dependencies [ab69ee6]
+- Updated dependencies [a0a8b34]
+- Updated dependencies [548bade]
+- Updated dependencies [d2066e0]
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [e465ed5]
+- Updated dependencies [683c3d6]
+- Updated dependencies [824a75e]
+- Updated dependencies [d2066e0]
+- Updated dependencies [5845e1c]
+- Updated dependencies [5d1be78]
+- Updated dependencies [2c361be]
+- Updated dependencies [1faf86c]
+- Updated dependencies [950996b]
+  - @nifrajs/image@5.10.0
+  - @nifrajs/i18n@5.10.0
+  - @nifrajs/web@5.10.0
+  - @nifrajs/cli@5.10.0
+  - @nifrajs/web-react@5.10.0
+  - @nifrajs/web-preact@5.10.0
+  - @nifrajs/web-vue@5.10.0
+  - @nifrajs/web-svelte@5.10.0
+  - @nifrajs/web-solid@5.10.0
+  - @nifrajs/core@5.10.0
+  - @nifrajs/client@5.10.0
+  - @nifrajs/auth@5.10.0
+  - @nifrajs/deno@5.10.0
+  - @nifrajs/mcp@5.10.0
+  - @nifrajs/middleware@5.10.0
+  - @nifrajs/schema@5.10.0
+  - @nifrajs/webmcp@5.10.0
+  - @nifrajs/workers@5.10.0
+  - @nifrajs/content@5.10.0
+  - @nifrajs/node@5.10.0
+  - @nifrajs/web-vanilla@5.10.0
+
+## 5.9.0
+
+### Patch Changes
+
+- Updated dependencies [2ffa7c1]
+- Updated dependencies [100a0aa]
+- Updated dependencies [71dea89]
+- Updated dependencies [9c20e05]
+- Updated dependencies [9942748]
+- Updated dependencies [8cdb138]
+- Updated dependencies [be1c677]
+- Updated dependencies [f399e06]
+- Updated dependencies [93e7078]
+- Updated dependencies [2c2f58b]
+- Updated dependencies [123409c]
+- Updated dependencies [7ee17d0]
+- Updated dependencies [68d9f31]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [fa7d102]
+- Updated dependencies [ddeb735]
+- Updated dependencies [a3fb195]
+- Updated dependencies [c04c1a9]
+- Updated dependencies [47a864f]
+- Updated dependencies [9942748]
+- Updated dependencies [ffcf41a]
+- Updated dependencies [7a15327]
+- Updated dependencies [866c8ec]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [a29d1cc]
+- Updated dependencies [9942748]
+- Updated dependencies [77b98ea]
+- Updated dependencies [a3caf9b]
+- Updated dependencies [a0fe5bf]
+- Updated dependencies [7ba5c9b]
+- Updated dependencies [0445564]
+- Updated dependencies [e19b8ad]
+- Updated dependencies [180bf9d]
+- Updated dependencies [ff9bc11]
+- Updated dependencies [8094874]
+- Updated dependencies [a7b89ee]
+- Updated dependencies [61117cd]
+- Updated dependencies [34b780e]
+- Updated dependencies [3e050f4]
+- Updated dependencies [111c3be]
+- Updated dependencies [5bd225e]
+- Updated dependencies [d6e6617]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [159ae97]
+- Updated dependencies [159ae97]
+- Updated dependencies [2383330]
+- Updated dependencies [ee83f66]
+- Updated dependencies [6ba9740]
+- Updated dependencies [5f4416a]
+- Updated dependencies [09c69b0]
+- Updated dependencies [bc05ec5]
+- Updated dependencies [d3c050e]
+- Updated dependencies [a565d7b]
+- Updated dependencies [c4ed3e9]
+- Updated dependencies [9942748]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [9942748]
+- Updated dependencies [3299474]
+- Updated dependencies [3265900]
+- Updated dependencies [85b88bf]
+- Updated dependencies [69dc913]
+- Updated dependencies [2069cff]
+- Updated dependencies [543d00a]
+- Updated dependencies [020eb7b]
+- Updated dependencies [9942748]
+- Updated dependencies [32f0bf3]
+- Updated dependencies [9785cd4]
+  - @nifrajs/web@5.9.0
+  - @nifrajs/web-react@5.9.0
+  - @nifrajs/web-preact@5.9.0
+  - @nifrajs/web-solid@5.9.0
+  - @nifrajs/web-svelte@5.9.0
+  - @nifrajs/web-vue@5.9.0
+  - @nifrajs/node@5.9.0
+  - @nifrajs/deno@5.9.0
+  - @nifrajs/core@5.9.0
+  - @nifrajs/cli@5.9.0
+  - @nifrajs/schema@5.9.0
+  - @nifrajs/mcp@5.9.0
+  - @nifrajs/image@5.9.0
+  - @nifrajs/middleware@5.9.0
+  - @nifrajs/auth@5.9.0
+  - @nifrajs/i18n@5.9.0
+  - @nifrajs/client@5.9.0
+  - @nifrajs/webmcp@5.9.0
+  - @nifrajs/workers@5.9.0
+  - @nifrajs/content@5.9.0
+  - @nifrajs/web-vanilla@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

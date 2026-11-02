@@ -16,7 +16,7 @@
  * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and
  * `check:publish` asserts it equals `@nifrajs/core`'s package version.
  */
-export const VERSION = "5.8.0" as const
+export const VERSION = "5.11.0" as const
 
 export type Version = typeof VERSION
 
@@ -125,6 +125,11 @@ export type {
   RouteInfoFor,
 } from "./server/registry.ts"
 export { replacedRequestOf } from "./server/request-lineage.ts"
+export {
+  carryRequestLocals,
+  type RequestLocal,
+  requestLocal,
+} from "./server/request-local.ts"
 export { writableResponse } from "./server/respond.ts"
 export { routeTemplateOf } from "./server/route-template.ts"
 export {

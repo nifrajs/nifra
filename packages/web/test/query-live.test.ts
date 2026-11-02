@@ -1,6 +1,6 @@
 /** Queries with live keys: registration while mounted, refresh, the tick a fetch asked at, and clear. */
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { identityChanged } from "../src/identity.ts"
+import { IDENTITY_CHANNEL, identityChanged } from "../src/identity.ts"
 import {
   advanceLiveTick,
   clearQueryClients,
@@ -11,7 +11,7 @@ import {
   watchLiveQueries,
 } from "../src/internal/live-queries.ts"
 import { installQuerySeam, queryClients, querySeam } from "../src/internal/query-seam.ts"
-import { createQueryClient } from "../src/query.ts"
+import { createMutation, createQueryClient } from "../src/query.ts"
 
 function gated() {
   const resolvers: ((value: unknown) => void)[] = []
@@ -26,6 +26,14 @@ function gated() {
     calls: () => resolvers.length,
     resolve: (i: number, value: unknown) => resolvers[i]?.(value),
     reject: (i: number, error: unknown) => rejecters[i]?.(error),
+  }
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for the identity broadcast")
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
   }
 }
 
@@ -261,6 +269,45 @@ test("identityChanged() clears every query client the page made, and no server-s
   expect(serverSide.getQueryData(["k"])).toBe("request-scoped")
 })
 
+test("a remote identity broadcast clears query data and cancels a pending mutation", async () => {
+  const client = createQueryClient({ now: () => 0 })
+  client.setQueryData(["profile"], { name: "Previous visitor" })
+
+  let resolveMutation!: (value: string) => void
+  let signal: AbortSignal | undefined
+  let successCalled = false
+  const mutation = createMutation(
+    (_variables: undefined, context) => {
+      signal = context.signal
+      return new Promise<string>((resolve) => {
+        resolveMutation = resolve
+      })
+    },
+    {
+      onSuccess: () => {
+        successCalled = true
+      },
+    },
+  )
+  const pending = mutation.mutate(undefined)
+  void pending.catch(() => {})
+  expect(signal?.aborted).toBe(false)
+
+  const otherTab = new BroadcastChannel(IDENTITY_CHANNEL)
+  try {
+    otherTab.postMessage("changed")
+    await waitFor(() => client.getQueryData(["profile"]) === undefined)
+    expect(signal?.aborted).toBe(true)
+
+    await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    expect(mutation.snapshot().status).toBe("idle")
+    expect(successCalled).toBe(false)
+    resolveMutation("late result")
+  } finally {
+    otherTab.close()
+  }
+})
+
 // A sign-in or sign-out response rotates the document's identity epoch, in a task of its own.
 const withEpoch = async (
   run: (rotate: (epoch: string) => Promise<void>) => Promise<void>,
@@ -278,6 +325,89 @@ const withEpoch = async (
     else Object.defineProperty(globalThis, "document", described)
   }
 }
+
+test("a cookie identity epoch change cancels a pending mutation before it publishes", async () => {
+  await withEpoch(async (rotate) => {
+    let resolveMutation!: (value: string) => void
+    let signal: AbortSignal | undefined
+    const callbacks: string[] = []
+    const mutation = createMutation<string, undefined>(
+      (_variables, context) => {
+        signal = context.signal
+        return new Promise((resolve) => {
+          resolveMutation = resolve
+        })
+      },
+      {
+        onSuccess: () => {
+          callbacks.push("success")
+        },
+        onError: () => {
+          callbacks.push("error")
+        },
+        onSettled: () => {
+          callbacks.push("settled")
+        },
+      },
+    )
+
+    const pending = mutation.mutate(undefined)
+    await rotate("two")
+    resolveMutation("previous visitor")
+
+    await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    expect(signal?.aborted).toBe(true)
+    expect(mutation.snapshot().status).toBe("idle")
+    expect(callbacks).toEqual([])
+  })
+})
+
+test("starting a mutation after an identity epoch change preserves its fresh state", async () => {
+  await withEpoch(async (rotate) => {
+    let resolveOld!: (value: string) => void
+    let resolveFresh!: (value: string) => void
+    let oldSignal: AbortSignal | undefined
+    const callbacks: string[] = []
+    const mutation = createMutation<string, string>(
+      (variables, context) => {
+        if (variables === "old") {
+          oldSignal = context.signal
+          return new Promise((resolve) => {
+            resolveOld = resolve
+          })
+        }
+        return new Promise((resolve) => {
+          resolveFresh = resolve
+        })
+      },
+      {
+        onSuccess: (_data, variables) => {
+          callbacks.push(variables)
+        },
+      },
+    )
+
+    const oldPending = mutation.mutate("old")
+    await rotate("two")
+    const freshPending = mutation.mutate("fresh")
+
+    expect(oldSignal?.aborted).toBe(true)
+    expect(mutation.snapshot()).toMatchObject({ status: "pending", variables: "fresh" })
+    resolveOld("stale result")
+    await expect(oldPending).rejects.toMatchObject({ name: "MutationCancelledError" })
+    expect(mutation.snapshot()).toMatchObject({ status: "pending", variables: "fresh" })
+
+    resolveFresh("fresh result")
+    await expect(freshPending).resolves.toBe("fresh result")
+    expect(mutation.snapshot()).toMatchObject({
+      status: "success",
+      data: "fresh result",
+      variables: "fresh",
+    })
+    expect(callbacks).toEqual(["fresh"])
+  })
+})
+
 const firstPage = { initialPageParam: 0, getNextPageParam: () => undefined }
 
 test("a new identity epoch drops a client's data on its next read, and mounted queries refetch after it", async () => {
@@ -358,6 +488,48 @@ test("a held handle's read after a new epoch shows the fetch it starts, which th
   })
 })
 
+test("a new epoch while a change's reloads run loads them once more, and one after that is theirs", async () => {
+  await withEpoch(async (rotate) => {
+    const c = createQueryClient({ now: () => 0 })
+    const g = gated()
+    const pages = gated()
+    const one = c.query(["me"], g.fn)
+    const feed = c.infiniteQuery(["feed"], pages.fn, firstPage)
+    const offs = [one.subscribe(() => {}), feed.subscribe(() => {})]
+    void one.fetch()
+    void feed.fetch()
+    g.resolve(0, "first")
+    pages.resolve(0, "first")
+    await flush()
+    await rotate("two")
+    one.snapshot()
+    await flush()
+    expect([g.calls(), pages.calls()]).toEqual([2, 2])
+    // Another tab's sign-in lands while the reloads run.
+    await rotate("three")
+    g.resolve(1, "second")
+    pages.resolve(1, "second")
+    await flush()
+    expect([g.calls(), pages.calls(), one.snapshot().status, feed.snapshot().status]).toEqual([
+      3,
+      3,
+      "pending",
+      "pending",
+    ])
+    await rotate("four")
+    g.resolve(2, "third")
+    pages.resolve(2, "third")
+    await flush()
+    expect([one.snapshot().data, feed.snapshot().data?.pages, g.calls(), pages.calls()]).toEqual([
+      "third",
+      ["third"],
+      3,
+      3,
+    ])
+    for (const off of offs) off()
+  })
+})
+
 test("a handle kept past its last subscriber reads nothing of the previous visitor", async () => {
   const c = createQueryClient({ now: () => 0, staleTime: Number.POSITIVE_INFINITY })
   let who = "first"
@@ -400,6 +572,83 @@ test("a refetch that fails after clear is let go: the query shows the error", as
   expect(feed.snapshot().status).toBe("error")
   offPlain()
   offFeed()
+})
+
+test("a fetch a visitor change catches answers with what the reload the change started showed", async () => {
+  const g = gated()
+  const pages = gated()
+  const c = createQueryClient({ now: () => 0 })
+  const handle = c.query(["k"], g.fn)
+  const feed = c.infiniteQuery(["feed"], pages.fn, firstPage)
+  const offs = [handle.subscribe(() => {}), feed.subscribe(() => {})]
+  const caught = handle.fetch()
+  const caughtFeed = feed.fetch()
+  c.clear()
+  g.resolve(1, "mine")
+  pages.resolve(1, "mine")
+  await flush()
+  g.resolve(0, "theirs")
+  pages.resolve(0, "theirs")
+  expect(await caught).toBe("mine")
+  expect((await caughtFeed).pages).toEqual(["mine"])
+  expect([g.calls(), pages.calls()]).toEqual([2, 2])
+  for (const off of offs) off()
+})
+
+test("a fetch a visitor change catches rejects with a later load's failure for the new visitor", async () => {
+  const g = gated()
+  const pages = gated()
+  const c = createQueryClient({ now: () => 0 })
+  const handle = c.query(["k"], g.fn)
+  const feed = c.infiniteQuery(["feed"], pages.fn, firstPage)
+  const offs = [handle.subscribe(() => {}), feed.subscribe(() => {})]
+  const caught = handle.fetch().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const caughtFeed = feed.fetch().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  c.clear()
+  g.resolve(1, "mine")
+  pages.resolve(1, "mine")
+  await flush()
+  void handle.refetch().catch(() => {})
+  void feed.refetch().catch(() => {})
+  const down = new Error("down")
+  g.reject(2, down)
+  pages.reject(2, down)
+  await flush()
+  g.resolve(0, "theirs")
+  pages.resolve(0, "theirs")
+  expect(await caught).toBe(down)
+  expect(await caughtFeed).toBe(down)
+  expect([handle.snapshot().error, feed.snapshot().error]).toEqual([down, down])
+  expect([g.calls(), pages.calls()]).toEqual([3, 3])
+  for (const off of offs) off()
+})
+
+test("an infinite fetch a change catches with no reload under way loads again, on a handle the cache let go of too", async () => {
+  let t = 0
+  const kept = gated()
+  const gone = gated()
+  const c = createQueryClient({ now: () => t, gcTime: 10 })
+  const keptFeed = c.infiniteQuery(["kept"], kept.fn, firstPage)
+  const goneFeed = c.infiniteQuery(["gone"], gone.fn, firstPage)
+  goneFeed.subscribe(() => {})()
+  const caughtKept = keptFeed.fetch()
+  const caughtGone = goneFeed.fetch()
+  t = 20
+  expect(c.infiniteQuery(["gone"], gone.fn, firstPage)).not.toBe(goneFeed)
+  c.clear()
+  kept.resolve(0, "theirs")
+  gone.resolve(0, "theirs")
+  await flush()
+  kept.resolve(1, "mine")
+  gone.resolve(1, "mine")
+  expect((await caughtKept).pages).toEqual(["mine"])
+  expect((await caughtGone).pages).toEqual(["mine"])
 })
 
 /** Run `body` as a page does before its live client has loaded: no seam installed yet. */

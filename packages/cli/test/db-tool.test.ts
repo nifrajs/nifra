@@ -743,6 +743,7 @@ describe.skipIf(PG_URL === "")(
     const run = `${process.pid}_${Date.now().toString(36)}`
     const database = `nifra_cli_live_${run}`
     const role = `nifra_cli_reader_${run}`
+    const broadRole = `nifra_cli_broad_${run}`
     const password = `cli-${crypto.randomUUID()}`
     let admin: {
       host?: string
@@ -775,6 +776,7 @@ describe.skipIf(PG_URL === "")(
       return root
     }
     let reader = ""
+    let broad = ""
     let superuser = ""
 
     beforeAll(async () => {
@@ -786,7 +788,10 @@ describe.skipIf(PG_URL === "")(
         const [version] = await server`SELECT current_setting('server_version_num')::int AS v`
         await server.unsafe(`CREATE DATABASE "${database}"`)
         await server.unsafe(`CREATE ROLE "${role}" LOGIN PASSWORD '${password}'`)
-        if (Number(version?.v) >= 140000) await server.unsafe(`GRANT pg_read_all_data TO "${role}"`)
+        await server.unsafe(`CREATE ROLE "${broadRole}" LOGIN PASSWORD '${password}'`)
+        if (Number(version?.v) >= 140000) {
+          await server.unsafe(`GRANT pg_read_all_data TO "${broadRole}"`)
+        }
       } finally {
         await server.close()
       }
@@ -797,13 +802,16 @@ describe.skipIf(PG_URL === "")(
           CREATE TABLE audit_log (id int, what text);
           INSERT INTO accounts (email, password_hash, note) VALUES ('a@example.com', 'hash', 'jwt ${JWT}');
           INSERT INTO audit_log VALUES (1, 'secret');
-          GRANT SELECT ON ALL TABLES IN SCHEMA public TO "${role}";
+          GRANT USAGE ON SCHEMA public TO "${role}", "${broadRole}";
+          GRANT SELECT (id, email, note) ON accounts TO "${role}";
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO "${broadRole}";
           ANALYZE;
         `)
       } finally {
         await db.close()
       }
       reader = project(url(role, password))
+      broad = project(url(broadRole, password))
       superuser = project(url(admin.username, admin.password))
     })
 
@@ -813,6 +821,7 @@ describe.skipIf(PG_URL === "")(
       try {
         await server.unsafe(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`)
         await server.unsafe(`DROP ROLE IF EXISTS "${role}"`)
+        await server.unsafe(`DROP ROLE IF EXISTS "${broadRole}"`)
       } finally {
         await server.close()
       }
@@ -823,7 +832,8 @@ describe.skipIf(PG_URL === "")(
       expect(schema).toMatchObject({
         ok: true,
         engine: "postgres",
-        excludedCount: 1,
+        // audit_log is excluded and never granted, so the role cannot see it to count it.
+        excludedCount: 0,
         untrusted: true,
       })
       expect(schema.tables?.map((table) => table.name)).toEqual(["accounts"])
@@ -848,14 +858,33 @@ describe.skipIf(PG_URL === "")(
       expect(await dbQuerySpec.run({ sql: "DELETE FROM accounts" }, ctx(reader))).toMatchObject({
         refusal: { code: "NIFRA_DB_WRITE_REFUSED" },
       })
-      const slow = await dbQuerySpec.run({ sql: "SELECT pg_sleep(5)" }, ctx(reader))
+      expect(await dbQuerySpec.run({ sql: "SELECT pg_sleep(5)" }, ctx(reader))).toMatchObject({
+        refusal: { code: "NIFRA_DB_FUNCTION_REFUSED" },
+      })
+      const slow = await dbQuerySpec.run(
+        { sql: "SELECT count(*) FROM generate_series(1, 1e11)" },
+        ctx(reader),
+      )
       expect(slow).toMatchObject({ refusal: { code: "NIFRA_DB_TIMEOUT" } })
       expect(slow.refusal?.message).toContain("statement timeout")
       const roleSql = await dbRoleSpec.run({}, ctx(reader))
       expect(roleSql.statements).toContain(
         'REVOKE SELECT ON TABLE "public"."audit_log" FROM "nifra_dev_reader";',
       )
+      // The declaration's masking reaches the role SQL: the credential column is left ungranted.
+      expect(roleSql.statements).toContain(
+        'GRANT SELECT ("id", "email", "note") ON TABLE "public"."accounts" TO "nifra_dev_reader";',
+      )
       expect(JSON.stringify(roleSql)).not.toContain(password)
+    })
+
+    test("a role that may read what the declaration hides is refused queries, with the fix", async () => {
+      const refused = await dbQuerySpec.run({ sql: "SELECT 1" }, ctx(broad))
+      expect(refused).toMatchObject({ ok: false, refusal: { code: "NIFRA_DB_ROLE_GRANTS" } })
+      expect(refused.refusal?.message).toContain("public.accounts.password_hash")
+      expect(refused.refusal?.message).toContain("public.audit_log")
+      expect(refused.refusal?.fix).toContain("nifra db role")
+      expect((await dbSchemaSpec.run({}, ctx(broad))).ok).toBe(true)
     })
 
     test("a superuser connection: queries refused with the fix, schema and the role SQL still answer", async () => {

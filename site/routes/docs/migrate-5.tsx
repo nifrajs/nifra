@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/migrate-5",
@@ -215,7 +216,7 @@ export default function Migrate5() {
         it. List that frontend&rsquo;s origin, or an identity provider&rsquo;s for a{" "}
         <code>form_post</code> callback, in the <code>formOrigins</code> server option (an array of
         exact origins or a function; <code>@nifrajs/edge</code> takes it too). JSON bodies are
-        unchanged. <a href="/docs/security">Security</a> covers what the check leaves to{" "}
+        unchanged. <a href={href({ to: "/docs/security" })}>Security</a> covers what the check leaves to{" "}
         <code>csrf()</code>.
       </p>
 
@@ -250,7 +251,7 @@ export default function Migrate5() {
           longer mounted. An islets <code>island(&quot;id&quot;, setup)</code> becomes{" "}
           <code>bindIsland(setup)</code> passed to <code>mountIslands(&#123; id &#125;)</code>, and a
           nano signal is read by calling it (<code>count()</code>). See{" "}
-          <a href="/docs/islands">Islands</a>.
+          <a href={href({ to: "/docs/islands" })}>Islands</a>.
         </li>
         <li>
           <code>withISR</code> over any store but <code>MemoryCacheStore</code> takes a{" "}

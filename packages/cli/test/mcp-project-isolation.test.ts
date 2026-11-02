@@ -192,6 +192,7 @@ const IN_PROCESS_PROBES: Readonly<Record<string, Record<string, unknown>>> = {
   nifra_types: { query: "server" },
   nifra_learn: {},
   nifra_frontend: { symptom: "hydration mismatch" },
+  nifra_runtime: { symptom: "path guard skipped" },
 }
 
 describe("nifra mcp runs no project code in its own process", () => {

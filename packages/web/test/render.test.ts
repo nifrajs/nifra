@@ -16,20 +16,10 @@ import {
   serializeData,
   unsafeInlineScript,
 } from "../src/index.ts"
+import { streamOf } from "./streams.ts"
 
 const LINE_SEP = String.fromCharCode(0x2028)
 const PARA_SEP = String.fromCharCode(0x2029)
-
-// Turn a string into a one-chunk byte stream - the minimal `renderToStream` an adapter returns.
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 
 // A stub adapter - proves the core orchestration is genuinely framework-agnostic (no Solid,
 // no React, no DOM). It "folds" the chain trivially: emits the chain length + the data.

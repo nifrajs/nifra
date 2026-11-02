@@ -1,6 +1,7 @@
 # Worst-case HTTP benchmark
 
-This benchmark compares Nifra with Elysia across Bun, Node, and Deno, plus Fastify on Node.
+This benchmark compares Nifra with Elysia across Bun, Node, and Deno, plus Fastify across all three.
+Fastify's Bun and Deno rows use the same `node:http` server through each runtime's Node compatibility.
 The application is intentionally adversarial for Nifra: it combines lifecycle hooks, a
 multi-parameter route, validated query data, JSON body validation, and dynamic response headers.
 The default one-derive/one-before/one-after shape is eligible for lifecycle fusion. Set

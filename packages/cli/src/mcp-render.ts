@@ -17,11 +17,11 @@ import { loadApp, resolvePlugins } from "./load.ts"
 import {
   CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
-  readBoundedLines,
   readBoundedStream,
   redirectConsoleToStderr,
   serializeBoundedJson,
   workerReplyWriter,
+  workerRequests,
 } from "./mcp-io.ts"
 import { frameworkWebAppOptions } from "./web-app-options.ts"
 
@@ -80,11 +80,6 @@ export async function renderPages(
   }
 }
 
-interface RenderWorkerMessage {
-  readonly id?: unknown
-  readonly input?: { readonly requests?: unknown }
-}
-
 /**
  * Warm-worker loop (`--worker`): build the web app ONCE, then SSR each `{ id, input: { requests } }` line
  * against that hot app and reply `{ id, output }`. The parent (`mcp.ts`'s warm-render handler) spawns this,
@@ -99,44 +94,22 @@ async function runWorker(cwd: string): Promise<void> {
   const send = workerReplyWriter((line) => {
     process.stdout.write(line)
   })
-  for await (const item of readBoundedLines(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)) {
-    if (item.kind === "too-large") {
-      send(null, { error: `worker input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` })
-      continue
-    }
-    const line = item.text.trim()
-    if (line === "") continue
-
-    let message: unknown
-    try {
-      message = JSON.parse(line) as unknown
-    } catch {
-      send(null, { error: "invalid worker input: expected JSON line" })
-      continue
-    }
-    const record =
-      message !== null && typeof message === "object" && !Array.isArray(message)
-        ? (message as RenderWorkerMessage)
-        : undefined
-    const input =
-      record?.input !== null && typeof record?.input === "object" && !Array.isArray(record.input)
-        ? record.input
-        : undefined
+  for await (const { id, input } of workerRequests(send)) {
     const requests = input?.requests
     if (!Array.isArray(requests)) {
-      send(record?.id, { error: "expected { requests: [...] }" })
+      send(id, { error: "expected { requests: [...] }" })
       continue
     }
     if ("error" in built) {
-      send(record?.id, built)
+      send(id, built)
       continue
     }
     try {
-      send(record?.id, {
+      send(id, {
         results: await runApp(built.app, requests as Parameters<typeof runApp>[1]),
       })
     } catch (err) {
-      send(record?.id, { error: errString(err) })
+      send(id, { error: errString(err) })
     }
   }
 }

@@ -2,17 +2,10 @@ import { expect, test } from "bun:test"
 import { inProcessClient } from "@nifrajs/client"
 import { type Platform, server } from "@nifrajs/core/server"
 import { createWebApp, type Loader, type Manifest, type RenderAdapter } from "../src/index.ts"
+import { streamOf } from "./streams.ts"
 
 // A loader's `ctx.api` is bound to the page request's platform: the backend it reaches sees the
 // visitor's clientIp/env/waitUntil, never the page request's headers.
-
-const streamOf = (s: string): ReadableStream<Uint8Array> =>
-  new ReadableStream({
-    start(c) {
-      c.enqueue(new TextEncoder().encode(s))
-      c.close()
-    },
-  })
 
 const stub: RenderAdapter = {
   renderToStream: () => streamOf("<p>page</p>"),

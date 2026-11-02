@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import {
   formatPercent,
   formatRatio,
@@ -25,8 +26,8 @@ export default function BunVsNode() {
       <h1>Bun vs Node.js in 2026: same app, both runtimes</h1>
       <p>
         <em>
-          Updated 2026-08-04 · We build <a href="/">Nifra</a>, a framework that runs unchanged on
-          both runtimes - which is exactly what makes this comparison clean.
+          Updated 2026-08-04 · We build <a href={href({ to: "/" })}>Nifra</a>, a framework that runs
+          unchanged on both runtimes - which is exactly what makes this comparison clean.
         </em>
       </p>
 
@@ -78,8 +79,9 @@ export default function BunVsNode() {
         </tbody>
       </table>
       <p>
-        (oha @ 50 conns, medians, harness public - <a href="/benchmarks">all rows here</a>.) The
-        pattern is the honest headline: Bun's advantage is largest on cheap HTTP work (GET{" "}
+        (oha @ 50 conns, medians, harness public -{" "}
+        <a href={href({ to: "/benchmarks" })}>all rows here</a>.) The pattern is the honest
+        headline: Bun's advantage is largest on cheap HTTP work (GET{" "}
         {formatRatio(
           httpWorkloadRps("Bun", "Nifra", "getUsers"),
           httpWorkloadRps("Node", "Nifra", "getUsers"),
@@ -121,7 +123,7 @@ export default function BunVsNode() {
         adapter: develop and deploy on Node today, move the identical code to Bun when the
         throughput matters (or Deno, or edge workers). The numbers above are that story measured -
         nobody rewrote anything between the two columns. On Node, Nifra runs level with Fastify (
-        <a href="/compare/fastify">details</a>); on Bun it serves at{" "}
+        <a href={href({ to: "/compare/fastify" })}>details</a>); on Bun it serves at{" "}
         {formatPercent(
           percentOf(
             httpWorkloadRps("Bun", "Nifra", "getUsers"),

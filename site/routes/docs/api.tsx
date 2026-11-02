@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/api",
@@ -208,7 +209,7 @@ export default function Api() {
       <p>
         Everything on this page is just <code>@nifrajs/core</code> - no frontend, no build step. Use Nifra
         as a standalone backend the way you'd use Hono or Elysia, deploy it to any runtime, and reach
-        for <a href="/docs/frameworks">the frontend adapters</a> only if and when you go full-stack.
+        for <a href={href({ to: "/docs/frameworks" })}>the frontend adapters</a> only if and when you go full-stack.
       </p>
 
       <h2>An inline server</h2>
@@ -686,9 +687,9 @@ export default function Api() {
       </p>
       <p>
         The same client runs in the browser and on the server. During SSR, a route's{" "}
-        <a href="/docs/data">loader</a> calls it <b>in-process</b> (no network hop) via{" "}
-        <code>ctx.api</code>. Next: <a href="/docs/routing">file routing</a>,{" "}
-        <a href="/docs/data">loaders &amp; actions</a>, and <a href="/docs/plugins">plugins</a>.
+        <a href={href({ to: "/docs/data" })}>loader</a> calls it <b>in-process</b> (no network hop) via{" "}
+        <code>ctx.api</code>. Next: <a href={href({ to: "/docs/routing" })}>file routing</a>,{" "}
+        <a href={href({ to: "/docs/data" })}>loaders &amp; actions</a>, and <a href={href({ to: "/docs/plugins" })}>plugins</a>.
       </p>
     </div>
   )

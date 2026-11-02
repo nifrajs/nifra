@@ -575,6 +575,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/open-resolved.ts": {
+    "functions": 100,
+    "lines": 93.75
+  },
   "packages/core/src/range.ts": {
     "functions": 100,
     "lines": 100

@@ -6,7 +6,14 @@
  * reactively (`splitProps`/`mergeProps`). Resizing is delegated to the `loader`; nifra bundles no codec.
  * No JSX (`createComponent`/`Dynamic`), so the package builds with plain `tsc`.
  */
-import { type ImageLoader, type ImageProps, resolveImage, toHtmlAttrs } from "@nifrajs/image"
+import {
+  type ImageInputProps,
+  type ImageLoader,
+  type ImageProps,
+  resolveImage,
+  type StaticImageProps,
+  toHtmlAttrs,
+} from "@nifrajs/image"
 import { createComponent, type JSX, mergeProps, splitProps } from "solid-js"
 import { Dynamic } from "solid-js/web"
 
@@ -29,11 +36,14 @@ export interface ImageComponentProps
   readonly loader?: ImageLoader
 }
 
+export type StaticImageComponentProps = StaticImageProps &
+  Omit<ImageComponentProps, "src" | "width" | "height">
+
 /**
- * Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space);
+ * Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them;
  * `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
  */
-export function Image(props: ImageComponentProps): JSX.Element {
+export function Image(props: ImageComponentProps | StaticImageComponentProps): JSX.Element {
   // Separate the nifra-only props (not valid DOM attributes) from the DOM passthrough (`rest`), keeping
   // both reactive. `rest` carries class/style/id/handlers; the computed attrs are layered over it.
   const [, rest] = splitProps(props, [
@@ -51,10 +61,7 @@ export function Image(props: ImageComponentProps): JSX.Element {
   const attrs = (): ReturnType<typeof toHtmlAttrs> => {
     // Build ImageProps via conditional spreads (exactOptionalPropertyTypes: an unset optional is
     // absent, not `undefined`). resolveImage validates width/height > 0 (CLS contract).
-    const input: ImageProps = {
-      src: props.src,
-      width: props.width,
-      height: props.height,
+    const common = {
       alt: props.alt,
       ...(props.sizes !== undefined ? { sizes: props.sizes } : {}),
       ...(props.widths !== undefined ? { widths: props.widths } : {}),
@@ -62,6 +69,20 @@ export function Image(props: ImageComponentProps): JSX.Element {
       ...(props.loading !== undefined ? { loading: props.loading } : {}),
       ...(props.priority !== undefined ? { priority: props.priority } : {}),
     }
+    const input: ImageInputProps =
+      typeof props.src === "string"
+        ? {
+            ...common,
+            src: props.src,
+            width: props.width ?? Number.NaN,
+            height: props.height ?? Number.NaN,
+          }
+        : {
+            ...common,
+            src: props.src,
+            ...(props.width !== undefined ? { width: props.width } : {}),
+            ...(props.height !== undefined ? { height: props.height } : {}),
+          }
     return toHtmlAttrs(resolveImage(input, props.loader))
   }
   return createComponent(Dynamic, mergeProps(rest, attrs, { component: "img" }))

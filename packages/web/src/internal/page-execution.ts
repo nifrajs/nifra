@@ -4,6 +4,7 @@ import {
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
 } from "@nifrajs/core/mount"
 import {
+  carryRequestLocals,
   isSameOriginForm,
   type Platform,
   type ResponseResult,
@@ -23,6 +24,7 @@ import type { CspPolicy } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { type Deferred, defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
 import { isDraftEnabled } from "../draft.ts"
+import { rawHref } from "../href.ts"
 import { routeTags } from "../isr.ts"
 import type {
   LayoutEntry,
@@ -87,6 +89,13 @@ import {
   tagLayoutError,
   withDuplicateInstanceHint,
 } from "./render-document.ts"
+import {
+  markRequestHeaderDependent,
+  OWNER_REQUEST_HEADER_DEPENDENCY_HEADER,
+  requestHeadersWereRead,
+  trackRequestHeaderReads,
+} from "./request-header-tracker.ts"
+import { searchOfRequest } from "./request-search.ts"
 import { originFor, urlPartsFor } from "./request-url.ts"
 import {
   ACTION_SCOPE,
@@ -248,6 +257,24 @@ const liveEnvelopeOf = (
         ),
       )
 
+/** Copy a loader context without invoking lazy request accessors owned by the framework. */
+const forkLoaderContext = (
+  ctx: LoaderContext,
+  overrides: Partial<LoaderContext>,
+): LoaderContext => {
+  const fork: LoaderContext = Object.create(Object.getPrototypeOf(ctx))
+  Object.defineProperties(fork, Object.getOwnPropertyDescriptors(ctx))
+  for (const [key, value] of Object.entries(overrides)) {
+    Object.defineProperty(fork, key, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value,
+    })
+  }
+  return fork
+}
+
 /** Run one owner's loader with its `ctx.live`, closing the collector once the loader settles. */
 const runLiveLoader = (
   live: LiveLoad,
@@ -257,7 +284,7 @@ const runLiveLoader = (
 ): Promise<unknown> => {
   let value: unknown
   try {
-    value = loader({ ...ctx, live: live.collector(owner) })
+    value = loader(forkLoaderContext(ctx, { live: live.collector(owner) }))
   } catch (err) {
     live.seal(owner)
     return Promise.reject(err)
@@ -424,7 +451,7 @@ export interface PageExecutionOptions<Env = unknown> {
   /** Logs a failure an `_error` boundary answered. Without a boundary the error propagates and the
    * server logs it, so this runs only where the server never sees the throw. */
   readonly logBoundaryError?: (error: unknown, request: Request) => void
-  /** Experimental partial prerendering: routes with a `shellLoader` stream a shared shell, then holes. */
+  /** Partial prerendering: routes with a `shellLoader` stream a shared shell, then holes. */
   readonly ppr?: PprIntegration
 }
 
@@ -782,11 +809,10 @@ export function createPageRequestExecutor<Env = unknown>(
           continue
         }
       }
-      const scoped: LoaderContext = {
-        ...ctx,
+      const scoped = forkLoaderContext(ctx, {
         params: scopeParams(ctx.params, route.layoutParams?.[i]),
         set: controls.scope(i),
-      }
+      })
       const layoutId = route.layoutIds[i] as string
       if (modules[i]?.gate === true) {
         results[i] =
@@ -854,11 +880,15 @@ export function createPageRequestExecutor<Env = unknown>(
     for (let i = 0; i < modules.length; i++) {
       const mod = modules[i]
       if (mod?.gate !== true || mod.loader === undefined) continue
-      gates[i] = await runGate(route, i, mod.loader, {
-        ...ctx,
-        params: scopeParams(ctx.params, route.layoutParams?.[i]),
-        set: controls.scope(i),
-      })
+      gates[i] = await runGate(
+        route,
+        i,
+        mod.loader,
+        forkLoaderContext(ctx, {
+          params: scopeParams(ctx.params, route.layoutParams?.[i]),
+          set: controls.scope(i),
+        }),
+      )
     }
     return { modules, gates }
   }
@@ -868,13 +898,14 @@ export function createPageRequestExecutor<Env = unknown>(
     route: RouteEntry,
     ctx: LoaderContext,
     controls: PageResponseControls,
+    request: Request,
   ): Promise<void> => {
     if (i18n !== undefined && localeGuarded(route)) {
       // Before any app middleware, as a root `_middleware` would run: an unserved locale, or a page
       // missing from it, never reaches the app's code.
-      const match = i18n.matchSegment(ctx.params.lang, pathOf(ctx.request))
+      const match = i18n.matchSegment(ctx.params.lang, pathOf(request))
       if (match.kind === "redirect") {
-        throw tagLayoutError(redirect(match.location, { status: 308 }), "_layout")
+        throw tagLayoutError(redirect(rawHref(match.location), { status: 308 }), "_layout")
       }
       if (match.kind === "not-found") {
         try {
@@ -899,11 +930,12 @@ export function createPageRequestExecutor<Env = unknown>(
             `[nifra/web] "${entry.file}" exports a middleware that is not a function.`,
           )
         }
-        outcome = await middleware({
-          ...ctx,
-          params: scopeParams(ctx.params, route.middlewareParams?.[i]),
-          set: controls.scope(MIDDLEWARE_SCOPE + i),
-        })
+        outcome = await middleware(
+          forkLoaderContext(ctx, {
+            params: scopeParams(ctx.params, route.middlewareParams?.[i]),
+            set: controls.scope(MIDDLEWARE_SCOPE + i),
+          }),
+        )
       } catch (err) {
         throw tagLayoutError(err, dirTag)
       }
@@ -987,18 +1019,22 @@ export function createPageRequestExecutor<Env = unknown>(
     return answer === false
   }
 
-  const loaderSearch = (searchSchema: RouteModule["searchSchema"], request: Request) =>
-    searchOf(searchSchema, urlPartsFor(request).search)
+  // A query is parsed and validated once per request; with none there is nothing to share, and the
+  // plain calls cost less than a memo.
+  const loaderSearch = (searchSchema: RouteModule["searchSchema"], request: Request) => {
+    const raw = urlPartsFor(request).search
+    return raw === "" ? searchOf(searchSchema, raw) : searchOfRequest(request, [searchSchema], raw)
+  }
 
   const searchChainOf = (
     layoutMods: LoadedLayoutModules,
     mod: RouteModule,
     request: Request,
-  ): Record<string, unknown> =>
-    searchOfChain(
-      [...layoutMods.map((m) => m.searchSchema), mod.searchSchema],
-      urlPartsFor(request).search,
-    )
+  ): Record<string, unknown> => {
+    const raw = urlPartsFor(request).search
+    const schemas = [...layoutMods.map((m) => m.searchSchema), mod.searchSchema]
+    return raw === "" ? searchOfChain(schemas, raw) : searchOfRequest(request, schemas, raw)
+  }
 
   // `ssr = false`: the slot holds `HydrateFallback`, which the browser hydrates before the page.
   const serverLeafOf = (route: RouteEntry, mod: RouteModule): unknown => {
@@ -1208,7 +1244,7 @@ export function createPageRequestExecutor<Env = unknown>(
           set: controls.scope(PAGE_SCOPE),
           live: NO_LIVE,
         }
-        if (route.middlewareIds !== undefined) await runMiddleware(route, ctx, controls)
+        if (route.middlewareIds !== undefined) await runMiddleware(route, ctx, controls, c.req)
         const run = await runLayoutChain(route, ctx, controls)
         await run.pending
         return settledLayouts(run.modules, run.layoutData, rootLayoutIds.length)
@@ -1618,6 +1654,24 @@ export function createPageRequestExecutor<Env = unknown>(
     )
   }
 
+  /** What a page route's failed loaders answer: a status signal's page, else the loader's error boundary. */
+  const renderRouteFailure = async (
+    req: Request,
+    env: Env,
+    route: RouteEntry,
+    params: Record<string, string>,
+    err: unknown,
+    run: LayoutRun | undefined,
+    personalized: boolean,
+  ): Promise<PageResponse> => {
+    if (isStatusSignal(err))
+      return (
+        (await renderRouteNotFound(req, env, route, params, err, run, personalized)) ??
+        renderStatusSignal(req, env, err, personalized, leadingLayouts(run, err))
+      )
+    return renderLoaderFailure(route, req, env, params, err, personalized, leadingLayouts(run, err))
+  }
+
   const renderNotFound = async (
     c: PageRouteContext<Env>,
     controls: PageResponseControls,
@@ -1712,7 +1766,8 @@ export function createPageRequestExecutor<Env = unknown>(
           : routeTags(hole.revalidateTags, { params, url: shellUrl() }, `${route.id}#${hole.name}`),
       loadShell: async (signal) => shellLoader({ ...shellContext, signal }),
       renderShellDocument: async (shellData, states) => {
-        const statics = boundaries.some((boundary) => boundary.mode === "static")
+        // Static and intercepting boundaries both need a state in the document; a hole's comes from `states`.
+        const statics = boundaries.some((boundary) => !isHole(boundary))
           ? await resolveStaticBoundaries(
               boundaries,
               { phase: "build" },
@@ -1806,6 +1861,8 @@ export function createPageRequestExecutor<Env = unknown>(
         let live = liveLoadOf?.(c.req)
         const componentRuntime = options.serverComponents
         const componentOwner = componentRuntime?.owns(route.id) === true
+        const loaderRequest =
+          componentOwner && c.req.method === "GET" ? trackRequestHeaderReads(c.req) : c.req
         let componentRequest:
           | import("../server-components/protocol.ts").ComponentRequest
           | undefined
@@ -1841,6 +1898,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let layoutRetained: readonly number[] = []
         let responseHeaders: Record<string, string> | undefined
         let componentState: import("../server-components/types.ts").ComponentState | undefined
+        let componentAnswer: Response | undefined
         const requestApi = apiFor(c)
         let run: LayoutRun | undefined
         let skipPage = false
@@ -1849,8 +1907,8 @@ export function createPageRequestExecutor<Env = unknown>(
         try {
           const ctx: LoaderContext = {
             params: c.params,
-            request: c.req,
-            req: c.req,
+            request: loaderRequest,
+            req: loaderRequest,
             api: requestApi,
             env: c.env,
             draft,
@@ -1858,8 +1916,18 @@ export function createPageRequestExecutor<Env = unknown>(
             set: controls.scope(PAGE_SCOPE),
             live: NO_LIVE,
           }
+          if (componentOwner && c.req.method === "GET") {
+            const ownerRequest = (): Request => {
+              markRequestHeaderDependent(loaderRequest)
+              return loaderRequest
+            }
+            Object.defineProperties(ctx, {
+              request: { configurable: true, enumerable: true, get: ownerRequest },
+              req: { configurable: true, enumerable: true, get: ownerRequest },
+            })
+          }
           if (route.middlewareIds !== undefined || localeGuarded(route)) {
-            await runMiddleware(route, ctx, controls)
+            await runMiddleware(route, ctx, controls, c.req)
           }
           // After middleware, before any loader: a grant issued to another viewer keeps nothing.
           const retains = live === undefined || (await live.bind(ctx))
@@ -1999,11 +2067,13 @@ export function createPageRequestExecutor<Env = unknown>(
               : mod.loader === undefined || skipPage
                 ? null
                 : live === undefined
-                  ? mod.loader({ ...ctx, search: effectiveSearch })
-                  : runLiveLoader(live, `P:${route.id}`, mod.loader, {
-                      ...ctx,
-                      search: effectiveSearch,
-                    })
+                  ? mod.loader(forkLoaderContext(ctx, { search: effectiveSearch }))
+                  : runLiveLoader(
+                      live,
+                      `P:${route.id}`,
+                      mod.loader,
+                      forkLoaderContext(ctx, { search: effectiveSearch }),
+                    )
           const [pageData, , staticBoundaries] =
             run.pending === undefined && staticBoundaryPromise === undefined
               ? ([await pageResult, undefined, undefined] as const)
@@ -2024,23 +2094,46 @@ export function createPageRequestExecutor<Env = unknown>(
           if (componentRequest !== undefined && (isControlFlow(data) || isStatusSignal(data)))
             return componentRuntime!.failure(data)
           if (componentOwner && !isControlFlow(data) && !isStatusSignal(data)) {
-            const componentContext = Object.create(
-              c,
-              Object.getOwnPropertyDescriptors({
-                ...ctx,
-                search: effectiveSearch,
-                signal:
+            const componentContext = Object.create(c)
+            Object.defineProperties(componentContext, Object.getOwnPropertyDescriptors(ctx))
+            Object.defineProperties(componentContext, {
+              search: {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value: effectiveSearch,
+              },
+              signal: {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value:
                   c.signal === undefined ? c.req.signal : AbortSignal.any([c.signal, c.req.signal]),
-                data,
-                layoutData: layoutData ?? [],
-              }),
-            )
-            componentState = await componentRuntime!.execute(
-              route.id,
-              componentContext,
-              componentRequest,
-              options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
-            )
+              },
+              data: { configurable: true, enumerable: true, writable: true, value: data },
+              layoutData: {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value: layoutData ?? [],
+              },
+            })
+            const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
+            if (componentRequest !== undefined && componentRuntime!.progressive !== undefined) {
+              componentAnswer = await componentRuntime!.progressive(
+                route.id,
+                componentContext,
+                componentRequest,
+                nonce,
+              )
+            } else {
+              componentState = await componentRuntime!.execute(
+                route.id,
+                componentContext,
+                componentRequest,
+                nonce,
+              )
+            }
           }
           if (holeStates !== undefined) {
             // The static resolver names every boundary, leaving the dynamic ones to the holes.
@@ -2062,36 +2155,25 @@ export function createPageRequestExecutor<Env = unknown>(
           }
           // Inside the loader `try`: a header the response cannot carry is a loader error, rendered
           // by the same boundary as one.
-          responseHeaders = controls.documentHeaders()
+          const documentHeaders = controls.documentHeaders() ?? {}
+          if (
+            componentOwner &&
+            (requestHeadersWereRead(c.req) || requestHeadersWereRead(loaderRequest))
+          )
+            documentHeaders[OWNER_REQUEST_HEADER_DEPENDENCY_HEADER] = "1"
+          responseHeaders = documentHeaders
           liveCtx = ctx
         } catch (err) {
           if (componentRequest !== undefined) return componentRuntime!.failure(err)
-          if (isStatusSignal(err)) {
-            return (
-              (await renderRouteNotFound(
-                c.req,
-                c.env,
-                route,
-                c.params,
-                err,
-                run,
-                controls.personalized,
-              )) ??
-              renderStatusSignal(c.req, c.env, err, controls.personalized, leadingLayouts(run, err))
-            )
-          }
-          return renderLoaderFailure(
-            route,
-            c.req,
-            c.env,
-            c.params,
-            err,
-            controls.personalized,
-            leadingLayouts(run, err),
-          )
+          return renderRouteFailure(c.req, c.env, route, c.params, err, run, controls.personalized)
         }
-        if (componentRequest !== undefined && componentState !== undefined) {
-          const answer = componentRuntime!.response(componentState, componentRequest)
+        if (componentRequest !== undefined) {
+          const answer =
+            componentAnswer ??
+            (componentState === undefined
+              ? undefined
+              : componentRuntime!.response(componentState, componentRequest))
+          if (answer === undefined) throw new Error("component_contract")
           const headers = new Headers(answer.headers)
           for (const [name, value] of Object.entries(responseHeaders ?? {}))
             if (name !== "cache-control" && name !== "content-type" && name !== "vary")
@@ -2206,7 +2288,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let result: unknown
         try {
           if (route.middlewareIds !== undefined || localeGuarded(route)) {
-            await runMiddleware(route, actionContext, controls)
+            await runMiddleware(route, actionContext, controls, c.req)
           }
           gated = await runLayoutGates(route, actionContext, controls)
           result = await mod.action(actionContext)
@@ -2280,6 +2362,8 @@ export function createPageRequestExecutor<Env = unknown>(
             signal:
               c.signal === undefined ? c.req.signal : AbortSignal.any([c.signal, c.req.signal]),
           })
+          // The owner page's GET answers the same visitor's action, so it reads the action's locals.
+          carryRequestLocals(c.req, request)
           progressiveActionData.set(request, actionResult)
           try {
             const response = await options.rerenderOwnerGET(request, c)
@@ -2324,29 +2408,7 @@ export function createPageRequestExecutor<Env = unknown>(
           data = pageData
           responseHeaders = controls.documentHeaders()
         } catch (err) {
-          if (isStatusSignal(err)) {
-            return (
-              (await renderRouteNotFound(
-                c.req,
-                c.env,
-                route,
-                c.params,
-                err,
-                run,
-                controls.personalized,
-              )) ??
-              renderStatusSignal(c.req, c.env, err, controls.personalized, leadingLayouts(run, err))
-            )
-          }
-          return renderLoaderFailure(
-            route,
-            c.req,
-            c.env,
-            c.params,
-            err,
-            controls.personalized,
-            leadingLayouts(run, err),
-          )
+          return renderRouteFailure(c.req, c.env, route, c.params, err, run, controls.personalized)
         }
         // The re-render answers a returned redirect or status the way the page's GET does.
         if (isStatusSignal(data))
@@ -2449,7 +2511,7 @@ export function createPageRequestExecutor<Env = unknown>(
           live: NO_LIVE,
         }
         if (target.route.middlewareIds !== undefined) {
-          await runMiddleware(target.route, ctx, controls)
+          await runMiddleware(target.route, ctx, controls, c.req)
         }
         run = await runLayoutChain(target.route, ctx, controls)
         await run.pending

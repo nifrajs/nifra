@@ -905,6 +905,20 @@ export async function replayAgent<
   return runAgent(definition, input, { ...ports, model, dryRun: true }, options)
 }
 
+/** Records one evidence step of the running turn. */
+type AddStep = (
+  kind: AgentStepEvidence["kind"],
+  outcome: AgentStepEvidence["outcome"],
+  fields?: Omit<AgentStepEvidence, "seq" | "at" | "kind" | "outcome">,
+) => Promise<AgentStepEvidence>
+
+/** Saves the turn as suspended on `pending` and returns that result. */
+type Suspend<Output> = (
+  state: AgentTurnState,
+  pending: AgentPendingContinuation,
+  reason: "approval" | "budget" | "model" | "cancelled",
+) => Promise<AgentTurnResult<Output>>
+
 async function executeToolStep<OutputSchema extends StandardSchemaV1>(
   state: AgentTurnState,
   tool: AgentToolContract,
@@ -912,32 +926,22 @@ async function executeToolStep<OutputSchema extends StandardSchemaV1>(
   ports: AgentPorts,
   evidence: AgentStepEvidence[],
   responses: AgentModelResponse[],
-  add: (
-    kind: AgentStepEvidence["kind"],
-    outcome: AgentStepEvidence["outcome"],
-    fields?: Omit<AgentStepEvidence, "seq" | "at" | "kind" | "outcome">,
-  ) => Promise<AgentStepEvidence>,
+  add: AddStep,
   save: (state: AgentTurnState) => Promise<void>,
-  suspended: (
-    state: AgentTurnState,
-    pending: AgentPendingContinuation,
-    reason: "approval" | "budget" | "model" | "cancelled",
-  ) => Promise<AgentTurnResult<NonNullable<OutputSchema["~standard"]["types"]>["output"]>>,
+  suspended: Suspend<NonNullable<OutputSchema["~standard"]["types"]>["output"]>,
   effectIdOverride?: string,
 ): Promise<AgentTurnResult<NonNullable<OutputSchema["~standard"]["types"]>["output"]>> {
   const effectId = effectIdOverride ?? (ports.idFactory ?? (() => crypto.randomUUID()))()
   const toolMs = costMilliseconds(tool.cost)
-  if (
-    ports.deadline !== undefined &&
-    !canAttempt(ports.deadline, toolMs, AGENT_SETTLE_RESERVE_MS)
-  ) {
-    await add("budget", "denied", {
-      name: tool.name,
-      effectId,
-      code: "deadline_exceeded",
-    })
+  // Checked before the approval wait and again after it, which spends the same deadline.
+  const outOfTime = async () => {
+    if (ports.deadline === undefined || canAttempt(ports.deadline, toolMs, AGENT_SETTLE_RESERVE_MS))
+      return undefined
+    await add("budget", "denied", { name: tool.name, effectId, code: "deadline_exceeded" })
     return suspended(state, { kind: "budget", tool: tool.name, input, effectId }, "budget")
   }
+  const early = await outOfTime()
+  if (early !== undefined) return early
   let approval: ToolApproval | undefined
   if (tool.approval.kind !== "none") {
     if (ports.approval === undefined)
@@ -972,17 +976,8 @@ async function executeToolStep<OutputSchema extends StandardSchemaV1>(
       ...(result.status === "denied" ? { code: "approval_denied" } : {}),
     })
   }
-  if (
-    ports.deadline !== undefined &&
-    !canAttempt(ports.deadline, toolMs, AGENT_SETTLE_RESERVE_MS)
-  ) {
-    await add("budget", "denied", {
-      name: tool.name,
-      effectId,
-      code: "deadline_exceeded",
-    })
-    return suspended(state, { kind: "budget", tool: tool.name, input, effectId }, "budget")
-  }
+  const late = await outOfTime()
+  if (late !== undefined) return late
   const result = await executeTool(tool, input, {
     effectId,
     capabilities: ports.capabilities,
@@ -1021,17 +1016,9 @@ async function resumeTool<
   resume: NonNullable<AgentTurnInput["resume"]>,
   evidence: AgentStepEvidence[],
   responses: AgentModelResponse[],
-  add: (
-    kind: AgentStepEvidence["kind"],
-    outcome: AgentStepEvidence["outcome"],
-    fields?: Omit<AgentStepEvidence, "seq" | "at" | "kind" | "outcome">,
-  ) => Promise<AgentStepEvidence>,
+  add: AddStep,
   save: (state: AgentTurnState) => Promise<void>,
-  suspended: (
-    state: AgentTurnState,
-    pending: AgentPendingContinuation,
-    reason: "approval" | "budget" | "model" | "cancelled",
-  ) => Promise<AgentTurnResult<NonNullable<OutputSchema["~standard"]["types"]>["output"]>>,
+  suspended: Suspend<NonNullable<OutputSchema["~standard"]["types"]>["output"]>,
 ): Promise<AgentTurnResult<NonNullable<OutputSchema["~standard"]["types"]>["output"]>> {
   // A resume continues the step this turn suspended on - that tool, that effect, that input. The
   // continuation travels through the caller, so anything else in it is refused, not run.

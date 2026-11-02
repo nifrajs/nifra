@@ -230,6 +230,11 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifr
 
 // Each ceiling is the measured gzip size rounded up to the next 0.1 KB, tight enough that a newly
 // reachable optional subsystem fails CI. A commit that raises one states the measured cost.
+// The direct synchronous Web path for schema-free routes with one derive and one before (and at
+// most one after) improved Bun 1.4.4 app.fetch medians from 481.3 to 470.3 ns/op (-2.3%) and from
+// 503.4 to 486.9 ns/op (-3.3%). A/B used 9 fresh processes, 7 rounds of 120,000 requests, 20,000
+// warmups, rotated arms, and control B/A of +1.5% and +0.3%. The bare gzip bundle grew 39,698 ->
+// 39,861 B; the crossed caps below advance only to the next 0.1 KiB step that fits.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // onRequest + onError hook boundaries and the QUERY method: bare 36,411 -> 36,668 B, mcp 36,694 ->
   // 36,934, sse 37,287 -> 37,535 (+214 / +29 / +14 B on bare, Bun 1.4.3).
@@ -282,7 +287,55 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 42,850 -> 42,874, effect-ledger 40,468 -> 40,488, sse 39,315 -> 39,333, mcp 38,714 -> 38,732,
   // valibot 39,425 -> 39,441, typebox-t 65,416 -> 65,436, typebox-form 70,396 -> 70,416 (Bun 1.4.4);
   // only the sse and typebox-t caps are crossed.
-  "nifra-bare": 37.6,
+  // That GET/HEAD skip together with the request-locals link and t.date() below: bare 38,514 B,
+  // effect-ledger 40,554, typebox-form 72,301 (Bun 1.4.4); these three caps take the next 0.1 KiB step.
+  // A Bun request's idle-timeout control for `withIdleTimeout()`, and the per-request Bun platform
+  // built as a class: bare 38,453 -> 38,566 B, idempotency 42,850 -> 42,978, effect-ledger 40,468 ->
+  // 40,592, sse 39,315 -> 39,435, mcp 38,714 -> 38,842, valibot 39,425 -> 39,550, typebox-t 65,416 ->
+  // 65,557, typebox-form 70,396 -> 70,526 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step
+  // that fits.
+  // listen()'s `static` handler in front of Bun's table and fetch: bare 38,566 -> 38,647 B,
+  // idempotency 42,978 -> 43,069, effect-ledger 40,592 -> 40,686, sse 39,435 -> 39,521, mcp 38,842 ->
+  // 38,939, valibot 39,550 -> 39,637, typebox-t 65,557 -> 65,640, typebox-form 70,526 -> 70,614
+  // (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step that fits.
+  // The idle-timeout control and listen()'s `static` merged with all of the above: bare 38,773 B,
+  // idempotency 43,539, effect-ledger 40,790, sse 39,621, mcp 39,029, valibot 39,739, typebox-t
+  // 67,584, typebox-form 72,561 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step that fits.
+  // A plain `Date` in a JSON answer written ahead of the serializer when the first row holds one:
+  // bare 38,472 -> 38,862 B, idempotency 43,247 -> 43,629, effect-ledger 40,488 -> 40,892, sse
+  // 39,333 -> 39,722, mcp 38,732 -> 39,131, valibot 39,438 -> 39,858, typebox-t 65,436 -> 65,833,
+  // typebox-form 70,416 -> 70,797 (Bun 1.4.4); each crossed cap takes the next 0.1 KiB step.
+  // That writer reading each getter once, the accessor check and the copy-first walk: bare 38,862 ->
+  // 38,920 B, sse 39,722 -> 39,786, typebox-t 65,833 -> 65,915, typebox-form 70,797 -> 70,865
+  // (Bun 1.4.4); only these four caps are crossed.
+  // The Date writer on top of the request-locals, response-contract and t.date() work: bare 39,025 B,
+  // idempotency 43,785, effect-ledger 41,026, sse 39,892, mcp 39,297, valibot 40,018, typebox-t
+  // 67,811, typebox-form 72,778 (Bun 1.4.4); each cap takes the next 0.1 KiB step.
+  // That writer copying only what the engine tags a plain object, and lists, and sharing its Date,
+  // `__proto__` and plain-record helpers with the contract lane and canonical JSON: bare 39,025 -> 39,096
+  // B, idempotency 43,785 -> 43,853, effect-ledger 41,026 -> 41,133, sse 39,892 -> 39,970, mcp 39,297 ->
+  // 39,373, valibot 40,018 -> 40,098, typebox-t 67,811 -> 67,895, typebox-form 72,778 -> 72,836 (Bun
+  // 1.4.4); each cap crossed takes the next 0.1 KiB step.
+  // The idle-timeout control and listen()'s `static` merged with the Date writer: bare 39,297 B,
+  // idempotency 44,079, effect-ledger 41,333, sse 40,173, mcp 39,570, valibot 40,301, typebox-t
+  // 68,108, typebox-form 73,080 (Bun 1.4.4); each cap takes the next 0.1 KiB step that fits.
+  // Fused lanes for any mix of derive, before and after hooks, each single-hook phase a straight-line
+  // closure: bare 38,849 -> 39,337 B, idempotency 43,682 -> 44,163, effect-ledger 40,881 -> 41,350, sse
+  // 39,701 -> 40,189, mcp 39,111 -> 39,589, valibot 39,836 -> 40,313, typebox-t 67,692 -> 68,128,
+  // typebox-form 72,656 -> 73,081 (Bun 1.4.4). Only the bare and idempotency caps are crossed, by one
+  // 0.1 KiB step each.
+  // The several-hook stages loop over synchronous hooks, each route holds its own copy of the hook
+  // arrays, and a thrown answer whose body cannot render ends as a 500: bare 39,337 -> 39,400 B,
+  // idempotency 44,163 -> 44,244, effect-ledger 41,350 -> 41,428, sse 40,189 -> 40,266, mcp 39,589 ->
+  // 39,667, valibot 40,313 -> 40,391, typebox-t 68,128 -> 68,212 (Bun 1.4.4). The six caps below the
+  // bare row take the next 0.1 KiB step.
+  // The fused stage chain built once per hook set and shared by the routes that register the same
+  // hooks: bare 39,400 -> 39,436 B, idempotency 44,244 -> 44,289, effect-ledger 41,428 -> 41,501, sse
+  // 40,266 -> 40,312, mcp 39,667 -> 39,707, valibot 40,391 -> 40,443, typebox-t 68,212 -> 68,311,
+  // typebox-form to 73,258 (Bun 1.4.4). The caps crossed take the next 0.1 KiB step.
+  // Deno's opt-in Host validation lives in shared core measured by this Bun build; 40,142 B needs
+  // the next 0.1 KiB cap.
+  "nifra-bare": 39.3,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -291,22 +344,38 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // valibot 37,697 -> 37,782 (Bun 1.4.3).
   // A Host sent twice refused on Bun: idempotency 41,752 -> 41,794 B, bare 37,308 -> 37,349,
   // typebox-form 68,149 -> 68,189 (Bun 1.4.3); only the idempotency cap is crossed.
+  // Request locals carried across the kernel's request copies (mount strip, target resolution, the
+  // transport and idempotency lanes): bare 38,453 -> 38,495 B, idempotency 42,850 -> 42,915, sse
+  // 39,315 -> 39,370, typebox-t 65,416 -> 65,496, typebox-form 70,396 -> 70,452 (Bun 1.4.4). Only
+  // the four caps crossed take the next 0.1 KiB step.
   // Core's shared canonical JSON, which refuses a value JSON cannot carry instead of hashing it as
   // something else: idempotency 42,874 -> 42,982 B (Bun 1.4.4); only the idempotency cap is crossed.
   // A fingerprint keeps the written text of a JSON number a double would round, behind a sampled scan
   // 3-7x cheaper than a regex over the body: idempotency 42,982 -> 43,223 B (Bun 1.4.4); only the
   // idempotency cap is crossed, by three 0.1 KiB steps.
-  "nifra-idempotency": 42.3,
-  "nifra-effect-ledger": 39.6,
-  "nifra-mcp": 37.9,
+  // A route's context carries its response contract, so a contracted `c.json` reply is written once
+  // for its bytes and its check: bare 38,502 -> 38,543 B, idempotency 43,293 -> 43,328, mcp 38,773 ->
+  // 38,816, valibot 39,475 -> 39,512 (Bun 1.4.4). The two caps crossed take the next 0.1 KiB step.
+  // A request's t.date() strings handed on as Dates by a schema-directed decoder, and date-time and
+  // date checked against the calendar: typebox-t 65,496 -> 67,312 B, typebox-form 70,452 -> 72,277
+  // (Bun 1.4.4). Each cap takes the next 0.1 KiB step.
+  // Checking Object.prototype-named schema keys through an own-only view adds about 0.3 KiB to the
+  // TypeBox validator, based on the measured typebox-t delta on its original Bun 1.4.4 capture.
+  // The bounded JSON output preflight is reachable from the typebox lane: typebox-t 67,312 -> 69,159 B
+  // (Bun 1.4.4), crossing the next 0.1 KiB cap.
+  // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
+  "nifra-idempotency": 44.1,
+  "nifra-effect-ledger": 41.3,
+  "nifra-mcp": 39.6,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 38.5,
-  "nifra-valibot": 38.6,
-  // A key named after an Object.prototype member is checked on an own view of the value:
-  // typebox-t 65,436 -> 65,736 B, typebox-form 70,416 -> 70,694 B (Bun 1.4.4).
-  "nifra-typebox-t": 64.2,
+  "nifra-sse": 40.2,
+  "nifra-valibot": 40.3,
+  "nifra-typebox-t": 67.9,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
-  "nifra-typebox-form": 69.1,
+  // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
+  // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only
+  // this cap is crossed. A GET/HEAD native slot skipping the framing mark: typebox-form 74,037 B.
+  "nifra-typebox-form": 72.4,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
@@ -333,8 +402,18 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // `identityChanged()` and on a new identity epoch cookie, read once per synchronous run because a
   // `document.cookie` read costs about 2.4 us in Chromium: 20,228 -> 20,519 B (Bun 1.4.4). Handles
   // and fetchers a page kept check the epoch on every read, and the page on screen reloads when the
-  // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4).
-  "nifra-web-client": 20.4,
+  // visitor changes, a navigation in flight starting again: 20,519 -> 20,791 B (Bun 1.4.4). A plain
+  // `Date` in the plain transport codec written ahead of the serializer: 20,791 -> 21,157 B, each getter
+  // there read once: 21,218 B (Bun 1.4.4). A query fetch or fetcher load a visitor change catches loading
+  // again inside the call, a rotating epoch costing bounded loads, and `documentLoad` when a load over the
+  // previous visitor's page fails: 21,218 -> 21,579 B (Bun 1.4.4). That codec's Date copy taking only
+  // what the engine tags a plain object, and lists: 21,579 -> 21,668 B (Bun 1.4.4). A route data request's
+  // headers built by one function the live client shares: 21,699 -> 21,712 B (Bun 1.4.4). A mutation
+  // that an identity change cancels in every tab, handing its function and callbacks an abort signal,
+  // and `dehydrate` taking a filter: 21,712 -> 22,087 B (Bun 1.4.4). `href` and `rawHref`, a route pattern
+  // filled with encoded params and a path checked as same-origin: 22,114 -> 23,476 B (Bun 1.4.4).
+  // Route slots add 4,177 B gzip to the 23,476 B href/rawHref baseline (Bun 1.4.4).
+  "nifra-web-client": 27.1,
   "nifra-i18n": 4.3,
 }
 

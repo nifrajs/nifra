@@ -1,4 +1,5 @@
 import { describe, expect, setSystemTime, spyOn, test } from "bun:test"
+import { rawHref } from "../src/href.ts"
 import { identityChanged } from "../src/identity.ts"
 import {
   createClientRouter,
@@ -7,6 +8,7 @@ import {
   type Submission,
 } from "../src/index.ts"
 import { setPresenter } from "../src/internal/present.ts"
+import { parseRouteSlots, setRouteSlot, withRouteSlots } from "../src/route-slots.ts"
 import { redirectOf } from "../src/router.ts"
 
 describe("createMatcher", () => {
@@ -138,6 +140,74 @@ describe("createClientRouter", () => {
     r.subscribe(() => seen.push(r.snapshot().pending))
     await r.navigate("/users/1")
     expect(seen).toEqual([true, false])
+  })
+
+  test("slot-only navigation preserves siblings and skips the page loader", async () => {
+    const slotPatterns = [
+      { routeId: "dashboard", pattern: "/dashboard" },
+      { routeId: "user", pattern: "/users/:id" },
+      { routeId: "activity", pattern: "/activity" },
+    ]
+    const initial: RouterState = {
+      routeId: "dashboard",
+      params: {},
+      path: "/dashboard?tab=overview",
+      data: { dashboard: true },
+      pending: false,
+    }
+    let pageLoads = 0
+    const loadedModules: string[] = []
+    const router = createClientRouter({
+      patterns: slotPatterns,
+      initial,
+      loadModule: async (routeId, path) => {
+        loadedModules.push(`${routeId}:${path}`)
+      },
+      routeHooks: {
+        dashboard: { routeSlots: { inspector: ["/users/:id"], activity: ["/activity"] } },
+      },
+      fetchData: async () => {
+        pageLoads++
+        return { dashboard: true }
+      },
+    })
+    expect(router.routeSlotsFor("dashboard")).toEqual({
+      inspector: ["/users/:id"],
+      activity: ["/activity"],
+    })
+    await router.loadModule("user", "/users/7")
+    expect(loadedModules).toEqual(["user:/users/7"])
+
+    const opened = withRouteSlots(initial.path, {
+      inspector: "/users/7",
+      activity: "/activity",
+    })
+    await router.navigate(opened)
+    expect(router.snapshot().path).toBe(opened)
+    expect(router.snapshot().data).toBe(initial.data)
+    expect(pageLoads).toBe(0)
+
+    const changed = setRouteSlot(opened, "inspector", "/users/8")
+    await router.navigate(changed)
+    expect(parseRouteSlots(router.snapshot().path)).toEqual({
+      activity: "/activity",
+      inspector: "/users/8",
+    })
+    expect(pageLoads).toBe(0)
+
+    const closed = setRouteSlot(changed, "inspector", null)
+    await router.navigate(closed)
+    expect(parseRouteSlots(router.snapshot().path)).toEqual({ activity: "/activity" })
+    expect(pageLoads).toBe(0)
+
+    await expect(
+      router.navigate(rawHref("/dashboard?tab=changed&slot.unknown=%2Fusers%2F7")),
+    ).rejects.toMatchObject({ code: "unknown_slot" })
+    await expect(
+      router.navigate(rawHref("/dashboard?tab=changed&slot.inspector=%2Fnot-a-route")),
+    ).rejects.toMatchObject({ code: "unknown_route" })
+    expect(router.snapshot().path).toBe(closed)
+    expect(pageLoads).toBe(0)
   })
 
   test("navigate publishes the target as pendingPath while in flight, cleared when settled", async () => {
@@ -1152,7 +1222,7 @@ describe("createClientRouter", () => {
     }
     const IDLE = { pending: false, data: undefined }
 
-    test("identityChanged() returns every fetcher to idle and tells it, and drops a load in flight", async () => {
+    test("identityChanged() returns every fetcher to idle and tells it, and a load in flight loads again", async () => {
       const state = { whoami: "alice", version: 0 }
       let release = (): void => {}
       const held = new Promise<void>((resolve) => {
@@ -1175,11 +1245,15 @@ describe("createClientRouter", () => {
         told++
       })
       const loading = r.fetcher("late").load("/users/8")
+      state.whoami = "bob"
       identityChanged()
       expect([r.fetcher("cart").snapshot(), told]).toEqual([IDLE, 1])
       release()
       await loading
-      expect(r.fetcher("late").snapshot()).toEqual(IDLE)
+      expect(r.fetcher("late").snapshot()).toEqual({
+        pending: false,
+        data: { id: "8", whoami: "bob", version: 0 },
+      })
     })
 
     test("a new identity epoch returns fetchers to idle on the next read, and tells them after it", async () => {
@@ -1224,6 +1298,30 @@ describe("createClientRouter", () => {
           actionData: { ok: true },
         })
       })
+    })
+
+    test("a fetcher submit keeps its answer, and stays pending, when the visitor changes during its POST", async () => {
+      const r = routerFor({ whoami: "alice", version: 0 })
+      const cart = r.fetcher("cart")
+      await cart.load("/users/7")
+      let answer = (_response: Response): void => {}
+      const realFetch = globalThis.fetch
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router only posts the action through it here.
+      globalThis.fetch = ((_url: string, _init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          answer = resolve
+        })) as typeof fetch
+      try {
+        const posting = cart.submit("/cart", new URLSearchParams())
+        await settled()
+        identityChanged()
+        expect(cart.snapshot()).toEqual({ pending: true, data: undefined })
+        answer(Response.json({ ok: true }))
+        await posting
+      } finally {
+        globalThis.fetch = realFetch
+      }
+      expect(cart.snapshot()).toEqual({ pending: false, data: undefined, actionData: { ok: true } })
     })
 
     const settled = () => new Promise((resolve) => setImmediate(resolve))
@@ -1515,7 +1613,7 @@ describe("createClientRouter", () => {
       ])
     })
 
-    test("a server that rotates the epoch on every response costs a load one more, never a loop", async () => {
+    test("a server that rotates the epoch on every response costs a bounded number of loads, never a loop", async () => {
       await withEpoch(async (rotate) => {
         const state = { whoami: "alice", version: 0 }
         let rotations = 0
@@ -1539,10 +1637,11 @@ describe("createClientRouter", () => {
         await render()
         expect(fetches).toBe(2)
 
-        // A reload for a visitor change takes the change its own response makes as its own.
+        // A reload for a visitor change loads once more for the change its own response makes, and
+        // takes the next as its own.
         identityChanged()
         await render()
-        expect([fetches, r.snapshot().pending]).toEqual([3, false])
+        expect([fetches, r.snapshot().pending]).toEqual([4, false])
       })
     })
   })

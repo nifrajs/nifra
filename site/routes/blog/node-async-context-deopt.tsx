@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { CodeBlock } from "../../shared/highlight"
 import { postMeta } from "../../shared/meta"
 
@@ -164,7 +165,7 @@ export default function NodeAsyncContextDeopt() {
         startup, the experiment costs one line and a before-and-after profile. Look for{" "}
         <code>async_context_frame</code> frames and for self time in{" "}
         <code>processTicksAndRejections</code>. The method is in the{" "}
-        <a href="/benchmarks">benchmark notes</a>, and the rig is in the repository.
+        <a href={href({ to: "/benchmarks" })}>benchmark notes</a>, and the rig is in the repository.
       </p>
     </article>
   )

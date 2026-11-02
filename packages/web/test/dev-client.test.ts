@@ -9,20 +9,11 @@ import {
   parseClientBatch,
   scriptHash,
 } from "../src/dev-client.ts"
+import { streamOf } from "./streams.ts"
 
 const TAG = "<script>x</script>"
 const ORIGIN = "http://127.0.0.1:3000"
 const config = { ingestPath: "/__nifra/client-event", pageToken: "t".repeat(43) }
-
-const streamOf = (...chunks: string[]): ReadableStream<Uint8Array> => {
-  const encoder = new TextEncoder()
-  return new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
-      controller.close()
-    },
-  })
-}
 
 const bytesOf = async (stream: ReadableStream<Uint8Array>): Promise<Uint8Array> =>
   new Uint8Array(await new Response(stream).arrayBuffer())

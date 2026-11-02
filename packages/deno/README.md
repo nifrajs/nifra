@@ -24,9 +24,39 @@ a Bun-`listen()`-style graceful `stop()` and opt-in signals.
 ## Graceful shutdown on signals
 
 ```ts
-await serve(app, { port: 3000, signals: true }) // SIGTERM/SIGINT → graceful stop()
-await serve(app, { port: 3000, signals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
+await serve(app, { port: 3000, gracefulSignals: true }) // SIGTERM/SIGINT → graceful stop()
+await serve(app, { port: 3000, gracefulSignals: { drainMs: 8_000 } }) // the same, with an 8 s drain window
 ```
+
+## Files ahead of the app
+
+```ts
+await serve(app, {
+  port: 3000,
+  static: (req) =>
+    new URL(req.url).pathname === "/robots.txt" ? new Response("User-agent: *\n") : undefined,
+})
+```
+
+`static` sees every request before the app does, so a file it answers wins over any route at the
+same path. It returns a response, or `undefined` (or a promise of one) to let the app route the
+request. No hook of the app runs for a request it answers, and a throw answers a plain `500`.
+
+`serveStatic` builds one for files on disk, read with Deno's own file API:
+
+```ts
+import { serve, serveStatic } from "@nifrajs/deno"
+
+await serve(app, { port: 3000, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) })
+```
+
+It takes one mount or a list, with the same options as Bun's `@nifrajs/core/serve-static` and
+`@nifrajs/node`'s: `dir`, `prefix` (default `/assets`), `immutable`, `hashedFiles` (paths, RegExps or
+a predicate), `cacheControl`, `files`, `allow`, `headers`, `dotfiles` and `fallthrough`. A path
+under a mount's prefix that it cannot serve answers 404 (400 malformed, 403 traversing) unless the
+mount sets `fallthrough: true`, which hands it to the next mount and then the app. Run Deno with
+`--allow-read` for the served directories. The server that `nifra build --target deno` emits serves
+its client bundle and public files this way.
 
 ## Client disconnect and `c.req.signal`
 

@@ -5,20 +5,12 @@ import {
   type Manifest,
   notFound,
   type RenderAdapter,
+  rawHref,
   redirect,
   statusPage,
 } from "../src/index.ts"
 import { DATA_HEADER, STATUS_HEADER } from "../src/router.ts"
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
+import { streamOf } from "./streams.ts"
 
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>
@@ -154,7 +146,7 @@ test("every pre-existing throw keeps its exact behaviour", async () => {
   const red = createWebApp({
     adapter: stub,
     manifest: manifestWith(() => {
-      throw redirect("/login")
+      throw redirect(rawHref("/login"))
     }),
     clientEntry: "/c.js",
   })

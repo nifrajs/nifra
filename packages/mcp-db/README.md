@@ -79,10 +79,8 @@ Each layer refuses on its own, in this order:
 
 1. **Host.** Only loopback, `*.localhost` and unix sockets connect unless `allowHosts` names the host.
    URL parameters other than host, port, user, password, database and `sslmode` are ignored.
-2. **Tokenizer.** One SELECT, WITH, VALUES or TABLE statement; row-locking clauses, unicode-escaped
-   identifiers, functions that reach outside a query (server files, `dblink`, `set_config`, advisory
-   locks, `pg_notify`, `nextval`, backend signals) and functions that run SQL from a string the plan
-   check cannot see (`query_to_xml`, `ts_stat`, `ts_rewrite`, `crosstab`, `connectby`) are refused.
+2. **Tokenizer.** One SELECT, WITH, VALUES or TABLE statement; row-locking clauses and
+   unicode-escaped identifiers are refused.
 3. **Read-only transaction.** `BEGIN READ ONLY` with `statement_timeout`, `lock_timeout` and
    `idle_in_transaction_session_timeout` set to `timeoutMs`, always rolled back. Sessions also start
    with `default_transaction_read_only = on`.
@@ -90,21 +88,50 @@ Each layer refuses on its own, in this order:
    role that may execute server-file functions is refused (`NIFRA_DB_SUPERUSER`). A role that can use
    dblink, postgres_fdw, file_fdw or an untrusted language is refused (`NIFRA_DB_EXTENSION`) unless
    `allowExtensions` names it.
-5. **Cursor.** The statement runs as one extended-protocol `DECLARE ... NO SCROLL CURSOR`, which the
+5. **Grant gate.** The role itself must be unable to read what the declaration hides: a column
+   `redaction.column` matches, an `exclude`d table or one inheriting from it, and a view or
+   materialized view that reads any of those or reaches outside `schemas`. A role that can is refused
+   (`NIFRA_DB_ROLE_GRANTS`), so the database's privileges refuse such a read even where no plan shows
+   it: inside a function's body, or from the rows a materialized view stores. Nor may the role execute
+   a SECURITY DEFINER function, or an aggregate over one, unless `allowFunctions` names it: such a
+   function reads with its owner's rights wherever a query reaches it, through an operator, a cast, a
+   view folded at plan time or another function's body, and only
+   the EXECUTE privilege is checked on every one of those paths. Either refusal names each grantee the
+   role holds the privilege through.
+6. **Function allowlist.** Every function the statement names, and every one its plan calls (inside
+   views too), is looked up in `pg_proc`, each overload the name can resolve to. A built-in or
+   extension function must be immutable or stable and parallel safe (a few value-only ones such as
+   `random()`, `clock_timestamp()` and `pg_total_relation_size()` pass as well); one the database
+   defines must be immutable or stable; none may be SECURITY DEFINER. Anything else is refused
+   (`NIFRA_DB_FUNCTION_REFUSED`) unless `allowFunctions` names it, so a function added in a later
+   Postgres release is refused until it is known to be safe. The names are checked before the server
+   plans the statement, since planning already runs immutable functions on constants.
+7. **Cursor.** The statement runs as one extended-protocol `DECLARE ... NO SCROLL CURSOR`, which the
    server accepts only for SELECT and VALUES and refuses for a data-modifying WITH, then one `FETCH`
    of `maxRows + 1` rows.
-6. **Plan scope.** Every relation in the `EXPLAIN (VERBOSE)` plan, every table it inherits from, and
+8. **Plan scope.** Every relation in the `EXPLAIN (VERBOSE)` plan, every table it inherits from, and
    every `pg_catalog` function scanned in FROM must sit in `schemas` (default `public`) and outside
    `exclude`. With `redaction`, a column `redaction.column` matches that any plan expression uses
    (output, filter, join, sort or index condition), or a whole row holding one, is refused
    (`NIFRA_DB_COLUMN_REFUSED`). A plan names a scan's columns by the table's column alias list
    (`FROM users AS t(a, b)`), so while any relation the query reads holds a matching column, a query
-   that gives a table one is refused as well.
+   that gives a table one is refused as well. This is the second line behind the grant gate.
 
 `explainPostgres` returns the plan (with `analyze`, executed inside the same transaction),
 `readPostgresSchema` reads tables, columns, keys and indexes from `pg_catalog`, and `postgresRoleSql`
-writes the SQL for a read-only role (`GRANT SELECT` on each allowed schema, with a `REVOKE` for each
-excluded table and its partitions) without running it.
+writes the SQL for the role the grant gate accepts, without running it: `GRANT USAGE` on each allowed
+schema and `GRANT SELECT` on all tables in each allowed schema; a `REVOKE` for each excluded table,
+its partitions and children, and each view or materialized view that reads hidden data; and, for a
+table with a masked column (pass the same `redaction`), a `REVOKE` followed by a column-level `GRANT`
+of its other columns. Run it again after adding a table or view: default privileges grant every
+column of a new one. A privilege reaches a role through PUBLIC, a grant to the role itself, or a role
+whose privileges it has, and a `REVOKE` from one leaves the others. So a grant that would still
+expose hidden data, to PUBLIC or (for a role that exists) to a role it inherits from, is listed in
+comments with its `REVOKE`, and so is each SECURITY DEFINER function the role may execute, grantee by
+grantee (pass the same `allowFunctions` to skip the ones you trust). Only a grant to the role itself
+is revoked by a statement; the rest are comments because they reach other roles. The grant gate's
+refusal names the same grantees. A query that names a column the role may not read is
+refused with `NIFRA_DB_COLUMN_REFUSED`, naming the columns it may.
 
 The live tests run against a throwaway server: set `NIFRA_TEST_POSTGRES_URL` to its superuser URL.
 

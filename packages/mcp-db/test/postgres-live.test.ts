@@ -12,11 +12,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { SQL } from "bun"
 import { isDbRefusal } from "../src/engine.ts"
 import {
+  explainThroughServer,
   extended,
   fetchThroughCursor,
   inReadOnlyTransaction,
   records,
 } from "../src/internal/pg-exec.ts"
+import { checkScope } from "../src/internal/pg-scope.ts"
 import {
   connectPostgres,
   explainPostgres,
@@ -54,9 +56,11 @@ const ROLE = {
   files: `nifra_live_files_${run}`,
   fileFunction: `nifra_live_filefn_${run}`,
   generated: `nifra_live_generated_${run}`,
+  granted: `nifra_live_granted_${run}`,
+  group: `nifra_live_group_${run}`,
 }
 const TIMEOUT_MS = 5_000
-const SCOPE = { schemas: ["public"], exclude: ["secrets", "audit"] }
+const SCOPE = { schemas: ["public"], exclude: ["secrets", "audit", "remote_secrets"] }
 const OPTIONS: PostgresQueryOptions = {
   ...SCOPE,
   timeoutMs: TIMEOUT_MS,
@@ -65,6 +69,9 @@ const OPTIONS: PostgresQueryOptions = {
   // dblink is installed and PUBLIC may execute it; the extension gate has its own test below.
   allowExtensions: ["dblink"],
 }
+const masked = (name: string) => name === "password_hash"
+const LONG_NAME = `volatile_${"x".repeat(54)}`
+const MASKED: PostgresQueryOptions = { ...OPTIONS, redaction: { column: masked } }
 
 let admin: PostgresTarget
 let hasDblink = false
@@ -82,6 +89,15 @@ function rawClient(database: string): SQL {
   }
   if (admin.password !== undefined) options.password = admin.password
   return new SQL(options)
+}
+
+async function asOwner(statement: string): Promise<void> {
+  const db = rawClient(DB)
+  try {
+    await db.unsafe(statement)
+  } finally {
+    await db.close()
+  }
 }
 
 /** A read-only engine client as `role` (the admin when omitted). */
@@ -161,19 +177,60 @@ describe.skipIf(SKIP)(SUITE, () => {
         CREATE TABLE users (id serial PRIMARY KEY, email text, password_hash text, note text);
         CREATE TABLE secrets (id serial PRIMARY KEY, value text);
         CREATE TABLE child_secret (extra int) INHERITS (secrets);
+        -- Inheritance two levels down from an excluded table, and a chain beside it that hides nothing.
+        CREATE TABLE grand_secret (deeper int) INHERITS (child_secret);
+        CREATE TABLE base_open (x int);
+        CREATE TABLE kid_open (y int) INHERITS (base_open);
         CREATE VIEW secret_view AS SELECT * FROM secrets;
         CREATE VIEW order_summary AS SELECT status, count(*) AS n FROM orders GROUP BY status;
         CREATE TABLE audit (id int, at date NOT NULL) PARTITION BY RANGE (at);
         CREATE TABLE audit_2026 PARTITION OF audit FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
         CREATE INDEX orders_status ON orders (status);
+        CREATE FOREIGN DATA WRAPPER nowhere;
+        CREATE SERVER nowhere FOREIGN DATA WRAPPER nowhere;
+        CREATE FOREIGN TABLE remote_secrets (value text) SERVER nowhere;
         CREATE PROCEDURE p() LANGUAGE sql AS $$ SELECT 1 $$;
+        -- PUBLIC may execute both, and neither runs with an owner's rights where a query reaches it: no
+        -- expression can call a procedure, and the aggregate's step function is no definer.
+        CREATE PROCEDURE definer_proc() LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+        CREATE AGGREGATE plain_sum(int) (SFUNC = int4pl, STYPE = int);
+        CREATE FUNCTION owner_hash(int) RETURNS text LANGUAGE sql STABLE SECURITY DEFINER
+          AS $$ SELECT password_hash FROM users WHERE id = $1 $$;
+        CREATE FUNCTION bump() RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT 1 $$;
+        CREATE FUNCTION ${LONG_NAME}() RETURNS int LANGUAGE sql VOLATILE AS $$ SELECT 1 $$;
+        CREATE FUNCTION shout(text) RETURNS text LANGUAGE plpgsql STABLE AS $$ BEGIN RETURN upper($1); END $$;
+        CREATE VIEW hash_lookup AS SELECT id, owner_hash(id::int) AS h FROM orders;
+        -- SECURITY DEFINER code a query reaches without naming it.
+        CREATE FUNCTION folded_secret(int) RETURNS text LANGUAGE sql IMMUTABLE SECURITY DEFINER
+          AS $$ SELECT value FROM secrets LIMIT 1 $$;
+        CREATE VIEW folded_view AS SELECT folded_secret(1) AS s;
+        CREATE FUNCTION op_secret(int, int) RETURNS text LANGUAGE sql STABLE SECURITY DEFINER
+          AS $$ SELECT value FROM secrets LIMIT 1 $$;
+        CREATE OPERATOR ### (LEFTARG = int, RIGHTARG = int, FUNCTION = op_secret);
+        CREATE TYPE boxed AS (a int);
+        CREATE FUNCTION boxed_text(boxed) RETURNS text LANGUAGE sql STABLE SECURITY DEFINER
+          AS $$ SELECT value FROM secrets LIMIT 1 $$;
+        CREATE CAST (boxed AS text) WITH FUNCTION boxed_text(boxed);
+        CREATE FUNCTION secret_step(text, int) RETURNS text LANGUAGE sql STABLE SECURITY DEFINER
+          AS $$ SELECT value FROM secrets LIMIT 1 $$;
+        CREATE AGGREGATE secret_agg(int) (SFUNC = secret_step, STYPE = text);
+        CREATE FUNCTION calls_folded() RETURNS text LANGUAGE sql STABLE AS $$ SELECT folded_secret(1) $$;
+        CREATE FUNCTION calls_agg() RETURNS text LANGUAGE sql STABLE
+          AS $$ SELECT secret_agg(x) FROM generate_series(1, 2) AS g(x) $$;
+        REVOKE EXECUTE ON FUNCTION owner_hash(int), folded_secret(int), op_secret(int, int),
+          boxed_text(boxed), secret_step(text, int), secret_agg(int) FROM PUBLIC;
         CREATE SCHEMA private;
         CREATE TABLE private.notes (id int);
+        -- Namesakes of public functions, off the search path and out of scope.
+        CREATE FUNCTION private.shout(text) RETURNS text LANGUAGE sql VOLATILE AS $$ SELECT $1 $$;
+        CREATE FUNCTION private.folded_secret(int) RETURNS text LANGUAGE sql STABLE AS $$ SELECT 'decoy' $$;
         INSERT INTO orders (status, total, blob) VALUES ('paid', 9007199254740993, '\\x0102'), ('open', 5, NULL);
         INSERT INTO users (email, password_hash, note)
           VALUES ('a@example.com', 'hash-value', 'token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXZhbHVl');
         INSERT INTO secrets (value) VALUES ('top secret');
         INSERT INTO audit VALUES (1, '2026-05-01');
+        CREATE MATERIALIZED VIEW secret_copy AS SELECT value FROM secrets;
+        CREATE MATERIALIZED VIEW hash_copy AS SELECT id, password_hash AS ph FROM users;
         ANALYZE;
       `)
       if (serverVersion < 140000) {
@@ -188,6 +245,23 @@ describe.skipIf(SKIP)(SUITE, () => {
       }
     } finally {
       await db.close()
+    }
+    // ROLE.granted holds exactly the grants `nifra db role` writes for the masked declaration.
+    const role = await postgresRoleSql(engineClient(), {
+      ...SCOPE,
+      timeoutMs: TIMEOUT_MS,
+      role: ROLE.granted,
+      redaction: { column: masked },
+    })
+    if (isDbRefusal(role)) throw new Error(role.message)
+    const granting = rawClient(DB)
+    try {
+      for (const statement of role.statements) {
+        if (statement.startsWith("--") || statement.startsWith("CREATE ROLE")) continue
+        await granting.unsafe(statement)
+      }
+    } finally {
+      await granting.close()
     }
   })
 
@@ -284,7 +358,7 @@ describe.skipIf(SKIP)(SUITE, () => {
   })
 
   test("the hostile corpus is refused with the expected code through every layer", async () => {
-    const client = engineClient(ROLE.reader)
+    const client = engineClient(ROLE.granted)
     const outcomes: Record<string, string | undefined> = {}
     const expected: Record<string, string | undefined> = {}
     for (const entry of HOSTILE_CORPUS) {
@@ -297,7 +371,7 @@ describe.skipIf(SKIP)(SUITE, () => {
     expect(count?.n).toBe(2)
   })
 
-  test("below the tokenizer: what the server alone refuses, and what only the denylist stops", async () => {
+  test("below the gates: what the server alone refuses, and what only the function allowlist stops", async () => {
     const su = engineClient()
     const reader = engineClient(ROLE.reader)
     const refusedBySuperuserServer = [
@@ -319,7 +393,7 @@ describe.skipIf(SKIP)(SUITE, () => {
         outcome: { ran: false },
       })
     }
-    // A superuser's read-only transaction still runs these: the tokenizer's denylist is what stops them.
+    // A superuser's read-only transaction still runs these: the function allowlist is what stops them.
     const ranForSuperuser = [
       "SELECT set_config('role', 'postgres', true)",
       "SELECT pg_read_file('PG_VERSION')",
@@ -330,8 +404,13 @@ describe.skipIf(SKIP)(SUITE, () => {
       "SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', value) FROM secrets')",
       "SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, plainto_tsquery(value) FROM secrets')",
     ]
+    const granted = engineClient(ROLE.granted)
     for (const sql of ranForSuperuser) {
       expect({ sql, outcome: await serverOnly(su, sql) }).toEqual({ sql, outcome: { ran: true } })
+      expect({ sql, code: code(await queryPostgres(granted, sql, OPTIONS)) }).toEqual({
+        sql,
+        code: "NIFRA_DB_FUNCTION_REFUSED",
+      })
     }
     // A non-superuser role is refused most of them by privileges, but not locks or notifications.
     const readerDenied = [
@@ -360,7 +439,7 @@ describe.skipIf(SKIP)(SUITE, () => {
     }
   })
 
-  test("dblink_exec writes another database from a read-only superuser session; the denylist refuses it", async () => {
+  test("dblink_exec writes another database from a read-only superuser session; the allowlist refuses it", async () => {
     if (!hasDblink) {
       console.info("[mcp-db live] dblink is not available on this server: dblink checks skipped")
       return
@@ -378,13 +457,17 @@ describe.skipIf(SKIP)(SUITE, () => {
     const reader = engineClient(ROLE.reader)
     const readerCall = await serverOnly(reader, call)
     expect(readerCall).toMatchObject({ ran: false, state: "2F003" })
-    expect(code(await queryPostgres(reader, call, OPTIONS))).toBe("NIFRA_DB_FUNCTION_REFUSED")
+    // Judged as an extension's function, which must be parallel safe as well as non-volatile.
+    const refused = await queryPostgres(engineClient(ROLE.granted), call, OPTIONS)
+    expect(isDbRefusal(refused) ? refused.message : "").toBe(
+      "the query calls public.dblink_exec(): it is volatile, so it can act outside the query (locks, settings, sequences, notifications, files, other sessions or another database)",
+    )
   })
 
-  test("pg_sleep past timeoutMs is cancelled by the server's statement_timeout", async () => {
-    const client = engineClient(ROLE.reader, 1_000)
+  test("a query past timeoutMs is cancelled by the server's statement_timeout", async () => {
+    const client = engineClient(ROLE.granted, 1_000)
     const started = performance.now()
-    const result = await queryPostgres(client, "SELECT pg_sleep(10)", {
+    const result = await queryPostgres(client, "SELECT count(*) FROM generate_series(1, 1e11)", {
       ...OPTIONS,
       timeoutMs: 1_000,
     })
@@ -427,11 +510,13 @@ describe.skipIf(SKIP)(SUITE, () => {
       code: "NIFRA_DB_EXTENSION",
       message: expect.stringContaining("dblink"),
     })
-    expect(code(await queryPostgres(reader, "SELECT 1", OPTIONS))).toBeUndefined()
+    expect(
+      code(await queryPostgres(engineClient(ROLE.granted), "SELECT 1", OPTIONS)),
+    ).toBeUndefined()
   })
 
-  test("a pg_read_all_data role queries: duplicate names, int8 beyond 2^53, bytes, dates, redaction", async () => {
-    const reader = engineClient(ROLE.reader)
+  test("the granted role queries: duplicate names, int8 beyond 2^53, bytes, dates, redaction", async () => {
+    const reader = engineClient(ROLE.granted)
     const rows = await queryPostgres(
       reader,
       "SELECT o.id, o.id, o.total, o.blob, o.placed, 'shown' AS password_hash, u.note FROM orders o CROSS JOIN users u ORDER BY o.id;",
@@ -461,74 +546,365 @@ describe.skipIf(SKIP)(SUITE, () => {
     expect(view).toMatchObject({ columns: ["status", "n"], rowCount: 2 })
   })
 
-  test("a masked column is refused wherever the plan uses it, and only then", async () => {
-    const reader = engineClient(ROLE.reader)
-    const masked = { ...OPTIONS, redaction: { column: (name: string) => name === "password_hash" } }
-    for (const sql of [
-      "SELECT password_hash FROM users",
-      "SELECT password_hash AS p FROM users",
-      "SELECT upper(u.password_hash) FROM users u",
-      "SELECT row_to_json(u) FROM users u",
-      "SELECT u::text FROM users u",
-      "SELECT id FROM users WHERE password_hash LIKE 'h%'",
-      "SELECT string_agg(password_hash, ',') FROM users",
-      "SELECT * FROM users",
-      "SELECT (SELECT password_hash FROM users LIMIT 1)",
-      "WITH c AS MATERIALIZED (SELECT password_hash AS q FROM users) SELECT q FROM c",
-      "SELECT o.id FROM orders o JOIN users u ON u.password_hash = 'x'",
-      "SELECT note FROM users UNION ALL SELECT password_hash FROM users",
-      "SELECT id FROM users ORDER BY password_hash LIMIT 1",
-      // A table alias list renames columns in the plan, so it can hand password_hash another's name.
-      "SELECT c FROM users AS t(a, b, c)",
-      "SELECT id FROM users AS t(a, b, id)",
-      "SELECT t.* FROM users t(a, b, c)",
-      "SELECT 1 FROM users t(a, b, c) WHERE c LIKE 'h%'",
-    ]) {
-      expect({ sql, code: code(await queryPostgres(reader, sql, masked)) }).toEqual({
+  const MASKED_READS = [
+    "SELECT password_hash FROM users",
+    "SELECT password_hash AS p FROM users",
+    "SELECT upper(u.password_hash) FROM users u",
+    "SELECT row_to_json(u) FROM users u",
+    "SELECT u::text FROM users u",
+    "SELECT id FROM users WHERE password_hash LIKE 'h%'",
+    "SELECT string_agg(password_hash, ',') FROM users",
+    "SELECT * FROM users",
+    "SELECT (SELECT password_hash FROM users LIMIT 1)",
+    "WITH c AS MATERIALIZED (SELECT password_hash AS q FROM users) SELECT q FROM c",
+    "SELECT o.id FROM orders o JOIN users u ON u.password_hash = 'x'",
+    "SELECT note FROM users UNION ALL SELECT password_hash FROM users",
+    "SELECT id FROM users ORDER BY password_hash LIMIT 1",
+    // A table alias list renames columns in the plan, so it can hand password_hash another's name.
+    "SELECT c FROM users AS t(a, b, c)",
+    "SELECT id FROM users AS t(a, b, id)",
+    "SELECT t.* FROM users t(a, b, c)",
+    "SELECT 1 FROM users t(a, b, c) WHERE c LIKE 'h%'",
+  ]
+  const UNMASKED_READS = [
+    "SELECT count(*) FROM users",
+    "SELECT note, count(*) FROM users GROUP BY note",
+    "SELECT o.id FROM orders o CROSS JOIN users u",
+    "SELECT note FROM users WHERE note IS NOT NULL",
+    "SELECT s FROM orders AS o(i, s)",
+    "SELECT n FROM generate_series(1, 2) AS g(n) CROSS JOIN users u",
+  ]
+
+  test("a masked column: the granted role's privileges refuse it in every form, and only then", async () => {
+    const granted = engineClient(ROLE.granted)
+    for (const sql of MASKED_READS) {
+      expect({ sql, code: code(await queryPostgres(granted, sql, MASKED)) }).toEqual({
         sql,
         code: "NIFRA_DB_COLUMN_REFUSED",
       })
       // A plan's row counts and estimates answer questions about the column too.
       for (const analyze of [false, true]) {
-        const explained = await explainPostgres(reader, sql, { ...masked, analyze })
+        const explained = await explainPostgres(granted, sql, { ...MASKED, analyze })
         expect({ sql, analyze, code: code(explained) }).toEqual({
           sql,
           analyze,
           code: "NIFRA_DB_COLUMN_REFUSED",
         })
       }
+      // The server refuses it with every layer of ours bypassed.
+      expect({ sql, outcome: await serverOnly(granted, sql) }).toMatchObject({
+        sql,
+        outcome: { ran: false, state: "42501" },
+      })
     }
-    for (const sql of [
-      "SELECT count(*) FROM users",
-      "SELECT note, count(*) FROM users GROUP BY note",
-      "SELECT o.id FROM orders o CROSS JOIN users u",
-      "SELECT note FROM users WHERE note IS NOT NULL",
-      "SELECT s FROM orders AS o(i, s)",
-      "SELECT n FROM generate_series(1, 2) AS g(n) CROSS JOIN users u",
-    ]) {
-      expect({ sql, code: code(await queryPostgres(reader, sql, masked)) }).toEqual({
+    for (const sql of UNMASKED_READS) {
+      expect({ sql, code: code(await queryPostgres(granted, sql, MASKED)) }).toEqual({
         sql,
         code: undefined,
       })
       expect({
         sql,
-        code: code(await explainPostgres(reader, sql, { ...masked, analyze: true })),
+        code: code(await explainPostgres(granted, sql, { ...MASKED, analyze: true })),
       }).toEqual({ sql, code: undefined })
+    }
+    const star = await queryPostgres(granted, "SELECT * FROM users", MASKED)
+    expect(isDbRefusal(star) ? star.message : "").toBe(
+      "the role may read only some columns of public.users, not password_hash: select the others by name",
+    )
+  })
+
+  test("a masked column: the plan check behind the grants refuses it too, wherever the plan uses it", async () => {
+    // pg_read_all_data reads every column, so only the plan check stands between it and the hash.
+    const reader = engineClient(ROLE.reader)
+    const planOnly = (sql: string, mode: "query" | "explain" | "analyze") =>
+      inReadOnlyTransaction(reader, TIMEOUT_MS, async (connection) => {
+        const scope = checkScope(SCOPE, { masked, statement: sql })
+        if (mode === "query") return fetchThroughCursor(connection, sql, { maxRows: 5, scope })
+        return explainThroughServer(connection, sql, { analyze: mode === "analyze", scope })
+      })
+    for (const sql of MASKED_READS) {
+      for (const mode of ["query", "explain", "analyze"] as const) {
+        expect({ sql, mode, code: code(await planOnly(sql, mode)) }).toEqual({
+          sql,
+          mode,
+          code: "NIFRA_DB_COLUMN_REFUSED",
+        })
+      }
+    }
+    for (const sql of UNMASKED_READS) {
+      expect({ sql, code: code(await planOnly(sql, "analyze")) }).toEqual({ sql, code: undefined })
+    }
+    // A view inlines into the plan, so a column it renames is still seen.
+    expect(code(await planOnly("SELECT * FROM hash_lookup", "query"))).toBe(
+      "NIFRA_DB_FUNCTION_REFUSED",
+    )
+  })
+
+  test("the grant gate refuses a role that can read hidden data, materialized views included", async () => {
+    const reader = engineClient(ROLE.reader)
+    const refused = await queryPostgres(reader, "SELECT count(*) FROM orders", MASKED)
+    expect(refused).toMatchObject({ code: "NIFRA_DB_ROLE_GRANTS" })
+    const message = isDbRefusal(refused) ? refused.message : ""
+    const via = serverVersion >= 140000 ? '"pg_read_all_data"' : JSON.stringify(ROLE.reader)
+    for (const hidden of [
+      `public.audit (devDatabase.exclude leaves it out; granted to ${via})`,
+      `public.audit_2026 (it inherits from public.audit, which devDatabase.exclude leaves out; granted to ${via})`,
+    ]) {
+      expect(message).toContain(hidden)
+    }
+    expect(message).toContain(", and 6 more;")
+    expect(code(await explainPostgres(reader, "SELECT 1", MASKED))).toBe("NIFRA_DB_ROLE_GRANTS")
+    // Without masking or exclusions the same role passes: nothing is hidden from it.
+    expect(
+      code(await queryPostgres(reader, "SELECT count(*) FROM orders", { ...OPTIONS, exclude: [] })),
+    ).toBeUndefined()
+    // A materialized view stores its rows: the plan reads only the view, so the plan check alone let
+    // these through. The granted role's privileges refuse them.
+    const granted = engineClient(ROLE.granted)
+    for (const sql of ["SELECT * FROM secret_copy", "SELECT ph FROM hash_copy"]) {
+      expect({ sql, code: code(await queryPostgres(granted, sql, MASKED)) }).toEqual({
+        sql,
+        code: "NIFRA_DB_TABLE_EXCLUDED",
+      })
+      expect({ sql, outcome: await serverOnly(granted, sql) }).toMatchObject({
+        sql,
+        outcome: { ran: false, state: "42501" },
+      })
     }
   })
 
-  test("text search that runs SQL from a string is refused before the server sees it", async () => {
-    const reader = engineClient(ROLE.reader)
-    const masked = { ...OPTIONS, redaction: { column: (name: string) => name === "password_hash" } }
+  test("the function allowlist: what pg_proc says a call can do decides it", async () => {
+    const granted = engineClient(ROLE.granted)
+    for (const sql of [
+      "SELECT pg_sleep(0)",
+      "SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', note) FROM users')",
+      "SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, ''b''::tsquery')",
+      "SELECT table_to_xml('orders', true, false, '')",
+      "SELECT query_to_xml('SELECT 1', true, false, '')",
+      "SELECT current_setting('server_version') || set_config('application_name', 'x', true)",
+      "SELECT owner_hash(1)",
+      "SELECT bump()",
+      // Planning runs immutable functions on constants, so a call is checked before the server plans it.
+      "SELECT 1 WHERE owner_hash(1) IS NOT NULL",
+      // A view's call shows only in its plan.
+      "SELECT * FROM hash_lookup",
+      'SELECT "bump"()',
+      "SELECT plain_sum(x) FROM generate_series(1, 2) AS g(x)",
+      // Postgres cuts an identifier to 63 bytes before resolving it.
+      `SELECT ${LONG_NAME}_and_more()`,
+    ]) {
+      expect({ sql, code: code(await queryPostgres(granted, sql, MASKED)) }).toEqual({
+        sql,
+        code: "NIFRA_DB_FUNCTION_REFUSED",
+      })
+    }
+    for (const sql of [
+      "SELECT lower('A'), length('abc'), now() > '2000-01-01', age(now(), now()), random() < 2",
+      "SELECT gen_random_uuid() IS NOT NULL, clock_timestamp() IS NOT NULL",
+      "SELECT count(*), string_agg(status, ','), json_agg(id) FROM orders",
+      "SELECT shout(status) FROM orders",
+      "SELECT pg_total_relation_size('orders') > 0",
+      "SELECT x FROM generate_series(1, 3) AS g(x)",
+      "SELECT to_char(placed, 'YYYY'), extract(year FROM placed) FROM orders",
+    ]) {
+      expect({ sql, code: code(await queryPostgres(granted, sql, MASKED)) }).toEqual({
+        sql,
+        code: undefined,
+      })
+    }
+    // allowFunctions is a decision to trust a function: owner_hash then reads with its owner's rights.
+    await asOwner(`GRANT EXECUTE ON FUNCTION owner_hash(int) TO "${ROLE.granted}"`)
+    try {
+      const trusted = await queryPostgres(granted, "SELECT owner_hash(1) AS h", {
+        ...MASKED,
+        allowFunctions: ["public.owner_hash"],
+      })
+      expect(trusted).toMatchObject({ rows: [["hash-value"]] })
+    } finally {
+      await asOwner(`REVOKE EXECUTE ON FUNCTION owner_hash(int) FROM "${ROLE.granted}"`)
+    }
+  })
+
+  test("SECURITY DEFINER code reached without its name: the gate needs EXECUTE revoked, then the server refuses it", async () => {
+    const granted = engineClient(ROLE.granted)
+    for (const sql of [
+      // Folded at plan time, through an operator, through a cast, from a function's body, from an
+      // aggregate's support function (checked against the aggregate's owner, not the caller).
+      "SELECT * FROM folded_view",
+      "SELECT 1 ### 2 AS s",
+      "SELECT ROW(1)::boxed::text AS s",
+      "SELECT calls_folded() AS s",
+      "SELECT calls_agg() AS s",
+    ]) {
+      const outcome = await queryPostgres(granted, sql, MASKED)
+      expect({
+        sql,
+        code: code(outcome),
+        leaked: JSON.stringify(outcome).includes("top secret"),
+      }).toEqual({
+        sql,
+        code: "NIFRA_DB_FUNCTION_REFUSED",
+        leaked: false,
+      })
+    }
+    for (const [grant, listed] of [
+      ["folded_secret(int)", "public.folded_secret(integer)"],
+      ["op_secret(int, int)", "public.op_secret(integer, integer)"],
+      ["boxed_text(boxed)", "public.boxed_text(boxed)"],
+      ["secret_step(text, int)", "public.secret_step(text, integer)"],
+      ["secret_agg(int)", "public.secret_agg(integer)"],
+    ] as const) {
+      await asOwner(`GRANT EXECUTE ON FUNCTION ${grant} TO "${ROLE.granted}"`)
+      try {
+        const outcome = await queryPostgres(granted, "SELECT 1", MASKED)
+        expect({ grant, code: code(outcome) }).toEqual({ grant, code: "NIFRA_DB_ROLE_GRANTS" })
+        expect(isDbRefusal(outcome) ? outcome.message : "").toContain(listed)
+      } finally {
+        await asOwner(`REVOKE EXECUTE ON FUNCTION ${grant} FROM "${ROLE.granted}"`)
+      }
+    }
+  })
+
+  test("a refusal names each grant the role reads through, and nifra db role revokes every one", async () => {
+    const granted = engineClient(ROLE.granted)
+    const su = engineClient()
+    const roleSql = async (role: string) => {
+      const sql = await postgresRoleSql(su, {
+        ...SCOPE,
+        timeoutMs: TIMEOUT_MS,
+        role,
+        redaction: { column: masked },
+      })
+      if (isDbRefusal(sql)) throw new Error(sql.message)
+      return sql.statements
+    }
+    const fn = '"public"."folded_secret"(integer)'
+    const grants = [
+      "GRANT SELECT ON secrets TO PUBLIC",
+      `GRANT SELECT (password_hash) ON users TO "${ROLE.group}"`,
+      `GRANT EXECUTE ON FUNCTION folded_secret(int) TO "${ROLE.group}", "${ROLE.granted}"`,
+    ]
+    await asOwner(`GRANT "${ROLE.group}" TO "${ROLE.granted}"`)
+    try {
+      for (const grant of grants) await asOwner(grant)
+      const tables = await queryPostgres(granted, "SELECT 1", MASKED)
+      expect(code(tables)).toBe("NIFRA_DB_ROLE_GRANTS")
+      for (const listed of [
+        "public.secrets (devDatabase.exclude leaves it out; granted to PUBLIC)",
+        `public.users.password_hash (masked as a credential; granted to "${ROLE.group}")`,
+      ]) {
+        expect(isDbRefusal(tables) ? tables.message : "").toContain(listed)
+      }
+      const written = await roleSql(ROLE.granted)
+      expect(
+        written.filter((line) => line.includes("folded_secret") || /^-- REVOKE SELECT/.test(line)),
+      ).toEqual([
+        '-- REVOKE SELECT ON TABLE "public"."secrets" FROM PUBLIC;',
+        `-- REVOKE SELECT ("password_hash") ON TABLE "public"."users" FROM "${ROLE.group}";`,
+        `REVOKE EXECUTE ON FUNCTION ${fn} FROM "${ROLE.granted}";`,
+        `-- REVOKE EXECUTE ON FUNCTION ${fn} FROM "${ROLE.group}";`,
+      ])
+      // A role the SQL would create holds only PUBLIC's grants.
+      const fresh = await roleSql(`nifra_live_absent_${run}`)
+      expect(fresh).toContain('-- REVOKE SELECT ON TABLE "public"."secrets" FROM PUBLIC;')
+      expect(
+        fresh.some((line) => line.includes(ROLE.group) || line.includes("folded_secret")),
+      ).toBe(false)
+      // Applied as written, the SQL leaves nothing for the gate to refuse.
+      await asOwner("REVOKE SELECT ON secrets FROM PUBLIC")
+      await asOwner(`REVOKE SELECT (password_hash) ON users FROM "${ROLE.group}"`)
+      const definers = await queryPostgres(granted, "SELECT 1", MASKED)
+      expect(code(definers)).toBe("NIFRA_DB_ROLE_GRANTS")
+      expect(isDbRefusal(definers) ? definers.message : "").toContain(
+        `public.folded_secret(integer) (granted to "${ROLE.granted}", "${ROLE.group}")`,
+      )
+      for (const line of written) {
+        if (!line.includes("folded_secret")) continue
+        await asOwner(line.replace(/^-- /, ""))
+      }
+      expect(code(await queryPostgres(granted, "SELECT 1", MASKED))).toBeUndefined()
+      if (serverVersion >= 140000) {
+        expect(await roleSql(ROLE.reader)).toContain(
+          `-- "${ROLE.reader}" has the privileges of pg_read_all_data, which reads every table past these REVOKEs: revoke that membership.`,
+        )
+      }
+    } finally {
+      await asOwner(`REVOKE "${ROLE.group}" FROM "${ROLE.granted}"`)
+      await asOwner("REVOKE SELECT ON secrets FROM PUBLIC")
+      await asOwner(`REVOKE SELECT (password_hash) ON users FROM "${ROLE.group}"`)
+      await asOwner(
+        `REVOKE EXECUTE ON FUNCTION folded_secret(int) FROM "${ROLE.group}", "${ROLE.granted}"`,
+      )
+    }
+  })
+
+  test("text search that runs SQL from a string: the allowlist refuses it, the grants would too", async () => {
+    const granted = engineClient(ROLE.granted)
     for (const sql of [
       "SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', password_hash) FROM users')",
       "SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', value) FROM secrets')",
       "SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, plainto_tsquery(value) FROM secrets')",
     ]) {
-      expect({ sql, code: code(await queryPostgres(reader, sql, masked)) }).toEqual({
+      expect({ sql, code: code(await queryPostgres(granted, sql, MASKED)) }).toEqual({
         sql,
         code: "NIFRA_DB_FUNCTION_REFUSED",
       })
+      expect({ sql, outcome: await serverOnly(granted, sql) }).toMatchObject({
+        sql,
+        outcome: { ran: false, state: "42501" },
+      })
+    }
+  })
+
+  test("an excluded table's partitions and children: the plan check behind the grants refuses them", async () => {
+    // pg_read_all_data reads every table, so only the plan check stands between it and the rows.
+    const reader = engineClient(ROLE.reader)
+    const planOnly = (sql: string) =>
+      inReadOnlyTransaction(reader, TIMEOUT_MS, (connection) =>
+        fetchThroughCursor(connection, sql, {
+          maxRows: 5,
+          scope: checkScope(SCOPE, { statement: sql }),
+        }),
+      )
+    for (const sql of [
+      "SELECT * FROM audit_2026",
+      "SELECT * FROM child_secret",
+      "SELECT * FROM grand_secret",
+    ]) {
+      expect({ sql, code: code(await planOnly(sql)) }).toEqual({
+        sql,
+        code: "NIFRA_DB_TABLE_EXCLUDED",
+      })
+    }
+    // An inheritance chain beside them hides nothing.
+    expect(await planOnly("SELECT * FROM kid_open")).toMatchObject({ rows: [] })
+  })
+
+  test("a SECURITY DEFINER function with its default privileges is PUBLIC's grant, in pg_catalog too", async () => {
+    const granted = engineClient(ROLE.granted)
+    // A superuser, or an extension's script, can put a function in pg_catalog.
+    const name = `nifra_live_definer_${run}`
+    await asOwner(
+      `CREATE FUNCTION pg_catalog.${name}() RETURNS int LANGUAGE sql STABLE SECURITY DEFINER AS $$ SELECT 1 $$`,
+    )
+    try {
+      const outcome = await queryPostgres(granted, "SELECT 1", MASKED)
+      expect(code(outcome)).toBe("NIFRA_DB_ROLE_GRANTS")
+      expect(isDbRefusal(outcome) ? outcome.message : "").toContain(
+        `pg_catalog.${name}() (granted to PUBLIC)`,
+      )
+      const sql = await postgresRoleSql(engineClient(), {
+        ...SCOPE,
+        timeoutMs: TIMEOUT_MS,
+        role: ROLE.granted,
+        redaction: { column: masked },
+      })
+      if (isDbRefusal(sql)) throw new Error(sql.message)
+      expect(sql.statements).toContain(
+        `-- REVOKE EXECUTE ON FUNCTION "pg_catalog"."${name}"() FROM PUBLIC;`,
+      )
+    } finally {
+      await asOwner(`DROP FUNCTION pg_catalog.${name}()`)
     }
   })
 
@@ -540,7 +916,7 @@ describe.skipIf(SKIP)(SUITE, () => {
   })
 
   test("explain and explain analyze run inside the same read-only transaction", async () => {
-    const reader = engineClient(ROLE.reader)
+    const reader = engineClient(ROLE.granted)
     const plan = await explainPostgres(
       reader,
       "SELECT * FROM orders WHERE status = 'paid'",
@@ -571,9 +947,19 @@ describe.skipIf(SKIP)(SUITE, () => {
     const schema = await readPostgresSchema(reader, { ...SCOPE, timeoutMs: TIMEOUT_MS })
     if (isDbRefusal(schema)) throw new Error(schema.message)
     const names = schema.tables.map((table) => table.name)
-    expect(names).toEqual(["order_summary", "orders", "users"])
-    // secrets and audit by name; child_secret inherits secrets; secret_view reads it.
-    expect(schema.excludedCount).toBe(4)
+    expect(names).toEqual([
+      "base_open",
+      "folded_view",
+      "hash_copy",
+      "hash_lookup",
+      "kid_open",
+      "order_summary",
+      "orders",
+      "users",
+    ])
+    // secrets, audit and remote_secrets by name; child_secret and grand_secret inherit secrets;
+    // secret_view and secret_copy read it.
+    expect(schema.excludedCount).toBe(7)
     const orders = schema.tables.find((table) => table.name === "orders")
     expect(orders?.columns[0]).toMatchObject({ name: "id", type: "bigint", primaryKey: true })
     expect(orders?.indexes.map((index) => index.name).sort()).toEqual([
@@ -590,6 +976,27 @@ describe.skipIf(SKIP)(SUITE, () => {
     expect(
       code(await readPostgresSchema(reader, { ...SCOPE, timeoutMs: TIMEOUT_MS, table: "secrets" })),
     ).toBe("NIFRA_DB_TABLE_EXCLUDED")
+    // A table the role may read only some columns of is listed; what it may not read at all is not.
+    const granted = await readPostgresSchema(engineClient(ROLE.granted), {
+      ...SCOPE,
+      timeoutMs: TIMEOUT_MS,
+      redaction: { column: masked },
+    })
+    if (isDbRefusal(granted)) throw new Error(granted.message)
+    expect(granted.tables.map((table) => table.name)).toEqual([
+      "base_open",
+      "folded_view",
+      "hash_lookup",
+      "kid_open",
+      "order_summary",
+      "orders",
+      "users",
+    ])
+    expect(
+      granted.tables
+        .find((table) => table.name === "users")
+        ?.columns.map((column) => column.redacted),
+    ).toEqual([false, false, true, false])
   })
 
   test("nifra db role SQL: applied as written, it reads exposed tables and is refused the excluded ones", async () => {
@@ -606,6 +1013,10 @@ describe.skipIf(SKIP)(SUITE, () => {
       `REVOKE SELECT ON TABLE "public"."audit" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."audit_2026" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."child_secret" FROM "${ROLE.generated}";`,
+      `REVOKE SELECT ON TABLE "public"."grand_secret" FROM "${ROLE.generated}";`,
+      `REVOKE SELECT ON TABLE "public"."remote_secrets" FROM "${ROLE.generated}";`,
+      `REVOKE SELECT ON TABLE "public"."secret_copy" FROM "${ROLE.generated}";`,
+      `REVOKE SELECT ON TABLE "public"."secret_view" FROM "${ROLE.generated}";`,
       `REVOKE SELECT ON TABLE "public"."secrets" FROM "${ROLE.generated}";`,
     ])
     const db = rawClient(DB)
@@ -638,12 +1049,29 @@ describe.skipIf(SKIP)(SUITE, () => {
       "SELECT * FROM secrets",
       "SELECT * FROM audit_2026",
       "SELECT * FROM child_secret",
+      "SELECT * FROM grand_secret",
+      "SELECT * FROM secret_view",
+      "SELECT * FROM secret_copy",
     ]) {
       expect({ sql, outcome: await serverOnly(generated, sql) }).toMatchObject({
         sql,
         outcome: { ran: false, state: "42501" },
       })
     }
+    const masking = await postgresRoleSql(su, {
+      ...SCOPE,
+      timeoutMs: TIMEOUT_MS,
+      role: ROLE.generated,
+      redaction: { column: masked },
+    })
+    if (isDbRefusal(masking)) throw new Error(masking.message)
+    expect(
+      masking.statements.filter((line) => line.includes('"users"') || line.includes("hash_copy")),
+    ).toEqual([
+      `REVOKE SELECT ON TABLE "public"."hash_copy" FROM "${ROLE.generated}";`,
+      `REVOKE SELECT ON TABLE "public"."users" FROM "${ROLE.generated}";`,
+      `GRANT SELECT ("id", "email", "note") ON TABLE "public"."users" TO "${ROLE.generated}";`,
+    ])
     const plain = await postgresRoleSql(su, { timeoutMs: TIMEOUT_MS })
     if (isDbRefusal(plain)) throw new Error(plain.message)
     expect(plain.statements).toContain(

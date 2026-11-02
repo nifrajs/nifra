@@ -21,11 +21,11 @@ import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
-  readBoundedLines,
   readBoundedStream,
   redirectConsoleToStderr,
   serializeBoundedJson,
   workerReplyWriter,
+  workerRequests,
 } from "./mcp-io.ts"
 
 const ENTRY_CANDIDATES = [BACKEND_APP_FILE, "app.ts", "src/app.ts"]
@@ -165,11 +165,6 @@ function withCapture(feed: DevFeed, requestId: string, result: RunResult): RunRe
   return { ...result, ...capture }
 }
 
-interface WorkerMessage {
-  readonly id?: unknown
-  readonly input?: { readonly requests?: unknown; readonly entry?: string }
-}
-
 /**
  * Keep stdout for the protocol. The app's console and any direct `process.stdout.write` go to stderr,
  * or a stray `console.log` in a handler would corrupt the JSON the parent reads. Returns the writer
@@ -192,30 +187,7 @@ function reserveStdout(): (text: string) => void {
 async function runWorker(cwd: string, protocol: (text: string) => void): Promise<void> {
   const apps = new Map<string, Promise<{ app: AppLike } | { error: string }>>()
   const send = workerReplyWriter(protocol)
-  for await (const item of readBoundedLines(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)) {
-    if (item.kind === "too-large") {
-      send(null, { error: `worker input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` })
-      continue
-    }
-    const line = item.text.trim()
-    if (line === "") continue
-
-    let message: unknown
-    try {
-      message = JSON.parse(line) as unknown
-    } catch {
-      send(null, { error: "invalid worker input: expected JSON line" })
-      continue
-    }
-    const record =
-      message !== null && typeof message === "object" && !Array.isArray(message)
-        ? (message as WorkerMessage)
-        : undefined
-    const input =
-      record?.input !== null && typeof record?.input === "object" && !Array.isArray(record.input)
-        ? record.input
-        : undefined
-    const id = record?.id
+  for await (const { id, input } of workerRequests(send)) {
     const requests = input?.requests
     const entry = input?.entry
     if (!Array.isArray(requests)) {

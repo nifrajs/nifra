@@ -5,6 +5,8 @@
  * these limits and stream readers so an untrusted local endpoint or child process cannot exhaust MCP.
  */
 
+import { isRecord } from "./internal/record.ts"
+
 export const CHILD_TIMEOUT_MS = 30_000
 /** Maximum stdout or stderr retained from a project subprocess. The process is killed at the limit. */
 export const CHILD_OUTPUT_MAX_BYTES = 1_048_576
@@ -394,6 +396,19 @@ export function redirectConsoleToStderr(): void {
   console.error = (...args: unknown[]) => write("error", args)
 }
 
+/** For a project child: send `console.log`, `info` and `debug` to stderr as plain lines and return
+ * stdout's own writer, taken before project code loads so nothing it patches reaches the answer channel. */
+export function protocolStdout(): typeof process.stdout.write {
+  const stdout = process.stdout.write.bind(process.stdout)
+  const toStderr = (...args: unknown[]): void => {
+    process.stderr.write(`${args.map((arg) => String(arg)).join(" ")}\n`)
+  }
+  console.log = toStderr
+  console.info = toStderr
+  console.debug = toStderr
+  return stdout
+}
+
 function safeResponseId(value: unknown): number | string | null {
   if (typeof value === "number" && Number.isSafeInteger(value)) return value
   if (typeof value === "string" && value.length <= 128) return value
@@ -410,5 +425,35 @@ export function workerReplyWriter(
     write(
       `${encoded ?? JSON.stringify({ id: responseId, output: { error: "worker output exceeded the size limit" } })}\n`,
     )
+  }
+}
+
+/** A warm worker's request line: its `id` and its `input` record, if the line carried one. */
+export interface WorkerRequest {
+  readonly id: unknown
+  readonly input: Readonly<Record<string, unknown>> | undefined
+}
+
+/** Each request line a warm worker reads from stdin; an oversized or non-JSON line is answered through
+ * `send` and skipped. */
+export async function* workerRequests(
+  send: (id: unknown, output: unknown) => void,
+): AsyncGenerator<WorkerRequest> {
+  for await (const item of readBoundedLines(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)) {
+    if (item.kind === "too-large") {
+      send(null, { error: `worker input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` })
+      continue
+    }
+    const line = item.text.trim()
+    if (line === "") continue
+    let message: unknown
+    try {
+      message = JSON.parse(line)
+    } catch {
+      send(null, { error: "invalid worker input: expected JSON line" })
+      continue
+    }
+    const record = isRecord(message) ? message : undefined
+    yield { id: record?.id, input: isRecord(record?.input) ? record.input : undefined }
   }
 }

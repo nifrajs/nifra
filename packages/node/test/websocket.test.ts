@@ -11,8 +11,10 @@ import {
   FORBIDDEN_CLOSES,
   REPORT_CAP,
   SERVER_CLOSE_REPORTS,
+  sizingMistakes,
 } from "../../core/test/ws-close-args.ts"
 import { firstContractFrame, sendContractApp } from "../../core/test/ws-send-contract.ts"
+import { exceedsPayloadCap, utf8ExceedsCap } from "../src/generated/ws-close.ts"
 import { type NodeServer, serve } from "../src/index.ts"
 import { PUBLISHED, publishFeedApp, publishRoundTrip } from "./ws-publish-fixture.ts"
 
@@ -88,6 +90,11 @@ describe("@nifrajs/node WebSocket payload caps", () => {
     server({ wsMaxPayloadBytes: cap })
       .use(websocket())
       .ws("/", { message: (ws, data) => ws.send(data) })
+
+  test("the generated close check counts UTF-8 bytes natively and by unit", () => {
+    expect(sizingMistakes(exceedsPayloadCap)).toEqual([])
+    expect(sizingMistakes(utf8ExceedsCap)).toEqual([])
+  })
 
   test("each mounted child keeps its own cap, whichever upgrades first", async () => {
     const app = server()
@@ -192,6 +199,15 @@ describe("@nifrajs/node WebSockets", () => {
     running = await serve(makeApp(), { port: 0, hostname: "127.0.0.1" })
     expect(await rawUpgradeStatus(running.port, "/rooms/../echo")).toBe(101)
     expect(await rawUpgradeStatus(running.port, "/rooms/%2e%2e/echo")).toBe(101)
+  })
+
+  test("with normalizeTarget unset, an upgrade resolves dot segments and its HTTP fallback does too", async () => {
+    const app = makeApp().get("/admin", () => ({ where: "admin" }))
+    running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+    // The handshake path: a `Request` the platform parser resolved, so the ws route matches.
+    expect(await rawUpgradeStatus(running.port, "/rooms/../echo")).toBe(101)
+    // An upgrade for a path with no ws route falls through to HTTP on the same parsed `Request`.
+    expect(await rawUpgradeStatus(running.port, "/public/../admin")).toBe(200)
   })
 
   test("guarded: accepts with token, threading data to ws.data", async () => {

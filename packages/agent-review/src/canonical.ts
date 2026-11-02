@@ -64,7 +64,7 @@ function canonicalValue(value: unknown): string {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalValue(value[key])}`).join(",")}}`
 }
 
-function sortedEvidence(value: readonly ReviewEvidenceRef[]): readonly ReviewEvidenceRef[] {
+export function sortedEvidence(value: readonly ReviewEvidenceRef[]): readonly ReviewEvidenceRef[] {
   return [...value]
     .map((entry) => ({
       source: entry.source,

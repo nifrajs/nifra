@@ -89,12 +89,11 @@ export {
   type HostPolicyRule,
   isHostPolicy,
 } from "./host-policy.ts"
+export { type HrefOptions, href, rawHref } from "./href.ts"
 export {
   type GenerateClientEntryOptions,
-  type GenerateRouteSearchTypesOptions,
   type GenerateServerManifestOptions,
   generateClientEntry,
-  generateRouteSearchTypes,
   generateServerManifest,
   type LiveClientEntry,
 } from "./internal/codegen.ts"
@@ -223,15 +222,13 @@ export {
   type BrowserNavigate,
   closeBoundary,
   getBrowserNavigate,
+  type Href,
   IDLE_BLOCKER,
   type NavigateFunction,
   type NavigateOptions,
-  type NavigateSearchOf,
-  type NavigateTargetInput,
   type PrefetchMode,
-  type RouteSearch,
+  type RouteTable,
   registerBlocker,
-  resolveNavigate,
   setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
@@ -243,26 +240,27 @@ export {
   type NonceHeader,
   type NonceHeaderContext,
 } from "./nonce.ts"
-// public/ - user-authored static files, served identically in dev and production by one handler.
+// public/ - user-authored static files; `@nifrajs/core/serve-static` serves them on Bun.
 export {
   type PrerenderedPageReaderOptions,
-  type PublicDirCache,
   prerenderedPageReader,
   resolvePublicPath,
-  type ServePublicDirOptions,
-  servePublicDir,
 } from "./public-dir.ts"
 // Keyed query-cache (agnostic) - a `query(key, fn)` primitive (dedup + staleness + invalidation + GC)
 // consumed by the per-adapter `useQuery`/`createQuery` bindings.
 export {
   createMutation,
   createQueryClient,
+  type DehydratedQueryInfo,
   type DehydratedState,
+  type DehydrateOptions,
   hashQueryKey,
   type InfiniteData,
   type InfiniteQueryHandle,
   type InfiniteQueryOptions,
   type MutationCallbacks,
+  MutationCancelledError,
+  type MutationContext,
   type MutationHandle,
   type MutationState,
   type MutationStatus,
@@ -296,6 +294,12 @@ export {
   ssrModuleLoader,
   type UIMatch,
 } from "./render-seam.ts"
+export type {
+  RouteSlotName,
+  RouteSlotPatternsOf,
+  RouteSlotRegistry,
+  RouteSlotTarget,
+} from "./route-slots.ts"
 // Agnostic client-side router core (pure + DOM-free) - consumed by per-adapter Router bindings.
 // `DATA_HEADER` marks a navigation's data-only GET; `createWebApp` answers it with loader JSON.
 export {

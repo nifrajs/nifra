@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/dev",
@@ -376,7 +377,7 @@ export default function Dev() {
       <p>
         <code>@nifrajs/devtools</code> is a plugin that streams what each request actually did - loader
         traces, ISR status, route metadata - over a secured SSE endpoint, with an overlay to read it
-        in the browser. In an app with <a href="/docs/keep-alive">keep-alive</a> routes, the overlay
+        in the browser. In an app with <a href={href({ to: "/docs/keep-alive" })}>keep-alive</a> routes, the overlay
         also lists the pages kept hidden.
       </p>
       <CodeBlock code={DEVTOOLS} lang="ts" />
@@ -394,13 +395,13 @@ export default function Dev() {
         <code>nifra_inspect</code>, and you can read it with <code>nifra errors</code> and{" "}
         <code>nifra logs</code>. Pages get a small inline script that reports browser errors and
         hydration mismatches back to the dev server; the dev server writes <code>.nifra/dev-server.json</code>{" "}
-        so the tools can find it. See <a href="/docs/agents">coding agents</a>.
+        so the tools can find it. See <a href={href({ to: "/docs/agents" })}>coding agents</a>.
       </p>
       <p>
         When a page reports an error, a badge appears in its corner. It lists that page's errors with
         their code, message, codeframe and fix, and a <strong>Copy prompt</strong> button per fix hands
         a coding agent the error, one fix and the steps to check it worked (the{" "}
-        <a href="/docs/errors">error codes</a> page has the same prompts). The badge lives in a closed
+        <a href={href({ to: "/docs/errors" })}>error codes</a> page has the same prompts). The badge lives in a closed
         shadow root, so the page's styles cannot reach it, and it loads under the page's CSP: by nonce,
         by its exact URL, or through <code>'strict-dynamic'</code>. A page that never errors never
         fetches it. Turn it off for one run with <code>nifra dev --no-indicator</code>, for every run

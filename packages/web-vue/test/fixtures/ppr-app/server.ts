@@ -14,10 +14,13 @@ plugin(vueBunPlugin("ssr"))
 
 export const trustedTypesPolicy: string | null = "vue"
 
-export const startPprApp = (options?: Parameters<typeof startFixture>[1]): Promise<PprApp> =>
+export const startPprApp = (
+  options?: Parameters<typeof startFixture>[1],
+  routesDir = `${import.meta.dir}/routes`,
+): Promise<PprApp> =>
   startFixture(
     {
-      routesDir: `${import.meta.dir}/routes`,
+      routesDir,
       adapter: vueAdapter,
       clientModule: "@nifrajs/web-vue/client",
       clientPlugins: [vueBunPlugin("dom")],

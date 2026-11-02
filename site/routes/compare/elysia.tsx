@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import {
   formatPercent,
   httpRealworldRps,
@@ -88,7 +89,8 @@ export default function VsElysia() {
       <p>
         Single-digit percentages, honestly labeled: treat them as "the same speed class, with the
         edge to Nifra as middleware stacks up". The harness and methodology are public - the{" "}
-        <a href="/benchmarks">benchmarks page</a> has every row, including the ones Nifra loses.
+        <a href={href({ to: "/benchmarks" })}>benchmarks page</a> has every row, including the ones
+        Nifra loses.
       </p>
 
       <h2>Typed clients: Eden vs inferred</h2>
@@ -160,7 +162,7 @@ export default function VsElysia() {
       <p>
         Start with <code>bun create nifra my-app</code> (backend) or <code>--template site</code>{" "}
         (full-stack). Deeper capability comparison:{" "}
-        <a href="/docs/comparison">the comparison doc</a>.
+        <a href={href({ to: "/docs/comparison" })}>the comparison doc</a>.
       </p>
     </article>
   )

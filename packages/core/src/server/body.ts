@@ -8,6 +8,7 @@
  */
 
 import { jsonError } from "./http.ts"
+import { carryToCopy } from "./request-local.ts"
 
 interface BodySource {
   readonly headers: Pick<Headers, "get">
@@ -277,7 +278,9 @@ export function capBodyBytes(request: Request, maxBytes: number): Request {
     ),
     duplex: "half",
   }
-  return new Request(request, init)
+  const capped = new Request(request, init)
+  carryToCopy(request, capped)
+  return capped
 }
 
 /** First matching own-or-inherited descriptor, so instance shadows and prototype accessors both resolve. */

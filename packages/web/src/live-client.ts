@@ -25,13 +25,10 @@ import { isRecord } from "./internal/record.ts"
 import { appUrl } from "./internal/route-path.ts"
 import {
   type ClientRouter,
-  DATA_HEADER,
   type FetchRouteData,
-  HOLE_FILL_HEADER,
   isRouteDataEnvelope,
-  NAV_FROM_HEADER,
-  RETAIN_HEADER,
   type RouteDataEnvelope,
+  routeDataHeaders,
   routeDataOf,
 } from "./router.ts"
 
@@ -225,12 +222,7 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
 
   /** A plain data GET: the router's own transport, for a navigation the live endpoint turned away. */
   const plainLoad: FetchRouteData = async (path, _match, signal, navigation, _purpose, hosts) => {
-    const headers = new Headers({ [DATA_HEADER]: "1" })
-    if (hosts !== undefined && hosts.length > 0) headers.set(HOLE_FILL_HEADER, hosts.join(","))
-    if (navigation !== undefined && navigation.retain.length > 0) {
-      headers.set(RETAIN_HEADER, navigation.retain.join(","))
-      headers.set(NAV_FROM_HEADER, navigation.from)
-    }
+    const headers = routeDataHeaders(navigation, hosts)
     return routeDataOf(await send(appUrl(path), { headers, signal: signal ?? null }), path, signal)
   }
 

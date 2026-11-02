@@ -167,6 +167,32 @@ describe("prerenderRoutes", () => {
     })
   })
 
+  // The recorded path is what the prerendered-page lookup compares to a request's raw path, so it must
+  // be the spelling a browser sends for the same link; the file name is the decoded text.
+  test("a param holding sub-delimiters is recorded and written in the shared spelling", async () => {
+    const { app, urls } = fakeApp()
+    const result = await prerenderRoutes({
+      app,
+      routes: [
+        dynamicRoute("/p/:slug", async () => ({
+          paths: [
+            { params: { slug: "a+b,c;d=e@f[g]" } },
+            { params: { slug: ".." } },
+            { params: { slug: "" } },
+          ],
+        })),
+      ],
+      outDir: dir,
+    })
+    expect(result.prerendered.map((p) => p.path)).toEqual(["/p/a+b,c%3Bd=e@f%5Bg%5D"])
+    expect(urls).toEqual(["http://localhost/p/a+b,c%3Bd=e@f%5Bg%5D"])
+    expect(existsSync(join(dir, "p", "a+b,c;d=e@f[g]", "index.html"))).toBe(true)
+    expect(result.skipped.map((s) => s.reason)).toEqual([
+      expect.stringContaining("no path can carry: slug"),
+      expect.stringContaining("missing param(s): slug"),
+    ])
+  })
+
   test("skips a wildcard route", async () => {
     const { app } = fakeApp()
     const result = await prerenderRoutes({
@@ -304,11 +330,14 @@ describe("prerenderRoutes", () => {
     })
     expect(urls).toEqual([])
     expect(result.prerendered).toEqual([])
+    // `..` has no spelling a URL parser leaves alone, so it is refused when the path is filled and the
+    // entry names the route; the others are rendered paths whose file name is unsafe.
     expect(result.skipped.map((s) => s.path)).toEqual([
       "/blog/..%2F..%2Fescape%20hatch",
-      "/blog/%2E%2E",
+      "/blog/:slug",
       "/blog/a%5Cb",
     ])
+    expect(result.skipped[1]?.reason).toContain("no path can carry: slug")
     expect(existsSync(join(dir, "escape hatch/index.html"))).toBe(false)
     expect(existsSync(outDir)).toBe(false)
   })

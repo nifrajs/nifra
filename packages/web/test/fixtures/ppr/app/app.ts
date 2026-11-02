@@ -11,7 +11,7 @@ import type { ShellCheckRecord } from "../../../../src/internal/ppr/compile-shel
 import { createWebApp } from "../../../../src/internal/web-app.ts"
 import { type PprOptions, partialPrerendering } from "../../../../src/ppr.ts"
 import type { RenderAdapter } from "../../../../src/render-seam.ts"
-import { probe, releaseHeld } from "./lib/probe.ts"
+import { probe, releaseHeld } from "./lib/probe.backend.ts"
 
 /** Signs the fixture's draft cookies; a test value, as `enableDraft` documents. */
 export const DRAFT_SECRET = "ppr-fixture-draft-secret-not-for-production"
@@ -48,13 +48,11 @@ export function fixtureApp(
     styles: assets.css ?? [],
     csp,
     draftSecret: DRAFT_SECRET,
-    experimental: {
-      ppr: partialPrerendering({
-        shellChecks: prepared.shellChecks,
-        origin: "https://shop.example",
-        options: pprOptions ?? {},
-      }),
-    },
+    ppr: partialPrerendering({
+      shellChecks: prepared.shellChecks,
+      origin: "https://shop.example",
+      options: pprOptions ?? {},
+    }),
   })
   app.get("/assets/*", async (c) => {
     const name = new URL(c.req.url).pathname.slice("/assets/".length)

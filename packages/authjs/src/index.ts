@@ -25,10 +25,16 @@
 
 import type { AuthConfig, setEnvDefaults } from "@auth/core"
 import type { Session } from "@auth/core/types"
+import {
+  assertUnauthenticated,
+  type UnauthenticatedResponse,
+  unauthenticatedResult,
+} from "@nifrajs/core/guard-deny"
 import type { AnyServer, Platform, ResponseResult } from "@nifrajs/core/server"
-import { defineIdentityPlugin, isSameOriginPath, status } from "@nifrajs/core/server"
+import { defineIdentityPlugin, isSameOriginPath, parseCookies, status } from "@nifrajs/core/server"
 
 export type { Session } from "@auth/core/types"
+export type { UnauthenticatedResponse } from "@nifrajs/core/guard-deny"
 
 /** The Auth.js config this integration drives - everything `@auth/core` accepts except `raw`. */
 export type AuthJSConfig = Omit<AuthConfig, "raw">
@@ -162,6 +168,60 @@ function activeConfig(
   return active
 }
 
+// `@nifrajs/web` keeps pages alive under an identity epoch it rotates when a session cookie changes,
+// and an Auth.js session read encrypts a new token every time. The mount holds the secret, so it names
+// a token re-issued to the same visitor in the header that hook reads and removes. Only a request that
+// carries an epoch pays for the two decryptions.
+const EPOCH_COOKIES = ["__Host-nifra-epoch", "nifra-epoch"]
+const RENEWED = "x-nifra-identity-renewed"
+const SESSION_TOKEN = "authjs.session-token"
+// Auth.js writes these anew on every read; a change to any other claim is a change of visitor.
+const REFRESHED_CLAIMS = new Set(["iat", "exp", "jti"])
+
+const claimsOf = (payload: Record<string, unknown> | null): string | undefined =>
+  payload === null
+    ? undefined
+    : JSON.stringify(
+        Object.keys(payload)
+          .filter((claim) => !REFRESHED_CLAIMS.has(claim))
+          .sort()
+          .map((claim) => [claim, payload[claim]]),
+      )
+
+async function vouchForRenewal(
+  req: Request,
+  response: Response,
+  config: AuthConfig,
+): Promise<Response> {
+  const sent = parseCookies(req.headers.get("cookie"))
+  const secret = config.secret
+  if (secret === undefined || EPOCH_COOKIES.every((name) => sent[name] === undefined)) {
+    return response
+  }
+  const named = config.cookies?.sessionToken?.name
+  const sessionNames = named === undefined ? [SESSION_TOKEN, `__Secure-${SESSION_TOKEN}`] : [named]
+  for (const line of response.headers.getSetCookie()) {
+    const name = line.slice(0, line.indexOf("=")).trim()
+    if (!sessionNames.includes(name)) continue
+    // A first sign-in or a sign-out decodes to null on one side, which matches nothing.
+    try {
+      const decode = config.jwt?.decode ?? (await import("@auth/core/jwt")).decode
+      const [before, after] = await Promise.all([
+        decode({ token: sent[name] ?? "", secret, salt: name }),
+        decode({ token: parseCookies(line)[name] ?? "", secret, salt: name }),
+      ])
+      const held = claimsOf(before)
+      if (held === undefined || held !== claimsOf(after)) return response
+    } catch {
+      return response
+    }
+    const vouched = new Response(response.body, response)
+    vouched.headers.append(RENEWED, name)
+    return vouched
+  }
+  return response
+}
+
 /** Remove proxy routing metadata so Auth.js cannot derive a URL from attacker-controlled headers. */
 function sanitizePublicRequest(req: Request, url: string, host: string): Request {
   const rewritten = new Request(url, req)
@@ -246,22 +306,16 @@ export function authjs(config: AuthJSConfig, options: AuthJSOptions = {}) {
           }
           const { Auth, setEnvDefaults } = await import("@auth/core")
           const active = activeConfig(config, base, secret, origin, env, setEnvDefaults)
-          return Auth(publicRequest(c.req, origin, options.trustProxy === true), active)
+          const response = await Auth(
+            publicRequest(c.req, origin, options.trustProxy === true),
+            active,
+          )
+          return vouchForRenewal(c.req, response, active)
         },
       )
     }
     return app
   })
-}
-
-/** The response a guard denies a missing session with, in place of the default `401` JSON. */
-export interface UnauthenticatedResponse {
-  /** An error status, 400-599. Default `401`. */
-  readonly status?: number
-  /** The body; present but `undefined` sends none. Default `{ ok: false, error: "unauthorized" }`. */
-  readonly body?: unknown
-  /** Response headers, such as a `www-authenticate` challenge. */
-  readonly headers?: Readonly<Record<string, string>>
 }
 
 /** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else the
@@ -277,34 +331,6 @@ export interface AuthGuardOptions
   readonly env?: unknown
   /** Secret key in `env`; defaults to `AUTH_SECRET`. */
   readonly secretEnv?: string
-}
-
-const UNAUTHORIZED = { ok: false, error: "unauthorized" } as const
-
-/** A dev-authored denial that is not an error status, or that competes with a redirect, fails loud. */
-function assertUnauthenticated(options: {
-  readonly redirectTo?: string
-  readonly unauthenticated?: UnauthenticatedResponse
-}): void {
-  const custom = options.unauthenticated
-  if (custom === undefined) return
-  if (options.redirectTo !== undefined) {
-    throw new Error("[nifra/authjs] a guard takes redirectTo or unauthenticated, not both")
-  }
-  const code = custom.status
-  if (code !== undefined && (!Number.isInteger(code) || code < 400 || code > 599)) {
-    throw new RangeError(
-      `[nifra/authjs] guard unauthenticated.status must be an integer 400-599 (got ${String(code)})`,
-    )
-  }
-}
-
-const unauthenticatedResult = (custom: UnauthenticatedResponse | undefined): ResponseResult => {
-  if (custom === undefined) return status(401, UNAUTHORIZED)
-  const body = "body" in custom ? custom.body : UNAUTHORIZED
-  return custom.headers === undefined
-    ? status(custom.status ?? 401, body)
-    : status(custom.status ?? 401, body, { headers: custom.headers })
 }
 
 const guardRejection = (options: AuthGuardOptions): ResponseResult => {
@@ -360,7 +386,7 @@ export async function requireAuthUser(
   config: AuthJSConfig,
   options: AuthGuardOptions = {},
 ): Promise<NonNullable<Session["user"]>> {
-  assertUnauthenticated(options)
+  assertUnauthenticated(options, "authjs")
   const session = await getSession(req, config, options)
   if (session?.user) return session.user
   throw guardRejection(options)

@@ -4,7 +4,34 @@ import { componentValue } from "./value.ts"
 
 export const COMPONENT_HEADER = "x-nifra-component"
 export const COMPONENT_MEDIA_TYPE = "application/vnd.nifra.component-v1"
+export const COMPONENT_FLIGHT_MEDIA_TYPE = "application/vnd.nifra.component-flight-v1"
 export const COMPONENT_PROTOCOL = 1
+
+export function acceptsComponentFlight(request: Request): boolean {
+  const accept = request.headers.get("accept")
+  if (accept === null) return false
+  return accept.split(",").some((entry) => {
+    const [mediaType, ...parameters] = entry.trim().split(";")
+    if (mediaType?.trim().toLowerCase() !== COMPONENT_FLIGHT_MEDIA_TYPE) return false
+    let quality = 1
+    let sawQuality = false
+    for (const parameter of parameters) {
+      const [name, value, ...extra] = parameter.trim().split("=")
+      if (name?.trim().toLowerCase() !== "q") continue
+      if (
+        sawQuality ||
+        value === undefined ||
+        extra.length > 0 ||
+        !/^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(value.trim())
+      )
+        return false
+      sawQuality = true
+      quality = Number(value)
+    }
+    return quality > 0
+  })
+}
+
 export const COMPONENT_LIMITS = Object.freeze({
   headerBytes: 2048,
   encodedHeaderBytes: 2732,
@@ -154,7 +181,7 @@ export const COMPONENT_RESPONSE_HEADERS = Object.freeze({
   "content-type": COMPONENT_MEDIA_TYPE,
   "cache-control": "private, no-store",
   "x-content-type-options": "nosniff",
-  vary: "x-nifra-component, x-nifra-data",
+  vary: "x-nifra-component, x-nifra-data, accept",
 })
 
 export function componentFailure(error: unknown): Response {

@@ -7,22 +7,27 @@
  *
  * The locale is the FIRST path segment. Prefixes match served locale keys only, case-insensitively on
  * read (`/HI/x` reads as `hi`), so `/frank` never reads as French and a draft locale's prefix reads as
- * an ordinary segment. No regex runs on request input; each operation is one scan of the path.
+ * an ordinary segment. No dynamic routing patterns run on request input.
  *
  * A page that exists in some locales only is declared once, with `pageLocales`: `matchSegment` answers
  * 404 for the others, `alternates` lists only its own, and `localizePathname` can fall back to the
  * default locale's page.
  */
 import type { LocaleInfo, Locales } from "./locales.ts"
+import { compilePathnames } from "./pathnames.ts"
 
 export interface I18nRoutingOptions<K extends string = string> {
   /** Prefix the default locale too (`/en/about` instead of `/about`). Default `false`. */
   readonly prefixDefaultLocale?: boolean
+  /** Explicit static, unprefixed canonical path → locale path mappings. Missing translations keep
+   * the canonical pathname; availability still comes from `pageLocales`. No filesystem aliases,
+   * dynamic slug translation or domain routing are created. Unicode is emitted percent-encoded. */
+  readonly pathnames?: Readonly<Record<string, Partial<Record<K, string | undefined>>>>
   /**
-   * The locales a page exists in, by its pathname without the locale prefix, query or hash
-   * (`/learn/x`); `undefined` for every served locale. It must be pure: every page of one cluster
-   * has to answer the same set, or the alternates stop being reciprocal. A draft locale it names is
-   * left out; a key the registry does not declare throws.
+   * The locales a page exists in, by its canonical pathname without the locale prefix, query or hash
+   * (`/learn/x`, the declared key for a mapped page); `undefined` for every served locale. It must be
+   * pure: every page of one cluster has to answer the same set, or alternates stop being reciprocal.
+   * A draft locale it names is left out; a key the registry does not declare throws.
    *
    * ```ts
    * pageLocales: (pathname) => (pathname.startsWith("/learn/") ? ["en", "hi"] : undefined)
@@ -37,11 +42,11 @@ export interface LocalizeOptions {
   readonly fallback?: "default"
 }
 
-/** A pathname with its locale prefix removed (or not, when it carries none). */
+/** A canonical pathname with its locale prefix removed (or not, when it carries none). */
 export interface UnlocalizedPath<K extends string = string> {
   /** The served locale the leading segment named, or `undefined` for an unprefixed path. */
   readonly locale: K | undefined
-  /** The path without the locale segment, always starting with `/`. */
+  /** The canonical unprefixed path, always starting with `/`; mapped Unicode is URL-encoded. */
   readonly pathname: string
 }
 
@@ -75,7 +80,8 @@ export type SegmentMatch<K extends string = string> =
   /** Not a served locale (unknown, or a draft): answer 404. */
   | { readonly kind: "not-found" }
   /** A served locale under a non-canonical URL - the default's prefix when the default is served
-   * unprefixed, or the wrong case. `location` is the canonical path, query kept. */
+   * unprefixed, the wrong case, or a mapped page's canonical source spelling instead of its translated
+   * spelling. `location` is the canonical localized path, query kept and hash dropped. */
   | { readonly kind: "redirect"; readonly location: string }
 
 /** Normalize and validate the origin used in absolute links. */
@@ -169,19 +175,22 @@ export interface LocalizedRouter<K extends string = string> {
   /** The registry this router reads. */
   readonly locales: Locales<K>
   /** Prefix `path` with `locale` (`/about` → `/fr/about`), unless it is the unprefixed default.
-   * The query and trailing slash ride along, the hash too; an already-prefixed path is re-prefixed.
-   * A locale that is not served throws. */
+   * The query and trailing slash ride along, the hash too; an already-localized path is translated
+   * through its canonical mapping. A locale that is not served throws. */
   localizePathname(path: string, locale: K, options?: LocalizeOptions): string
-  /** Strip a served locale prefix (`/fr/about` → `{ locale: "fr", pathname: "/about" }`). Anything
-   * else - `/frank`, a draft's prefix - returns `{ locale: undefined }` with the path unchanged. */
+  /** Strip a served locale prefix and resolve a translated static pathname to its canonical path.
+   * Unmapped paths keep their spelling; unknown and draft prefixes remain ordinary segments. */
   unlocalizePathname(path: string): UnlocalizedPath<K>
   /** The served locale a path's first segment names, or `undefined` when unprefixed. */
   getPathLocale(path: string): K | undefined
   /** The locale a path is in: its prefix, or the default for an unprefixed path. */
   localeOf(path: string): K
   /** The served locales the page at `path` exists in (any prefix, or none), in registry order: what
-   * `pageLocales` says, or every served locale. Also a prerender's static paths. */
+   * `pageLocales` says, or every served locale. The callback sees the canonical mapping key. */
   localesOf(path: string): readonly K[]
+  /** Mapped public paths only, in mapping declaration then served registry order, filtered by
+   * `pageLocales`. Unmapped filesystem routes are not enumerated. No query, hash or trailing slash. */
+  staticPathnames(): readonly string[]
   /** The page's canonical URL and its `hreflang` alternates, one per locale the page exists in
    * (`pageLocales`, unless `options.locales` names them). `path` may carry any served prefix or none
    * (it decides the canonical's locale); its query is kept and its hash dropped. A page in one locale
@@ -227,6 +236,7 @@ export function defineI18nRouting<K extends string>(
 ): LocalizedRouter<K> {
   const prefixDefault = options.prefixDefaultLocale === true
   const defaultLocale = locales.default
+  const pathnames = compilePathnames(locales, options.pathnames)
   // Lowercase key → served key, so reads are case-insensitive while emitted prefixes keep the declared
   // spelling. Drafts are absent: their prefix reads as an ordinary segment.
   const servedByLower = new Map<string, K>()
@@ -240,11 +250,23 @@ export function defineI18nRouting<K extends string>(
 
   const matchFirst = (segments: readonly string[]): K | undefined => {
     const first = segments[0]
-    return first === undefined ? undefined : servedByLower.get(first.toLowerCase())
+    if (first === undefined) return undefined
+    if (pathnames !== undefined && first.includes("%")) {
+      try {
+        return servedByLower.get(decodeURIComponent(first).toLowerCase())
+      } catch {
+        return undefined
+      }
+    }
+    return servedByLower.get(first.toLowerCase())
   }
 
   const prefixFor = (locale: K): string | undefined =>
     locale === defaultLocale && !prefixDefault ? undefined : locale
+  const canonicalRest = (rest: readonly string[], locale = defaultLocale): readonly string[] =>
+    pathnames?.canonical(rest, locale) ?? rest
+  const localizedRest = (rest: readonly string[], locale: K): readonly string[] =>
+    pathnames?.localized(rest, locale) ?? rest
 
   const servedOrThrow = (locale: K, where: string): K => {
     if (!infos.has(locale)) {
@@ -258,7 +280,7 @@ export function defineI18nRouting<K extends string>(
   /** The served locales the page at these unprefixed segments exists in, in registry order. */
   const pageLocalesOf = (rest: readonly string[]): readonly K[] => {
     if (pageLocales === undefined) return locales.served
-    const pathname = joinPath(undefined, rest, false)
+    const pathname = pathnames?.pageKey(rest) ?? joinPath(undefined, rest, false)
     let listed: readonly K[] | undefined
     try {
       listed = pageLocales(pathname)
@@ -289,15 +311,16 @@ export function defineI18nRouting<K extends string>(
   const localizePathname = (path: string, locale: K, opts: LocalizeOptions = {}): string => {
     let target = servedOrThrow(locale, "localizePathname")
     const { segments, query, hash, trailingSlash } = splitPath(path)
-    const rest = matchFirst(segments) === undefined ? segments : segments.slice(1)
+    const source = matchFirst(segments)
+    const rest = canonicalRest(source === undefined ? segments : segments.slice(1), source)
     if (opts.fallback === "default" && !pageLocalesOf(rest).includes(target)) target = defaultLocale
-    return `${joinPath(prefixFor(target), rest, trailingSlash)}${query}${hash}`
+    return `${joinPath(prefixFor(target), localizedRest(rest, target), trailingSlash)}${query}${hash}`
   }
 
   const unlocalizePathname = (path: string): UnlocalizedPath<K> => {
     const { segments, query, hash, trailingSlash } = splitPath(path)
     const locale = matchFirst(segments)
-    const rest = locale === undefined ? segments : segments.slice(1)
+    const rest = canonicalRest(locale === undefined ? segments : segments.slice(1), locale)
     return { locale, pathname: `${joinPath(undefined, rest, trailingSlash)}${query}${hash}` }
   }
 
@@ -307,17 +330,28 @@ export function defineI18nRouting<K extends string>(
 
   const localesOf = (path: string): readonly K[] => {
     const { segments } = splitPath(path)
-    return pageLocalesOf(matchFirst(segments) === undefined ? segments : segments.slice(1))
+    const locale = matchFirst(segments)
+    return pageLocalesOf(canonicalRest(locale === undefined ? segments : segments.slice(1), locale))
+  }
+
+  const staticPathnames = (): readonly string[] => {
+    const paths: string[] = []
+    for (const rest of pathnames?.canonicalPaths() ?? []) {
+      for (const locale of pageLocalesOf(rest)) {
+        paths.push(joinPath(prefixFor(locale), localizedRest(rest, locale), false))
+      }
+    }
+    return paths
   }
 
   const alternates = (path: string, opts: AlternatesOptions<K> = {}): Alternates => {
     const base = opts.origin === undefined ? "" : normalizeOrigin(opts.origin)
     const { segments, query, trailingSlash } = splitPath(path)
     const current = matchFirst(segments)
-    const rest = current === undefined ? segments : segments.slice(1)
+    const rest = canonicalRest(current === undefined ? segments : segments.slice(1), current)
     const pageLocale = current ?? defaultLocale
     const urlFor = (locale: K): string =>
-      `${base}${joinPath(prefixFor(locale), rest, trailingSlash)}${query}`
+      `${base}${joinPath(prefixFor(locale), localizedRest(rest, locale), trailingSlash)}${query}`
     let listed: readonly K[]
     if (opts.locales === undefined) {
       listed = pageLocalesOf(rest)
@@ -350,11 +384,18 @@ export function defineI18nRouting<K extends string>(
     const { segments, query, trailingSlash } = splitPath(pathname)
     if (value === undefined) {
       // An absent optional segment is the default locale's unprefixed URL.
-      if (!pageLocalesOf(segments).includes(defaultLocale)) return { kind: "not-found" }
-      if (!prefixDefault) return { kind: "ok", locale: defaultLocale }
+      const rest = canonicalRest(segments)
+      if (!pageLocalesOf(rest).includes(defaultLocale)) return { kind: "not-found" }
+      const location = `${joinPath(prefixFor(defaultLocale), localizedRest(rest, defaultLocale), trailingSlash)}${query}`
+      if (
+        !prefixDefault &&
+        location === `${joinPath(undefined, segments, trailingSlash)}${query}`
+      ) {
+        return { kind: "ok", locale: defaultLocale }
+      }
       return {
         kind: "redirect",
-        location: `${joinPath(defaultLocale, segments, trailingSlash)}${query}`,
+        location,
       }
     }
     const locale = servedByLower.get(value.toLowerCase())
@@ -363,12 +404,20 @@ export function defineI18nRouting<K extends string>(
     // The segment must be the one in the path: anything else is a router setup this helper cannot
     // build a redirect for, and a 404 is the safe answer to it.
     if (first === undefined || !segmentEquals(first, value)) return { kind: "not-found" }
-    if (!pageLocalesOf(segments.slice(1)).includes(locale)) return { kind: "not-found" }
+    const rest = canonicalRest(segments.slice(1), locale)
+    if (!pageLocalesOf(rest).includes(locale)) return { kind: "not-found" }
     const canonicalPrefix = prefixFor(locale)
-    if (canonicalPrefix === first) return { kind: "ok", locale }
+    const localized = localizedRest(rest, locale)
+    const location = `${joinPath(canonicalPrefix, localized, trailingSlash)}${query}`
+    if (
+      canonicalPrefix === first &&
+      joinPath(undefined, localized, false) === joinPath(undefined, segments.slice(1), false)
+    ) {
+      return { kind: "ok", locale }
+    }
     return {
       kind: "redirect",
-      location: `${joinPath(canonicalPrefix, segments.slice(1), trailingSlash)}${query}`,
+      location,
     }
   }
 
@@ -379,6 +428,7 @@ export function defineI18nRouting<K extends string>(
     getPathLocale,
     localeOf,
     localesOf,
+    staticPathnames,
     alternates,
     matchSegment,
   }

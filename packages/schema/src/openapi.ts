@@ -16,6 +16,7 @@ import {
   type SchemaReflection,
 } from "@nifrajs/core/reflection"
 import type { Server } from "@nifrajs/core/server"
+import { isRecord } from "./internal/record.ts"
 
 /**
  * OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen
@@ -185,9 +186,6 @@ export interface OpenAPIDocument {
 }
 
 type SchemaRecord = Readonly<Record<string, unknown>>
-
-const isRecord = (value: unknown): value is SchemaRecord =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
 
 const recordOf = (value: unknown): SchemaRecord | undefined => (isRecord(value) ? value : undefined)
 

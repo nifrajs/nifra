@@ -343,7 +343,7 @@ describe("judge", () => {
     expect(judge(repeated, split).violations[0]?.kind).toBe("difference")
   })
 
-  test("a leading empty Content-Type member waits on U18 only where workerd alone differs", () => {
+  test("a leading empty Content-Type member waits on U18 only where workerd differs, with or without Deno", () => {
     const repeated = caseOf({
       ...get("/items/-", [
         ["Host", "127.0.0.1"],
@@ -364,6 +364,19 @@ describe("judge", () => {
     })
     const split = new Map<LaneName, Outcome>([...read, ["node", response(400, "{}")]])
     expect(judge(repeated, split).violations[0]?.kind).toBe("difference")
+
+    // A dot segment in the target makes core rebuild Deno's request, which drops the empty member too.
+    const asJson = response(200, '{"id":"-","qty":0}')
+    const denoJoins = new Map<LaneName, Outcome>([...read, ["deno", asJson]])
+    expect(judge(repeated, denoJoins)).toEqual({
+      violations: [],
+      excusedBy: ["U18 workerd-drops-leading-empty-content-type"],
+    })
+    const apart = new Map<LaneName, Outcome>([...denoJoins, ["deno", response(409, "{}")]])
+    expect(judge(repeated, apart).violations[0]?.kind).toBe("difference")
+    const denoAlone = new Map<LaneName, Outcome>([...read, ["workerd", refused], ["deno", asJson]])
+    // Deno alone is U6's, not U18's.
+    expect(judge(repeated, denoAlone).excusedBy).toEqual(["U6 repeated-header-empty-member"])
   })
 
   test("an exposed open finding is reported instead of excused", () => {

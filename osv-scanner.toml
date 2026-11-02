@@ -1,0 +1,7 @@
+# deepmerge 4.3.1 is the latest release and the advisory lists no patched version. It is reached
+# only through @sveltejs/vite-plugin-svelte, which merges its own build-time config with it, so no
+# request-handling code passes it untrusted input. Revisit when a patched release exists.
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-12-28
+reason = "No patched deepmerge release exists; build-time dependency of the Svelte Vite plugin only."

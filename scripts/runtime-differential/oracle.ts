@@ -215,10 +215,19 @@ const statusOf = (outcomes: Outcomes, lane: LaneName) => {
   return outcome?.kind === "response" ? outcome.status : undefined
 }
 
-/** Every compared lane but `lane` gave one and the same answer. */
-const othersAgree = (outcomes: Outcomes, lane: LaneName) =>
-  new Set([...outcomes].filter(([name]) => name !== lane).map(([, outcome]) => canonical(outcome)))
-    .size <= 1
+/** Every compared lane but `lanes` gave one and the same answer. */
+const othersAgree = (outcomes: Outcomes, ...lanes: LaneName[]) =>
+  new Set(
+    [...outcomes]
+      .filter(([name]) => !lanes.includes(name))
+      .map(([, outcome]) => canonical(outcome)),
+  ).size <= 1
+
+/** The compared lanes among `lanes` gave one and the same answer. */
+const lanesAgree = (outcomes: Outcomes, ...lanes: LaneName[]) =>
+  new Set(
+    [...outcomes].filter(([name]) => lanes.includes(name)).map(([, outcome]) => canonical(outcome)),
+  ).size <= 1
 
 /** The violation is `lane`'s alone: every other lane agrees, or only `lane` broke the invariant. */
 const aloneIn = (violation: Violation, outcomes: Outcomes, lane: LaneName) =>
@@ -324,9 +333,13 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       "A Content-Type repeated with an empty first member (`Content-Type:` then `Content-Type: " +
       "application/json`) reads as ', application/json' on Bun, Node and Deno, which is refused 415. " +
       "workerd drops that leading empty member of Content-Type alone, not of another field nor a trailing " +
-      "one, so it reads the body as JSON.",
+      "one, so it reads the body as JSON. Deno does the same once core rebuilds its request for a target " +
+      "with a dot segment: `new Request(url, req)` copies the headers through Deno's iteration (U6).",
     matches: (violation, testCase, outcomes) => {
-      if (violation.kind !== "difference" || !othersAgree(outcomes, "workerd")) return false
+      if (violation.kind !== "difference") return false
+      const denoJoins =
+        othersAgree(outcomes, "deno", "workerd") && lanesAgree(outcomes, "deno", "workerd")
+      if (!othersAgree(outcomes, "workerd") && !denoJoins) return false
       const types = testCase.request.headers.filter(
         ([name]) => name.toLowerCase() === "content-type",
       )

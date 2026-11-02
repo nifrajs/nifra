@@ -170,6 +170,22 @@ export interface LayoutMigrationOptions {
   readonly typescript?: typeof TS
 }
 
+type LayoutMigrationReport = Omit<LayoutMigrationResult, "write">
+
+/**
+ * The complete set of changes discovered by the layout migration. Planning keeps reading the
+ * project directly for now; applying the plan is the only mutating step in the migration command.
+ */
+interface LayoutMigrationPlan {
+  readonly root: string
+  readonly original: ReadonlyMap<string, string>
+  readonly final: ReadonlyMap<string, string>
+  readonly toolingWrites: ReadonlyMap<string, string>
+  readonly scriptWrites: ReadonlyMap<string, string>
+  readonly moves: readonly { readonly from: string; readonly to: string }[]
+  readonly report: LayoutMigrationReport
+}
+
 /** A file's text, as the migration sees it before writing. */
 type Files = Map<string, string>
 
@@ -1042,6 +1058,21 @@ function scriptBlocks(
   return blocks
 }
 
+/** A replacement of the source between `start` and `end`. */
+interface TextEdit {
+  start: number
+  end: number
+  text: string
+}
+
+/** `text` with every edit made, last offset first so the ones before it still point where they did. */
+function applyEdits(text: string, edits: TextEdit[]): string {
+  let out = text
+  for (const edit of edits.sort((a, b) => b.start - a.start))
+    out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
+  return out
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Import graph + zoning
 // ---------------------------------------------------------------------------------------------------
@@ -1372,7 +1403,7 @@ function rebaseShellPaths(
   locate: (target: string) => string,
 ): { readonly text: string; readonly unfollowed: string | undefined } {
   let unfollowed: string | undefined
-  const edits: Array<{ start: number; end: number; text: string }> = []
+  const edits: TextEdit[] = []
   for (const match of text.matchAll(SHELL_OWN_DIR)) {
     const start = match.index + match[0].length
     const trailing = /^\/([\w.@-]+(?:\/[\w.@-]+)*\/?)/.exec(text.slice(start))?.[1]
@@ -1455,7 +1486,7 @@ function rebaseOwnPaths(
     true,
     to.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   )
-  const edits: Array<{ start: number; end: number; text: string }> = []
+  const edits: TextEdit[] = []
   const followed: Array<readonly [number, number]> = []
   const aliases = ownDirAliases(ts, sf)
   const isOwnDir = (node: TS.Node | undefined): node is TS.Expression =>
@@ -1569,10 +1600,7 @@ function rebaseOwnPaths(
   const unfollowed = [...text.matchAll(new RegExp(SELF_LOCATION.source, "g"))].find(
     (match) => !followed.some(([start, end]) => start <= match.index && match.index < end),
   )?.[0]
-  let next = text
-  for (const edit of edits.sort((a, b) => b.start - a.start))
-    next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
-  return { text: next, unfollowed }
+  return { text: applyEdits(text, edits), unfollowed }
 }
 
 /** Rewrite one relative specifier from `from`'s new location to `target`'s new location, keeping the
@@ -1658,7 +1686,7 @@ function redirectMovedImports(
     true,
     file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   )
-  const edits: Array<{ start: number; end: number; text: string }> = []
+  const edits: TextEdit[] = []
   const issues: string[] = []
   const mentioned = (split: SplitTarget, pattern: (name: string) => RegExp): string[] =>
     [...split.moved].filter((name) => pattern(escapeRegExp(name)).test(text)).sort()
@@ -1754,10 +1782,7 @@ function redirectMovedImports(
     ts.forEachChild(node, visit)
   }
   visit(sf)
-  let out = text
-  for (const edit of edits.sort((a, b) => b.start - a.start))
-    out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
-  return { text: out, issues, redirects }
+  return { text: applyEdits(text, edits), issues, redirects }
 }
 
 /**
@@ -1987,12 +2012,7 @@ function rewriteImports(
   text: string,
   rewrite: (specifier: string) => string | undefined,
 ): string {
-  const replace = (
-    code: string,
-    offset: number,
-    out: Array<{ start: number; end: number; text: string }>,
-    kind: TS.ScriptKind,
-  ): void => {
+  const replace = (code: string, offset: number, out: TextEdit[], kind: TS.ScriptKind): void => {
     const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, kind)
     const visit = (node: TS.Node): void => {
       let literal: TS.StringLiteralLike | undefined
@@ -2030,39 +2050,34 @@ function rewriteImports(
     }
     visit(sf)
   }
-  const edits: Array<{ start: number; end: number; text: string }> = []
+  const edits: TextEdit[] = []
+  // A match's group 2 is the specifier; group 1 is everything before it.
+  const rewriteMatches = (pattern: RegExp): void => {
+    for (const match of text.matchAll(pattern)) {
+      const next = rewrite(match[2] ?? "")
+      if (next !== undefined) {
+        const start = (match.index ?? 0) + (match[1] ?? "").length
+        edits.push({ start, end: start + (match[2] ?? "").length, text: next })
+      }
+    }
+  }
   if (/\.(?:svelte|vue)$/.test(file)) {
     for (const block of scriptBlocks(text))
       replace(text.slice(block.start, block.end), block.start, edits, ts.ScriptKind.TS)
   } else if (file.endsWith(".css")) {
-    for (const match of text.matchAll(/(@import\s+(?:url\()?["'])([^"']+)["']/g)) {
-      const next = rewrite(match[2] ?? "")
-      if (next !== undefined) {
-        const start = (match.index ?? 0) + (match[1] ?? "").length
-        edits.push({ start, end: start + (match[2] ?? "").length, text: next })
-      }
-    }
+    rewriteMatches(/(@import\s+(?:url\()?["'])([^"']+)["']/g)
   } else if (file.endsWith(".mdx")) {
-    for (const match of text.matchAll(/^((?:import|export)\s[^\n]*?from\s+["'])([^"']+)["']/gm)) {
-      const next = rewrite(match[2] ?? "")
-      if (next !== undefined) {
-        const start = (match.index ?? 0) + (match[1] ?? "").length
-        edits.push({ start, end: start + (match[2] ?? "").length, text: next })
-      }
-    }
+    rewriteMatches(/^((?:import|export)\s[^\n]*?from\s+["'])([^"']+)["']/gm)
   } else if (/\.[cm]?[jt]sx?$/.test(file)) {
     replace(text, 0, edits, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
   }
-  let out = text
-  for (const edit of edits.sort((a, b) => b.start - a.start))
-    out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
-  return out
+  return applyEdits(text, edits)
 }
 
 /** `ServerOnly` imported from `@nifrajs/web` becomes `BackendOnly`, along with every use of it. */
 function renameRetiredTypes(ts: typeof TS, file: string, text: string): string {
   if (!text.includes("ServerOnly")) return text
-  const edits: Array<{ start: number; end: number; text: string }> = []
+  const edits: TextEdit[] = []
   const scan = (code: string, offset: number, kind: TS.ScriptKind): void => {
     const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, kind)
     const rename = (node: TS.Node): void => {
@@ -2101,10 +2116,7 @@ function renameRetiredTypes(ts: typeof TS, file: string, text: string): string {
   } else if (/\.[cm]?[jt]sx?$/.test(file)) {
     scan(text, 0, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
   }
-  let out = text
-  for (const edit of edits.sort((a, b) => b.start - a.start))
-    out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
-  return out
+  return applyEdits(text, edits)
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -2248,10 +2260,10 @@ function nestedAppHint(root: string): string {
   return `. ${found.map((name) => `${name}/routes/`).join(", ")} exists: run \`nifra migrate layout --dir ${first}\` to migrate the app there`
 }
 
-export async function migrateLayout(
+async function planLayoutMigration(
   appRoot: string,
   options: LayoutMigrationOptions = {},
-): Promise<LayoutMigrationResult> {
+): Promise<LayoutMigrationPlan> {
   const ts = options.typescript ?? (await importTypeScript())
   if (ts === undefined)
     throw new Error("[nifra] `nifra migrate layout` needs TypeScript: bun add -d typescript")
@@ -2813,7 +2825,7 @@ export async function migrateLayout(
     const at = newPath(file)
     const text = final.get(at)
     if (text === undefined) continue
-    const edits: Array<{ start: number; end: number; text: string }> = []
+    const edits: TextEdit[] = []
     for (const call of globCalls(ts, at, text)) {
       if (!call.literal) continue
       const written = call.patterns.map((pattern) => pattern.text)
@@ -2840,10 +2852,7 @@ export async function migrateLayout(
       })
     }
     if (edits.length === 0) continue
-    let updated = text
-    for (const edit of edits.sort((a, b) => b.start - a.start))
-      updated = updated.slice(0, edit.start) + edit.text + updated.slice(edit.end)
-    final.set(at, updated)
+    final.set(at, applyEdits(text, edits))
     if (!moveMap.has(file) && !rewritten.includes(file)) rewritten.push(file)
   }
 
@@ -2853,7 +2862,7 @@ export async function migrateLayout(
     const at = newPath(configFile)
     const text = final.get(at)
     if (text === undefined || !next.has(configFile)) continue
-    const edits: Array<{ start: number; end: number; text: string }> = []
+    const edits: TextEdit[] = []
     for (const entry of configEntries(ts, at, text)) {
       if (entry.span === undefined) continue
       const target = resolveAny("nifra.config.ts", entry.path)
@@ -2864,10 +2873,7 @@ export async function migrateLayout(
       if (value !== undefined) edits.push({ start: entry.span[0], end: entry.span[1], text: value })
     }
     if (edits.length === 0) continue
-    let updated = text
-    for (const edit of edits.sort((a, b) => b.start - a.start))
-      updated = updated.slice(0, edit.start) + edit.text + updated.slice(edit.end)
-    final.set(at, updated)
+    final.set(at, applyEdits(text, edits))
     if (!moveMap.has(configFile) && !rewritten.includes(configFile)) rewritten.push(configFile)
   }
 
@@ -3195,44 +3201,60 @@ export async function migrateLayout(
     })
   }
 
-  if (options.write === true) {
-    for (const [file, text] of toolingWrites) writeFileSync(join(root, file), text)
-    for (const [file, text] of final) {
-      if (original.get(file) === text) continue
-      const path = join(root, file)
-      mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(path, text)
-    }
-    const vacated: string[] = []
-    for (const file of original.keys()) {
-      if (final.has(file)) continue
-      rmSync(join(root, file), { force: true })
-      vacated.push(file)
-    }
-    for (const { from, to } of moves) {
-      if (original.has(from) || !existsSync(join(root, from))) continue
-      mkdirSync(dirname(join(root, to)), { recursive: true })
-      renameSync(join(root, from), join(root, to))
-      vacated.push(from)
-    }
-    for (const [file, text] of scriptWrites) writeFileSync(join(root, file), text)
-    pruneVacatedDirs(root, vacated)
-  }
-  return {
+  const report: LayoutMigrationReport = {
     ok: issues.length === 0,
-    write: options.write === true,
     mode,
     followUps,
     splits: splits.sort((a, b) => codeUnitOrder(a.file, b.file)),
     moves,
     rewritten: rewritten.sort(),
     tooling,
-    schemas: schemas.map((entry) =>
+    schemas,
+    issues,
+  }
+  return { root, original, final, toolingWrites, scriptWrites, moves, report }
+}
+
+/** Apply a planned migration in the same order the command historically used. */
+function applyLayoutMigration(plan: LayoutMigrationPlan): void {
+  const { root, original, final, toolingWrites, scriptWrites, moves } = plan
+  for (const [file, text] of toolingWrites) writeFileSync(join(root, file), text)
+  for (const [file, text] of final) {
+    if (original.get(file) === text) continue
+    const path = join(root, file)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, text)
+  }
+  const vacated: string[] = []
+  for (const file of original.keys()) {
+    if (final.has(file)) continue
+    rmSync(join(root, file), { force: true })
+    vacated.push(file)
+  }
+  for (const { from, to } of moves) {
+    if (original.has(from) || !existsSync(join(root, from))) continue
+    mkdirSync(dirname(join(root, to)), { recursive: true })
+    renameSync(join(root, from), join(root, to))
+    vacated.push(from)
+  }
+  for (const [file, text] of scriptWrites) writeFileSync(join(root, file), text)
+  pruneVacatedDirs(root, vacated)
+}
+
+export async function migrateLayout(
+  appRoot: string,
+  options: LayoutMigrationOptions = {},
+): Promise<LayoutMigrationResult> {
+  const plan = await planLayoutMigration(appRoot, options)
+  if (options.write === true) applyLayoutMigration(plan)
+  return {
+    ...plan.report,
+    write: options.write === true,
+    schemas: plan.report.schemas.map((entry) =>
       options.write === true && entry.reason === undefined
         ? { ...entry, status: "generated" }
         : entry,
     ),
-    issues,
   }
 }
 
@@ -3393,7 +3415,7 @@ function followTsconfigs(
       const inherited = parent === undefined ? undefined : settled.get(parent)
       const extendsOther = base !== undefined && inherited === undefined
 
-      const edits: Array<{ start: number; end: number; text: string }> = []
+      const edits: TextEdit[] = []
       const own = new Map<string, { before: string[]; after: string[] }>()
       let malformed: string | undefined
       for (const key of ["include", "exclude", "files"]) {
@@ -3422,9 +3444,7 @@ function followTsconfigs(
         }
         own.set(key, lists)
       }
-      let updated = text
-      for (const edit of edits.sort((a, b) => b.start - a.start))
-        updated = updated.slice(0, edit.start) + edit.text + updated.slice(edit.end)
+      let updated = applyEdits(text, edits)
       const changes: string[] = []
       if (edits.length > 0) changes.push(`${edits.length} file path(s) follow their moved files`)
 
@@ -3775,7 +3795,7 @@ function rewritePackagePaths(
     `(?<![\\w.@/-])(\\./)?(${ordered.map(([from]) => escapeRegExp(from)).join("|")})(?![\\w/-]|\\.\\w)`,
     "g",
   )
-  const edits: Array<{ start: number; end: number; text: string }> = []
+  const edits: TextEdit[] = []
   let count = 0
   const visit = (node: TS.Node, field: string): void => {
     if (ts.isStringLiteral(node)) {
@@ -3808,10 +3828,7 @@ function rewritePackagePaths(
     if (!ts.isPropertyAssignment(property) || !ts.isStringLiteral(property.name)) continue
     if (PACKAGE_PATH_FIELDS.has(property.name.text)) visit(property.initializer, property.name.text)
   }
-  let next = text
-  for (const edit of edits.sort((a, b) => b.start - a.start))
-    next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
-  return { text: next, count }
+  return { text: applyEdits(text, edits), count }
 }
 
 /** Tailwind `content` globs that matched a moved file at its old path and match nothing at its new one. */

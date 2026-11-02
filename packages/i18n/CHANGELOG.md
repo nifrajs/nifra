@@ -1,5 +1,34 @@
 # @nifrajs/i18n
 
+## 5.11.0
+
+No changes in this release.
+
+## 5.10.0
+
+### Minor Changes
+
+- d2066e0: Add opt-in local `?image` metadata imports and content-hashed build-time responsive variants using the existing injectable image backends. Emit images with client, SSR and static builds, and infer imported dimensions in all five UI adapters. String image URLs retain their existing dimension requirements.
+  
+  Add explicit static translated-path mappings to i18n routing, with reciprocal URL/SEO helpers, availability-aware redirects and static-path enumeration. These mappings do not implicitly create filesystem route aliases.
+  
+  Add `vercelRuntime: "node"` for ordinary SSR Vercel builds through both bundlers, using a shared streaming Node request bridge. Vercel Edge remains the default.
+
+### Patch Changes
+
+- 535c4e5: Bound nested percent-decoding when translated pathnames are looked up, and refuse segments nested deeper than three encodings. Publish each development image asset once per build instead of re-verifying earlier ones on every import. Mark ordinary Vercel Node functions as response-streaming.
+
+## 5.9.0
+
+### Patch Changes
+
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- 5bc60b7: `@nifrajs/core` exports `varyOn(value, names)` from its root and `/server`: the `Vary` value that names each of `names` once, matched without regard to case, with `Vary: *` returned unchanged. The i18n `localeDetector()` and the middleware `language()` plugin set their `Vary` with it.
+  
+  `@nifrajs/agent` exports `parseAgentResume(raw)`, which reads a turn's `resume` (`{ continuation, approval? }`) from an untrusted value and returns `undefined` for anything else. The agent mount, A2A and AG-UI transports all parse a resume with it, so a continuation is accepted on the same terms whichever protocol carries it.
+  
+  `etag()` and `prettyJson()` release the upstream body's reader lock once a replayed body ends, fails, or is cancelled, as `cache()` already did.
+
 ## 5.8.0
 
 No changes in this release.

@@ -130,7 +130,7 @@ export interface SingleCopyPlan {
 }
 
 export interface SingleCopyOptions {
-  /** The app root whose copy wins. Defaults to `process.cwd()`. */
+  /** The app root whose copy wins. Defaults to its nearest declaration, or `process.cwd()` if none. */
   readonly cwd?: string
   /** Package names or `@scope/*` patterns. Defaults to the `nifra.singleCopy` declaration. */
   readonly packages?: readonly string[]
@@ -177,6 +177,21 @@ const singleCopyField = (cwd: string): unknown => {
   const pkg = readJsonSync(join(resolve(cwd), "package.json"))
   const nifra = pkg?.nifra
   return isRecord(nifra) ? nifra.singleCopy : undefined
+}
+
+/** Find the declaring app when a Bun workspace script runs from a package directory. */
+const singleCopyProjectRoot = (cwd: string): string => {
+  const start = resolve(cwd)
+  let current = start
+  for (let depth = 0; depth < MAX_ANCESTOR_DIRS; depth++) {
+    const pkg = readJsonSync(join(current, "package.json"))
+    const nifra = pkg?.nifra
+    if (isRecord(nifra) && Object.hasOwn(nifra, "singleCopy")) return realpathOrSelf(current)
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  return realpathOrSelf(start)
 }
 
 /**
@@ -266,6 +281,34 @@ function preloadEntries(value: string): readonly string[] {
   return entries
 }
 
+/** Accept the public entry, or a relative source preload that is itself the registrar. */
+function isSingleCopyRegistrar(entry: string, cwd: string): boolean {
+  if (entry === SINGLE_COPY_REGISTER_SPECIFIER) return true
+  if (!entry.startsWith(".")) return false
+  let source: string
+  try {
+    source = readFileSync(resolve(cwd, entry), "utf8")
+  } catch {
+    return false
+  }
+  const lines = source
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .map((line) => line.trim())
+  const importsRegistrar = lines.some((line) => {
+    const statement = line.endsWith(";") ? line.slice(0, -1) : line
+    return (
+      statement === 'import { registerSingleCopy } from "./single-copy"' ||
+      statement === "import { registerSingleCopy } from './single-copy'"
+    )
+  })
+  const callsRegistrar = lines.some((line) => {
+    const statement = line.endsWith(";") ? line.slice(0, -1) : line
+    return statement === "registerSingleCopy()"
+  })
+  return importsRegistrar && callsRegistrar
+}
+
 /**
  * Read the runtime proof out of `bunfig.toml`.
  *
@@ -294,7 +337,10 @@ export function readSingleCopyRegistration(cwd: string): SingleCopyRegistration 
       section = heading.trim()
       continue
     }
-    if (value === undefined || !preloadEntries(value).includes(SINGLE_COPY_REGISTER_SPECIFIER))
+    if (
+      value === undefined ||
+      !preloadEntries(value).some((entry) => isSingleCopyRegistrar(entry, cwd))
+    )
       continue
     if (section === "test") test = true
     else if (section === "") run = true
@@ -726,7 +772,9 @@ const strictFromEnv = (): boolean => {
  * anything loads, and a `no-counterpart` file fails its own import.
  */
 export function registerSingleCopy(options: SingleCopyOptions = {}): SingleCopyPlan {
-  const root = realpathOrSelf(resolve(options.cwd ?? process.cwd()))
+  // Bun runs `--filter` scripts from the workspace package directory. Resolve the declaration root
+  // first so the preload still pins packages against the application tree that owns bunfig.toml.
+  const root = realpathOrSelf(resolve(options.cwd ?? singleCopyProjectRoot(process.cwd())))
   const strict = options.strict ?? (readSingleCopyStrict(root) || strictFromEnv())
   const warned = processSet(WARNED)
   const emit = (key: string, message: string): void => {

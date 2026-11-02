@@ -41,11 +41,6 @@ export function assertPprRoute(
   })
   let holes = 0
   for (const boundary of boundaries) {
-    if (typeof boundary.mode === "object") {
-      throw new Error(
-        `[nifra/web] ppr: route "${route.id}" has a shellLoader and an intercepting boundary "${boundary.name}", which partial prerendering does not support yet`,
-      )
-    }
     if (!isHole(boundary)) continue
     holes++
     if (typeof boundary.load !== "function") {

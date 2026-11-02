@@ -10,7 +10,7 @@ export { publicEnvDefines } from "./internal/public-env.ts"
  * are Bun-specific and never on the request path (own subpath, like `@nifrajs/web/fs`); the *output*
  * runs on any runtime.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { cp, lstat, mkdir, realpath } from "node:fs/promises"
 import {
   dirname,
@@ -26,7 +26,7 @@ import {
   singleCopyPlugin as declaredSingleCopyPlugin,
   readSingleCopyDeclaration,
 } from "@nifrajs/core/single-copy"
-import { isHiddenPath } from "@nifrajs/core/static-file"
+import { isHiddenPath, ONE_DAY } from "@nifrajs/core/static-file"
 import { type BunPlugin, Glob } from "bun"
 import {
   aggregateSizeReport,
@@ -50,28 +50,36 @@ import {
   planBuildTarget,
   type ServerBuild,
   type SizeReport,
+  type VercelRuntime,
+  validateVercelRuntime,
 } from "./build-plan.ts"
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
-import { generateClientEntry, generateServerManifest, type LiveClientEntry } from "./index.ts"
+import { generateServerManifest, type LiveClientEntry } from "./index.ts"
+import {
+  clientEntryFiles,
+  pageStyles,
+  writeClientEntry,
+  writeClientManifest,
+  writeServerManifest,
+} from "./internal/build-steps.ts"
 import { missingClientEntry } from "./internal/codegen.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { assertDisposableDir } from "./internal/disposable-dir.ts"
 import { entryChunks } from "./internal/entry-chunks.ts"
+import { escapeRegExp } from "./internal/escape-regexp.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
-import { nodeAdapterRefusal } from "./internal/node-adapter.ts"
-import {
-  assertDevelopmentProductionParity,
-  assertIdentityParity,
-  collectDevelopmentParityInput,
-} from "./internal/parity.ts"
+import { emitPluginImages, isImageAssetUrl } from "./internal/image-assets.ts"
+import { adapterRefusal } from "./internal/node-adapter.ts"
+import { nodeHandlerSource } from "./internal/node-handler-source.ts"
+import { assertIdentityParity } from "./internal/parity.ts"
 import {
   type ServerPrerenderedPage,
   servablePrerenderedPages,
 } from "./internal/prerendered-pages.ts"
 import { privateEnvCheck } from "./internal/private-env.ts"
-import { publicUrlPath } from "./internal/public-url.ts"
+import { publicUrlPaths } from "./internal/public-url.ts"
 import {
   assertNoSecrets,
   buildEnvironment,
@@ -106,7 +114,6 @@ import { assertNoImportGlob, importGlobPlugin } from "./plugins/import-glob.ts"
 import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { type PrerenderOptions, prerenderRoutes } from "./prerender.ts"
-import { IMMUTABLE, ONE_DAY } from "./public-dir.ts"
 import { createZoneClassifier } from "./zones.ts"
 
 export * from "./build-plan.ts"
@@ -362,7 +369,7 @@ export function cloudflareRouteRules(
  * `.well-known` are skipped, as development never serves them: every target ships this list, and a
  * CDN-hosted one serves whatever was copied.
  *
- * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and
+ * Lives here, not in `public-dir.ts`, because it is BUILD-time: it reaches for `Bun.Glob` and
  * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package
  * entry - a dynamic `import("bun")` there fails the browser build outright.
  */
@@ -385,7 +392,7 @@ export async function copyPublicDir(from: string, to: string): Promise<string[]>
     const target = join(to, rel)
     await mkdir(join(target, ".."), { recursive: true })
     await cp(candidateReal, target)
-    copied.push(publicUrlPath(rel))
+    copied.push(...publicUrlPaths(rel))
   }
   return copied.sort()
 }
@@ -471,38 +478,22 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
   const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
   const privateEnv = privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_")
-  // Keep the generated source beside the project, not inside `outDir`: module resolution starts at the
-  // importing file, so an absolute `--out /tmp/deploy` must still resolve the app's dependencies.
-  // A unique directory also avoids clobbering a user file or colliding with parallel builds.
-  const entryDir = mkdtempSync(resolvePath(dirname(routesDir), ".nifra-client-"))
-  const entryFile = `${entryDir}/_nifra-entry.ts`
-  // A client bundle has no Node `process`; provide a minimal one so a stray bare `process` reference in
-  // an app module doesn't crash hydration (`process.env.*` reads are handled at compile time by `define`).
-  writeFileSync(
-    entryFile,
-    `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, {
+  const { dir: entryDir, file: entryFile } = writeClientEntry(
+    routesDir,
+    ".nifra-client-",
+    routeManifest,
+    {
       clientModule,
       resolve,
       copyChunks: copySplit !== undefined,
       live: options.live,
-    })}`,
+    },
   )
 
-  // Every unique route/layout/`_404` file (sorted, stable), as ADDITIONAL entrypoints - Bun emits a
-  // named chunk per file that the bootstrap's lazy `import()` dedupes to (verified), so the manifest
-  // can map each route to its chunk URLs for matched-route preload. `resolve(file)` is the same
-  // specifier the bootstrap imports, so the entrypoint + lazy import are the same module (dedup).
-  const routeFiles = [
-    ...new Set([
-      ...routeManifest.routes.map((r) => r.file),
-      ...Object.values(routeManifest.layouts).map((l) => l.file),
-      ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
-      // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
-      ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
-      // A `_loading` page is an entry for its stylesheet too: the bootstrap imports it lazily.
-      ...Object.values(routeManifest.loadings ?? {}).map((page) => page.file),
-    ]),
-  ].sort()
+  // As ADDITIONAL entrypoints the manifest can map each route to its chunk URLs for matched-route
+  // preload. `resolve(file)` is the same specifier the bootstrap imports, so the entrypoint + lazy
+  // import are the same module (dedup).
+  const routeFiles = clientEntryFiles(routeManifest)
 
   // `metafile: true` asks Bun for the input/output graph - specifically `outputs[js].entryPoint`
   // (the source file) + `outputs[js].cssBundle` (that entry's emitted stylesheet). It's the robust
@@ -772,33 +763,13 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     if (leadingCss !== undefined) urls.unshift(leadingCss)
     return [...new Set(urls)]
   }
-  const routeStyles: Record<string, readonly string[]> = {}
   // A compiler plugin may attach a global stylesheet to the generated bootstrap rather than to a
   // route entry (StyleX's atomic CSS is one example). In that shape there is no useful per-route map:
   // emitting `routeId: []` would suppress the aggregate `styles` fallback in `createWebApp` and render
   // SSR pages unstyled. Keep routeStyles absent until at least one authored route entry owns CSS.
   const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== bootstrapEntry)
-  if (css.length > 0 && routeCssEntries.length > 0) {
-    // A `_loading` page can show on a navigation from ANY page, and a document links only its own
-    // route's stylesheets - so every page that can start a navigation carries the loading pages' too.
-    const loadingFiles = Object.values(routeManifest.loadings ?? {}).map((page) => page.file)
-    for (const route of routeManifest.routes) {
-      routeStyles[route.id] = stylesFor([
-        ...route.layoutIds.map((id) => routeManifest.layouts[id]?.file ?? ""),
-        route.file,
-        ...loadingFiles,
-      ])
-    }
-    if (routeManifest.notFound) {
-      routeStyles._404 = stylesFor([routeManifest.notFound.file, ...loadingFiles])
-    }
-    for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
-      routeStyles[id] = stylesFor([
-        ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),
-        page.file,
-      ])
-    }
-  }
+  const routeStyles =
+    css.length > 0 && routeCssEntries.length > 0 ? pageStyles(routeManifest, stylesFor) : {}
 
   // Copy `public/` into the output next to the hashed assets. A missing directory is normal (most
   // apps have none) and must not fail the build.
@@ -806,18 +777,16 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
   const copyChunks = copy?.urls ?? {}
-  const manifest: BuildManifest = {
-    entry: entryUrl,
-    assets: [...outputs.map((o) => toUrl(o.path)), ...Object.values(copyChunks)],
-    routes,
-    ...(publicFiles.length > 0 ? { publicFiles } : {}),
-    ...(css.length > 0 ? { css } : {}),
-    ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
-    ...(Object.keys(copyChunks).length > 0 ? { copyChunks } : {}),
-  }
-  assertDevelopmentProductionParity(collectDevelopmentParityInput(routesDir, publicDir), manifest)
-  writeFileSync(`${outDir}/manifest.json`, JSON.stringify(manifest, null, 2))
-  return manifest
+  const images = emitPluginImages(options.plugins ?? [], outDir, publicPath)
+  return writeClientManifest(
+    {
+      entry: entryUrl,
+      assets: [...outputs.map((o) => toUrl(o.path)), ...Object.values(copyChunks), ...images],
+      routes,
+    },
+    { publicFiles, css, routeStyles, copyChunks },
+    { routesDir, publicDir, outDir },
+  )
 }
 
 export interface BuildServerOptions {
@@ -877,6 +846,10 @@ export interface BuildServerOptions {
    * only apply to the `"browser"` target; `"node"`/`"bun"` resolve their own renderer builds via the
    * matching condition. */
   readonly target?: "browser" | "node" | "bun"
+  /** Node built-ins the runtime that runs the bundle has besides what `target` implies, kept as imports
+   * of the runtime's own module: neither polyfilled nor refused. `buildTarget` passes `node:crypto` for
+   * Deno, where Bun's `browser` stand-in for it has no working `createHash`. */
+  readonly providedBuiltins?: readonly string[]
   /** **Lazy/code-split routes** (default `false`): emit `() => import(route)` loaders + bundle with
    * `splitting`, so each route is its own chunk loaded on first request (smaller cold-start parse)
    * instead of all parsed at boot. The output becomes the worker entry **+ chunk files** in `outDir`
@@ -922,21 +895,28 @@ const reactDomEdgePlugin = (from: string): BunPlugin => ({
  * react-dom's build.
  */
 const REACT_DEDUPE_SPECS = dedupePolicyFor("react").bunSpecs ?? []
-export const reactDedupePlugin = (from: string): BunPlugin => ({
-  name: "nifra-react-dedupe",
-  setup(build) {
-    for (const spec of REACT_DEDUPE_SPECS) {
-      let resolved: string
-      try {
-        resolved = Bun.resolveSync(spec, from)
-      } catch {
-        continue // React (or this subpath) isn't resolvable here - nothing to dedupe
+export const reactDedupePlugin = (from: string): BunPlugin =>
+  pinnedSpecsPlugin("nifra-react-dedupe", REACT_DEDUPE_SPECS, from)
+
+/** Pins each of `specs` to the one copy `from` resolves; a spec that does not resolve is left alone. */
+function pinnedSpecsPlugin(name: string, specs: readonly string[], from: string): BunPlugin {
+  return {
+    name,
+    setup(build) {
+      for (const spec of specs) {
+        let resolved: string
+        try {
+          resolved = Bun.resolveSync(spec, from)
+        } catch {
+          continue
+        }
+        build.onResolve({ filter: new RegExp(`^${escapeRegExp(spec)}$`) }, () => ({
+          path: resolved,
+        }))
       }
-      const escaped = spec.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")
-      build.onResolve({ filter: new RegExp(`^${escaped}$`) }, () => ({ path: resolved }))
-    }
-  },
-})
+    },
+  }
+}
 
 /**
  * Dedupe Preact to a single copy - the Preact analogue of `reactDedupePlugin`, closing the same class of
@@ -950,21 +930,8 @@ export const reactDedupePlugin = (from: string): BunPlugin => ({
  * unlike react-dom there is no edge-vs-server build to preserve, so pinning the subpaths is safe.
  */
 const PREACT_DEDUPE_SPECS = dedupePolicyFor("preact").bunSpecs ?? []
-export const preactDedupePlugin = (from: string): BunPlugin => ({
-  name: "nifra-preact-dedupe",
-  setup(build) {
-    for (const spec of PREACT_DEDUPE_SPECS) {
-      let resolved: string
-      try {
-        resolved = Bun.resolveSync(spec, from)
-      } catch {
-        continue // Preact (or this subpath) isn't resolvable here - nothing to dedupe
-      }
-      const escaped = spec.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")
-      build.onResolve({ filter: new RegExp(`^${escaped}$`) }, () => ({ path: resolved }))
-    }
-  },
-})
+export const preactDedupePlugin = (from: string): BunPlugin =>
+  pinnedSpecsPlugin("nifra-preact-dedupe", PREACT_DEDUPE_SPECS, from)
 
 const SVELTE_DEDUPE_PATTERN = dedupePolicyFor("svelte").bunPattern ?? /^svelte($|\/internal\/)/
 /**
@@ -1174,6 +1141,20 @@ const solidWebServerPlugin = (from: string): BunPlugin => ({
   },
 })
 
+/** Keeps each of `provided` an import of the runtime's own module. Bun.build's `external` loses to its
+ * `browser` stand-in for a Node built-in; an `onResolve` answer does not. Any other built-in resolves
+ * as it would without the plugin. */
+function providedBuiltinsPlugin(provided: ReadonlySet<string>): BunPlugin {
+  return {
+    name: "nifra:provided-builtins",
+    setup(build) {
+      build.onResolve({ filter: /^node:/ }, (args) =>
+        provided.has(args.path) ? { path: args.path, external: true } : undefined,
+      )
+    },
+  }
+}
+
 /**
  * Build a self-contained **worker bundle** for a file-routed app on a disk-less edge (Cloudflare
  * Workers / workerd). Discovers routes (build-time fs), codegens the static-import server manifest
@@ -1205,10 +1186,6 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   const buildAssets =
     options.buildAssets ?? (client === undefined ? undefined : buildAssetPaths(client))
   const entryDir = dirname(serverEntry)
-  const manifestFile = options.manifestFile ?? "server-manifest.ts"
-  // Default: import routes relative from the generated manifest (next to serverEntry) to routesDir.
-  const rel = relative(entryDir, routesDir).replaceAll("\\", "/")
-  const resolve = options.resolve ?? ((file: string) => `./${rel}/${file}`)
   mkdirSync(outDir, { recursive: true })
 
   const lazy = options.lazy ?? false
@@ -1219,21 +1196,17 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   // apply - defaults become `[target]` (e.g. react-dom → server.node.js under `node`).
   const edge = target === "browser"
   const conditions = options.conditions ?? (edge ? ["workerd", "edge-light", "browser"] : [target])
-  const manifest = discoverRoutes(routesDir)
-  writeFileSync(
-    `${entryDir}/${manifestFile}`,
-    generateServerManifest(manifest, {
-      resolve,
-      clientEntry,
-      styles,
-      routeStyles,
-      ...(cssLoading !== undefined ? { cssLoading } : {}),
-      ...(copyChunks !== undefined ? { copyChunks } : {}),
-      ...(buildAssets !== undefined ? { buildAssets } : {}),
-      lazy,
-    }),
-  )
+  const manifestFile = writeServerManifest(options, {
+    clientEntry,
+    styles,
+    routeStyles,
+    cssLoading,
+    copyChunks,
+    buildAssets,
+    lazy,
+  })
 
+  const provided = new Set(options.providedBuiltins)
   const result = await Bun.build({
     entrypoints: [serverEntry],
     outdir: outDir,
@@ -1256,6 +1229,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     // Lazy → one chunk per route (loaded on first request); eager → a single self-contained file.
     splitting: lazy,
     plugins: [
+      ...(provided.size > 0 ? [providedBuiltinsPlugin(provided)] : []),
       ...declaredSingleCopyPlugins(resolvePath(dirname(routesDir))),
       ...(edge ? [reactDomEdgePlugin(entryDir), solidWebServerPlugin(entryDir)] : []),
       reactDedupePlugin(entryDir),
@@ -1288,11 +1262,9 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   const classifier = createZoneClassifier({
     appRoot,
     routesDir,
-    generatedFiles: [
-      serverEntry,
-      join(entryDir, manifestFile),
-      ...(options.generatedFiles ?? []),
-    ].map((file) => resolvePath(file)),
+    generatedFiles: [serverEntry, manifestFile, ...(options.generatedFiles ?? [])].map((file) =>
+      resolvePath(file),
+    ),
   })
   const sourceOf = bunModuleSource(process.cwd())
   const labelOf = (id: string): string => {
@@ -1306,7 +1278,8 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
         sourceOf,
         privateEnv: privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_"),
       }),
-    ) ?? formatUnsupportedBuiltins(unsupportedBuiltins(serverGraph, target, labelOf), target)
+    ) ??
+    formatUnsupportedBuiltins(unsupportedBuiltins(serverGraph, target, labelOf, provided), target)
   if (refusal !== undefined) {
     // Bun wrote the bundle already; a refused build leaves nothing a deploy step could pick up.
     for (const output of result.outputs) rmSync(output.path, { force: true })
@@ -1353,6 +1326,44 @@ export type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption
 export type ServerEntryClientIp = "platform"
 
 /**
+ * Settings the server of a self-hosting target (`bun`, `node`, `deno`) starts with; an edge target has
+ * no process of its own and ignores them. `gracefulSignals` stops the server gracefully on SIGTERM and
+ * SIGINT (`docker stop`, Ctrl-C): `true`, or the `{ drainMs, delayMs }` its `stop()` takes.
+ * `idleTimeoutSec` is how long Bun keeps a connection that moves no bytes, a whole number from `0`
+ * (never) to 255, a request whose handler is still working included. Node and Deno do not close a
+ * connection while its request is being handled, so they ignore it.
+ */
+export interface ServerEntrySelfHost {
+  readonly gracefulSignals?: boolean | { readonly drainMs?: number; readonly delayMs?: number }
+  readonly idleTimeoutSec?: number
+}
+
+/** What is wrong with a {@link ServerEntrySelfHost}, or `undefined` when it is valid. */
+function selfHostProblem(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return "must be an object"
+  const signals: unknown = Reflect.get(value, "gracefulSignals")
+  if (signals !== undefined && typeof signals !== "boolean") {
+    if (typeof signals !== "object" || signals === null) {
+      return "gracefulSignals must be a boolean or { drainMs, delayMs }"
+    }
+    for (const key of ["drainMs", "delayMs"]) {
+      const ms: unknown = Reflect.get(signals, key)
+      if (ms !== undefined && !(typeof ms === "number" && Number.isFinite(ms) && ms >= 0)) {
+        return `gracefulSignals.${key} must be a number of milliseconds, 0 or more`
+      }
+    }
+  }
+  const idle: unknown = Reflect.get(value, "idleTimeoutSec")
+  if (
+    idle !== undefined &&
+    !(typeof idle === "number" && Number.isInteger(idle) && idle >= 0 && idle <= 255)
+  ) {
+    return "idleTimeoutSec must be a whole number of seconds from 0 to 255"
+  }
+  return undefined
+}
+
+/**
  * The header each edge platform sets to the caller's address, replacing any value the client sent.
  * That replacement is the whole trust: the same bundle served without the platform's edge in front
  * (`wrangler pages dev`, a self-hosted workerd) hands the header straight from the client, which is
@@ -1367,8 +1378,35 @@ const PLATFORM_CLIENT_IP_HEADERS: Readonly<Partial<Record<BuildTarget, string>>>
 // own copy of the policy refuses it the same way it refuses a page.
 const HOST_ALLOWS_STATIC =
   ' && hostPolicy.allows(request.headers.get("host") ?? "", pathname, buildAssets)'
-const NODE_STATIC_ALLOW =
+const STATIC_ALLOW =
   "      allow: (host: string, pathname: string) => hostPolicy.allows(host, pathname, buildAssets),"
+
+/**
+ * The `static: serveStatic([...])` option a self-hosting entry passes, the same on Bun, Node and Deno:
+ * the client bundle under `/assets`, then only the files the build copied at the root. A path under
+ * either that cannot be served answers 404 rather than rendering a page; any other reaches the app.
+ */
+function staticOption(hashed: boolean, hostPolicy: boolean): string[] {
+  return [
+    "  static: serveStatic([",
+    "    {",
+    '      dir: new URL("./assets/", import.meta.url),',
+    '      prefix: "/assets",',
+    ...(hashed ? ["      hashedFiles: HASHED_FILES,"] : []),
+    `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
+    ...(hostPolicy ? [STATIC_ALLOW] : []),
+    "    },",
+    "    {",
+    "      dir: STATIC_ROOT,",
+    '      prefix: "/",',
+    "      files: PUBLIC_FILES,",
+    "      immutable: false,",
+    `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
+    ...(hostPolicy ? [STATIC_ALLOW] : []),
+    "    },",
+    "  ]),",
+  ]
+}
 
 /** Where a self-hosting build writes its prerendered pages, beside `server.js`. */
 const PRERENDERED_DIR = "_prerendered"
@@ -1379,7 +1417,7 @@ const PRERENDERED_DIR = "_prerendered"
  * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires
  * the right host:
  *   - `cloudflare` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).
- *   - `deno`: same fetch-handler default, plus `Deno.serve` self-host when run directly.
+ *   - `deno`: a `@nifrajs/deno` server that serves the client bundle with Deno's file API.
  *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those
  *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).
  * `adapterImport`/`backendImport` are the specifiers the entry uses (relative to where it's written) -
@@ -1388,6 +1426,8 @@ const PRERENDERED_DIR = "_prerendered"
  */
 export function generateServerEntry(options: {
   readonly target: BuildTarget
+  /** Vercel-only runtime selection; Edge remains the default. */
+  readonly vercelRuntime?: VercelRuntime
   /** Import specifier for the module exporting `adapter` (e.g. `"../framework.ts"`). */
   readonly adapterImport: string
   /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */
@@ -1407,6 +1447,8 @@ export function generateServerEntry(options: {
   readonly hashedFiles?: readonly string[]
   /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */
   readonly clientIp?: ServerEntryClientIp
+  /** How a self-hosted server stops and keeps idle connections. See {@link ServerEntrySelfHost}. */
+  readonly selfHost?: ServerEntrySelfHost
   /** The server manifest exports `copyChunks` (the client build split copy tables by locale). */
   readonly copyChunks?: boolean
   /** `bun` / `node` only: the pages the build prerendered into `_prerendered/`, by request path, which
@@ -1423,13 +1465,24 @@ export function generateServerEntry(options: {
     publicFiles = [],
     hashedFiles,
     clientIp,
+    selfHost,
   } = options
+  validateVercelRuntime(target, options.vercelRuntime)
   if (clientIp !== undefined && clientIp !== "platform") {
     throw new Error(
       `[nifra/web] generateServerEntry: clientIp must be "platform" or left out, got ${JSON.stringify(clientIp)}`,
     )
   }
   const clientIpHeader = clientIp === "platform" ? PLATFORM_CLIENT_IP_HEADERS[target] : undefined
+  const selfHostIssue = selfHost === undefined ? undefined : selfHostProblem(selfHost)
+  if (selfHostIssue !== undefined) {
+    throw new Error(`[nifra/web] generateServerEntry: selfHost ${selfHostIssue}`)
+  }
+  const gracefulSignals =
+    selfHost?.gracefulSignals === undefined || selfHost.gracefulSignals === false
+      ? undefined
+      : JSON.stringify(selfHost.gracefulSignals)
+  const idleTimeoutSec = target === "bun" ? selfHost?.idleTimeoutSec : undefined
   // Identifiers come only from the fixed list, never from the caller's keys, so generated code names
   // nothing the list does not.
   const importedOptions = SERVER_ENTRY_OPTIONS.filter((name) => optionImports[name] !== undefined)
@@ -1443,19 +1496,16 @@ export function generateServerEntry(options: {
   if (target === "static") {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
-  // Bun serves the client bundle through `servePublicDir` and Node through @nifrajs/node's own reader,
-  // both on core's static-file policy. Deno bundles for the browser condition, where `node:fs` is a
-  // stub, so its entry runs the same checks on Deno's own file API.
-  const nodeFs = target === "bun" || target === "node"
+  // Each runtime serves the client bundle through its own `serveStatic`, on its fastest file API, with
+  // the same mounts and answers: Deno's `node:fs` took 1.2-2.1x the instructions per file request.
   const prerendered = Object.entries(options.prerenderedPages ?? {})
-  if (prerendered.length > 0 && !nodeFs) {
+  if (prerendered.length > 0 && target !== "bun" && target !== "node") {
     throw new Error(
       `[nifra/web] generateServerEntry: prerendered pages are served by the bun and node targets, not ${target}`,
     )
   }
   const webImports = ["createWebApp"]
   if (prerendered.length > 0) webImports.push("prerenderedPageReader")
-  if (target === "bun") webImports.push("servePublicDir")
   const lines: string[] = [`import { ${webImports.join(", ")} } from "@nifrajs/web"`]
   if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
   lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
@@ -1478,17 +1528,12 @@ export function generateServerEntry(options: {
     "routeStyles",
   ]
   lines.push(`import { ${manifestImports.join(", ")} } from "./server-manifest"`)
-  // Cloudflare needs the fetch-handler shape; the others call app.fetch directly.
+  // Cloudflare needs the fetch-handler shape; Bun serves through app.listen(), the rest call app.fetch.
   if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
-  if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
-  if (nodeFs) lines.push('import { fileURLToPath } from "node:url"')
-  if (target === "deno") {
-    lines.push(
-      'import { parseByteRange } from "@nifrajs/core/range"',
-      'import { CONTENT_SNAPSHOT_MAX, contentTags, contentTypeOf, ifRangeAllowsPartial, isHiddenPath, isNotModified, lastModifiedOf, streamedLastModifiedOf } from "@nifrajs/core/static-file"',
-      'import { createHash } from "node:crypto"',
-    )
-  }
+  if (target === "bun") lines.push('import { serveStatic } from "@nifrajs/core/serve-static"')
+  if (target === "node") lines.push('import { serve, serveStatic } from "@nifrajs/node"')
+  if (target === "deno") lines.push('import { serve, serveStatic } from "@nifrajs/deno"')
+  if (prerendered.length > 0) lines.push('import { fileURLToPath } from "node:url"')
   if (prerendered.length > 0) {
     const headers = Object.fromEntries(prerendered.map(([path, page]) => [path, page.headers]))
     const files = Object.fromEntries(prerendered.map(([path, page]) => [path, page.file]))
@@ -1524,6 +1569,11 @@ export function generateServerEntry(options: {
     ...(clientIpHeader !== undefined
       ? [`  server: { clientIp: { header: ${JSON.stringify(clientIpHeader)} } },`]
       : []),
+    // Bun's listen() installs the handlers the app's own options ask for; the adapters take the same
+    // `gracefulSignals` as a serve() option.
+    ...(target === "bun" && gracefulSignals !== undefined
+      ? [`  server: { gracefulSignals: ${gracefulSignals} },`]
+      : []),
     "})",
     "",
   )
@@ -1554,6 +1604,17 @@ export function generateServerEntry(options: {
     return `${lines.join("\n")}\n`
   }
   if (target === "vercel") {
+    if (options.vercelRuntime === "node") {
+      lines.push(
+        ...nodeHandlerSource({
+          fetch: "app.fetch(request)",
+          failure: "server_failed",
+          protocol: "https",
+        }),
+        "export default handle",
+      )
+      return `${lines.join("\n")}\n`
+    }
     lines.push(
       "// Vercel Edge Function - Vercel serves /assets/* from its CDN; this only SSRs page routes.",
       'export const config = { runtime: "edge" }',
@@ -1571,78 +1632,26 @@ export function generateServerEntry(options: {
       ? [`const HASHED_FILES = new Set(${JSON.stringify(hashedFiles)})`]
       : []),
   )
+  const hashed = hashedFiles !== undefined
   if (target === "node") {
     // The app itself with the adapter's own reader, not a `{ fetch }` wrapper around app.fetch: the
     // wrapper hid the node-direct lane, so every page built an undici Request and drained a Response,
-    // and every file went through one too. The root mount serves only the files the build listed.
+    // and every file went through one too.
     lines.push(
       "await serve(app, {",
       "  port: Number(process.env.PORT ?? 3000),",
-      "  static: [",
-      "    {",
-      '      dir: fileURLToPath(new URL("./assets/", import.meta.url)),',
-      '      prefix: "/assets",',
-      ...(hashedFiles !== undefined ? ["      hashedFiles: HASHED_FILES,"] : []),
-      `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
-      ...(hostPolicy ? [NODE_STATIC_ALLOW] : []),
-      "    },",
-      "    {",
-      "      dir: fileURLToPath(STATIC_ROOT),",
-      '      prefix: "/",',
-      "      files: PUBLIC_FILES,",
-      "      immutable: false,",
-      `      cacheControl: ${JSON.stringify(ONE_DAY)},`,
-      ...(hostPolicy ? [NODE_STATIC_ALLOW] : []),
-      "    },",
-      "  ],",
+      ...(gracefulSignals !== undefined ? [`  gracefulSignals: ${gracefulSignals},`] : []),
+      ...staticOption(hashed, hostPolicy),
       "})",
     )
     return `${lines.join("\n")}\n`
   }
-  lines.push(
-    "const staticPath = (pathname: string): string | undefined => {",
-    "  if (PUBLIC_FILES.has(pathname)) return '.' + pathname",
-    '  if (!pathname.startsWith("/assets/")) return undefined',
-    '  const segments = pathname.slice(1).split("/")',
-    "  // `.` and `..` match the character class, and the path is joined onto a base URL that resolves",
-    "  // dot segments - so they are rejected explicitly rather than relying on the request URL having",
-    "  // been normalized upstream.",
-    "  const safe = (segment: string): boolean =>",
-    '    segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)',
-    "  return segments.every(safe) ? '.' + pathname : undefined",
-    "}",
-    // The handler `nifra dev` serves public/ with: its type table, nosniff and cache policy, content
-    // tags, byte ranges and conditional requests, and a descriptor opened only once the real path is
-    // inside the root, so a link planted in the deployed tree cannot reach a file outside it.
-    ...(target === "bun"
-      ? [
-          "const serveStatic = servePublicDir({",
-          "  dir: fileURLToPath(STATIC_ROOT),",
-          ...(hashedFiles !== undefined ? ["  hashedFiles: HASHED_FILES,"] : []),
-          "})",
-          "const staticResponse = async (req: Request): Promise<Response> =>",
-          '  (await serveStatic(req)) ?? new Response("not found", { status: 404 })',
-        ]
-      : denoStaticResponse(hashedFiles !== undefined)),
-  )
-  // Bun.serve and Deno.serve delimit the body themselves, so its declared length is the transport
-  // frame - the guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
-  const markFramed =
-    '(req as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] = true'
   if (target === "bun") {
     lines.push(
-      "const server = Bun.serve({",
-      "  port: Number(Bun.env.PORT ?? 3000),",
-      "  async fetch(req, server) {",
-      "    const { pathname } = new URL(req.url)",
-      // Braced: the next emitted line opens with `(`, which would otherwise call the returned value.
-      `    if (staticPath(pathname) !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}) {`,
-      "      return staticResponse(req)",
-      "    }",
-      `    ${markFramed}`,
-      "    // The socket peer, looked up only when something reads it (as core's own listen() does).",
-      "    return app.fetch(req, { get clientIp() { return server.requestIP(req)?.address } })",
-      "  },",
+      "// listen() puts this in front of every route, so a file wins over a page at the same path.",
+      "const server = app.listen(Number(Bun.env.PORT ?? 3000), {",
+      ...(idleTimeoutSec !== undefined ? [`  idleTimeoutSec: ${idleTimeoutSec},`] : []),
+      ...staticOption(hashed, hostPolicy),
       "})",
       // The `${...}` here is literal OUTPUT (a template in the GENERATED file), not a template in this
       // source - split so biome's noTemplateCurlyInString doesn't flag it; the emitted line is unchanged.
@@ -1650,178 +1659,17 @@ export function generateServerEntry(options: {
     )
     return `${lines.join("\n")}\n`
   }
-  // deno
   lines.push(
-    "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req, info) => {',
-    "  const { pathname } = new URL(req.url)",
-    "  const filePath = staticPath(pathname)",
-    `  if (filePath !== undefined${hostPolicy ? HOST_ALLOWS_STATIC.replaceAll("request", "req") : ""}) {`,
-    "    return staticResponse(req, filePath, pathname)",
-    "  }",
-    `  ${markFramed}`,
-    "  return app.fetch(req, { clientIp: info.remoteAddr.hostname })",
+    "// serve() puts this in front of every route, so a file wins over a page at the same path.",
+    "const server = await serve(app, {",
+    "  // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
+    '  port: Number(Deno.env.get("PORT") ?? "3000"),',
+    ...(gracefulSignals !== undefined ? [`  gracefulSignals: ${gracefulSignals},`] : []),
+    ...staticOption(hashed, hostPolicy),
     "})",
+    `console.log(\`nifra (Deno) → http://localhost:$${"{server.port}"}\`)`,
   )
   return `${lines.join("\n")}\n`
-}
-
-/**
- * The Deno entry's static handler: `servePublicDir`'s checks and answers on Deno's file API. The real
- * path must sit inside the root and cross no hidden segment, and the opened file must still be the one
- * that path names, so a link planted in the deployed tree cannot reach a file outside it or a `.env`
- * inside it. The file is typed by its real path, tagged by its content and dated only by an mtime its
- * own last write set, through the same policy as servePublicDir: a current cached copy is a 304, and a
- * range survives only an `If-Range` naming that tag. A file is read once to tag it, and one small
- * enough is then served from those bytes; otherwise one byte range is served from a seek, several as
- * the whole file.
- */
-function denoStaticResponse(hashed: boolean): string[] {
-  return [
-    "const staticHeaders = (pathname: string, file: string): Record<string, string> => ({",
-    '  "content-type": contentTypeOf(file),',
-    `  "cache-control": ${hashed ? "HASHED_FILES.has(pathname)" : 'pathname.startsWith("/assets/")'} ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
-    '  "x-content-type-options": "nosniff",',
-    '  "accept-ranges": "bytes",',
-    "})",
-    "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    "const STATIC_REAL: string = await Deno.realPath(STATIC_ROOT)",
-    "// One per process: the tag of a file is remembered by its real path.",
-    "// A stat costs Deno more than hashing a snapshot of up to 24 KiB, so only a larger one is restatted.",
-    "const STATIC_TAGS = contentTags(createHash, { rehashMax: 24 * 1024 })",
-    "// Up to this many bytes are read whole to tag a file, and the response is then served from them.",
-    "const STATIC_INLINE_MAX = CONTENT_SNAPSHOT_MAX",
-    "const staticResponse = async (req: Request, filePath: string, pathname: string): Promise<Response> => {",
-    '  const missing = () => new Response("not found", { status: 404 })',
-    '  if (req.method !== "GET" && req.method !== "HEAD") return missing()',
-    "  let file, info",
-    '  let real = ""',
-    "  try {",
-    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    "    real = await Deno.realPath(new URL(filePath, STATIC_ROOT))",
-    '    if (!real.startsWith(STATIC_REAL + (STATIC_REAL.includes("\\\\") ? "\\\\" : "/"))) return missing()',
-    "    if (isHiddenPath(real.slice(STATIC_REAL.length + 1))) return missing()",
-    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    "    file = await Deno.open(real)",
-    "    // Deno.open follows links, so a directory swapped for one after the check above redirects it.",
-    "    // The opened file must be the one at `real`, which must still resolve to itself.",
-    "    const opened = await file.stat()",
-    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    "    const named = await Deno.stat(real)",
-    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    "    if (opened.dev !== named.dev || opened.ino !== named.ino || (await Deno.realPath(real)) !== real) {",
-    "      file.close()",
-    "      return missing()",
-    "    }",
-    "    info = opened",
-    "  } catch {",
-    "    file?.close()",
-    "    return missing()",
-    "  }",
-    "  if (!info.isFile) {",
-    "    file.close()",
-    "    return missing()",
-    "  }",
-    "  const size: number = info.size",
-    "  const headers = new Headers(staticHeaders(pathname, real))",
-    "  // Deno reports a field the platform does not keep as null; NaN never matches a remembered version.",
-    "  const versionOf = (stat: { dev: number; ino: number | null; size: number; mtime: Date | null; ctime: Date | null }) => ({",
-    "    dev: stat.dev,",
-    "    ino: stat.ino ?? Number.NaN,",
-    "    size: stat.size,",
-    "    mtimeMs: stat.mtime?.getTime() ?? Number.NaN,",
-    "    ctimeMs: stat.ctime?.getTime() ?? Number.NaN,",
-    "  })",
-    "  const version = versionOf(info)",
-    "  const snapshot = size <= STATIC_INLINE_MAX",
-    "  const lastModified = snapshot ? lastModifiedOf(version) : streamedLastModifiedOf(version)",
-    '  const ifNoneMatch = req.headers.get("if-none-match")',
-    '  const ifModifiedSince = req.headers.get("if-modified-since")',
-    "  let whole: Uint8Array<ArrayBuffer> | undefined",
-    "  // A HEAD or a 304 sends none of the file, so the tag remembered for this settled version",
-    "  // answers it from the stat alone: a write since that tag would show in the stat.",
-    "  let etag: string | undefined = snapshot ? STATIC_TAGS.cached(real, version) : undefined",
-    "  try {",
-    '    if (snapshot && (etag === undefined || !(req.method === "HEAD" || isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)))) {',
-    "      whole = new Uint8Array(size)",
-    "      let filled = 0",
-    "      while (filled < size) {",
-    "        const read: number | null = await file.read(whole.subarray(filled))",
-    "        if (read === null || read === 0) break",
-    "        filled += read",
-    "      }",
-    "      if (filled < size) whole = whole.subarray(0, filled)",
-    "      etag = await STATIC_TAGS.ofSnapshot(real, version, whole, async () => versionOf(await file.stat()))",
-    "    }",
-    "  } catch {",
-    "    file.close()",
-    "    return missing()",
-    "  }",
-    '  if (etag !== undefined) headers.set("etag", etag)',
-    '  if (lastModified !== undefined) headers.set("last-modified", new Date(lastModified).toUTCString())',
-    "  if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {",
-    "    file.close()",
-    '    headers.delete("content-type")',
-    "    return new Response(null, { status: 304, headers })",
-    "  }",
-    '  const rangeHeader = req.method === "GET" ? req.headers.get("range") : null',
-    "  const range =",
-    "  // A streamed body's date is weak: a write during the stream must never splice two versions.",
-    '    rangeHeader !== null && ifRangeAllowsPartial(req.headers.get("if-range"), etag, snapshot ? lastModified : undefined)',
-    "      ? parseByteRange(rangeHeader, size)",
-    '      : { kind: "none" as const }',
-    '  if (req.method === "HEAD" || range.kind === "unsatisfiable") {',
-    "    file.close()",
-    '    if (range.kind !== "unsatisfiable") {',
-    '      headers.set("content-length", String(size))',
-    "      return new Response(null, { headers })",
-    "    }",
-    '    headers.delete("content-type")',
-    '    headers.set("content-range", "bytes */" + size)',
-    "    return new Response(null, { status: 416, headers })",
-    "  }",
-    '  if (range.kind === "satisfiable" && range.ranges.length === 1) {',
-    "    const { start, end } = range.ranges[0]!",
-    '    headers.set("content-range", "bytes " + start + "-" + end + "/" + size)',
-    "    if (whole !== undefined) {",
-    "      file.close()",
-    "      const part = whole.subarray(start, end + 1)",
-    '      headers.set("content-length", String(part.byteLength))',
-    "      return new Response(part, { status: 206, headers })",
-    "    }",
-    "    // @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    "    await file.seek(start, Deno.SeekMode.Start)",
-    "    let left = end - start + 1",
-    '    headers.set("content-length", String(left))',
-    "    const body = new ReadableStream<Uint8Array>({",
-    "      async pull(controller) {",
-    "        const chunk = new Uint8Array(Math.min(left, 65_536))",
-    "        const read: number | null = await file.read(chunk)",
-    "        if (read === null || read === 0) {",
-    "          file.close()",
-    "          controller.close()",
-    "          return",
-    "        }",
-    "        controller.enqueue(chunk.subarray(0, read))",
-    "        left -= read",
-    "        if (left <= 0) {",
-    "          file.close()",
-    "          controller.close()",
-    "        }",
-    "      },",
-    "      cancel: () => file.close(),",
-    "    })",
-    "    return new Response(body, { status: 206, headers })",
-    "  }",
-    "  if (whole !== undefined) {",
-    "    file.close()",
-    '    headers.set("content-length", String(whole.byteLength))',
-    "    return new Response(whole, { headers })",
-    "  }",
-    '  headers.set("content-length", String(size))',
-    "  return new Response(file.readable, { headers })",
-    "}",
-  ]
 }
 
 /** Measure each emitted output file's raw + gzip size. Reads the file off disk and gzips it with
@@ -1841,6 +1689,8 @@ async function measureOutputs(paths: readonly string[]): Promise<ChunkSize[]> {
 }
 
 export interface BuildTargetOptions {
+  /** Vercel-only: opt into Node.js 22 serverless SSR instead of the default Edge function. */
+  readonly vercelRuntime?: VercelRuntime
   /** The `routes/` directory to discover (absolute path). */
   readonly routesDir: string
   /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated, so the
@@ -1902,6 +1752,9 @@ export interface BuildTargetOptions {
   /** Trust the edge platform's client-address header for `c.clientIp` (`cloudflare`, `vercel`). Off by
    * default, leaving an edge app with no caller address. See {@link ServerEntryClientIp}. */
   readonly clientIp?: ServerEntryClientIp
+  /** How a `bun`, `node` or `deno` server stops and keeps idle connections. See
+   * {@link ServerEntrySelfHost}. */
+  readonly selfHost?: ServerEntrySelfHost
   /** The client entry for a server built with `optionImports.live`: that runtime's `clientEntry`. */
   readonly live?: LiveClientEntry | undefined
 }
@@ -1962,23 +1815,11 @@ export const bunBundler: Bundler = {
       live: input.live,
     })
   },
-  buildServer: (input) =>
+  buildServer: ({ plugins, root, ...fields }) =>
     buildServer({
-      routesDir: input.routesDir,
-      serverEntry: input.serverEntry,
-      outDir: input.outDir,
-      clientEntry: input.clientEntry,
-      target: input.target,
-      ...(input.styles !== undefined ? { styles: input.styles } : {}),
-      ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
-      ...(input.copyChunks !== undefined ? { copyChunks: input.copyChunks } : {}),
-      ...(input.buildAssets !== undefined ? { buildAssets: input.buildAssets } : {}),
-      ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
-      ...(input.define ? { define: input.define } : {}),
-      ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
-      ...(input.root !== undefined ? { root: input.root } : {}),
-      ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
-      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
+      ...fields,
+      ...(plugins ? { plugins: plugins as BunPlugin[] } : {}),
+      ...(root !== undefined ? { root } : {}),
     }),
 }
 
@@ -2071,11 +1912,16 @@ export async function buildTargetWith(
       "[nifra/web] buildTarget: `optionImports.live` and `live` go together - the server's runtime and the client entry that reaches it",
     )
   }
+  // Before the client build, which a wrong value would otherwise run to completion first.
+  const selfHostIssue =
+    options.selfHost === undefined ? undefined : selfHostProblem(options.selfHost)
+  if (selfHostIssue !== undefined)
+    throw new Error(`[nifra/web] buildTarget: selfHost ${selfHostIssue}`)
   const requestedCssCodeSplit =
     options.cssCodeSplit === undefined ? undefined : normalizeCssCodeSplit(options.cssCodeSplit)
   const requestedCssLoading =
     options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
-  const targetPlan = planBuildTarget(parseBuildTarget(target), outDir)
+  const targetPlan = planBuildTarget(parseBuildTarget(target), outDir, options.vercelRuntime)
   const sources = [
     routesDir,
     process.cwd(),
@@ -2091,8 +1937,8 @@ export async function buildTargetWith(
   assertDisposableDir("outDir", outDir, sources)
   assertDisposableDir("workDir", workDir, sources)
   // Before anything is cleared, so a refused build leaves the last deploy dir in place.
-  if (targetPlan.target === "node") {
-    const refusal = nodeAdapterRefusal(workDir)
+  if (targetPlan.target === "node" || targetPlan.target === "deno") {
+    const refusal = adapterRefusal(targetPlan.target, workDir)
     if (refusal !== undefined) throw new Error(refusal)
   }
   const { rmSync } = await import("node:fs")
@@ -2157,6 +2003,22 @@ export async function buildTargetWith(
     writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
   }
 
+  // Server-only imports and lazy prerender modules can discover images after the client build.
+  const emittedImages = new Set<string>()
+  const collectImages = (): boolean => {
+    const images = emitPluginImages(
+      [...(options.clientPlugins ?? []), ...(options.serverPlugins ?? [])],
+      assetsDir,
+      "/assets/",
+      emittedImages,
+    )
+    const assets = [...new Set([...client.assets, ...images])]
+    if (assets.length === client.assets.length) return false
+    client = { ...client, assets }
+    writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
+    return true
+  }
+
   // A self-hosting server answers its prerendered pages from their file. The static target is all
   // prerendered pages; the edge targets keep rendering them on demand.
   const prerenderedPages =
@@ -2171,6 +2033,7 @@ export async function buildTargetWith(
           secretScan,
         )
       : undefined
+  collectImages()
 
   if (targetPlan.kind === "static") {
     if (options.prerenderApp === undefined) {
@@ -2183,6 +2046,7 @@ export async function buildTargetWith(
     // build above, so the hydration `<script src>` the prerendered HTML emits matches the emitted bundle.
     // A stale/placeholder entry here 404s → the pages render but never hydrate (inert controls).
     const app = await options.prerenderApp(client)
+    collectImages()
     const result = await prerenderRoutes({
       app,
       routes: manifest.routes,
@@ -2197,10 +2061,9 @@ export async function buildTargetWith(
           "`export const prerender = true` (static) or `getStaticPaths` (dynamic).",
       )
     }
+    collectImages()
     rmSync(workDir, { recursive: true, force: true })
-    const size = aggregateSizeReport(
-      await measureOutputs(client.assets.map((u) => assetUrlToPath(u, assetsDir))),
-    )
+    const size = aggregateSizeReport(await measureOutputs(codeAssetPaths(client.assets, assetsDir)))
     return {
       target,
       outDir,
@@ -2214,43 +2077,76 @@ export async function buildTargetWith(
   // lands next to it (buildServer writes it there). The adapter/backend specifiers are resolved from
   // workDir, so the caller passes paths relative to it (or absolute).
   const serverEntryPath = `${workDir}/server-entry.ts`
-  writeFileSync(
-    serverEntryPath,
-    generateServerEntry({
-      target,
-      adapterImport: options.adapterImport,
-      ...(options.useImport !== undefined ? { useImport: options.useImport } : {}),
-      ...(options.optionImports !== undefined ? { optionImports: options.optionImports } : {}),
-      ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
-      ...(options.title !== undefined ? { title: options.title } : {}),
-      ...(publicFiles.length > 0 ? { publicFiles } : {}),
-      hashedFiles: client.assets,
-      ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
-      ...(client.copyChunks !== undefined ? { copyChunks: true } : {}),
-      ...(prerenderedPages !== undefined ? { prerenderedPages } : {}),
-    }),
-  )
-  const { worker } = await bundler.buildServer({
-    routesDir,
-    serverEntry: serverEntryPath,
-    outDir: `${workDir}/server`,
-    clientEntry: client.entry,
-    target: targetPlan.serverTarget,
-    ...(client.css !== undefined ? { styles: client.css } : {}),
-    ...(client.routeStyles !== undefined ? { routeStyles: client.routeStyles } : {}),
-    ...(client.copyChunks !== undefined ? { copyChunks: client.copyChunks } : {}),
-    buildAssets: buildAssetPaths(client),
-    ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
-    define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
-    ...(client.cssLoading !== undefined
-      ? { cssLoading: client.cssLoading }
-      : requestedCssLoading !== undefined
-        ? { cssLoading: requestedCssLoading }
+  const bundleServer = async (): Promise<ServerBuild> => {
+    writeFileSync(
+      serverEntryPath,
+      generateServerEntry({
+        target,
+        ...(options.vercelRuntime !== undefined ? { vercelRuntime: options.vercelRuntime } : {}),
+        adapterImport: options.adapterImport,
+        ...(options.useImport !== undefined ? { useImport: options.useImport } : {}),
+        ...(options.optionImports !== undefined ? { optionImports: options.optionImports } : {}),
+        ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
+        ...(options.title !== undefined ? { title: options.title } : {}),
+        ...(publicFiles.length > 0 ? { publicFiles } : {}),
+        hashedFiles: client.assets,
+        ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
+        ...(options.selfHost !== undefined ? { selfHost: options.selfHost } : {}),
+        ...(client.copyChunks !== undefined ? { copyChunks: true } : {}),
+        ...(prerenderedPages !== undefined ? { prerenderedPages } : {}),
+      }),
+    )
+    return bundler.buildServer({
+      routesDir,
+      serverEntry: serverEntryPath,
+      outDir: `${workDir}/server`,
+      clientEntry: client.entry,
+      target: targetPlan.serverTarget,
+      ...(client.css !== undefined ? { styles: client.css } : {}),
+      ...(client.routeStyles !== undefined ? { routeStyles: client.routeStyles } : {}),
+      ...(client.copyChunks !== undefined ? { copyChunks: client.copyChunks } : {}),
+      buildAssets: buildAssetPaths(client),
+      ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
+      define: {
+        "process.env.NODE_ENV": '"production"',
+        ...(options.define ?? {}),
+        // Node functions never use core's optional Bun branches (listen/file/sleep).
+        ...(options.vercelRuntime === "node"
+          ? { Bun: "undefined", "globalThis.Bun": "undefined" }
+          : {}),
+      },
+      ...(client.cssLoading !== undefined
+        ? { cssLoading: client.cssLoading }
+        : requestedCssLoading !== undefined
+          ? { cssLoading: requestedCssLoading }
+          : {}),
+      root: resolvePath(dirname(routesDir)),
+      generatedFiles: [resolvePath(workDir, options.adapterImport)],
+      ...(options.publicEnvPrefix !== undefined
+        ? { publicEnvPrefix: options.publicEnvPrefix }
         : {}),
-    root: resolvePath(dirname(routesDir)),
-    generatedFiles: [resolvePath(workDir, options.adapterImport)],
-    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
-  })
+      // The Deno entry tags its files with node:crypto, which Deno provides itself.
+      ...(targetPlan.target === "deno" ? { providedBuiltins: ["node:crypto"] } : {}),
+    })
+  }
+  let { worker, outputs } = await bundleServer()
+  if (collectImages()) {
+    // Bake SSR-only images into buildAssets/host-policy classification too, not only the disk files.
+    ;({ worker, outputs } = await bundleServer())
+    if (collectImages())
+      throw new Error("[nifra/web] Image sources changed during the server build; rebuild")
+  }
+  // The deploy dir below ships `worker` alone: a code-split server would lose its chunks and fail at its
+  // first import of one, never at build time.
+  const chunks = outputs.filter(
+    (file) => resolvePath(file) !== resolvePath(worker) && /\.[cm]?js$/.test(file),
+  )
+  if (chunks.length > 0) {
+    throw new Error(
+      `[nifra/web] the server build emitted code chunks besides its entry (${chunks.map(basename).join(", ")}), ` +
+        `but the ${targetPlan.target} deploy ships the entry alone. Build the server as one file: no \`lazy\` or code splitting.`,
+    )
+  }
 
   // (3) Assemble the deploy dir for the target.
   const { cpSync } = await import("node:fs")
@@ -2285,10 +2181,25 @@ export async function buildTargetWith(
     const fn = dirname(`${outDir}/${targetPlan.outputFile}`)
     mkdirSync(fn, { recursive: true })
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
+    const node = options.vercelRuntime === "node"
     writeFileSync(
       `${fn}/.vc-config.json`,
-      `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
+      `${JSON.stringify(
+        node
+          ? {
+              runtime: "nodejs22.x",
+              handler: "index.js",
+              launcherType: "Nodejs",
+              shouldAddHelpers: false,
+              // Without it Vercel buffers the response, so streamed SSR and PPR holes arrive at once.
+              supportsResponseStreaming: true,
+            }
+          : { runtime: "edge", entrypoint: "index.js" },
+        null,
+        2,
+      )}\n`,
     )
+    if (node) writeFileSync(`${fn}/package.json`, `${JSON.stringify({ type: "module" })}\n`)
     // Files the build wrote are served first; every other path is the SSR function's.
     writeFileSync(
       `${outDir}/config.json`,
@@ -2300,7 +2211,7 @@ export async function buildTargetWith(
   rmSync(workDir, { recursive: true, force: true })
 
   // Size report over the client assets + the server bundle (its parse cost matters on the edge).
-  const clientPaths = client.assets.map((u) => assetUrlToPath(u, assetsDir))
+  const clientPaths = codeAssetPaths(client.assets, assetsDir)
   const serverPath = `${outDir}/${targetPlan.outputFile}`
   const size = aggregateSizeReport(await measureOutputs([...clientPaths, serverPath]))
   return { target, outDir, client, run: targetPlan.run, size }
@@ -2309,4 +2220,8 @@ export async function buildTargetWith(
 /** Map a client asset URL (`/assets/x-hash.js`) back to its on-disk path under `assetsDir`. The
  * `publicPath` prefix is always `/assets/` for these builds, so strip it and rejoin. */
 const assetUrlToPath = (url: string, assetsDir: string): string =>
-  `${assetsDir}/${url.slice(url.lastIndexOf("/") + 1)}`
+  `${assetsDir}/${url.slice("/assets/".length)}`
+
+/** The client assets a size report covers: code and styles, not the media image plugins emit. */
+const codeAssetPaths = (urls: readonly string[], assetsDir: string): string[] =>
+  urls.filter((url) => !isImageAssetUrl(url)).map((url) => assetUrlToPath(url, assetsDir))

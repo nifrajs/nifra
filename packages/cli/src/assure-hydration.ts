@@ -17,6 +17,7 @@ import {
   forwardTerminalSignals,
   joinHeadTail,
   OWN_PROCESS_GROUP,
+  protocolStdout,
   readBoundedStream,
   readHeadTail,
   signalProcessGroup,
@@ -700,15 +701,7 @@ export async function runHydrationAssurance(
 }
 
 if (import.meta.main && process.argv.includes("--nifra-hydration-child")) {
-  // Bound before project code loads, so a `console.log` in a config or loader goes to stderr and
-  // never reaches the answer channel.
-  const stdout = process.stdout.write.bind(process.stdout)
-  const toStderr = (...args: unknown[]): void => {
-    process.stderr.write(`${args.map((arg) => String(arg)).join(" ")}\n`)
-  }
-  console.log = toStderr
-  console.info = toStderr
-  console.debug = toStderr
+  const stdout = protocolStdout()
   const token = (await readBoundedStream(Bun.stdin.stream(), 256)).text.trim()
   const cwd = process.argv[2] ?? process.cwd()
   const rawOptions = process.argv[4]

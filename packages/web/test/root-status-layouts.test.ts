@@ -9,25 +9,17 @@ import {
   type LoaderContext,
   type RenderAdapter,
   type RouteModule,
+  rawHref,
   redirect,
   statusPage,
 } from "../src/index.ts"
 import { generateClientEntry } from "../src/internal/codegen.ts"
 import { DATA_HEADER, STATUS_HEADER } from "../src/router.ts"
 import { isBackendHalf, splitRouteHalves } from "./_route-halves.ts"
+import { streamOf } from "./streams.ts"
 
 // A root status page or `_error` renders inside the root layout with its loader data and meta, and
 // alone - same status - when that layout cannot render. `inLayouts = false` renders it alone.
-
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>
@@ -189,7 +181,7 @@ describe("a root status page", () => {
         site({
           "_layout.tsx": {
             loader: () => ({ site: "root" }),
-            middleware: () => redirect("/login"),
+            middleware: () => redirect(rawHref("/login")),
           },
         }),
       ),
@@ -206,7 +198,7 @@ describe("a root status page", () => {
           "_layout.tsx": {
             gate: true,
             loader: () => {
-              throw redirect("/login")
+              throw redirect(rawHref("/login"))
             },
           },
         }),

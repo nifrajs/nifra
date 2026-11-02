@@ -1,4 +1,9 @@
-import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
+import {
+  type HoleHost,
+  type HoleState,
+  holeHost,
+  initialHtml,
+} from "@nifrajs/web/internal/hole-runtime"
 import { createElement, type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
 import { hydrateRoot } from "react-dom/client"
 import { Await } from "./await.ts"
@@ -10,15 +15,6 @@ export interface HoleDefinition<Data> {
   readonly render: (data: Data) => ReactNode
   readonly fallback?: ReactNode
   readonly interactive?: boolean
-}
-
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
- * `fill` that host's refill when the page reloads. */
-interface HoleState {
-  readonly status: "unresolved" | "pending" | "ready" | "error"
-  readonly data?: unknown
-  readonly ppr?: true
-  readonly fill?: unknown
 }
 
 interface Parked {
@@ -64,7 +60,7 @@ export interface HoleProps<Data> {
 }
 
 /**
- * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+ * One `dynamic` or `shared` boundary of a partially prerendered page.
  *
  * In a shared shell the hole is an empty host React never fills or diffs: the PPR runtime puts the
  * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.

@@ -9,6 +9,7 @@ import {
   type CompiledRoutePattern,
   compareRoutePatternSpecificity,
   compileRoutePattern,
+  fillRoutePath,
   paramConstraint,
 } from "@nifrajs/core/pattern"
 import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
@@ -181,6 +182,8 @@ export interface KeepAliveOptions {
 
 /** Client hooks populated by the generated route entry after a route chunk loads. */
 export interface ClientRouteHooks {
+  /** page's registered independently navigable route-slot identities. */
+  readonly routeSlots?: Readonly<Record<string, readonly string[]>>
   readonly clientLoader?: ClientLoader
   readonly clientAction?: ClientAction
   /** The page's `shareData` export: `false` gives every reload of it fresh data. */
@@ -360,6 +363,11 @@ export type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>
 export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
+  /**
+   * Named, independently navigable route regions. Each name is bound to route patterns from the
+   * generated route table; URL state selects only one of these registered identities.
+   */
+  readonly routeSlots?: Readonly<Record<string, readonly string[]>>
   /** Layout loader that must run before actions and is not retained across the action's render. */
   readonly gate?: boolean
   readonly action?: Action
@@ -381,14 +389,14 @@ export interface RouteModule {
   /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */
   readonly actionOutput?: StandardSchemaV1
   /**
-   * Experimental, backend half only: the loader of a partially prerendered page's shared shell. It
+   * Backend half only: the loader of a partially prerendered page's shared shell. It
    * receives no request, so its output is the same for every visitor and the shell is cached.
    */
   readonly shellLoader?: (ctx: ShellCtx) => unknown
-  /** Experimental, backend half only: the schema of what {@link shellLoader} returns. */
+  /** Backend half only: the schema of what {@link shellLoader} returns. */
   readonly shellOutput?: StandardSchemaV1
   /**
-   * Experimental, backend half only: query parameters that select a different shell, each with its
+   * Backend half only: query parameters that select a different shell, each with its
    * closed set of values (`{ search: { color: ["red", "blue"] } }`). Any other parameter, or a value
    * outside its set, builds the default shell; holes still read the whole query.
    */
@@ -1162,6 +1170,11 @@ export function filePathToRoutes(file: string): FileRoutePattern[] {
   }
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!
+    if (/[#?]/.test(seg)) {
+      throw new Error(
+        `[nifra/web] "${file}" has "#" or "?" in "${seg}": a request path cannot carry either, so no URL reaches this route. Rename the file.`,
+      )
+    }
     if (seg === "index") {
       mark()
       continue
@@ -1605,38 +1618,6 @@ export function buildManifest(
   return notFound === undefined ? base : { ...base, notFound }
 }
 
-const FILL_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g
-
-const encodeRouteParam = (value: string): string => {
-  const encoded = encodeURIComponent(value)
-  // `encodeURIComponent(".")` and `encodeURIComponent("..")` intentionally leave dots alone, but those
-  // are filesystem path segments during prerender output. Keep them URL-equivalent while making them
-  // inert as path components.
-  return encoded === "." || encoded === ".." ? encoded.replace(/\./g, "%2E") : encoded
-}
-
-/**
- * Substitute a route pattern's `:param` segments with concrete values: `/users/:id` + `{id:"7"}` →
- * `/users/7`. Returns the filled path plus any params that had no value (a `getStaticPaths` bug) so
- * the caller can skip rather than emit a path with a literal `:name`. Shared by the SSG driver and
- * {@link enumerateStaticRoutes}.
- */
-export function fillRoutePattern(
-  pattern: string,
-  params: Record<string, string>,
-): { path: string; missing: string[] } {
-  const missing: string[] = []
-  const path = pattern.replace(FILL_PARAM, (_m, name: string) => {
-    const value = params[name]
-    if (value === undefined) {
-      missing.push(name)
-      return `:${name}`
-    }
-    return encodeRouteParam(value)
-  })
-  return { path, missing }
-}
-
 /** The static-routing facts a server needs from the route modules: which concrete paths are
  * prerendered, plus each dynamic route's `getStaticPaths` fallback policy. */
 export interface StaticRoutes {
@@ -1667,8 +1648,8 @@ export async function enumerateStaticRoutes(routes: readonly RouteEntry[]): Prom
       const { paths: staticPaths, fallback = "ssr" } = await mod.getStaticPaths()
       fallbacks[route.pattern] = fallback
       for (const { params } of staticPaths) {
-        const { path, missing } = fillRoutePattern(route.pattern, params)
-        if (missing.length === 0) paths.push(path)
+        const filled = fillRoutePath(route.pattern, params)
+        if (filled.ok) paths.push(filled.path)
       }
     } else if (mod.prerender === true) {
       paths.push(route.pattern)

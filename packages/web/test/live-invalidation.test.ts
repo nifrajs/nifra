@@ -11,6 +11,7 @@ import {
   type Manifest,
   MemoryCacheStore,
   type RenderAdapter,
+  rawHref,
   redirect,
   revalidate,
   revalidateEndpoint,
@@ -165,7 +166,7 @@ test("a redirecting action still invalidates what it wrote", async () => {
   const runtime = runtimeOf()
   const publish = spyOn(runtime, "publish")
   const app = appWith(
-    async () => revalidate(["/posts/1"], redirect("/posts/2"), { keys: ["post:1"] }),
+    async () => revalidate(["/posts/1"], redirect(rawHref("/posts/2")), { keys: ["post:1"] }),
     runtime,
   )
   const res = await app.fetch(post())

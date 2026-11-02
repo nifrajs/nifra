@@ -194,7 +194,7 @@ test("a kept page's partially prerendered shell carries the wrappers its documen
         adapter,
         manifest,
         clientEntry: "/c.js",
-        experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+        ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
       })
       const shell = await (await app.fetch(new Request("http://x/list"))).text()
       expect(shell).toContain("nifra-ppr-req")

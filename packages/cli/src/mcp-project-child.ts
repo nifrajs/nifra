@@ -13,7 +13,7 @@ import { isRecord } from "./internal/record.ts"
 import { detectMonorepo } from "./load.ts"
 import { projectResources } from "./mcp-context.ts"
 import { createCachedAppLoader, projectTools } from "./mcp-exec.ts"
-import { CHILD_INPUT_MAX_BYTES, readBoundedStream } from "./mcp-io.ts"
+import { CHILD_INPUT_MAX_BYTES, protocolStdout, readBoundedStream } from "./mcp-io.ts"
 import type {
   McpPrompt,
   McpPromptMessage,
@@ -161,14 +161,7 @@ export async function serveProjectChild(
 }
 
 if (import.meta.main) {
-  // Bound before project code loads, so nothing it patches can reach the protocol channel.
-  const stdout = process.stdout.write.bind(process.stdout)
-  const toStderr = (...args: unknown[]): void => {
-    process.stderr.write(`${args.map((arg) => String(arg)).join(" ")}\n`)
-  }
-  console.log = toStderr
-  console.info = toStderr
-  console.debug = toStderr
+  const stdout = protocolStdout()
   const served = await serveProjectChild(
     process.argv[2] ?? process.cwd(),
     Bun.stdin.stream(),

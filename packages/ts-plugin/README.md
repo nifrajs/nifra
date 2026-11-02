@@ -1,6 +1,6 @@
 # @nifrajs/ts-plugin
 
-A TypeScript language-service plugin for [nifra](https://github.com/nifrajs/nifra). It adds go-to-definition on route-path string literals: put your cursor on `"/orders"` in `navigate({ to: "/orders" })`, `<Link to="/orders">`, or `href="/orders"`, and jump straight to the `routes/` file that serves it.
+A TypeScript language-service plugin for [nifra](https://github.com/nifrajs/nifra). It adds go-to-definition on route-path string literals: put your cursor on `"/orders"` in `href({ to: "/orders" })`, `rawHref("/orders")`, or `<a href="/orders">`, and jump straight to the `routes/` file that serves it. A route-table pattern such as `"/users/:id"` resolves to its file too.
 
 The routing rules are nifra's own - it discovers routes with `@nifrajs/web` and matches them with `@nifrajs/core`'s pattern matcher - so a path resolves to exactly the file it would serve at runtime, dynamic segments included (`/users/42` → `routes/users/[id].tsx`).
 

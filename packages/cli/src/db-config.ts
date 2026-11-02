@@ -49,6 +49,8 @@ export interface DevPostgresDatabase extends DevDatabaseCommon {
   readonly allowHosts: readonly string[]
   /** Extensions or untrusted languages the role may use without the query being refused. */
   readonly allowExtensions: readonly string[]
+  /** Functions (`name` or `schema.name`) a query may call although the function allowlist refuses them. */
+  readonly allowFunctions: readonly string[]
   /** Schemas a query may read (default `["public"]`). */
   readonly schemas: readonly string[]
 }
@@ -71,6 +73,7 @@ const POSTGRES_FIELDS = new Set<string>([
   "url",
   "allowHosts",
   "allowExtensions",
+  "allowFunctions",
   "schemas",
 ])
 
@@ -173,6 +176,7 @@ export function parseDevDatabase(value: unknown): DevDatabase | DbRefusal {
       url,
       allowHosts: strings(fields, "allowHosts"),
       allowExtensions: strings(fields, "allowExtensions"),
+      allowFunctions: strings(fields, "allowFunctions"),
       schemas: fields("schemas") === undefined ? ["public"] : strings(fields, "schemas"),
     }
   } catch (error) {

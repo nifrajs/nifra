@@ -24,7 +24,11 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
   `array`/`optional`/`union`/`record`, with options (`min`/`max`, `pattern`, `format`,
   …) that become JSON Schema constraints. Validators are compiled (fast).
 - **Validating string formats** - `email`/`uuid`/`date-time`/`date`/`time`/`uri`/`ipv4`
-  validate *and* annotate; register more with `registerFormat`.
+  validate *and* annotate; register more with `registerFormat`. `date-time`, `date` and `time`
+  follow RFC 3339, calendar included, so `2026-02-30` fails.
+- **Dates** - `t.date()` is a `Date` in your code and an RFC 3339 `date-time` string on the wire. A
+  request `body`, `query` or `params` carries the string and the handler receives a `Date`; a
+  response may hold the `Date` (a timestamp column), and the typed client reads a `string`.
 - **Bytes in a response** - `t.bytes()` declares a field the handler fills with a `Uint8Array` (or a
   `Buffer`). The route writes it as a base64 string, the typed client reads a `string`, and the
   document says `{ type: "string", contentEncoding: "base64" }`. Response-only for now: a request or

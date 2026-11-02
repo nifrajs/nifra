@@ -5,6 +5,7 @@
   "include": [
     "app/routes/**/*.tsx",
     "kept/routes/**/*.tsx",
+    "modal/routes/**/*.tsx",
     "refresh-app/routes/**/*.tsx",
     "app-browser.ts",
     "refresh-browser.ts",

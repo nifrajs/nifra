@@ -1,15 +1,7 @@
 import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
-import {
-  cartSchema,
-  greetingSchema,
-  loadCart,
-  loadGreeting,
-  loadRecs,
-  productSchema,
-  readProduct,
-  recsSchema,
-} from "../../../shared/catalog.ts"
+import { loadCart, loadGreeting, loadRecs, readProduct } from "../../../backend/catalog.ts"
+import { cartSchema, greetingSchema, productSchema, recsSchema } from "../../../shared/catalog.ts"
 
 export const loaderOutput = t.object({
   product: productSchema,

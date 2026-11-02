@@ -159,6 +159,8 @@ Usage:
                                          _routes.json. The server entry is generated from your
                                          backend/framework.ts (adapter) + backend/app.ts + routes/.
                                          --report prints a per-chunk size + gzip table (biggest first).
+                                         Vercel defaults to Edge; export vercelRuntime = "node" from
+                                         nifra.config.ts for ordinary Node.js 22 serverless SSR.
                 [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
                                          (faster, Bun-native) unless your ONLY transforms are
                                          \`vitePlugins\`, which the Bun build cannot run - then Vite,
@@ -215,10 +217,15 @@ Usage:
                                          nifra_explain (structured errors), nifra_inspect (request
                                          traces), nifra_learn (guided build path).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs, nifra_example,
-                                         nifra_types, nifra_learn, nifra_frontend, nifra_gallery) -
+                                         nifra_types, nifra_learn, nifra_frontend, nifra_runtime, nifra_gallery) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra learn   [<step>]                 Print the guided build-an-app path (the human view of nifra_learn):
                                          no arg for the step index, a number for one step's goal/do/verify.
+  nifra frontend [<adapter>] [<symptom>] [--json]
+                                         Print the frontend gotcha catalog (the human view of nifra_frontend).
+  nifra runtime  [<runtime>] [<symptom>] [--json]
+                                         Print where Bun, Node, Deno and Workers differ (the human view of
+                                         nifra_runtime): cause, fix and how to verify, with measured versions.
   nifra check   [--json] [--sarif] [--lints-only]
                                          Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          backend code in browser code). Run as "done"; --json for agents;
@@ -233,9 +240,6 @@ Usage:
   nifra sync-manifest                    Regenerate a committed web server-manifest.ts from routes/ WITHOUT
                                          a full build - clears server-manifest drift after a route add/rename
                                          (a new hydrating component still needs a full build).
-  nifra sync-routes                      Regenerate nifra-routes.d.ts from routes/ so navigate({ to, search })
-                                         is typed against each static route's searchSchema (a stale shape is a
-                                         tsc error). Include the file in your tsconfig. Pure file write.
   nifra snapshot [--out <file>]          Write the backend's API contract (routes + schemas) as plain
                                          JSON - the baseline for \`nifra diff\`. Default api-snapshot.json.
   nifra diff    [<baseline>] [--json]    Breaking-change gate: re-snapshot the contract and compare
@@ -286,7 +290,9 @@ Usage:
                 [--write] [--no-verify]  installed version and it, oldest first: move removed packages,
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
                 [--exact]                ^/~, or exact with --exact; a peer range only when it
-                                         excludes the target), then verify with nifra check.
+                [--from <version>]       excludes the target), then verify with nifra check. --from
+                                         names the installed version when the pins no longer do,
+                                         such as after bumping them by hand.
                 [--allow-downgrade]      Dry-run by default; --write applies, then verifies (--no-verify
                 [--allow-linked-skew]    to skip) and prints how hook scope changed (--no-hooks to skip)
                 [--no-hooks]             once the target is installed, else prints the install command
@@ -305,14 +311,15 @@ Usage:
                                          (--zones keeps them in place and lists them in package.json
                                          "nifra.zones"). Dry-run by default; --write applies.
   nifra scaffold hole <route> <name> [--shared] [--interactive] [--timeout <ms>] [--server] [--json]
-                                         Experimental: add a partially prerendered hole to a route whose
+                                         Add a partially prerendered hole to a route whose
                                          backend half exports shellLoader - its definition and <Hole> in
                                          the page, its loader and output schema in the backend half. A
                                          Vue or Svelte page gets the code to paste; --server writes a
                                          React server component for the hole.
   nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
                                          params, the data its output schemas let through, and api typed
-                                         by backend/app.ts. dev, build and check refresh them too;
+                                         by backend/app.ts, plus routes.d.ts, the table href() checks
+                                         links against. dev, build and check refresh them too;
                                          --check fails when one is stale.
   nifra schemas [--write] [--check] [--json]
                                          Draft loaderOutput/actionOutput from each loader's and
@@ -349,7 +356,7 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "5.8.0"
+const CLI_VERSION = "5.11.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
@@ -825,7 +832,9 @@ async function buildForTarget(
   flag: string | undefined,
   flags: Flags,
 ): Promise<void> {
-  const { parseBuildTarget, renderSizeReport } = await import("@nifrajs/web/build")
+  const { parseBuildTarget, renderSizeReport, validateVercelRuntime } = await import(
+    "@nifrajs/web/build"
+  )
   const target = parseBuildTarget(
     flag ?? app.framework.target ?? "bun",
     flag === undefined ? "target in nifra.config.ts" : "--target",
@@ -834,7 +843,13 @@ async function buildForTarget(
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
   const { framework: fw } = app
+  validateVercelRuntime(target, fw.vercelRuntime)
   if (fw.componentPipeline !== undefined) {
+    // The component pipeline already owns its Vercel Node handler; this selector is ordinary SSR only.
+    if (fw.vercelRuntime !== undefined)
+      throw new Error(
+        "[nifra/components] vercelRuntime selects ordinary SSR only; omit it for the component pipeline",
+      )
     if (flags.bun)
       throw new Error(
         "[nifra/components] Components require the Vite 8 pipeline; Bun remains a server runtime",
@@ -949,6 +964,8 @@ async function buildForTarget(
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
+    ...(fw.vercelRuntime !== undefined ? { vercelRuntime: fw.vercelRuntime } : {}),
+    ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
     live: fw.live?.clientEntry,
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server
     // answers its prerendered pages from their file. Not under Vite, whose server bundle may rely on
@@ -1144,7 +1161,6 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "openapi",
   "routes",
   "sync-manifest",
-  "sync-routes",
 ])
 
 const HELD_OPEN_GRACE_MS = 2_000
@@ -1170,6 +1186,36 @@ function exitIfHeldOpen(command: string): void {
 /** Set on the copy of `nifra mcp` that serves without `.env` files, so it does not restart again. */
 const MCP_WITHOUT_ENV_FILES = "NIFRA_MCP_WITHOUT_ENV_FILES"
 
+/** Parsed arguments for the project-independent `nifra frontend` command. */
+export interface FrontendCommandInput {
+  readonly adapter?: string | undefined
+  readonly symptom?: string | undefined
+  readonly json: boolean
+}
+
+/** Parse frontend positionals separately from flags so `--json` never becomes a symptom. */
+export function frontendCommandInput(
+  argv: readonly string[],
+  parseAdapter: (value: string | undefined) => string | undefined,
+): FrontendCommandInput {
+  const unknown = argv.find(
+    (arg) => arg.startsWith("-") && arg !== "--json" && arg !== "--help" && arg !== "-h",
+  )
+  if (unknown !== undefined)
+    throw new Error(`[nifra] unknown option: ${unknown} - see \`nifra help\``)
+  const positional = argv.filter((arg) => !arg.startsWith("-"))
+  const first = positional[0]
+  const maybeAdapter = parseAdapter(first)
+  const adapter = maybeAdapter === undefined ? undefined : first
+  const symptom = (maybeAdapter === undefined ? positional : positional.slice(1)).join(" ")
+  return {
+    adapter,
+    symptom: symptom.length > 0 ? symptom : undefined,
+    json: argv.includes("--json"),
+  }
+}
+
+/** Dispatch a CLI invocation, including project-independent agent and documentation commands. */
 async function main(): Promise<void> {
   const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
   // `nifra mcp` keeps none of the `.env` values Bun loaded at startup. Decided before the
@@ -1265,18 +1311,30 @@ async function main(): Promise<void> {
   // Project-independent and static. `nifra frontend` for the index, `nifra frontend vue "lost reactivity"`
   // to filter by adapter and/or symptom (either arg may be omitted; an adapter is recognized by name).
   if (command === "frontend") {
-    const { renderFrontendResult, parseAdapter } = await import("./frontend-guidance.ts")
-    const first = argv[1]
-    const maybeAdapter = parseAdapter(first)
-    const adapter = maybeAdapter === undefined ? undefined : first
-    const symptom = (maybeAdapter === undefined ? argv.slice(1) : argv.slice(2))
-      .filter((a) => !a.startsWith("-"))
-      .join(" ")
+    const { selectFrontendGuidance, renderFrontendResult, parseAdapter } = await import(
+      "./frontend-guidance.ts"
+    )
+    const input = frontendCommandInput(argv.slice(1), parseAdapter)
     console.log(
-      renderFrontendResult({
-        adapter,
-        symptom: symptom.length > 0 ? symptom : undefined,
-      }),
+      input.json
+        ? JSON.stringify(selectFrontendGuidance(input), null, 2)
+        : renderFrontendResult(input),
+    )
+    return
+  }
+  // `runtime` prints the Bun/Node/Deno/Workers differences catalog (the human head of `nifra_runtime`).
+  // Project-independent and static. `nifra runtime` for the index, `nifra runtime deno "path guard"` to
+  // filter by runtime and/or symptom (either arg may be omitted; a runtime is recognized by name).
+  if (command === "runtime") {
+    const { selectRuntimeDifferences, renderRuntimeResult, parseRuntime } = await import(
+      "./runtime-differences.ts"
+    )
+    const input = frontendCommandInput(argv.slice(1), parseRuntime)
+    const query = { runtime: input.adapter, symptom: input.symptom }
+    console.log(
+      input.json
+        ? JSON.stringify(selectRuntimeDifferences(query), null, 2)
+        : renderRuntimeResult(query),
     )
     return
   }
@@ -1395,19 +1453,14 @@ async function main(): Promise<void> {
   // recipe, then verified with `nifra check`. Dispatch before the eager `loadApp` - it must run on any
   // repo (API-only, not built, or mid-upgrade with edits that don't yet typecheck under dry-run).
   if (command === "upgrade") {
-    const { runUpgrade } = await import("./upgrade.ts")
-    const version = argv.slice(1).find((arg) => !arg.startsWith("-"))
+    if (argv.includes("--help") || argv.includes("-h")) {
+      console.log(HELP)
+      return
+    }
+    const { parseUpgradeArgs, runUpgrade } = await import("./upgrade.ts")
     try {
       const ok = await runUpgrade(process.cwd(), {
-        ...(version !== undefined ? { version } : {}),
-        write: argv.includes("--write"),
-        json: argv.includes("--json"),
-        list: argv.includes("--list"),
-        verify: !argv.includes("--no-verify"),
-        hooks: !argv.includes("--no-hooks"),
-        allowDowngrade: argv.includes("--allow-downgrade"),
-        allowLinkedSkew: argv.includes("--allow-linked-skew"),
-        exact: argv.includes("--exact"),
+        ...parseUpgradeArgs(argv.slice(1)),
         cliVersion: CLI_VERSION,
       })
       if (!ok) process.exitCode = 1

@@ -16,7 +16,7 @@
 import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { CreateWebAppOptions, CssLoadingMode } from "@nifrajs/web"
-import type { SecretExemption } from "@nifrajs/web/build"
+import type { SecretExemption, ServerEntrySelfHost } from "@nifrajs/web/build"
 import { assertCurrentLayout, BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
@@ -71,12 +71,19 @@ export interface NifraFramework {
   /** The deploy target `nifra build` emits without `--target` (default `"bun"`); `nifra target <t>`
    * rewrites it. */
   readonly target?: string
+  /** Ordinary Vercel SSR: Edge by default, or opt into a Node.js 22 serverless handler. */
+  readonly vercelRuntime?: "edge" | "node"
   /** `"platform"` makes a `cloudflare` / `vercel` build read `c.clientIp` from the header that
    * platform's edge overwrites (`cf-connecting-ip` / `x-real-ip`). Left out, an edge build has no
    * caller address, so a per-caller `rateLimit` refuses every request. Declare it only while that edge
    * is the sole way in: served any other way the header is whatever the client sent. Self-hosting
    * targets use the socket peer either way. */
   readonly clientIp?: "platform"
+  /** How the server a `bun`, `node` or `deno` build emits stops and keeps idle connections, `nifra start`
+   * included: `gracefulSignals` drains it on SIGTERM and SIGINT, `idleTimeoutSec` is Bun's idle
+   * connection timeout. `nifra build` checks it before building; an edge build ignores it. See
+   * `ServerEntrySelfHost` in `@nifrajs/web/build`. */
+  readonly selfHost?: ServerEntrySelfHost
   /** `nifra dev` settings. `indicator: false` turns the in-page issues badge off for every run
    * (`nifra dev --no-indicator` does it for one); browser errors still reach `nifra errors`.
    * `allowedHosts` lists host names the Bun dev server answers besides loopback ones; it refuses
@@ -88,8 +95,8 @@ export interface NifraFramework {
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). With both
    * configs, `nifra.config.ts` wins and `backend/framework.ts` fills it in when left unset. */
   readonly publicEnvPrefix?: string
-  /** Reviewed false positives of `nifra build`'s secret scan, each `{ rule, file, reason }` (or
-   * `{ rule: "private-env-value", env, reason }`). There is no exemption by value. */
+  /** Reviewed false positives of `nifra build`'s secret scan. A `file` scope applies throughout that
+   * file; for `private-env-value`, an `env` scope applies to every finding from that variable. */
   readonly secretExemptions?: readonly SecretExemption[]
   /** Vite production CSS output policy. `false` emits one aggregate stylesheet for the whole client. */
   readonly cssCodeSplit?: boolean
@@ -220,10 +227,20 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
     wrong("publicEnvPrefix", 'a string such as "PUBLIC_", or "" to expose no environment variable')
   }
   if (fw.secretExemptions !== undefined && !Array.isArray(fw.secretExemptions)) {
-    wrong("secretExemptions", "an array of { rule, file, reason } entries")
+    wrong(
+      "secretExemptions",
+      'an array of { rule, file, reason } entries (or { rule: "private-env-value", env, reason })',
+    )
   }
   if (fw.target !== undefined && typeof fw.target !== "string") {
     wrong("target", 'a deploy target name such as "bun"')
+  }
+  if (
+    fw.vercelRuntime !== undefined &&
+    fw.vercelRuntime !== "edge" &&
+    fw.vercelRuntime !== "node"
+  ) {
+    wrong("vercelRuntime", '"edge" or "node" (only for target "vercel")')
   }
   if (fw.clientIp !== undefined && fw.clientIp !== "platform") {
     wrong("clientIp", '"platform" (trust the edge platform\'s client-address header), or left out')

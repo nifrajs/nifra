@@ -1,5 +1,30 @@
 # @nifrajs/client
 
+## 5.11.0
+
+No changes in this release.
+
+## 5.10.0
+
+### Minor Changes
+
+- a6af4c9: A path segment has one spelling in every place a framework writes one. `@nifrajs/core/pattern` exports `encodePathSegment(value)`, `decodePathSegment(raw)`, `browserPathSegment(value)` and `fillRoutePath(pattern, params)`. `encodePathSegment` leaves `A-Za-z0-9 - . _ ~ ! $ & ' ( ) * + , : = @` as written and percent-encodes everything else in upper-case hex, so `;`, `[`, `]` and `|` are escaped (a proxy that reads `;` as a path parameter cannot change the path). A value no segment can carry (`.`, `..`, a lone surrogate) throws `RangeError`. `fillRoutePath` reports a value the router would read back as different params, such as `name` = `a.b` in `:name.:ext`, as invalid.
+  
+  `getStaticPaths` output, the prerender report and written files, `enumerateStaticRoutes`, the typed client's path params and the contract fuzzer's request paths all use it. A `getStaticPaths` entry that leaves out a param or holds one no path can carry is skipped, and the prerender report names the param. Files in `public/` are served under the spelling a page links and the one a browser sends for the same name.
+
+## 5.9.0
+
+### Patch Changes
+
+- 5f4416a: `t.date()` is a `Date` in code and an RFC 3339 `date-time` string on the wire, in a request and a response alike.
+  
+  - A request `body`, `query` or `params`, and a server function's `input`, that declares `t.date()` takes the string and hands the handler a `Date`. Only places the schema declares `t.date()` are read as dates: a `t.string()` holding a date-like string stays a string. In a union, the first branch that accepts the value decides.
+  - A route `response` may declare `t.date()` for a timestamp column: the handler returns the `Date` or the string, and the JSON carries the string.
+  - `responseContract()` judges a `Date` as the ISO string JSON writes for it when the schema carries its JSON Schema (every `t` schema), so a `Date` under `t.string({ format: "date-time" })` passes `enforce` and logs nothing in `warn`, at any depth and under `extra: "strip"`. A schema without one (zod, valibot) is still shown the `Date`.
+  - The `date-time`, `date` and `time` string formats follow RFC 3339 in full: a day the calendar lacks (`2026-02-30`), an hour of `24` and an offset past `23:59` fail.
+  - A `c.json(...)` reply on a route with a contract calls each `toJSON` hook once, a `Date`'s included, and sends the value the contract judged.
+  - The typed client writes a `Date` in `query` as its ISO string.
+
 ## 5.8.0
 
 No changes in this release.

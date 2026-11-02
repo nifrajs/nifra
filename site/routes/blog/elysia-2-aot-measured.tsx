@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { CodeBlock } from "../../shared/highlight"
 import { postMeta } from "../../shared/meta"
 
@@ -142,7 +143,7 @@ export default function ElysiaTwoAotMeasured() {
       </p>
       <p>
         The harness is in the repository, and the published tables are on the{" "}
-        <a href="/benchmarks">benchmarks page</a>.
+        <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
       </p>
     </article>
   )

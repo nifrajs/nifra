@@ -131,14 +131,14 @@ describe("the --json line", () => {
     const preact = "Preact - Table A (uncached SSR)"
     expect(Object.keys(out.results)).toEqual(["node"])
     expect(out.results.node?.["next (ISR)"]?.[isr]?.rounds).toEqual([sample(103), sample(113)])
-    // The static host is the ceiling of both React Table B comparisons, the same rounds in each.
+    // The static host is in both React Table B comparisons, the same rounds in each.
     expect(Object.keys(out.results.node?.["nifra+react (SSG files, static host)"] ?? {})).toEqual([
       ssg,
       isr,
     ])
     expect(out.ceilings).toEqual({
       node: {
-        [ssg]: "nifra+react (SSG files, static host)",
+        [ssg]: "next (static)",
         [isr]: "nifra+react (SSG files, static host)",
         [preact]: "preact-ssr",
       },

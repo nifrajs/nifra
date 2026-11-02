@@ -9,6 +9,7 @@ It exposes:
 - `nifra_types` - look up exact generated TypeScript declarations.
 - `nifra_learn` - follow the ordered Nifra learning path.
 - `nifra_frontend` - diagnose common frontend issues.
+- `nifra_runtime` - explain behavior that differs between Bun, Node, Deno and Cloudflare Workers.
 
 The plugin has no project, filesystem, repository, deployment, or secret access.
 

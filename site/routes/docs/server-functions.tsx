@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/server-functions",
@@ -122,9 +123,10 @@ export default function ServerFunctions() {
         in the module that is not a server function is ignored rather than mounted.
       </p>
       <p>
-        One thing worth knowing: the namespace you pass here and the <code>*.fn.ts</code> filename are
-        not statically checked against each other. If they disagree the call 404s, and the generated
-        stub names the mismatch - but the compiler will not catch it for you. The build fails on a
+        One thing worth knowing: the namespace you pass here and the <code>*.fn.ts</code> filename must
+        agree, or the call 404s. The compiler does not compare them, but <code>nifra check</code>{" "}
+        reports a mismatch as NF-C056 when the module is imported with{" "}
+        <code>import * as todos from "./todos.fn"</code> and mounted in the same file. The build fails on a
         filename that is not a valid namespace (<code>todoItems.fn.ts</code>; use{" "}
         <code>todo-items.fn.ts</code>). Two files with one basename (<code>admin/todos.fn.ts</code>{" "}
         and <code>user/todos.fn.ts</code>) share the namespace: both mount, and an export name they
@@ -215,8 +217,8 @@ export default function ServerFunctions() {
       </p>
       <CodeBlock code={ASSURE} lang="bash" />
       <p>
-        See <a href="/docs/capabilities">effect provenance</a> for what the declaration is checked
-        against, and <a href="/docs/verification">the verification ladder</a> for where this sits.
+        See <a href={href({ to: "/docs/capabilities" })}>effect provenance</a> for what the declaration is checked
+        against, and <a href={href({ to: "/docs/verification" })}>the verification ladder</a> for where this sits.
       </p>
 
       <h2>Cost</h2>

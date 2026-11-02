@@ -3,8 +3,8 @@
  * runtime section measures the identical app.
  *
  * This app stresses the hookful route shape. Set BENCH_GENERIC=1 to exclude fusion:
- *   - derive + beforeHandle + afterHandle registered (eligible for closed-shape fusion)
- *   - BENCH_GENERIC=1 adds a second before hook, selecting the generic lifecycle runner
+ *   - derive + beforeHandle + afterHandle registered (eligible for the fused hook lane)
+ *   - BENCH_GENERIC=1 adds a second before hook and an error hook, selecting the generic lifecycle runner
  *   - multi-segment path params                       → no static-map route hit
  *   - validated query                                 → query materialization + validate
  *   - JSON body validation on the generic body stage → parse + validate after runtime framing
@@ -111,8 +111,9 @@ export function makeWorstNifraApp(
         : undefined,
     )
     .afterHandle((result) => result)
-  // A second before hook excludes the closed one-derive/one-before fused lanes.
-  if (generic) app.beforeHandle(() => undefined)
+  // The second before hook keeps the work equal to the comparators'; the error hook, which never
+  // answers, is what takes the routes off the fused hook lanes.
+  if (generic) app.beforeHandle(() => undefined).onError(() => undefined)
   return app
     .get("/orgs/:org/projects/:proj/tasks/:id", { query: traceQuery }, (c) => {
       c.set.headers["x-request-id"] = c.requestId

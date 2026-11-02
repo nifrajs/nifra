@@ -207,6 +207,17 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
     return byDispatchId.get(lease.dispatch.dispatchId)
   }
 
+  // The entry a write under `lease` may change, or the result refusing it: the lease no longer holds
+  // the entry, or the entry is cancelled, finished or past its lease.
+  function writable(lease: RunLease): Entry | DispatchWriteResult {
+    const entry = current(lease)
+    if (!leaseMatches(entry, lease)) return result("stale_lease")
+    if (entry.state === "cancelled") return result("cancelled")
+    if (isTerminal(entry.state)) return result("terminal")
+    if (now() >= entry.leaseUntil) return result("stale_lease")
+    return entry
+  }
+
   // A cancel can land while a transition awaits the jobs adapter. It was accepted first, so the
   // transition must not overwrite it, nor act on a lease the cancel withdrew.
   function superseded(entry: Entry, lease: RunLease): DispatchWriteResult | undefined {
@@ -216,11 +227,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
 
   async function checkpoint(lease: RunLease, source: RunCheckpoint): Promise<DispatchWriteResult> {
     const value = parseRunCheckpoint(source)
-    const entry = current(lease)
-    if (!leaseMatches(entry, lease)) return result("stale_lease")
-    if (entry.state === "cancelled") return result("cancelled")
-    if (isTerminal(entry.state)) return result("terminal")
-    if (now() >= entry.leaseUntil) return result("stale_lease")
+    const entry = writable(lease)
+    if ("ok" in entry) return entry
     if (
       value.dispatchId !== lease.dispatch.dispatchId ||
       value.runId !== lease.dispatch.runId ||
@@ -243,11 +251,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
     lease: RunLease,
     source?: RunDispatchEvidence,
   ): Promise<DispatchWriteResult> {
-    const entry = current(lease)
-    if (!leaseMatches(entry, lease)) return result("stale_lease")
-    if (entry.state === "cancelled") return result("cancelled")
-    if (isTerminal(entry.state)) return result("terminal")
-    if (now() >= entry.leaseUntil) return result("stale_lease")
+    const entry = writable(lease)
+    if ("ok" in entry) return entry
     if (source !== undefined) {
       const evidence = parseRunDispatchEvidence(source)
       if (
@@ -275,11 +280,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
     runAt: number,
     failureCode: string,
   ): Promise<DispatchWriteResult> {
-    const entry = current(lease)
-    if (!leaseMatches(entry, lease)) return result("stale_lease")
-    if (entry.state === "cancelled") return result("cancelled")
-    if (isTerminal(entry.state)) return result("terminal")
-    if (now() >= entry.leaseUntil) return result("stale_lease")
+    const entry = writable(lease)
+    if ("ok" in entry) return entry
     if (!Number.isSafeInteger(runAt) || runAt < 0)
       throw new RangeError("dispatch retry time is invalid")
     await jobs.retry(entry.jobId, runAt)
@@ -296,11 +298,8 @@ export function createDurableJobsStore(options: DurableJobsStoreOptions = {}): R
   }
 
   async function deadLetter(lease: RunLease, failureCode: string): Promise<DispatchWriteResult> {
-    const entry = current(lease)
-    if (!leaseMatches(entry, lease)) return result("stale_lease")
-    if (entry.state === "cancelled") return result("cancelled")
-    if (isTerminal(entry.state)) return result("terminal")
-    if (now() >= entry.leaseUntil) return result("stale_lease")
+    const entry = writable(lease)
+    if ("ok" in entry) return entry
     const stableCode = code(failureCode)
     await jobs.deadLetter(entry.jobId, stableCode)
     const lost = superseded(entry, lease)

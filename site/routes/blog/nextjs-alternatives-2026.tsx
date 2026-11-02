@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { formatRps, MULTIPLIERS, ssrFrameworkRps, ssrRps } from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
 
@@ -29,7 +30,7 @@ export default function NextjsAlternatives() {
       <h2>The field, with measured SSR throughput</h2>
       <p>
         Same dynamic data-loaded page, each framework's production build on Node, same machine
-        (methodology + all rows: <a href="/benchmarks">benchmarks</a>):
+        (methodology + all rows: <a href={href({ to: "/benchmarks" })}>benchmarks</a>):
       </p>
       <table>
         <thead>
@@ -99,7 +100,7 @@ export default function NextjsAlternatives() {
         <li>
           <strong>"Server bill / SSR throughput":</strong> the table is the answer. This is where
           the gap is not subtle - it is an order of magnitude, and it is mostly meta-framework
-          overhead, not React itself (<a href="/compare/nextjs">the breakdown</a>).
+          overhead, not React itself (<a href={href({ to: "/compare/nextjs" })}>the breakdown</a>).
         </li>
         <li>
           <strong>"Vercel coupling":</strong> SvelteKit, Nuxt, and Nifra all deploy anywhere; Nifra
@@ -121,10 +122,10 @@ export default function NextjsAlternatives() {
         Nifra is the pick when the API and frontend are one typed product: the client and loaders
         are inferred from the server's TypeScript (zero codegen), validation is on by default, SSR
         runs {REACT_SSR_MULTIPLIER} Next.js in our harness, and the docs/types are a{" "}
-        <a href="/blog/docs-as-mcp">live MCP server</a> so AI agents build against the real API. It
-        is NOT the pick if you need RSC itself, or the largest possible ecosystem of React-specific
-        integrations - that is still Next.js, and we say so in the{" "}
-        <a href="/compare/nextjs">full comparison</a>.
+        <a href={href({ to: "/blog/docs-as-mcp" })}>live MCP server</a> so AI agents build against
+        the real API. It is NOT the pick if you need RSC itself, or the largest possible ecosystem
+        of React-specific integrations - that is still Next.js, and we say so in the{" "}
+        <a href={href({ to: "/compare/nextjs" })}>full comparison</a>.
       </p>
       <p>
         Try the shape in one command:{" "}

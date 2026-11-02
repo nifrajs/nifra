@@ -145,13 +145,17 @@ function likeForLike(row: SsrRunRow): boolean {
   return rowKind(row.target) === "app"
 }
 
-/** The landing bar chart: the React story (Bun + Node vs Next + Remix) - the `heroSsr` slice. */
+/**
+ * The landing bar chart compares Node SSR apps on one runner. Keep Bun's standalone Nifra result in
+ * the full tables, where it is labeled by runtime, but don't rank it beside Node rows from a
+ * separate runner whose CPU model may differ.
+ */
 export function heroSsrSlice(
   rows: readonly SsrRunRow[],
   versionOf: SsrVersionOf,
 ): readonly BenchRow[] {
   return rows
-    .filter((r) => r.framework === "React" && likeForLike(r))
+    .filter((r) => r.framework === "React" && likeForLike(r) && r.target.runtime === "node")
     .map((r) => ({
       name: displayName(r),
       version: versionOf(r.target),

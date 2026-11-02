@@ -609,17 +609,19 @@ export interface FakeModelGatewayOptions {
   readonly responses: readonly ModelGatewayRawResult[]
 }
 
+function scriptedResponses(responses: unknown, gateway: string): readonly ModelGatewayRawResult[] {
+  if (!Array.isArray(responses) || responses.length > MAX_ATTEMPTS)
+    throw new RangeError(`${gateway} gateway responses are unbounded`)
+  return Object.freeze(responses.map((response) => parseModelGatewayResult(response)))
+}
+
 /** Deterministic, network-free gateway for tests and local examples. It records no request input. */
 export class FakeModelGateway implements ModelGateway {
   private readonly responses: readonly ModelGatewayRawResult[]
   private cursor = 0
 
   constructor(options: FakeModelGatewayOptions) {
-    if (!Array.isArray(options.responses) || options.responses.length > MAX_ATTEMPTS)
-      throw new RangeError("fake gateway responses are unbounded")
-    this.responses = Object.freeze(
-      options.responses.map((response) => parseModelGatewayResult(response)),
-    )
+    this.responses = scriptedResponses(options.responses, "fake")
   }
 
   get calls(): number {
@@ -645,12 +647,8 @@ export class ReplayModelGateway implements ModelGateway {
 
   constructor(options: ReplayModelGatewayOptions) {
     if (!TOKEN.test(options.replayId)) throw new TypeError("replay gateway id is invalid")
-    if (!Array.isArray(options.responses) || options.responses.length > MAX_ATTEMPTS)
-      throw new RangeError("replay gateway responses are unbounded")
     this.replayId = options.replayId
-    this.responses = Object.freeze(
-      options.responses.map((response) => parseModelGatewayResult(response)),
-    )
+    this.responses = scriptedResponses(options.responses, "replay")
   }
 
   get calls(): number {

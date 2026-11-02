@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/agents",
@@ -65,6 +66,7 @@ const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
   ["nifra_types", "reads", "The exact declaration of an export."],
   ["nifra_learn", "reads", "The guided build-an-app path."],
   ["nifra_frontend", "reads", "Frontend guidance for a framework and topic."],
+  ["nifra_runtime", "reads", "Where Bun, Node, Deno and Workers differ, with the fix."],
   ["nifra_check", "reads", "Typecheck and contract lints, each with a structured fix."],
   ["nifra_contract_proof", "reads", "Each changed route, joined to its assurance and capability evidence."],
   ["nifra_port", "reads", "Which features each deploy target supports, with file:line evidence."],
@@ -80,7 +82,6 @@ const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
   ["nifra_capabilities", "writes files", "Writes, checks or explains the capability lockfile."],
   ["nifra_manifest", "writes files", "Emits or diffs the route trust manifest."],
   ["nifra_sync_manifest", "writes files", "Regenerates the server-manifest route tables."],
-  ["nifra_sync_routes", "writes files", "Regenerates nifra-routes.d.ts."],
   ["nifra_scaffold", "writes files", "The route files for a URL path; with write, creates them."],
   ["nifra_context", "runs project code", "The route index and conventions, sliced by path or kind."],
   ["nifra_routes", "runs project code", "Every route served: a list, a graph, render modes, or the hooks each runs."],
@@ -265,7 +266,7 @@ export default function Agents() {
         Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
         can read the project, learn the real API, run actual requests against the backend it just
         edited, and finish with a report of what the change proved. The same typed capabilities can
-        power the agent inside your product through <a href="/docs/webmcp">WebMCP and predictive UI</a>
+        power the agent inside your product through <a href={href({ to: "/docs/webmcp" })}>WebMCP and predictive UI</a>
         or stream into a product surface through AG-UI.
       </p>
 
@@ -475,9 +476,9 @@ export default function Agents() {
             <td>none</td>
             <td>
               tables a query may not read (<code>name</code>, or <code>schema.name</code> on Postgres),
-              also through views, CTEs, partitions and child tables. On Postgres the check reads the
-              query plan, so a function that reads the table inside its own body is not seen; the{" "}
-              <code>REVOKE</code> that <code>nifra db role</code> prints is what closes that
+              also through views, CTEs, partitions and child tables. On Postgres the role itself must be
+              unable to read it, or any view over it, so a function body or a materialized view cannot
+              reach it either; the <code>REVOKE</code> that <code>nifra db role</code> prints does that
             </td>
           </tr>
           <tr>
@@ -521,10 +522,14 @@ export default function Agents() {
           </tr>
           <tr>
             <td>
-              <code>allowHosts</code>, <code>allowExtensions</code>, <code>schemas</code>
+              <code>allowHosts</code>, <code>allowExtensions</code>, <code>allowFunctions</code>,{" "}
+              <code>schemas</code>
             </td>
-            <td>none, none, public</td>
-            <td>Postgres: remote hosts, extensions to accept, schemas a query may read</td>
+            <td>none, none, none, public</td>
+            <td>
+              Postgres: remote hosts, extensions to accept, functions to trust past the allowlist
+              (<code>name</code> or <code>schema.name</code>), schemas a query may read
+            </td>
           </tr>
         </tbody>
       </table>
@@ -542,11 +547,14 @@ export default function Agents() {
         </li>
         <li>
           <strong>Layers that each refuse on their own.</strong> One statement, read-only, checked by a
-          tokenizer that also refuses functions that reach outside a query (server files,{" "}
-          <code>dblink</code>, <code>set_config</code>, advisory locks, <code>pg_notify</code>,{" "}
-          <code>nextval</code>). On Postgres the statement runs as one extended-protocol{" "}
-          <code>DECLARE CURSOR</code>, which the server accepts only for SELECT and VALUES. Every table
-          the plan reads (SQLite: every table its compiled statement opens) must be exposed.
+          tokenizer. On Postgres every function the statement or its plan calls is looked up in{" "}
+          <code>pg_proc</code> and must be immutable or stable, parallel safe when it ships with
+          Postgres or an extension, and not SECURITY DEFINER, so <code>pg_sleep</code>,{" "}
+          <code>set_config</code>, advisory locks, <code>dblink</code> and functions that run SQL from
+          a string are refused unless <code>allowFunctions</code> names them. The statement runs as one
+          extended-protocol <code>DECLARE CURSOR</code>, which the server accepts only for SELECT and
+          VALUES. Every table the plan reads (SQLite: every table its compiled statement opens) must be
+          exposed.
         </li>
         <li>
           <strong>No superuser.</strong> A Postgres superuser, a member of{" "}
@@ -561,9 +569,11 @@ export default function Agents() {
           credential (<code>password</code>, <code>token</code>, <code>secret</code>,{" "}
           <code>api_key</code>, ...) or one in <code>redactColumns</code> is refused wherever the
           query plan uses it: selected under another name, inside an expression, in a filter, through
-          a view, or renamed by a table's column alias list. Functions that run SQL from a string,
-          which the plan cannot see, are refused outright. Every other value goes through the same
-          redactor as the dev feed: keys, tokens, JWTs and the project's environment values.
+          a view, or renamed by a table's column alias list. On Postgres the role must also be unable
+          to read the column at all, so the database refuses it where no plan shows it: run{" "}
+          <code>nifra db role</code>, which grants a table's other columns only. Every other value
+          goes through the same redactor as the dev feed: keys, tokens, JWTs and the project's
+          environment values.
         </li>
         <li>
           <strong>Data, not instructions.</strong> Rows, and names from the schema, are marked{" "}
@@ -612,6 +622,23 @@ export default function Agents() {
         The role can use dblink, postgres_fdw, file_fdw or an untrusted language, any of which reaches
         outside this database. Use a role without it, or accept it in <code>allowExtensions</code>.
       </p>
+      <h3 id="db-role-grants">NIFRA_DB_ROLE_GRANTS</h3>
+      <p>
+        The Postgres role may itself read what the declaration hides: a masked column, an excluded
+        table or one inheriting from it, or a view or materialized view over any of them (or reaching
+        outside <code>schemas</code>). A materialized view stores its rows and a function reads with
+        no plan to check, so only the role's privileges can refuse those. Run <code>nifra db role</code>,
+        apply its SQL, and connect as that role; run it again after adding a table or view, since
+        default privileges grant every column of a new one. The role may not execute a SECURITY
+        DEFINER function either (or an aggregate over one): it reads with its owner's rights through
+        an operator, a cast, a view or another function, where no allowlist sees its name. Name it in{" "}
+        <code>devDatabase.allowFunctions</code> to trust it. Otherwise the refusal names each grantee
+        the role holds the privilege through, and every one must be revoked: PUBLIC, the role itself,
+        and any role whose privileges it has, since a REVOKE from PUBLIC leaves a direct or inherited
+        grant in place. <code>nifra db role</code> writes the REVOKE from the role itself as a statement
+        and the others as comments, since they reach other roles; it lists the same for a table or
+        column grant that would still expose hidden data.
+      </p>
       <h3 id="db-query-off">NIFRA_DB_QUERY_OFF</h3>
       <p>
         <code>devDatabase.query</code> is <code>false</code>. Only the schema tool answers.
@@ -623,8 +650,11 @@ export default function Agents() {
       </p>
       <h3 id="db-function-refused">NIFRA_DB_FUNCTION_REFUSED</h3>
       <p>
-        The statement calls a function that reaches outside a read-only query: server files, other
-        sessions, settings, locks, sequences, notifications, or another database. Remove it.
+        The statement, or a view it reads, calls a function the allowlist refuses: one that is volatile
+        (it can act outside the query: locks, settings, sequences, files, other sessions, another
+        database), not parallel safe (it can run SQL of its own), or SECURITY DEFINER (it reads with
+        its owner's privileges). Every function a name can resolve to is checked. Remove it, or name
+        it in <code>allowFunctions</code> if you trust what it reads.
       </p>
       <h3 id="db-table-excluded">NIFRA_DB_TABLE_EXCLUDED</h3>
       <p>
@@ -701,7 +731,7 @@ export default function Agents() {
         different question of what the project <em>holds</em>, as a cumulative ladder from a typed
         contract (L0) to contract-derived invariant tests (L4). A scaffolded app starts at L1, and each
         rung it has not reached reports the specific thing missing - so the ladder doubles as the list
-        of what to do next. See <a href="/docs/verification">the verification ladder</a>.
+        of what to do next. See <a href={href({ to: "/docs/verification" })}>the verification ladder</a>.
       </p>
       <CodeBlock code={GATE} lang="bash" />
 
@@ -774,7 +804,10 @@ export default function Agents() {
         a pending decision can remain open: 5 minutes by default, at most 24 hours, or{" "}
         <code>"never"</code> to wait until it is answered, cancelled, its turn ends, or the session
         closes. The host's broker takes the same values as <code>approvals.timeoutMs</code> on{" "}
-        <code>CodingAgentHost</code> and <code>CodingAgentRpcServer</code>.
+        <code>CodingAgentHost</code> and <code>CodingAgentRpcServer</code>. An approval port's
+        optional <code>review</code> may allow or deny a call before anyone is asked, with no approval
+        events; any other answer, or a review still unsettled after <code>reviewTimeoutMs</code>,
+        raises the approval as usual.
       </p>
 
       <h2>Expose the same agent to other clients</h2>

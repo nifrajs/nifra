@@ -1,11 +1,15 @@
 import { t } from "@nifrajs/schema"
 import { defineServerComponent, inheritOwnerAuthorization } from "@nifrajs/web/server-components"
 import { NestedServerComponent } from "@nifrajs/web-react/server-components/nested"
-import React, { createElement as el } from "react"
+import React, { createElement as el, Suspense } from "react"
 import { Counter as Native } from "./frontend/Client"
 
 function Detail(_props: { privateValue: string }) {
   return el("p", {}, "Public detail")
+}
+function SlowDetail({ gate }: { gate: { promise: Promise<void>; settled: boolean } }) {
+  if (!gate.settled) throw gate.promise
+  return el("p", { id: "slow-ready" }, "Slow ready")
 }
 export const Summary = defineServerComponent({
   input: t.object({}),
@@ -29,6 +33,30 @@ export const Summary = defineServerComponent({
       child === undefined
         ? null
         : el(NestedServerComponent, { key: "detail", instance: child.instance, html: child.html })
+    const detail =
+      props.revision === 4
+        ? el(
+            Suspense,
+            { fallback: el("p", { id: "slow-fallback" }, "Slow loading") },
+            el(SlowDetail, {
+              gate: (() => {
+                let settled = false
+                const promise = new Promise<void>((resolve) =>
+                  setTimeout(() => {
+                    settled = true
+                    resolve()
+                  }, 1_500),
+                )
+                return {
+                  promise,
+                  get settled() {
+                    return settled
+                  },
+                }
+              })(),
+            }),
+          )
+        : make(Detail, { privateValue: "SERVER_DEBUG_PRIVATE_SENTINEL_91" })
     return el(
       "section",
       {},
@@ -36,7 +64,7 @@ export const Summary = defineServerComponent({
       props.revision % 2 === 0
         ? [nested, React.cloneElement(node, { title: data.title })]
         : [React.cloneElement(node, { title: data.title }), nested],
-      make(Detail, { privateValue: "SERVER_DEBUG_PRIVATE_SENTINEL_91" }),
+      detail,
     )
   },
 })

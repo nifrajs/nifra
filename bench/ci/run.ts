@@ -34,13 +34,6 @@ const SUITE_RUN: Readonly<Record<Suite, (runtime: Runtime) => readonly [string, 
   ssr: (runtime) => ["bench/ssr/run.ts", "--runtime", runtime, "--json"],
 }
 
-/** Env a suite needs unless the caller set it. SSR defaults to 5 rounds; the offset needs pairs. */
-const SUITE_ENV: Readonly<Record<Suite, Readonly<Record<string, string>>>> = {
-  http: {},
-  realworld: {},
-  ssr: { BENCH_ROUNDS: "4" },
-}
-
 interface Options {
   readonly suite: Suite
   readonly runtime: Runtime
@@ -73,7 +66,7 @@ function parseOptions(argv: readonly string[]): Options {
   if (maxRuns < minRuns) throw new Error("--max-runs must be at least --min-runs")
   const width = value("--max-ci-width") ?? "10"
   if (!/^\d+(?:\.\d+)?$/.test(width) || Number(width) <= 0) {
-    throw new Error("--max-ci-width takes a positive number of percentage points")
+    throw new Error("--max-ci-width takes a positive percentage of the median")
   }
   return {
     suite,
@@ -94,7 +87,6 @@ async function runOnce(
   const argv = SUITE_RUN[options.suite](options.runtime)
   // An even offset keeps each run's rounds in forward/reversed pairs (bench/rounds.ts).
   const env: Record<string, string | undefined> = {
-    ...SUITE_ENV[options.suite],
     ...Bun.env,
     BENCH_ROUND_OFFSET: String(2 * index),
   }

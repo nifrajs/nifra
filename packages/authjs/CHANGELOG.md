@@ -1,5 +1,23 @@
 # @nifrajs/authjs
 
+## 5.11.0
+
+### Patch Changes
+
+- d76f9d7: The three auth packages' guards deny a missing session through one owner: `@nifrajs/core/guard-deny` now holds `UnauthenticatedResponse`, the default `401` it builds (`unauthenticatedResult`), and the fail-loud check `assertUnauthenticated`, which refuses a denial that both redirects and answers, and a status outside 400-599. A new argument carries the package name, so every error keeps its prefix (`[nifra/auth]`, `[nifra/authjs]`, `[nifra/better-auth]`). Each package re-exports `UnauthenticatedResponse` and keeps its own guard options and its redirect rejection; no behavior and no message changed. The new subpath imports only the status lane, so it costs nothing beyond the grammar itself.
+
+## 5.10.0
+
+### Patch Changes
+
+- d2066e0: Restore the repository check gate without weakening global rules. Distinguish property names from variable self-references in SQL assembly scanning, retain detection of real interpolation and concatenation, and document reviewed comparisons of public labels/object identities and escaped table identifiers. Correct fixture dependency declarations and backend zoning while preserving intentionally unsafe PPR shell tests.
+
+## 5.9.0
+
+### Patch Changes
+
+- 9942748: An Auth.js session read under `@nifrajs/web` keep-alive keeps the identity epoch. Auth.js encrypts a new session token on every read, so each one used to rotate the epoch, drop every kept page and reload the page on screen. When the request carries an epoch, the `authjs()` mount decrypts the token it received and the one it sent, and when every claim but `iat`, `exp` and `jti` matches it names that cookie as re-issued to the same visitor, in a response header the epoch hook reads and removes. A sign-in, a switch to another user and a sign-out still rotate the epoch, and a request without an epoch costs nothing extra.
+
 ## 5.8.0
 
 No changes in this release.

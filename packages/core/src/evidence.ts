@@ -18,6 +18,7 @@ import type { ResponseClassification } from "./classification.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
 import { sha256Hex } from "./internal/hex.ts"
 import { evidenceProvenance } from "./internal/route-assurance.ts"
+import { mapSchemaParts } from "./internal/schema-parts.ts"
 import {
   type JsonSchema,
   type ReflectedMount,
@@ -151,12 +152,6 @@ function schemaPart(value: SchemaReflection | undefined): ProjectEvidenceSchemaP
 function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
   const source = route.schema
   if (source === undefined) return undefined
-  const headers = schemaPart(source.headers)
-  const cookies = schemaPart(source.cookies)
-  const body = schemaPart(source.body)
-  const query = schemaPart(source.query)
-  const params = schemaPart(source.params)
-  const response = schemaPart(source.response)
   const sse = schemaPart(source.sse)
   const errors: Record<string, ProjectEvidenceSchemaPart> = {}
   for (const [status, value] of Object.entries(source.errors ?? {})) {
@@ -167,12 +162,7 @@ function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
     ...(source.validationOrder !== undefined ? { validationOrder: source.validationOrder } : {}),
     ...(source.bodyLimit !== undefined ? { bodyLimit: source.bodyLimit } : {}),
     ...(source.bodyLimitReason !== undefined ? { bodyLimitReason: source.bodyLimitReason } : {}),
-    ...(headers !== undefined ? { headers } : {}),
-    ...(cookies !== undefined ? { cookies } : {}),
-    ...(body !== undefined ? { body } : {}),
-    ...(query !== undefined ? { query } : {}),
-    ...(params !== undefined ? { params } : {}),
-    ...(response !== undefined ? { response } : {}),
+    ...mapSchemaParts(source, schemaPart),
     ...(Object.keys(errors).length > 0 ? { errors: Object.freeze(errors) } : {}),
     ...(sse !== undefined ? { sse } : {}),
     ...(source.validationErrorHook === true ? { validationErrorHook: true as const } : {}),
@@ -218,6 +208,20 @@ const sortByRoute = <T extends { readonly method: string; readonly path: string 
     [...values].sort((a, b) => codeUnitOrder(a.path, b.path) || codeUnitOrder(a.method, b.method)),
   )
 
+const sortByFinding = <
+  T extends { readonly method: string; readonly path: string; readonly code: string },
+>(
+  values: readonly T[],
+): readonly T[] =>
+  Object.freeze(
+    [...values].sort(
+      (a, b) =>
+        codeUnitOrder(a.path, b.path) ||
+        codeUnitOrder(a.method, b.method) ||
+        codeUnitOrder(a.code, b.code),
+    ),
+  )
+
 function evidenceRouteOf(
   route: ReflectedRoute,
   locations: readonly ProjectEvidenceSourceLocation[] | undefined,
@@ -257,14 +261,7 @@ function assuranceOf(report: AssuranceReport | undefined): ProjectEvidenceAssura
         }),
       ),
     ),
-    findings: Object.freeze(
-      [...report.findings].sort(
-        (a, b) =>
-          codeUnitOrder(a.path, b.path) ||
-          codeUnitOrder(a.method, b.method) ||
-          codeUnitOrder(a.code, b.code),
-      ),
-    ),
+    findings: sortByFinding(report.findings),
   })
 }
 
@@ -287,14 +284,7 @@ function capabilitiesOf(
         }),
       ),
     ),
-    findings: Object.freeze(
-      [...report.findings].sort(
-        (a, b) =>
-          codeUnitOrder(a.path, b.path) ||
-          codeUnitOrder(a.method, b.method) ||
-          codeUnitOrder(a.code, b.code),
-      ),
-    ),
+    findings: sortByFinding(report.findings),
   })
 }
 
@@ -440,16 +430,7 @@ export function composeProjectEvidence(
       : Object.freeze({
           ok: assuranceReports.every((report) => report.ok),
           routes: sortByRoute(assuranceReports.flatMap((report) => report.routes)),
-          findings: Object.freeze(
-            assuranceReports
-              .flatMap((report) => report.findings)
-              .sort(
-                (a, b) =>
-                  codeUnitOrder(a.path, b.path) ||
-                  codeUnitOrder(a.method, b.method) ||
-                  codeUnitOrder(a.code, b.code),
-              ),
-          ),
+          findings: sortByFinding(assuranceReports.flatMap((report) => report.findings)),
         })
   const capabilities =
     capabilityReports.length === 0
@@ -457,16 +438,7 @@ export function composeProjectEvidence(
       : Object.freeze({
           ok: capabilityReports.every((report) => report.ok),
           routes: sortByRoute(capabilityReports.flatMap((report) => report.routes)),
-          findings: Object.freeze(
-            capabilityReports
-              .flatMap((report) => report.findings)
-              .sort(
-                (a, b) =>
-                  codeUnitOrder(a.path, b.path) ||
-                  codeUnitOrder(a.method, b.method) ||
-                  codeUnitOrder(a.code, b.code),
-              ),
-          ),
+          findings: sortByFinding(capabilityReports.flatMap((report) => report.findings)),
         })
   if (assurance !== undefined) validateComposedReportRoutes(assurance, routeKeys, "assurance")
   if (capabilities !== undefined)
@@ -503,23 +475,12 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
       schemaPartToReflection(value) as SchemaReflection,
     ]),
   )
-  const headers = schemaPartToReflection(schema.headers)
-  const cookies = schemaPartToReflection(schema.cookies)
-  const body = schemaPartToReflection(schema.body)
-  const query = schemaPartToReflection(schema.query)
-  const params = schemaPartToReflection(schema.params)
-  const response = schemaPartToReflection(schema.response)
   const sse = schemaPartToReflection(schema.sse)
   return {
     ...(schema.validationOrder !== undefined ? { validationOrder: schema.validationOrder } : {}),
     ...(schema.bodyLimit !== undefined ? { bodyLimit: schema.bodyLimit } : {}),
     ...(schema.bodyLimitReason !== undefined ? { bodyLimitReason: schema.bodyLimitReason } : {}),
-    ...(headers !== undefined ? { headers } : {}),
-    ...(cookies !== undefined ? { cookies } : {}),
-    ...(body !== undefined ? { body } : {}),
-    ...(query !== undefined ? { query } : {}),
-    ...(params !== undefined ? { params } : {}),
-    ...(response !== undefined ? { response } : {}),
+    ...mapSchemaParts(schema, schemaPartToReflection),
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
     ...(sse !== undefined ? { sse } : {}),
     ...(schema.validationErrorHook === true ? { validationErrorHook: true as const } : {}),

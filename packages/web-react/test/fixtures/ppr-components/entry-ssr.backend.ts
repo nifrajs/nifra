@@ -45,6 +45,6 @@ export async function createApp(
       owners: {},
       holes: { "p/[id]": { components: [Summary] } },
     }),
-    experimental: { ppr: partialPrerendering({ shellChecks }) },
+    ppr: partialPrerendering({ shellChecks }),
   })
 }

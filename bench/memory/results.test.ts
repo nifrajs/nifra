@@ -1,8 +1,15 @@
 import { expect, test } from "bun:test"
 import { memoryCapture } from "./results.ts"
 
-const targets = ["nifra", "fastify", "elysia", "hono", "express"]
-function fixture() {
+const frameworkTargets = ["nifra", "fastify", "elysia", "hono", "express"] as const
+const targets = {
+  node: frameworkTargets,
+  bun: [...frameworkTargets, "bun-native"],
+  deno: [...frameworkTargets, "deno-raw"],
+} as const
+type Runtime = keyof typeof targets
+
+function fixture(runtime: Runtime = "node") {
   const snapshot = (rss: number) => ({
     rss,
     heapTotal: 1000,
@@ -23,6 +30,8 @@ function fixture() {
       connections: 50,
       date: "2026-10-21T00:00:00.000Z",
       node: "v26.12.0",
+      runtime,
+      runtimeVersion: runtime === "node" ? "v26.12.0" : runtime === "bun" ? "1.4.4" : "2.9.7",
       platform: "darwin",
       cpu: "test",
       head: "a".repeat(40),
@@ -34,7 +43,7 @@ function fixture() {
         express: "5.3.0",
       },
     },
-    samples: targets.flatMap((target) =>
+    samples: targets[runtime].flatMap((target) =>
       [0, 1, 2].map((round) => ({
         target,
         round,
@@ -48,13 +57,16 @@ function fixture() {
   }
 }
 test("memory summaries use fresh-process medians and retain the observed range", () => {
-  const capture = memoryCapture(fixture())
-  expect(capture.rows).toHaveLength(5)
-  expect(capture.rows[0]?.postRssMiB).toBe(4000 / 1048576)
-  expect(capture.rows[0]?.postRssMinMiB).toBe(3000 / 1048576)
-  expect(capture.rows[0]?.postRssMaxMiB).toBe(9000 / 1048576)
-  expect(capture.protocol).toBe("fresh-native-node-v1")
-  expect(capture.workspaceArtifactSHA256).toBe("b".repeat(64))
+  for (const runtime of ["node", "bun", "deno"] as const) {
+    const capture = memoryCapture(fixture(runtime))
+    expect(capture.runtime).toBe(runtime)
+    expect(capture.rows).toHaveLength(5)
+    expect(capture.rows[0]?.postRssMiB).toBe(4000 / 1048576)
+    expect(capture.rows[0]?.postRssMinMiB).toBe(3000 / 1048576)
+    expect(capture.rows[0]?.postRssMaxMiB).toBe(9000 / 1048576)
+    expect(capture.protocol).toBe(`fresh-native-${runtime}-v1`)
+    expect(capture.workspaceArtifactSHA256).toBe("b".repeat(64))
+  }
 })
 test("mixed packaging, profiler data, partial matrices and duplicate samples cannot be published", () => {
   for (const mutate of [

@@ -1,4 +1,4 @@
-import type { ImageLoader, ImageProps } from "@nifrajs/image"
+import type { ImageLoader, ImageProps, StaticImageProps } from "@nifrajs/image"
 import type { Component } from "svelte"
 import type { HTMLImgAttributes } from "svelte/elements"
 
@@ -25,5 +25,7 @@ export interface ImageComponentProps
   loader?: ImageLoader
 }
 
-declare const Image: Component<ImageComponentProps>
+export type StaticImageComponentProps = StaticImageProps &
+  Omit<ImageComponentProps, "src" | "width" | "height">
+declare const Image: Component<ImageComponentProps | StaticImageComponentProps>
 export default Image

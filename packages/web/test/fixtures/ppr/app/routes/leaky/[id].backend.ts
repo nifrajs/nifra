@@ -1,5 +1,5 @@
 import { t } from "@nifrajs/schema"
-import { visitorName } from "../../lib/session.ts"
+import { visitorName } from "../../lib/session.backend.ts"
 
 // Wrong on purpose: a shell must not read the visitor. The shell check refuses this route.
 export const shellLoader = async () => ({ who: visitorName(new Request("https://shell.invalid/")) })

@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/cli",
@@ -20,6 +21,7 @@ nifra build --target cloudflare  # also: node | deno | vercel | static; add --re
 const UPGRADE = `nifra upgrade --list          # the release targets this CLI knows
 nifra upgrade 5.6.0           # dry-run: every planned edit, nothing written
 nifra upgrade 5.6.0 --write   # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.6.0 --from 5.4.0 --write   # pins already bumped by hand: apply the recipes they skipped
 bun install                   # install the new pins
 nifra check                   # verify against them
 nifra doctor                  # afterwards: no "mixed nifra versions" advisory left`
@@ -85,7 +87,7 @@ export default function Cli() {
 
       <h2 id="conventions">The layout the CLI reads</h2>
       <p>
-        <code>nifra dev</code> runs the Bun-native <a href="/docs/dev">HMR dev server</a>;{" "}
+        <code>nifra dev</code> runs the Bun-native <a href={href({ to: "/docs/dev" })}>HMR dev server</a>;{" "}
         <code>nifra build</code> runs the production build (content-hashed client assets plus a
         target-specific server); <code>nifra start</code> runs the default Bun output. The generated
         server serves assets and SSR with matched-route chunks preloaded and route CSS linked in each{" "}
@@ -100,7 +102,7 @@ export default function Cli() {
         Vite-only app rather than dropping its transforms silently. Every <code>dev</code> and{" "}
         <code>build</code> run prints which bundler it picked and why, and <code>nifra check</code>{" "}
         answers the same question without starting a server - see{" "}
-        <a href="/docs/dev">which pipeline runs, when</a> for the full table.
+        <a href={href({ to: "/docs/dev" })}>which pipeline runs, when</a> for the full table.
       </p>
       <CodeBlock code={STRUCTURE} />
       <p>
@@ -114,7 +116,7 @@ export default function Cli() {
         <code>backend/app.ts</code> a composition root - merging modules, registering no routes of
         its own - so each route&apos;s capability reach stays its own module&apos;s. What goes in each
         zone, and what the builds refuse to cross, is on{" "}
-        <a href="/docs/structure">Project structure</a>.
+        <a href={href({ to: "/docs/structure" })}>Project structure</a>.
       </p>
 
       <h2 id="framework">backend/framework.ts and nifra.config.ts</h2>
@@ -127,6 +129,18 @@ export default function Cli() {
         adapter. This keeps build tooling and native dependencies out of generated server bundles.
       </p>
       <CodeBlock code={FRAMEWORK} />
+      <p>
+        Ordinary <code>vercel</code> builds default to Edge. To opt into Node.js 22, export both{" "}
+        <code>{`target = "vercel"`}</code> and <code>{`vercelRuntime = "node"`}</code> from{" "}
+        <code>nifra.config.ts</code>, then run <code>nifra build</code> (or{" "}
+        <code>nifra build --target vercel</code>) and <code>vercel deploy --prebuilt</code> from
+        the project root. Both Bun and Vite builds write <code>.vercel/output</code> unless{" "}
+        <code>--out</code> overrides it. Omit the selector or use <code>"edge"</code> to retain
+        Edge; other values and use with a different target are refused before output is cleared.
+        There is no separate runtime flag. Node functions support Node built-ins but not Bun APIs
+        or a persistent server; the CLI/build still requires Bun. See{" "}
+        <a href={href({ to: "/docs/deployment", hash: "vercel-node" })}>runtime output and limitations</a>.
+      </p>
 
       <h2 id="commands">Command reference</h2>
       <p>
@@ -338,19 +352,13 @@ export default function Cli() {
             <td>
               <code>nifra types [--check]</code>
             </td>
-            <td>Each route&apos;s <code>./+types</code> module under <code>.nifra/types</code>: params, schema-typed data, and <code>api</code> typed by <code>backend/app.ts</code>. <code>dev</code>, <code>build</code> and <code>check</code> refresh them too.</td>
+            <td>Each route&apos;s <code>./+types</code> module under <code>.nifra/types</code>: params, schema-typed data, and <code>api</code> typed by <code>backend/app.ts</code>. It also writes <code>routes.d.ts</code>, the route table <code>href()</code> reads. <code>dev</code>, <code>build</code> and <code>check</code> refresh them too.</td>
           </tr>
           <tr>
             <td>
               <code>nifra schemas [--write] [--check]</code>
             </td>
             <td>Draft <code>loaderOutput</code> and <code>actionOutput</code> from each loader&apos;s and action&apos;s return type. <code>--write</code> adds the missing ones; it also lists returned fields a hand-written schema drops.</td>
-          </tr>
-          <tr>
-            <td>
-              <code>nifra sync-routes</code>
-            </td>
-            <td>Regenerate <code>nifra-routes.d.ts</code> so <code>navigate(&#123; to, search &#125;)</code> is typed by each route&apos;s search schema.</td>
           </tr>
           <tr>
             <td>
@@ -362,7 +370,7 @@ export default function Cli() {
             <td>
               <code>nifra scaffold hole &lt;route&gt; &lt;name&gt; [--shared] [--interactive] [--timeout &lt;ms&gt;] [--server]</code>
             </td>
-            <td>Experimental. Add a hole to a <a href="/docs/partial-prerendering">partially prerendered</a> route: its definition, <code>boundaries</code> entry and <code>Hole</code> in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.</td>
+            <td>Add a hole to a <a href={href({ to: "/docs/partial-prerendering" })}>partially prerendered</a> route: its definition, <code>boundaries</code> entry and <code>Hole</code> in a JSX page, and a loader with its output schema in the backend half. A Vue or Svelte page gets the code to paste.</td>
           </tr>
           <tr>
             <td>
@@ -526,7 +534,10 @@ nifra migrate --from tailwind --to stylex --dir src`}
       </p>
       <CodeBlock code={UPGRADE} lang="bash" />
       <p>
-        It is a dry-run until <code>--write</code>, and the same run twice makes no further edits. An
+        It is a dry-run until <code>--write</code>, and the same run twice makes no further edits. Once
+        the pins name the target, no recipe is left to apply: pass <code>--from &lt;version&gt;</code>{" "}
+        with the version they were at to apply the ones they skipped. An option it does not know is
+        refused rather than ignored. An
         unknown version or a target below what is installed is refused (<code>--allow-downgrade</code>{" "}
         when the rollback is intended); a target newer than the running CLI prints the command for
         that release&apos;s CLI. It edits files under the workspace root only: a symlinked package
@@ -545,14 +556,18 @@ nifra migrate --from tailwind --to stylex --dir src`}
         install to run first instead. With <code>--write</code> it also saves the hook report from
         before the edits and, once the target is installed, prints how hook scope changed across the
         upgrade (<code>--no-hooks</code> skips that); before then,{" "}
-        <code>nifra routes --hooks --since</code> compares after the install.{" "}
+        <code>nifra routes --hooks --since .nifra/hooks-before-upgrade.json</code> compares after the
+        install. Run from a CLI whose{" "}
+        <code>@nifrajs/core</code> is not the project&apos;s - <code>bunx @nifrajs/cli@&lt;new&gt;
+        upgrade</code> before the new release is installed - it takes no hook report, since that
+        copy cannot reflect the project&apos;s app, and says so in one line.{" "}
         <code>nifra doctor</code> and{" "}
         <code>nifra check</code> (NF-D002) point here when a workspace carries more than one version;
-        see <a href="/docs/troubleshooting#mixed-versions">mixed nifra versions</a>. A{" "}
+        see <a href={href({ to: "/docs/troubleshooting", hash: "mixed-versions" })}>mixed nifra versions</a>. A{" "}
         <code>file:</code> package whose dependencies this upgrade moves keeps its old ones in{" "}
         <code>bun.lock</code>, where Bun never refreshes them; the plan lists each, and{" "}
         <code>--write</code> drops those entries so the next <code>bun install</code> records them
-        again (see <a href="/docs/troubleshooting#stale-file-links">stale file: links</a>).
+        again (see <a href={href({ to: "/docs/troubleshooting", hash: "stale-file-links" })}>stale file: links</a>).
       </p>
       <p>
         A <code>link:</code> or <code>file:</code> dependency outside the root that installs its own{" "}
@@ -586,7 +601,7 @@ nifra migrate --from tailwind --to stylex --dir src`}
       <p>
         <code>nifra build</code> defaults to a self-hosted Bun server. Use <code>--target node</code>,{" "}
         <code>deno</code>, <code>cloudflare</code>, <code>vercel</code>, or <code>static</code> for another
-        complete deploy shape (see <a href="/docs/deployment">Deployment</a>). Run non-Bun outputs with
+        complete deploy shape (see <a href={href({ to: "/docs/deployment" })}>Deployment</a>). Run non-Bun outputs with
         the command printed by the build.
       </p>
     </div>

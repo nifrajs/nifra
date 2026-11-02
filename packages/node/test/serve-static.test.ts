@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, setSystemTime, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from "bun:test"
 import { createHash } from "node:crypto"
 import {
   mkdir,
@@ -14,7 +14,17 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
-import { type NodeServer, type ServeStaticOptions, serve } from "../src/index.ts"
+import {
+  HASHED_FILES_EXPECTED,
+  HASHED_FILES_REFUSAL,
+  hashedFilesAnswers,
+  hashedFilesRefusals,
+  STATIC_MOUNT_CASES,
+  STATIC_MOUNTS_APP,
+  staticMountAnswer,
+  staticMounts,
+} from "../../core/test/static-mounts.ts"
+import { type NodeServer, type ServeStaticOptions, serve, serveStatic } from "../src/index.ts"
 
 let dir = ""
 let running: NodeServer | undefined
@@ -51,7 +61,7 @@ async function startWithStatic(
   running = await serve(app, {
     hostname: "127.0.0.1",
     port: 0,
-    static: { dir, ...(prefix ? { prefix } : {}), ...extra },
+    static: serveStatic({ dir, ...(prefix ? { prefix } : {}), ...extra }),
   })
   return `http://127.0.0.1:${running.port}`
 }
@@ -432,10 +442,10 @@ test("an array of mounts answers from the first one that takes the path", async 
     running = await serve(app, {
       hostname: "127.0.0.1",
       port: 0,
-      static: [
+      static: serveStatic([
         { dir, prefix: "/assets" },
         { dir: other, prefix: "/", files: ["/robots.txt"], immutable: false },
-      ],
+      ]),
     })
     const base = `http://127.0.0.1:${running.port}`
     const asset = await fetch(`${base}/assets/app.js`)
@@ -458,10 +468,10 @@ test("a path a mount's files leaves out passes to the next mount", async () => {
     running = await serve(app, {
       hostname: "127.0.0.1",
       port: 0,
-      static: [
+      static: serveStatic([
         { dir: other, prefix: "/", files: ["/robots.txt"] },
         { dir, prefix: "/" },
-      ],
+      ]),
     })
     const base = `http://127.0.0.1:${running.port}`
     expect(await (await fetch(`${base}/robots.txt`)).text()).toBe("User-agent: *")
@@ -484,7 +494,7 @@ test("cacheControl applies to files not served immutable", async () => {
   await other.text()
 })
 
-test("/.well-known is served by default, as servePublicDir serves it", async () => {
+test("/.well-known is served by default", async () => {
   await mkdir(join(dir, ".well-known"), { recursive: true })
   await writeFile(join(dir, ".well-known", "security.txt"), "Contact: x")
   const base = await startWithStatic()
@@ -684,8 +694,181 @@ test("a HEAD or a 304 of a remembered version reads none of the file", async () 
   }
 })
 
+test("serve runs serveStatic's mounts itself and never calls its function", async () => {
+  let calls = 0
+  const counted = new Proxy(serveStatic({ dir }), {
+    apply(target, self, args: [Request]) {
+      calls += 1
+      return Reflect.apply(target, self, args)
+    },
+  })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0, static: counted })
+  const base = `http://127.0.0.1:${running.port}`
+  expect(await (await fetch(`${base}/assets/app.js`)).text()).toBe("console.log('hi')")
+  expect(await (await fetch(`${base}/`)).json()).toEqual({ page: true })
+  expect(calls).toBe(0)
+})
+
+test("allow sees the host the app sees, on Node's request and as a Web handler", async () => {
+  const seen: string[] = []
+  const files = serveStatic({
+    dir,
+    allow: (host) => {
+      seen.push(host)
+      return true
+    },
+  })
+  running = await serve(app, {
+    hostname: "127.0.0.1",
+    port: 0,
+    canonicalHost: "canonical.test",
+    static: files,
+  })
+  expect((await fetch(`http://127.0.0.1:${running.port}/assets/app.js`)).status).toBe(200)
+  expect((await files(new Request("http://canonical.test/assets/app.js")))?.status).toBe(200)
+  expect(seen).toEqual(["canonical.test", "canonical.test"])
+})
+
+test("a file that grows after its stat is sent at the stat's length", async () => {
+  const size = 2 * 1024 * 1024
+  const name = join(dir, "growing.bin")
+  await writeFile(name, new Uint8Array(size))
+  try {
+    const response = await serveStatic({ dir, prefix: "/" })(new Request("http://x/growing.bin"))
+    await writeFile(name, new Uint8Array(1024), { flag: "a" })
+    expect(response?.headers.get("content-length")).toBe(String(size))
+    expect((await response?.arrayBuffer())?.byteLength).toBe(size)
+  } finally {
+    await rm(name, { force: true })
+  }
+})
+
+test("hashedFiles marks the files it names immutable, in each form it takes", async () => {
+  for (const [form, answers] of Object.entries(await hashedFilesAnswers(serveStatic))) {
+    expect([form, answers]).toEqual([form, HASHED_FILES_EXPECTED])
+  }
+  for (const message of hashedFilesRefusals((options) =>
+    Reflect.apply(serveStatic, undefined, [options]),
+  )) {
+    expect(message).toContain(HASHED_FILES_REFUSAL)
+  }
+})
+
+test("`static` refuses a mount object and names serveStatic", () => {
+  // The shape this adapter took before `static` became a function, which the types now refuse.
+  const options = { hostname: "127.0.0.1", port: 0, static: { dir } }
+  expect(() => Reflect.apply(serve, undefined, [app, options])).toThrow("serveStatic")
+})
+
+test("a `static` function answers before the app, and undefined hands the request on", async () => {
+  const seen: string[] = []
+  running = await serve(
+    server()
+      .get("/", () => ({ page: true }))
+      .post("/form", () => "posted"),
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      static: (request) => {
+        const { pathname } = new URL(request.url)
+        seen.push(`${request.method} ${pathname}`)
+        if (pathname === "/hello") return new Response("from static")
+        if (pathname === "/later") return Promise.resolve(new Response("resolved"))
+        return pathname === "/pass" ? Promise.resolve(undefined) : undefined
+      },
+    },
+  )
+  const base = `http://127.0.0.1:${running.port}`
+  expect(await (await fetch(`${base}/hello`)).text()).toBe("from static")
+  expect(await (await fetch(`${base}/later`)).text()).toBe("resolved")
+  expect(await (await fetch(`${base}/`)).json()).toEqual({ page: true })
+  expect((await fetch(`${base}/pass`)).status).toBe(404)
+  const posted = await fetch(`${base}/form`, { method: "POST", body: "a=1" })
+  expect(await posted.json()).toBe("posted")
+  expect(seen).toEqual(["GET /hello", "GET /later", "GET /", "GET /pass", "POST /form"])
+})
+
+test("a `static` function that throws or rejects answers 500 without reaching the app", async () => {
+  let reached = 0
+  running = await serve(
+    server().get("/*", () => {
+      reached += 1
+      return "app"
+    }),
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      static: (request) => {
+        if (new URL(request.url).pathname === "/throw") throw new Error("static failed")
+        return Promise.reject(new Error("static rejected"))
+      },
+    },
+  )
+  const base = `http://127.0.0.1:${running.port}`
+  expect((await fetch(`${base}/throw`)).status).toBe(500)
+  expect((await fetch(`${base}/reject`)).status).toBe(500)
+  expect(reached).toBe(0)
+})
+
+test("serveStatic's handler answers a Web request as its mounts do on Node's", async () => {
+  const handler = serveStatic({
+    dir,
+    allow: (host) => host === "files.test",
+    headers: { "x-served-by": "mount" },
+  })
+  const asset = await handler(new Request("http://files.test/assets/app.js"))
+  expect(asset?.status).toBe(200)
+  expect(await asset?.text()).toBe("console.log('hi')")
+  expect(asset?.headers.get("x-served-by")).toBe("mount")
+  const head = await handler(new Request("http://files.test/assets/app.js", { method: "HEAD" }))
+  expect(head?.status).toBe(200)
+  expect(await head?.text()).toBe("")
+  const etag = asset?.headers.get("etag") ?? ""
+  const cached = await handler(
+    new Request("http://files.test/assets/app.js", { headers: { "if-none-match": etag } }),
+  )
+  expect(cached?.status).toBe(304)
+  expect((await handler(new Request("http://files.test/assets/missing.js")))?.status).toBe(404)
+  expect(handler(new Request("http://files.test/other"))).toBeUndefined()
+  expect(handler(new Request("http://elsewhere.test/assets/app.js"))).toBeUndefined()
+  expect(
+    handler(new Request("http://files.test/assets/app.js", { method: "POST" })),
+  ).toBeUndefined()
+})
+
 // Cleanup the temp dir last (afterEach handles servers; this removes the fixture).
 test("cleanup", async () => {
   await rm(dir, { recursive: true, force: true })
   expect(true).toBe(true)
 })
+
+// Native: serve() runs the mounts on Node's own request. Web: a plain function around the same
+// handler, so the mounts answer a Web Request and the app gets one too.
+for (const lane of ["native", "web"] as const) {
+  describe(`the shared mount matrix, ${lane} lane`, () => {
+    let matrix: NodeServer | undefined
+    let base = ""
+    beforeAll(async () => {
+      const handler = serveStatic(staticMounts())
+      matrix = await serve(
+        server()
+          .get("/*", (c) => c.text(STATIC_MOUNTS_APP))
+          .post("/*", (c) => c.text(STATIC_MOUNTS_APP)),
+        {
+          hostname: "127.0.0.1",
+          port: 0,
+          static: lane === "native" ? handler : (request) => handler(request),
+        },
+      )
+      base = `http://127.0.0.1:${matrix.port}`
+    })
+    afterAll(async () => {
+      await matrix?.stop({ drainMs: 0 })
+    })
+    for (const [name, path, method, expected] of STATIC_MOUNT_CASES) {
+      test(name, async () => {
+        expect(await staticMountAnswer(base, path, method, expected)).toEqual(expected)
+      })
+    }
+  })
+}

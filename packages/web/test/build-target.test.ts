@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { buildTarget, checkHostReach, generateServerEntry } from "../src/build.ts"
+import {
+  buildTarget,
+  buildTargetWith,
+  bunBundler,
+  checkHostReach,
+  generateServerEntry,
+} from "../src/build.ts"
+import type { Bundler } from "../src/build-plan.ts"
 import { discoverRoutes } from "../src/fs.ts"
 import type { RenderAdapter } from "../src/index.ts"
 import { createWebApp } from "../src/index.ts"
+import { streamOf } from "./streams.ts"
 
 // #5 end-to-end: `nifra build --target <t>` packages buildClient + buildServer (+ prerender) into one
 // dist/. The CLI is a thin wrapper over `buildTarget`; this exercises the engine directly on a tiny app.
@@ -16,16 +24,6 @@ const WORKSPACE_TMP_BASE = `${import.meta.dir}/.tmp-build-target-`
 let projectRoot: string
 let routesDir: string
 
-// A one-chunk byte stream - the minimal `renderToStream` an adapter returns (mirrors render.test.ts).
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 const stubAdapter: RenderAdapter = {
   renderToStream: (chain, props) =>
     streamOf(`<p>nifra chain=${chain.length}:${JSON.stringify(props.data)}</p>`),
@@ -230,6 +228,31 @@ test("cloudflare refuses a public _routes.json, which the build writes itself", 
   await expect(promise).rejects.toThrow(/\/_routes\.json would be overwritten by the cloudflare/)
 }, 60_000)
 
+// A deploy ships the server entry alone, so a split server build would fail at its first lazy import.
+test("a server build that emits code chunks is refused on every server target", async () => {
+  const splitting = { lazy: true }
+  const bundler: Bundler = {
+    ...bunBundler,
+    buildServer: (input) => bunBundler.buildServer({ ...input, ...splitting }),
+  }
+  for (const target of ["bun", "node", "deno", "cloudflare", "vercel"] as const) {
+    const promise = buildTargetWith(
+      target,
+      {
+        routesDir,
+        outDir: join(projectRoot, `dist-split-${target}`),
+        workDir: join(projectRoot, `.work-split-${target}`),
+        clientModule: join(projectRoot, "frontend/client-stub.ts"),
+        adapterImport: join(projectRoot, "backend/framework.ts"),
+      },
+      bundler,
+    )
+    await expect(promise).rejects.toThrow(
+      new RegExp(`\\(chunk-[\\w-]+\\.js.*\\), but the ${target} deploy ships the entry alone`),
+    )
+  }
+}, 300_000)
+
 // The built Bun server's URL, read from its startup line rather than polled.
 async function listening(stdout: ReadableStream<Uint8Array>): Promise<string> {
   const decoder = new TextDecoder()
@@ -277,6 +300,137 @@ test("--target bun caches only the build's content-hashed files as immutable", a
     await proc.exited
   }
 }, 60_000)
+
+test("--target bun serves a public file over a page that matches its path, from Bun's own table", async () => {
+  // A root `[slug]` page is one Bun serves from its route table, without the fetch fallback.
+  writeFileSync(join(routesDir, "[slug].tsx"), "export default function Slug() { return null }\n")
+  mkdirSync(join(projectRoot, "public"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *\n")
+  const outDir = join(projectRoot, "dist-bun-shadow")
+  await buildTarget("bun", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-bun-shadow"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+  })
+  const proc = Bun.spawn([process.execPath, join(outDir, "server.js")], {
+    env: { ...process.env, PORT: "0" },
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  try {
+    const base = await listening(proc.stdout)
+    const robots = await fetch(`${base}/robots.txt`)
+    expect(robots.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+    expect(await robots.text()).toBe("User-agent: *\n")
+    const page = await fetch(`${base}/hello`)
+    expect(page.status).toBe(200)
+    expect(await page.text()).toContain("<p>nifra</p>")
+  } finally {
+    proc.kill()
+    await proc.exited
+  }
+}, 60_000)
+
+// Windows has no SIGTERM: Bun terminates the process outright, so the handlers never run.
+test.skipIf(process.platform === "win32")(
+  "--target bun with selfHost.gracefulSignals stops on SIGTERM and exits on its own",
+  async () => {
+    const outDir = join(projectRoot, "dist-bun-signals")
+    await buildTarget("bun", {
+      routesDir,
+      outDir,
+      workDir: join(projectRoot, ".work-bun-signals"),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      selfHost: { gracefulSignals: { drainMs: 1000 }, idleTimeoutSec: 30 },
+    })
+    const proc = Bun.spawn([process.execPath, join(outDir, "server.js")], {
+      env: { ...process.env, PORT: "0" },
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    try {
+      const base = await listening(proc.stdout)
+      expect((await fetch(`${base}/robots.txt`)).status).toBe(404)
+      proc.kill("SIGTERM")
+      // Without the handlers SIGTERM kills the process; with them stop() drains and nothing holds it.
+      expect(await proc.exited).toBe(0)
+      expect(proc.signalCode).toBeNull()
+    } finally {
+      proc.kill()
+      await proc.exited
+    }
+  },
+  60_000,
+)
+
+test("buildTarget refuses a selfHost setting of the wrong shape before it builds", async () => {
+  const outDir = join(projectRoot, "dist-bun-bad-selfhost")
+  await expect(
+    buildTarget("bun", {
+      routesDir,
+      outDir,
+      workDir: join(projectRoot, ".work-bun-bad-selfhost"),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      selfHost: { idleTimeoutSec: 300 },
+    }),
+  ).rejects.toThrow("[nifra/web] buildTarget: selfHost idleTimeoutSec must be a whole number")
+  expect(existsSync(outDir)).toBe(false)
+})
+
+const DENO = Bun.which("deno")
+
+test.skipIf(DENO === null)(
+  "--target deno serves through @nifrajs/deno: a public file over a page at its path, pages from the app",
+  async () => {
+    writeFileSync(join(routesDir, "[slug].tsx"), "export default function Slug() { return null }\n")
+    mkdirSync(join(projectRoot, "public"), { recursive: true })
+    writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *\n")
+    const outDir = join(projectRoot, "dist-deno")
+    await buildTarget("deno", {
+      routesDir,
+      outDir,
+      workDir: join(projectRoot, ".work-deno"),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      selfHost: { gracefulSignals: true },
+    })
+    const proc = Bun.spawn(
+      [
+        DENO ?? "deno",
+        "run",
+        "--quiet",
+        "--no-config",
+        "--no-lock",
+        "-A",
+        join(outDir, "server.js"),
+      ],
+      {
+        env: { ...process.env, PORT: "0", DENO_NO_UPDATE_CHECK: "1", NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "ignore",
+      },
+    )
+    try {
+      const base = await listening(proc.stdout)
+      const robots = await fetch(`${base}/robots.txt`)
+      expect(robots.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+      expect(await robots.text()).toBe("User-agent: *\n")
+      const page = await fetch(`${base}/hello`)
+      expect(page.status).toBe(200)
+      expect(await page.text()).toContain("<p>nifra</p>")
+      proc.kill("SIGTERM")
+      expect(await proc.exited).toBe(0)
+    } finally {
+      proc.kill()
+      await proc.exited
+    }
+  },
+  60_000,
+)
 
 // The partner-domain shape: every host but the app's own renders only the public surface.
 const HOST_POLICY_MODULE =
@@ -359,19 +513,21 @@ test("the generated entries put a host policy ahead of their static files", () =
   const optionImports = { hostPolicy: "../backend/policy.ts" }
   const entry = (target: "bun" | "node" | "deno" | "cloudflare") =>
     generateServerEntry({ target, adapterImport: "../framework.ts", optionImports })
-  for (const target of ["bun", "deno", "cloudflare"] as const) {
+  for (const target of ["bun", "node", "deno", "cloudflare"] as const) {
     const code = entry(target)
     expect(code).toContain("import { buildAssets, clientEntry,")
     expect(code).toContain("  hostPolicy,\n  buildAssets,\n")
-    expect(code).toContain("&& hostPolicy.allows(req")
   }
   expect(entry("cloudflare")).toContain(
     'hostPolicy.allows(request.headers.get("host") ?? "", pathname, buildAssets)',
   )
-  const node = entry("node")
-  expect(
-    node.match(/allow: \(host: string, pathname: string\) => hostPolicy\.allows/g)?.length,
-  ).toBe(2)
+  // Each self-hosted entry hands the policy to both of its mounts.
+  for (const target of ["bun", "node", "deno"] as const) {
+    expect(
+      entry(target).match(/allow: \(host: string, pathname: string\) => hostPolicy\.allows/g)
+        ?.length,
+    ).toBe(2)
+  }
   // Without a policy, nothing changes.
   const plain = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
   expect(plain).not.toContain("hostPolicy")

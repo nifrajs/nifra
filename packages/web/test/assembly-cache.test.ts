@@ -41,6 +41,28 @@ describe("renderPageResult assembly cache", () => {
     expect(second).not.toContain('{"n":1}')
   })
 
+  test("a cached route does not serialize its handover entries again, and a page with no client never does", async () => {
+    let serialized = 0
+    const prerenderedPaths = Object.assign(["/a", "/b"], {
+      toJSON() {
+        serialized += 1
+        return ["/a", "/b"]
+      },
+    })
+    const input = (n: number) => ({ ...baseInput({ n }), prerenderedPaths })
+    const slot: RenderAssemblyCache = {}
+    const first = await html(renderPageResult({ ...input(1), assemblyCache: slot }))
+    expect(serialized).toBe(1)
+    const second = await html(renderPageResult({ ...input(2), assemblyCache: slot }))
+    expect(serialized).toBe(1)
+    expect(second).toContain('["/a","/b"]')
+    expect(second).toBe(await html(renderPageResult(input(2))))
+    expect(first).toContain('["/a","/b"]')
+    serialized = 0
+    await html(renderPageResult({ ...input(3), hydrate: false }))
+    expect(serialized).toBe(0)
+  })
+
   test("a per-request nonce bypasses the cache (nonce'd bytes never persist in the slot)", async () => {
     const slot: RenderAssemblyCache = {}
     const nonced = await html(

@@ -47,6 +47,32 @@ export const app = server()
   ])
 })
 
+test("options passed to a call with no handler are not a route's, whatever the method name", async () => {
+  const flag = "{ query: z.object({ on: z.coerce.boolean() }) }"
+  const lines = [
+    `import { server } from "@nifrajs/core/server"`,
+    `import { z } from "zod"`,
+    `import { handler } from "./handler.ts"`,
+    `declare const store: Record<string, (key: string, options?: object) => unknown>`,
+    `export const app = server()`,
+  ]
+  const expected: string[] = []
+  for (const method of ["get", "post", "put", "patch", "delete", "head", "options", "all"]) {
+    lines.push(`const ${method}Route = ${flag}`)
+    expected.push(`backend/app.ts:${lines.length} warning`)
+    lines.push(
+      `const ${method}Read = ${flag}`,
+      `store.${method}("/${method}", ${flag})`,
+      `store.${method}("/${method}", ${method}Read)`,
+      `app.${method}("/${method}", ${flag}, (c) => c.query)`,
+    )
+    expected.push(`backend/app.ts:${lines.length} warning`)
+    lines.push(`app.${method}("/${method}/imported", ${method}Route, handler)`)
+  }
+  writeAppFile(root, "backend/app.ts", `${lines.join("\n")}\n`)
+  expect(await findings()).toEqual(expected)
+})
+
 test("a named or namespace import of zod counts, and another library's coerce does not", async () => {
   writeAppFile(
     root,

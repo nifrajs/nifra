@@ -11,6 +11,7 @@ const CODES: Record<DbRefusalCode, true> = {
   NIFRA_DB_REMOTE_HOST: true,
   NIFRA_DB_SUPERUSER: true,
   NIFRA_DB_EXTENSION: true,
+  NIFRA_DB_ROLE_GRANTS: true,
   NIFRA_DB_QUERY_OFF: true,
   NIFRA_DB_WRITE_REFUSED: true,
   NIFRA_DB_FUNCTION_REFUSED: true,

@@ -1,4 +1,4 @@
-import { initialHtml } from "@nifrajs/web/internal/hole-runtime"
+import { type HoleState, initialHtml } from "@nifrajs/web/internal/hole-runtime"
 import { createComponent, createMemo, type JSX, untrack } from "solid-js"
 import { Dynamic, isServer } from "solid-js/web"
 import { Await } from "./await.ts"
@@ -13,15 +13,6 @@ export interface HoleDefinition<Data> {
   readonly render: (data: Data) => JSX.Element
   readonly fallback?: () => JSX.Element
   readonly interactive?: boolean
-}
-
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
- * `fill` that host's refill when the page reloads. */
-interface HoleState {
-  readonly status: "unresolved" | "pending" | "ready" | "error"
-  readonly data?: unknown
-  readonly ppr?: true
-  readonly fill?: unknown
 }
 
 export interface HoleProps<Data> {
@@ -47,7 +38,7 @@ function openHost<Data>(hole: HoleDefinition<Data>, fill: () => unknown): JSX.El
 }
 
 /**
- * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+ * One `dynamic` or `shared` boundary of a partially prerendered page.
  *
  * In a shared shell the hole is an empty host Solid never fills: the PPR runtime puts the server's
  * HTML into it, and an interactive hole then hydrates as its own root from the frame's props. When the

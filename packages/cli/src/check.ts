@@ -32,7 +32,7 @@ import {
 } from "./check-diagnostics.ts"
 import { appDirs, clientModuleRoot } from "./client-module.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
-import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
+import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import { installedManifest } from "./internal/installed-package.ts"
 import { createApiOnlyProbe, createNifraProjectProbe } from "./internal/nifra-project.ts"
 import { createSpecifierResolver } from "./internal/project-specifiers.ts"
@@ -50,7 +50,12 @@ import {
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { sourceIndex } from "./rules/index.ts"
-import { filesOutsideProgram, splitListedFiles, typecheckProjects } from "./typecheck-coverage.ts"
+import {
+  filesOutsideProgram,
+  routeTableOutsideProgram,
+  splitListedFiles,
+  typecheckProjects,
+} from "./typecheck-coverage.ts"
 
 export type {
   CheckAnalysisInput,
@@ -110,6 +115,8 @@ interface TypecheckResult {
   readonly programFiles?: readonly string[]
   /** Zoned TypeScript files outside the program, project-relative: the typecheck never read them. */
   readonly outsideProgram?: readonly string[]
+  /** The generated route table, when it exists and the program does not hold it. */
+  readonly routeTableOutsideProgram?: string
 }
 
 /**
@@ -384,7 +391,7 @@ function withoutTsconfig(
 function withProgramCoverage(
   cwd: string,
   result: TypecheckResult,
-  sourceFiles: ReadonlyArray<{ readonly file: string }>,
+  sourceFiles: ReadonlyArray<{ readonly file: string; readonly content: string }>,
   checkConfig: CheckConfig,
 ): TypecheckResult {
   const { programFiles, ...rest } = result
@@ -395,7 +402,12 @@ function withProgramCoverage(
     sourceFiles.map((source) => source.file),
     programFiles,
   ).filter((file) => !ignore?.some((pattern) => safeIgnoreGlobMatch(pattern, file)))
-  return outside.length === 0 ? rest : { ...rest, outsideProgram: outside }
+  const table = routeTableOutsideProgram(cwd, programFiles, sourceFiles)
+  return {
+    ...rest,
+    ...(outside.length === 0 ? {} : { outsideProgram: outside }),
+    ...(table === undefined ? {} : { routeTableOutsideProgram: table }),
+  }
 }
 
 /** Build the rule input from one source walk and the other check-wide scans. */
@@ -787,6 +799,25 @@ function belowError(warnings: number, infos: number): string {
   return parts.join(", ")
 }
 
+/** The check's findings as structured diagnostics: the collector's own, else each report entry mapped over. */
+export function checkDiagnostics(result: CheckResult): readonly Diagnostic[] {
+  return (
+    result.structuredDiagnostics ??
+    result.diagnostics.map((value) =>
+      diagnostic({
+        code: value.code ?? value.rule,
+        severity: normalizeSeverity(value.severity),
+        message: value.message,
+        ...(value.file === undefined ? {} : { file: value.file }),
+        ...(value.line === undefined ? {} : { line: value.line }),
+        ...(value.evidence === undefined ? {} : { evidence: value.evidence }),
+        ...(value.fix === undefined ? {} : { fix: { recipe: value.fix } }),
+        ...(value.verify === undefined ? {} : { verify: value.verify }),
+      }),
+    )
+  )
+}
+
 /** Run the full check; print a report (`--json` for machine output) and return whether it passed. */
 export async function runCheck(
   cwd: string,
@@ -802,19 +833,7 @@ export async function runCheck(
   const verification = await collectProjectVerification(cwd, { lintsOnly: opts.lintsOnly ?? false })
   const result = await verification.check()
   if (opts.sarif) {
-    const diagnostics: readonly Diagnostic[] =
-      result.structuredDiagnostics ??
-      result.diagnostics.map((value) => ({
-        code: value.code ?? value.rule,
-        severity: normalizeSeverity(value.severity),
-        message: value.message,
-        ...(value.file === undefined ? {} : { file: value.file }),
-        ...(value.line === undefined ? {} : { line: value.line }),
-        ...(value.evidence === undefined ? {} : { evidence: value.evidence }),
-        ...(value.fix === undefined ? {} : { fix: { recipe: value.fix } }),
-        ...(value.verify === undefined ? {} : { verify: value.verify }),
-      }))
-    console.log(JSON.stringify(toSarifLog(diagnostics), null, 2))
+    console.log(JSON.stringify(toSarifLog(checkDiagnostics(result)), null, 2))
     return result.ok
   }
   if (opts.json) {

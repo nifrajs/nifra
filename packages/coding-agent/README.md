@@ -50,6 +50,13 @@ closes; `maxPending` (default 32) still bounds how many can wait. `NifraBackend`
 denies, so the shorter of the two applies. A never-expiring approval reports `expiresAt` as
 `APPROVAL_NEVER_EXPIRES_AT`, which survives JSON and stays later than any `Date.now()`.
 
+A `NativeApprovalPort` may also `review` a call before anyone is asked: `{ decision: "allow" }`
+runs it, `{ decision: "deny", reason }` refuses it with `REVIEW_DENIED` and a reason the model
+reads, and `{ decision: "ask" }` raises the approval as usual. Any other answer, a throw, or a
+review still unsettled after `reviewTimeoutMs` (default 30 s, at most 10 minutes) asks; an abort
+during a review stops the turn. Review answers are host-owned like approvals, but an allow or a
+deny emits no approval events, so a host that needs an audit trail records its own reviews.
+
 `nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
 `--extensions`. An extension module's top-level code runs as soon as it is
 imported, before its declared `capabilities` are checked, so pass the flag only

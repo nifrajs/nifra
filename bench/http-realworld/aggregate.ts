@@ -25,13 +25,13 @@ The bare-route matrix ([BENCHMARKS.md](./BENCHMARKS.md)) measures the framework 
 nifra's fused Web lane (bare/query/body-only routes) targets. This suite measures the SAME GET/POST
 split, but on a route with what a real API route actually has: security headers, CORS, a request-id
 hook, bearer-token auth via a derive, and a cookie read. On nifra, that combination compiles into the
-fused derive-before lane (body-derive-before for the POST), not the bare/query/body lanes. Compare the
+fused hooks lane (body-hooks for the POST), not the bare/query/body lanes. Compare the
 SAME framework's ratio across both files to see what the middleware work costs directly, instead of
 assuming the bare-route ratio generalizes to a real endpoint.
 
 The third workload (the \`*-body\` rows) adds ONE body-observing middleware to the same GET - an
 x-body-hash header over the final serialized body - via each framework's own idiomatic body tier:
-nifra's \`onResponseBody\`, Fastify's \`onSend\`, Elysia's \`mapResponse\`, Hono's drain-and-rebuild
+nifra's \`onResponseBody\`, Fastify's \`onSend\`, Elysia's \`mapResponse\`, Hono's buffer-and-rewrap
 middleware, Express's \`res.json\` wrap, and inline hashing for the raw ceilings. The delta against
 the plain GET row is what each framework charges middleware to SEE the response body.
 
@@ -77,9 +77,9 @@ const WORKLOADS: readonly string[] = [
   BODY_WORKLOAD,
 ]
 const FRAMEWORKS: Record<string, readonly string[]> = {
-  bun: ["nifra", "elysia", "hono", "bun-native"],
+  bun: ["nifra", "elysia", "hono", "fastify", "bun-native"],
   node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
-  deno: ["nifra", "hono", "elysia", "deno-raw"],
+  deno: ["nifra", "hono", "elysia", "fastify", "deno-raw"],
 }
 const CEILING: Record<string, string> = {
   bun: "bun-native",

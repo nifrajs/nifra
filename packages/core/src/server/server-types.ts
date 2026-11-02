@@ -90,17 +90,32 @@ export interface ServerOptions {
    */
   readonly trustBodyFraming?: boolean
   /**
-   * Answer `400 invalid_host` on Bun to every Host that Node and Deno refuse: one sent twice, one
-   * no URL can be built on (a space, a byte past ASCII, a port past 65535, an IPv6 literal no parser
-   * takes), a percent-encoded or sub-delimiter one, and serve an HTTP/1.0 request with no Host as
-   * `localhost`. Bun serves those requests itself, building `c.req.url` on the first Host or leaving
-   * it relative, so `new URL(c.req.url)` can throw in a handler.
+   * Answer `400 invalid_host` for Hosts the request target cannot safely be built on: one sent
+   * twice, one with a space or byte past ASCII, a port past 65535, an IPv6 literal no URL parser
+   * takes, a percent-encoded or sub-delimiter Host, or an authority that can change Deno's route.
+   * Bun may leave `c.req.url` relative or build it on the first Host, so `new URL(c.req.url)` can
+   * throw in a handler.
    *
-   * Disabled by default: the check reads the Host on every request, which measured about 6% of a bare
-   * route on Bun. Left off, a target with `.` or `..` segments is still checked, so a dot segment is
-   * never routed raw. Node and Deno refuse these Hosts either way; the option changes nothing there.
+   * Disabled by default: checking Host on every request measured about 6% of a bare route on Bun.
+   * Deno builds `Request.url` from Host; without this check, a malformed Host can change the routed
+   * path. Enable it when Deno receives requests with an untrusted Host header.
    */
   readonly validateHost?: boolean
+  /**
+   * Route a Deno request on the path a WHATWG parser would give it. Bun and workerd deliver a parsed
+   * URL, so `/public/../admin` reaches the app as `/admin`; Deno hands over the target as sent. Off,
+   * Deno routes the text received, as most frameworks do: a guard on `/admin` does not see
+   * `/public/../admin`, and a proxy that normalizes paths before forwarding disagrees with the app
+   * about which route a request is for. On, dot segments (`.`, `..`, `%2e`), backslashes and the
+   * characters a parser percent-encodes are resolved before routing, so every runtime routes the
+   * same path.
+   *
+   * Disabled by default: the check reads and scans the whole URL of every request, measured at about
+   * 3% of a bare route on Deno. Enable it when path guards, or a path-normalizing proxy, sit in
+   * front of or inside the app. Bun already delivers parsed targets and is unaffected; `@nifrajs/node`
+   * has the same option on `serve()`.
+   */
+  readonly normalizeTarget?: boolean
   /**
    * Max inbound WebSocket message size (bytes). A larger message never reaches the handler and the
    * socket closes with `1009`; when Bun's own frame limit refuses it, Bun up to 1.4.3 drops the

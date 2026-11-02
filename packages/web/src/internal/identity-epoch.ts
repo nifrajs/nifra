@@ -5,7 +5,9 @@
  * A header-only hook reads each response's `Set-Cookie`: when an identity cookie's value differs from
  * the request's, or the cookie is deleted, the response also sets a fresh epoch with the same lifetime,
  * so the epoch expires with an idle session. A rolling session re-sending the same value with a new
- * lifetime re-sends the epoch it holds with that lifetime, so the two keep expiring together.
+ * lifetime re-sends the epoch it holds with that lifetime, so the two keep expiring together. So does
+ * an `@nifrajs/auth` cookie-mode session re-signed with the same tag, or without one the same data,
+ * and a cookie an integration that can read its own tokens names as re-issued to the same visitor.
  */
 import { type CookieOptions, parseCookies } from "@nifrajs/core/server"
 import { EPOCH_COOKIE, LOCAL_EPOCH_COOKIE } from "../identity.ts"
@@ -26,11 +28,17 @@ export interface KeepAliveServerOptions {
 interface HeaderView {
   get(name: string): string | null
   append(name: string, value: string): void
+  delete(name: string): void
 }
 interface RequestView {
   readonly url: string
   header(name: string): string | null | undefined
 }
+
+// Set alongside the `Set-Cookie` it covers, it names identity cookies an integration re-issued to the
+// same visitor: `@nifrajs/authjs` sets it for an Auth.js token it decrypted on both sides. Removed
+// here, so it never reaches the browser; only the cookies it names count, never a deletion.
+const RENEWED = "x-nifra-identity-renewed"
 
 // Session cookies by their default names, without a `__Secure-` / `__Host-` prefix.
 const IDENTITY_DEFAULTS = ["nifra_session", "authjs.session-token", "next-auth.session-token"]
@@ -108,6 +116,36 @@ const parseSetCookies = (joined: string, now: number): SetCookie[] => {
   return cookies
 }
 
+// An `@nifrajs/auth` cookie-mode value is `{"data":...,"expiresAt":...}.<signature>`, with a `"tag"`
+// once the app names the data keys that say who its visitor is. Two values with the same tag, or
+// without one the same data, are the same visitor: the server knows nothing of a visitor beyond its
+// data. The request's value is unverified, so a forged one can only keep that browser's own pages.
+const sessionOf = (value: string): { readonly data: object; readonly tag: unknown } | undefined => {
+  const at = value.lastIndexOf(".")
+  if (value[0] !== "{" || at === -1) return undefined
+  let payload: unknown
+  try {
+    payload = JSON.parse(value.slice(0, at))
+  } catch {
+    return undefined
+  }
+  if (typeof payload !== "object" || payload === null) return undefined
+  if (!("data" in payload) || !("expiresAt" in payload)) return undefined
+  const { data, expiresAt } = payload
+  return typeof expiresAt === "number" && typeof data === "object" && data !== null
+    ? { data, tag: "tag" in payload ? payload.tag : undefined }
+    : undefined
+}
+
+const sameVisitor = (sent: string, set: string): boolean => {
+  const now = sessionOf(set)
+  const before = sessionOf(sent)
+  if (now === undefined || before === undefined) return false
+  return typeof now.tag === "string" && typeof before.tag === "string"
+    ? now.tag === before.tag
+    : JSON.stringify(now.data) === JSON.stringify(before.data)
+}
+
 const randomEpoch = (): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(16))
   let hex = ""
@@ -159,13 +197,23 @@ export function identityEpochHook(
     const joined = headers.get("set-cookie")
     if (joined === null || joined === "") return
     const sent = parseCookies(request.header("cookie") ?? null)
+    const vouched = headers.get(RENEWED)?.split(",")
+    if (vouched !== undefined) headers.delete(RENEWED)
     let changed: SetCookie | undefined
     let renewed: SetCookie | undefined
     for (const cookie of parseSetCookies(joined, Date.now())) {
       if (cookie.name === EPOCH_COOKIE || cookie.name === LOCAL_EPOCH_COOKIE) return
       const now = cookie.deleted ? "" : cookie.value
       const base = baseName(cookie.name)
-      if (now === (sent[cookie.name] ?? "")) {
+      const before = sent[cookie.name] ?? ""
+      if (
+        now === before ||
+        (isIdentity(base) &&
+          (sameVisitor(before, now) ||
+            (now !== "" &&
+              before !== "" &&
+              vouched?.some((v) => v.trim() === cookie.name) === true)))
+      ) {
         if (
           renewed === undefined &&
           !cookie.deleted &&

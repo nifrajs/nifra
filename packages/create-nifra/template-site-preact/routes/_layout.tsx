@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact"
+import { href } from "@nifrajs/web-preact/router"
 
 const css = `
   :root { --bg:#0a0a0f; --panel:#14141c; --border:#26263a; --fg:#e8e8f0; --muted:#9a9ab0; --accent:#7c5cff; --accent2:#00d4ff; }
@@ -27,7 +28,7 @@ export default function Layout(props: { children?: ComponentChildren }) {
       <style dangerouslySetInnerHTML={{ __html: css }} />
       <header className="site">
         <div className="wrap">
-          <a href="/" className="logo">
+          <a href={href({ to: "/" })} className="logo">
             <b>nifra</b>
           </a>
           <a href="https://github.com">GitHub</a>

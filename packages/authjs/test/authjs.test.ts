@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { decode } from "@auth/core/jwt"
 import Credentials from "@auth/core/providers/credentials"
 import GitHub from "@auth/core/providers/github"
 import { server } from "@nifrajs/core"
@@ -351,5 +352,106 @@ describe("origin, proxy, and guard configuration", () => {
     await expect(
       requireAuthUser(req("/guarded"), config, { redirectTo: "https://evil.example/login" }),
     ).rejects.toThrow(/guard redirectTo must be a same-origin path/)
+  })
+})
+
+describe("a session read under @nifrajs/web keep-alive", () => {
+  const RENEWED = "x-nifra-identity-renewed"
+  const EPOCH = "__Host-nifra-epoch=0123456789abcdef0123456789abcdef"
+  const mount = (extra: Partial<AuthJSConfig> = {}) =>
+    server().use(
+      authjs({
+        ...config,
+        providers: [
+          Credentials({
+            credentials: { username: {} },
+            authorize: (creds) => ({ id: String(creds.username), name: String(creds.username) }),
+          }),
+        ],
+        ...extra,
+      }),
+    )
+  const switching = mount()
+  const cookiesOf = (response: Response): string =>
+    response.headers
+      .getSetCookie()
+      .map((line) => line.split(";")[0])
+      .join("; ")
+  const csrfOf = async (app: typeof switching, cookie: string) => {
+    const csrf = await app.fetch(req("/api/auth/csrf", { headers: { cookie } }))
+    const body: unknown = await csrf.json()
+    const csrfToken =
+      typeof body === "object" && body !== null && "csrfToken" in body ? String(body.csrfToken) : ""
+    return { csrfToken, cookie: [cookie, cookiesOf(csrf)].filter(Boolean).join("; ") }
+  }
+  const post = async (app: typeof switching, path: string, cookie: string, fields = {}) => {
+    const { csrfToken, cookie: withCsrf } = await csrfOf(app, cookie)
+    return app.fetch(
+      req(path, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", cookie: withCsrf },
+        body: new URLSearchParams({ csrfToken, ...fields }),
+      }),
+    )
+  }
+  const signIn = (username: string, cookie = "", app = switching): Promise<Response> =>
+    post(app, "/api/auth/callback/credentials", cookie, { username })
+  const read = (cookie: string, app = switching) =>
+    app.fetch(req("/api/auth/session", { headers: { cookie } }))
+
+  test("names the token it re-issued to the same visitor, and still answers the session", async () => {
+    const ada = cookiesOf(await signIn("ada"))
+    const response = await read(`${ada}; ${EPOCH}`)
+    expect(response.headers.get(RENEWED)).toBe("authjs.session-token")
+    expect(cookiesOf(response)).toContain("authjs.session-token=")
+    expect(cookiesOf(response)).not.toBe(ada)
+    expect(await response.json()).toMatchObject({ user: { name: "ada" } })
+  })
+
+  test("names nothing without an epoch, for another visitor, or for a token it cannot read", async () => {
+    const ada = cookiesOf(await signIn("ada"))
+    expect((await read(ada)).headers.get(RENEWED)).toBeNull()
+    const bob = await signIn("bob", `${ada}; ${EPOCH}`)
+    expect(cookiesOf(bob)).toContain("authjs.session-token=")
+    expect(bob.headers.get(RENEWED)).toBeNull()
+    const forged = ada.replace(/authjs\.session-token=([^;]+)/, (_, token: string) => {
+      return `authjs.session-token=${token.slice(0, -4)}AAAA`
+    })
+    expect((await read(`${forged}; ${EPOCH}`)).headers.get(RENEWED)).toBeNull()
+  })
+
+  test("names the session cookie the app renamed, and only that one", async () => {
+    const renamed = mount({
+      cookies: { sessionToken: { name: "app.session", options: { path: "/", sameSite: "lax" } } },
+    })
+    const ada = cookiesOf(await signIn("ada", "", renamed))
+    expect(ada).toContain("app.session=")
+    expect((await read(`${ada}; ${EPOCH}`, renamed)).headers.get(RENEWED)).toBe("app.session")
+    // The default name, carried over from elsewhere, is not the session this mount reads.
+    const stray = ada.replace("app.session=", "authjs.session-token=")
+    expect((await read(`${stray}; ${EPOCH}`, renamed)).headers.get(RENEWED)).toBeNull()
+  })
+
+  test("names nothing for a sign-out, even where the app's decoder returns null for what it cannot read", async () => {
+    const lenient = mount({
+      jwt: {
+        decode: async (params) => {
+          try {
+            return await decode(params)
+          } catch {
+            return null
+          }
+        },
+      },
+    })
+    const ada = cookiesOf(await signIn("ada", "", lenient))
+    for (const cookie of [`${ada}; ${EPOCH}`, `authjs.session-token=junk; ${EPOCH}`]) {
+      const out = await post(lenient, "/api/auth/signout", cookie)
+      expect({ cookie, cleared: out.headers.getSetCookie().join("\n") }).toMatchObject({
+        cookie,
+        cleared: expect.stringContaining("authjs.session-token=;"),
+      })
+      expect({ cookie, renewed: out.headers.get(RENEWED) }).toEqual({ cookie, renewed: null })
+    }
   })
 })

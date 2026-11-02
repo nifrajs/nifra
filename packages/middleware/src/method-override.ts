@@ -1,4 +1,4 @@
-import { defineRouterPlugin, METHODS, type Method } from "@nifrajs/core/server"
+import { carryRequestLocals, defineRouterPlugin, METHODS, type Method } from "@nifrajs/core/server"
 import { jsonError } from "./_utils.ts"
 
 export interface MethodOverrideOptions {
@@ -35,7 +35,9 @@ function singleQueryValue(req: Request, name: string): string | null | false {
 }
 
 function replacement(req: Request, method: Method): Request {
-  return new Request(req, { method })
+  const replaced = new Request(req, { method })
+  carryRequestLocals(req, replaced)
+  return replaced
 }
 
 /**

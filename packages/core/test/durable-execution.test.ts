@@ -249,9 +249,9 @@ describe("durable approvals", () => {
       ApprovalTokenInvalidError,
     )
     now = 1_011
-    await expect(approval.authorize(approvalInput(token))).rejects.toBeInstanceOf(
-      ApprovalTokenExpiredError,
-    )
+    const expired = approval.authorize(approvalInput(token))
+    await expect(expired).rejects.toBeInstanceOf(ApprovalTokenExpiredError)
+    await expect(expired).rejects.toMatchObject({ name: "ApprovalTokenExpiredError" })
   })
 
   test("validates lookup tokens and rejects overflowing approval clocks", async () => {

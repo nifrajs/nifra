@@ -31,7 +31,8 @@ export type ErrorLogDetail = "full" | "message" | "none"
  *   - a `Response` or a `status(...)` is control flow - the app answering directly, or plain data.
  *     Either renders through the same `finalize` a RETURNED one takes, with the request's `c.set`,
  *     so a thrown one means what the return means: a `Response` ships as built, plus the cookies the
- *     request queued (the set-session-then-`throw redirect()` pattern);
+ *     request queued (the set-session-then-`throw redirect()` pattern); one whose body cannot render
+ *     is a fault like any other, never a rejected request;
  *   - a request body the app's own `c.req.json()` or `c.req.formData()` could not parse is the
  *     client's 400 (`invalid_json`, `invalid_form`);
  *   - anything else is a real fault: logged once, then a bodyless 500 (never the caller's error text).
@@ -48,7 +49,15 @@ export function renderBareError<T>(
   logError: (err: unknown, ctx: RawContext) => void,
   wrapResponse: (response: ResponseResult) => T,
 ): T {
-  if (err instanceof Response || isResponseResult(err)) return finalize(err, responseSet(ctx), ctx)
+  if (err instanceof Response || isResponseResult(err)) {
+    try {
+      return finalize(err, responseSet(ctx), ctx)
+    } catch (renderErr) {
+      // A thrown answer whose body cannot render (a `toJSON` that throws) is a fault, not control flow.
+      logError(renderErr, ctx)
+      return wrapResponse(plainError(500, "internal_error"))
+    }
+  }
   const clientCode = clientBodyErrorCode(err)
   if (clientCode !== undefined) return wrapResponse(plainError(400, clientCode))
   logError(err, ctx)

@@ -9,7 +9,12 @@ import {
 } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { DEFERRED_ERROR_CODE, DEFERRED_RUNTIME, prepareDeferred } from "../deferred.ts"
-import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "../isr.ts"
+import {
+  ISR_REVALIDATE_HEADER,
+  ISR_REVALIDATE_TAGS_HEADER,
+  OWNER_NONCE_USED_HEADER,
+  serializeISRTags,
+} from "../isr.ts"
 import type {
   Loader as LayoutLoader,
   Meta,
@@ -17,6 +22,7 @@ import type {
   RouteModule,
   UnsafeScriptDescriptor,
 } from "../manifest.ts"
+import type { Href } from "../navigation.ts"
 import type {
   DocumentParts,
   MatchChain,
@@ -334,21 +340,6 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   if (requestedNonce !== undefined && requestedNonce.trim() === "") {
     throw new TypeError("[nifra/web] renderPage nonce must be non-empty when provided")
   }
-  // Each handover entry after the data is `,"<global>":<json>`; the data opens the object, so it always
-  // has a first member and every other entry is a plain suffix.
-  const route = routeId === undefined ? "" : `,"${ROUTE_GLOBAL}":${serializeData(routeId)}`
-  // The SSG prerendered-path set (when an app declares it) - the client reads it to fetch a static
-  // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
-  const prerendered =
-    prerenderedListUrl !== undefined
-      ? `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedListUrl)}`
-      : prerenderedPaths.length === 0
-        ? ""
-        : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
-  const copyHandover =
-    copyChunks === undefined ? "" : `,"${COPY_CHUNKS_GLOBAL}":${serializeData(copyChunks)}`
-  const localesHandover =
-    options.locales === undefined ? "" : `,"${LOCALES_GLOBAL}":${serializeData(options.locales)}`
   // A route's `lang` wins with its own `dir`; otherwise the page's registered locale names both.
   const lang = head?.lang ?? locale?.lang ?? "en"
   const dir = head?.dir ?? (head?.lang === undefined ? locale?.dir : undefined)
@@ -508,6 +499,24 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     for (const src of islandScripts)
       islandTags += `<script type="module" src="${escapeAttr(src)}"${nonceAttr}></script>`
     if (hydrate) {
+      // Each handover entry after the data is `,"<global>":<json>`; the data opens the object, so it always
+      // has a first member and every other entry is a plain suffix. Built here, with the cached tail they
+      // end up in, so a cached route does not serialize them again.
+      const route = routeId === undefined ? "" : `,"${ROUTE_GLOBAL}":${serializeData(routeId)}`
+      // The SSG prerendered-path set (when an app declares it) - the client reads it to fetch a static
+      // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
+      const prerendered =
+        prerenderedListUrl !== undefined
+          ? `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedListUrl)}`
+          : prerenderedPaths.length === 0
+            ? ""
+            : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
+      const copyHandover =
+        copyChunks === undefined ? "" : `,"${COPY_CHUNKS_GLOBAL}":${serializeData(copyChunks)}`
+      const localesHandover =
+        options.locales === undefined
+          ? ""
+          : `,"${LOCALES_GLOBAL}":${serializeData(options.locales)}`
       // Inert JSON, never executed: the page state needs no nonce and no hash under any CSP.
       slot.tailPre = `<script type="application/json" id="${HANDOVER_ID}">{"${DATA_GLOBAL}":`
       slot.tailPost = `${route}${prerendered}${copyHandover}${localesHandover}}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>${islandTags}</body></html>`
@@ -557,10 +566,13 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   if (revalidate !== undefined) headers[ISR_REVALIDATE_HEADER] = String(revalidate)
   const serializedTags = serializeISRTags(revalidateTags)
   if (serializedTags !== undefined) headers[ISR_REVALIDATE_TAGS_HEADER] = serializedTags
-  // A per-request nonce must not be replayed from a browser, CDN, or ISR cache. The same policy
-  // also keeps `withISR` from storing a document whose executable scripts carry request-specific
-  // authorization to run under the caller's CSP.
-  if (nonce !== undefined) headers["cache-control"] = "private, no-store"
+  // A per-render nonce must not be replayed from a browser, CDN, or ISR cache. The internal marker
+  // lets the owner-cache guard distinguish nonce documents from hash-only CSP documents.
+  const markNonceUsed = (): void => {
+    headers["cache-control"] = "private, no-store"
+    headers[OWNER_NONCE_USED_HEADER] = "1"
+  }
+  if (nonce !== undefined) markNonceUsed()
   if (csp !== undefined) {
     const policy = cspHeaderValue(csp, adapter, nonce)
     if (policy !== undefined) headers["content-security-policy"] = policy
@@ -633,7 +645,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       nonce ?? (csp === undefined ? undefined : cspCandidateNonce(csp, requestedNonce))
     const adoptNonce = (): void => {
       if (renderNonce === nonce || csp === undefined || renderNonce === undefined) return
-      headers["cache-control"] = "private, no-store"
+      markNonceUsed()
       const policy = cspHeaderValue(csp, adapter, renderNonce)
       if (policy !== undefined) headers["content-security-policy"] = policy
     }
@@ -915,10 +927,12 @@ export interface RedirectOptions {
  * mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303
  * (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
  *
- * **Secure by default:** `location` must be a same-origin path (begins with `/`, not `//`). An
- * off-origin/absolute destination throws unless you pass `{ external: true }` - this closes the
- * open-redirect footgun of `return redirect(formData.get("next"))` on the no-JS (native-form) path,
- * which serves the action's control-flow value verbatim.
+ * **Secure by default:** `location` is an `Href` - built by `href()` for a route of the app or by
+ * `rawHref()` for a same-origin path built elsewhere - and must be a same-origin path (begins with `/`,
+ * not `//`); a plain string is a compile error. An off-origin/absolute destination is a string and
+ * throws unless you pass `{ external: true }` - this closes the open-redirect footgun of
+ * `return redirect(formData.get("next"))` on the no-JS (native-form) path, which serves the action's
+ * control-flow value verbatim.
  *
  * Returns a plain render, not a `Response`. A redirect is a status line and one header - the most
  * body-less response there is - and building a `Response` for it costs the whole Web object plus, on
@@ -928,6 +942,14 @@ export interface RedirectOptions {
  *
  * @param options redirect status, extra headers, and whether an off-origin destination is intentional.
  */
+export function redirect(
+  location: Href,
+  options?: RedirectOptions & { readonly external?: false },
+): ResponseResult
+export function redirect(
+  location: string,
+  options: RedirectOptions & { readonly external: true },
+): ResponseResult
 export function redirect(location: string, options: RedirectOptions = {}): ResponseResult {
   if (options.external !== true && !isSameOriginPath(location)) {
     throw new Error(
@@ -1174,9 +1196,9 @@ function escapeHtml(value: string): string {
  * mirroring {@link serializeData}'s posture for the data-global script. Idempotent on already-safe text.
  */
 function escapeScriptContent(content: string): string {
-  // Order matters: rewrite `]]>` first (its `>` becomes `>`), then every `<` (covers `</` and
-  // `<!--` in one pass). `<` → `<`; the lone `>` of `]]>` → `>`. A bare `>` elsewhere is
-  // harmless in script data, so only the `]]>` close is targeted for `>`.
+  // Order matters: rewrite `]]>` first (its `>` becomes the literal `\u003e`), then every `<`
+  // (covers `</` and `<!--` in one pass). `<` becomes the literal `\u003c`. A bare `>` elsewhere
+  // is harmless in script data, so only the `]]>` close is escaped.
   return content.replaceAll("]]>", "]]\\u003e").replaceAll("<", "\\u003c")
 }
 

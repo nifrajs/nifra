@@ -97,3 +97,22 @@ describe("nifra target", () => {
     expect(readConfigTarget(root)).toBe("node")
   })
 })
+
+test("build refuses a Vercel runtime after a non-Vercel target override, before wiping output", async () => {
+  writeAppFile(root, "routes/index.tsx", "export default function Page() {}")
+  writeAppFile(
+    root,
+    "nifra.config.ts",
+    `export const adapter = {}
+export const clientModule = "./client.ts"
+export const target = "vercel"
+export const vercelRuntime = "node"`,
+  )
+  writeAppFile(root, "dist/keep", "last deploy")
+  writeAppFile(root, ".nifra-build/keep", "last work")
+  const result = await nifra("build", "--target", "bun")
+  expect(result.exit).not.toBe(0)
+  expect(result.out).toContain('vercelRuntime is only supported for target "vercel"')
+  expect(readFileSync(join(root, "dist/keep"), "utf8")).toBe("last deploy")
+  expect(readFileSync(join(root, ".nifra-build/keep"), "utf8")).toBe("last work")
+})

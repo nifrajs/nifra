@@ -147,6 +147,26 @@ test("createWebApp runs the policy before its use() middleware, mounts and pages
   expect(seen).toEqual(["/p/9", "/login", "/auth/session"])
 })
 
+test("served by Bun's listen(), the policy refuses pages Bun's route table would serve", async () => {
+  const app = createWebApp({
+    adapter,
+    manifest,
+    clientEntry: "/assets/entry-abc.js",
+    hostPolicy: partner,
+    buildAssets: assets,
+  })
+  const running = app.listen(0, { hostname: "127.0.0.1" })
+  try {
+    const on = async (host: string, path: string) =>
+      (await fetch(`http://127.0.0.1:${running.port}${path}`, { headers: { host } })).status
+    expect(await on("partner.example", "/p/9")).toBe(200)
+    expect(await on("partner.example", "/login")).toBe(404)
+    expect(await on("app.test", "/login")).toBe(200)
+  } finally {
+    await app.stop({ drainMs: 0 })
+  }
+})
+
 test("createWebApp refuses a hostPolicy that createHostPolicy did not make", () => {
   expect(() =>
     createWebApp({
@@ -178,7 +198,7 @@ function rawStatus(port: number, target: string, host: string): Promise<number> 
   })
 }
 
-test("on Node a dot-segment target is judged by the path it routes to, not as sent", async () => {
+test("on Node with normalizeTarget a dot-segment target is judged by the path it routes to, not as sent", async () => {
   const app = createWebApp({
     adapter,
     manifest: buildManifest(
@@ -188,7 +208,7 @@ test("on Node a dot-segment target is judged by the path it routes to, not as se
     clientEntry: "/assets/entry-abc.js",
     hostPolicy: partner,
   })
-  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0, normalizeTarget: true })
   try {
     expect(await rawStatus(running.port, "/share/a", "partner.example")).toBe(200)
     // Sent as `/share/...`, which the policy allows, but it routes to the sign-in page.

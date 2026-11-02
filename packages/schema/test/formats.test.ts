@@ -38,6 +38,43 @@ describe("standard string formats validate (not just annotate)", () => {
     expect(await accepts(t.string({ format: "time" }), "noon")).toBe(false)
   })
 
+  test("date-time, date and time check the calendar and the clock, as RFC 3339 does", async () => {
+    const dateTime = t.string({ format: "date-time" })
+    for (const value of [
+      "2024-02-29T00:00:00Z",
+      "0000-01-01T00:00:00z",
+      "2026-05-30t23:59:59.123456789-23:59",
+      "2016-12-31T23:59:60Z",
+      "2017-01-01T00:59:60+01:00",
+    ])
+      expect(await accepts(dateTime, value)).toBe(true)
+    for (const value of [
+      "2026-02-29T00:00:00Z",
+      "1900-02-29T00:00:00Z",
+      "2026-04-31T00:00:00Z",
+      "2026-13-01T00:00:00Z",
+      "2026-00-10T00:00:00Z",
+      "2026-05-30T24:00:00Z",
+      "2026-05-30T12:60:00Z",
+      "2026-05-30T12:00:61Z",
+      "2026-05-30T12:00:60Z",
+      "2026-05-30T12:00:00.Z",
+      "2026-05-30T12:00:00+24:00",
+      "2026-05-30T12:00:00+0100",
+      "2026-05-30 12:00:00Z",
+      "2026-05-30T12:00:00Z ",
+      "\u0662026-05-30T12:00:00Z",
+    ])
+      expect(await accepts(dateTime, value)).toBe(false)
+    expect(await accepts(t.string({ format: "date" }), "2024-02-29")).toBe(true)
+    for (const value of ["2026-02-29", "2026-5-30", "2026-05-30T00:00:00Z", "2026/05/30"])
+      expect(await accepts(t.string({ format: "date" }), value)).toBe(false)
+    for (const value of ["23:59:60Z", "00:00:00.5+05:30", "12:00:00z"])
+      expect(await accepts(t.string({ format: "time" }), value)).toBe(true)
+    for (const value of ["24:00:00", "12:00", "12:00:00+5:30", "12:00:00Zz"])
+      expect(await accepts(t.string({ format: "time" }), value)).toBe(false)
+  })
+
   test("uri, ipv4", async () => {
     expect(await accepts(t.string({ format: "uri" }), "https://example.com/x")).toBe(true)
     expect(await accepts(t.string({ format: "uri" }), "no-scheme")).toBe(false)

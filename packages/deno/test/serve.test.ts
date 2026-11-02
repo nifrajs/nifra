@@ -70,6 +70,20 @@ Deno.test("passes a 204 (no body) through correctly", async () => {
   }
 })
 
+Deno.test("the old `signals` option is refused and names gracefulSignals", () => {
+  const options = { hostname: "127.0.0.1", port: 0, signals: true }
+  let message = ""
+  try {
+    Reflect.apply(serve, undefined, [{ fetch: () => new Response("") }, options])
+  } catch (error) {
+    message = error instanceof TypeError ? error.message : ""
+  }
+  assert(
+    message.includes("gracefulSignals"),
+    `expected a TypeError naming gracefulSignals, got "${message}"`,
+  )
+})
+
 Deno.test("a throwing app yields a flat 500 (no leak)", async () => {
   const running = await serve(
     {
@@ -650,8 +664,11 @@ Deno.test("a method token that differs only in case is a different method on the
 
 // Deno hands the adapter the target exactly as sent; the app routes the path a URL parser resolves
 // it to, as it does on every other runtime.
-Deno.test("a target with dot segments or a backslash routes the path it resolves to", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+Deno.test("normalizeTarget routes a target with dot segments or a backslash on the path it resolves to", async () => {
+  const running = await serve(requestTargetApp(server({ normalizeTarget: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
   try {
     assertEquals(await requestTargetMismatches(running.port), [])
     assertEquals(await requestTargetMismatches(running.port, true), [])
@@ -662,8 +679,11 @@ Deno.test("a target with dot segments or a backslash routes the path it resolves
 
 // Deno builds the request URL from the Host as received: `Host: x/users/7#` with `GET /posts` was
 // routed to `/users/:id`. Such a Host is refused, as Node refuses it.
-Deno.test("a Host that is not an authority never steers the routed path", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+Deno.test("validateHost prevents a Host from steering the routed path", async () => {
+  const running = await serve(requestTargetApp(server({ validateHost: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
   try {
     assertEquals(await invalidHostMismatches(running.port), [])
     assertEquals(await refusedHostMismatches(running.port), [])
@@ -678,10 +698,44 @@ Deno.test("a Host that is not an authority never steers the routed path", async 
   }
 })
 
+Deno.test("validateHost is opt-in on Deno", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const served = await rawExchange(running.port, "GET", "/posts", undefined, "a!b")
+    assertEquals(served, { status: 200, body: '{"route":"GET /posts"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+Deno.test("unparseable Host cannot steer dot-segment routing with validation off", async () => {
+  const running = await serve(requestTargetApp(server({ normalizeTarget: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
+  try {
+    const refused = await rawExchange(
+      running.port,
+      "GET",
+      "/users/../posts",
+      undefined,
+      "127.0.0.1:99999",
+    )
+    assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 // No URL can be built on a port past 65535, so resolving the dot segment threw out of `fetch` and the
 // adapter answered 500. Found by the runtime differential (scripts/check-runtime-differential.ts).
 Deno.test("a Host port past 65535 is refused, dot segments or not", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  const running = await serve(
+    requestTargetApp(server({ validateHost: true, normalizeTarget: true })),
+    {
+      port: 0,
+      hostname: "127.0.0.1",
+    },
+  )
   try {
     for (const target of ["/posts", "/users/../posts"]) {
       const refused = await rawExchange(running.port, "GET", target, undefined, "127.0.0.1:99999")
@@ -756,6 +810,72 @@ Deno.test("a JSON body led by a byte order mark parses through a schema and c.bo
   }
 })
 
+Deno.test("runtime-framed JSON text keeps validation, poisoning and byte limits", async () => {
+  const app = server({ maxBodyBytes: 32 }).post("/named", { body: named }, (c) => c.body)
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const url = `http://127.0.0.1:${running.port}/named`
+    const post = (body: string) =>
+      fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      })
+    const unicode = await post('{"name":"é😀"}')
+    assertEquals([unicode.status, await unicode.json()], [200, { name: "é😀" }])
+    const malformed = await post('{"name":')
+    assertEquals(malformed.status, 400)
+    const poisoned = await post('{"name":"Ada","__proto__":{}}')
+    assertEquals(poisoned.status, 400)
+    const over = await post(JSON.stringify({ name: "a".repeat(40) }))
+    assertEquals(over.status, 413)
+
+    // A lengthless streamed body must still be capped while it is read.
+    const chunked = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ name: "a".repeat(40) })))
+          controller.close()
+        },
+      }),
+    })
+    assertEquals(chunked.status, 413)
+
+    // An in-process request is not runtime-framed: a forged short length cannot bypass the cap.
+    const forged = await app.fetch(
+      new Request("http://localhost/named", {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": "2" },
+        body: JSON.stringify({ name: "a".repeat(40) }),
+      }),
+    )
+    assertEquals(forged.status, 413)
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("an untouched runtime-framed JSON request uses the BOM-safe text reader", async () => {
+  const app = server().post("/named", { body: named }, (c) => c.body)
+  const body = '{"name":"Ada"}'
+  const request = new Request("http://localhost/named", {
+    method: "POST",
+    headers: { "content-type": "application/json", "content-length": String(body.length) },
+    body,
+  })
+  Object.defineProperty(request, Symbol.for("nifra.body.trustedFraming"), { value: true })
+  const originalText = request.text.bind(request)
+  let reads = 0
+  request.text = () => {
+    reads++
+    return originalText()
+  }
+  const response = await app.fetch(request)
+  assertEquals([response.status, await response.json(), reads], [200, { name: "Ada" }, 1])
+})
+
 // The framework's own 404 and 422 said `application/json;charset=utf-8`, Bun's spelling baked into core,
 // while a handler's JSON and a 405 said Deno's `application/json`. Found by
 // scripts/check-runtime-differential.ts.
@@ -808,7 +928,7 @@ function headersCacheSlot(): symbol {
 Deno.test("the Host check, upgrade probe and JSON body lane leave the header list unbuilt", async () => {
   const headersCache = headersCacheSlot()
   const seen: Request[] = []
-  const app = server()
+  const app = server({ validateHost: true })
     .use(websocket())
     .ws("/socket", { message: (ws, data) => ws.send(data) })
     .get("/bare", (c) => {
@@ -865,7 +985,7 @@ Deno.test("the body lane reads the headers of a request a hook rebuilt", async (
 
 // A request Deno did not parse off the wire has no single-header reader; its Host is still checked.
 Deno.test("a constructed request's Host is checked through its headers", async () => {
-  const app = requestTargetApp(server())
+  const app = requestTargetApp(server({ validateHost: true }))
   const refused = await app.fetch(
     new Request("http://127.0.0.1/posts", { headers: { host: "x/users/7#" } }),
   )
@@ -878,7 +998,7 @@ Deno.test("a constructed request's Host is checked through its headers", async (
 })
 
 Deno.test("a handshake whose Host is not an authority is refused", async () => {
-  const app = server()
+  const app = server({ validateHost: true })
     .use(websocket())
     .ws("/echo", { message: (ws, data) => ws.send(data) })
   const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
@@ -891,7 +1011,7 @@ Deno.test("a handshake whose Host is not an authority is refused", async () => {
 })
 
 Deno.test("a handshake target with dot segments upgrades on the path it resolves to", async () => {
-  const app = server()
+  const app = server({ normalizeTarget: true })
     .use(websocket())
     .ws("/echo", { message: (ws, data) => ws.send(data) })
   const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
@@ -945,5 +1065,134 @@ Deno.test("serves a QUERY route: its body validated, its method kept, GET beside
     assertEquals(await (await fetch(url)).json(), { via: "get" })
   } finally {
     await running.stop({ drainMs: 0 })
+  }
+})
+
+/** Answers `/robots.txt` at once and `/later` after a tick; leaves `/pending` and the rest to the app. */
+function robotsFirst(request: Request): Response | Promise<Response | undefined> | undefined {
+  const { pathname } = new URL(request.url)
+  if (pathname === "/robots.txt") return new Response("file")
+  if (pathname === "/later") return Promise.resolve(new Response("file later"))
+  if (pathname === "/pending") return Promise.resolve(undefined)
+  if (pathname === "/sync-throw") throw new Error("disk gone")
+  if (pathname === "/async-throw") return Promise.reject(new Error("disk gone"))
+  return undefined
+}
+
+Deno.test("static answers before any route, hands undefined to the app, and runs no app hook", async () => {
+  const hooked: string[] = []
+  const app = server()
+    .onRequest((request) => {
+      hooked.push(new URL(request.url).pathname)
+    })
+    .get("/:slug", (c) => ({ slug: c.params.slug }))
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0, static: robotsFirst })
+  try {
+    const base = `http://127.0.0.1:${running.port}`
+    const answers: string[] = []
+    for (const path of ["/robots.txt", "/later", "/pending", "/about"]) {
+      const res = await fetch(base + path)
+      answers.push(`${res.status} ${await res.text()}`)
+    }
+    assertEquals(answers, [
+      "200 file",
+      "200 file later",
+      '200 {"slug":"pending"}',
+      '200 {"slug":"about"}',
+    ])
+    assertEquals(hooked, ["/pending", "/about"])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("static fronts an app with WebSocket routes, which still upgrade", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/echo", { open: (ws) => ws.send("welcome") })
+    .get("/:slug", (c) => ({ slug: c.params.slug }))
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0, static: robotsFirst })
+  try {
+    assertEquals(await (await fetch(`http://127.0.0.1:${running.port}/robots.txt`)).text(), "file")
+    const first = await new Promise<string>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${running.port}/echo`)
+      const timer = setTimeout(() => reject(new Error("ws timed out")), 5000)
+      socket.onmessage = (ev) => {
+        clearTimeout(timer)
+        socket.close()
+        resolve(String(ev.data))
+      }
+      socket.onerror = () => {
+        clearTimeout(timer)
+        reject(new Error("ws error"))
+      }
+    })
+    assertEquals(first, "welcome")
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a static handler that throws or rejects answers a flat 500", async () => {
+  const app = server().get("/:slug", (c) => ({ slug: c.params.slug }))
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0, static: robotsFirst })
+  try {
+    for (const path of ["/sync-throw", "/async-throw"]) {
+      const res = await fetch(`http://127.0.0.1:${running.port}${path}`)
+      assertEquals(res.status, 500)
+      assertEquals(await res.json(), { ok: false, error: "internal_error" })
+    }
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("stop() drains a static response in flight", async () => {
+  let entered = (): void => {}
+  const inFlight = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const app = server().get("/", () => "app")
+  const running = await serve(app, {
+    hostname: "127.0.0.1",
+    port: 0,
+    static: (request) => {
+      if (new URL(request.url).pathname !== "/slow") return undefined
+      entered()
+      return new Promise((resolve) => setTimeout(() => resolve(new Response("slow file")), 80))
+    },
+  })
+  const pending = fetch(`http://127.0.0.1:${running.port}/slow`)
+    .then((r) => r.text())
+    .catch(() => "ERR")
+  // A request the handler never saw reaches the app's 404 and fails here instead of hanging.
+  await Promise.race([
+    inFlight,
+    pending.then(() => {
+      throw new Error("the static handler never saw /slow")
+    }),
+  ])
+  await running.stop({ drainMs: 1000 })
+  assertEquals(await pending, "slow file")
+})
+
+Deno.test("dot segments are routed as sent unless normalizeTarget is set", async () => {
+  const build = (normalizeTarget: boolean) =>
+    server({ normalizeTarget })
+      .get("/admin", () => ({ where: "admin" }))
+      .get("/public/:name", (c) => ({ where: "public", name: c.params.name }))
+  const off = await serve(build(false), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const missed = await rawExchange(off.port, "GET", "/public/../admin")
+    assertEquals(missed.status, 404)
+  } finally {
+    await off.stop({ drainMs: 0 })
+  }
+  const on = await serve(build(true), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const hit = await rawExchange(on.port, "GET", "/public/../admin")
+    assertEquals(hit.status, 200)
+  } finally {
+    await on.stop({ drainMs: 0 })
   }
 })

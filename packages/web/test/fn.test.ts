@@ -61,6 +61,28 @@ describe("mounting", () => {
     expect(received).toEqual({ text: "parsed" })
   })
 
+  test("a t.date() input arrives as the string JSON writes and reaches the function as a Date", async () => {
+    let at: unknown
+    const dated = server().use(
+      serverFunctions("clock", {
+        set: serverFn({ input: t.object({ at: t.date() }) }, (input) => {
+          at = input.at
+          return null
+        }),
+      }),
+    )
+    const sent = new Date("2026-10-25T12:00:00.000Z")
+    const res = await dated.fetch(
+      new Request(`http://t${SERVER_FN_PREFIX}/clock/set`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ at: sent }),
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(at).toEqual(sent)
+  })
+
   test("a function with no input schema takes no argument", async () => {
     const res = await post("ping", JSON.stringify({}))
     expect(res.status).toBe(200)

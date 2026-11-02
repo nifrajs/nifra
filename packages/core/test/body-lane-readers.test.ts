@@ -146,6 +146,56 @@ describe("bounded JSON source readers", () => {
       [400, "invalid_json"],
     ])
   })
+
+  test("a continuation that throws rejects the read and is never re-entered", async () => {
+    const delivered = '{"a":1}'
+    const lanes: Record<string, () => RequestSource> = {
+      "trusted framing": () => {
+        const value = source({ "content-length": "7" }, { json: async () => ({ a: 1 }) })
+        markTrustedBodyFraming(value)
+        return value
+      },
+      jsonWithByteLength: () =>
+        source(
+          { "content-length": "7" },
+          { jsonWithByteLength: async () => ({ value: { a: 1 }, byteLength: 7 }) },
+        ),
+      bytes: () => source({ "content-length": "7" }, { bytes: async () => bytesOf(delivered) }),
+      arrayBuffer: () =>
+        source(
+          { "content-length": "7" },
+          {
+            arrayBuffer: async () => {
+              const copy = new ArrayBuffer(7)
+              new Uint8Array(copy).set(bytesOf(delivered))
+              return copy
+            },
+          },
+        ),
+      streamed: () => ({ ...source({}), body: new Response(delivered).body }),
+    }
+    for (const [lane, src] of Object.entries(lanes)) {
+      const seen: unknown[] = []
+      const settled = await readBoundedJsonSource(
+        src(),
+        64,
+        "reject",
+        (result) => {
+          seen.push(result)
+          throw new Error("continuation")
+        },
+        (error) => ["onError", String(error)],
+      ).then(
+        () => "resolved",
+        (error: unknown) => String(error),
+      )
+      expect({ lane, settled, seen }).toEqual({
+        lane,
+        settled: "Error: continuation",
+        seen: [{ a: 1 }],
+      })
+    }
+  })
 })
 
 describe("framed body schema reader", () => {

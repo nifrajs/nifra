@@ -22,12 +22,12 @@ const COOLDOWN_MS = 800
 const BASE_PORT = 3490
 const DIR = import.meta.dir
 
-// Mirrors aggregate.ts's canonical sets (ceiling listed last). Elysia runs on all three (Bun-native,
-// + its Node adapter and Web-Standard adapter on Deno), so it's benched in every section.
+// Mirrors aggregate.ts's canonical sets (ceiling listed last). Fastify uses node:http compatibility
+// on Bun and Deno; Elysia uses its Node adapter and Web-Standard adapter outside Bun.
 const SETS = {
   node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
-  bun: ["nifra", "hono", "elysia", "bun-native"],
-  deno: ["nifra", "hono", "elysia", "deno-raw"],
+  bun: ["nifra", "hono", "elysia", "fastify", "bun-native"],
+  deno: ["nifra", "hono", "elysia", "fastify", "deno-raw"],
 } as const
 type RuntimeKey = keyof typeof SETS
 const CEILING = { node: "node-raw", bun: "bun-native", deno: "deno-raw" } as const
@@ -133,8 +133,24 @@ async function buildNifraNodeBundle(): Promise<void> {
 /** The argv that boots `framework` on `runtime` at `port` (mirrors run.ts's targets). */
 async function spawnArgv(runtime: string, framework: string, port: number): Promise<string[]> {
   const p = String(port)
-  if (runtime === "bun") return ["bun", `${DIR}/serve.ts`, framework, p]
-  if (runtime === "deno")
+  if (runtime === "bun") {
+    const server = framework === "fastify" ? `${DIR}/serve-node.ts` : `${DIR}/serve.ts`
+    return ["bun", server, framework, p]
+  }
+  if (runtime === "deno") {
+    if (framework === "fastify") {
+      return [
+        "deno",
+        "run",
+        "--allow-net",
+        "--allow-env",
+        "--allow-read",
+        "--no-check",
+        `${DIR}/serve-node.ts`,
+        framework,
+        p,
+      ]
+    }
     // --allow-env: Elysia reads process.env.NODE_ENV at import; Node/Bun grant env by default, Deno doesn't.
     return [
       "deno",
@@ -146,6 +162,7 @@ async function spawnArgv(runtime: string, framework: string, port: number): Prom
       framework,
       p,
     ]
+  }
   // node
   if (framework === "nifra") {
     await buildNifraNodeBundle()

@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/contract",
@@ -65,7 +66,7 @@ export const hydrate = false   // opt out of full-document hydration (static / i
 
 const RESPONSE_CONTROLS = `// routes/account.backend.ts - response headers and cookies, from a loader or an action.
 import { t } from "@nifrajs/schema"
-import { type LoaderContext, redirect } from "@nifrajs/web"
+import { type LoaderContext, rawHref, redirect } from "@nifrajs/web"
 
 declare function signIn(email: string, password: string): Promise<{ token: string } | null>
 
@@ -85,7 +86,7 @@ export async function action(ctx: LoaderContext) {
   if (session === null) return { error: "Wrong email or password" }
   // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.
   ctx.set.cookie("session", session.token, { maxAge: 60 * 60 * 24 * 7 })
-  throw redirect("/dashboard") // the cookie rides the redirect
+  throw redirect(rawHref("/dashboard")) // the cookie rides the redirect
 }`
 
 const HEAD_MERGE = `// routes/_layout.tsx - a layout can export \`meta\` too. Its tags are SITEWIDE: they land in
@@ -254,6 +255,22 @@ export const handler = withISR(app, {
   now: () => Date.now(),
 })`
 
+const NONCE_CSP_HEADER = `import { createNonceResolver, createWebApp } from "@nifrajs/web"
+
+declare const adapter: import("@nifrajs/web").RenderAdapter
+declare const manifest: import("@nifrajs/web").Manifest
+
+// A fresh nonce on every document, and nifra writes the header from that same value - on pages,
+// status pages, _error, and streamed or deferred documents - whatever rebuilds the Request in front.
+export const app = createWebApp({
+  adapter,
+  manifest,
+  clientEntry: "/assets/client.js",
+  nonce: createNonceResolver(),
+  // \`sources\`: 'nonce-…' plus a sha256 hash per constant inline script nifra writes.
+  cspHeader: ({ sources }) => \`default-src 'self'; script-src 'self' \${sources}; object-src 'none'\`,
+})`
+
 const SEO_EXAMPLE = `// routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
 // with ABSOLUTE URLs built from \`origin\`. The three helpers (canonical/openGraph/jsonLd) come from
 // @nifrajs/web/seo, which imports nothing at runtime, so the page's browser bundle takes only them;
@@ -394,7 +411,7 @@ export default function Contract() {
         <code>revalidate</code>. A <code>loader</code> runs on <strong>GET</strong> and feeds{" "}
         <code>props.data</code>; an <code>action</code> runs on <strong>POST</strong> and feeds{" "}
         <code>props.actionData</code>. A server-only export in the page file is a build error - see{" "}
-        <a href="/docs/structure">Project structure</a>.
+        <a href={href({ to: "/docs/structure" })}>Project structure</a>.
       </p>
       <CodeBlock code={SIGNATURES} />
       <blockquote>
@@ -595,6 +612,17 @@ export default function Contract() {
         the same list for a policy set at a proxy:
       </p>
       <CodeBlock code={CSP_POLICY} lang="ts" />
+      <p>
+        An app that wants a nonce on every document still gets its header from nifra: pass{" "}
+        <code>cspHeader</code> beside <code>nonce</code>, and each document nifra renders - a page, a
+        status page, <code>_error</code>, a streamed or deferred one - carries the policy built from
+        the nonce on its own scripts. A wrapper that rebuilds the request with{" "}
+        <code>new Request(url, req)</code> (a mount that strips a prefix, a request id, an origin
+        rewrite) no longer has to find which nonce a document used. <code>cspHeader</code> needs{" "}
+        <code>nonce</code>, and is refused beside <code>csp</code> or a resolver made with its own{" "}
+        <code>header</code>. The documents stay <code>private, no-store</code>.
+      </p>
+      <CodeBlock code={NONCE_CSP_HEADER} lang="ts" />
 
       <h2>The client ↔ server boundary</h2>
       <p>
@@ -608,7 +636,7 @@ export default function Contract() {
 
       <h2>Optional server components</h2>
       <p>
-        The optional <a href="/docs/server-components">server-components pipeline</a> supports
+        The optional <a href={href({ to: "/docs/server-components" })}>server-components pipeline</a> supports
         React, Preact, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
         in <code>*.component.server.ts(x)</code>, register owner instances and export a named
         <code>componentPipeline</code> configuration. React uses native RSC/Flight; the other four
@@ -680,8 +708,8 @@ export default function Contract() {
       </p>
 
       <p>
-        See <a href="/docs/rendering">SSG &amp; ISR</a> for prerendering, <a href="/docs/dev">Dev &amp; HMR</a> for the
-        two dev loops and the <code>--port</code> flag, and <a href="/docs/data">Loaders &amp; actions</a> for the
+        See <a href={href({ to: "/docs/rendering" })}>SSG &amp; ISR</a> for prerendering, <a href={href({ to: "/docs/dev" })}>Dev &amp; HMR</a> for the
+        two dev loops and the <code>--port</code> flag, and <a href={href({ to: "/docs/data" })}>Loaders &amp; actions</a> for the
         data layer in depth.
       </p>
     </div>

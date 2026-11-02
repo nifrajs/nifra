@@ -10,9 +10,10 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve, sep } from "node:path"
+import { decodePathSegment, fillRoutePath } from "@nifrajs/core/pattern"
 import { prerenderedDocumentHeaders } from "./internal/prerendered-pages.ts"
 import { assertNoSecrets, buildEnvironment, type SecretExemption } from "./internal/secret-scan.ts"
-import { fillRoutePattern, type RouteEntry } from "./manifest.ts"
+import type { RouteEntry } from "./manifest.ts"
 import { DATA_HEADER, PRERENDERED_GLOBAL, PRERENDERED_LIST_PATH } from "./router.ts"
 
 /** Minimal app surface the driver needs - just a fetch handler (a built `createWebApp`). */
@@ -81,12 +82,8 @@ function trimTrailingSlashes(path: string): string {
  * `/`, `\` or NUL.
  */
 function fileSegment(segment: string): string | undefined {
-  let decoded: string
-  try {
-    decoded = decodeURIComponent(segment)
-  } catch {
-    return undefined
-  }
+  const decoded = decodePathSegment(segment)
+  if (decoded === undefined) return undefined
   if (decoded === "." || decoded === ".." || /[/\\\0]/.test(decoded)) return undefined
   return decoded
 }
@@ -215,15 +212,21 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       const { paths, fallback = "ssr" } = await mod.getStaticPaths()
       fallbacks[route.pattern] = fallback
       for (const { params } of paths) {
-        const { path, missing } = fillRoutePattern(route.pattern, params)
-        if (missing.length > 0) {
+        const filled = fillRoutePath(route.pattern, params)
+        if (!filled.ok) {
+          const why = [
+            filled.missing.length > 0 ? `missing param(s): ${filled.missing.join(", ")}` : "",
+            filled.invalid.length > 0
+              ? `param(s) no path can carry: ${filled.invalid.join(", ")}`
+              : "",
+          ]
           skipped.push({
             path: route.pattern,
-            reason: `getStaticPaths missing param(s): ${missing.join(", ")}`,
+            reason: `getStaticPaths ${why.filter(Boolean).join("; ")}`,
           })
           continue
         }
-        await renderPath(path)
+        await renderPath(filled.path)
       }
       continue
     }

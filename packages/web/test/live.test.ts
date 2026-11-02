@@ -14,6 +14,7 @@ import { createKeyring, type GrantInput, type LiveSecrets } from "../src/live/ke
 import { type Live, type LiveBus, type LiveOptions, live, memoryBus, nextSeq } from "../src/live.ts"
 import type { LoaderContext } from "../src/manifest.ts"
 import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
+import { streamOf } from "./streams.ts"
 
 const SECRET = "s".repeat(32)
 const OLD_SECRET = "o".repeat(32)
@@ -27,14 +28,6 @@ const ROOT = "L:_layout"
 const POSTS = "L:posts/_layout"
 const GATE = "L:posts/_gate"
 const ALL = [ROOT, POSTS, GATE, PAGE]
-
-const streamOf = (s: string): ReadableStream<Uint8Array> =>
-  new ReadableStream({
-    start(c) {
-      c.enqueue(new TextEncoder().encode(s))
-      c.close()
-    },
-  })
 
 const stub: RenderAdapter = {
   renderToStream: (_chain, props) => streamOf(`<p>${JSON.stringify(props.data)}</p>`),

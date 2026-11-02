@@ -7,7 +7,7 @@ export interface BenchRuntimeVersions {
 }
 
 const PIN_FILE = new URL("../.tool-versions", import.meta.url)
-const MAX_LOAD_PER_CPU = 0.5
+const MAX_LOAD_PER_CPU = 1
 
 function commandVersion(command: string, arg: string): string {
   try {

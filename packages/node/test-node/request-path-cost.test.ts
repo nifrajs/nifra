@@ -4,14 +4,15 @@
  * Each of these once cost nifra 1-3% of its throughput against fastify - a size run-to-run noise
  * hides, so no timing gate caught them. Building `req.headers` for a Host lookup turned every GET
  * into a full header parse; a pair of `finish`/`close` listeners on every response existed only for
- * the rare parser-error path. Both are counted here against a bare `node:http` server.
+ * the rare parser-error path. Both are counted here against a bare `node:http` server, the first
+ * also behind static mounts the request misses.
  */
 
 import assert from "node:assert/strict"
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http"
 import { test } from "node:test"
 import { server } from "@nifrajs/core"
-import { serve } from "@nifrajs/node"
+import { type ServeOptions, serve, serveStatic } from "@nifrajs/node"
 
 interface Observed {
   headerReads: number
@@ -67,8 +68,12 @@ async function observe(run: () => Promise<void>): Promise<Observed[]> {
   return seen
 }
 
-async function viaServe(app: Parameters<typeof serve>[0], init?: RequestInit): Promise<void> {
-  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+async function viaServe(
+  app: Parameters<typeof serve>[0],
+  init?: RequestInit,
+  files?: ServeOptions["static"],
+): Promise<void> {
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1", static: files })
   try {
     const res = await fetch(`http://127.0.0.1:${running.port}/users/123`, init)
     assert.equal(res.status, 200)
@@ -109,9 +114,18 @@ test("the observer sees a handler that reads req.headers", async () => {
 
 test("a GET whose route reads no header never builds req.headers", async () => {
   const app = server().get("/users/:id", (c) => ({ id: c.params.id }))
-  const seen = await observe(() => viaServe(app))
-  assert.equal(seen.length, 1)
-  assert.equal(seen[0]?.headerReads, 0)
+  const dir = import.meta.dirname
+  // Each way a mount passes a request on: its prefix, its `files`, and its `allow`.
+  const missed = serveStatic([
+    { dir },
+    { dir, prefix: "/", files: new Set(["/robots.txt"]) },
+    { dir, prefix: "/", allow: () => false },
+  ])
+  for (const files of [undefined, missed]) {
+    const seen = await observe(() => viaServe(app, undefined, files))
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0]?.headerReads, 0, files === undefined ? "no mounts" : "mounts it misses")
+  }
 })
 
 test("serve() leaves a response's listeners as bare node:http has them", async () => {

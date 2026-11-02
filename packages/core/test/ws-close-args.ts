@@ -8,7 +8,9 @@
  *   and workerd used to report the peer's echo, which drops the reason, and Node reported 1006 for
  *   its own 1009.
  *
- * Each suite registers the routes on its own app. `node:net` is here because Bun, Node and Deno all
+ * - `sizingMistakes` checks the UTF-8 sizers each adapter runs, core's source and its generated copies.
+ *
+Each suite registers the routes on its own app. `node:net` is here because Bun, Node and Deno all
  * provide it.
  */
 import { connect } from "node:net"
@@ -39,6 +41,33 @@ export const FORBIDDEN_CLOSES: readonly (readonly [number | null, string | null]
   [1000, "\ud800".repeat(42)],
   [null, "a reason without a code"],
 ]
+
+// Multi-byte characters, surrogate pairs, and lone surrogates, which are sent as U+FFFD, three bytes.
+const SIZED_TEXTS: readonly string[] = [
+  "",
+  "abc",
+  "é",
+  "€",
+  "😀",
+  "aé€😀",
+  "€".repeat(5),
+  "😀".repeat(3),
+  "\ud800",
+  "\udc00",
+  "a\ud800b",
+  "\udc00\ud800",
+  "😀\ud800",
+  "\ud800".repeat(61),
+]
+
+/** The texts `over` misjudges against a cap of their exact UTF-8 size, or of one byte less. */
+export function sizingMistakes(over: (text: string, cap: number) => boolean): string[] {
+  const encoder = new TextEncoder()
+  return SIZED_TEXTS.filter((text) => {
+    const bytes = encoder.encode(text).byteLength
+    return over(text, bytes) || (bytes > 0 && !over(text, bytes - 1))
+  })
+}
 
 /** `/close` reads `[code, reason]` and closes with them, answering `range` when that throws. */
 export function closeArgsRoute<App extends CloseRoutable>(app: App): App {

@@ -140,15 +140,7 @@ export function compileRouteExecutionPlan(options: {
   readonly hasLedger: boolean
   readonly fusedWeb: FusedWebRunner | undefined
   readonly fusedBody: FusedBodyRunner | undefined
-  readonly fusedLane:
-    | "bare"
-    | "body"
-    | "query"
-    | "derive-before"
-    | "derive-before-after"
-    | "body-derive-before"
-    | "body-derive-before-after"
-    | undefined
+  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
 }): RouteExecutionPlan {
   const { lane, contextless, hasAround, hasLedger, fusedWeb, fusedBody, fusedLane } = options
 
@@ -254,6 +246,9 @@ export function compileRouteExecutionPlan(options: {
           maxBodyBytes,
           server.protoPoisoning,
         )
+    // `c.json` writes by the route's contract, if it has one, so the reply and its check share one walk.
+    // Only then: one more own property moves a context that holds a body out of its inline slots.
+    if (entry.responseContract !== undefined) ctx.jsonContract = entry.responseContract
     let ledger: RequestLedger | undefined
     // The runtime is always present when a route resolved a ledger (enforced at registration).
     const ledgerRuntime = server.effectLedgerRuntime
@@ -286,15 +281,7 @@ export interface RouteExecutionPlan {
   /** Which builder produced {@link fusedWeb} - a merge rebinds the closure to the executing server
    * and must rebuild it with the SAME semantics (a query-fused route rebuilt as bare would skip its
    * validation). `undefined` iff `fusedWeb` is. */
-  readonly fusedLane:
-    | "bare"
-    | "body"
-    | "query"
-    | "derive-before"
-    | "derive-before-after"
-    | "body-derive-before"
-    | "body-derive-before-after"
-    | undefined
+  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
 }
 
 export interface RouteEntry {
@@ -334,8 +321,8 @@ export interface RouteEntry {
   readonly beforeHandle: ReadonlyArray<RawBeforeHandle>
   readonly afterHandle: ReadonlyArray<RawAfterHandle>
   readonly onError: ReadonlyArray<RawErrorHandler>
-  /** Registration-specialized hook shape for the common derive + before middleware route. */
-  readonly lifecycleHookLane: "derive-before" | "derive-before-after" | undefined
+  /** Registration-specialized hook shape: a route whose only lifecycle steps are derive, before and after hooks. */
+  readonly lifecycleHookLane: "hooks" | undefined
   /** Wraps the matched route lifecycle. Empty for the common no-around path. */
   readonly around: ReadonlyArray<RawAround>
   /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */

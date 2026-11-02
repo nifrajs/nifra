@@ -17,7 +17,12 @@ import { jsonText } from "./json-text.ts"
 import type { ProtoPoisoning } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
 import { residentText, responseJsonContentType } from "./respond.ts"
+import type {
+  ResponseContractDefinition,
+  ResponseContractRuntime,
+} from "./response-contract-lane.ts"
 import {
+  CONTEXT_IDLE_TIMEOUT,
   CONTEXT_REQUEST,
   CONTEXT_SEARCH,
   CONTEXT_SET,
@@ -166,8 +171,40 @@ const TEXT_CONTENT_TYPE = "text/plain; charset=utf-8"
  * handler never reads it costs the adapter neither a lookup nor a platform object of its own. */
 export const PLATFORM_PEER = Symbol()
 
+/** Where a Bun listener leaves the idle timeout of a request's connection: called with the request
+ * and the seconds to allow, or `undefined` to put back the listener's own. */
+export const PLATFORM_IDLE_TIMEOUT = Symbol()
+
+/** The request the adapter received, on a platform made for one request: the routed source may be a
+ * rewritten or stripped copy, which Bun does not know. */
+export const PLATFORM_REQUEST = Symbol()
+
 export type PeerPlatform = Platform & {
   readonly [PLATFORM_PEER]?: (source: RequestSource) => string | undefined
+  readonly [PLATFORM_IDLE_TIMEOUT]?: (source: RequestSource, seconds: number | undefined) => void
+  readonly [PLATFORM_REQUEST]?: RequestSource
+}
+
+/**
+ * Whether merging `decorations` into a context can complete. A decoration named for a read-only
+ * accessor of the context (`req`, `set`, `signal`) makes `Object.assign` throw on every request, a
+ * failure the general program routes to the route's error hooks and a fused lane would not.
+ */
+export function decorationsAssignable(decorations: Record<PropertyKey, unknown>): boolean {
+  for (const key of Reflect.ownKeys(decorations)) {
+    for (
+      let proto: object | null = RequestContext.prototype;
+      proto !== null && proto !== Object.prototype;
+      proto = Object.getPrototypeOf(proto)
+    ) {
+      const descriptor = Object.getOwnPropertyDescriptor(proto, key)
+      if (descriptor === undefined) continue
+      if (descriptor.get !== undefined && descriptor.set === undefined) return false
+      if (descriptor.writable === false) return false
+      break
+    }
+  }
+  return true
 }
 
 export class RequestContext implements RawContext {
@@ -190,6 +227,13 @@ export class RequestContext implements RawContext {
   private declare cookiesValue: Readonly<Record<string, string>> | undefined
   declare jsonReply: Response | undefined
   declare jsonBody: unknown
+  /** The route's response contract, if it has one, for {@link json} to write by. */
+  declare jsonContract:
+    | {
+        readonly runtime: ResponseContractRuntime
+        readonly definition: ResponseContractDefinition
+      }
+    | undefined
   private declare readonly source: RequestSource
   private declare readonly maxBodyBytes: number
   private declare readonly protoPoisoning: ProtoPoisoning
@@ -264,6 +308,14 @@ export class RequestContext implements RawContext {
     return requestOf(this.source)
   }
 
+  [CONTEXT_IDLE_TIMEOUT](seconds: number | undefined): boolean {
+    const platform = this.platformValue
+    const set = platform?.[PLATFORM_IDLE_TIMEOUT]
+    if (set === undefined) return false
+    set(platform?.[PLATFORM_REQUEST] ?? this.source, seconds)
+    return true
+  }
+
   get [CONTEXT_SEARCH](): string {
     this.searchValue ??= searchOf(this.source.url)
     return this.searchValue
@@ -336,6 +388,13 @@ export class RequestContext implements RawContext {
    */
   json(body: unknown, init?: ResponseInit | number): Response {
     const i = statusInit(init)
+    // A contracted route's value is written here once, as its contract judges it: the bytes and the
+    // check share one call of each `toJSON` hook, a `Date`'s included.
+    const contract = this.jsonContract
+    const value =
+      contract?.runtime.write === undefined
+        ? body
+        : contract.runtime.write(contract.definition, body, i?.status)
     let reply: Response | undefined
     if (DEFERS_RESPONSE) {
       const defer = deferredResponderFor()
@@ -344,17 +403,17 @@ export class RequestContext implements RawContext {
       // (`undefined`, a function, a symbol) - exactly the case where `Response.json` throws, so it
       // gets the throw rather than an invented body. The content-type is the runtime's own, read
       // off `Response.json` once, so a deferred response carries the same one byte for byte.
-      const text = defer === undefined ? undefined : (jsonText(body) as string | undefined)
+      const text = defer === undefined ? undefined : (jsonText(value) as string | undefined)
       const headers =
         text === undefined ? undefined : ownHeaderRecord(i?.headers, responseJsonContentType())
       if (defer !== undefined && text !== undefined && headers !== undefined) {
         reply = defer(text, i?.status ?? 200, headers)
       }
     }
-    reply ??= markResidentBody(jsonResponse(body, i))
+    reply ??= markResidentBody(jsonResponse(value, i))
     // Remembered so a response contract holds the value to the route's schema: this is the
     // framework's JSON helper, not a raw-Response escape hatch.
-    this.jsonBody = body
+    this.jsonBody = value
     this.jsonReply = reply
     return reply
   }

@@ -117,12 +117,10 @@ function componentApp(
       owners: {},
       holes: options.listed === false ? {} : { "p/[id]": { components: [Summary] } },
     }),
-    experimental: {
-      ppr: partialPrerendering({
-        shellChecks: "unchecked-development",
-        options: { blockingFor: /test-bot/ },
-      }),
-    },
+    ppr: partialPrerendering({
+      shellChecks: "unchecked-development",
+      options: { blockingFor: /test-bot/ },
+    }),
   })
   return { app, probe }
 }

@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 
-import { useNavigate, useSearch } from "@nifrajs/web-preact/router"
+import { href, useNavigate, useSearch } from "@nifrajs/web-preact/router"
 import { searchSchema } from "../shared/search.ts"
 import type { Route } from "./+types/search"
 
@@ -23,11 +23,11 @@ export default function Search({ data }: Route.ComponentProps) {
       <button
         id="next"
         type="button"
-        onClick={() => navigate(`/search?page=${page + 1}${q ? `&q=${q}` : ""}`)}
+        onClick={() => navigate(href({ to: "/search", search: { page: page + 1, q } }))}
       >
         next page
       </button>{" "}
-      <a id="set-q" href="/search?page=1&q=preact">
+      <a id="set-q" href={href({ to: "/search", search: { page: 1, q: "preact" } })}>
         set q=preact
       </a>
     </div>

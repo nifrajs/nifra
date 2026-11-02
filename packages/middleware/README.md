@@ -60,9 +60,12 @@ const app = server()
 - **`rateLimit(options)`** - `429` + `Retry-After` + `RateLimit-*` headers, with a
   pluggable `RateLimitStore`. The default bucket key is the caller IP the server resolved (the
   socket peer, or the app's `clientIp` trust declaration behind a proxy); a custom `key`, trusted
-  single-IP `header`, or `trustedProxies` overrides it. With no caller IP it fails closed (`500`)
-  instead of silently sharing one bucket. The bundled `MemoryStore` **refuses to run in production** (a per-instance
-  limiter is unsafe across instances) - provide a shared store (Redis, etc.) there.
+  single-IP `header`, or `trustedProxies` overrides it. A configured header must contain exactly one
+  valid IP; comma-separated or malformed values fall through to configured `trustedProxies` or
+  `allowGlobalKey` fallbacks. Without a usable key or explicit global fallback, requests fail closed
+  (`500`) instead of silently sharing one bucket. The bundled `MemoryStore` **refuses to run in
+  production** (a per-instance limiter is unsafe across instances) - provide a shared store (Redis,
+  etc.) there.
 - **`cache({ store, ttlMs })` / `responseCache(...)`** - full response cache with a pluggable
   store, `Vary`-aware keys, `Age`, byte caps, and `Cache-Control` / `Set-Cookie` safety defaults.
   `MemoryResponseCache` is dev/single-instance only unless explicitly allowed in production.

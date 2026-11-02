@@ -1,27 +1,21 @@
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 // `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
 // bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
-// Vite's dev server. Sourced from the ROOT so the generated `RouteSearch` augmentation applies.
+// Vite's dev server. Sourced from the ROOT so the generated `RouteTable` augmentation applies.
 import type {
   Blocker,
   BlockerFunction,
   BlockerState,
   NavigateFunction,
-  NavigateOptions,
-  NavigateTargetInput,
   RenderProps,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
-import {
-  getBrowserNavigate,
-  IDLE_BLOCKER,
-  registerBlocker,
-  resolveNavigate,
-} from "@nifrajs/web/client"
+import { IDLE_BLOCKER, registerBlocker } from "@nifrajs/web/client"
 // Its own subpath, so an app that never calls `useMatches` never bundles it.
 import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
+import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
 import { getContext } from "svelte"
 /**
  * `@nifrajs/web-svelte/router` - Svelte routing bindings over the agnostic `@nifrajs/web` history layer,
@@ -33,6 +27,9 @@ import { getContext } from "svelte"
  */
 import { type Readable, readable } from "svelte/store"
 
+export { href, rawHref } from "@nifrajs/web/client"
+export type { RouteSlotController } from "./route-slot.ts"
+export { useRouteSlot } from "./route-slot.ts"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Must match the string key `Chain.svelte` passes to `setContext` (a string avoids a `.svelte` → `.ts`
@@ -90,16 +87,11 @@ export function useMatches(): () => readonly UIMatch[] {
   return get === undefined ? NO_MATCHES_ACCESSOR : () => chainMatches(get())
 }
 
-/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).
+/** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta).
  * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops
  * before then / on the server. */
 export function useNavigate(): NavigateFunction {
-  return ((to: string | number | NavigateTargetInput, options?: NavigateOptions) => {
-    const navigate = getBrowserNavigate()
-    if (navigate === undefined) return
-    const resolved = resolveNavigate(to, options)
-    navigate(resolved.to, resolved.options)
-  }) as NavigateFunction
+  return navigateNow
 }
 
 /**

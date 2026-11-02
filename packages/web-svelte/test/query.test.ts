@@ -1,6 +1,7 @@
 /** The Svelte query store: its options reach the page's client, and it follows the cache entry. */
 import { expect, test } from "bun:test"
 import type { QueryOptions } from "@nifrajs/web"
+import { identityChanged } from "@nifrajs/web/client"
 import { getQueryClientSingleton } from "@nifrajs/web/internal/query-runtime"
 
 /** Run `body` with a `window`, as a browser would: the query singleton exists there. */
@@ -11,6 +12,17 @@ function asBrowser<T>(body: () => T): T {
     return body()
   } finally {
     if (!had) Reflect.deleteProperty(globalThis, "window")
+  }
+}
+
+async function asBrowserAsync<T>(body: () => Promise<T>): Promise<T> {
+  const before = Object.getOwnPropertyDescriptor(globalThis, "window")
+  Reflect.set(globalThis, "window", globalThis)
+  try {
+    return await body()
+  } finally {
+    if (before) Object.defineProperty(globalThis, "window", before)
+    else Reflect.deleteProperty(globalThis, "window")
   }
 }
 
@@ -39,7 +51,7 @@ function recordingOptions(body: () => void): (QueryOptions | undefined)[] {
 }
 
 import { get } from "svelte/store"
-import { useQuery, useQueryClient } from "../src/query.ts"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "../src/query.ts"
 
 test("useQuery passes staleTime and live keys through", () => {
   const seen = recordingOptions(() => {
@@ -52,7 +64,7 @@ test("in a browser the store fetches on its first subscriber and follows the cac
   let fetches = 0
   const store = asBrowser(() => useQuery(["svelte", "entry"], async () => ++fetches))
   const seen: unknown[] = []
-  const stop = store.subscribe((state) => seen.push(state.data))
+  const stop = asBrowser(() => store.subscribe((state) => seen.push(state.data)))
   expect(fetches).toBe(1)
   await Promise.resolve()
   pageClient().setQueryData(["svelte", "entry"], 7)
@@ -66,4 +78,92 @@ test("on the server the store stays idle, refetch rejects and the client is a no
   expect(get(store).status).toBe("pending")
   await expect(store.refetch()).rejects.toThrow("no query client")
   expect(() => useQueryClient().invalidateQueries(["svelte"])).not.toThrow()
+})
+
+test("infinite queries without a provider expose idle state and reject client actions", async () => {
+  const store = useInfiniteQuery(["svelte", "server-pages"], async (page: number) => page, {
+    initialPageParam: 0,
+    getNextPageParam: () => undefined,
+  })
+  expect(get(store).status).toBe("pending")
+  expect(get(store).hasNextPage).toBe(false)
+  expect(get(store).hasPreviousPage).toBe(false)
+  await expect(store.fetchNextPage()).rejects.toThrow("no query client")
+})
+
+test("Svelte mutation store exposes async controls and observable state", async () => {
+  const mutation = useMutation(async (value: number) => value * 2)
+  const stop = mutation.subscribe(() => {})
+  expect(get(mutation).status).toBe("idle")
+  await expect(mutation.mutateAsync(21)).resolves.toBe(42)
+  expect(get(mutation)).toMatchObject({ status: "success", data: 42, variables: 21 })
+  stop()
+})
+
+test("Svelte fire-and-forget mutation contains rejected work", async () => {
+  const mutation = useMutation(async () => {
+    throw new Error("expected failure")
+  })
+  const stop = mutation.subscribe(() => {})
+  mutation.mutate(undefined)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(get(mutation).status).toBe("error")
+  stop()
+})
+
+test("Svelte mutation store cancels pending state and callbacks on identity change", async () => {
+  await asBrowserAsync(async () => {
+    let resolve!: (value: string) => void
+    const called: string[] = []
+    const mutation = useMutation(() => new Promise<string>((done) => (resolve = done)), {
+      onSuccess: () => {
+        called.push("success")
+      },
+    })
+    const stop = mutation.subscribe(() => {})
+    const pending = mutation.mutateAsync()
+    identityChanged()
+    await expect(pending).rejects.toThrow("cancelled")
+    expect(get(mutation).status).toBe("idle")
+    expect(called).toEqual([])
+    resolve("private result")
+    stop()
+  })
+})
+
+test("cancelling an unsubscribed Svelte mutation releases its identity listener", async () => {
+  await asBrowserAsync(async () => {
+    const listeners = (): Set<unknown> | undefined => {
+      const value: unknown = Reflect.get(globalThis, Symbol.for("nifra.identity.listeners"))
+      return value instanceof Set ? value : undefined
+    }
+    const before = listeners()?.size ?? 0
+    let resolve!: (value: string) => void
+    const mutation = useMutation(() => new Promise<string>((done) => (resolve = done)))
+    const stop = mutation.subscribe(() => {})
+    const pending = mutation.mutateAsync()
+    stop()
+
+    expect(listeners()?.size ?? 0).toBe(before + 1)
+    mutation.cancel()
+    expect(listeners()?.size ?? 0).toBe(before)
+    await expect(pending).rejects.toThrow("cancelled")
+    resolve("late result")
+  })
+})
+
+test("Svelte infinite query store pages data and reports whether another page exists", async () => {
+  const store = asBrowser(() =>
+    useInfiniteQuery(["svelte", "pages"], async (page: number) => page, {
+      initialPageParam: 0,
+      getNextPageParam: (_last, pages, lastParam) => (pages.length < 2 ? lastParam + 1 : undefined),
+    }),
+  )
+  const stop = asBrowser(() => store.subscribe(() => {}))
+  await store.refetch()
+  expect(get(store).data?.pages).toEqual([0])
+  await store.fetchNextPage()
+  expect(get(store).data?.pages).toEqual([0, 1])
+  expect(get(store).hasNextPage).toBe(false)
+  stop()
 })

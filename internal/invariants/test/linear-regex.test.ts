@@ -49,6 +49,7 @@ const BOUNDED: Readonly<Record<string, Entry>> = {
     count: 2,
     reason: "a numeric literal or an import clause from the project's source",
   },
+  "packages/cli/src/rules/internal-links.ts": { count: 1, reason: PROJECT_SOURCE },
   "packages/cli/src/rules/legacy.ts": {
     count: 1,
     reason: "one line of tsc's output for the project",
@@ -146,9 +147,17 @@ const BUILT: Readonly<Record<string, Entry>> = {
     count: 2,
     reason: "bundler filters for escaped package roots",
   },
+  "packages/core/src/static-file.ts": {
+    count: 1,
+    reason: "the app's own `hashedFiles` pattern, copied without the global and sticky flags",
+  },
   "packages/core/src/wire.ts": {
     count: 1,
     reason: "the RegExp node of a decoded wire value; nothing here runs it",
+  },
+  "packages/deno/src/generated/static-file.ts": {
+    count: 1,
+    reason: "the app's own `hashedFiles` pattern, copied without the global and sticky flags",
   },
   "packages/i18n/src/check.ts": {
     count: 4,
@@ -159,16 +168,24 @@ const BUILT: Readonly<Record<string, Entry>> = {
     count: 1,
     reason: "a JSON Schema `pattern` of the app's own schema",
   },
+  "packages/node/src/generated/static-file.ts": {
+    count: 1,
+    reason: "the app's own `hashedFiles` pattern, copied without the global and sticky flags",
+  },
   "packages/pi/src/index.ts": {
     count: 1,
     reason: "escaped secrets as alternatives, no quantifier",
+  },
+  "packages/schema/src/decode.ts": {
+    count: 1,
+    reason: "a `patternProperties` key of the app's own schema",
   },
   "packages/web-solid/src/plugin.ts": { count: 1, reason: BUNDLER_FILTER },
   "packages/web-vue/src/index.ts": {
     count: 1,
     reason: "a teleport id over Vue's escaped markup, where every `<` opens a tag a `>` closes",
   },
-  "packages/web/src/build.ts": { count: 2, reason: BUNDLER_FILTER },
+  "packages/web/src/build.ts": { count: 1, reason: BUNDLER_FILTER },
   "packages/web/src/dev-ssr-graph.ts": { count: 1, reason: "the project's escaped root paths" },
   "packages/web/src/internal/dev-reserved.ts": {
     count: 1,

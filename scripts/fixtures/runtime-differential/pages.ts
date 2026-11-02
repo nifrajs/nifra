@@ -5,7 +5,7 @@
  * request.
  */
 import { isSameOriginPath, silentLogger } from "@nifrajs/core"
-import { createWebApp, defer, type Manifest, notFound, redirect } from "@nifrajs/web"
+import { createWebApp, defer, type Manifest, notFound, rawHref, redirect } from "@nifrajs/web"
 import { html, type VanillaComponent, vanillaAdapter } from "@nifrajs/web-vanilla"
 
 const Layout: VanillaComponent = ({ children }) =>
@@ -105,7 +105,7 @@ const manifest = (sentinel: string): Manifest => ({
         loader: (ctx) => {
           const to = searchOf(ctx.request, "to")
           if (!isSameOriginPath(to)) notFound()
-          throw redirect(to)
+          throw redirect(rawHref(to))
         },
       }),
     },
@@ -137,7 +137,7 @@ const manifest = (sentinel: string): Manifest => ({
         hydrate: false,
         action: async (ctx) => {
           const form = await ctx.request.formData()
-          if (form.get("go") === "1") return redirect("/pages/form?saved=1")
+          if (form.get("go") === "1") return redirect(rawHref("/pages/form?saved=1"))
           // Every entry as read, so a runtime parsing the body differently shows in the page.
           return [...form].map(([key, value]) =>
             typeof value === "string"

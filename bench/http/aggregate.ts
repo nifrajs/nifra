@@ -72,9 +72,9 @@ const WORKLOADS: readonly string[] = FULL
   : ["GET /users/:id", "POST /users"]
 // Canonical row order per section (ceiling last in each list is fine - rows are re-sorted by rps).
 const FRAMEWORKS: Record<string, readonly string[]> = {
-  bun: ["nifra", "elysia", "hono", "bun-native"],
+  bun: ["nifra", "elysia", "hono", "fastify", "bun-native"],
   node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
-  deno: ["nifra", "hono", "elysia", "deno-raw"],
+  deno: ["nifra", "hono", "elysia", "fastify", "deno-raw"],
 }
 const CEILING: Record<string, string> = {
   bun: "bun-native",

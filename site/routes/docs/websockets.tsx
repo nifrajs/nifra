@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/websockets",
@@ -226,7 +227,7 @@ export default function WebSockets() {
         first. A socket registered before a guard stays public, like an HTTP route there. A browser
         cannot set a header on the handshake, so <code>authenticate()</code> can read a short-lived,
         single-use ticket from <code>input.query</code> - see{" "}
-        <a href="/docs/auth#auth-first">Authentication runs first</a>.
+        <a href={href({ to: "/docs/auth", hash: "auth-first" })}>Authentication runs first</a>.
       </p>
       <CodeBlock code={GUARDED} />
       <p>

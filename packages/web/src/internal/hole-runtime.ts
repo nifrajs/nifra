@@ -8,6 +8,7 @@
 import type { ComponentClientAdapter, ComponentClientRoot } from "../server-components/client.ts"
 import type { ComponentRecord } from "../server-components/types.ts"
 import { onPageRelease, PAGE_HIDE_EVENT, PAGE_SHOW_EVENT } from "./page-events.ts"
+import { isRecord } from "./record.ts"
 
 /** One hole's fill, as the PPR runtime keeps it. */
 export interface HoleFill {
@@ -17,6 +18,15 @@ export interface HoleFill {
   readonly component?: unknown
   /** That component's HTML. */
   readonly html?: string
+}
+
+/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
+ * `fill` that host's refill when the page reloads. */
+export interface HoleState {
+  readonly status: "unresolved" | "pending" | "ready" | "error"
+  readonly data?: unknown
+  readonly ppr?: true
+  readonly fill?: unknown
 }
 
 /** The shell's inline runtime (internal/ppr/runtime.ts). */
@@ -86,9 +96,6 @@ export interface HoleHost {
   /** The parked host is the adapter's again. */
   unpark(): void
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null
 
 /** A fill the server deferred: the NDJSON stream settles its promise. */
 const settledFill = (fill: unknown): Promise<unknown> =>

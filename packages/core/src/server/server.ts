@@ -58,6 +58,7 @@ import {
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
 import {
+  compileRoutePattern,
   decodeRouteParams,
   expandOptionalParams,
   type RoutePatternSegment,
@@ -124,11 +125,14 @@ import type {
 import { type QueryValue, queryObjectOf, searchOf } from "./query.ts"
 import {
   type PeerPlatform,
+  PLATFORM_IDLE_TIMEOUT,
   PLATFORM_PEER,
+  PLATFORM_REQUEST,
   RequestContext,
   readBodyFramed,
 } from "./request-context.ts"
 import { recordRequestReplacement } from "./request-lineage.ts"
+import { carryToCopy } from "./request-local.ts"
 import { needsResolving, resolveDotSegments } from "./request-target.ts"
 import {
   applyStaticResponseHeaders,
@@ -347,10 +351,11 @@ interface WsEntry {
   readonly chain: RouteEntry
 }
 
-/** Structural view of the socket-peer lookup on the Bun `Server`, so any Bun `Server` (WS or not)
- * satisfies it. */
+/** Structural view of the socket-peer lookup and per-request idle timeout on the Bun `Server`, so
+ * any Bun `Server` (WS or not) satisfies it. */
 interface BunPeerServer {
   requestIP(request: Request): { readonly address: string } | null
+  timeout(request: Request, seconds: number): void
 }
 
 /** Structural view of the Bun `Server` the `fetch` 2nd arg exposes (`upgrade` + the socket peer). */
@@ -405,23 +410,44 @@ interface FetchMount<Env = unknown> {
   wsPassed?: WeakMap<Request, Request>
 }
 
-/** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown). */
-function bunPeerPlatform(server: BunPeerServer, req: Request): Platform {
+/** A route Bun's table matched, as the dispatcher would have. */
+interface MatchedRoute {
+  readonly entry: RouteEntry
+  readonly params: Record<string, string>
+}
+
+type IdleTimeoutSetter = NonNullable<PeerPlatform[typeof PLATFORM_IDLE_TIMEOUT]>
+
+/**
+ * The socket peer Bun observed (`undefined` if unknown) and its connection's idle timeout, as a
+ * `Platform` for one request. A class, not an object literal: JSC builds a literal holding a getter
+ * or a symbol key on a slow path, measured at about 5x the instructions of this instance.
+ */
+class BunPeerPlatform implements PeerPlatform {
+  readonly #server: BunPeerServer
+  #resolved = false
+  #address: string | undefined
+  // Own fields, so the copy a `clientIp` trust declaration makes (`{ ...platform }`) keeps them.
+  declare readonly [PLATFORM_IDLE_TIMEOUT]: IdleTimeoutSetter
+  declare readonly [PLATFORM_REQUEST]: Request
+
+  constructor(server: BunPeerServer, req: Request, setIdleTimeout: IdleTimeoutSetter) {
+    this.#server = server
+    this[PLATFORM_IDLE_TIMEOUT] = setIdleTimeout
+    this[PLATFORM_REQUEST] = req
+  }
+
   // Bun's requestIP() costs ~0.5 us per call, about 7% of a bare GET's server time. Keep the
   // documented raw-peer c.clientIp behavior, but resolve it lazily: most routes never read c.clientIp,
   // so they should not pay for the socket lookup on every request. A getter also
   // preserves middleware that inspects the platform argument directly and trust-mode routes, which
   // resolve the value in deriveClientIp before the handler runs.
-  let resolved = false
-  let address: string | undefined
-  return {
-    get clientIp(): string | undefined {
-      if (!resolved) {
-        resolved = true
-        address = server.requestIP(req)?.address
-      }
-      return address
-    },
+  get clientIp(): string | undefined {
+    if (!this.#resolved) {
+      this.#resolved = true
+      this.#address = this.#server.requestIP(this[PLATFORM_REQUEST])?.address
+    }
+    return this.#address
   }
 }
 
@@ -456,6 +482,23 @@ function outranks(
     } else if (theirs.kind !== "param") ahead = true
   }
   return ahead && other.length === route.length
+}
+
+/** Whether one request can match both patterns: no two static segments differ before either ends
+ * in a wildcard, and the lengths agree otherwise. Errs toward `true`. */
+function mayShareRequest(
+  a: CatalogRoute["pattern"]["segments"],
+  b: CatalogRoute["pattern"]["segments"],
+): boolean {
+  const shared = Math.min(a.length, b.length)
+  for (let i = 0; i < shared; i++) {
+    const left = a[i]!
+    const right = b[i]!
+    if (left.kind === "wildcard" || right.kind === "wildcard") return true
+    if (left.kind === "static" && right.kind === "static" && left.value !== right.value)
+      return false
+  }
+  return a.length === b.length
 }
 
 /**
@@ -611,6 +654,8 @@ const BODY_ERROR = (error: unknown): Promise<never> => Promise.reject(error)
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
 const STOP_HOOK_TIMEOUT_MS = 5_000
+/** Bun's own `idleTimeout` when `listen()` is given none. */
+const BUN_IDLE_TIMEOUT_SEC = 10
 
 /** Same-origin check for a WebSocket handshake (CSWSH default). {@link isSameOriginRequest} is the one
  * owner, shared with the server-function mount in `@nifrajs/web` - the two used to answer differently
@@ -652,8 +697,8 @@ function hasUnroutedParam(params: Record<string, string>): boolean {
 }
 
 /**
- * Deno is the runtime that hands an app a `Request` whose `url` is the target as the client sent it;
- * Bun, workerd and every `new Request()` parse it first. Only there does `fetch` read the URL up front.
+ * Deno's server builds `Request.url` from the Host and target as received, without normalizing the
+ * target first. Bun, workerd, and `new Request()` parse it before core sees it.
  */
 const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 
@@ -679,6 +724,7 @@ function withResolvedTarget(req: Request, url: string): Request | undefined {
   }
   // The same body, so the same framing: a runtime still delimited it.
   if (hasTrustedBodyFraming(req)) markTrustedBodyFraming(rebuilt)
+  carryToCopy(req, rebuilt)
   return rebuilt
 }
 
@@ -733,24 +779,35 @@ const invalidHost = (host: string): boolean => {
  * Host (400), a URL replaces the target, `false` keeps it. Deno hands the target over as sent, so
  * its dot segments are resolved; so does Bun when HTTP/1.0 leaves the Host out, and its route table
  * matched `/files/..` raw. Such a request is served as `localhost`, as Node and Deno serve it.
- * `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every
- * header. On Bun only a target that needs resolving is checked unless `validateHost` is set.
+ * `headerOf`, not `req.headers`: on Deno it reads Host only when `validateHost` is set, and dot
+ * segments are resolved only when `normalizeTarget` is. On Bun only a target that needs resolving
+ * is checked unless `validateHost` is set.
  */
-const requestTarget = (req: Request, validateHost: boolean): string | boolean => {
-  if (!rawRequestTargets && !(unparsedBunTargets && (validateHost || needsResolving(req.url))))
-    return false
+const requestTarget = (
+  req: Request,
+  validateHost: boolean,
+  normalizeTarget: boolean,
+): string | boolean => {
+  if (rawRequestTargets) {
+    const host = validateHost ? headerOf(req, "host") : null
+    if (host !== null && invalidHost(host)) return true
+    if (!normalizeTarget || !needsResolving(req.url)) return false
+    // Deno can preserve an unparseable absolute URL when Host is malformed. Do not route its
+    // unresolved dot segments through the raw-target fallback.
+    if (!URL.canParse(req.url, "http://localhost")) return true
+    return resolveDotSegments(req.url)
+  }
+  if (!(unparsedBunTargets && (validateHost || needsResolving(req.url)))) return false
   const host = headerOf(req, "host")
   if (host !== null && invalidHost(host)) {
-    if (rawRequestTargets) return true
     // Bun served it anyway: it could not read the Host, so it left the target unparsed, or it
     // built the URL on it - sent twice (joined with ", ", the URL on the first; RFC 9112 section
-    // 3.2 answers 400), percent-encoded (`%61.example` routed as `a.example`), or with a
-    // sub-delimiter (`a!b`). A request built in process keeps the URL its caller built, unless Bun
+    // 3.2 answers 400), percent-encoded (%61.example routed as a.example), or with a
+    // sub-delimiter (a!b). A request built in process keeps the URL its caller built, unless Bun
     // would have built it so.
     const routed = URL.parse(req.url)?.host
     return routed === undefined || URL.parse(`//${host.split(", ")[0]}`, req.url)?.host === routed
   }
-  if (rawRequestTargets) return needsResolving(req.url) && resolveDotSegments(req.url)
   // A request built in process carries an absolute URL whatever its headers say.
   return (
     host === null &&
@@ -789,7 +846,8 @@ function compareMounts<Env>(a: FetchMount<Env>, b: FetchMount<Env>): number {
   return b.priority - a.priority || b.path.length - a.path.length || a.order - b.order
 }
 
-/** Rebase a mounted request's path without losing the authentication mark used by child caches. */
+/** Rebase a mounted request's path without losing the authentication mark used by child caches, or
+ * its request locals. */
 function stripMountPrefix(request: Request, prefix: string): Request {
   if (prefix === "/") return request
   const url = new URL(request.url)
@@ -797,6 +855,7 @@ function stripMountPrefix(request: Request, prefix: string): Request {
   url.pathname = rest === "" ? "/" : rest
   const childRequest = new Request(url.href, request)
   if (isAuthenticatedRequest(request)) markAuthenticatedRequest(childRequest)
+  carryToCopy(request, childRequest)
   return childRequest
 }
 
@@ -810,6 +869,74 @@ export type CtxSet = ResponseControls & {
 
 function responseSet(ctx: RawContext): CtxSet {
   return ctx[CONTEXT_SET]() ?? EMPTY_RESPONSE_CONTROLS
+}
+
+type Finalize<T> = (result: unknown, set: CtxSet, ctx: RawContext) => T
+type Wrap<T> = (response: Response | ResponseResult) => T
+
+/** A fused route's handler, hook arrays, error hooks and decorations, which never change after the
+ * route is built. The route's shared stage chain reads them per request, so routes whose hooks differ
+ * still share one chain. */
+interface FusedHooks {
+  readonly handler: InternalHandler
+  readonly derives: readonly RawDerive[]
+  readonly befores: readonly RawBeforeHandle[]
+  readonly afters: readonly RawAfterHandle[]
+  readonly errors: readonly RawErrorHandler[]
+  readonly decorations: Record<PropertyKey, unknown> | undefined
+}
+
+/** What a fused lifecycle route runs for its hook shape on the Web lane: the first derive, or the
+ * handler when the shape has no hooks before it. */
+type FusedWebStart = (ctx: RawContext, route: FusedHooks, index: number) => MaybePromise<Response>
+
+/** The same chain for the Node-direct lane, finalizing through the caller's `finalize`. */
+type FusedNodeStart = <T>(
+  ctx: RawContext,
+  route: FusedHooks,
+  finalize: Finalize<T>,
+  wrapResponse: Wrap<T>,
+  index: number,
+) => MaybePromise<T>
+
+/** The error hooks of the many fused routes that have none, shared so each does not allocate its own. */
+const NO_ERROR_HOOKS: readonly RawErrorHandler[] = []
+
+const WEB_STAGES = new WeakMap<object, Map<number, FusedWebStart>>()
+const NODE_STAGES = new WeakMap<object, Map<number, FusedNodeStart>>()
+
+/** How many hooks a phase runs, as the chain tells them apart: none, one, or several. */
+type HookCount = 0 | 1 | 2
+
+const hookCount = (hooks: readonly object[]): HookCount =>
+  hooks.length > 1 ? 2 : (hooks.length as 0 | 1)
+
+/**
+ * The fused stage chain of a hook shape, built once per server and handed to every route with the same
+ * number of derive, before and after hooks (none, one or several of each). The chain reads a route's
+ * hooks and handler from the `FusedHooks` it is called with, so sharing it changes no answer.
+ */
+function sharedStages<T>(
+  cache: WeakMap<object, Map<number, T>>,
+  owner: object,
+  route: FusedHooks,
+  build: (derives: HookCount, befores: HookCount, afters: HookCount) => T,
+): T {
+  const derives = hookCount(route.derives)
+  const befores = hookCount(route.befores)
+  const afters = hookCount(route.afters)
+  const key = derives * 9 + befores * 3 + afters
+  let chains = cache.get(owner)
+  if (chains === undefined) {
+    chains = new Map()
+    cache.set(owner, chains)
+  }
+  let stages = chains.get(key)
+  if (stages === undefined) {
+    stages = build(derives, befores, afters)
+    chains.set(key, stages)
+  }
+  return stages
 }
 
 function isContextlessNoArgArrow(handler: (context: never) => unknown): boolean {
@@ -1273,6 +1400,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
   private readonly trustBodyFraming: boolean
   private readonly validateHost: boolean
+  private readonly normalizeTarget: boolean
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
   private readonly wsUpgradeTimeoutMs: number
@@ -1418,6 +1546,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.formOrigins = options.formOrigins
     this.trustBodyFraming = options.trustBodyFraming ?? false
     this.validateHost = options.validateHost ?? false
+    this.normalizeTarget = options.normalizeTarget ?? false
     const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
     assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
     this.maxBodyBytes = maxBodyBytes
@@ -2662,18 +2791,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       handler = this.idempotencyRuntime.wrapHandler(handler)
     }
     const { bare, fusedQuery, fusedBody } = lanes
-    // Fused lifecycle lanes: derive + before (with or without an after), and body + the same shape.
-    // The lane selectors in `selectRouteLanes` are exhaustive about the lifecycleHookLane /
-    // body-derive-before-after eligibility, so we only need to check the lane and the hook counts.
-    const lifecycleHookLane = lanes.lifecycleHookLane
-    const isFusedLifecycle = lifecycleHookLane !== undefined && this.derives.length === 1
-    const isFusedBodyLifecycle =
-      lanes.fusedLane === "body-derive-before" || lanes.fusedLane === "body-derive-before-after"
-    // The generic runners below are the Node-direct twins of the fused Web lanes built further
-    // down: same single-frame lifecycle, finalizing through the caller's own `finalize` instead of
-    // building a `Response`, so the `!webFast` dispatcher prefers them over the generic program
-    // exactly as it prefers the body-only runner. Only the original body-only lane may feed the Web
-    // wrapper; every other runner here preserves its derive/before/after stages.
+    // `selectRouteLanes` admits the fused hook lanes only for derive, before and after hooks, so the
+    // three arrays below are the route's whole lifecycle.
+    const fusedLifecycle = lanes.fusedLane === "hooks" || lanes.fusedLane === "body-hooks"
+    // The fused chains keep the arrays they are built from, and `beforeHandle()` inserts into the live
+    // ones ahead of `beforeHandler()` guards, so the entry and the fused chains share one snapshot of
+    // this route's.
+    const derivesSnapshot = [...this.derives]
+    const beforesSnapshot = [...beforeHandle]
+    const aftersSnapshot = [...afterHandle]
+    const onErrorSnapshot = onError.length === 0 ? NO_ERROR_HOOKS : [...onError]
+    const fusedHooks: FusedHooks | undefined = fusedLifecycle
+      ? {
+          handler: handler as unknown as InternalHandler,
+          derives: derivesSnapshot,
+          befores: beforesSnapshot,
+          afters: aftersSnapshot,
+          errors: onErrorSnapshot,
+          decorations: hasDecorations ? routeDecorations : undefined,
+        }
+      : undefined
+    // The Node-direct dispatcher (`!webFast`) prefers these runners over the generic program. Only the
+    // body-only runner also feeds the Web wrapper; the lifecycle lanes build their own Web closure.
     const fusedBodyRunner = fusedBody
       ? this.buildFusedBodyRunner(
           handler as unknown as InternalHandler,
@@ -2681,34 +2820,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           hasDecorations ? routeDecorations : undefined,
           bodyLimit ?? UNLIMITED_BODY_BYTES,
         )
-      : isFusedBodyLifecycle
-        ? this.buildFusedBodyDeriveBeforeAfterRunner(
-            handler as unknown as InternalHandler,
-            this.derives[0]!,
-            beforeHandle[0]!,
-            afterHandle[0],
-            schema?.body as StandardSchemaV1,
+      : fusedHooks !== undefined
+        ? this.buildFusedLifecycleRunner(
+            fusedHooks,
+            schema?.query,
+            schema?.body as StandardSchemaV1 | undefined,
             bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
-        : isFusedLifecycle && lifecycleHookLane === "derive-before"
-          ? this.buildFusedDeriveBeforeRunner(
-              handler as unknown as InternalHandler,
-              this.derives[0]!,
-              beforeHandle[0]!,
-              undefined,
-              schema?.query,
-              bodyLimit ?? UNLIMITED_BODY_BYTES,
-            )
-          : isFusedLifecycle && lifecycleHookLane === "derive-before-after"
-            ? this.buildFusedDeriveBeforeRunner(
-                handler as unknown as InternalHandler,
-                this.derives[0]!,
-                beforeHandle[0]!,
-                afterHandle[0],
-                schema?.query,
-                bodyLimit ?? UNLIMITED_BODY_BYTES,
-              )
-            : undefined
+        : undefined
     const fusedWeb =
       bare && this.aroundHooks.length === 0
         ? this.buildFusedWeb(
@@ -2726,33 +2845,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
-            : isFusedBodyLifecycle
-              ? this.buildFusedBodyDeriveBeforeAfter(
-                  handler as unknown as InternalHandler,
-                  this.derives[0]!,
-                  beforeHandle[0]!,
-                  afterHandle[0],
-                  schema?.body as StandardSchemaV1,
+            : fusedHooks !== undefined
+              ? this.buildFusedLifecycleWeb(
+                  fusedHooks,
+                  schema?.query,
+                  schema?.body as StandardSchemaV1 | undefined,
                   bodyLimit ?? UNLIMITED_BODY_BYTES,
                 )
-              : isFusedLifecycle && lifecycleHookLane === "derive-before"
-                ? this.buildFusedDeriveBefore(
-                    handler as unknown as InternalHandler,
-                    this.derives[0]!,
-                    beforeHandle[0]!,
-                    schema?.query,
-                    bodyLimit ?? UNLIMITED_BODY_BYTES,
-                  )
-                : isFusedLifecycle && lifecycleHookLane === "derive-before-after"
-                  ? this.buildFusedDeriveBeforeAfter(
-                      handler as unknown as InternalHandler,
-                      this.derives[0]!,
-                      beforeHandle[0]!,
-                      afterHandle[0]!,
-                      schema?.query,
-                      bodyLimit ?? UNLIMITED_BODY_BYTES,
-                    )
-                  : undefined
+              : undefined
     const program = compileRouteProgram({
       schema,
       handler: handler as unknown as InternalHandler,
@@ -2785,13 +2885,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       idempotent,
       ledgered,
       responseContract,
-      derives: [...this.derives],
+      derives: derivesSnapshot,
       authStages: [...compiled.authStages],
       decorations: routeDecorations,
       hasDecorations,
-      beforeHandle: [...beforeHandle],
-      afterHandle: [...afterHandle],
-      onError: [...onError],
+      beforeHandle: beforesSnapshot,
+      afterHandle: aftersSnapshot,
+      onError: onErrorSnapshot,
       lifecycleHookLane: lanes.lifecycleHookLane,
       around: [...this.aroundHooks],
       execution,
@@ -3246,13 +3346,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const lane = entry.execution.fusedLane
     // Type-erase the lane so each `===` branch sees the full union, not the narrowed remainder.
     const laneName: string | undefined = lane
-    // Body+lifecycle routes have a fused Web renderer, and - unlike before - a generic fused
-    // runner too: it preserves derive/before/after (it IS the lifecycle, single-framed), so the
-    // Node-direct dispatcher's preference for the generic slot over the execution plan stays
-    // semantics-preserving. Only the original body-only lane may feed the Web wrapper below.
-    const derive = entry.derives[0]
-    const before = entry.beforeHandle[0]
-    const after = entry.afterHandle[0]
+    const lifecycle = laneName === "hooks" || laneName === "body-hooks"
+    const hooks: FusedHooks | undefined = lifecycle
+      ? {
+          handler: entry.handler,
+          derives: entry.derives,
+          befores: entry.beforeHandle,
+          afters: entry.afterHandle,
+          errors: entry.onError,
+          decorations: entry.hasDecorations ? entry.decorations : undefined,
+        }
+      : undefined
     const fusedBody =
       laneName === "body"
         ? this.buildFusedBodyRunner(
@@ -3261,49 +3365,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             entry.hasDecorations ? entry.decorations : undefined,
             entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
-        : laneName === "body-derive-before" && derive !== undefined && before !== undefined
-          ? this.buildFusedBodyDeriveBeforeAfterRunner(
-              entry.handler,
-              derive,
-              before,
-              undefined,
-              entry.schema?.body as StandardSchemaV1,
+        : hooks !== undefined
+          ? this.buildFusedLifecycleRunner(
+              hooks,
+              entry.schema?.query,
+              entry.schema?.body as StandardSchemaV1 | undefined,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
-          : laneName === "body-derive-before-after" &&
-              derive !== undefined &&
-              before !== undefined &&
-              after !== undefined
-            ? this.buildFusedBodyDeriveBeforeAfterRunner(
-                entry.handler,
-                derive,
-                before,
-                after,
-                entry.schema?.body as StandardSchemaV1,
-                entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-              )
-            : laneName === "derive-before" && derive !== undefined && before !== undefined
-              ? this.buildFusedDeriveBeforeRunner(
-                  entry.handler,
-                  derive,
-                  before,
-                  undefined,
-                  entry.schema?.query,
-                  entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-                )
-              : laneName === "derive-before-after" &&
-                  derive !== undefined &&
-                  before !== undefined &&
-                  after !== undefined
-                ? this.buildFusedDeriveBeforeRunner(
-                    entry.handler,
-                    derive,
-                    before,
-                    after,
-                    entry.schema?.query,
-                    entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-                  )
-                : undefined
+          : undefined
     const fusedWeb =
       laneName === "body"
         ? this.buildFusedBodyWeb(fusedBody as FusedBodyRunner)
@@ -3314,53 +3383,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               entry.schema?.query as StandardSchemaV1,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
-          : laneName === "body-derive-before" && derive !== undefined && before !== undefined
-            ? this.buildFusedBodyDeriveBeforeAfter(
-                entry.handler,
-                derive,
-                before,
-                undefined,
-                entry.schema?.body as StandardSchemaV1,
+          : hooks !== undefined
+            ? this.buildFusedLifecycleWeb(
+                hooks,
+                entry.schema?.query,
+                entry.schema?.body as StandardSchemaV1 | undefined,
                 entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
               )
-            : laneName === "body-derive-before-after" &&
-                derive !== undefined &&
-                before !== undefined &&
-                after !== undefined
-              ? this.buildFusedBodyDeriveBeforeAfter(
-                  entry.handler,
-                  derive,
-                  before,
-                  after,
-                  entry.schema?.body as StandardSchemaV1,
-                  entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-                )
-              : laneName === "derive-before" && derive !== undefined && before !== undefined
-                ? this.buildFusedDeriveBefore(
-                    entry.handler,
-                    derive,
-                    before,
-                    entry.schema?.query,
-                    entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-                  )
-                : laneName === "derive-before-after" &&
-                    derive !== undefined &&
-                    before !== undefined &&
-                    after !== undefined
-                  ? this.buildFusedDeriveBeforeAfter(
-                      entry.handler,
-                      derive,
-                      before,
-                      after,
-                      entry.schema?.query,
-                      entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-                    )
-                  : this.buildFusedWeb(
-                      entry.handler,
-                      entry.hasDecorations ? entry.decorations : undefined,
-                      isContextlessNoArgArrow(entry.handler),
-                      entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-                    )
+            : this.buildFusedWeb(
+                entry.handler,
+                entry.hasDecorations ? entry.decorations : undefined,
+                isContextlessNoArgArrow(entry.handler),
+                entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+              )
     return {
       ...route,
       entry: {
@@ -3395,7 +3430,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
     // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
-    const target = requestTarget(req, this.validateHost)
+    const target = requestTarget(req, this.validateHost, this.normalizeTarget)
     if (target === true) return jsonError(400, "invalid_host")
     if (target !== false) {
       const rebuilt = withResolvedTarget(req, target)
@@ -3465,6 +3500,47 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return this.admitGated(requestOf(source), () =>
       this.fetchMatchedInner(source, entry, params, platform),
     )
+  }
+
+  /** {@link fetchMatched} for an app whose `onRequest` hooks run before the route does: the hooks see
+   * the request first, and the route Bun matched runs unless one of them replaced the request. */
+  private fetchMatchedHooked(
+    source: Request,
+    entry: RouteEntry,
+    params: Record<string, string>,
+    platform: Platform<EnvOf<Ctx>>,
+  ): MaybePromise<Response> {
+    if (this.capacityGate === undefined) {
+      return this.fetchMatchedHookedInner(source, entry, params, platform)
+    }
+    return this.admitGated(source, () =>
+      this.fetchMatchedHookedInner(source, entry, params, platform),
+    )
+  }
+
+  private fetchMatchedHookedInner(
+    source: Request,
+    entry: RouteEntry,
+    params: Record<string, string>,
+    platform: Platform<EnvOf<Ctx>>,
+  ): MaybePromise<Response> {
+    const outcome = this.runWithOnRequest<Response>(
+      source,
+      this.trustedPlatform(source, platform),
+      this.finalizeResponse,
+      this.wrapWebResponse,
+      this.webResponseTimeout,
+      true,
+      { entry, params },
+    )
+    if (this.onResponseHooks.length === 0 && this.onResponseFinalizedHooks.length === 0) {
+      return outcome
+    }
+    return outcome instanceof Promise
+      ? outcome.then((response) =>
+          this.applyOnResponseAndFinalize(response, this.takeResponseRequest(source)),
+        )
+      : this.applyOnResponseAndFinalize(outcome, this.takeResponseRequest(source))
   }
 
   private fetchMatchedInner(
@@ -3899,7 +3975,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The adapter answers a pass by handing this same object to `fetch`.
     const received = req
     // The handshake routes the path `fetch` would: Host checked, dot segments resolved (see `fetch`).
-    const target = requestTarget(req, this.validateHost)
+    const target = requestTarget(req, this.validateHost, this.normalizeTarget)
     if (target === true) {
       return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
     }
@@ -4120,10 +4196,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private bunFetchWithWebSocket(
     req: Request,
     server: BunUpgradeServer,
+    setIdleTimeout: IdleTimeoutSetter,
   ): MaybePromise<Response | undefined> {
     const handle = (o: WebSocketUpgradeOutcome): MaybePromise<Response | undefined> => {
       if (o.kind === "pass")
-        return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
+        return this.fetch(
+          req,
+          new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>,
+        )
       if (o.kind === "reject") return o.response
       // A copy: the Bun socket keeps per-connection state on it, and a hand-built outcome may be shared.
       return server.upgrade(req, { data: { ...o } })
@@ -4132,7 +4212,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
     const outcome = this.resolveWebSocketUpgrade(
       req,
-      bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>,
+      new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>,
     )
     return outcome instanceof Promise ? outcome.then(handle) : handle(outcome)
   }
@@ -4285,6 +4365,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
+    matched?: MatchedRoute,
   ): MaybePromise<T> {
     const hooks = this.onRequestHooks
     const originalRequest = requestOf(source)
@@ -4314,6 +4395,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               wrapResponse,
               onTimeout,
               webFast,
+              matched,
             ),
           (err) => this.onRequestFailure(err, current, platform, finalize, wrapResponse),
         )
@@ -4326,7 +4408,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       if (outcome !== undefined) return earlyAnswer(outcome, wrapResponse)
     }
-    return this.routeAndRun(current, platform, finalize, wrapResponse, onTimeout, webFast)
+    return this.routeAndRun(
+      current,
+      platform,
+      finalize,
+      wrapResponse,
+      onTimeout,
+      webFast,
+      current === originalRequest ? matched : undefined,
+    )
   }
 
   /** Async tail of {@link runWithOnRequest}: applies the first awaited hook's outcome, then runs
@@ -4341,6 +4431,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
+    matched?: MatchedRoute,
   ): Promise<T> {
     let current = sourceAtAwait
     let seen = requestOf(sourceAtAwait)
@@ -4364,7 +4455,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       index++
     }
-    return this.routeAndRun(current, platform, finalize, wrapResponse, onTimeout, webFast)
+    return this.routeAndRun(
+      current,
+      platform,
+      finalize,
+      wrapResponse,
+      onTimeout,
+      webFast,
+      current === originalRequest ? matched : undefined,
+    )
   }
 
   private takeResponseRequest(source: RequestSource): Request {
@@ -4442,7 +4541,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
+    // The route Bun's table already matched for this very request, which routing would find again.
+    matched?: MatchedRoute,
   ): MaybePromise<T> {
+    if (matched !== undefined) {
+      return this.runMatched(
+        source,
+        platform,
+        matched.entry,
+        matched.params,
+        undefined,
+        finalize,
+        wrapResponse,
+        onTimeout,
+        webFast,
+      )
+    }
     // Native delimiter searches keep path/query splitting out of a character-by-character JS loop.
     // Keep the slices in locals instead of allocating the public helper's pathname/search pair.
     let pathname: string
@@ -5291,292 +5405,418 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   /**
-   * Compile a route's `derive + before` lifecycle to a single closure: the per-request walk through
-   * `runSync` → `runHooksSync` is a stack of 3 frames and 2 `Object.assign`s for what is by far the
-   * most common middleware shape (auth/trace/id derivation, an auth/policy `beforeHandle`). Folding
-   * the same steps into one closure hits the same monomorphic inline-cache site as `buildFusedWeb`,
-   * and `Object.assign(ctx, deriveResult)` becomes one extra property write on the context's already
-   * hot hidden class. Behavior is byte-identical to the compiled route program: the same thrown-value
-   * contract (`Response` is control flow, anything else logs + 500), the same `c.set` semantics, the
-   * same `fusedRespond` for the rendered body. The `LifecycleExecutionLane` guarantee
-   * (`schema.params === undefined && schema.headers === undefined && derives === 1 &&
-   * beforeHandle === 1 && afterHandle === 0 && onError === 0 && !hasResponseContract &&
-   * !hasDecorations`) is enforced by `selectRouteLanes`; this lane is selected ONLY when all of those
-   * hold. A `query` schema (the route declares `{ query }` alongside the hooks) is validated FIRST,
-   * mirroring the compiled route program's stage order; the fused builder runs validate → derive →
-   * before → handler in one frame.
+   * The stage chain a hook shape runs - derive, before, handler, after, respond - for the Web lane,
+   * built once per server and shared by every route with the same number of hooks in each phase (none,
+   * one or several). The chain reads a route's handler and hooks from its `FusedHooks` per request, so
+   * a route's own closure (see {@link buildFusedLifecycleWeb}) holds only that record and its schemas,
+   * and memory grows with the number of distinct shapes, not routes or hook functions.
    */
-  private buildFusedDeriveBefore(
-    handler: InternalHandler,
-    derive: RawDerive,
-    before: RawBeforeHandle,
-    querySchema: StandardSchemaV1 | undefined,
-    maxBodyBytes: number,
-  ): FusedWebRunner {
-    return this.buildFusedDeriveBeforeAfter(
-      handler,
-      derive,
-      before,
-      undefined,
-      querySchema,
-      maxBodyBytes,
-    )
-  }
-
-  // Both hook variants share one registered chain; request contexts stay in arguments.
-  private buildFusedDeriveBeforeAfter(
-    handler: InternalHandler,
-    derive: RawDerive,
-    before: RawBeforeHandle,
-    after: RawAfterHandle | undefined,
-    querySchema: StandardSchemaV1 | undefined,
-    maxBodyBytes: number,
-  ): FusedWebRunner {
-    const logError = (err: unknown, ctx: RawContext): Response =>
-      this.bareError(
-        err,
-        ctx,
-        (result, set) => this.wrapWebResponse(toResponse(result, set)),
-        this.wrapWebResponse,
-      )
-    // Continuations capture route state once; each request supplies its own context.
-    const runAfter = (result: unknown, ctx: RawContext): MaybePromise<Response> => {
-      if (after === undefined)
-        return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
-      let transformed: unknown
-      try {
-        transformed = after(result, ctx)
-      } catch (err) {
-        return logError(err, ctx)
-      }
-      if (transformed instanceof Promise) {
-        return transformed.then(
-          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
-          (err) => logError(err, ctx),
-        )
-      }
-      return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
-    }
-    const runHandler = (ctx: RawContext): MaybePromise<Response> => {
-      let result: unknown
-      try {
-        result = handler(ctx)
-      } catch (err) {
-        return logError(err, ctx)
-      }
-      if (result instanceof Promise) {
-        return result.then(
-          (value) => runAfter(value, ctx),
-          (err) => logError(err, ctx),
-        )
-      }
-      return runAfter(result, ctx)
-    }
-    const runBefore = (ctx: RawContext): MaybePromise<Response> => {
-      let early: unknown
-      try {
-        early = before(ctx)
-      } catch (err) {
-        return logError(err, ctx)
-      }
-      if (early instanceof Promise) {
-        return early.then(
-          (settled) => {
-            if (settled === undefined) return runHandler(ctx)
-            return this.respondFused(settled, ctx)
-          },
-          (err) => logError(err, ctx),
-        )
-      }
-      if (early === undefined) return runHandler(ctx)
-      return this.respondFused(early, ctx)
-    }
-    const runDerive = (ctx: RawContext): MaybePromise<Response> => {
-      let derived: unknown
-      try {
-        derived = derive(ctx)
-      } catch (err) {
-        return logError(err, ctx)
-      }
-      if (derived instanceof Promise) {
-        return derived.then(
-          (settled) => {
-            if (isResponseResult(settled) || settled instanceof Response) {
-              return this.respondFused(settled, ctx)
-            }
-            Object.assign(ctx, settled as object)
-            return runBefore(ctx)
-          },
-          (err) => logError(err, ctx),
-        )
-      }
-      if (isResponseResult(derived) || derived instanceof Response) {
-        return this.respondFused(derived, ctx)
-      }
-      Object.assign(ctx, derived as object)
-      return runBefore(ctx)
-    }
-    return (source, params, search, signal, budget, platform, nativeContext) => {
-      const ctx = nativeContext
-        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
-        : new RequestContext(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            maxBodyBytes,
-            this.protoPoisoning,
+  private fusedWebStages(
+    deriveCount: HookCount,
+    beforeCount: HookCount,
+    afterCount: HookCount,
+  ): FusedWebStart {
+    // A shape creates only the stages it uses. Which stage follows which is settled once here, so a
+    // request makes one call per hook and per phase. A phase with a single hook, the common middleware
+    // shape, gets a straight-line closure that reads that hook from the route; a phase with several
+    // loops over the route's array, running synchronous hooks in place so the stack stays flat however
+    // many a phase holds, and only a hook that returns a promise re-enters its stage from a microtask.
+    // Each request supplies its own context and route.
+    type Stage = (ctx: RawContext, route: FusedHooks, index: number) => MaybePromise<Response>
+    type AfterStage = (
+      result: unknown,
+      ctx: RawContext,
+      route: FusedHooks,
+      index: number,
+    ) => MaybePromise<Response>
+    let runAfter: AfterStage
+    if (afterCount === 0) {
+      runAfter = (result, ctx, route) =>
+        this.respondHooks(result, ctx, route, this.onResponseHooks.length === 0)
+    } else if (afterCount === 1) {
+      runAfter = (result, ctx, route) => {
+        let transformed: unknown
+        try {
+          transformed = route.afters[0]!(result, ctx)
+        } catch (err) {
+          return this.fusedWebRouteFail(err, ctx, route)
+        }
+        if (transformed instanceof Promise) {
+          return transformed.then(
+            (value) => this.respondHooks(value, ctx, route, this.onResponseHooks.length === 0),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
-      if (querySchema === undefined) return runDerive(ctx)
-      let validation: MaybePromise<StandardResult<unknown>>
-      try {
-        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
-      } catch (err) {
-        return logError(err, ctx)
+        }
+        return this.respondHooks(transformed, ctx, route, this.onResponseHooks.length === 0)
       }
-      if (validation instanceof Promise) {
-        return validation.then(
-          (settled) => {
-            if (settled.issues !== undefined)
-              return this.wrapWebResponse(plainValidationError(settled.issues))
-            ctx.query = settled.value
-            return runDerive(ctx)
-          },
-          (err) => logError(err, ctx),
-        )
-      }
-      if (validation.issues !== undefined)
-        return this.wrapWebResponse(plainValidationError(validation.issues))
-      ctx.query = validation.value
-      return runDerive(ctx)
-    }
-  }
-
-  /**
-   * Body + lifecycle hooks fused: parse → validate → derive → before → handler → (after) in one
-   * closure, the same win `buildFusedBodyRunner` gives for the no-hooks body shape. The shape is
-   * `lifecycleHookLane` PLUS a body schema with no other validation conflicts; the lane is selected
-   * ONLY when `schema.body !== undefined && schema.query/params/headers === undefined &&
-   * schema.onValidationError === undefined && !defaultOnValidationError && !hasIdempotency &&
-   * !hasLedger && derives === 1 && beforeHandle === 1 && afterHandle <= 1 && onError === 0 &&
-   * !hasResponseContract && !hasDecorations && around === 0`. The same single `querySchema === undefined`
-   * trick used in the no-body lane lets the build path stay simple: a query + body route falls back
-   * to the generic program (this is rare in practice - validated query + validated body is usually a
-   * "search results" route with a middleware chain on top, and the generic lane is fine there).
-   */
-  private buildFusedBodyDeriveBeforeAfter(
-    handler: InternalHandler,
-    derive: RawDerive,
-    before: RawBeforeHandle,
-    after: RawAfterHandle | undefined,
-    bodySchema: StandardSchemaV1,
-    maxBodyBytes: number,
-  ): FusedWebRunner {
-    const logError = (err: unknown, ctx: RawContext): Response =>
-      this.bareError(
-        err,
-        ctx,
-        (result, set) => this.wrapWebResponse(toResponse(result, set)),
-        this.wrapWebResponse,
-      )
-    return (source, params, search, signal, budget, platform, nativeContext) => {
-      const ctx = nativeContext
-        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
-        : new RequestContext(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            maxBodyBytes,
-            this.protoPoisoning,
-          )
-      const runHandlerValidated = (): MaybePromise<Response> => {
-        const runAfter = (result: unknown): MaybePromise<Response> => {
-          if (after === undefined) {
-            return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
-          }
+    } else {
+      runAfter = (result, ctx, route, index) => {
+        const lastAfter = route.afters.length - 1
+        for (;;) {
           let transformed: unknown
           try {
-            transformed = after(result, ctx)
+            transformed = route.afters[index]!(result, ctx)
           } catch (err) {
-            return logError(err, ctx)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (transformed instanceof Promise) {
             return transformed.then(
-              (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
-              (err) => logError(err, ctx),
+              (value) =>
+                index < lastAfter
+                  ? runAfter(value, ctx, route, index + 1)
+                  : this.respondHooks(value, ctx, route, this.onResponseHooks.length === 0),
+              (err) => this.fusedWebRouteFail(err, ctx, route),
             )
           }
-          return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
-        }
-        const runHandler = (): MaybePromise<Response> => {
-          let result: unknown
-          try {
-            result = handler(ctx)
-          } catch (err) {
-            return logError(err, ctx)
+          if (index === lastAfter) {
+            return this.respondHooks(transformed, ctx, route, this.onResponseHooks.length === 0)
           }
-          if (result instanceof Promise) {
-            return result.then(
-              (value) => runAfter(value),
-              (err) => logError(err, ctx),
-            )
-          }
-          return runAfter(result)
+          result = transformed
+          index++
         }
-        const runBefore = (): MaybePromise<Response> => {
+      }
+    }
+    const runHandler: Stage = (ctx, route) => {
+      let result: unknown
+      try {
+        result = route.handler(ctx)
+      } catch (err) {
+        return this.fusedWebRouteFail(err, ctx, route)
+      }
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => runAfter(value, ctx, route, 0),
+          (err) => this.fusedWebRouteFail(err, ctx, route),
+        )
+      }
+      return runAfter(result, ctx, route, 0)
+    }
+    let runBefore: Stage
+    if (beforeCount === 0) {
+      runBefore = runHandler
+    } else if (beforeCount === 1) {
+      runBefore = (ctx, route) => {
+        let early: unknown
+        try {
+          early = route.befores[0]!(ctx)
+        } catch (err) {
+          return this.fusedWebRouteFail(err, ctx, route)
+        }
+        if (early instanceof Promise) {
+          return early.then(
+            (settled) =>
+              settled === undefined
+                ? runHandler(ctx, route, 0)
+                : this.respondHooks(settled, ctx, route),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
+          )
+        }
+        if (early === undefined) return runHandler(ctx, route, 0)
+        return this.respondHooks(early, ctx, route)
+      }
+    } else {
+      runBefore = (ctx, route, index) => {
+        const lastBefore = route.befores.length - 1
+        for (;;) {
           let early: unknown
           try {
-            early = before(ctx)
+            early = route.befores[index]!(ctx)
           } catch (err) {
-            return logError(err, ctx)
+            return this.fusedWebRouteFail(err, ctx, route)
           }
           if (early instanceof Promise) {
             return early.then(
               (settled) => {
-                if (settled === undefined) return runHandler()
-                return this.respondFused(settled, ctx)
+                if (settled !== undefined) return this.respondHooks(settled, ctx, route)
+                return index < lastBefore
+                  ? runBefore(ctx, route, index + 1)
+                  : runHandler(ctx, route, 0)
               },
-              (err) => logError(err, ctx),
+              (err) => this.fusedWebRouteFail(err, ctx, route),
             )
           }
-          if (early === undefined) return runHandler()
-          return this.respondFused(early, ctx)
+          if (early !== undefined) return this.respondHooks(early, ctx, route)
+          if (index === lastBefore) return runHandler(ctx, route, 0)
+          index++
         }
+      }
+    }
+    let runDerive: Stage
+    if (deriveCount === 0) {
+      runDerive = runBefore
+    } else if (deriveCount === 1) {
+      runDerive = (ctx, route) => {
         let derived: unknown
         try {
-          derived = derive(ctx)
+          derived = route.derives[0]!(ctx)
         } catch (err) {
-          return logError(err, ctx)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (derived instanceof Promise) {
           return derived.then(
             (settled) => {
               if (isResponseResult(settled) || settled instanceof Response) {
-                return this.respondFused(settled, ctx)
+                return this.respondHooks(settled, ctx, route)
               }
-              Object.assign(ctx, settled as object)
-              return runBefore()
+              try {
+                Object.assign(ctx, settled)
+              } catch (err) {
+                return this.fusedWebRouteFail(err, ctx, route)
+              }
+              return runBefore(ctx, route, 0)
             },
-            (err) => logError(err, ctx),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         if (isResponseResult(derived) || derived instanceof Response) {
-          return this.respondFused(derived, ctx)
+          return this.respondHooks(derived, ctx, route)
         }
-        Object.assign(ctx, derived as object)
-        return runBefore()
+        try {
+          Object.assign(ctx, derived)
+        } catch (err) {
+          return this.fusedWebRouteFail(err, ctx, route)
+        }
+        return runBefore(ctx, route, 0)
       }
-      const onParsed = (parsed: unknown): MaybePromise<Response> => {
+    } else {
+      runDerive = (ctx, route, index) => {
+        const lastDerive = route.derives.length - 1
+        for (;;) {
+          let derived: unknown
+          try {
+            derived = route.derives[index]!(ctx)
+          } catch (err) {
+            return this.fusedWebRouteFail(err, ctx, route)
+          }
+          if (derived instanceof Promise) {
+            return derived.then(
+              (settled) => {
+                if (isResponseResult(settled) || settled instanceof Response) {
+                  return this.respondHooks(settled, ctx, route)
+                }
+                try {
+                  Object.assign(ctx, settled)
+                } catch (err) {
+                  return this.fusedWebRouteFail(err, ctx, route)
+                }
+                return index < lastDerive
+                  ? runDerive(ctx, route, index + 1)
+                  : runBefore(ctx, route, 0)
+              },
+              (err) => this.fusedWebRouteFail(err, ctx, route),
+            )
+          }
+          if (isResponseResult(derived) || derived instanceof Response) {
+            return this.respondHooks(derived, ctx, route)
+          }
+          try {
+            Object.assign(ctx, derived)
+          } catch (err) {
+            return this.fusedWebRouteFail(err, ctx, route)
+          }
+          if (index === lastDerive) return runBefore(ctx, route, 0)
+          index++
+        }
+      }
+    }
+    return runDerive
+  }
+
+  /**
+   * Compile a fused lifecycle route's entry closure: parse (body) → validate → the shared stage chain
+   * of its hook shape (derive → before → handler → after → respond, see {@link fusedWebStages}) in a
+   * single frame, where the generic program walks staged hook loops. `selectRouteLanes` admits only
+   * derive, before and after hooks - no params or headers schema, onError, around, decorations,
+   * response contract or recovery hook, and never a query schema beside a body schema - so the behavior
+   * is the compiled program's: the same stage order, the same thrown-value contract (`Response` is
+   * control flow, anything else logs and 500s), the same `c.set` semantics and `fusedRespond` render.
+   * The route's own closure holds only its `FusedHooks` and schemas and takes the request's context as
+   * an argument, so a request allocates no step closures.
+   */
+  /**
+   * Keep the common one-derive/one-before shape bound to its hooks. Inline its synchronous path to
+   * avoid stage calls; retain helper closures only for promise continuations.
+   */
+  private buildFusedLifecycleWebSingle(
+    handler: InternalHandler,
+    derive: RawDerive,
+    before: RawBeforeHandle,
+    after: RawAfterHandle | undefined,
+    maxBodyBytes: number,
+  ): FusedWebRunner {
+    const runAfter =
+      after === undefined
+        ? (result: unknown, ctx: RawContext): MaybePromise<Response> =>
+            this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+        : (result: unknown, ctx: RawContext): MaybePromise<Response> => {
+            let transformed: unknown
+            try {
+              transformed = after(result, ctx)
+            } catch (err) {
+              return this.fusedWebFail(err, ctx)
+            }
+            if (transformed instanceof Promise) {
+              return transformed.then(
+                (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+                (err) => this.fusedWebFail(err, ctx),
+              )
+            }
+            return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+          }
+
+    const runHandler = (ctx: RawContext): MaybePromise<Response> => {
+      let result: unknown
+      try {
+        result = handler(ctx)
+      } catch (err) {
+        return this.fusedWebFail(err, ctx)
+      }
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => runAfter(value, ctx),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      return runAfter(result, ctx)
+    }
+
+    const runBefore = (ctx: RawContext): MaybePromise<Response> => {
+      let early: unknown
+      try {
+        early = before(ctx)
+      } catch (err) {
+        return this.fusedWebFail(err, ctx)
+      }
+      if (early instanceof Promise) {
+        return early.then(
+          (settled) => (settled === undefined ? runHandler(ctx) : this.respondFused(settled, ctx)),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      if (early === undefined) return runHandler(ctx)
+      return this.respondFused(early, ctx)
+    }
+
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+
+      let derived: unknown
+      try {
+        derived = derive(ctx)
+      } catch (err) {
+        return this.fusedWebFail(err, ctx)
+      }
+      if (derived instanceof Promise) {
+        return derived.then(
+          (settled) => {
+            if (isResponseResult(settled) || settled instanceof Response)
+              return this.respondFused(settled, ctx)
+            try {
+              Object.assign(ctx, settled)
+            } catch (err) {
+              return this.fusedWebFail(err, ctx)
+            }
+            return runBefore(ctx)
+          },
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      if (isResponseResult(derived) || derived instanceof Response)
+        return this.respondFused(derived, ctx)
+
+      let early: unknown
+      let result: unknown
+      let transformed: unknown
+      let handlerPromise: Promise<unknown> | undefined
+      try {
+        Object.assign(ctx, derived)
+        early = before(ctx)
+        if (early === undefined) {
+          result = handler(ctx)
+          if (result instanceof Promise) handlerPromise = result
+          else if (after !== undefined) transformed = after(result, ctx)
+        }
+      } catch (err) {
+        return this.fusedWebFail(err, ctx)
+      }
+
+      if (early instanceof Promise) {
+        return early.then(
+          (settled) => (settled === undefined ? runHandler(ctx) : this.respondFused(settled, ctx)),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      if (early !== undefined) return this.respondFused(early, ctx)
+      if (handlerPromise !== undefined) {
+        return handlerPromise.then(
+          (value) =>
+            after === undefined
+              ? this.respondFused(value, ctx, this.onResponseHooks.length === 0)
+              : runAfter(value, ctx),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      if (after === undefined)
+        return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
+      if (transformed instanceof Promise) {
+        return transformed.then(
+          (value) => this.respondFused(value, ctx, this.onResponseHooks.length === 0),
+          (err) => this.fusedWebFail(err, ctx),
+        )
+      }
+      return this.respondFused(transformed, ctx, this.onResponseHooks.length === 0)
+    }
+  }
+
+  private buildFusedLifecycleWeb(
+    route: FusedHooks,
+    querySchema: StandardSchemaV1 | undefined,
+    bodySchema: StandardSchemaV1 | undefined,
+    maxBodyBytes: number,
+  ): FusedWebRunner {
+    if (
+      querySchema === undefined &&
+      bodySchema === undefined &&
+      route.errors.length === 0 &&
+      route.decorations === undefined &&
+      route.derives.length === 1 &&
+      route.befores.length === 1 &&
+      route.afters.length <= 1
+    ) {
+      const derive = route.derives[0]
+      const before = route.befores[0]
+      if (derive !== undefined && before !== undefined) {
+        return this.buildFusedLifecycleWebSingle(
+          route.handler,
+          derive,
+          before,
+          route.afters[0],
+          maxBodyBytes,
+        )
+      }
+    }
+    const runDerive = sharedStages(WEB_STAGES, this, route, (d, b, a) =>
+      this.fusedWebStages(d, b, a),
+    )
+    const decorations = route.decorations
+    if (bodySchema !== undefined) {
+      const onParsed = (parsed: unknown, ctx: RawContext): MaybePromise<Response> => {
         let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
         try {
           validation = bodySchema["~standard"].validate(parsed)
         } catch (err) {
-          return logError(err, ctx)
+          return this.fusedWebRouteFail(err, ctx, route)
         }
         if (validation instanceof Promise) {
           return validation.then(
@@ -5584,188 +5824,416 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               if (settled.issues !== undefined)
                 return this.wrapWebResponse(plainValidationError(settled.issues))
               ctx.body = settled.value
-              return runHandlerValidated()
+              return runDerive(ctx, route, 0)
             },
-            (err) => logError(err, ctx),
+            (err) => this.fusedWebRouteFail(err, ctx, route),
           )
         }
         if (validation.issues !== undefined)
           return this.wrapWebResponse(plainValidationError(validation.issues))
         ctx.body = validation.value
-        return runHandlerValidated()
+        return runDerive(ctx, route, 0)
       }
-      return readBodyFramed(
-        source,
-        maxBodyBytes,
-        this.protoPoisoning,
-        onParsed,
-        (response) => this.wrapWebResponse(response),
-        (err) => Promise.resolve(logError(err, ctx)),
-        bodySchema,
-        this.formOrigins,
-      ) as MaybePromise<Response>
+      return (source, params, search, signal, budget, platform, nativeContext) => {
+        const ctx = nativeContext
+          ? RequestContext.native(
+              source,
+              params,
+              search,
+              maxBodyBytes,
+              platform,
+              this.protoPoisoning,
+            )
+          : new RequestContext(
+              source,
+              params,
+              search,
+              signal,
+              budget,
+              platform,
+              maxBodyBytes,
+              this.protoPoisoning,
+            )
+        if (decorations !== undefined) Object.assign(ctx, decorations)
+        return readBodyFramed(
+          source,
+          maxBodyBytes,
+          this.protoPoisoning,
+          (parsed) => onParsed(parsed, ctx),
+          this.wrapWebResponse,
+          (err) => this.fusedWebRouteFail(err, ctx, route),
+          bodySchema,
+          this.formOrigins,
+        ) as MaybePromise<Response>
+      }
+    }
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+      if (decorations !== undefined) Object.assign(ctx, decorations)
+      if (querySchema === undefined) return runDerive(ctx, route, 0)
+      let validation: MaybePromise<StandardResult<unknown>>
+      try {
+        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
+      } catch (err) {
+        return this.fusedWebRouteFail(err, ctx, route)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return this.wrapWebResponse(plainValidationError(settled.issues))
+            ctx.query = settled.value
+            return runDerive(ctx, route, 0)
+          },
+          (err) => this.fusedWebRouteFail(err, ctx, route),
+        )
+      }
+      if (validation.issues !== undefined)
+        return this.wrapWebResponse(plainValidationError(validation.issues))
+      ctx.query = validation.value
+      return runDerive(ctx, route, 0)
     }
   }
 
   /**
-   * Generic (finalize/wrapResponse-parameterized) fused runner for the derive-before(-after) lane:
-   * the Node-direct counterpart of `buildFusedDeriveBefore` / `buildFusedDeriveBeforeAfter`.
-   *
-   * The Web fused builders above return a `Response`, so the Node dispatcher (`webFast === false`)
-   * cannot use them and a derive+before route falls back to the generic route program there - two
-   * staged loops, per-stage dispatch, and the async-continuation machinery - while Bun rides the
-   * single closure. That asymmetry is the realistic-route Node deficit against Fastify: this runner
-   * closes it by running validate → derive → before → handler → (after) in one frame and finalizing
-   * through the caller's own `finalize` (the Node outcome on the direct lane, `toResponse` on Web),
-   * so the same registration feeds both runtimes with no per-lane copy of the lifecycle to drift.
-   *
-   * Semantics mirror the generic program stage-for-stage for the shapes this lane admits (exactly
-   * one derive, one beforeHandle, zero-or-one afterHandle, no onError/around/decorations/contracts/
-   * recovery hooks - enforced by `selectRouteLanes`): thrown `Response`/`status(...)` are control
-   * flow through `wrapResponse`/`finalize`, anything else logs + 500s via the shared `bareError`
-   * lane (identical to `handleLifecycleError` with no `onError` hooks), and a terminal `finalize`
-   * throw (e.g. an unstringifiable handler return on the Node lane) is caught exactly as
-   * `finishLifecycleContract` catches it. Step functions close over registration state only and take
-   * the request state as arguments, so the hot path allocates no per-request closures.
+   * The Node-direct twin of {@link fusedWebStages}: the same chain, finalizing through the caller's
+   * own `finalize`, shared by every route with the same hook shape. A terminal `finalize` throw (an
+   * unstringifiable handler return on the Node lane) is caught as `finishLifecycleContract` catches it.
    */
-  private buildFusedDeriveBeforeRunner(
-    handler: InternalHandler,
-    derive: RawDerive,
-    before: RawBeforeHandle,
-    after: RawAfterHandle | undefined,
-    querySchema: StandardSchemaV1 | undefined,
-    maxBodyBytes: number,
-  ): FusedBodyRunner {
-    const logError = <T>(
-      err: unknown,
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): T => this.bareError(err, ctx, finalize, wrapResponse)
-
-    const runFinish = <T>(
+  private fusedNodeStages(
+    deriveCount: HookCount,
+    beforeCount: HookCount,
+    afterCount: HookCount,
+  ): FusedNodeStart {
+    const finishResult = <T>(
       result: unknown,
       ctx: RawContext,
+      route: FusedHooks,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
-      if (after === undefined) {
-        try {
-          return finalize(result, responseSet(ctx), ctx)
-        } catch (err) {
-          return logError(err, ctx, finalize, wrapResponse)
-        }
-      }
-      let transformed: unknown
-      try {
-        transformed = after(result, ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-      if (transformed instanceof Promise) {
-        return transformed.then(
-          (value) => {
-            try {
-              return finalize(value, responseSet(ctx), ctx)
-            } catch (err) {
-              return logError(err, ctx, finalize, wrapResponse)
-            }
-          },
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      try {
-        return finalize(transformed, responseSet(ctx), ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-    }
-
-    const finalizeEarly = <T>(
-      result: unknown,
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): T => {
       try {
         return finalize(result, responseSet(ctx), ctx)
       } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
       }
     }
 
-    const runHandler = <T>(
+    // The stages read the route's hooks, as in the Web builder: a shape creates only the stages it uses,
+    // a phase with one hook gets a straight-line closure, and a phase with several loops over the route's
+    // array. The generic `T` of each stage is the caller's outcome type.
+    type Stage = <T>(
       ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
+      route: FusedHooks,
+      finalize: Finalize<T>,
+      wrapResponse: Wrap<T>,
+      index: number,
+    ) => MaybePromise<T>
+    type AfterStage = <T>(
+      result: unknown,
+      ctx: RawContext,
+      route: FusedHooks,
+      finalize: Finalize<T>,
+      wrapResponse: Wrap<T>,
+      index: number,
+    ) => MaybePromise<T>
+
+    let runAfter: AfterStage
+    if (afterCount === 0) {
+      runAfter = (result, ctx, route, finalize, wrapResponse) =>
+        finishResult(result, ctx, route, finalize, wrapResponse)
+    } else if (afterCount === 1) {
+      runAfter = (result, ctx, route, finalize, wrapResponse) => {
+        let transformed: unknown
+        try {
+          transformed = route.afters[0]!(result, ctx)
+        } catch (err) {
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+        }
+        if (transformed instanceof Promise) {
+          return transformed.then(
+            (value) => finishResult(value, ctx, route, finalize, wrapResponse),
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+          )
+        }
+        return finishResult(transformed, ctx, route, finalize, wrapResponse)
+      }
+    } else {
+      runAfter = (result, ctx, route, finalize, wrapResponse, index) => {
+        const lastAfter = route.afters.length - 1
+        for (;;) {
+          let transformed: unknown
+          try {
+            transformed = route.afters[index]!(result, ctx)
+          } catch (err) {
+            return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+          }
+          if (transformed instanceof Promise) {
+            return transformed.then(
+              (value) =>
+                index < lastAfter
+                  ? runAfter(value, ctx, route, finalize, wrapResponse, index + 1)
+                  : finishResult(value, ctx, route, finalize, wrapResponse),
+              (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+            )
+          }
+          if (index === lastAfter)
+            return finishResult(transformed, ctx, route, finalize, wrapResponse)
+          result = transformed
+          index++
+        }
+      }
+    }
+
+    const runHandler: Stage = (ctx, route, finalize, wrapResponse) => {
       let result: unknown
       try {
-        result = handler(ctx)
+        result = route.handler(ctx)
       } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => runFinish(value, ctx, finalize, wrapResponse),
-          (err) => logError(err, ctx, finalize, wrapResponse),
+          (value) => runAfter(value, ctx, route, finalize, wrapResponse, 0),
+          (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
         )
       }
-      return runFinish(result, ctx, finalize, wrapResponse)
+      return runAfter(result, ctx, route, finalize, wrapResponse, 0)
     }
 
-    const runBefore = <T>(
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      let early: unknown
-      try {
-        early = before(ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+    let runBefore: Stage
+    if (beforeCount === 0) {
+      runBefore = runHandler
+    } else if (beforeCount === 1) {
+      runBefore = (ctx, route, finalize, wrapResponse) => {
+        let early: unknown
+        try {
+          early = route.befores[0]!(ctx)
+        } catch (err) {
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+        }
+        if (early instanceof Promise) {
+          return early.then(
+            (settled) =>
+              settled === undefined
+                ? runHandler(ctx, route, finalize, wrapResponse, 0)
+                : finishResult(settled, ctx, route, finalize, wrapResponse),
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+          )
+        }
+        if (early === undefined) return runHandler(ctx, route, finalize, wrapResponse, 0)
+        return finishResult(early, ctx, route, finalize, wrapResponse)
       }
-      if (early instanceof Promise) {
-        return early.then(
-          (settled) =>
-            settled === undefined
-              ? runHandler(ctx, finalize, wrapResponse)
-              : finalizeEarly(settled, ctx, finalize, wrapResponse),
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
+    } else {
+      runBefore = (ctx, route, finalize, wrapResponse, index) => {
+        const lastBefore = route.befores.length - 1
+        for (;;) {
+          let early: unknown
+          try {
+            early = route.befores[index]!(ctx)
+          } catch (err) {
+            return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+          }
+          if (early instanceof Promise) {
+            return early.then(
+              (settled) => {
+                if (settled !== undefined)
+                  return finishResult(settled, ctx, route, finalize, wrapResponse)
+                return index < lastBefore
+                  ? runBefore(ctx, route, finalize, wrapResponse, index + 1)
+                  : runHandler(ctx, route, finalize, wrapResponse, 0)
+              },
+              (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+            )
+          }
+          if (early !== undefined) return finishResult(early, ctx, route, finalize, wrapResponse)
+          if (index === lastBefore) return runHandler(ctx, route, finalize, wrapResponse, 0)
+          index++
+        }
       }
-      if (early === undefined) return runHandler(ctx, finalize, wrapResponse)
-      return finalizeEarly(early, ctx, finalize, wrapResponse)
     }
 
-    const runDerive = <T>(
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      let derived: unknown
-      try {
-        derived = derive(ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+    let runDerive: Stage
+    if (deriveCount === 0) {
+      runDerive = runBefore
+    } else if (deriveCount === 1) {
+      runDerive = (ctx, route, finalize, wrapResponse) => {
+        let derived: unknown
+        try {
+          derived = route.derives[0]!(ctx)
+        } catch (err) {
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+        }
+        if (derived instanceof Promise) {
+          return derived.then(
+            (settled) => {
+              if (isResponseResult(settled) || settled instanceof Response) {
+                return finishResult(settled, ctx, route, finalize, wrapResponse)
+              }
+              try {
+                Object.assign(ctx, settled)
+              } catch (err) {
+                return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+              }
+              return runBefore(ctx, route, finalize, wrapResponse, 0)
+            },
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+          )
+        }
+        if (isResponseResult(derived) || derived instanceof Response) {
+          return finishResult(derived, ctx, route, finalize, wrapResponse)
+        }
+        try {
+          Object.assign(ctx, derived)
+        } catch (err) {
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+        }
+        return runBefore(ctx, route, finalize, wrapResponse, 0)
       }
-      if (derived instanceof Promise) {
-        return derived.then(
-          (settled) => {
-            if (isResponseResult(settled) || settled instanceof Response) {
-              return finalizeEarly(settled, ctx, finalize, wrapResponse)
-            }
-            Object.assign(ctx, settled as object)
-            return runBefore(ctx, finalize, wrapResponse)
-          },
-          (err) => logError(err, ctx, finalize, wrapResponse),
+    } else {
+      runDerive = (ctx, route, finalize, wrapResponse, index) => {
+        const lastDerive = route.derives.length - 1
+        for (;;) {
+          let derived: unknown
+          try {
+            derived = route.derives[index]!(ctx)
+          } catch (err) {
+            return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+          }
+          if (derived instanceof Promise) {
+            return derived.then(
+              (settled) => {
+                if (isResponseResult(settled) || settled instanceof Response) {
+                  return finishResult(settled, ctx, route, finalize, wrapResponse)
+                }
+                try {
+                  Object.assign(ctx, settled)
+                } catch (err) {
+                  return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+                }
+                return index < lastDerive
+                  ? runDerive(ctx, route, finalize, wrapResponse, index + 1)
+                  : runBefore(ctx, route, finalize, wrapResponse, 0)
+              },
+              (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+            )
+          }
+          if (isResponseResult(derived) || derived instanceof Response) {
+            return finishResult(derived, ctx, route, finalize, wrapResponse)
+          }
+          try {
+            Object.assign(ctx, derived)
+          } catch (err) {
+            return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+          }
+          if (index === lastDerive) return runBefore(ctx, route, finalize, wrapResponse, 0)
+          index++
+        }
+      }
+    }
+    return runDerive
+  }
+
+  /**
+   * The Node-direct twin of {@link buildFusedLifecycleWeb}: the same steps, finalizing through the
+   * caller's own `finalize` (the Node outcome on the direct lane) instead of building a `Response`, so
+   * the `!webFast` dispatcher runs these routes in one frame rather than the generic program. A
+   * terminal `finalize` throw (an unstringifiable handler return on the Node lane) is caught as
+   * `finishLifecycleContract` catches it; the body's 415/400 renders take `wrapResponse` directly.
+   */
+  private buildFusedLifecycleRunner(
+    route: FusedHooks,
+    querySchema: StandardSchemaV1 | undefined,
+    bodySchema: StandardSchemaV1 | undefined,
+    maxBodyBytes: number,
+  ): FusedBodyRunner {
+    const runDerive = sharedStages(NODE_STAGES, this, route, (d, b, a) =>
+      this.fusedNodeStages(d, b, a),
+    )
+    const decorations = route.decorations
+
+    if (bodySchema !== undefined) {
+      const onParsed = <T>(
+        parsed: unknown,
+        ctx: RawContext,
+        finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+        wrapResponse: (response: Response | ResponseResult) => T,
+      ): MaybePromise<T> => {
+        let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+        try {
+          validation = bodySchema["~standard"].validate(parsed)
+        } catch (err) {
+          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+        }
+        if (validation instanceof Promise) {
+          return validation.then(
+            (settled) => {
+              if (settled.issues !== undefined)
+                return wrapResponse(plainValidationError(settled.issues))
+              ctx.body = settled.value
+              return runDerive(ctx, route, finalize, wrapResponse, 0)
+            },
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+          )
+        }
+        if (validation.issues !== undefined)
+          return wrapResponse(plainValidationError(validation.issues))
+        ctx.body = validation.value
+        return runDerive(ctx, route, finalize, wrapResponse, 0)
+      }
+      return <T>(
+        source: RequestSource,
+        params: Record<string, string>,
+        search: string | undefined,
+        signal: AbortSignal,
+        budget: RequestBudget,
+        platform: Platform | undefined,
+        nativeContext: boolean,
+        finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+        wrapResponse: (response: Response | ResponseResult) => T,
+      ): MaybePromise<T> => {
+        const ctx = nativeContext
+          ? RequestContext.native(
+              source,
+              params,
+              search,
+              maxBodyBytes,
+              platform,
+              this.protoPoisoning,
+            )
+          : new RequestContext(
+              source,
+              params,
+              search,
+              signal,
+              budget,
+              platform,
+              maxBodyBytes,
+              this.protoPoisoning,
+            )
+        if (decorations !== undefined) Object.assign(ctx, decorations)
+        return readBodyFramed(
+          source,
+          maxBodyBytes,
+          this.protoPoisoning,
+          (parsed) => onParsed(parsed, ctx, finalize, wrapResponse),
+          wrapResponse,
+          (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+          bodySchema,
+          this.formOrigins,
         )
       }
-      if (isResponseResult(derived) || derived instanceof Response) {
-        return finalizeEarly(derived, ctx, finalize, wrapResponse)
-      }
-      Object.assign(ctx, derived as object)
-      return runBefore(ctx, finalize, wrapResponse)
     }
 
     const runValidated = <T>(
@@ -5780,15 +6248,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             if (settled.issues !== undefined)
               return wrapResponse(plainValidationError(settled.issues))
             ctx.query = settled.value
-            return runDerive(ctx, finalize, wrapResponse)
+            return runDerive(ctx, route, finalize, wrapResponse, 0)
           },
-          (err) => logError(err, ctx, finalize, wrapResponse),
+          (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
         )
       }
       if (validation.issues !== undefined)
         return wrapResponse(plainValidationError(validation.issues))
       ctx.query = validation.value
-      return runDerive(ctx, finalize, wrapResponse)
+      return runDerive(ctx, route, finalize, wrapResponse, 0)
     }
 
     return <T>(
@@ -5814,228 +6282,73 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      if (querySchema === undefined) return runDerive(ctx, finalize, wrapResponse)
+      if (decorations !== undefined) Object.assign(ctx, decorations)
+      if (querySchema === undefined) return runDerive(ctx, route, finalize, wrapResponse, 0)
       let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
       } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
       }
       return runValidated(validation, ctx, finalize, wrapResponse)
     }
   }
 
-  /**
-   * Generic fused runner for the body+derive-before(-after) lane: the Node-direct counterpart of
-   * `buildFusedBodyDeriveBeforeAfter`. Same contract as `buildFusedDeriveBeforeRunner` above - one
-   * frame running parse → validate → derive → before → handler → (after) through the caller's own
-   * `finalize` - with the body read ahead of validation, exactly as the generic program orders its
-   * body stage before the derive/before stages. `readBodyFramed` keeps the shared bounded-read,
-   * content-type, and prototype-poisoning contracts; the 415/400 renders take `wrapResponse`
-   * directly, which is what the generic lane's wrap-after-identity amounts to.
-   */
-  private buildFusedBodyDeriveBeforeAfterRunner(
-    handler: InternalHandler,
-    derive: RawDerive,
-    before: RawBeforeHandle,
-    after: RawAfterHandle | undefined,
-    bodySchema: StandardSchemaV1,
-    maxBodyBytes: number,
-  ): FusedBodyRunner {
-    const logError = <T>(
-      err: unknown,
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): T => this.bareError(err, ctx, finalize, wrapResponse)
+  /** The thrown-value render of the Web fused lifecycle lanes for a route with no error hooks: a
+   * `Response` is control flow, anything else is logged and answered with a plain 500. */
+  private fusedWebFail(err: unknown, ctx: RawContext): Response {
+    return this.bareError(err, ctx, this.finalizeResponse, this.wrapWebResponse)
+  }
 
-    const runFinish = <T>(
-      result: unknown,
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      if (after === undefined) {
-        try {
-          return finalize(result, responseSet(ctx), ctx)
-        } catch (err) {
-          return logError(err, ctx, finalize, wrapResponse)
-        }
-      }
-      let transformed: unknown
+  /** {@link fusedWebFail} for a fused route that may have error hooks. */
+  private fusedWebRouteFail(
+    err: unknown,
+    ctx: RawContext,
+    route: FusedHooks,
+  ): MaybePromise<Response> {
+    return this.fusedFail(err, ctx, route, this.finalizeResponse, this.wrapWebResponse)
+  }
+
+  /** The thrown-value render of a fused lifecycle route. A `Response` or `status(...)` is control flow
+   * that no error hook sees, unless it cannot render, which is a fault like any other. Anything else
+   * goes to the route's error hooks; with none it is logged and answered with a plain 500. */
+  private fusedFail<T>(
+    err: unknown,
+    ctx: RawContext,
+    route: FusedHooks,
+    finalize: Finalize<T>,
+    wrapResponse: Wrap<T>,
+  ): MaybePromise<T> {
+    if (route.errors.length === 0) return this.bareError(err, ctx, finalize, wrapResponse)
+    let fault = err
+    if (err instanceof Response || isResponseResult(err)) {
       try {
-        transformed = after(result, ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-      if (transformed instanceof Promise) {
-        return transformed.then(
-          (value) => {
-            try {
-              return finalize(value, responseSet(ctx), ctx)
-            } catch (err) {
-              return logError(err, ctx, finalize, wrapResponse)
-            }
-          },
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      try {
-        return finalize(transformed, responseSet(ctx), ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
+        return finalize(err, responseSet(ctx), ctx)
+      } catch (renderError) {
+        fault = renderError
       }
     }
+    return this.runErrorHooks(
+      route.errors,
+      undefined,
+      fault,
+      ctx,
+      (result, set) => finalize(result, set, ctx),
+      wrapResponse,
+    )
+  }
 
-    const finalizeEarly = <T>(
-      result: unknown,
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): T => {
-      try {
-        return finalize(result, responseSet(ctx), ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-    }
-
-    const runHandler = <T>(
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      let result: unknown
-      try {
-        result = handler(ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-      if (result instanceof Promise) {
-        return result.then(
-          (value) => runFinish(value, ctx, finalize, wrapResponse),
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      return runFinish(result, ctx, finalize, wrapResponse)
-    }
-
-    const runBefore = <T>(
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      let early: unknown
-      try {
-        early = before(ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-      if (early instanceof Promise) {
-        return early.then(
-          (settled) =>
-            settled === undefined
-              ? runHandler(ctx, finalize, wrapResponse)
-              : finalizeEarly(settled, ctx, finalize, wrapResponse),
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      if (early === undefined) return runHandler(ctx, finalize, wrapResponse)
-      return finalizeEarly(early, ctx, finalize, wrapResponse)
-    }
-
-    const runDerive = <T>(
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      let derived: unknown
-      try {
-        derived = derive(ctx)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-      if (derived instanceof Promise) {
-        return derived.then(
-          (settled) => {
-            if (isResponseResult(settled) || settled instanceof Response) {
-              return finalizeEarly(settled, ctx, finalize, wrapResponse)
-            }
-            Object.assign(ctx, settled as object)
-            return runBefore(ctx, finalize, wrapResponse)
-          },
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      if (isResponseResult(derived) || derived instanceof Response) {
-        return finalizeEarly(derived, ctx, finalize, wrapResponse)
-      }
-      Object.assign(ctx, derived as object)
-      return runBefore(ctx, finalize, wrapResponse)
-    }
-
-    const onParsed = <T>(
-      parsed: unknown,
-      ctx: RawContext,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
-      try {
-        validation = bodySchema["~standard"].validate(parsed)
-      } catch (err) {
-        return logError(err, ctx, finalize, wrapResponse)
-      }
-      if (validation instanceof Promise) {
-        return validation.then(
-          (settled) => {
-            if (settled.issues !== undefined)
-              return wrapResponse(plainValidationError(settled.issues))
-            ctx.body = settled.value
-            return runDerive(ctx, finalize, wrapResponse)
-          },
-          (err) => logError(err, ctx, finalize, wrapResponse),
-        )
-      }
-      if (validation.issues !== undefined)
-        return wrapResponse(plainValidationError(validation.issues))
-      ctx.body = validation.value
-      return runDerive(ctx, finalize, wrapResponse)
-    }
-
-    return <T>(
-      source: RequestSource,
-      params: Record<string, string>,
-      search: string | undefined,
-      signal: AbortSignal,
-      budget: RequestBudget,
-      platform: Platform | undefined,
-      nativeContext: boolean,
-      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response | ResponseResult) => T,
-    ): MaybePromise<T> => {
-      const ctx = nativeContext
-        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
-        : new RequestContext(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            maxBodyBytes,
-            this.protoPoisoning,
-          )
-      return readBodyFramed(
-        source,
-        maxBodyBytes,
-        this.protoPoisoning,
-        (parsed) => onParsed(parsed, ctx, finalize, wrapResponse),
-        wrapResponse,
-        (err) => logError(err, ctx, finalize, wrapResponse),
-        bodySchema,
-        this.formOrigins,
-      )
+  /** {@link respondFused} for a fused lifecycle route, whose failures reach its error hooks. */
+  private respondHooks(
+    result: unknown,
+    ctx: RawContext,
+    route: FusedHooks,
+    unstamped?: boolean,
+  ): MaybePromise<Response> {
+    try {
+      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders, unstamped)
+    } catch (err) {
+      return this.fusedWebRouteFail(err, ctx, route)
     }
   }
 
@@ -6829,11 +7142,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     budget: RequestBudget | undefined,
     peer: PeerPlatform,
     fallback: BunNativeHandler,
+    hookedPlatform?: (request: Request, server: BunPeerServer) => Platform<EnvOf<Ctx>>,
   ): BunNativeHandler {
     // This callback is reached only from Bun's compiled native route table. Bun has already parsed
     // the HTTP framing, so the JSON lane may retain its native fused `json()` parse without weakening
-    // the portable/adapted source contract (those sources are never marked).
-    const markFramed = (request: Request): void => markTrustedBodyFraming(request)
+    // the portable/adapted source contract (those sources are never marked). Bun hands a GET or
+    // HEAD slot no body, so it skips the symbol write on every request.
+    const markFramed =
+      method === "GET" || method === "HEAD" ? (): void => undefined : markTrustedBodyFraming
     // The direct native lanes bypass `runMatched`, so the route's transport byte cap must be
     // marked here too - otherwise a Bun `listen()` fused route would leave direct `c.req` body
     // reads uncapped. The fallback branches go through `fetchMatched` -> `runMatched`, which marks.
@@ -6902,6 +7218,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         : finishNative(request, outcome)
     }
     if (paramNames.length === 0) {
+      if (hookedPlatform !== undefined) {
+        return (request, server) => {
+          markFramed(request)
+          return this.fetchMatchedHooked(
+            request,
+            entry,
+            EMPTY_PARAMS,
+            hookedPlatform(request, server),
+          )
+        }
+      }
       if (capped === undefined) {
         return (request) => {
           markFramed(request)
@@ -6926,6 +7253,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       paramNames.length === 1
         ? (params: Record<string, string>) => unroutedParam(params[paramNames[0]!])
         : hasUnroutedParam
+    if (hookedPlatform !== undefined) {
+      return (request, server) => {
+        markFramed(request)
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Bun's route table hands each handler a Request carrying the `params` it matched.
+        const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+        if (malformed(params)) return fallback(request, server)
+        return this.fetchMatchedHooked(request, entry, params, hookedPlatform(request, server))
+      }
+    }
     if (capped === undefined) {
       return (request, server) => {
         markFramed(request)
@@ -6952,9 +7288,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
   }
 
-  /** Compile portable route registrations into Bun's native route table. Apps with request-rewrite
-   * hooks or WebSockets retain the single portable dispatcher because those features must run before
-   * route selection/upgrade.
+  /** Compile portable route registrations into Bun's native route table. Paths a composed mount or
+   * a WebSocket handshake may reach stay with the portable dispatcher; provably disjoint HTTP routes
+   * keep native matching. Request hooks run before the matched route and rewrites return to dispatch.
    *
    * Bun and the portable router agree on which of two static-and-`:param` paths wins a request, so
    * the table is kept to those paths. Where Bun would otherwise pass a request on to a less specific
@@ -6963,21 +7299,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private buildBunNativeRoutes(
     fallback: BunNativeHandler,
     peer: PeerPlatform,
+    platformFor?: (request: Request, server: BunPeerServer) => Platform<EnvOf<Ctx>>,
   ): BunNativeRoutes | undefined {
-    // A `clientIp` trust declaration must run the resolver in `dispatch`, which the fused native lane
-    // bypasses - so an app that declares trust routes through the fetch lane (where `c.clientIp`
-    // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
+    const hooked = this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe
     if (
-      (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
-      this.wsRoutes.length > 0 ||
-      this.preRouteMountCount > 0 ||
-      this.clientIpTrust !== undefined
+      (hooked && platformFor === undefined) ||
+      // A hook may rewrite a handshake onto a socket path, which only the dispatcher's upgrade check follows.
+      (hooked && this.wsRoutes.length > 0) ||
+      this.mountsTakeUpgrades()
     ) {
       return undefined
     }
 
     const routes: BunNativeRoutes = Object.create(null) as BunNativeRoutes
     const mayUseFusedNative =
+      !hooked &&
       this.requestTimeoutMs === 0 &&
       (this.onResponseHooks.length === 0 || this.bunNativeResponseHeadersOnly) &&
       this.onResponseFinalizedHooks.length === 0 &&
@@ -6988,29 +7324,50 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
     let count = 0
     const all = this.catalog.entries()
+    const preRouteMounts = this.fetchMounts.filter((mount) => mount.beforeRoutes)
     // A path with a wildcard or a part-literal segment cannot go in the table: Bun reads `/:name.json`
     // as one parameter named `name.json`. These are filed under each run of static segments they
     // start with, which is where a table path they could outrank looks for them.
-    const under = new Map<string, CatalogRoute[]>()
+    const under = new Map<string, CatalogRoute["pattern"]["segments"][]>()
+    const fileUnder = (segments: CatalogRoute["pattern"]["segments"]): void => {
+      let prefix = ""
+      for (const segment of segments) {
+        let bucket = under.get(prefix)
+        if (bucket === undefined) {
+          bucket = []
+          under.set(prefix, bucket)
+        }
+        bucket.push(segments)
+        if (segment.kind !== "static") break
+        prefix += `/${segment.value}`
+      }
+    }
+    // A handshake is a GET the portable dispatcher gives to a socket route before any HTTP route, so a
+    // socket path is outside the table like a wildcard path, and a GET route a request may share with
+    // one stays with the dispatcher.
+    const sockets = this.wsRoutes.map((route) => compileRoutePattern(route.path).segments)
+    for (const segments of sockets) fileUnder(segments)
     const lead = all.map((route) => {
       const segments = route.pattern.segments
       const plain = segments.every(
         (segment) => segment.kind === "static" || segment.kind === "param",
       )
+      if (!plain) fileUnder(segments)
       let prefix = ""
       for (const segment of segments) {
-        if (!plain) {
-          let bucket = under.get(prefix)
-          if (bucket === undefined) {
-            bucket = []
-            under.set(prefix, bucket)
-          }
-          bucket.push(route)
-        }
         if (segment.kind !== "static") break
         prefix += `/${segment.value}`
       }
-      return plain ? prefix : undefined
+      // Mounts take every method under their literal prefix before route matching. A parameter may
+      // fill the rest of that prefix, but a static route ending above the mount cannot reach it.
+      // Conservative by design: only the leading static run proves a dynamic route disjoint.
+      const mayHitMount = preRouteMounts.some(
+        (mount) =>
+          underMountPrefix(prefix, mount.path) ||
+          (route.pattern.paramNames.length > 0 &&
+            (prefix === "" || underMountPrefix(mount.path, prefix))),
+      )
+      return plain && !mayHitMount ? prefix : undefined
     })
     // A preflight hook is intentionally handled by the fallback fetch path. Keeping OPTIONS out
     // of the native lane means Bun dispatches it through CORS's onRequest hook even when the
@@ -7040,7 +7397,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         entry.idempotent !== undefined ||
         !BUN_TABLE_METHODS.includes(method as Method) ||
         (preflightOnFallback && method === "OPTIONS") ||
-        under.get(run)?.some((other) => outranks(other.pattern.segments, pattern.segments))
+        under.get(run)?.some((other) => outranks(other, pattern.segments)) ||
+        (method === "GET" && sockets.some((socket) => mayShareRequest(socket, pattern.segments)))
       ) {
         continue
       }
@@ -7055,13 +7413,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         unboundedBudget,
         peer,
         fallback,
+        hooked ? platformFor : undefined,
       )
       // The table matched the target as sent; one `fetch` refuses or rewrites goes through it. Left
       // off, `validateHost` costs nothing here: the table holds no wildcard, a `..` parameter falls
       // back, and reading the Host on every request measured about 6% of a bare route.
       tableAt(path, pattern.segments)[method as Method] = this.validateHost
         ? (request, server) =>
-            requestTarget(request, true) ? fallback(request, server) : handler(request, server)
+            requestTarget(request, true, this.normalizeTarget)
+              ? fallback(request, server)
+              : handler(request, server)
         : handler
       count += 1
       if (paramNames.length > 0) {
@@ -7113,11 +7474,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * nothing - so any endpoint slower than 10s (a render, an export, a long upstream call) has its
    * connection cut mid-flight regardless of `requestTimeoutMs`. Apps with such endpoints must raise
    * this above their slowest expected response, which is why it is a first-class option and not a
-   * reason to drop down to `Bun.serve`. `0` disables the timeout entirely; max 255.
+   * reason to drop down to `Bun.serve`, or hold those requests' connections alone with
+   * `withIdleTimeout()` from `@nifrajs/core/idle-timeout`. `0` disables the timeout entirely; max 255.
    *
    * `tls` serves HTTPS directly: `app.listen(443, { tls: { cert, key } })` with PEM text or bytes.
    * Requests then arrive with `https:` URLs. Behind a proxy or a platform that terminates TLS, leave
    * it unset.
+   *
+   * `static` sees every request before the app does, the ones Bun's route table serves included, so
+   * a file it answers wins over any route at the same path. It returns the file's response, or
+   * `undefined` to let the app route the request. No hook of the app runs for a request it answers.
+   * `@nifrajs/web`'s Bun build serves its client bundle and public files this way.
    */
   listen(
     port: number,
@@ -7126,6 +7493,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       readonly hostname?: string
       readonly idleTimeoutSec?: number
       readonly tls?: ListenTlsOptions
+      readonly static?: (request: Request) => MaybePromise<Response | undefined>
     },
   ): RunningServer {
     if (typeof Bun === "undefined") {
@@ -7189,6 +7557,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return jsonError(500, "internal_error")
       },
     }
+    const idleTimeoutSec = options?.idleTimeoutSec ?? BUN_IDLE_TIMEOUT_SEC
+    const setIdleTimeout: IdleTimeoutSetter = (request, seconds) =>
+      // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: `running` is the Bun `Server` this call started (`RunningServer` publishes a subset of it), and every source a Bun listener routes is a `Request`.
+      (running as unknown as BunPeerServer).timeout(request as Request, seconds ?? idleTimeoutSec)
     const fallback: BunNativeHandler = (req, server) => {
       // Bun has already framed and bounded this request body in its HTTP parser. Mark the
       // source before the portable fallback runs so body schemas use Bun's native `json()`
@@ -7196,27 +7568,73 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // Requests. Native route handlers mark themselves in compileBunNativeHandler; this
       // covers every request the native lane does not serve.
       markTrustedBodyFraming(req)
-      return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
+      return this.fetch(
+        req,
+        new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>,
+      )
     }
     // Bun names the socket peer of a request when its server is asked. A request served from the
     // native table carries this one platform, which asks only when a handler reads `c.clientIp`.
+    const socketPeer = (request: RequestSource): string | undefined =>
+      (running as unknown as BunPeerServer).requestIP(request as Request)?.address
+    // A `clientIp` trust declaration resolves here too, from the request's headers, when a handler reads
+    // the address; only a declaration of zero hops names the socket peer.
+    const trust = this.clientIpTrust
     const peer: PeerPlatform = {
-      [PLATFORM_PEER]: (request) =>
-        (running as unknown as BunPeerServer).requestIP(request as Request)?.address,
+      [PLATFORM_PEER]:
+        trust === undefined
+          ? socketPeer
+          : (request) =>
+              resolveClientIp(
+                !("header" in trust) && trust.trustedHops === 0 ? socketPeer(request) : undefined,
+                // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every source a Bun listener routes is a `Request`.
+                request as Request,
+                trust,
+              ),
+      [PLATFORM_IDLE_TIMEOUT]: setIdleTimeout,
     }
-    const nativeRoutes =
-      wsHandlers === undefined ? this.buildBunNativeRoutes(fallback, peer) : undefined
+    const nativeRoutes = this.buildBunNativeRoutes(
+      fallback,
+      peer,
+      (request, server) =>
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `fallback` hands `fetch` the same platform, which holds no environment.
+        new BunPeerPlatform(server, request, setIdleTimeout) as Platform<EnvOf<Ctx>>,
+    )
+    const first = options?.static
+    const before = <S, A>(
+      inner: (req: Request, server: S) => MaybePromise<A>,
+    ): ((req: Request, server: S) => MaybePromise<A | Response>) =>
+      first === undefined
+        ? inner
+        : (req, server) => {
+            const answer = first(req)
+            if (answer === undefined) return inner(req, server)
+            return answer instanceof Promise
+              ? answer.then((response) => response ?? inner(req, server))
+              : answer
+          }
+    // Bun runs a table handler without `fetch`, so each one gets the same front as the fallback.
+    if (first !== undefined && nativeRoutes !== undefined) {
+      for (const path in nativeRoutes) {
+        const methods = nativeRoutes[path]!
+        for (const method of BUN_TABLE_METHODS) {
+          const handler = methods[method]
+          if (handler !== undefined) methods[method] = before(handler)
+        }
+      }
+    }
     const sockets = new Set<{ close(code?: number): void }>()
     this.bunSockets = sockets
     const running = (wsHandlers === undefined
       ? Bun.serve({
           ...listening,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-          fetch: fallback,
+          fetch: before(fallback),
         })
       : Bun.serve<BunWsData>({
           ...listening,
-          fetch: (req, server) => this.bunFetchWithWebSocket(req, server),
+          ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
+          fetch: before((req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout)),
           // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
           // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.

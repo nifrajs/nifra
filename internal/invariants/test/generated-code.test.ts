@@ -154,7 +154,10 @@ const expected = (generator: Generator, value: string): unknown => {
     case "packages/web/src/server-components/server-entry.ts":
       return ["node:fs/promises", "node:crypto", `./server${value}.js`]
     default:
-      return /[/\\\0]/.test(value) ? "not a file name" : [0, `p${value}.backend`, `p${value}`]
+      // The route table references search and slot types from its module, then the route's own types module.
+      return /[/\\\0]/.test(value)
+        ? "not a file name"
+        : [0, `p${value}`, `p${value}`, 0, `p${value}.backend`, `p${value}`]
   }
 }
 

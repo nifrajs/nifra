@@ -19,6 +19,7 @@
  */
 
 import { type ProjectEvidenceSnapshot, reflectedRoutesFromEvidence } from "./evidence.ts"
+import { mapSchemaParts } from "./internal/schema-parts.ts"
 import {
   type JsonSchema,
   type ReflectedRoute,
@@ -120,20 +121,9 @@ const snapshotRoute = (route: ReflectedRoute): RouteSnapshot => {
     const snapped = schemaSnapshot(reflection)
     if (snapped !== undefined) errors[status] = snapped
   }
-  const body = schemaSnapshot(schema.body)
-  const headers = schemaSnapshot(schema.headers)
-  const cookies = schemaSnapshot(schema.cookies)
-  const query = schemaSnapshot(schema.query)
-  const params = schemaSnapshot(schema.params)
-  const response = schemaSnapshot(schema.response)
   const sse = schemaSnapshot(schema.sse)
   const snapped: RouteSnapshotSchema = {
-    ...(headers !== undefined ? { headers } : {}),
-    ...(cookies !== undefined ? { cookies } : {}),
-    ...(body !== undefined ? { body } : {}),
-    ...(query !== undefined ? { query } : {}),
-    ...(params !== undefined ? { params } : {}),
-    ...(response !== undefined ? { response } : {}),
+    ...mapSchemaParts(schema, schemaSnapshot),
     ...(sse !== undefined ? { sse } : {}),
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
   }

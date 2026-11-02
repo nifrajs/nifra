@@ -1,7 +1,8 @@
 /**
  * `@nifrajs/ts-plugin` - a TypeScript language-service plugin. It adds two things to the editor:
  * - go-to-definition on a route-path string literal jumps to the `routes/` file that serves it, so
- *   `navigate({ to: "/orders" })`, `<Link to="/orders">`, or `href="/orders"` are click-through;
+ *   `href({ to: "/orders" })`, `rawHref("/orders")`, or `<a href="/orders">` are click-through, and so is a
+ *   route-table pattern such as `"/users/:id"`;
  * - the frontend/backend zone rules as errors on the import that breaks them (see ./zones.ts).
  *
  * Wire it up in a project's tsconfig:

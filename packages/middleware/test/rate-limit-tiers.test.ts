@@ -423,3 +423,175 @@ describe("rateLimitTiers without a floor", () => {
     ).toThrow(/floor must be/)
   })
 })
+
+describe("rateLimitTiers prefix lists", () => {
+  test("every prefix of one tier depletes its one counter", async () => {
+    const store = recordingStore()
+    const app = server().use(
+      tiered(store, {
+        tiers: [{ prefix: ["/api/exports", "/api/pdf"], max: 3, windowMs: 60_000 }],
+      }),
+    )
+    const statuses: number[] = []
+    for (const path of ["/api/exports", "/api/pdf/latest", "/api/pdf", "/api/exports"]) {
+      statuses.push((await get(app, path)).status)
+    }
+    expect(statuses).toEqual([404, 404, 404, 429])
+    expect(store.hits).toEqual(Array(4).fill("tier:/api/exports:client"))
+  })
+
+  test("a longer prefix of another tier charges only that tier", async () => {
+    const store = recordingStore()
+    const app = server().use(
+      tiered(store, {
+        tiers: [
+          { prefix: ["/api", "/me"], max: 5, windowMs: 60_000 },
+          { prefix: "/api/public", max: 10, windowMs: 60_000 },
+        ],
+      }),
+    )
+    for (const path of ["/api/public/feed", "/api/x", "/me", "/mex"]) await get(app, path)
+    expect(store.hits).toEqual([
+      "tier:/api/public:client",
+      "tier:/api:client",
+      "tier:/api:client",
+      "floor:client",
+    ])
+  })
+
+  test("a name keeps the counter when the prefix list is edited", async () => {
+    const store = new MemoryStore()
+    const limit = (tier: Partial<RateLimitTiersOptions["tiers"][number]>) =>
+      server().use(tiered(store, { tiers: [{ prefix: "/x", max: 2, windowMs: 60_000, ...tier }] }))
+    const before = limit({ name: "exports", prefix: "/api/exports" })
+    const after = limit({ name: "exports", prefix: ["/api/pdf", "/api/exports"] })
+    expect((await get(before, "/api/exports")).status).toBe(404)
+    expect((await get(before, "/api/exports")).status).toBe(404)
+    expect((await get(after, "/api/pdf")).status).toBe(429)
+    // Unnamed, the scope is the first prefix, so appending a prefix keeps that counter too.
+    const single = limit({ prefix: "/api/session" })
+    const appended = limit({ prefix: ["/api/session", "/api/token"] })
+    expect((await get(single, "/api/session")).status).toBe(404)
+    expect((await get(single, "/api/session")).status).toBe(404)
+    expect((await get(appended, "/api/token")).status).toBe(429)
+  })
+
+  test("a prefix or a name in two tiers is refused when the limiter is built", () => {
+    const store = new MemoryStore()
+    const build = (tiers: RateLimitTiersOptions["tiers"]) => () =>
+      rateLimitTiers({ store, floor: { max: 1, windowMs: 1000 }, tiers })
+    const window = { max: 1, windowMs: 1000 }
+    expect(
+      build([
+        { prefix: ["/a", "/b"], ...window },
+        { prefix: "/b", ...window },
+      ]),
+    ).toThrow(/duplicate tier prefix "\/b"/)
+    expect(build([{ prefix: ["/a", "/a"], ...window }])).toThrow(/duplicate tier prefix "\/a"/)
+    expect(
+      build([
+        { name: "exports", prefix: "/a", ...window },
+        { name: "exports", prefix: "/b", ...window },
+      ]),
+    ).toThrow(/duplicate tier name "exports"/)
+    expect(
+      build([
+        { prefix: ["/a", "/b"], ...window },
+        { name: "/a", prefix: "/c", ...window },
+      ]),
+    ).toThrow(/duplicate tier name "\/a"/)
+    expect(build([{ prefix: [], ...window }])).toThrow(/non-empty list/)
+    expect(build([{ prefix: ["/a", "/b/"], ...window }])).toThrow(/tier prefix "\/b\/"/)
+    for (const name of ["", "a:b", "a b"]) {
+      expect(build([{ name, prefix: "/a", ...window }])).toThrow(/rateLimitTiers: tier name/)
+    }
+  })
+
+  test("rate-limit evidence covers the routes under every listed prefix", () => {
+    const ids = (app: ReturnType<typeof server>, path: string) =>
+      app
+        .routes()
+        .find((route) => route.path === path)
+        ?.assurance?.map((item) => item.id) ?? []
+    const app = server()
+      .use(
+        rateLimitTiers({
+          store: new MemoryStore(),
+          tiers: [{ prefix: ["/api/exports", "/api/pdf"], max: 1, windowMs: 60_000 }],
+        }),
+      )
+      .get("/api/exports", () => "exports")
+      .get("/api/pdf/:id", () => "section")
+      .get("/api/other", () => "other")
+    expect(ids(app, "/api/exports")).toContain(NIFRA_ASSURANCE.RATE_LIMITED)
+    expect(ids(app, "/api/pdf/:id")).toContain(NIFRA_ASSURANCE.RATE_LIMITED)
+    expect(ids(app, "/api/other")).not.toContain(NIFRA_ASSURANCE.RATE_LIMITED)
+  })
+})
+
+describe("keyOf", () => {
+  test("names the key check charged, for an async session key and its client-IP fallback", async () => {
+    const store = recordingStore()
+    const limiter = rateLimitTiers({
+      store,
+      tiers: [
+        { name: "notes", prefix: ["/api/notes", "/api/drafts"], max: 9, windowMs: 60_000 },
+        { prefix: "/api/public", max: 9, windowMs: 60_000 },
+      ],
+      key: signedSessionKey,
+    })
+    const app = server().use(limiter)
+    const platform = { clientIp: "203.0.113.9" }
+    const session = await sessionCookie("a")
+    const cases: [string, string | undefined][] = [
+      ["/api/notes", session],
+      ["/api/drafts/1", session],
+      ["/api/notes", `${session.slice(0, -4)}0000`],
+      ["/api/public/feed", undefined],
+    ]
+    for (const [path, cookie] of cases) {
+      const request = () =>
+        new Request(`http://x${path}`, cookie === undefined ? {} : { headers: { cookie } })
+      const key = await limiter.keyOf(request(), platform)
+      await app.fetch(request(), platform)
+      expect([path, key]).toEqual([path, store.hits.at(-1)])
+    }
+    expect(store.hits).toEqual([
+      "tier:notes:session:a",
+      "tier:notes:session:a",
+      "tier:notes:203.0.113.9",
+      "tier:/api/public:203.0.113.9",
+    ])
+  })
+
+  test("is undefined when nothing would be charged, and counts nothing", async () => {
+    const store = recordingStore()
+    const floorless = rateLimitTiers({
+      store,
+      tiers: [{ prefix: "/api", max: 1, windowMs: 60_000 }],
+      skip: (req) => req.headers.has("x-probe"),
+    })
+    const platform = { clientIp: "203.0.113.9" }
+    expect(await floorless.keyOf(new Request("http://x/other"), platform)).toBeUndefined()
+    const probe = new Request("http://x/api/x", { headers: { "x-probe": "1" } })
+    expect(await floorless.keyOf(probe, platform)).toBeUndefined()
+    // No client IP and no custom key: the request would be refused, not charged.
+    expect(await floorless.keyOf(new Request("http://x/api/x"))).toBeUndefined()
+    expect(await floorless.keyOf(new Request("http://x/api/x"), platform)).toBe(
+      "tier:/api:203.0.113.9",
+    )
+    expect(store.hits).toEqual([])
+  })
+
+  test("a store pre-spent through keyOf limits the next request", async () => {
+    const store = new MemoryStore()
+    const limiter = rateLimit({ store, max: 1, windowMs: 60_000, key: () => "user-1" })
+    const app = server()
+      .use(limiter)
+      .get("/", () => "ok")
+    const key = await limiter.keyOf(new Request("http://x/"))
+    expect(key).toBe("user-1")
+    if (key !== undefined) await store.hit(key, 60_000)
+    expect((await get(app, "/")).status).toBe(429)
+  })
+})

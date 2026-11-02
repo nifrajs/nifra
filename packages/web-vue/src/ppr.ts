@@ -1,4 +1,9 @@
-import { type HoleHost, holeHost, initialHtml } from "@nifrajs/web/internal/hole-runtime"
+import {
+  type HoleHost,
+  type HoleState,
+  holeHost,
+  initialHtml,
+} from "@nifrajs/web/internal/hole-runtime"
 import {
   createSSRApp,
   defineComponent,
@@ -23,15 +28,6 @@ export interface HoleDefinition<Data> {
   readonly interactive?: boolean
 }
 
-/** The slice of a boundary state a hole reads: `ppr` marks a hole the shared shell left open, and
- * `fill` that host's refill when the page reloads. */
-interface HoleState {
-  readonly status: "unresolved" | "pending" | "ready" | "error"
-  readonly data?: unknown
-  readonly ppr?: true
-  readonly fill?: unknown
-}
-
 export interface HoleProps<Data> {
   readonly of: HoleDefinition<Data>
   readonly state: HoleState | undefined
@@ -41,7 +37,7 @@ export interface HoleProps<Data> {
 type HoleSlots = SlotsType<{ error?: () => VNodeChild }>
 
 /**
- * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+ * One `dynamic` or `shared` boundary of a partially prerendered page.
  *
  * In a shared shell the hole is an empty host Vue never fills or diffs: the PPR runtime puts the
  * server's HTML into it, and an interactive hole then hydrates as its own app from the frame's props.

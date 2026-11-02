@@ -75,7 +75,7 @@
     "name": "SETUP",
     "topic": "Nifra - Auth & sessions",
     "slug": "auth",
-    "code": "// backend/auth.ts - one session manager, created on first use so the secret is read at request time.\n// Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore } from \"@nifrajs/auth\"\n\nlet manager: ReturnType<typeof createSessions> | undefined\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret\n  store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore\n  // cookie: { secure: false },                 // local http dev only\n}))"
+    "code": "// backend/auth.ts - one session manager, created on first use so the secret is read at request time.\n// Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore } from \"@nifrajs/auth\"\n\nlet manager: ReturnType<typeof createSessions> | undefined\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret\n  store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore\n  // identity: [\"userId\", \"orgId\", \"role\"],     // the keys that say who the visitor is; unset, all of them\n  // cookie: { secure: false },                 // local http dev only\n}))"
   },
   {
     "name": "BACKEND",
@@ -186,6 +186,12 @@
     "code": "import { renderPage, unsafeInlineScript } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const nonce: string // one per response, from your CSP middleware\n\nconst page = renderPage({\n  adapter,\n  chain: [null],\n  data: null,\n  clientEntry: \"/assets/client.js\",\n  nonce, // reaches the hydration bootstrap, streamed scripts and every island tag\n  head: {\n    script: [{ content: JSON.stringify({ \"@type\": \"Article\" }) }], // inert: JSON only\n    unsafeScript: [unsafeInlineScript(\"window.dataLayer = []\", { nonce })],\n  },\n})"
   },
   {
+    "name": "NONCE_CSP_HEADER",
+    "topic": "Nifra - Framework contract",
+    "slug": "contract",
+    "code": "import { createNonceResolver, createWebApp } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const manifest: import(\"@nifrajs/web\").Manifest\n\n// A fresh nonce on every document, and nifra writes the header from that same value - on pages,\n// status pages, _error, and streamed or deferred documents - whatever rebuilds the Request in front.\nexport const app = createWebApp({\n  adapter,\n  manifest,\n  clientEntry: \"/assets/client.js\",\n  nonce: createNonceResolver(),\n  // `sources`: 'nonce-…' plus a sha256 hash per constant inline script nifra writes.\n  cspHeader: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,\n})"
+  },
+  {
     "name": "PARAM_404",
     "topic": "Nifra - Framework contract",
     "slug": "contract",
@@ -201,7 +207,7 @@
     "name": "RESPONSE_CONTROLS",
     "topic": "Nifra - Framework contract",
     "slug": "contract",
-    "code": "// routes/account.backend.ts - response headers and cookies, from a loader or an action.\nimport { t } from \"@nifrajs/schema\"\nimport { type LoaderContext, redirect } from \"@nifrajs/web\"\n\ndeclare function signIn(email: string, password: string): Promise<{ token: string } | null>\n\nexport const loaderOutput = t.object({ plan: t.string() })\nexport const actionOutput = t.object({ error: t.string() })\n\nexport async function loader(ctx: LoaderContext) {\n  // Headers land on the rendered document.\n  ctx.set.headers[\"cache-control\"] = \"public, max-age=60\"\n  ctx.set.headers[\"x-robots-tag\"] = \"noindex\"\n  return { plan: \"pro\" }\n}\n\nexport async function action(ctx: LoaderContext) {\n  const form = await ctx.request.formData()\n  const session = await signIn(String(form.get(\"email\")), String(form.get(\"password\")))\n  if (session === null) return { error: \"Wrong email or password\" }\n  // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.\n  ctx.set.cookie(\"session\", session.token, { maxAge: 60 * 60 * 24 * 7 })\n  throw redirect(\"/dashboard\") // the cookie rides the redirect\n}"
+    "code": "// routes/account.backend.ts - response headers and cookies, from a loader or an action.\nimport { t } from \"@nifrajs/schema\"\nimport { type LoaderContext, rawHref, redirect } from \"@nifrajs/web\"\n\ndeclare function signIn(email: string, password: string): Promise<{ token: string } | null>\n\nexport const loaderOutput = t.object({ plan: t.string() })\nexport const actionOutput = t.object({ error: t.string() })\n\nexport async function loader(ctx: LoaderContext) {\n  // Headers land on the rendered document.\n  ctx.set.headers[\"cache-control\"] = \"public, max-age=60\"\n  ctx.set.headers[\"x-robots-tag\"] = \"noindex\"\n  return { plan: \"pro\" }\n}\n\nexport async function action(ctx: LoaderContext) {\n  const form = await ctx.request.formData()\n  const session = await signIn(String(form.get(\"email\")), String(form.get(\"password\")))\n  if (session === null) return { error: \"Wrong email or password\" }\n  // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.\n  ctx.set.cookie(\"session\", session.token, { maxAge: 60 * 60 * 24 * 7 })\n  throw redirect(rawHref(\"/dashboard\")) // the cookie rides the redirect\n}"
   },
   {
     "name": "REUSABLE_ROUTER",
@@ -231,7 +237,13 @@
     "name": "FULL_APP",
     "topic": "Nifra - Custom server (createWebApp)",
     "slug": "custom-server",
-    "code": "import { fileURLToPath } from \"node:url\"\nimport { createCspPolicy, createWebApp, servePublicDir } from \"@nifrajs/web\"\nimport type { Manifest, RenderAdapter } from \"@nifrajs/web\"\n\n// From your build: the framework adapter, the route manifest, and what buildClient() returned.\ndeclare const adapter: RenderAdapter\ndeclare const manifest: Manifest\ndeclare const build: {\n  readonly entry: string\n  readonly assets: readonly string[]\n  readonly routes: Readonly<Record<string, readonly string[]>>\n  readonly css?: readonly string[]\n}\ndeclare const errors: { capture(error: unknown, tags: Record<string, string>): void }\n\n// buildClient({ outDir: \"dist/assets\" }) writes the chunks where their /assets/ URLs point.\nconst bundle = servePublicDir({\n  dir: fileURLToPath(new URL(\"./dist/\", import.meta.url)),\n  hashedFiles: new Set(build.assets),\n})\nconst publicFiles = servePublicDir({ dir: fileURLToPath(new URL(\"./public/\", import.meta.url)) })\n\nconst csp = createCspPolicy({\n  header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,\n})\n\nexport const app = createWebApp({\n  adapter,\n  manifest,\n  clientEntry: build.entry,\n  routePreload: build.routes,\n  styles: build.css ?? [],\n  csp,\n  server: { requestTimeoutMs: 15_000, gracefulSignals: { drainMs: 8_000 } },\n  use: (app) => {\n    app.onRequest(async (request) => (await bundle(request)) ?? (await publicFiles(request)))\n  },\n  onLoaderError: (error, { route }) => errors.capture(error, { route }),\n})\n\napp.listen(3000)"
+    "code": "import { ONE_DAY, serveStatic } from \"@nifrajs/core/serve-static\"\nimport { createCspPolicy, createWebApp } from \"@nifrajs/web\"\nimport type { Manifest, RenderAdapter } from \"@nifrajs/web\"\n\n// From your build: the framework adapter, the route manifest, and what buildClient() returned.\ndeclare const adapter: RenderAdapter\ndeclare const manifest: Manifest\ndeclare const build: {\n  readonly entry: string\n  readonly assets: readonly string[]\n  readonly routes: Readonly<Record<string, readonly string[]>>\n  readonly css?: readonly string[]\n}\ndeclare const errors: { capture(error: unknown, tags: Record<string, string>): void }\n\n// buildClient({ outDir: \"dist/assets\" }) writes the chunks where their /assets/ URLs point.\nconst files = serveStatic([\n  { dir: new URL(\"./dist/assets/\", import.meta.url), hashedFiles: build.assets, cacheControl: ONE_DAY },\n  {\n    dir: new URL(\"./public/\", import.meta.url),\n    prefix: \"/\",\n    immutable: false,\n    cacheControl: ONE_DAY,\n    fallthrough: true,\n  },\n])\n\nconst csp = createCspPolicy({\n  header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,\n})\n\nexport const app = createWebApp({\n  adapter,\n  manifest,\n  clientEntry: build.entry,\n  routePreload: build.routes,\n  styles: build.css ?? [],\n  csp,\n  server: { requestTimeoutMs: 15_000, gracefulSignals: { drainMs: 8_000 } },\n  onLoaderError: (error, { route }) => errors.capture(error, { route }),\n})\n\napp.listen(3000, { static: files })"
+  },
+  {
+    "name": "HASHED_FONTS",
+    "topic": "Nifra - Custom server (createWebApp)",
+    "slug": "custom-server",
+    "code": "import { ONE_DAY, serveStatic } from \"@nifrajs/core/serve-static\"\n\n// The fonts loadGoogleFont wrote into public/fonts/ are content-hashed; the rest of public/ is not.\nconst HASHED_FONT = /^\\/fonts\\/[\\w-]+-[0-9a-f]{16}\\.woff2$/\n\nexport const publicFiles = serveStatic({\n  dir: new URL(\"./public/\", import.meta.url),\n  prefix: \"/\",\n  hashedFiles: [HASHED_FONT],\n  cacheControl: ONE_DAY,\n  fallthrough: true,\n})"
   },
   {
     "name": "ACTION",
@@ -369,7 +381,7 @@
     "name": "GUARD",
     "topic": "Nifra - i18n",
     "slug": "i18n",
-    "code": "// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { defineI18nRouting } from \"@nifrajs/i18n/routing\"\nimport { notFound, type RouteMiddleware, redirect } from \"@nifrajs/web\"\n\nconst urls = defineI18nRouting(\n  defineLocales({ default: \"en\", locales: { en: {}, hi: {}, gu: { draft: true } } }),\n)\n\nexport const middleware: RouteMiddleware = (ctx) => {\n  const { pathname, search } = new URL(ctx.request.url)\n  const match = urls.matchSegment(ctx.params.lang, pathname + search)\n  if (match.kind === \"not-found\") notFound()\n  if (match.kind === \"redirect\") return redirect(match.location, { status: 308 })\n  return undefined\n}"
+    "code": "// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { defineI18nRouting } from \"@nifrajs/i18n/routing\"\nimport { notFound, type RouteMiddleware, rawHref, redirect } from \"@nifrajs/web\"\n\nconst urls = defineI18nRouting(\n  defineLocales({ default: \"en\", locales: { en: {}, hi: {}, gu: { draft: true } } }),\n)\n\nexport const middleware: RouteMiddleware = (ctx) => {\n  const { pathname, search } = new URL(ctx.request.url)\n  const match = urls.matchSegment(ctx.params.lang, pathname + search)\n  if (match.kind === \"not-found\") notFound()\n  if (match.kind === \"redirect\") return redirect(rawHref(match.location), { status: 308 })\n  return undefined\n}"
   },
   {
     "name": "LOCALES",
@@ -384,10 +396,22 @@
     "code": "// routes/index.backend.ts - resolve the locale + return only that catalog's messages.\nimport { negotiateLocale } from \"@nifrajs/i18n\"\nimport { t } from \"@nifrajs/schema\"\nimport { catalogs, locales } from \"../shared/catalogs\"\nimport type { Route } from \"./+types/index\"\n\n// A catalog is open-ended, so its schema is the explicit opt-out of the strict default.\nexport const loaderOutput = t.object({ locale: t.string(), messages: t.looseObject({}) })\nexport async function loader({ request }: Route.LoaderArgs) {\n  const locale = negotiateLocale(request, { locales, defaultLocale: \"en\", queryParam: \"lang\", cookie: \"lang\" })\n  return { locale, messages: catalogs[locale] }   // ?lang= → cookie → Accept-Language → default\n}"
   },
   {
+    "name": "TRANSLATED_PATHNAMES",
+    "topic": "Nifra - i18n",
+    "slug": "i18n",
+    "code": "// shared/i18n.ts - explicit STATIC pathname translations, not content or dynamic slug translation.\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { defineI18nRouting } from \"@nifrajs/i18n/routing\"\n\nconst locales = defineLocales({ default: \"en\", locales: { en: {}, fr: {}, de: {} } })\nexport const urls = defineI18nRouting(locales, {\n  pathnames: {\n    \"/about\": { fr: \"/a-propos\", de: \"/ueber-uns\" },\n    \"/contact\": { fr: \"/contactez-nous\" }, // Missing German name; availability is separate below.\n  },\n  // Always the canonical key, even when the incoming URL is /fr/contactez-nous.\n  pageLocales: (path) => path === \"/contact\" ? [\"en\", \"fr\"] : undefined,\n})\n\nurls.localizePathname(\"/about\", \"fr\") // \"/fr/a-propos\"\nurls.localizePathname(\"/fr/a-propos\", \"de\") // \"/de/ueber-uns\"\nurls.unlocalizePathname(\"/de/ueber-uns\") // { locale: \"de\", pathname: \"/about\" }\nurls.alternates(\"/fr/a-propos\").canonical // \"/fr/a-propos\"\nurls.staticPathnames() // [\"/about\", \"/fr/a-propos\", \"/de/ueber-uns\", \"/contact\", \"/fr/contactez-nous\"]"
+  },
+  {
     "name": "DIMENSIONS",
     "topic": "Nifra - images",
     "slug": "images",
     "code": "import { imageDimensions, readImageDimensions } from \"@nifrajs/image\"\n\n// Pure-JS header read - PNG / JPEG / GIF / WebP. No decode, no codec, no deps.\nconst info = await readImageDimensions(Bun.file(\"public/hero.jpg\"))\n// → { width: 1200, height: 630, format: \"jpeg\" }   (null if unrecognized)\n\n// Build-time tooling: pre-read sizes into a manifest so <Image> is CLS-safe\n// without hardcoding width/height at every call site. The sync variant takes the\n// raw header bytes you already have in memory (no file read):\nconst headerBytes = await Bun.file(\"public/hero.jpg\").bytes()\nimageDimensions(headerBytes)"
+  },
+  {
+    "name": "IMPORT_PLUGINS",
+    "topic": "Nifra - images",
+    "slug": "images",
+    "code": "// backend/framework.ts — add these beside your existing framework plugins:\nimport { imageBunPlugin } from \"@nifrajs/image/plugins\"\n\nconst images = { root: process.cwd() }\nexport const clientPlugins = [imageBunPlugin(images)]\nexport const serverPlugins = [imageBunPlugin(images)]\n\n// For the Vite pipeline instead (including component mode):\n// import { imageVitePlugin } from \"@nifrajs/image/plugins\"\n// export const vitePlugins = [imageVitePlugin(images)]"
   },
   {
     "name": "LOADERS",
@@ -468,6 +492,36 @@
     "code": "import { live } from \"@nifrajs/web/live\"\n\n// Your session lookup: a stable user id, or null for an anonymous viewer.\ndeclare function sessionUserId(request: Request): Promise<string | null>\n\nexport const liveRuntime = live({\n  secret: process.env.LIVE_SECRET, // openssl rand -base64 32; required in production\n  subject: (ctx) => sessionUserId(ctx.request),\n})"
   },
   {
+    "name": "ELYSIA",
+    "topic": "Nifra - Migrating Express, Fastify, Hono & Elysia backends",
+    "slug": "migrate-backend",
+    "code": "// Elysia\nimport { Elysia, t as elysiaT } from \"elysia\"\nconst legacy = new Elysia()\n  .get(\"/users/:id\", ({ params }) => ({ id: params.id, name: \"Ada\" }))\n  .post(\n    \"/users\",\n    ({ body }) => ({ id: crypto.randomUUID(), name: body.name }),\n    { body: elysiaT.Object({ name: elysiaT.String() }) },\n  )\n\n// Nifra\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id, name: \"Ada\" }))\n  .post(\"/users\", { body: t.looseObject({ name: t.string() }) }, (c) => {\n    return { id: crypto.randomUUID(), name: c.body.name }\n  })"
+  },
+  {
+    "name": "EXPRESS",
+    "topic": "Nifra - Migrating Express, Fastify, Hono & Elysia backends",
+    "slug": "migrate-backend",
+    "code": "// Express\nimport express from \"express\"\nconst expressApp = express()\nexpressApp.get(\"/users/:id\", (req, res) => res.json({ id: req.params.id, name: \"Ada\" }))\nexpressApp.post(\"/users\", express.json(), (req, res) =>\n  res.status(201).json({ id: crypto.randomUUID(), name: req.body.name }),\n)\n\n// Nifra\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id, name: \"Ada\" }))\n  .post(\"/users\", { body: t.looseObject({ name: t.string() }) }, (c) => {\n    c.set.status = 201\n    return { id: crypto.randomUUID(), name: c.body.name }\n  })"
+  },
+  {
+    "name": "FASTIFY",
+    "topic": "Nifra - Migrating Express, Fastify, Hono & Elysia backends",
+    "slug": "migrate-backend",
+    "code": "// Fastify\nimport Fastify from \"fastify\"\ntype UserParams = { id: string }\ntype UserBody = { name: string }\nconst fastify = Fastify()\nfastify.get<{ Params: UserParams }>(\"/users/:id\", async (request, reply) =>\n  reply.send({ id: request.params.id, name: \"Ada\" }),\n)\nfastify.post<{ Body: UserBody }>(\n  \"/users\",\n  {\n    schema: {\n      body: {\n        type: \"object\",\n        required: [\"name\"],\n        properties: { name: { type: \"string\" } },\n      },\n    },\n  },\n  async (request, reply) =>\n    reply.code(201).send({ id: crypto.randomUUID(), name: request.body.name }),\n)\n\n// Nifra\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id, name: \"Ada\" }))\n  .post(\"/users\", { body: t.looseObject({ name: t.string() }) }, (c) => {\n    c.set.status = 201\n    return { id: crypto.randomUUID(), name: c.body.name }\n  })"
+  },
+  {
+    "name": "HONO",
+    "topic": "Nifra - Migrating Express, Fastify, Hono & Elysia backends",
+    "slug": "migrate-backend",
+    "code": "// Hono\nimport { Hono } from \"hono\"\nconst legacy = new Hono()\nlegacy\n  .get(\"/users/:id\", (c) => c.json({ id: c.req.param(\"id\"), name: \"Ada\" }))\n  .post(\"/users\", async (c) => {\n    const body = await c.req.json<{ name: string }>()\n    return c.json({ id: crypto.randomUUID(), name: body.name }, 201)\n  })\n\n// Nifra\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id, name: \"Ada\" }))\n  .post(\"/users\", { body: t.looseObject({ name: t.string() }) }, (c) => {\n    c.set.status = 201\n    return { id: crypto.randomUUID(), name: c.body.name }\n  })"
+  },
+  {
+    "name": "SHARED_LOADER",
+    "topic": "Nifra - Migrating React, Preact, Solid, Vue & Svelte apps",
+    "slug": "migrate-frontend",
+    "code": "// routes/users/[id].backend.ts - server-only data work, shared by every UI adapter\nimport { t } from \"@nifrajs/schema\"\nimport { notFound } from \"@nifrajs/web\"\nimport type { Route } from \"./+types/[id]\"\n\nexport const loaderOutput = t.object({ id: t.string(), name: t.string() })\nexport const loader: Route.Loader = async ({ params, api }) => {\n  const result = await api.users({ id: params.id }).get()\n  if (!result.ok) {\n    if (result.status === 404) throw notFound()\n    throw new Error(\"User API request failed (\" + result.status + \")\")\n  }\n  return result.data\n}"
+  },
+  {
     "name": "HONO",
     "topic": "Nifra - Migrate route by route",
     "slug": "migrate-route-by-route",
@@ -475,19 +529,19 @@
   },
   {
     "name": "BACKEND",
-    "topic": "Nifra - Partial prerendering (experimental)",
+    "topic": "Nifra - Partial prerendering",
     "slug": "partial-prerendering",
     "code": "import { t } from \"@nifrajs/schema\"\nimport type { BoundaryRequestCtx } from \"@nifrajs/web\"\nimport { defineShellLoader } from \"@nifrajs/web/ppr\"\nimport type { Route } from \"./+types/[id]\"\n\nconst titles: Readonly<Record<string, string>> = { \"1\": \"Sencha\", \"2\": \"Hojicha\" }\nconst cartCount = (request: Request): number => (request.headers.has(\"cookie\") ? 2 : 0)\n\n// The shell: no request, no cookies. It is built once and shared by every visitor.\nexport const shellLoader = defineShellLoader(async ({ params }) => ({\n  title: titles[params.id ?? \"\"] ?? \"Tea\",\n}))\nexport const shellOutput = t.object({ title: t.string() })\nexport const revalidate = 60\nexport const revalidateTags = [\"catalog\"]\nexport const shellVariations = { search: { size: [\"50g\", \"100g\"] } }\n\n// The holes: each runs per request, under its own deadline.\nexport const boundaryLoaders = {\n  cart: {\n    load: (ctx: BoundaryRequestCtx) => ({ count: cartCount(ctx.request) }),\n    output: t.object({ count: t.number() }),\n  },\n} satisfies Route.BoundaryLoaders"
   },
   {
     "name": "SERVER",
-    "topic": "Nifra - Partial prerendering (experimental)",
+    "topic": "Nifra - Partial prerendering",
     "slug": "partial-prerendering",
-    "code": "import { createCspPolicy, createWebApp } from \"@nifrajs/web\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\nimport { compileShells, partialPrerendering } from \"@nifrajs/web/ppr\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\n\nconst routesDir = \"./routes\"\nconst manifest = discoverRoutes(routesDir)\n// The content-hashed client entry from your build; a shell check record is valid for it only.\nconst clientEntry = \"/assets/entry-4c5ndncr.js\"\n\n// Fails a route whose shell reaches a module that reads the visitor. That route renders whole.\nconst shellChecks = await compileShells({\n  routesDir,\n  manifest,\n  deployment: clientEntry,\n  requestScoped: (file) => file.endsWith(\"/lib/session.ts\"),\n  onFailure: (routeId, error) => console.warn(routeId, error),\n})\n\nexport const app = createWebApp({\n  adapter: reactAdapter,\n  manifest,\n  clientEntry,\n  // Hashes, not a nonce: a shell is one document for every visitor.\n  csp: createCspPolicy({\n    header: ({ sources }) => `script-src 'self' ${sources}; object-src 'none'; base-uri 'none'`,\n  }),\n  experimental: {\n    ppr: partialPrerendering({ shellChecks, origin: \"https://shop.example\" }),\n  },\n})"
+    "code": "import { createCspPolicy, createWebApp } from \"@nifrajs/web\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\nimport { compileShells, partialPrerendering } from \"@nifrajs/web/ppr\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\n\nconst routesDir = \"./routes\"\nconst manifest = discoverRoutes(routesDir)\n// The content-hashed client entry from your build; a shell check record is valid for it only.\nconst clientEntry = \"/assets/entry-4c5ndncr.js\"\n\n// Fails a route whose shell reaches a module that reads the visitor. That route renders whole.\nconst shellChecks = await compileShells({\n  routesDir,\n  manifest,\n  deployment: clientEntry,\n  requestScoped: (file) => file.endsWith(\"/lib/session.ts\"),\n  onFailure: (routeId, error) => console.warn(routeId, error),\n})\n\nexport const app = createWebApp({\n  adapter: reactAdapter,\n  manifest,\n  clientEntry,\n  // Hashes, not a nonce: a shell is one document for every visitor.\n  csp: createCspPolicy({\n    header: ({ sources }) => `script-src 'self' ${sources}; object-src 'none'; base-uri 'none'`,\n  }),\n  ppr: partialPrerendering({ shellChecks, origin: \"https://shop.example\" }),\n})"
   },
   {
     "name": "SHARED_BACKEND",
-    "topic": "Nifra - Partial prerendering (experimental)",
+    "topic": "Nifra - Partial prerendering",
     "slug": "partial-prerendering",
     "code": "import { t } from \"@nifrajs/schema\"\nimport type { ShellCtx } from \"@nifrajs/web\"\nimport type { Route } from \"./+types/[id]\"\n\nconst prices: Readonly<Record<string, string>> = { \"1\": \"$12.00\", \"2\": \"$9.50\" }\n\nexport const boundaryLoaders = {\n  // Inline, with revalidate: the build checks this loader with the shell, so its frame is stored.\n  price: {\n    load: async ({ params }: ShellCtx) => ({ amount: prices[params.id ?? \"\"] ?? \"-\" }),\n    output: t.object({ amount: t.string() }),\n    revalidate: 10,\n    revalidateTags: ({ params }) => [`price:${params.id}`],\n  },\n} satisfies Route.BoundaryLoaders"
   },
@@ -496,6 +550,12 @@
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { cache, MemoryResponseCache, prettyJson } from \"@nifrajs/middleware\"\n\n// Full response cache: pluggable store, Vary-aware keys, byte cap. Bypasses Set-Cookie and respects\n// Cache-Control (no-store/private). MemoryResponseCache is per-instance - refuses prod unless opted in.\nconst app = server()\napp.use(cache({ store: new MemoryResponseCache(), ttlMs: 30_000, vary: [\"accept-language\"] }))\napp.use(prettyJson())   // pretty-print JSON responses (size-capped; optional ?pretty query toggle)"
+  },
+  {
+    "name": "GROUPED_TIERS",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { MemoryStore, rateLimitTiers } from \"@nifrajs/middleware\"\n\nconst store = new MemoryStore()\nconst limiter = rateLimitTiers({\n  store,\n  floor: { max: 120, windowMs: 60_000 },\n  tiers: [\n    // One 30/min allowance across all three, not 30 each. The name is the bucket's\n    // store scope, so adding or removing a prefix later keeps the live counters.\n    {\n      name: \"exports\",\n      prefix: [\"/api/exports\", \"/api/reports/download\", \"/api/invoices/pdf\"],\n      max: 30,\n      windowMs: 60_000,\n    },\n  ],\n})\nconst app = server().use(limiter)\n\n// The store key a request is charged to, for a test or an ops tool: \"tier:exports:<ip>\".\nconst key = await limiter.keyOf(new Request(\"http://x/api/exports/csv\"), { clientIp: \"203.0.113.9\" })\nif (key !== undefined) await store.hit(key, 60_000) // pre-spend one hit"
   },
   {
     "name": "IDENTITY",
@@ -544,6 +604,12 @@
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { idempotency, MemoryIdempotencyStore } from \"@nifrajs/middleware\"\n\n// A retried POST with the same Idempotency-Key replays the first response instead of\n// re-running the side effect. Shared store in production (atomic claim); dev-only memory store.\nconst app = server()\napp.use(idempotency({ store: new MemoryIdempotencyStore() }))"
+  },
+  {
+    "name": "REQUEST_LOCALS",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { carryRequestLocals, requestLocal, server } from \"@nifrajs/core/server\"\n\n// One slot per value. A WeakMap<Request, T> would lose it at the first copy of the request.\nconst requestId = requestLocal<string>()\n\nconst billing = server().get(\"/invoices\", (c) => ({ requestId: requestId.get(c.req) }))\n\nexport const app = server()\n  .onRequest((req) => {\n    requestId.set(req, req.headers.get(\"x-request-id\") ?? crypto.randomUUID())\n  })\n  // The child sees a copy of the request with /billing stripped, and reads the same value.\n  .mount({ path: \"/billing\", app: billing, stripPrefix: true })\n\n// A wrapper that rebuilds the request carries the values itself. It keeps the host, which the\n// same-origin check on a form POST compares with the browser's Origin.\nexport const fetch = (req: Request): Response | Promise<Response> => {\n  const url = new URL(req.url)\n  if (!url.pathname.startsWith(\"/v1/\")) return app.fetch(req)\n  url.pathname = url.pathname.slice(\"/v1\".length)\n  const rebuilt = new Request(url.href, req)\n  carryRequestLocals(req, rebuilt)\n  return app.fetch(rebuilt)\n}"
   },
   {
     "name": "SESSION_TIERS",
@@ -609,7 +675,7 @@
     "name": "MIDDLEWARE",
     "topic": "Nifra - Routing",
     "slug": "routing",
-    "code": "// routes/account/_layout.backend.ts - runs before every page under /account\nimport { type RouteMiddleware, redirect } from \"@nifrajs/web\"\n\nexport const middleware: RouteMiddleware = ({ request, set }) => {\n  set.headers[\"cache-control\"] = \"private, no-store\"\n  const signedIn = request.headers.get(\"cookie\")?.includes(\"session=\") ?? false\n  return signedIn ? undefined : redirect(\"/login\")\n}"
+    "code": "// routes/account/_layout.backend.ts - runs before every page under /account\nimport { type RouteMiddleware, rawHref, redirect } from \"@nifrajs/web\"\n\nexport const middleware: RouteMiddleware = ({ request, set }) => {\n  set.headers[\"cache-control\"] = \"private, no-store\"\n  const signedIn = request.headers.get(\"cookie\")?.includes(\"session=\") ?? false\n  return signedIn ? undefined : redirect(rawHref(\"/login\"))\n}"
   },
   {
     "name": "ROUTE_BACKEND",
@@ -618,10 +684,16 @@
     "code": "// routes/users/[id].backend.ts - its server half\nimport { t } from \"@nifrajs/schema\"\nimport type { Route } from \"./+types/[id]\"\n\nexport const loaderOutput = t.object({ name: t.string() })\n\nexport async function loader({ params }: Route.LoaderArgs) {\n  return { name: `User ${params.id}` }\n}"
   },
   {
+    "name": "OPTIONS",
+    "topic": "Nifra - Runtime differences",
+    "slug": "runtime-differences",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { serve } from \"@nifrajs/node\"\n\n// Deno (and Bun's Host handling): the Host header and the request target are checked and resolved.\nconst app = server({ validateHost: true, normalizeTarget: true })\n\n// Node: the adapter has the same normalizeTarget switch.\nawait serve(app, { port: 3000, normalizeTarget: true })"
+  },
+  {
     "name": "BOUNDED",
     "topic": "Nifra - security & hardening",
     "slug": "security",
-    "code": "import { server } from \"@nifrajs/core/server\"\n\nconst app = server()\n\n// A schema route is ALREADY bounded - the validated read enforces `maxBodyBytes`.\n// But a raw-body / file / BYO-validation route reads the body directly, which\n// `maxBodyBytes` does not cover. `c.boundedBody` caps that read:\napp.post(\"/import\", async (c) => {\n  const bytes = await c.boundedBody(5 * 1024 * 1024) // cap THIS route at 5 MiB\n  // Over-cap throws a flat 413; a malformed Content-Length a 400 - as control-flow\n  // Responses (caught by the lifecycle like `throw redirect()`), so a handler can't\n  // accidentally ignore the cap. The over-cap length is rejected BEFORE buffering;\n  // a chunked / length-less body is aborted mid-stream once it crosses the cap.\n  return { received: bytes.byteLength } // a returned object is serialized as JSON 200\n})\n\napp.post(\"/rpc\", async (c) => {\n  const body = await c.boundedJson<{ method: string }>() // default: the server's maxBodyBytes\n  // …bad JSON → 400. Then validate `body` with your schema before trusting it.\n  return { method: body.method }\n})"
+    "code": "import { server } from \"@nifrajs/core/server\"\n\nconst app = server()\n\n// Every route is bounded, including raw-body / file / BYO-validation routes that\n// read c.req directly. Raise the route cap when this endpoint needs more than the default:\napp.post(\"/import\", { bodyLimit: 5 * 1024 * 1024 }, async (c) => {\n  const bytes = await c.req.arrayBuffer() // the direct read is capped at 5 MiB\n  // An over-cap Content-Length is rejected BEFORE buffering; chunked bodies are\n  // aborted mid-stream. Both answer a flat 413 through the request lifecycle.\n  return { received: bytes.byteLength } // a returned object is serialized as JSON 200\n})\n\napp.post(\"/rpc\", async (c) => {\n  const body = await c.boundedJson<{ method: string }>() // default: the server's maxBodyBytes\n  // …bad JSON → 400. Then validate `body` with your schema before trusting it.\n  return { method: body.method }\n})"
   },
   {
     "name": "CONTRACT_REPORTS",
@@ -639,7 +711,7 @@
     "name": "GATING",
     "topic": "Nifra - security & hardening",
     "slug": "security",
-    "code": "import { server } from \"@nifrajs/core/server\"\nimport { jwt, csrf, ipRestriction, bodyLimit } from \"@nifrajs/middleware\"\n\nconst app = server()\n  // JWT: the algorithm allowlist is REQUIRED; alg:none and RSA/HMAC confusion are rejected; exp enforced.\n  .use(jwt({ key: process.env.JWT_SECRET!, algorithms: [\"HS256\"], issuer: \"my-app\" }))\n  // Signed double-submit CSRF (HMAC) + Origin/Referer check on unsafe methods. Secret must be >= 32 bytes.\n  .use(csrf({ secret: process.env.CSRF_SECRET! }))\n  // Allow/deny by IPv4/IPv6 + CIDR, judged against c.clientIp: the socket peer, or the chain your\n  // server({ clientIp }) trust declaration names. FAILS CLOSED with no caller IP; a raw\n  // X-Forwarded-For is never believed.\n  .use(ipRestriction({ allow: [\"10.0.0.0/8\", \"::1\"] }))\n  // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a\n  // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)\n  .use(bodyLimit({ maxBytes: 1_000_000 }))"
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { jwt, csrf, ipRestriction, bodyLimit } from \"@nifrajs/middleware\"\n\nconst app = server()\n  // JWT: the algorithm allowlist is REQUIRED; alg:none and RSA/HMAC confusion are rejected; exp enforced.\n  .use(jwt({ key: process.env.JWT_SECRET!, algorithms: [\"HS256\"], issuer: \"my-app\" }))\n  // Signed double-submit CSRF (HMAC) + Origin/Referer check on unsafe methods. Secret must be >= 32 bytes.\n  .use(csrf({ secret: process.env.CSRF_SECRET! }))\n  // Allow/deny by IPv4/IPv6 + CIDR, judged against c.clientIp: the socket peer, or the chain your\n  // server({ clientIp }) trust declaration names. FAILS CLOSED with no caller IP; a raw\n  // X-Forwarded-For is never believed.\n  .use(ipRestriction({ allow: [\"10.0.0.0/8\", \"::1\"] }))\n  // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a\n  // length-less body. This is the cheap pre-filter; the route's cap on direct and\n  // framework reads is the read-time guard.\n  .use(bodyLimit({ maxBytes: 1_000_000 }))"
   },
   {
     "name": "LOGGING",

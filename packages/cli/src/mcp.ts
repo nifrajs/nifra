@@ -56,7 +56,7 @@ import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import type { AppLoader } from "./load.ts"
 import { loadMonorepoApps } from "./load.ts"
-import { delegateToProjectCli, refuseVersionSensitive } from "./mcp-delegate.ts"
+import { delegateToProjectCli, projectCliCommand, refuseVersionSensitive } from "./mcp-delegate.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
 import {
   createMcpProtocolState,
@@ -69,6 +69,7 @@ import {
   type McpTool,
   rpcError,
 } from "./mcp-protocol.ts"
+import { type McpRelay, startRelay } from "./mcp-relay.ts"
 import { loadTypesCorpus } from "./types-search.ts"
 
 export {
@@ -267,6 +268,38 @@ export async function runMcpServer(
   const state = createMcpProtocolState()
   let rootsSupported = false
   let rootsRequestPending = false
+  // The project's own CLI, serving the session once the project installs one that is not this one.
+  let relay: McpRelay | undefined
+  let takingOver: Promise<McpRelay | undefined> | undefined
+  let relayFailed: string | undefined
+  let initializeRequest: JsonRpcRequest | undefined
+  let initializedSent = false
+  const takeOver = async (connection: StdioConnection): Promise<McpRelay | undefined> => {
+    // The child asks for roots with the id this process uses, so an answer in flight is not ambiguous.
+    if (!rootState.isProject || initializeRequest === undefined || rootsRequestPending)
+      return undefined
+    const target = await projectCliCommand({
+      root: rootState.root,
+      version,
+      args: explicitDir === undefined ? [] : [requested],
+    })
+    if (target === undefined) return undefined
+    const key = `${target.cli.bin}@${target.cli.version}`
+    if (relayFailed === key) return undefined
+    const started = await startRelay({
+      command: target.command,
+      cwd,
+      env: target.env,
+      initialize: initializeRequest,
+      initialized: initializedSent,
+      send: connection.send,
+      announce: `[nifra] mcp: this server is ${version}; the project now installs @nifrajs/cli ${target.cli.version} - serving the rest of this session from ${target.cli.bin}`,
+    })
+    if (started === undefined) relayFailed = key
+    // A client that listed the old tools lists them again.
+    else connection.send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" })
+    return started
+  }
   const requestRoots = (connection: StdioConnection): void => {
     if (!rootsSupported || rootsRequestPending) return
     rootsRequestPending = true
@@ -293,6 +326,10 @@ export async function runMcpServer(
   const dispatchRootsAnswer = (message: JsonRpcResponse): boolean => {
     // The roots answer is a response to a request initiated by this server, not a client RPC request.
     // Serialize adoption with normal dispatch so a following request cannot observe a half-updated root.
+    if (relay?.alive === true) {
+      relay.answer(message)
+      return true
+    }
     if (message.id !== ROOTS_REQUEST_ID) return false
     if (!rootsRequestPending) return true
     rootsRequestPending = false
@@ -307,7 +344,19 @@ export async function runMcpServer(
     await rootsUpdate
     if (message.method === "initialize") {
       rootsSupported = clientSupportsRoots(message.params)
+      initializeRequest = message
     }
+    if (message.method === "notifications/initialized") initializedSent = true
+    // An install during the session leaves this process listing and running the tools it started with.
+    if (
+      relay === undefined &&
+      (message.method === "tools/list" || message.method === "tools/call")
+    ) {
+      takingOver ??= takeOver(connection)
+      relay = await takingOver
+      takingOver = undefined
+    }
+    if (relay?.alive === true) return relay.request(message)
     // An install during the session changes the nifra the project builds with, and this process keeps
     // the code it started with: re-read the installed version per call so no answer is for a stale one.
     if (message.method === "tools/call") drift = await detectToolingDrift(rootState.root, version)
@@ -392,6 +441,7 @@ export async function runMcpServer(
       onResponse: dispatchRootsAnswer,
     })
   } finally {
+    await relay?.close()
     closeWarmWorkers()
   }
 }

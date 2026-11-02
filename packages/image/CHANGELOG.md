@@ -1,5 +1,33 @@
 # @nifrajs/image
 
+## 5.11.0
+
+No changes in this release.
+
+## 5.10.0
+
+### Minor Changes
+
+- d2066e0: Add opt-in local `?image` metadata imports and content-hashed build-time responsive variants using the existing injectable image backends. Emit images with client, SSR and static builds, and infer imported dimensions in all five UI adapters. String image URLs retain their existing dimension requirements.
+  
+  Add explicit static translated-path mappings to i18n routing, with reciprocal URL/SEO helpers, availability-aware redirects and static-path enumeration. These mappings do not implicitly create filesystem route aliases.
+  
+  Add `vercelRuntime: "node"` for ordinary SSR Vercel builds through both bundlers, using a shared streaming Node request bridge. Vercel Edge remains the default.
+
+### Patch Changes
+
+- 535c4e5: Bound nested percent-decoding when translated pathnames are looked up, and refuse segments nested deeper than three encodings. Publish each development image asset once per build instead of re-verifying earlier ones on every import. Mark ordinary Vercel Node functions as response-streaming.
+- 0aa10d0: Publish cached and emitted image files atomically, and name the file to delete when one does not match its content hash. Keep animated images as the original instead of failing a build that resizes others. Reuse processed variants across the client and server builds. Keep image files out of the size report and write each emitted file once per build. Open source images through a pinned descriptor. Accept an absolute http(s) `publicPath` and refuse a plugin built for a different one. Answer dev requests outside the image prefix without parsing them.
+- e465ed5: Prevent check/use races in build-time and development image output. Create assets with exclusive, no-follow opens; validate and read existing content through the held descriptor; refuse swapped files/directories and bound verification reads. Add deterministic symlink-swap regressions. Fix new-file lint violations and restore imported-image resolver coverage without changing lint or coverage baselines.
+
+## 5.9.0
+
+### Patch Changes
+
+- bc42fd2: The modules a package carries as its own copy of another package's file (the static-file open helper, the agent-file generators, the Node-stream hand-off, and core's helpers inside the Node and Deno adapters) are generated from one source each, under a header naming it. No API or behavior change.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- d6e6617: More helpers that several modules of a package each defined (SHA-256 to hex, the control-character check, code-unit string order, the child-process environment allowlist, realpath with a fallback, the MCP worker's console redirect and reply line) now have one definition per package. No API change. The `git diff` that `@nifrajs/coding-agent` runs now inherits `CI` like its other child processes.
+
 ## 5.8.0
 
 No changes in this release.

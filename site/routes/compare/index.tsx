@@ -1,3 +1,4 @@
+import { href, rawHref } from "@nifrajs/web-react/router"
 import { breadcrumbs, pageMeta } from "../../shared/meta"
 
 const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
@@ -57,20 +58,21 @@ export default function CompareIndex() {
     <div className="prose">
       <h1 className="page">Nifra, compared</h1>
       <p className="lead">
-        Honest comparisons, backed by <a href="/benchmarks">reproducible benchmarks</a> that publish
-        the rows we lose. Each page says plainly where the alternative is the right choice.
+        Honest comparisons, backed by{" "}
+        <a href={href({ to: "/benchmarks" })}>reproducible benchmarks</a> that publish the rows we
+        lose. Each page says plainly where the alternative is the right choice.
       </p>
       {PAGES.map((page) => (
         <section key={page.slug}>
           <h2>
-            <a href={`/compare/${page.slug}`}>{page.title}</a>
+            <a href={rawHref(`/compare/${page.slug}`)}>{page.title}</a>
           </h2>
           <p>{page.summary}</p>
         </section>
       ))}
       <p>
         Want the single-page, capability-by-capability version instead? See{" "}
-        <a href="/docs/comparison">the comparison doc</a>.
+        <a href={href({ to: "/docs/comparison" })}>the comparison doc</a>.
       </p>
     </div>
   )

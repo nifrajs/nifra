@@ -6,35 +6,14 @@
  * identical plan + catalog + inputs yield an identical digest, which is the deterministic-eval anchor.
  */
 
-import type {
-  ArtifactPort,
-  ArtifactRef,
-  NodeEffectKey,
-  RunEvidence,
-  RunNode,
-  RunNodeKind,
-  RunPlan,
-} from "@nifrajs/agent-protocol"
+import type { ArtifactPort, RunEvidence, RunPlan } from "@nifrajs/agent-protocol"
 import { parseRunEvidence, parseRunPlan, RUN_PLAN_VERSION } from "@nifrajs/agent-protocol"
 import { type WorkflowEvent, WorkflowRunner } from "../workflows.ts"
 import { noopArtifactPort } from "./artifact-port.ts"
 import type { StepCatalog } from "./catalog.ts"
 import { compileRunPlan, digestRunPlan } from "./compile.ts"
 import { canonicalJson, sha256HexOf } from "./hash.ts"
-
-/** A verify/approve node whose output is not a pass. Other kinds never gate. */
-function isGateRejection(kind: RunNodeKind | undefined, output: unknown): boolean {
-  if (kind === "verify") {
-    if (output === true) return false
-    return !(
-      typeof output === "object" &&
-      output !== null &&
-      (output as { ok?: unknown }).ok === true
-    )
-  }
-  if (kind === "approve") return output !== true
-  return false
-}
+import { indexPlan, isGateRejection, nodeRecords } from "./plan-index.ts"
 
 export interface RunTraceOptions {
   /** Caller-supplied, so a trace is fully reproducible. No clock or randomness is read here. */
@@ -66,42 +45,14 @@ export async function runTrace(
   const planDigest = await digestRunPlan(plan)
   const artifactPort = options.artifactPort ?? noopArtifactPort()
 
-  const effectKeys = new Map<string, NodeEffectKey>()
-  const artifacts = new Map<string, ArtifactRef[]>()
-  const idempotent = new Map<string, boolean>()
-  const kindById = new Map<string, RunNodeKind>()
-  const nodeIds = new Set<string>()
-  const walk = (node: RunNode): void => {
-    nodeIds.add(node.id)
-    kindById.set(node.id, node.kind)
-    const step = "step" in node ? options.catalog.get(node.step) : undefined
-    idempotent.set(node.id, step?.selectEffect !== undefined)
-    switch (node.kind) {
-      case "sequence":
-      case "parallel":
-        for (const child of node.children) walk(child)
-        break
-      case "retry":
-        walk(node.child)
-        break
-      case "branch":
-        walk(node.then)
-        if (node.otherwise !== undefined) walk(node.otherwise)
-        break
-    }
-  }
-  for (const node of plan.nodes) walk(node)
+  const { effectKeys, artifacts, hooks } = nodeRecords()
+  const { kindById, idempotentById: idempotent, nodeIds } = indexPlan(plan, options.catalog)
 
   const step = compileRunPlan(plan, {
     catalog: options.catalog,
     planDigest,
     artifactPort,
-    onNodeEffect: (nodeId, key) => effectKeys.set(nodeId, key),
-    collectArtifact: (nodeId, ref) => {
-      const list = artifacts.get(nodeId)
-      if (list === undefined) artifacts.set(nodeId, [ref])
-      else list.push(ref)
-    },
+    ...hooks,
   })
 
   const evidence: RunEvidence[] = []

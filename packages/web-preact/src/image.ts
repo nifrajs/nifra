@@ -5,7 +5,13 @@
  * spreads `toHtmlAttrs`) and forwards any extra DOM props (`class`, `style`, `id`, `data-*`, handlers).
  * Resizing is delegated to the `loader` (an image CDN); nifra bundles no codec. No JSX (`h`).
  */
-import { type ImageLoader, type ImageProps, resolveImage, toHtmlAttrs } from "@nifrajs/image"
+import {
+  type ImageLoader,
+  type ImageProps,
+  resolveImage,
+  type StaticImageProps,
+  toHtmlAttrs,
+} from "@nifrajs/image"
 import { h, type JSX, type VNode } from "preact"
 
 /** Attributes `resolveImage` computes - callers can't override them via DOM passthrough. */
@@ -27,11 +33,14 @@ export interface ImageComponentProps
   readonly loader?: ImageLoader
 }
 
+export type StaticImageComponentProps = StaticImageProps &
+  Omit<ImageComponentProps, "src" | "width" | "height">
+
 /**
- * Render a responsive, CLS-safe `<img>`. `width`+`height` are required (reserve layout space);
+ * Render a responsive, CLS-safe `<img>`. String URLs require dimensions; asset imports infer them;
  * `priority` marks the LCP image (`eager` + `fetchpriority="high"`). Extra DOM props pass through.
  */
-export function Image(props: ImageComponentProps): VNode {
+export function Image(props: ImageComponentProps | StaticImageComponentProps): VNode {
   // Strip the nifra-only props (not valid DOM attributes) before forwarding the rest to <img>.
   const { loader, widths, quality, priority, ...rest } = props
   const attrs = toHtmlAttrs(resolveImage(props, loader))

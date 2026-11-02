@@ -13,10 +13,15 @@ import { fileURLToPath } from "node:url"
  * body that fails while it is read answers 400 instead of 500 (+120 B); 9,983 B (from 9,885) once a
  * `bigint` in a JSON answer is written as its decimal string, as on core; 10,028 B (from 9,983)
  * once a route that sets a header, cookie or status with no response hook skips the resident-body
- * record. The ceiling has headroom for honest growth; a jump past it means something big got
- * pulled in - investigate, don't just bump the number.
+ * record; 10,414 B (from 10,028) once a plain `Date` in a JSON answer is written ahead of the
+ * serializer, as on core (V8's serializer also slows at a `Date`: Deno -22% instructions on 50 Date
+ * rows); 10,566 B (from 10,489) once that writer copies only what the engine tags a plain object,
+ * and lists; 10,111 B (from 10,580) once the Date writer is gone and a `Date` is left to the serializer,
+ * which writes it as `toJSON` does; 10,085 B (from 10,060 B in the same run) with Deno's framed JSON
+ * text path, which the runtime guard leaves unused on edge. The ceiling has headroom for honest
+ * growth; a jump past it means something big got pulled in - investigate, don't just bump the number.
  */
-const CEILING_GZIP_BYTES = 10_100
+const CEILING_GZIP_BYTES = 10_200
 
 test(`self-contained bundle stays under ${CEILING_GZIP_BYTES} B gzipped`, async () => {
   const built = await Bun.build({

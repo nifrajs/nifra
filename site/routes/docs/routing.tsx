@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/routing",
@@ -46,12 +47,12 @@ export async function loader({ params }: Route.LoaderArgs) {
 }`
 
 const MIDDLEWARE = `// routes/account/_layout.backend.ts - runs before every page under /account
-import { type RouteMiddleware, redirect } from "@nifrajs/web"
+import { type RouteMiddleware, rawHref, redirect } from "@nifrajs/web"
 
 export const middleware: RouteMiddleware = ({ request, set }) => {
   set.headers["cache-control"] = "private, no-store"
   const signedIn = request.headers.get("cookie")?.includes("session=") ?? false
-  return signedIn ? undefined : redirect("/login")
+  return signedIn ? undefined : redirect(rawHref("/login"))
 }`
 
 const CATCHALL = `// routes/files/[...path].backend.ts - the page is routes/files/[...path].tsx, and together they
@@ -117,6 +118,24 @@ export async function loader({ search, api }: Route.LoaderArgs) {
   return { rows: res.ok ? res.data : [] }
 }`
 
+const LINKS = `// doc-check: skip - routes of your own app; one line per call, before and after.
+import { href, rawHref } from "@nifrajs/web-react/router"
+
+navigate(\`/users/\${id}?tab=posts\`)
+navigate(href({ to: "/users/:id", params: { id }, search: { tab: "posts" } }))
+
+<a href="/pricing">Pricing</a>
+<a href={href({ to: "/pricing" })}>Pricing</a>
+
+<Link to="/docs#install">Install</Link>
+<Link to={href({ to: "/docs", hash: "install" })}>Install</Link>
+
+throw redirect("/login")
+throw redirect(href({ to: "/login" }))
+
+navigate(cmsLink) // a same-origin path built elsewhere
+navigate(rawHref(cmsLink))`
+
 const BLOCKER = `// routes/posts/[id]/edit.tsx - don't lose a half-finished edit to a stray click.
 import { useState } from "react"
 import { useBlocker } from "@nifrajs/web-react/router"
@@ -150,7 +169,7 @@ const PREFETCH = `// A docs sidebar: each link loads as it scrolls into view.
 </nav>
 
 // React's <Link> takes it as a prop.
-<Link to="/pricing" prefetch="render">Pricing</Link>`
+<Link to={href({ to: "/pricing" })} prefetch="render">Pricing</Link>`
 
 const BREADCRUMBS = `// routes/orgs/[org]/_layout.tsx
 import type { ReactNode } from "react"
@@ -208,6 +227,37 @@ export default function Layout(props: { children?: ReactNode; boundaries?: Bound
   )
 }`
 
+const ROUTE_SLOTS = `// routes/dashboard.tsx - name the only route identities this panel may display
+import { href } from "@nifrajs/web"
+import { RouteSlot, useRouteSlot } from "@nifrajs/web-react/router"
+
+export const routeSlots = {
+  inspector: ["/users/:id"],
+  activity: ["/activity"],
+} as const
+
+export default function Dashboard() {
+  const inspector = useRouteSlot("inspector")
+  return (
+    <>
+      <button type="button" onClick={() => inspector.open(href({ to: "/users/:id", params: { id: "7" } }))}>
+        Inspect user 7
+      </button>
+      <RouteSlot name="inspector" fallback={<p>Select a user.</p>} />
+      <RouteSlot name="activity" fallback={<p>Activity is closed.</p>} />
+    </>
+  )
+}
+
+// A shareable link can open more than one panel at once.
+const dashboard = href({
+  to: "/dashboard",
+  slots: {
+    inspector: href({ to: "/users/:id", params: { id: "7" } }),
+    activity: href({ to: "/activity" }),
+  },
+})`
+
 export default function Routing() {
   return (
     <div className="prose">
@@ -250,7 +300,7 @@ export default function Routing() {
         <li>
           <code>x.backend.ts</code> beside a page or layout is its server half: <code>loader</code>,{" "}
           <code>action</code>, their output schemas, and the other server-only exports. It never
-          reaches the browser - see <a href="/docs/structure">Project structure</a>.
+          reaches the browser - see <a href={href({ to: "/docs/structure" })}>Project structure</a>.
         </li>
         <li>
           <code>_404.tsx</code> renders unmatched paths, and whatever a loader answers with{" "}
@@ -295,8 +345,13 @@ export default function Routing() {
           loader) goes straight to the new page, as does one with no eligible{" "}
           <code>_loading</code>; a change of search on the same path and a form submit keep the
           page and report <code>pending</code>. The component receives <code>pending</code> and no{" "}
-          <code>data</code>. It is a browser-only convention on every adapter - the first load of a
-          URL is a server render, where <code>defer()</code> streams the slow part.
+          <code>data</code>. React&apos;s <code>NavLink</code> widens this to a per-link signal: its{" "}
+          <code>className</code>, <code>style</code> and <code>children</code> take functions over{" "}
+          <code>{`{ isActive, isPending }`}</code>, where <code>isPending</code> is{" "}
+          <code>true</code> while a navigation into that link&apos;s own target is in flight; the
+          other adapters expose the route-level <code>pending</code> described here only. It is a
+          browser-only convention on every adapter - the first load of a URL is a server render,
+          where <code>defer()</code> streams the slow part.
         </li>
         <li>
           <code>_error.tsx</code> is the segment's <b>error boundary</b>. On the server - if a route's
@@ -325,7 +380,7 @@ export default function Routing() {
         Each page default-exports a component; an optional <code>meta</code> export drives{" "}
         <code>&lt;head&gt;</code> (applied on SSR and on client navigation). Its data comes from a{" "}
         <code>loader</code> in its <code>.backend.ts</code> half - see{" "}
-        <a href="/docs/data">Loaders &amp; actions</a>.
+        <a href={href({ to: "/docs/data" })}>Loaders &amp; actions</a>.
       </p>
       <p>
         A layout's <code>meta</code> receives its own loader's data as <code>data</code>, the value its
@@ -411,15 +466,79 @@ export default function Routing() {
         <code>[params, setParams]</code> tuple.
       </p>
       <p>
-        To WRITE search, <code>useNavigate</code> takes an object target:{" "}
-        <code>{`navigate({ to: "/reports", search: { page: 2 } })`}</code> serializes <code>search</code>{" "}
-        onto <code>to</code> (no hand-built query strings). Run <code>nifra sync-routes</code> to generate{" "}
-        <code>nifra-routes.d.ts</code> (each static route mapped to its schema output) and include it in
-        your tsconfig, and <code>search</code> becomes typed against the target route's schema - a wrong
-        shape for a known route is a compile error, while any other path takes a loose <code>search</code>.
-        Re-run it after adding a route or changing a <code>searchSchema</code>; a stale shape is a{" "}
-        <code>tsc</code> error. The plain string-path and history-delta forms
-        (<code>navigate("/about")</code>, <code>navigate(-1)</code>) are unchanged.
+        To WRITE search, build the link with <code>href</code> and hand it to <code>useNavigate</code>:{" "}
+        <code>{`navigate(href({ to: "/reports", search: { page: 2 } }))`}</code>. <code>href</code> and{" "}
+        <code>rawHref</code> are exported by every adapter's router entry (
+        <code>@nifrajs/web-&lt;framework&gt;/router</code>). <code>nifra dev</code>,{" "}
+        <code>nifra build</code>, <code>nifra check</code> and <code>nifra types</code> write{" "}
+        <code>.nifra/types/routes.d.ts</code>, which maps every route pattern to its params and its
+        schema output, and each route's generated <code>./+types</code> module loads it. So{" "}
+        <code>to</code> is one of those patterns, <code>params</code> holds that route's params, and{" "}
+        <code>search</code> is typed against its schema: a misspelt route, a missing param and a wrong
+        search shape are compile errors, and a changed <code>searchSchema</code> shows up as a{" "}
+        <code>tsc</code> error at the stale call. A route without a <code>searchSchema</code> takes any{" "}
+        <code>search</code>.
+      </p>
+      <p>
+        Each param is encoded as one path segment, so a value such as <code>a/b</code> or{" "}
+        <code>//evil.com</code> stays inside the segment and never changes where the link goes. A
+        param that is missing, empty, <code>.</code>, <code>..</code> or an unpaired surrogate throws a{" "}
+        <code>TypeError</code> naming it. <code>navigate</code> takes only an <code>href</code> result,
+        or a history delta such as <code>navigate(-1)</code>; a string or a template literal is a
+        compile error. So do React's <code>Link</code>, <code>NavLink</code> and <code>Navigate</code>{" "}
+        (<code>{`<Link to={href({ to: "/pricing" })}>`}</code>) and the server's{" "}
+        <code>redirect()</code>; when <code>to</code> is not a same-origin path,{" "}
+        <code>Link</code> and <code>NavLink</code> render the anchor without an <code>href</code>,
+        and <code>Navigate</code> and <code>setSearchParams</code> do not navigate; each logs a{" "}
+        <code>console.error</code> that names the call and never the value. <code>redirect</code>{" "}
+        takes an off-origin location with <code>{`{ external: true }`}</code>, which still refuses
+        one holding a line break. For a same-origin path built elsewhere - a CMS link,{" "}
+        <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
+        <code>/</code>, no backslash or control character) and returns the same type. A link to
+        another site is a plain <code>&lt;a href&gt;</code>. A path that comes from outside is
+        checked where it is read: <code>rawHref</code> throws a <code>TypeError</code> for one that is
+        not same-origin, so catch it at that call when a field cannot be trusted. A value that gets
+        past it as a forged <code>Href</code> costs only its own link.
+      </p>
+
+      <h2 id="typed-links">Moving existing links to href()</h2>
+      <p>
+        A link written as a string is not checked: <code>{`navigate("/pricng")`}</code> and{" "}
+        <code>{`<a href="/pricng">`}</code> compile and then 404. Moving one is mechanical.
+      </p>
+      <CodeBlock code={LINKS} lang="tsx" />
+      <p>
+        A leftover <code>navigate("/x")</code>, <code>{`<Link to="/x">`}</code> or{" "}
+        <code>redirect("/x")</code> is a compile error at the call, so <code>tsc</code> lists what is
+        left. A plain <code>{`<a href="/x">`}</code> is not an error, so search for{" "}
+        <code>{`href="/`}</code> and <code>{"href={`/"}</code> too; a link that opens another site stays
+        an <code>&lt;a href&gt;</code>. This site, the examples and the starters are held to it by a
+        test that fails on a literal internal anchor.
+      </p>
+      <p>
+        <code>nifra check</code> finds the plain anchors in your app too, and reads the route table to
+        tell two cases apart. <code>NF-C057</code> (a warning) is a path that no page, no backend route
+        and no file in <code>public/</code> serves: the link is a 404, and the message names the
+        nearest page when it is a typo away. <code>NF-C058</code> (info) is a path that is a page
+        today; the message gives the <code>href()</code> call that replaces it. A template literal such
+        as <code>{"`/users/${id}`"}</code> is judged by its shape and never reported as dead, since the
+        route it builds may live outside the file routes. Links in <code>.tsx</code>, <code>.vue</code>{" "}
+        and <code>.svelte</code> files are read. Raise, lower or silence either code with{" "}
+        <code>rules</code> in <code>nifra.config</code>, or keep one link as written with{" "}
+        <code>rawHref()</code> or <code>{"// nifra-expect NF-C058: <reason>"}</code> above the
+        attribute (<code>{"<!-- nifra-expect NF-C058: <reason> -->"}</code> above the anchor in a{" "}
+        <code>.vue</code> or <code>.svelte</code> template). A backend mounted under{" "}
+        <code>apiPrefix</code> counts as serving its paths, read from <code>backend/framework.ts</code>{" "}
+        or <code>nifra.config.ts</code>; when either holds a value <code>check</code> cannot read, no
+        link is reported dead. <code>.jsx</code> files and an <code>href</code> built by a function are
+        not read.
+      </p>
+      <p>
+        The table is a generated file, <code>.nifra/types/routes.d.ts</code>. A program in which no route
+        imports a <code>./+types/...</code> module does not load it, and <code>to</code> then accepts no
+        route at all, and <code>nifra check</code> warns. List <code>.nifra/types/routes.d.ts</code> under
+        the tsconfig <code>files</code>: the <code>**</code> globs skip a dot directory, and a{" "}
+        <code>files</code> entry is not filtered by <code>exclude</code>.
       </p>
 
       <h2>Prefetching</h2>
@@ -497,9 +616,10 @@ export default function Routing() {
           stays an ordinary page.
         </li>
         <li>
-          Back closes the modal and forward reopens it. A link inside the modal to another matching
-          URL replaces its content, and back steps through each one. Navigating anywhere else closes
-          it.
+          Back closes the modal and forward reopens it. Closing shows the page underneath as it was,
+          with its loader data and boundaries, without fetching it again; a page loaded for a
+          previous visitor loads again. A link inside the modal to another matching URL replaces its
+          content, and back steps through each one. Navigating anywhere else closes it.
         </li>
         <li>
           A reload, a shared link, or a navigation from a page outside the declaring layout or page
@@ -553,6 +673,53 @@ export default function Routing() {
           The component renders the boundary itself: it reads <code>boundaries.&lt;name&gt;</code>{" "}
           from its props and calls the boundary&apos;s <code>render</code> with the data. Every
           adapter passes <code>boundaries</code> to the layouts and the page.
+        </li>
+      </ul>
+
+      <h2 id="parallel-routes">Independently navigable route slots</h2>
+      <p>
+        An intercepted route is useful for one modal over its owning page. A dashboard with several
+        panels that open, change route, and close independently uses route slots. The page declares
+        named slots and an allowlist of route patterns for each. A slot renders that target&apos;s full
+        layout and page chain in its own component tree; each slot has separate loading and error UI.
+      </p>
+      <CodeBlock code={ROUTE_SLOTS} lang="tsx" />
+      <ul>
+        <li>
+          Generated route types constrain the slot name and target route passed to <code>href</code>.
+          At runtime, the client checks slot-only navigation against the page&apos;s registration and
+          route identity, and the server applies the same checks to direct requests. Malformed,
+          duplicate, unknown, or oversized slot state is rejected before rendering; the server
+          returns <code>400</code> for an invalid direct URL. The reserved flat query keys use the
+          form <code>slot.&lt;name&gt;=&lt;target&gt;</code>, allow at most four targets, 1,024
+          encoded characters per target, and 4,096 encoded characters total. They are removed before
+          application search parsing, while unrelated query text stays intact.
+        </li>
+        <li>
+          The server sends only the page shell. After hydration, each target loads through the normal
+          same-origin route-data request, so its middleware, gates, and loader run with the current
+          request&apos;s authorization. Target data is never embedded in the cached shell. Slot URLs
+          are inputs, never authorization grants; keep sensitive values out because URLs can appear
+          in <code>Referer</code> headers, logs, and analytics. Identity changes clear old data before
+          reauthorization. Returning focus revalidates at most once per 30 seconds while keeping
+          ready content visible, and navigation cancels stale work.
+        </li>
+        <li>
+          Opening, changing, and closing a slot create history entries; Browser Back and Forward
+          restore the previous slot URLs. Updating one slot retains sibling slots and the page&apos;s
+          own loader data; changing slot state alone does not rerun that page loader. Up to four slot
+          targets may be open at once, with bounded concurrent loading.
+        </li>
+        <li>
+          Slot content is client-rendered in this first slice: server HTML contains the fallback,
+          then hydration performs an authorized route-data fetch. This works well for overlays and
+          modals; always-visible panels incur that post-hydration request.
+        </li>
+        <li>
+          React, Preact, Solid, and Vue export <code>RouteSlot</code> and <code>useRouteSlot</code>{" "}
+          from their <code>/router</code> entry. Svelte exports <code>useRouteSlot</code> from{" "}
+          <code>@nifrajs/web-svelte/router</code> and the <code>RouteSlot</code> component from{" "}
+          <code>@nifrajs/web-svelte/route-slot</code>.
         </li>
       </ul>
 

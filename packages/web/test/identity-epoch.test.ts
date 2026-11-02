@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
-import { documentEpoch, epochOf } from "../src/identity.ts"
+import { documentEpoch, epochOf, identityChanged, onIdentityChange } from "../src/identity.ts"
 import {
   buildManifest,
   createWebApp,
@@ -10,6 +10,13 @@ import { identityEpochHook } from "../src/internal/identity-epoch.ts"
 
 const EPOCH = /^__Host-nifra-epoch=[0-9a-f]{32}; Path=\/; SameSite=Lax; Secure/
 const LOCAL_EPOCH = /^nifra-epoch=[0-9a-f]{32}; Path=\/; SameSite=Lax$/
+const IDENTITY_CHANNEL_SLOT = Symbol.for("nifra.identity.channel")
+const IDENTITY_LISTENERS_SLOT = Symbol.for("nifra.identity.listeners")
+
+function restoreGlobal(key: PropertyKey, descriptor: PropertyDescriptor | undefined): void {
+  if (descriptor === undefined) Reflect.deleteProperty(globalThis, key)
+  else Object.defineProperty(globalThis, key, descriptor)
+}
 
 // Runs the hook over one response's `Set-Cookie` lines; returns the epoch cookie it added, if any.
 const run = (
@@ -70,6 +77,145 @@ test("documentEpoch reads the cookies once per synchronous run", async () => {
   }
 })
 
+test("identityChanged runs every observer and defers observer failures", () => {
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const beforeChannel = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_CHANNEL_SLOT)
+  const beforeListeners = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_LISTENERS_SLOT)
+  const beforeQueueMicrotask = Object.getOwnPropertyDescriptor(globalThis, "queueMicrotask")
+  const queued: Array<() => void> = []
+  const seen: string[] = []
+
+  try {
+    Object.defineProperty(globalThis, "window", { value: undefined, configurable: true })
+    Reflect.deleteProperty(globalThis, IDENTITY_CHANNEL_SLOT)
+    Object.defineProperty(globalThis, IDENTITY_LISTENERS_SLOT, {
+      value: new Set<() => void>(),
+      configurable: true,
+      writable: true,
+    })
+    Object.defineProperty(globalThis, "queueMicrotask", {
+      value: (callback: () => void) => queued.push(callback),
+      configurable: true,
+      writable: true,
+    })
+
+    const stopBroken = onIdentityChange(() => {
+      seen.push("broken")
+      throw new Error("observer failed")
+    })
+    const stopHealthy = onIdentityChange(() => seen.push("healthy"))
+    identityChanged()
+
+    expect(seen).toEqual(["broken", "healthy"])
+    expect(queued).toHaveLength(1)
+    expect(() => queued[0]?.()).toThrow(AggregateError)
+    stopBroken()
+    stopHealthy()
+  } finally {
+    restoreGlobal("window", beforeWindow)
+    restoreGlobal(IDENTITY_CHANNEL_SLOT, beforeChannel)
+    restoreGlobal(IDENTITY_LISTENERS_SLOT, beforeListeners)
+    restoreGlobal("queueMicrotask", beforeQueueMicrotask)
+  }
+})
+
+test("identityChannel accepts only its fixed message and keeps same-tab updates", () => {
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const beforeBroadcastChannel = Object.getOwnPropertyDescriptor(globalThis, "BroadcastChannel")
+  const beforeChannel = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_CHANNEL_SLOT)
+  const beforeListeners = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_LISTENERS_SLOT)
+  const seen: string[] = []
+  let message: ((event: { data: unknown }) => void) | undefined
+  let unrefs = 0
+  const posted: unknown[] = []
+
+  class FakeBroadcastChannel {
+    addEventListener(_type: string, listener: (event: { data: unknown }) => void): void {
+      message = listener
+    }
+    unref(): void {
+      unrefs++
+    }
+    postMessage(value: unknown): void {
+      posted.push(value)
+    }
+    close(): void {}
+  }
+
+  try {
+    Object.defineProperty(globalThis, "window", { value: {}, configurable: true })
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+      value: FakeBroadcastChannel,
+      configurable: true,
+      writable: true,
+    })
+    Reflect.deleteProperty(globalThis, IDENTITY_CHANNEL_SLOT)
+    Object.defineProperty(globalThis, IDENTITY_LISTENERS_SLOT, {
+      value: new Set<() => void>(),
+      configurable: true,
+      writable: true,
+    })
+
+    const stop = onIdentityChange(() => seen.push("changed"))
+    message?.({ data: "untrusted" })
+    expect(seen).toEqual([])
+    message?.({ data: "changed" })
+    expect(seen).toEqual(["changed"])
+    identityChanged()
+    expect(seen).toEqual(["changed", "changed"])
+    expect(unrefs).toBe(1)
+    expect(posted).toEqual(["changed"])
+    stop()
+  } finally {
+    restoreGlobal("window", beforeWindow)
+    restoreGlobal("BroadcastChannel", beforeBroadcastChannel)
+    restoreGlobal(IDENTITY_CHANNEL_SLOT, beforeChannel)
+    restoreGlobal(IDENTITY_LISTENERS_SLOT, beforeListeners)
+  }
+})
+
+test("identityChannel closes a partially initialized channel and falls back safely", () => {
+  const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const beforeBroadcastChannel = Object.getOwnPropertyDescriptor(globalThis, "BroadcastChannel")
+  const beforeChannel = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_CHANNEL_SLOT)
+  const beforeListeners = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_LISTENERS_SLOT)
+  let closeCalls = 0
+
+  class BlockedBroadcastChannel {
+    addEventListener(): void {
+      throw new Error("channel blocked")
+    }
+    close(): void {
+      closeCalls++
+      throw new Error("close blocked")
+    }
+  }
+
+  try {
+    Object.defineProperty(globalThis, "window", { value: {}, configurable: true })
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+      value: BlockedBroadcastChannel,
+      configurable: true,
+      writable: true,
+    })
+    Reflect.deleteProperty(globalThis, IDENTITY_CHANNEL_SLOT)
+    Object.defineProperty(globalThis, IDENTITY_LISTENERS_SLOT, {
+      value: new Set<() => void>(),
+      configurable: true,
+      writable: true,
+    })
+
+    const stop = onIdentityChange(() => {})
+    expect(closeCalls).toBe(1)
+    stop()
+  } finally {
+    restoreGlobal("window", beforeWindow)
+    restoreGlobal("BroadcastChannel", beforeBroadcastChannel)
+    restoreGlobal(IDENTITY_CHANNEL_SLOT, beforeChannel)
+    restoreGlobal(IDENTITY_LISTENERS_SLOT, beforeListeners)
+  }
+})
+
 describe("the identity epoch hook", () => {
   test("a sign-in rotates the epoch with the session cookie's lifetime", () => {
     const epoch = run([
@@ -99,6 +245,125 @@ describe("the identity epoch hook", () => {
         url: "http://localhost:3000/",
       }),
     ).toBe(`nifra-epoch=${held}; Path=/; SameSite=Lax; Expires=${expires}`)
+  })
+
+  test("a cookie-mode session re-signed with the same data renews the epoch it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const signed = (data: string, expiresAt: number) =>
+      encodeURIComponent(`{"data":${data},"expiresAt":${expiresAt}}`) + `.sig${expiresAt}`
+    const renew = (data: string) =>
+      run([`nifra_session=${signed(data, 2000)}; Max-Age=600; HttpOnly; Secure`], {
+        cookie: `nifra_session=${signed('{"userId":"ada"}', 1000)}; __Host-nifra-epoch=${held}`,
+      })
+    expect(renew('{"userId":"ada"}')).toBe(
+      `__Host-nifra-epoch=${held}; Path=/; SameSite=Lax; Secure; Max-Age=600`,
+    )
+    for (const data of ['{"userId":"bob"}', "{}", '{"userId":"ada","cart":1}']) {
+      expect({ data, epoch: renew(data) }).toEqual({ data, epoch: expect.stringMatching(EPOCH) })
+      expect(renew(data)).not.toContain(held)
+    }
+  })
+
+  test("a cookie-mode session with a tag on both sides compares the tags, not the data", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const signed = (data: string, tag: string | undefined, expiresAt: number) =>
+      encodeURIComponent(
+        `{"data":${data},"expiresAt":${expiresAt}${tag === undefined ? "" : `,"tag":${tag}`}}`,
+      ) + `.sig${expiresAt}`
+    const ada = '{"userId":"ada"}'
+    const cart = '{"userId":"ada","cart":1}'
+    const t1 = '"aaaaaaaaaaaa"'
+    const t2 = '"bbbbbbbbbbbb"'
+    const cases: readonly (readonly [
+      string,
+      string,
+      string | undefined,
+      string | undefined,
+      boolean,
+    ])[] = [
+      ["the same tag over other data", cart, t1, t1, true],
+      ["another tag over the same data", ada, t1, t2, false],
+      ["a tag only after, over the same data", ada, undefined, t1, true],
+      ["a tag only before, over the same data", ada, t1, undefined, true],
+      ["a tag only after, over other data", cart, undefined, t1, false],
+      ["tags that are not strings, over other data", cart, "1", "1", false],
+    ]
+    for (const [name, after, before, now, renews] of cases) {
+      const epoch = run(
+        [`nifra_session=${signed(after, now, 2000)}; Max-Age=600; HttpOnly; Secure`],
+        {
+          cookie: `nifra_session=${signed(ada, before, 1000)}; __Host-nifra-epoch=${held}`,
+        },
+      )
+      expect({ name, renews: epoch?.startsWith(`__Host-nifra-epoch=${held};`) }).toEqual({
+        name,
+        renews,
+      })
+      expect(epoch).toMatch(EPOCH)
+    }
+  })
+
+  test("a changed value that is not a cookie-mode session rotates, whatever it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    for (const [before, after] of [
+      ['{"data":{},"expiresAt":1}', '{"data":{},"expiresAt":2}'],
+      // Unsigned, yet JSON once the last character is cut, or once leading space is trimmed.
+      ['{"data":{},"expiresAt":1}}', '{"data":{},"expiresAt":2}}'],
+      [' {"data":{},"expiresAt":1}.a', ' {"data":{},"expiresAt":2}.b'],
+      ['{"data":{}}.a', '{"data":{}}.b'],
+      ['{"data":1,"expiresAt":1}.a', '{"data":1,"expiresAt":2}.b'],
+      ["{not json.a", "{not json.b"],
+      ["tok.a", "tok.b"],
+    ] as const) {
+      const epoch = run([`nifra_session=${encodeURIComponent(after)}; Max-Age=600; HttpOnly`], {
+        cookie: `nifra_session=${encodeURIComponent(before)}; __Host-nifra-epoch=${held}`,
+      })
+      expect({ before, epoch }).toEqual({ before, epoch: expect.stringMatching(EPOCH) })
+      expect(epoch).not.toContain(held)
+    }
+  })
+
+  test("a cookie the response names as re-issued to the same visitor renews the epoch it holds", () => {
+    const held = "0123456789abcdef0123456789abcdef"
+    const vouch = (lines: readonly string[], cookie: string, renewed: string) => {
+      const headers = new Headers({ "x-nifra-identity-renewed": renewed })
+      for (const line of lines) headers.append("set-cookie", line)
+      identityEpochHook({}, false)(headers, {
+        url: "https://app.test/api/auth/session",
+        header: (name) => (name === "cookie" ? cookie : null),
+      })
+      return {
+        epoch: headers.getSetCookie().slice(lines.length)[0],
+        header: headers.get("x-nifra-identity-renewed"),
+      }
+    }
+    const token = "authjs.session-token"
+    expect(
+      vouch(
+        [`${token}=new; Max-Age=600; HttpOnly`],
+        `${token}=old; __Host-nifra-epoch=${held}`,
+        token,
+      ),
+    ).toEqual({
+      epoch: `__Host-nifra-epoch=${held}; Path=/; SameSite=Lax; Secure; Max-Age=600`,
+      header: null,
+    })
+    // It covers only the cookies it names, never a deletion or a first sign-in.
+    for (const [lines, cookie] of [
+      [
+        [`${token}=new; Max-Age=600`, "nifra_session=b; Max-Age=600"],
+        `${token}=old; nifra_session=a`,
+      ],
+      [[`${token}=; Max-Age=0`], `${token}=old`],
+      [[`${token}=new; Max-Age=600`], ""],
+    ] as const) {
+      const { epoch, header } = vouch(lines, `${cookie}; __Host-nifra-epoch=${held}`, token)
+      expect({ lines, header, rotated: epoch !== undefined && !epoch.includes(held) }).toEqual({
+        lines,
+        header: null,
+        rotated: true,
+      })
+    }
   })
 
   test("a renewal whose epoch is gone or not one nifra wrote sets a fresh one", () => {

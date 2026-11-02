@@ -50,18 +50,21 @@ export default defineAssuranceConfig({
   source: createBackend({ rows: new Map() }),
   policy: { rules: [/* ... */] },
   invariants: {
-    // Called once, before the first L4 request - never when this file is imported, so
+    // Called once per L4 run, before its first case - never when this file is imported, so
     // \`nifra check\` and \`nifra assure\` provision nothing.
     setup: async () => {
-      const rows = new Map([["row_1", { id: "row_1", owner: "fixture" }]])
+      const id = crypto.randomUUID()
+      const rows = new Map([[id, { id, owner: "fixture" }]])
       const target = createBackend({ rows })
       return {
         executor: (request) => target.fetch(request),
+        // Names the row this run created, so no executor rewrites a placeholder id.
+        witnesses: { "PATCH /rows/:id": { params: { id }, body: { title: "ok" } } },
         teardown: () => rows.clear(), // runs after a failing run too
       }
     },
-    // Known-good inputs for schemas L4 cannot synthesize (an opaque validator, a real id).
-    witnesses: { "PATCH /rows/:id": { params: { id: "row_1" }, body: { title: "ok" } } },
+    // Known-good inputs for schemas L4 cannot synthesize, when they are known up front.
+    witnesses: { "POST /rows": { body: { title: "ok" } } },
     // Attach what the app needs on every case: a session, a signed token.
     prepareRequest: (request) => {
       const headers = new Headers(request.headers)
@@ -157,9 +160,18 @@ export default function Verification() {
         <code>isRejected</code>, <code>include</code> and <code>maxMutationsPerInput</code> on{" "}
         <code>invariants</code> reach every L4 run, from <code>nifra levels</code> and the{" "}
         <code>nifra_levels</code> MCP tool alike. <code>setup</code> provisions a throwaway target only
-        when L4 runs: it is called once, before the first L4 request, and its <code>teardown</code>{" "}
-        always runs after the run, a failing one included. The example keeps its target in memory; a
-        database or container belongs in your own <code>setup</code>.
+        when L4 runs: it is called once, before the run generates its first case, and its{" "}
+        <code>teardown</code> always runs after the run, a failing one included. What a success
+        witness must name often exists only once the target is up - a real slug, a row id, a
+        signed-in session - so <code>setup</code> may return <code>witnesses</code> and{" "}
+        <code>prepareRequest</code> too. Its witnesses are merged over the static ones, a{" "}
+        <code>"METHOD /path"</code> in both taking the setup&apos;s, and validated the same way; its{" "}
+        <code>prepareRequest</code> replaces the static one. <code>nifra levels</code> lists the
+        witnesses that came from <code>setup</code> under L4, and the <code>nifra_levels</code> result
+        carries them as <code>setupWitnesses</code>. A harness that runs L4 itself merges a setup
+        result with <code>applyInvariantSetup</code> from <code>@nifrajs/core/assurance</code>. The
+        example keeps its target in memory; a database or container belongs in your own{" "}
+        <code>setup</code>.
       </p>
       <CodeBlock code={FIXTURES} lang="ts" />
 

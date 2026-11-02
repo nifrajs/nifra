@@ -32,19 +32,22 @@ import { type BodyReadState, NodeBodyRead } from "./body-read.ts"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import { jsonText } from "./generated/json-text.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
-import { type ByteRange, parseByteRange } from "./generated/range.ts"
+import { parseByteRange } from "./generated/range.ts"
+import { plainRenderHeaders } from "./generated/render-headers.ts"
 import { needsResolving, resolveDotSegments } from "./generated/request-target.ts"
 import { RESPONSE_OWNED_HEADERS } from "./generated/response-owned-headers.ts"
 import {
   CONTENT_SNAPSHOT_MAX,
   contentTags,
-  contentTypeOf,
-  ifRangeAllowsPartial,
   isHiddenPath,
-  isNotModified,
-  lastModifiedOf,
-  streamedLastModifiedOf,
+  matchStatic,
+  planStatic,
+  type ServeStaticOptions,
+  type StaticMount,
+  staticMountsOf,
 } from "./generated/static-file.ts"
+import { assertCloseArgs } from "./generated/ws-close.ts"
+import type { NifraWs, NifraWsData, WsUpgradeOutcome } from "./generated/ws-types.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 import { openResolved } from "./open-resolved.ts"
 import { writeTextFrame } from "./ws-frame.ts"
@@ -65,56 +68,6 @@ export interface FetchHandler {
     platform?: NodePlatform,
   ): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
 }
-
-// --- WebSocket types: structurally mirrored from @nifrajs/core. The adapter stays dependency-free;
-// the runtime outcome contract below is generated from core as a separate type-only artifact. ---
-
-/** A received frame, normalized: text → `string`, binary → `Uint8Array`. */
-type NifraWsData = string | Uint8Array
-
-/** The portable socket a nifra WS handler sees (mirror of core's `NifraWebSocket`). */
-interface NifraWs {
-  send(data: string | ArrayBufferView | ArrayBuffer): void
-  close(code?: number, reason?: string): void
-  readonly readyState: number
-  subscribe(topic: string): void
-  unsubscribe(topic: string): void
-  data: unknown
-  readonly raw: unknown
-}
-
-/** Mirror of core's `TopicRegistry` surface - the app's pub/sub the adapter wires `ws.subscribe` to. */
-interface WsPubSub {
-  subscribe(topic: string, ws: NifraWs): void
-  unsubscribe(topic: string, ws: NifraWs): void
-  unsubscribeAll(ws: NifraWs): void
-}
-
-/** A nifra WS route's lifecycle (mirror of core's `WebSocketHandler` - the post-upgrade callbacks). */
-interface NifraWsHandler {
-  open?(ws: NifraWs): void | Promise<void>
-  message?(ws: NifraWs, data: NifraWsData): void | Promise<void>
-  close?(ws: NifraWs, code: number, reason: string): void | Promise<void>
-  error?(ws: NifraWs, error: unknown): void | Promise<void>
-}
-
-/** Mirror of core's `WebSocketUpgradeOutcome` - what `resolveWebSocketUpgrade` returns. */
-type WsUpgradeOutcome =
-  | { readonly kind: "pass" }
-  | { readonly kind: "reject"; readonly response: Response }
-  | {
-      readonly kind: "upgrade"
-      readonly handler: NifraWsHandler
-      readonly data: unknown
-      readonly pubsub: WsPubSub
-      readonly maxPayloadBytes?: number
-      /** Builds `ws.send` with the route's outbound contract (`validateSend`). */
-      sender?(
-        handler: NifraWsHandler,
-        send: (payload: string | ArrayBufferView | ArrayBuffer) => void,
-        onError: (error: unknown) => void,
-      ): (payload: string | ArrayBufferView | ArrayBuffer) => void
-    }
 
 /** Structural view of the `ws` package's `WebSocket` (no `@types/ws` dependency - see `loadWsServer`). */
 interface WsSocket {
@@ -347,17 +300,6 @@ interface NodeResponseResult {
   }
 }
 
-/** Mirror of core's `plainRenderHeaders`: the render's own headers on top of `c.set.headers`, always
- * a fresh record when it has any, because the writers below mutate what they are handed and a
- * `status(...)` value is commonly hoisted and reused across requests. */
-function plainRenderHeaders(
-  own: Readonly<Record<string, string>> | undefined,
-  ambient: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (own === undefined) return ambient
-  return ambient === undefined ? { ...own } : { ...ambient, ...own }
-}
-
 function isResponseResult(value: unknown): value is NodeResponseResult {
   return (
     typeof value === "object" &&
@@ -489,32 +431,7 @@ const DeferringResponse = /* @__PURE__ */ (() => {
     "toResponse",
     "toNodeBody",
   ])
-  const keys: Array<string | symbol> = [
-    ...Object.getOwnPropertyNames(NativeResponse.prototype),
-    ...Object.getOwnPropertySymbols(NativeResponse.prototype),
-  ]
-  for (const key of keys) {
-    if (own.has(key)) continue
-    const descriptor = Object.getOwnPropertyDescriptor(NativeResponse.prototype, key)
-    if (descriptor === undefined) continue
-    if (typeof descriptor.value === "function") {
-      Object.defineProperty(DeferringResponse.prototype, key, {
-        configurable: true,
-        writable: true,
-        value: function (this: InstanceType<typeof DeferringResponse>, ...args: unknown[]) {
-          const real = this._real as unknown as Record<string | symbol, unknown>
-          return (real[key] as (...a: unknown[]) => unknown).apply(real, args)
-        },
-      })
-    } else if (descriptor.get !== undefined) {
-      Object.defineProperty(DeferringResponse.prototype, key, {
-        configurable: true,
-        get(this: InstanceType<typeof DeferringResponse>) {
-          return (this._real as unknown as Record<string | symbol, unknown>)[key]
-        },
-      })
-    }
-  }
+  forwardToReal(DeferringResponse.prototype, NativeResponse.prototype, own)
   Object.defineProperty(DeferringResponse.prototype, RESPONSE_RESULT, { value: true })
   Object.setPrototypeOf(DeferringResponse.prototype, NativeResponse.prototype)
   // Inherit the native statics (`Response.json` / `redirect` / `error`) so they still resolve after
@@ -738,56 +655,7 @@ function applySetToNodeHeaders(
   return out
 }
 
-/**
- * Serve static files from a directory (e.g. the client build) under a URL prefix - so a self-hosted
- * Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the
- * platform serves assets; this is for `node server.js`.)
- */
-export interface ServeStaticOptions {
-  /** Directory to read files from - an absolute path or a `file://` URL (`new URL("./assets/", import.meta.url)`). */
-  readonly dir: string | URL
-  /** URL prefix these files are served under. Default `"/assets"`. Use `"/"` to serve the whole dir. */
-  readonly prefix?: string
-  /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */
-  readonly immutable?: boolean
-  /**
-   * URL paths of the content-hashed files, such as a client build manifest's `assets`. When set,
-   * `immutable` applies only to these; any other file is sent with its validators and no
-   * `cache-control`, so a file that keeps its name across deploys still revalidates.
-   */
-  readonly hashedFiles?: Iterable<string>
-  /**
-   * `cache-control` for a file that is not served immutable (`immutable: false`, or a file outside
-   * `hashedFiles`). Unset, such a file carries only its validators.
-   */
-  readonly cacheControl?: string
-  /**
-   * URL paths (as sent, percent-encoded) of the only files this mount serves. Any other path under
-   * `prefix` passes to the next mount, then the app, without this mount touching the filesystem - so
-   * a mount over a directory that also holds the server bundle can expose just the build's listed
-   * files. A later mount over the same paths can still serve the rest.
-   */
-  readonly files?: Iterable<string>
-  /**
-   * Whether this mount may answer `pathname` (as sent, without the query) for a request addressed to
-   * `host` (its Host header). `false` passes the request on, without touching the filesystem, to the
-   * next mount and then the app - the seam a host policy uses so a host's refused file meets the
-   * app's own refusal instead of being served.
-   */
-  readonly allow?: (host: string, pathname: string) => boolean
-  /** Extra headers merged onto every served file. */
-  readonly headers?: Readonly<Record<string, string>>
-  /**
-   * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is
-   * served. Default `"deny"`: answered `404` - the same response as a missing file, so probing
-   * can't distinguish "hidden" from "absent". Dotfiles land in build output by accident, not by
-   * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.
-   * `/.well-known` is public by definition (RFC 8615) and always served, as `servePublicDir` does.
-   * The rule applies to the requested path and again to the file it resolves to, so a visible name
-   * linking to `.env` is denied too. Set `"allow"` if the directory deliberately holds dotfiles.
-   */
-  readonly dotfiles?: "deny" | "allow"
-}
+export type { HashedFiles, ServeStaticOptions } from "./generated/static-file.ts"
 
 export interface ServeOptions {
   readonly port: number
@@ -812,24 +680,42 @@ export interface ServeOptions {
   /** Use this validated authority when constructing Request.url, ignoring the inbound Host value. */
   readonly canonicalHost?: string
   /**
+   * Route a request on the path a WHATWG parser would give it. Bun and workerd deliver a parsed URL,
+   * so `/public/../admin` reaches the app as `/admin`; Node's `IncomingMessage.url` is the target as
+   * sent. Off, Node routes the text received, as most frameworks do: a guard on `/admin` does not see
+   * `/public/../admin`, and a proxy that normalizes paths before forwarding disagrees with the app
+   * about which route a request is for. On, dot segments (`.`, `..`, `%2e`), backslashes and the
+   * characters a parser percent-encodes are resolved before routing, so every runtime routes the
+   * same path. Off by default; enable it when path guards, or a path-normalizing proxy, sit in front
+   * of or inside the app. The same option as `server({ normalizeTarget })` on Deno.
+   *
+   * Off applies to requests the adapter serves from Node's own request object. A request the adapter
+   * must hand over as a Web `Request` - one a `static` callback sees, and every WebSocket upgrade -
+   * is built by the platform's URL parser, which resolves dot segments whatever this option says.
+   */
+  readonly normalizeTarget?: boolean
+  /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
-   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
-   * mirroring nifra's Bun `listen({ gracefulSignals })`. The object form is passed to `stop()`.
+   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as
+   * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.
    *
    * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap
    * are *not* set here - they live inside `app.fetch`, so they already apply through
    * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /
    * `headersTimeout` (60s) defaults.
    */
-  readonly signals?: boolean | NodeStopOptions
+  readonly gracefulSignals?: boolean | NodeStopOptions
   /**
-   * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching
-   * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on
-   * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries. An array
-   * serves several directories; the first mount whose prefix (and `files`, when set) takes a path
-   * answers it.
+   * Sees every request before the app does, so a file it answers wins over any route at the same
+   * path. It returns the file's response, or `undefined` to let the app route the request. No hook
+   * of the app runs for a request it answers. The same option as Bun's `app.listen()` and
+   * `@nifrajs/deno`'s `serve()`.
+   *
+   * {@link serveStatic} is the one to pass for files on disk: this adapter runs its mounts on Node's
+   * own request, so a request they pass on keeps the app's direct lane. Any other function needs a
+   * Web `Request` for every request, which roughly doubles the cost of a small route.
    */
-  readonly static?: ServeStaticOptions | readonly ServeStaticOptions[]
+  readonly static?: (request: Request) => Response | Promise<Response | undefined> | undefined
   /**
    * Make a hand-rolled `return new Response(body)` ride the direct-write lane, by swapping
    * `globalThis.Response` for a stand-in that defers a *simple* construction (a string body, no
@@ -873,6 +759,7 @@ const DRAIN_POLL_MS = 10
 interface HostPolicy {
   readonly allowedHosts: ReadonlySet<string> | ((host: string) => boolean) | undefined
   readonly canonicalHost: string | undefined
+  readonly normalizeTarget: boolean
 }
 
 function normalizeHostAuthority(value: string): string | undefined {
@@ -932,7 +819,7 @@ function hostPolicyOf(options: ServeOptions): HostPolicy {
   if (options.canonicalHost !== undefined && canonicalHost === undefined) {
     throw new TypeError(`@nifrajs/node: invalid canonical host ${options.canonicalHost}`)
   }
-  return { allowedHosts, canonicalHost }
+  return { allowedHosts, canonicalHost, normalizeTarget: options.normalizeTarget ?? false }
 }
 
 // Last inbound Host and what it normalized to. Normalization is pure and the value repeats for
@@ -955,7 +842,7 @@ function normalizeHostCached(value: string): string | undefined {
  * a cost a request that reads no other header would otherwise pay just for Host. `null` when Host
  * repeats: `joinDuplicateHeaders` would hand the app both authorities while this routes on one, and
  * RFC 9112 section 3.2 answers such a request 400, as Deno does. */
-function rawHost(req: IncomingMessage): string | null | undefined {
+function rawHost(req: Pick<IncomingMessage, "rawHeaders">): string | null | undefined {
   const raw = req.rawHeaders
   let host: string | undefined
   for (let i = 0; i < raw.length; i += 2) {
@@ -1053,97 +940,26 @@ function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefin
   return policy.canonicalHost ?? normalized
 }
 
-interface StaticState {
-  readonly root: string
-  readonly prefix: string // normalized: "/assets" (no trailing slash) or "/"
-  readonly immutable: boolean
-  readonly hashedFiles: ReadonlySet<string> | undefined
-  readonly cacheControl: string | undefined
-  readonly files: ReadonlySet<string> | undefined
-  readonly allow: ((host: string, pathname: string) => boolean) | undefined
-  readonly headers: Readonly<Record<string, string>> | undefined
-  readonly denyDotfiles: boolean
+/** A mount's directory as this adapter reads it. */
+function rootOf(dir: string | URL): string {
+  return resolve(typeof dir === "string" ? dir : fileURLToPath(dir))
 }
 
-function staticHeadersOf(
-  input: Readonly<Record<string, string>> | undefined,
-): Readonly<Record<string, string>> | undefined {
-  if (input === undefined) return undefined
-  const headers = Object.create(null) as Record<string, string>
-  for (const [name, value] of Object.entries(input)) headers[name.toLowerCase()] = value
-  return headers
+/** The request target as sent, without its query. */
+function staticPathOf(url: string): string {
+  const query = url.indexOf("?")
+  return query === -1 ? url : url.slice(0, query)
 }
 
-function staticStateOf(options: ServeStaticOptions): StaticState {
-  const root = resolve(typeof options.dir === "string" ? options.dir : fileURLToPath(options.dir))
-  const raw = options.prefix ?? "/assets"
-  // Index scans, not `/^\/+|\/+$/g` - the trailing-run half backtracks quadratically.
-  let from = 0
-  while (from < raw.length && raw.charCodeAt(from) === 47 /* '/' */) from++
-  let to = raw.length
-  while (to > from && raw.charCodeAt(to - 1) === 47) to--
-  const prefix = raw === "/" ? "/" : `/${raw.slice(from, to)}`
-  return {
-    root,
-    prefix,
-    immutable: options.immutable !== false,
-    hashedFiles: options.hashedFiles === undefined ? undefined : new Set(options.hashedFiles),
-    cacheControl: options.cacheControl,
-    files: options.files === undefined ? undefined : new Set(options.files),
-    allow: options.allow,
-    headers: staticHeadersOf(options.headers),
-    denyDotfiles: options.dotfiles !== "allow",
-  }
+function refusalOf(status: 400 | 403 | 404): Response {
+  return new Response(status === 400 ? "Bad Request" : status === 403 ? "Forbidden" : "Not Found", {
+    status,
+  })
 }
 
-/**
- * Resolve a request URL to a file under the served root - **synchronously**, so non-matching requests
- * stay on the app's sync fast path. Returns `"pass"` (let the app handle it), a rejection `Response`
- * (malformed encoding / NUL / `..` traversal out of root), or a confined absolute file path to read.
- */
-function staticMatch(
-  state: StaticState,
-  req: IncomingMessage,
-): "pass" | { readonly reject: Response } | { readonly file: string; readonly immutable: boolean } {
-  const rawUrl = req.url ?? "/"
-  const query = rawUrl.indexOf("?")
-  const path = query === -1 ? rawUrl : rawUrl.slice(0, query)
-  const underPrefix =
-    state.prefix === "/" ? true : path === state.prefix || path.startsWith(`${state.prefix}/`)
-  if (!underPrefix || (state.files !== undefined && !state.files.has(path))) return "pass"
-  if (state.allow !== undefined && !state.allow(rawHost(req) ?? "", path)) return "pass"
-  let rel: string
-  try {
-    rel = decodeURIComponent(state.prefix === "/" ? path : path.slice(state.prefix.length))
-  } catch {
-    return { reject: new Response("Bad Request", { status: 400 }) }
-  }
-  rel = rel.replace(/^\/+/, "")
-  if (rel === "" || rel.endsWith("/")) return "pass" // a directory request → the app decides
-  if (rel.includes("\0")) return { reject: new Response("Bad Request", { status: 400 }) }
-  // Reject traversal in the REQUEST form before it ever reaches the filesystem path join: a `..`
-  // path segment (or a backslash Windows would treat as a separator) has no legitimate use in an
-  // asset URL. Segment-precise on purpose - a filename merely CONTAINING `..` (`logo..png`) is legal.
-  // The same segment pass covers dotfiles: the check runs post-decode, so `%2E`-spelled dots are
-  // already plain `.` here. Denied dotfiles answer 404, not 403 - identical to a missing file, so
-  // probing can't distinguish "hidden" from "absent" (traversal keeps its 403: `..` is an attack
-  // shape, and there is nothing behind it to conceal).
-  const segments = rel.split("/")
-  if (segments.includes("..") || rel.includes("\\")) {
-    return { reject: new Response("Forbidden", { status: 403 }) }
-  }
-  if (state.denyDotfiles && isHiddenPath(rel)) {
-    return { reject: new Response("Not Found", { status: 404 }) }
-  }
-  const file = resolve(state.root, rel)
-  // Confine to the served directory - the resolved path must sit at or below root.
-  const contained = relative(state.root, file)
-  if (contained.startsWith("..") || isAbsolute(contained)) {
-    return { reject: new Response("Forbidden", { status: 403 }) }
-  }
-  const immutable =
-    state.immutable && (state.hashedFiles === undefined || state.hashedFiles.has(path))
-  return { file, immutable }
+/** The answer a mount gives a path it took but cannot serve, or `undefined` to pass it on. */
+function staticRefusal(mount: StaticMount, status: 403 | 404): Response | undefined {
+  return mount.fallthrough ? undefined : refusalOf(status)
 }
 
 // One per process: the tag of a file served from any mount is remembered by its real path.
@@ -1154,27 +970,8 @@ function headerOf(headers: IncomingHttpHeaders, name: string): string | null {
   return typeof value === "string" ? value : null
 }
 
-/**
- * The one range to send, `"unsatisfiable"` (416), or `undefined` to send the whole file: no header,
- * one core's parser ignores, several disjoint ranges (RFC 9110 lets a server ignore Range), or an
- * `If-Range` validator that no longer matches the file.
- */
-function staticByteRange(
-  headers: IncomingHttpHeaders,
-  size: number,
-  etag: string | undefined,
-  lastModified: number | undefined,
-): ByteRange | "unsatisfiable" | undefined {
-  const range = headers.range
-  if (typeof range !== "string") return undefined
-  if (!ifRangeAllowsPartial(headerOf(headers, "if-range"), etag, lastModified)) return undefined
-  const parsed = parseByteRange(range, size)
-  if (parsed.kind === "unsatisfiable") return "unsatisfiable"
-  return parsed.kind === "satisfiable" && parsed.ranges.length === 1 ? parsed.ranges[0] : undefined
-}
-
 // Up to this many bytes are read whole through the pinned descriptor and written in one call, with
-// no Response or stream; a larger body streams from the descriptor. The same cut as servePublicDir.
+// no Response or stream; a larger body streams from the descriptor. The same cut as Bun's reader.
 const STATIC_BUFFERED_MAX = CONTENT_SNAPSHOT_MAX
 
 /** `length` bytes of `handle` from `start`; fewer when the file shrank since its stat. */
@@ -1189,133 +986,94 @@ async function readPinned(handle: FileHandle, start: number, length: number): Pr
   return filled === length ? bytes : bytes.subarray(0, filled)
 }
 
+type StaticOutcome = Exclude<NodeServeOutcome, { readonly kind: "json" }>
+
+/**
+ * The answer for `rel` under `mount`, or `undefined` when the mount falls through on a file it cannot
+ * serve.
+ */
 async function readStatic(
-  file: string,
+  mount: StaticMount,
+  rel: string,
   immutable: boolean,
-  state: StaticState,
-  method: string,
+  method: "GET" | "HEAD",
   requestHeaders: IncomingHttpHeaders,
-): Promise<NodeServeOutcome> {
-  let handle: Awaited<ReturnType<typeof openResolved>> | undefined
+): Promise<StaticOutcome | undefined> {
+  const missing = (status: 403 | 404 = 404): StaticOutcome | undefined => {
+    const response = staticRefusal(mount, status)
+    return response === undefined ? undefined : { kind: "response", response }
+  }
+  const file = resolve(mount.root, rel)
+  // A drive or root in the decoded name (`C:/x` on Windows) leaves the directory without a `..`.
+  const contained = relative(mount.root, file)
+  if (contained.startsWith("..") || isAbsolute(contained)) return missing(403)
+  let handle: FileHandle | undefined
   try {
-    // Defense-in-depth: the lexical `..` guard in staticMatch can't catch a symlink INSIDE root that
+    // Defense-in-depth: the lexical `..` guard in matchStatic can't catch a symlink INSIDE root that
     // points outside it. Resolve first, check containment on the RESOLVED name, and open that -
     // never open the requested path and re-resolve it afterwards. A local attacker who can write
     // inside the served tree wins that ordering: swap a link between the open and the lookup and the
     // descriptor already streaming refers to an external file while the lookup answers with a
     // contained path. openResolved closes the remainder - `realpath` returned a name with no links
     // left in it, so one appearing in any component before the open is an attack, not a layout.
-    const [realFile, realRoot] = await Promise.all([realpath(file), realpath(state.root)])
+    const [realFile, realRoot] = await Promise.all([realpath(file), realpath(mount.root)])
     // A link out of root, or a visible name linking to a dotfile inside it, answers as a missing file
     // does: unlike a `..` in the request, the name exists, and a distinct status would say so.
-    if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
-      return { kind: "response", response: new Response("Not Found", { status: 404 }) }
-    }
-    if (state.denyDotfiles && isHiddenPath(realFile.slice(realRoot.length + 1))) {
-      return { kind: "response", response: new Response("Not Found", { status: 404 }) }
-    }
+    if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) return missing()
+    if (mount.denyDotfiles && isHiddenPath(realFile.slice(realRoot.length + 1))) return missing()
     const opened = await openResolved(realFile)
     handle = opened
     const stat = await opened.stat()
     if (!stat.isFile()) {
       await opened.close()
-      return { kind: "response", response: new Response("Not Found", { status: 404 }) }
+      return missing()
     }
-    const headers: Record<string, string> = { ...state.headers }
-    if (headers["cache-control"] === undefined) {
-      const cacheControl = immutable ? "public, max-age=31536000, immutable" : state.cacheControl
-      if (cacheControl !== undefined) headers["cache-control"] = cacheControl
-    }
-    const streamed = stat.size > STATIC_BUFFERED_MAX
-    const modified = streamed ? streamedLastModifiedOf(stat) : lastModifiedOf(stat)
-    // A date this reader chose for a streamed body is weak; a caller's own stays theirs to vouch for.
-    const weakDate = streamed && headers["last-modified"] === undefined
-    if (modified !== undefined) headers["last-modified"] ??= new Date(modified).toUTCString()
-    const parsedLastModified = Date.parse(headers["last-modified"] ?? "")
-    const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
-    const ifNoneMatch = headerOf(requestHeaders, "if-none-match")
-    const ifModifiedSince = headerOf(requestHeaders, "if-modified-since")
-    // The whole file, when tagging it had to read it: the response is then served from these bytes.
     let whole: Uint8Array | undefined
-    if (headers.etag === undefined && !streamed) {
-      // A HEAD or a 304 sends none of the file, so the tag remembered for this settled version
-      // answers it from the stat alone: a write since that tag would show in the stat.
-      const known = STATIC_TAGS.cached(realFile, stat)
-      if (
-        known !== undefined &&
-        (method === "HEAD" || isNotModified(ifNoneMatch, ifModifiedSince, known, lastModified))
-      ) {
-        headers.etag = known
-      } else {
-        whole = await readPinned(opened, 0, stat.size)
-        headers.etag = await STATIC_TAGS.ofSnapshot(realFile, stat, whole, () => opened.stat())
-      }
+    const plan = await planStatic(
+      mount,
+      immutable,
+      { method, header: (name) => headerOf(requestHeaders, name) },
+      {
+        path: realFile,
+        version: stat,
+        readWhole: async () => {
+          whole = await readPinned(opened, 0, stat.size)
+          return whole
+        },
+        restat: () => opened.stat(),
+        tags: STATIC_TAGS,
+        parseRange: parseByteRange,
+      },
+    )
+    if (!plan.body) {
+      await opened.close()
+      return { kind: "body", status: plan.status, headers: plan.headers, body: "" }
     }
-    // Custom validators are response headers, not decoration: compare the exact values the client saw.
-    const etag = headers.etag
-    // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
-    if (isNotModified(ifNoneMatch, ifModifiedSince, etag, lastModified)) {
-      await handle.close()
-      delete headers["content-length"]
-      delete headers["content-type"]
-      return { kind: "body", status: 304, headers, body: "" }
-    }
-    // The file served, not the name asked for: a link is typed by its target, as servePublicDir does.
-    headers["content-type"] = contentTypeOf(realFile)
-    // Never let a client sniff a served file into a more dangerous type (e.g. an .svg as active content).
-    headers["x-content-type-options"] = "nosniff"
-    headers["accept-ranges"] = "bytes"
-    // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
-    const range =
-      method === "GET"
-        ? staticByteRange(requestHeaders, stat.size, etag, weakDate ? undefined : lastModified)
-        : undefined
-    if (range === "unsatisfiable") {
-      await handle.close()
-      headers["content-range"] = `bytes */${stat.size}`
-      delete headers["content-length"]
-      delete headers["content-type"]
-      return { kind: "body", status: 416, headers, body: "" }
-    }
-    let status = 200
-    if (range !== undefined) {
-      status = 206
-      headers["content-range"] = `bytes ${range.start}-${range.end}/${stat.size}`
-      headers["content-length"] = String(range.end - range.start + 1)
-    } else {
-      headers["content-length"] = String(stat.size)
-    }
-    if (method === "HEAD") {
-      await handle.close()
-      return { kind: "body", status, headers, body: "" }
-    }
-    const start = range === undefined ? 0 : range.start
-    const length = range === undefined ? stat.size : range.end - range.start + 1
+    const { start, length, headers } = plan
     if (length <= STATIC_BUFFERED_MAX) {
       const body =
         whole === undefined
-          ? await readPinned(handle, start, length)
+          ? await readPinned(opened, start, length)
           : whole.subarray(start, start + length)
-      await handle.close()
+      await opened.close()
       headers["content-length"] = String(body.byteLength)
-      return { kind: "body", status, headers, body }
+      return { kind: "body", status: plan.status, headers, body }
     }
-    const stream =
-      range === undefined
-        ? handle.createReadStream()
-        : handle.createReadStream({ start: range.start, end: range.end })
+    // Bounded by the stat's length even for a whole file: one that grew since would overrun its
+    // content-length.
+    const stream = opened.createReadStream({ start, end: start + length - 1 })
     return {
       kind: "response",
       // Claimable rather than `Readable.toWeb`: served straight from disk to the socket when this
       // response reaches the writer untouched, and read as an ordinary Web stream by anything that
       // gets to it first (a middleware that rewrites or compresses the body, say), which refuses
       // the claim and takes the conversion instead.
-      response: new Response(claimableWebStream(stream), { status, headers }),
+      response: new Response(claimableWebStream(stream), { status: plan.status, headers }),
     }
   } catch {
     await handle?.close().catch(() => {})
-    // Missing/unreadable under the static prefix → 404 (don't fall through to an SSR 404 page).
-    return { kind: "response", response: new Response("Not Found", { status: 404 }) }
+    // Missing or unreadable under the prefix: a 404 (not an SSR 404 page), unless the mount falls through.
+    return missing()
   }
 }
 
@@ -1400,7 +1158,95 @@ function closeAfterResponses(socket: ResponseSocket): void {
   response.on("close", next)
 }
 
+const NATIVE_MOUNTS = Symbol("nifra.node.static-mounts")
+
+function nativeMountsOf(handler: object): readonly StaticMount[] | undefined {
+  const mounts: unknown = Reflect.get(handler, NATIVE_MOUNTS)
+  return Array.isArray(mounts) ? mounts : undefined
+}
+
+function staticOutcomeResponse(outcome: StaticOutcome): Response {
+  if (outcome.kind === "response") return outcome.response
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(outcome.headers ?? {})) {
+    if (typeof value === "string") headers.set(name, value)
+    else for (const item of value) headers.append(name, item)
+  }
+  const body = outcome.body === "" ? null : outcome.body
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: readStatic's bytes come from Buffer.allocUnsafe or a snapshot read, never a SharedArrayBuffer.
+  return new Response(body as string | Uint8Array<ArrayBuffer> | null, {
+    status: outcome.status,
+    headers,
+  })
+}
+
+/**
+ * Serve `path` from `mounts`, starting at `from`: the first mount that takes it answers, and one that
+ * falls through on a file it cannot serve hands it to the next. `undefined` when none takes it, so a
+ * request no mount's prefix covers never leaves the caller's synchronous lane. `request.headers` is
+ * read only once a mount takes the path: on Node's request it builds the header object.
+ */
+function serveMounts(
+  mounts: readonly StaticMount[],
+  from: number,
+  path: string,
+  host: () => string,
+  method: "GET" | "HEAD",
+  request: { readonly headers: IncomingHttpHeaders },
+): Promise<StaticOutcome | undefined> | undefined {
+  for (let i = from; i < mounts.length; i++) {
+    const mount = mounts[i]
+    if (mount === undefined) break
+    const matched = matchStatic(mount, path, host)
+    if (matched === "pass") continue
+    // matchStatic passes what a falling-through mount refuses, so a status here is always answered.
+    if ("status" in matched) {
+      return Promise.resolve({ kind: "response", response: refusalOf(matched.status) })
+    }
+    return readStatic(mount, matched.rel, matched.immutable, method, request.headers).then(
+      (outcome) => outcome ?? serveMounts(mounts, i + 1, path, host, method, request),
+    )
+  }
+  return undefined
+}
+
+/**
+ * The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the
+ * first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to
+ * {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the
+ * app on its direct lane. Called with a Web `Request`, it answers the same way. Bun's
+ * `@nifrajs/core/serve-static` and `@nifrajs/deno` take the same mounts.
+ *
+ * @example
+ * ```ts
+ * await serve(app, { port: 3000, static: serveStatic({ dir: new URL("./assets/", import.meta.url) }) })
+ * ```
+ */
+export function serveStatic(
+  mounts: ServeStaticOptions | readonly ServeStaticOptions[],
+): (request: Request) => Promise<Response | undefined> | undefined {
+  const states = staticMountsOf(mounts, rootOf)
+  const handler = (request: Request): Promise<Response | undefined> | undefined => {
+    const method = request.method
+    if (method !== "GET" && method !== "HEAD") return undefined
+    const url = new URL(request.url)
+    const headers: IncomingHttpHeaders = {}
+    for (const [name, value] of request.headers) headers[name] = value
+    // A Web request names its host in its URL; a Host header may be absent.
+    return serveMounts(states, 0, url.pathname, () => url.host, method, { headers })?.then(
+      (outcome) => (outcome === undefined ? undefined : staticOutcomeResponse(outcome)),
+    )
+  }
+  Object.defineProperty(handler, NATIVE_MOUNTS, { value: states })
+  return handler
+}
+
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
+  if ("signals" in options) {
+    throw new TypeError(
+      "[nifra/node] `signals` is now `gracefulSignals`, as on Bun's server options",
+    )
+  }
   activateAsyncContextFrame()
   enableNodeDirect(app)
   const report = errorReporterOf(app)
@@ -1422,18 +1268,29 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     options.protocol ?? (options.tls === undefined ? undefined : "https"),
   )
   const hostPolicy = hostPolicyOf(options)
-  const staticOption = options.static
-  const staticState =
-    staticOption === undefined
-      ? undefined
-      : ("dir" in staticOption ? [staticOption] : staticOption).map(staticStateOf)
+  const staticOption: unknown = options.static
+  if (staticOption !== undefined && typeof staticOption !== "function") {
+    throw new TypeError(
+      "[nifra/node] `static` takes a function; pass a directory as `static: serveStatic({ dir })`",
+    )
+  }
+  const staticState = staticOption === undefined ? undefined : nativeMountsOf(staticOption)
+  const staticHandler = staticState === undefined ? options.static : undefined
   const settled = (): void => {
     inFlight -= 1
   }
   const onRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse): void => {
     inFlight += 1
     try {
-      const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
+      const handled = handle(
+        app,
+        nodeReq,
+        nodeRes,
+        protocol,
+        staticState,
+        hostPolicy,
+        staticHandler,
+      )
       if (handled instanceof Promise) {
         // The rejection arm is required: Node terminates the process on an unhandled rejection by
         // default. Every writer already ends and reports its own failures (`failAndReport`), so
@@ -1518,7 +1375,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
 
   // Opt-in: own SIGTERM/SIGINT so `docker stop` / Ctrl-C drains in-flight requests
   // before exit. `stop` is hoisted, so `onSignal` can reference it.
-  const signals = options.signals === true ? {} : options.signals || undefined
+  const signals = options.gracefulSignals === true ? {} : options.gracefulSignals || undefined
   const onSignal = (): void => {
     void stop(signals)
   }
@@ -1596,36 +1453,13 @@ function runNodeSource(
     }
   }
 
-  const request = toWebRequest(nodeReq, protocol, host, nodeRes)
-  const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
-  if (typeof resolveNode === "function") {
-    try {
-      const outcome = resolveNode.call(app, request, platform)
-      return outcome instanceof Promise
-        ? outcome.then(
-            (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
-            (error: unknown) => failAndReport(nodeRes, error),
-          )
-        : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
-    } catch (error) {
-      failAndReport(nodeRes, error)
-      return
-    }
-  }
-
-  try {
-    const response = app.fetch(request, platform)
-    return response instanceof Promise
-      ? response.then(
-          (settled) => writeResponseSafely(settled, nodeRes, nodeReq.method),
-          (error: unknown) => failAndReport(nodeRes, error),
-        )
-      : writeResponseSafely(response, nodeRes, nodeReq.method)
-  } catch (error) {
-    // A request hook that throws escapes `fetch`; never leak a stack to the wire.
-    failAndReport(nodeRes, error)
-    return
-  }
+  return runWebRequest(
+    app,
+    toWebRequest(nodeReq, protocol, host, nodeRes),
+    nodeReq,
+    nodeRes,
+    platform,
+  )
 }
 
 /**
@@ -1637,7 +1471,7 @@ function runNodeSource(
  */
 const ABSOLUTE_FORM = /^[a-z][a-z\d+.-]*:\/\//i
 
-function resolveTarget(nodeReq: IncomingMessage): void {
+function resolveTarget(nodeReq: IncomingMessage, normalizeTarget: boolean): void {
   let target = nodeReq.url
   if (target === undefined) return
   // Absolute-form (`GET http://host/path`, RFC 9112 section 3.2.2) is routed as its origin-form path
@@ -1650,7 +1484,7 @@ function resolveTarget(nodeReq: IncomingMessage): void {
     target = rest.charCodeAt(0) === 47 ? rest : `/${rest}`
     nodeReq.url = target
   }
-  if (needsResolving(target)) nodeReq.url = resolveDotSegments(target)
+  if (normalizeTarget && needsResolving(target)) nodeReq.url = resolveDotSegments(target)
 }
 
 function handle(
@@ -1658,10 +1492,11 @@ function handle(
   nodeReq: IncomingMessage,
   nodeRes: ServerResponse,
   getProtocol: RequestProtocolResolver,
-  staticState: readonly StaticState[] | undefined,
+  staticState: readonly StaticMount[] | undefined,
   hostPolicy: HostPolicy,
+  staticHandler?: (request: Request) => Response | Promise<Response | undefined> | undefined,
 ): void | Promise<void> {
-  resolveTarget(nodeReq)
+  resolveTarget(nodeReq, hostPolicy.normalizeTarget)
   const host = requestHost(nodeReq, hostPolicy)
   if (host === undefined) {
     writeBadRequest(nodeRes)
@@ -1689,26 +1524,69 @@ function handle(
     }
   }
 
+  // A `static` function other than serveStatic's mounts takes a Web request, so the app gets the same
+  // one rather than its direct lane.
+  if (staticHandler !== undefined) {
+    const request = toWebRequest(nodeReq, protocol, host, nodeRes)
+    let answer: Response | Promise<Response | undefined> | undefined
+    try {
+      answer = staticHandler(request)
+    } catch {
+      writeInternalError(nodeRes)
+      return
+    }
+    if (answer === undefined) return runWebRequest(app, request, nodeReq, nodeRes, platform)
+    if (!(answer instanceof Promise)) return writeResponseSafely(answer, nodeRes, nodeReq.method)
+    return answer.then(
+      (response) =>
+        response === undefined
+          ? runWebRequest(app, request, nodeReq, nodeRes, platform)
+          : writeResponseSafely(response, nodeRes, nodeReq.method),
+      () => writeInternalError(nodeRes),
+    )
+  }
+
   // Static files first (GET/HEAD). The match is synchronous, so a non-asset request never leaves the
   // app's sync fast path below; only a prefix hit reads from disk (and async-writes the file).
-  if (staticState !== undefined && (nodeReq.method === "GET" || nodeReq.method === "HEAD")) {
-    for (const mount of staticState) {
-      const matched = staticMatch(mount, nodeReq)
-      if (matched === "pass") continue
-      if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
-      return readStatic(
-        matched.file,
-        matched.immutable,
-        mount,
-        nodeReq.method ?? "GET",
-        nodeReq.headers,
-      ).then(
-        (outcome) => writeOutcomeSafely(outcome, nodeRes, nodeReq.method),
+  const method = nodeReq.method
+  if (staticState !== undefined && (method === "GET" || method === "HEAD")) {
+    let served: Promise<StaticOutcome | undefined> | undefined
+    try {
+      served = serveMounts(
+        staticState,
+        0,
+        staticPathOf(nodeReq.url ?? "/"),
+        // The host the app sees, as the Web lane's URL carries it.
+        () => host,
+        method,
+        nodeReq,
+      )
+    } catch {
+      writeInternalError(nodeRes)
+      return
+    }
+    if (served !== undefined) {
+      return served.then(
+        (outcome) =>
+          outcome === undefined
+            ? toApp(app, nodeReq, nodeRes, protocol, host, platform)
+            : writeOutcomeSafely(outcome, nodeRes, method),
         () => failWrite(nodeRes),
       )
     }
   }
+  return toApp(app, nodeReq, nodeRes, protocol, host, platform)
+}
 
+/** The app's answer for a request no static mount took. */
+function toApp(
+  app: FetchHandler,
+  nodeReq: IncomingMessage,
+  nodeRes: ServerResponse,
+  protocol: RequestProtocol,
+  host: string,
+  platform: NodePlatform | undefined,
+): void | Promise<void> {
   // A mounted handler may advertise a native Node lane. Core has already checked route precedence
   // and every global lifecycle gate before returning this selection. The handler writes directly to
   // `nodeRes`; `false` means its optional transport was unavailable, so the same untouched source
@@ -1762,7 +1640,23 @@ function handle(
     return runNodeSource(app, nodeSource, nodeReq, nodeRes, protocol, host, platform)
   }
 
-  const request = toWebRequest(nodeReq, protocol, host, nodeRes)
+  return runWebRequest(
+    app,
+    toWebRequest(nodeReq, protocol, host, nodeRes),
+    nodeReq,
+    nodeRes,
+    platform,
+  )
+}
+
+/** Answer through a Web `Request`: the app's `resolveNode` lane when it has one, else `fetch`. */
+function runWebRequest(
+  app: FetchHandler,
+  request: Request,
+  nodeReq: IncomingMessage,
+  nodeRes: ServerResponse,
+  platform: NodePlatform | undefined,
+): void | Promise<void> {
   const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
   if (typeof resolveNode === "function") {
     try {
@@ -2134,7 +2028,8 @@ function toWebRequest(
 ): Request {
   const url = `${protocol}://${host}${req.url ?? "/"}`
   const method = req.method ?? "GET"
-  return makeWebRequest(req, method, url, headerRecordFromNode(req.headers), undefined, res)
+  const signal = res === undefined ? undefined : disconnectSignal(res)
+  return makeWebRequest(req, method, url, headerRecordFromNode(req.headers), undefined, signal)
 }
 
 function toNodeRequestSource(
@@ -2217,28 +2112,17 @@ function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
   )
 }
 
-/**
- * Lazy view over a Node `IncomingMessage`. Methods live on the prototype (not re-allocated per
- * request), and every materialization is deferred: the `Headers` object, the Web `ReadableStream`
- * body, and the undici `Request` are each built only when first read. Body-capable methods use this
- * source; GET/HEAD use the smaller {@link LeanNodeGetSource}.
- */
-class LazyNodeRequestSource implements NodeRequestSource {
+/** What both Node request sources read straight off `IncomingMessage`: URL, URL parts, headers. */
+abstract class NodeSourceBase {
   readonly method: string
 
-  private headersValue: Headers | undefined
-  private bodyValue: ReadableStream<Uint8Array> | null | undefined
-  private requestValue: Request | undefined
-  private consumedBody: Buffer | undefined
-  private bodyRead: BodyReadState | undefined
-  private readBodyPromise: Promise<Buffer> | undefined
-  private mappedRead: Promise<unknown> | undefined
-  private rawReaders: NodeRawBodyReaders | undefined
+  protected headersValue: Headers | undefined
+  protected requestValue: Request | undefined
   private urlValue: string | undefined
-  private readonly nodeReq: IncomingMessage
+  protected readonly nodeReq: IncomingMessage
   private readonly protocol: RequestProtocol
   private readonly host: string
-  private readonly nodeRes: ServerResponse
+  protected readonly nodeRes: ServerResponse
 
   constructor(
     nodeReq: IncomingMessage,
@@ -2274,6 +2158,21 @@ class LazyNodeRequestSource implements NodeRequestSource {
   header(name: string): string | null {
     return nodeRequestHeader(this.nodeReq, name)
   }
+}
+
+/**
+ * Lazy view over a Node `IncomingMessage`. Methods live on the prototype (not re-allocated per
+ * request), and every materialization is deferred: the `Headers` object, the Web `ReadableStream`
+ * body, and the undici `Request` are each built only when first read. Body-capable methods use this
+ * source; GET/HEAD use the smaller {@link LeanNodeGetSource}.
+ */
+class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource {
+  private bodyValue: ReadableStream<Uint8Array> | null | undefined
+  private consumedBody: Buffer | undefined
+  private bodyRead: BodyReadState | undefined
+  private readBodyPromise: Promise<Buffer> | undefined
+  private mappedRead: Promise<unknown> | undefined
+  private rawReaders: NodeRawBodyReaders | undefined
 
   get body(): ReadableStream<Uint8Array> | null {
     if (this.method === "GET" || this.method === "HEAD") return null
@@ -2381,7 +2280,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
       this.method,
       this.url,
       () => this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
-      (headers) => {
+      (headers, signal) => {
         if (this.consumedBody !== undefined) {
           const real = makeWebRequest(
             this.nodeReq,
@@ -2389,7 +2288,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
             this.url,
             headers,
             this.consumedBody,
-            this.nodeRes,
+            signal,
           )
           // Preserve one-shot body semantics if user code asks for `c.req` after nifra already
           // consumed it.
@@ -2411,7 +2310,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
               this.url,
               headers,
               new ReadableStream<Uint8Array>(),
-              this.nodeRes,
+              signal,
             )
             const standIn = real.body
             if (disturbed) void standIn?.cancel()
@@ -2419,8 +2318,9 @@ class LazyNodeRequestSource implements NodeRequestSource {
             return real
           }
         }
-        return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, this.nodeRes)
+        return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, signal)
       },
+      this.nodeRes,
     ) as unknown as Request
     return this.requestValue
   }
@@ -2484,50 +2384,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
  * GET/HEAD requests dominate API reads and never carry a body. This source keeps that path lean while
  * preserving the full Web `Request` escape hatch if user code reads `c.req`/`c.request`.
  */
-class LeanNodeGetSource implements NodeRequestSource {
-  readonly method: string
-
-  private headersValue: Headers | undefined
-  private requestValue: Request | undefined
-  private urlValue: string | undefined
-  private readonly nodeReq: IncomingMessage
-  private readonly protocol: RequestProtocol
-  private readonly host: string
-  private readonly nodeRes: ServerResponse
-
-  constructor(
-    nodeReq: IncomingMessage,
-    method: string,
-    protocol: RequestProtocol,
-    host: string,
-    nodeRes: ServerResponse,
-  ) {
-    this.nodeReq = nodeReq
-    this.method = method
-    this.protocol = protocol
-    this.host = host
-    this.nodeRes = nodeRes
-  }
-
-  /** The absolute URL, built only when something reads it - routing uses `urlParts` instead. */
-  get url(): string {
-    this.urlValue ??= `${this.protocol}://${this.host}${this.nodeReq.url ?? "/"}`
-    return this.urlValue
-  }
-
-  get urlParts(): { pathname: string; search: string } {
-    return originUrlParts(this.nodeReq.url ?? "/")
-  }
-
-  get headers(): Headers {
-    this.headersValue ??= headersFromNode(this.nodeReq.headers)
-    return this.headersValue
-  }
-
-  header(name: string): string | null {
-    return nodeRequestHeader(this.nodeReq, name)
-  }
-
+class LeanNodeGetSource extends NodeSourceBase implements NodeRequestSource {
   get body(): null {
     return null
   }
@@ -2545,7 +2402,9 @@ class LeanNodeGetSource implements NodeRequestSource {
       this.method,
       this.url,
       () => this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
-      (headers) => makeWebRequest(this.nodeReq, this.method, this.url, headers, null, this.nodeRes),
+      (headers, signal) =>
+        makeWebRequest(this.nodeReq, this.method, this.url, headers, null, signal),
+      this.nodeRes,
     ) as unknown as Request
     return this.requestValue
   }
@@ -2602,25 +2461,28 @@ function headerPairsFromNode(input: IncomingHttpHeaders): Array<[string, string]
   return pairs
 }
 
+/** A request's `signal`: it aborts when the client goes away before the response finished, as on Bun
+ * and Deno. */
+function disconnectSignal(res: RequestEnd): AbortSignal {
+  const disconnect = new AbortController()
+  const onClose = (): void => {
+    if (!res.writableFinished) disconnect.abort()
+  }
+  if (res.closed) onClose()
+  else res.once("close", onClose)
+  return disconnect.signal
+}
+
 function makeWebRequest(
   req: IncomingMessage,
   method: string,
   url: string,
   headers: Headers | NodeHeaderInit,
   body?: ReadableStream<Uint8Array> | Uint8Array | null,
-  res?: RequestEnd,
+  signal?: AbortSignal,
 ): Request {
   const init: RequestInit & { duplex?: "half" } = { method, headers }
-  if (res !== undefined) {
-    // `signal` aborts when the client goes away before the response finished, as on Bun and Deno.
-    const disconnect = new AbortController()
-    init.signal = disconnect.signal
-    const onClose = (): void => {
-      if (!res.writableFinished) disconnect.abort()
-    }
-    if (res.closed) onClose()
-    else res.once("close", onClose)
-  }
+  if (signal !== undefined) init.signal = signal
   if (method !== "GET" && method !== "HEAD") {
     // Stream the body in; `duplex: "half"` is required for a streamed request body.
     init.body =
@@ -2635,9 +2497,9 @@ function makeWebRequest(
  * its internal URL parse alone showed at ~2.4% of a realistic request - yet most consumers of
  * `c.req` (and of the `req` argument Web hooks receive) only ever read `method`, `url`, or a
  * header. This class serves those three from what the adapter already has, materializes one real
- * `Headers` on first `headers` access, and defers the full undici `Request` until something
- * actually needs the rest of the surface (body readers, `signal`, `clone`, ...), forwarding to it
- * from then on. The prototype chains to the native `Request`, so `instanceof Request` holds and
+ * `Headers` on first `headers` access, builds `signal` from the response's close, and defers the full
+ * undici `Request` until something needs the rest of the surface (body readers, `clone`, ...),
+ * forwarding to it from then on. The prototype chains to the native `Request`, so `instanceof Request` holds and
  * every forwarded member runs with a genuine receiver. The `url` is ALWAYS the adapter's own
  * derivation (the declared protocol trust) - never re-derived here.
  */
@@ -2647,20 +2509,24 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
     #method: string
     #url: string
     #headersInit: (() => Headers | NodeHeaderInit) | undefined
-    #materialize: ((headers: Headers | NodeHeaderInit) => Request) | undefined
+    #materialize: ((headers: Headers | NodeHeaderInit, signal: AbortSignal) => Request) | undefined
+    #end: RequestEnd
     #headers: Headers | undefined
+    #signal: AbortSignal | undefined
     #real: Request | undefined
 
     constructor(
       method: string,
       url: string,
       headersInit: () => Headers | NodeHeaderInit,
-      materialize: (headers: Headers | NodeHeaderInit) => Request,
+      materialize: (headers: Headers | NodeHeaderInit, signal: AbortSignal) => Request,
+      end: RequestEnd,
     ) {
       this.#method = method
       this.#url = url
       this.#headersInit = headersInit
       this.#materialize = materialize
+      this.#end = end
     }
 
     get method(): string {
@@ -2682,14 +2548,25 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
       return this.#headers
     }
 
+    // A page render reads it for every document, so it must not build the real request. That one,
+    // once built, follows this signal, and reading it keeps returning this one.
+    get signal(): AbortSignal {
+      this.#signal ??= disconnectSignal(this.#end)
+      return this.#signal
+    }
+
     /** The real undici Request, built on first demand. Named for the forwarding descriptors below. */
     get _real(): Request {
       if (this.#real === undefined) {
-        const materialize = this.#materialize as (h: Headers | NodeHeaderInit) => Request
+        const materialize = this.#materialize as (
+          h: Headers | NodeHeaderInit,
+          signal: AbortSignal,
+        ) => Request
         // Hand the materializer the SAME Headers a hook may already have observed (and mutated),
         // so the real request reflects it; otherwise let it build from its own cheap record.
         this.#real = materialize(
           this.#headers ?? (this.#headersInit as () => Headers | NodeHeaderInit)(),
+          this.signal,
         )
         this.#headersInit = undefined
         this.#materialize = undefined
@@ -2701,36 +2578,40 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
   // Forward every other Request member to the lazily materialized real request. Data properties
   // (e.g. Symbol.toStringTag) are reachable through the chained prototype without a brand check,
   // so only accessors and methods need explicit forwarding.
-  const own = new Set<string | symbol>(["constructor", "method", "url", "headers"])
-  const keys: Array<string | symbol> = [
-    ...Object.getOwnPropertyNames(NativeRequest.prototype),
-    ...Object.getOwnPropertySymbols(NativeRequest.prototype),
-  ]
-  for (const key of keys) {
+  const own = new Set<string | symbol>(["constructor", "method", "url", "headers", "signal"])
+  forwardToReal(LazyWebRequest.prototype, NativeRequest.prototype, own)
+  Object.setPrototypeOf(LazyWebRequest.prototype, NativeRequest.prototype)
+  return LazyWebRequest
+})()
+
+/** Forward each method and accessor of `native` that `own` does not name to the instance's `_real`. */
+function forwardToReal(prototype: object, native: object, own: ReadonlySet<string | symbol>): void {
+  for (const key of [
+    ...Object.getOwnPropertyNames(native),
+    ...Object.getOwnPropertySymbols(native),
+  ]) {
     if (own.has(key)) continue
-    const descriptor = Object.getOwnPropertyDescriptor(NativeRequest.prototype, key)
+    const descriptor = Object.getOwnPropertyDescriptor(native, key)
     if (descriptor === undefined) continue
     if (typeof descriptor.value === "function") {
-      Object.defineProperty(LazyWebRequest.prototype, key, {
+      Object.defineProperty(prototype, key, {
         configurable: true,
         writable: true,
-        value: function (this: InstanceType<typeof LazyWebRequest>, ...args: unknown[]) {
-          const real = this._real as unknown as Record<string | symbol, unknown>
+        value: function (this: { readonly _real: unknown }, ...args: unknown[]) {
+          const real = this._real as Record<string | symbol, unknown>
           return (real[key] as (...a: unknown[]) => unknown).apply(real, args)
         },
       })
     } else if (descriptor.get !== undefined) {
-      Object.defineProperty(LazyWebRequest.prototype, key, {
+      Object.defineProperty(prototype, key, {
         configurable: true,
-        get(this: InstanceType<typeof LazyWebRequest>) {
-          return (this._real as unknown as Record<string | symbol, unknown>)[key]
+        get(this: { readonly _real: unknown }) {
+          return (this._real as Record<string | symbol, unknown>)[key]
         },
       })
     }
   }
-  Object.setPrototypeOf(LazyWebRequest.prototype, NativeRequest.prototype)
-  return LazyWebRequest
-})()
+}
 
 /** A writable end whose backpressure can be awaited: a response, or an upgrade socket answered as one. */
 interface DrainTarget {
@@ -3018,30 +2899,6 @@ type WsServerCtor = new (options: { noServer: true; maxPayload?: number }) => Ws
  * `@types/ws` dependency here (the surface is structurally typed via {@link WsServer}/{@link WsSocket}). */
 const WS_MODULE_SPECIFIER = "ws"
 
-/** Node copy of core's `assertCloseArgs`: a close RFC 6455 forbids throws a `RangeError` before `ws`
- * sees it. `ws` marks the socket closing before it checks the code, so a refused close left the socket
- * half-open: its later sends dropped and the peer's close never answered. */
-function assertCloseArgs(code: number | undefined, reason: string | undefined): void {
-  if (code === undefined) {
-    if (reason !== undefined && reason !== "")
-      throw new RangeError("ws.close(): a reason needs a code")
-    return
-  }
-  if (
-    !Number.isInteger(code) ||
-    !(
-      (code >= 1000 && code <= 1003) ||
-      (code >= 1007 && code <= 1014) ||
-      (code >= 3000 && code <= 4999)
-    )
-  )
-    throw new RangeError(
-      `ws.close(): ${code} is not a code a server may send (1000-1003, 1007-1014, 3000-4999)`,
-    )
-  if (reason !== undefined && Buffer.byteLength(reason) > 123)
-    throw new RangeError("ws.close(): the reason is over 123 UTF-8 bytes")
-}
-
 /** Lazily build a noServer `ws` `WebSocketServer`, or `undefined` if `ws` isn't installed. */
 async function loadWsServer(maxPayloadBytes?: number): Promise<WsServer | undefined> {
   try {
@@ -3093,7 +2950,7 @@ async function handleUpgrade(
 ): Promise<void> {
   // A peer can reset the socket while the guard is awaited; with no listener that error ends the process.
   socket.on("error", ignoreSocketError)
-  resolveTarget(nodeReq)
+  resolveTarget(nodeReq, hostPolicy.normalizeTarget)
   let outcome: WsUpgradeOutcome
   let request: Request
   let platform: NodePlatform | undefined

@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/auth",
@@ -61,6 +62,7 @@ let manager: ReturnType<typeof createSessions> | undefined
 export const getSessions = () => (manager ??= createSessions({
   secret: process.env.SESSION_SECRET!,          // at least 32 bytes; never reuse another signing secret
   store: new MemorySessionStore(),              // production: a strongly consistent shared SessionStore
+  // identity: ["userId", "orgId", "role"],     // the keys that say who the visitor is; unset, all of them
   // cookie: { secure: false },                 // local http dev only
 }))`
 
@@ -75,12 +77,12 @@ app.post("/api/login", async (c) => {
   session.set("userId", String(username))
   sessions.regenerate(session)                           // rotate the id on login (fixation defense)
   await sessions.commit(c, session)
-  return redirect("/")                                   // the Set-Cookie rides the redirect
+  return redirect(rawHref("/"))                          // the Set-Cookie rides the redirect
 })
 
 app.post("/api/logout", async (c) => {
   await sessions.destroy(c, await sessions.get(c))
-  return redirect("/login")
+  return redirect(rawHref("/login"))
 })`
 
 const GUARD = `// routes/account.backend.ts - a protected route's loader reads the session and redirects when absent.
@@ -202,9 +204,10 @@ export default function Auth() {
       <h2 id="sessions">Set up a session manager</h2>
       <p>
         <code>createSessions</code> signs the cookie (HMAC, verified constant-time) and always marks it{" "}
-        <code>HttpOnly</code>. In <b>store mode</b> the cookie is just an opaque id and the data lives in
-        a <code>SessionStore</code>; in <b>cookie mode</b> (no store) the data is signed into the cookie.
-        <code>MemorySessionStore</code> is prod-guarded. Production store mode needs a strongly
+        <code>HttpOnly</code>. In <b>store mode</b> the cookie is an opaque id, with a tag that changes
+        whenever the data that says who the visitor is does, and the data lives in a{" "}
+        <code>SessionStore</code>; in <b>cookie mode</b> (no store) the data is signed into the
+        cookie. <code>MemorySessionStore</code> is prod-guarded. Production store mode needs a strongly
         consistent shared <code>SessionStore</code>, such as a transactional adapter or Durable Object.
         Every instance must observe completed writes and deletes, including revocation markers.
       </p>
@@ -226,6 +229,14 @@ export default function Auth() {
         session-shaped value the app signs with the same secret through <code>signValue</code> reads
         as a session.
       </p>
+      <p>
+        <code>identity</code> names the data keys that say who the visitor is: the user id, and any
+        key that changes what a page may show, such as an organization or a role. The cookie's tag,
+        in either mode, then changes only when one of them does, so{" "}
+        <a href={href({ to: "/docs/keep-alive", hash: "sign-in" })}>keep-alive</a> keeps the pages it holds across a commit
+        that writes a cart or a preference. Unset, every key counts. A key left out that decides what
+        a page shows lets the next visitor of a browser see the pages kept for the previous one.
+      </p>
       <CodeBlock code={SETUP} />
 
       <h2>Log in &amp; out</h2>
@@ -246,7 +257,7 @@ export default function Auth() {
         <code>requireUser</code>. It is plain data, not
         a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes. To guard
         every page under a directory, run the same check in the <code>middleware</code> export of that
-        directory's <code>_layout.backend.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.
+        directory's <code>_layout.backend.ts</code> - see <a href={href({ to: "/docs/routing", hash: "middleware" })}>Route middleware</a>.
       </p>
       <CodeBlock code={GUARD} />
       <p>
@@ -320,7 +331,7 @@ export default function Auth() {
         the build with the import chain that reached it, so a secret cannot ride into the browser
         bundle. A page that needs the user reads it from its loader data, which{" "}
         <code>loaderOutput</code> narrows to the fields it declares - see{" "}
-        <a href="/docs/structure">Project structure</a>.
+        <a href={href({ to: "/docs/structure" })}>Project structure</a>.
       </p>
 
       <h2>CSRF</h2>

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { build } from "vite"
+import { emitPluginImages } from "../internal/image-assets.ts"
 import { unsupportedBuiltin } from "../internal/target-compat.ts"
 import type { ComponentPipelineOptions } from "./build.ts"
 import { componentBundleImports } from "./bundle-proof.ts"
@@ -77,6 +78,7 @@ export async function assembleComponentTarget(
   const entries = records.filter((record) => record.isEntry)
   if (entries.length !== 1)
     throw new Error("[nifra/components] Exactly one client entry is required")
+  emitPluginImages(options.plugins ?? [], resolve(out, "client/assets"))
   const assets = (await files(resolve(out, "client/assets"))).map(
     (file) => `/${relative(resolve(out, "client"), file).replaceAll("\\", "/")}`,
   )

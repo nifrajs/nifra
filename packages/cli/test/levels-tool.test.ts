@@ -125,7 +125,7 @@ describe("nifra levels", () => {
 async function invariantProject(
   name: string,
   invariants: string,
-  options: { guarded?: boolean; opaque?: boolean } = {},
+  options: { guarded?: boolean; opaque?: boolean; provisioned?: boolean } = {},
 ): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, `${name}-`)
   await mkdir(join(cwd, "backend"), { recursive: true })
@@ -148,6 +148,21 @@ async function invariantProject(
           ]
         : []),
       `  .post("/pay", { body }, () => ({ ok: true }))`,
+      // A row that exists only once setup has created it, the way a throwaway database fills.
+      ...(options.provisioned === true
+        ? [
+            `export const rows = new Set<string>()`,
+            `const params = {`,
+            `  "~standard": { version: 1, vendor: "levels-test", validate: (value) => (typeof value?.slug === "string" ? { value } : { issues: [{ message: "slug" }] }) },`,
+            `  jsonSchema: { type: "object", properties: { slug: { type: "string", minLength: 1 } }, required: ["slug"] },`,
+            `}`,
+            `const response = {`,
+            `  "~standard": { version: 1, vendor: "levels-test", validate: (value) => (value?.ok === true ? { value } : { issues: [{ message: "ok" }] }) },`,
+            `  jsonSchema: { type: "object", properties: { ok: { const: true } }, required: ["ok"] },`,
+            `}`,
+            `backend.get("/posts/:slug", { params, response }, (c) => (rows.has(c.params.slug) ? { ok: true } : new Response("missing", { status: 404 })))`,
+          ]
+        : []),
       "",
     ].join("\n"),
   )
@@ -155,7 +170,7 @@ async function invariantProject(
     join(cwd, "nifra.assurance.ts"),
     [
       `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
-      `import { backend } from "./backend/app.ts"`,
+      `import { backend, ${options.provisioned === true ? "rows" : "backend as _unused"} } from "./backend/app.ts"`,
       `const calls = ((globalThis as Record<string, unknown>).__levelsCalls ??= {}) as Record<string, string[]>`,
       `const log = (calls[${JSON.stringify(name)}] ??= [])`,
       `export default defineAssuranceConfig({`,
@@ -299,6 +314,88 @@ describe("nifra levels L4 fixture options", () => {
     const cwd = await invariantProject("setup-no-executor", `{ setup: async () => {} }`)
     expect((await collectVerificationLevels(cwd)).levels[4]?.reasons).toEqual([
       "no invariant executor: invariants.setup returned none and invariants.executor is not set",
+    ])
+  })
+
+  test("a setup witness naming a row setup created makes the success case pass, no rewrite needed", async () => {
+    const setupOf = (witnesses: string) => `{
+    setup: async () => {
+      const slug = crypto.randomUUID()
+      rows.add(slug)
+      return {
+        executor: (request) => backend.fetch(request),
+        ${witnesses}
+        teardown: () => void log.push("teardown"),
+      }
+    },
+  }`
+    const placeholder = await invariantProject("setup-no-witness", setupOf(""), {
+      provisioned: true,
+    })
+    const without = (await collectVerificationLevels(placeholder)).levels[4]
+    expect(without?.ok).toBe(false)
+    expect(without?.reasons.join("\n")).toMatch(/GET \/posts\/:slug/)
+    expect(without?.setupWitnesses).toBeUndefined()
+
+    const cwd = await invariantProject(
+      "setup-witness",
+      setupOf(`witnesses: { "GET /posts/:slug": { params: { slug } } },`),
+      { provisioned: true },
+    )
+    const result = await collectVerificationLevels(cwd)
+    expect(result.levels[4]).toMatchObject({
+      ok: true,
+      reasons: [],
+      setupWitnesses: ["GET /posts/:slug"],
+    })
+    expect(callsOf("setup-witness")).toEqual(["teardown"])
+  })
+
+  test("a setup witness wins over the static one for its route, and its prepareRequest replaces the static one", async () => {
+    const cwd = await invariantProject(
+      "setup-overrides",
+      `{
+    witnesses: { "GET /posts/:slug": { params: { slug: "placeholder" } }, "POST /pay": { body: { amount: 3 } } },
+    prepareRequest: (request) => { log.push("static"); return request },
+    setup: async () => {
+      const slug = crypto.randomUUID()
+      rows.add(slug)
+      return {
+        executor: (request) => backend.fetch(request),
+        witnesses: { "GET /posts/:slug": { params: { slug } } },
+        prepareRequest: (request) => { log.push("setup"); return request },
+      }
+    },
+  }`,
+      { provisioned: true },
+    )
+    const result = await collectVerificationLevels(cwd)
+    expect(result.levels[4]).toMatchObject({ ok: true, setupWitnesses: ["GET /posts/:slug"] })
+    expect(callsOf("setup-overrides")).toContain("setup")
+    expect(callsOf("setup-overrides")).not.toContain("static")
+  })
+
+  test("a malformed setup witness fails with the static witness error, and teardown still runs", async () => {
+    const cwd = await invariantProject(
+      "setup-bad-witness",
+      `{
+    setup: async () => ({
+      executor: (request) => backend.fetch(request),
+      witnesses: { "POST /pay": "amount=3" },
+      teardown: () => void log.push("teardown"),
+    }),
+  }`,
+    )
+    expect((await collectVerificationLevels(cwd)).levels[4]?.reasons).toEqual([
+      'route assurance: invariants.setup().witnesses["POST /pay"] must be an object',
+    ])
+    expect(callsOf("setup-bad-witness")).toEqual(["teardown"])
+    const statically = await invariantProject(
+      "static-bad-witness",
+      `{ executor: (request) => backend.fetch(request), witnesses: { "POST /pay": "amount=3" } }`,
+    )
+    expect((await collectVerificationLevels(statically)).levels[4]?.reasons).toEqual([
+      'route assurance: invariants.witnesses["POST /pay"] must be an object',
     ])
   })
 })

@@ -36,6 +36,28 @@ export interface TextSlotBooleanCoercion {
   readonly path: string
 }
 
+/** An `<a href>` whose value is a path of this origin, from {@link SourceFacts.internalAnchors}. */
+export interface InternalAnchor {
+  /** The start of the `href` attribute. */
+  readonly position: number
+  /** The path as written; each `${...}` of a template literal is {@link ANCHOR_HOLE}. */
+  readonly path: string
+}
+
+/** Stands for one `${...}` in {@link InternalAnchor.path}. */
+export const ANCHOR_HOLE = "\u0000"
+
+/** A `serverFunctions("namespace", module)` mount of a `*.fn.ts` module, from {@link SourceFacts.serverFunctionMounts}. */
+export interface ServerFunctionMount {
+  /** The start of the namespace literal. */
+  readonly position: number
+  /** The start of the `serverFunctions(...)` call, where a `nifra-expect` comment is written above. */
+  readonly callPosition: number
+  readonly namespace: string
+  /** The specifier the mounted module namespace was imported from. */
+  readonly specifier: string
+}
+
 export interface SourceFacts {
   parse(file: string, content: string): TSApi.SourceFile | undefined
   isValueImportAt(
@@ -92,6 +114,17 @@ export interface SourceFacts {
    * another file is not followed.
    */
   textSlotBooleanCoercions(source: TSApi.SourceFile): readonly TextSlotBooleanCoercion[]
+  /**
+   * The `serverFunctions("namespace", module)` calls in `source` whose `module` is a namespace import
+   * (`import * as todos from "./todos.fn"`) of a `*.fn` file. A module reached any other way is left out.
+   */
+  serverFunctionMounts(source: TSApi.SourceFile): readonly ServerFunctionMount[]
+  /**
+   * The `<a>` elements of `source` whose `href` is a string or template literal that starts with
+   * exactly one `/`. A value that is built (`href={url}`, `href={href({ to })}`), an external URL, a
+   * `#hash` and a `//host` are left out.
+   */
+  internalAnchors(source: TSApi.SourceFile): readonly InternalAnchor[]
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -151,6 +184,30 @@ const REGISTRATION_METHODS: ReadonlySet<string> = new Set([
   "all",
 ])
 
+/** A route registration such as `app.get("/path", handler)`: its method name, path, and the arguments after the path. */
+function routeRegistration(
+  ts: TypeScriptApi,
+  node: TSApi.Node,
+):
+  | {
+      readonly name: TSApi.MemberName
+      readonly method: string
+      readonly path: string
+      readonly rest: readonly TSApi.Expression[]
+    }
+  | undefined {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression))
+    return undefined
+  const method = node.expression.name.text
+  const [first, ...rest] = node.arguments
+  if (!REGISTRATION_METHODS.has(method) || first === undefined || !ts.isStringLiteralLike(first))
+    return undefined
+  return { name: node.expression.name, method, path: first.text, rest }
+}
+
+const SERVER_FN_MODULE_ID = "@nifrajs/web/fn"
+const SERVER_FN_FILE = /\.fn(?:\.[cm]?[jt]sx?)?$/
+
 const ZOD_MODULES: ReadonlySet<string> = new Set(["zod", "zod/v4", "zod/mini", "zod/v4/mini"])
 
 /** The names `source` binds zod's namespace to (`z`), and those it binds zod's `coerce` to. */
@@ -179,6 +236,23 @@ function zodBindings(
     }
   }
   return { namespaces, coerce }
+}
+
+/** Every name `source` declares other than by import: variables, parameters, functions and classes, any scope. */
+function declaredNames(ts: TypeScriptApi, source: TSApi.SourceFile): Set<string> {
+  const names = new Set<string>()
+  const bind = (name: TSApi.BindingName): void => {
+    if (ts.isIdentifier(name)) names.add(name.text)
+    else for (const element of name.elements) if (ts.isBindingElement(element)) bind(element.name)
+  }
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) bind(node.name)
+    else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name)
+      names.add(node.name.text)
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return names
 }
 
 /** The initializer of each variable of `source`, any scope, by name: the first one wins. */
@@ -707,15 +781,9 @@ export function createSourceFacts(
     const routes: UndeclaredResponseRoute[] = []
     const visit = (node: TSApi.Node): void => {
       ts.forEachChild(node, visit)
-      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return
-      const method = node.expression.name.text
-      const [first, ...rest] = node.arguments
-      if (
-        !REGISTRATION_METHODS.has(method) ||
-        first === undefined ||
-        !ts.isStringLiteralLike(first)
-      )
-        return
+      const registration = routeRegistration(ts, node)
+      if (registration === undefined) return
+      const { name, method, path, rest } = registration
       const handlers: FunctionNode[] = []
       for (const argument of rest.map((value) => unwrapExpression(ts, value))) {
         const local = ts.isIdentifier(argument) ? locals.get(argument.text) : undefined
@@ -723,16 +791,47 @@ export function createSourceFacts(
         else if (local !== undefined) handlers.push(...local)
         else if (!ts.isObjectLiteralExpression(argument) || declaresResponse(ts, argument)) return
       }
-      if (handlers.length > 0 && handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
+      // Every registration takes a handler: `headers.get("etag")` and `map.get("/")` are reads.
+      if (handlers.length === 0 || handlers.every((fn) => raw.isUntypedAt(fn.getStart(source))))
         return
-      routes.push({
-        position: node.expression.name.getStart(source),
-        method: method.toUpperCase(),
-        path: first.text,
-      })
+      routes.push({ position: name.getStart(source), method: method.toUpperCase(), path })
     }
     visit(source)
     return routes.sort((a, b) => a.position - b.position)
+  }
+
+  const internalAnchors = (source: TSApi.SourceFile): readonly InternalAnchor[] => {
+    const found: InternalAnchor[] = []
+    const pathOf = (node: TSApi.Expression): string | undefined => {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
+      if (!ts.isTemplateExpression(node)) return undefined
+      return (
+        node.head.text + node.templateSpans.map((span) => ANCHOR_HOLE + span.literal.text).join("")
+      )
+    }
+    const visit = (node: TSApi.Node): void => {
+      if (
+        (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+        ts.isIdentifier(node.tagName) &&
+        node.tagName.text === "a"
+      ) {
+        for (const attribute of node.attributes.properties) {
+          if (!ts.isJsxAttribute(attribute) || attribute.name.getText(source) !== "href") continue
+          const init = attribute.initializer
+          if (init === undefined) continue
+          const path = ts.isStringLiteral(init)
+            ? init.text
+            : ts.isJsxExpression(init) && init.expression !== undefined
+              ? pathOf(init.expression)
+              : undefined
+          if (path?.startsWith("/") && !path.startsWith("//"))
+            found.push({ position: attribute.getStart(source), path })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return found
   }
 
   const textSlotBooleanCoercions = (
@@ -783,19 +882,17 @@ export function createSourceFacts(
     }
     const visit = (node: TSApi.Node): void => {
       ts.forEachChild(node, visit)
-      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return
-      const method = node.expression.name.text
-      const [first, ...rest] = node.arguments
-      if (
-        !REGISTRATION_METHODS.has(method) ||
-        first === undefined ||
-        !ts.isStringLiteralLike(first)
-      )
-        return
-      for (const argument of rest) {
-        let options = unwrapExpression(ts, argument)
-        const named = ts.isIdentifier(options) ? consts.get(options.text) : undefined
-        if (named !== undefined) options = unwrapExpression(ts, named)
+      const registration = routeRegistration(ts, node)
+      if (registration === undefined) return
+      const { method, path, rest } = registration
+      const arguments_ = rest.map((argument) => {
+        const value = unwrapExpression(ts, argument)
+        const named = ts.isIdentifier(value) ? consts.get(value.text) : undefined
+        return named === undefined ? value : unwrapExpression(ts, named)
+      })
+      // Every registration takes a handler: `config.get("key", { query })` is not a route.
+      if (arguments_.every((value) => ts.isObjectLiteralExpression(value))) return
+      for (const options of arguments_) {
         if (!ts.isObjectLiteralExpression(options)) continue
         for (const property of options.properties) {
           if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property))
@@ -806,7 +903,7 @@ export function createSourceFacts(
               : undefined
           if (slot !== "query" && slot !== "headers" && slot !== "cookies") continue
           const value = ts.isPropertyAssignment(property) ? property.initializer : property.name
-          reach(value, new Set(), { slot, method: method.toUpperCase(), path: first.text })
+          reach(value, new Set(), { slot, method: method.toUpperCase(), path })
         }
       }
     }
@@ -843,6 +940,72 @@ export function createSourceFacts(
     }
   }
 
+  const serverFunctionMounts = (source: TSApi.SourceFile): readonly ServerFunctionMount[] => {
+    const callees = new Set<string>()
+    const members = new Set<string>()
+    const modules = new Map<string, string>()
+    for (const statement of source.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+        continue
+      const clause = statement.importClause
+      if (clause === undefined || clause.isTypeOnly) continue
+      const specifier = statement.moduleSpecifier.text
+      const bindings = clause.namedBindings
+      if (bindings === undefined) continue
+      if (ts.isNamespaceImport(bindings)) {
+        if (specifier === SERVER_FN_MODULE_ID) members.add(bindings.name.text)
+        else if (SERVER_FN_FILE.test(specifier)) modules.set(bindings.name.text, specifier)
+      } else if (specifier === SERVER_FN_MODULE_ID) {
+        for (const element of bindings.elements) {
+          if (
+            !element.isTypeOnly &&
+            (element.propertyName ?? element.name).text === "serverFunctions"
+          )
+            callees.add(element.name.text)
+        }
+      }
+    }
+    if (modules.size === 0 || (callees.size === 0 && members.size === 0)) return []
+    // A name the file declares again (a local `serverFunctions`, a parameter called like the module) is
+    // not the import, whatever scope it sits in: leave those calls out rather than guess the scope.
+    for (const name of declaredNames(ts, source)) {
+      callees.delete(name)
+      members.delete(name)
+      modules.delete(name)
+    }
+    const mounts: ServerFunctionMount[] = []
+    const visit = (node: TSApi.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression
+        const [namespace, module] = node.arguments
+        if (
+          (ts.isIdentifier(callee)
+            ? callees.has(callee.text)
+            : ts.isPropertyAccessExpression(callee) &&
+              ts.isIdentifier(callee.expression) &&
+              members.has(callee.expression.text) &&
+              callee.name.text === "serverFunctions") &&
+          namespace !== undefined &&
+          ts.isStringLiteralLike(namespace) &&
+          module !== undefined &&
+          ts.isIdentifier(module)
+        ) {
+          const specifier = modules.get(module.text)
+          if (specifier !== undefined)
+            mounts.push({
+              position: namespace.getStart(source),
+              callPosition: node.getStart(source),
+              namespace: namespace.text,
+              specifier,
+            })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return mounts
+  }
+
   return {
     parse,
     isValueImportAt,
@@ -853,6 +1016,8 @@ export function createSourceFacts(
     untypedResponseRoutes,
     undeclaredResponseRoutes,
     textSlotBooleanCoercions,
+    internalAnchors,
+    serverFunctionMounts,
     exportReturnsResponse,
     isDynamicImportAt,
   }

@@ -1,4 +1,5 @@
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/security-comparison",
@@ -14,7 +15,7 @@ export default function SecurityComparison() {
         Which hardening each framework actually ships. A dimension-by-dimension read of Nifra&rsquo;s
         security defaults against the <b>current releases</b> of Hono, Fastify, Express, and Elysia -
         what is on by default, what is opt-in, and what is left to a third-party package. For how each
-        Nifra primitive works, see <a href="/docs/security">Security &amp; hardening</a>.
+        Nifra primitive works, see <a href={href({ to: "/docs/security" })}>Security &amp; hardening</a>.
       </p>
 
       <h2>The honest verdict</h2>
@@ -476,8 +477,8 @@ export default function SecurityComparison() {
         narrower and honest: it makes the dangerous configurations <i>unrepresentable</i>, ships the
         hardening primitives first-party, and lets <code>nifra assure</code> prove in CI that every
         route is guarded. For the full capability and throughput comparison, see{" "}
-        <a href="/docs/comparison">vs other frameworks</a> and the{" "}
-        <a href="/compare">per-framework pages</a>.
+        <a href={href({ to: "/docs/comparison" })}>vs other frameworks</a> and the{" "}
+        <a href={href({ to: "/compare" })}>per-framework pages</a>.
       </p>
     </div>
   )

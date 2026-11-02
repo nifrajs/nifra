@@ -1,5 +1,41 @@
 # create-nifra
 
+## 5.11.0
+
+### Minor Changes
+
+- 3c8024d: Add independently addressable route slots with typed targets, server allowlists, and framework bindings.
+
+## 5.10.0
+
+### Minor Changes
+
+- 5d1be78: `nifra dev`, `nifra build`, `nifra check` and `nifra types` write `.nifra/types/routes.d.ts`, which fills `RouteTable` (exported from `@nifrajs/web`) with one `{ params, search }` entry per URL pattern. `params` comes from the compiled pattern, the function the router matches with, and `search` is the route's `searchSchema` output (the raw query when it declares none). An optional segment such as `[[lang]]` is two entries with exact params each, and `Route.Params` is read from the same patterns. Every generated `./+types` module references the table, so a program that imports any route's types loads it. `Href` is exported as the type of a built in-app URL.
+  
+  `nifra check` warns when a source file imports a navigation API (`Link`, `useNavigate`, `redirect` and the like) and no program loads the table; listing `.nifra/types/routes.d.ts` under `files` in tsconfig.json clears it. The starter's `.nifra/types` includes the table.
+  
+  Upgrade: `RouteSearch`, `generateRouteSearchTypes` and `GenerateRouteSearchTypesOptions` are removed, and so is `nifra sync-routes` (with the `nifra_sync_routes` MCP tool). Delete `nifra-routes.d.ts` and its tsconfig `include` entry, and move any hand-written `RouteSearch` entry to `RouteTable` as `"/path": { params: ...; search: ... }`.
+- bbdb582: Every starter links with `href()`: the navigation and the 404 page of the React, Preact, Solid, Svelte, Vue and ISR starters build their anchors with `href({ to })`, so a renamed route fails `tsc` instead of leaving a dead link. The generated `AGENTS.md` teaches `href()` and `rawHref()` for `navigate()`, `redirect()` and links, in place of `redirect(url)`.
+  
+  Upgrade, for an existing app: `tsc` lists each `navigate("/x")`, `<Link to="/x">` and `redirect("/x")` (they take an `Href` now), and `href="/` and ``href={`/`` find the plain anchors it cannot see. A route file that imports no `./+types/...` module does not load `.nifra/types/routes.d.ts`; `nifra check` warns, and listing that file under the tsconfig `files` fixes it.
+
+## 5.9.0
+
+### Patch Changes
+
+- 7ee17d0: `nifra check --sarif` and the command catalog's check output map report entries to diagnostics through one step. The CLI's page rules read the routes manifest and a `createWebApp` call's options through shared helpers, the layout migration applies its text edits through one function, two source scans share one route-registration reader, the two sync commands share their output schema and flag, and the Python and Go SDK generators share their setup and map-type reading.
+  
+  `create-nifra` passes the flags it parsed to `scaffold` as they are.
+  
+  `@nifrajs/web`'s PostCSS and Sass plugins build their JS module through one function, its client-build guards share one import-chain search, a page route's failed loaders answer through one step, and the router and the live client build a route data request's headers through one function.
+  
+  `@nifrajs/web-svelte`'s Svelte and MDX plugins emit scoped CSS through the stylesheet emitter in `@nifrajs/web/plugins/kit`, as the other kit plugins do. The virtual stylesheet import they write is now `?nifra-svelte-css` (`?nifra-svelte-mdx-css` for MDX), and its resolved path stays slash-separated on Windows.
+  
+  `@nifrajs/mcp` builds its capabilities once for `initialize` and `server/discover`. `@nifrajs/agent-review`'s composer uses the parser's outcome rule and evidence order, and the parser reads its two string lists through one reader. `@nifrajs/pi` reads message text through one helper, and core's evidence report sorts its findings through one comparator.
+- bc42fd2: The modules a package carries as its own copy of another package's file (the static-file open helper, the agent-file generators, the Node-stream hand-off, and core's helpers inside the Node and Deno adapters) are generated from one source each, under a header naming it. No API or behavior change.
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- b5152a3: A new Vue site's home page declares only the `data` route prop it reads.
+
 ## 5.8.0
 
 No changes in this release.

@@ -39,15 +39,16 @@ const RULES: ReadonlySet<string> = new Set<SecretRule>([
 ])
 
 /**
- * One reviewed false positive. It names the rule, where the finding is and why it may ship: there is
- * no exemption by value, so a credential that turns up somewhere else still fails the build.
+ * One reviewed false positive. A file scope exempts a rule throughout that file. For
+ * `private-env-value`, an env scope exempts every finding sourced from that variable anywhere in
+ * scanned output.
  */
 export interface SecretExemption {
   readonly rule: SecretRule
-  /** The finding's file as reported: app-relative for a source or `public/` file, output-relative for
-   * an emitted file. */
+  /** Exempt this rule throughout the named file. Source and `public/` paths are app-relative;
+   * emitted-file paths are output-relative. */
   readonly file?: string
-  /** For `private-env-value`: the variable whose value may ship. */
+  /** For `private-env-value`: exempt every finding sourced from this variable across scanned output. */
   readonly env?: string
   readonly reason: string
 }
@@ -436,8 +437,8 @@ function assignedMatches(text: string): Match[] {
   return matches
 }
 
-// Environment variables a shell, an OS or a CI system sets: none is an app secret unless its name
-// says so (`GITHUB_TOKEN`, `VERCEL_OIDC_TOKEN`).
+// Recognized shell, OS and CI variable names are usually not app secrets; secret-like names such as
+// `GITHUB_TOKEN` and `VERCEL_OIDC_TOKEN` are still scanned.
 const AMBIENT_ENV =
   /^(?:PATH|HOME|PWD|OLDPWD|SHELL|USER|LOGNAME|TMPDIR|TMP|TEMP|LANG|LANGUAGE|EDITOR|VISUAL|PAGER|HOSTNAME|SHLVL|DISPLAY|MANPATH|INFOPATH|COLORTERM|COMMAND_MODE|_|(?:LC|NPM|npm|BUN|NODE|XPC|TERM|__CF|HOMEBREW|SSH|GPG|ITERM|VSCODE|JAVA|ANDROID|CONDA|PYENV|NVM|ZSH|GITHUB|RUNNER|CI|VERCEL|CF_PAGES|NETLIFY|RENDER|RAILWAY|FLY|CLAUDE|CLAUDECODE|GIT|DENO|PNPM|YARN)(?:_.*)?)$/
 
@@ -566,7 +567,7 @@ const preview = (match: Match): string =>
     ? `${match.text.length} chars`
     : `${match.text.slice(0, 4)}... (${match.text.length} chars)`
 
-/** Refuse an exemption that does not name its rule, its location and its reason. */
+/** Refuse an exemption that does not name its rule, its scope and its reason. */
 export function assertSecretExemptions(exemptions: readonly SecretExemption[]): void {
   exemptions.forEach((exemption, i) => {
     const where = `secretExemptions[${i}]`
@@ -581,9 +582,12 @@ export function assertSecretExemptions(exemptions: readonly SecretExemption[]): 
     const file = typeof exemption.file === "string" && exemption.file !== ""
     const env = typeof exemption.env === "string" && exemption.env !== ""
     if (!file && !(env && exemption.rule === "private-env-value")) {
-      throw new Error(
-        `[nifra/web] ${where} must name a file${exemption.rule === "private-env-value" ? " or an env variable" : ""}; an exemption covers one location, never a value everywhere`,
-      )
+      const envHint =
+        exemption.rule === "private-env-value"
+          ? "; env exemptions cover every finding from that variable"
+          : ""
+      const scopeHint = exemption.rule === "private-env-value" ? " or an env variable" : ""
+      throw new Error(`[nifra/web] ${where} must name a file${scopeHint}${envHint}`)
     }
   })
 }
@@ -721,6 +725,7 @@ export function formatSecretFindings(findings: readonly SecretFinding[]): string
     "Keep credentials on the server: read them from the environment in a route's backend half or under",
     "backend/, and rotate any that were committed. A reviewed false positive is exempted in",
     'nifra.config.ts: export const secretExemptions = [{ rule, file, reason: "why it may ship" }].',
+    "For private-env-value, use env to exempt every finding from that variable across scanned output.",
   ].join("\n")
 }
 

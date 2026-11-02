@@ -9,15 +9,17 @@
 
 import { renderDocsResult } from "./docs-search.ts"
 import { type Example, renderExamplesResult } from "./examples.ts"
-import { renderFrontendResult } from "./frontend-guidance.ts"
+import { renderFrontendResult, selectFrontendGuidance } from "./frontend-guidance.ts"
 import { renderLearnResult } from "./learn.ts"
 import type { McpTool } from "./mcp-protocol.ts"
+import { renderRuntimeResult, selectRuntimeDifferences } from "./runtime-differences.ts"
 import { renderTypesResult, type TypeEntry } from "./types-search.ts"
 
+/** Clamp optional MCP pagination input to a safe, deterministic range. */
 const clamp = (n: number | undefined, lo: number, hi: number, dflt: number): number =>
   Math.min(Math.max(typeof n === "number" ? n : dflt, lo), hi)
 
-/** Build `nifra_docs` + `nifra_example` + `nifra_types` over injected corpus loaders. */
+/** Build the read-only docs, examples, types, learning, and frontend tools over injected loaders. */
 export function docsTools(
   loadDocs: () => Promise<string | undefined>,
   loadExamples: () => Promise<Example[] | undefined>,
@@ -199,7 +201,53 @@ export function docsTools(
           adapter?: string
           limit?: number
         }
-        return renderFrontendResult({ symptom, adapter, limit: clamp(limit, 1, 5, 3) })
+        const input = { symptom, adapter, limit: clamp(limit, 1, 5, 3) }
+        return {
+          content: [{ type: "text", text: renderFrontendResult(input) }],
+          structuredContent: { ...selectFrontendGuidance(input) },
+        }
+      },
+    },
+    {
+      name: "nifra_runtime",
+      annotations: {
+        title: "Runtime differences",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      description:
+        'Explain a behavior that differs between Bun, Node, Deno and Cloudflare Workers by symptom. These are runtime behaviors, not Nifra\'s: request-target and Host handling, pipelining, JSON content-type, engine error messages, recursion depth, .env loading, and runtime-specific APIs. Returns what each runtime does, the fix (and the Nifra option that decides it when there is one), how to verify it, and the versions it was measured on. Call with no args for the index; pass `symptom` (e.g. "path guard skipped", "env var undefined") and/or `runtime` to filter.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          symptom: {
+            type: "string",
+            maxLength: 256,
+            description: "What you observe (omit for the index).",
+          },
+          runtime: {
+            type: "string",
+            enum: ["bun", "node", "deno", "workerd"],
+            description: "Filter to one runtime's entries.",
+          },
+          limit: { type: "number", description: "Max entries to return (default 3, max 5)." },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the MCP layer validated args against inputSchema
+        const { symptom, runtime, limit } = args as {
+          symptom?: string
+          runtime?: string
+          limit?: number
+        }
+        const input = { symptom, runtime, limit: clamp(limit, 1, 5, 3) }
+        return {
+          content: [{ type: "text", text: renderRuntimeResult(input) }],
+          structuredContent: { ...selectRuntimeDifferences(input) },
+        }
       },
     },
   ]

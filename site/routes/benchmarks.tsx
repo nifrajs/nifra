@@ -1,5 +1,6 @@
 import {
   type CapturedMeta,
+  type CaptureMachine,
   HTTP_MEMORY,
   HTTP_REALWORLD,
   HTTP_REALWORLD_CAPTURED,
@@ -7,9 +8,9 @@ import {
   HTTP_WORKLOADS_CAPTURED,
   type HttpRealworldTable,
   type HttpWorkloadTable,
-  httpGetTrail,
   MULTIPLIERS,
   SSR_CAPTURED,
+  SSR_OUTPUT_GUARD_COST,
   SSR_TABLES,
   SSR_TABLES_B,
   type SsrTableRow,
@@ -31,12 +32,31 @@ const fmtJs = (row: SsrTableRow): string => (row.jsGzKb > 0 ? `${row.jsGzKb} KB`
 function Captured({ meta }: { meta: CapturedMeta }) {
   const runtimes = [`Bun ${meta.bun}`, `Node ${meta.node}`]
   if (meta.deno !== undefined) runtimes.push(`Deno ${meta.deno}`)
+  const machines = [
+    ...(meta.machine === undefined ? [] : [`All runtimes: ${describeMachine(meta.machine)}`]),
+    ...(["node", "bun", "deno"] as const).flatMap((runtime) => {
+      const machine = meta.machines?.[runtime]
+      return machine === undefined
+        ? []
+        : [`${runtime[0]?.toUpperCase()}${runtime.slice(1)}: ${describeMachine(machine)}`]
+    }),
+  ]
+  const source =
+    meta.sourceUrl === undefined ? (
+      (meta.source ?? "Source not recorded")
+    ) : (
+      <a href={meta.sourceUrl}>{meta.source ?? "Benchmark run"}</a>
+    )
   return (
     <p className="note">
-      Captured {meta.date} on macOS arm64 with {runtimes.join(", ")} and <code>oha</code> {meta.oha}{" "}
-      at 50 connections.
+      {meta.date} · {source} · {machines.join("; ") || "Machine not recorded"} ·{" "}
+      {runtimes.join(", ")} · <code>oha</code> {meta.oha} · 50 connections
     </p>
   )
+}
+
+function describeMachine(machine: CaptureMachine): string {
+  return `${machine.runner} · ${machine.cpu} · ${machine.vcpus} vCPU`
 }
 
 function Named({ name, version }: { name: string; version: string }) {
@@ -49,19 +69,22 @@ function Named({ name, version }: { name: string; version: string }) {
 }
 
 function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
+  const ranked = [...rows].sort((a, b) => b.rps - a.rps || a.name.localeCompare(b.name))
   return (
     <table>
       <thead>
         <tr>
           <th>Target</th>
-          <th className="num">req/s</th>
+          <th className="num" aria-sort="descending">
+            Median req/s
+          </th>
           <th className="num">p50</th>
           <th className="num">p99</th>
           <th className="num">client JS (gz)</th>
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
+        {ranked.map((row) => (
           <tr key={row.name} className={row.nifra ? "hl" : undefined}>
             <td>
               <Named name={row.name} version={row.version} />
@@ -77,17 +100,127 @@ function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
   )
 }
 
+function SsrOutputGuardCost() {
+  const capture = SSR_OUTPUT_GUARD_COST
+  return (
+    <section className="bench-block" style={{ marginTop: 24 }}>
+      <h3>Loader output work per request (local)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Runtime</th>
+            <th className="num">Added per request</th>
+            <th className="num">Local SSR p50</th>
+            <th className="num">Share of p50</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(["node", "bun"] as const).map((runtime) => {
+            const result = capture.results[runtime]
+            return (
+              <tr key={runtime}>
+                <td>{`${runtime === "node" ? "Node" : "Bun"} ${result.runtimeVersion}`}</td>
+                <td className="num">{result.addedUsPerRequest.toFixed(2)} µs</td>
+                <td className="num">{result.p50ms.toFixed(2)} ms</td>
+                <td className="num">{result.guardShareOfP50Percent.toFixed(2)}%</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <p className="note" style={{ marginTop: 8 }}>
+        Direct timing of the compiled <code>loaderOutput</code> guard on a {capture.items}-item
+        result; the added time subtracts an identity control. {capture.guardRounds} paired rounds ×{" "}
+        {capture.iterationsPerRound.toLocaleString("en-US")} calls on {capture.machine} (
+        {capture.date}). Local p50 comes from the same Nifra + React route ({capture.durationS}s
+        samples, {capture.warmupS}s warmup, {capture.connections} connections, oha {capture.oha}).
+        This is latency context, not a throughput uplift.
+      </p>
+    </section>
+  )
+}
+
 // ---- Backend: HTTP throughput across runtimes ----
 // Two core workloads per framework (path-param GET, validated POST) - see BENCHMARKS.md.
 type HttpRow = HttpWorkloadTable["rows"][number]
 type RuntimeTable = HttpWorkloadTable
+
+type MemoryCapture = (typeof HTTP_MEMORY)[number]
+type MemoryMetric = "readyRssMiB" | "getRssMiB" | "postRssMiB" | "peakRssMiB" | "postHeapMiB"
+
+const MEMORY_COLUMNS: ReadonlyArray<{ key: MemoryMetric; label: string }> = [
+  { key: "readyRssMiB", label: "Ready RSS" },
+  { key: "getRssMiB", label: "After GET" },
+  { key: "postRssMiB", label: "After POST" },
+  { key: "peakRssMiB", label: "Peak RSS" },
+  { key: "postHeapMiB", label: "POST heap" },
+]
+
+function MemoryTable({ capture }: { capture: MemoryCapture }) {
+  const ranked = [...capture.rows].sort(
+    (a, b) => a.postRssMiB - b.postRssMiB || a.name.localeCompare(b.name),
+  )
+  const lowest: Record<MemoryMetric, number> = {
+    readyRssMiB: Math.min(...capture.rows.map((row) => row.readyRssMiB)),
+    getRssMiB: Math.min(...capture.rows.map((row) => row.getRssMiB)),
+    postRssMiB: Math.min(...capture.rows.map((row) => row.postRssMiB)),
+    peakRssMiB: Math.min(...capture.rows.map((row) => row.peakRssMiB)),
+    postHeapMiB: Math.min(...capture.rows.map((row) => row.postHeapMiB)),
+  }
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table>
+        <thead>
+          <tr>
+            <th>Framework</th>
+            {MEMORY_COLUMNS.map(({ key, label }) => (
+              <th key={key} className="num">
+                {label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {ranked.map((row) => (
+            <tr key={row.name} className={row.nifra ? "hl" : undefined}>
+              <td>
+                <Named name={row.name} version={row.version} />
+              </td>
+              {MEMORY_COLUMNS.map(({ key }) => {
+                const value = row[key]
+                const isLowest = value === lowest[key]
+                return (
+                  <td
+                    key={key}
+                    className={isLowest ? "num memory-best" : "num"}
+                    title={
+                      key === "postRssMiB"
+                        ? `Observed range: ${row.postRssMinMiB.toFixed(1)}-${row.postRssMaxMiB.toFixed(1)} MiB`
+                        : undefined
+                    }
+                  >
+                    {value.toFixed(1)} MiB
+                    {isLowest && <span className="memory-best-label">Low</span>}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 const HTTP: ReadonlyArray<RuntimeTable> = HTTP_WORKLOADS
 
 /** Rank rows by geometric mean across the workloads - a single strong column (or a single weak
  * one) can't decide the order the way sorting by one workload alone would. */
 function geoMean(row: HttpRow): number {
-  const values = [row.getUsers, row.postUsers].map((v) => Number(v.replaceAll(",", "")))
+  const values = [row.getRoot, row.getUsers, row.getSearch, row.postUsers]
+    .filter((value): value is string => value !== undefined)
+    .map((value) => Number(value.replaceAll(",", "")))
   return Math.exp(values.reduce((sum, v) => sum + Math.log(v), 0) / values.length)
 }
 
@@ -143,7 +276,9 @@ function HttpTable({ table }: { table: RuntimeTable }) {
         <thead>
           <tr>
             <th>Framework</th>
+            <th className="num">GET /</th>
             <th className="num">GET /users/:id</th>
+            <th className="num">GET /search?query</th>
             <th className="num">POST /users</th>
           </tr>
         </thead>
@@ -153,7 +288,9 @@ function HttpTable({ table }: { table: RuntimeTable }) {
               <td>
                 <Named name={row.name} version={row.version} />
               </td>
+              <td className="num">{row.getRoot ?? "-"}</td>
               <td className="num">{row.getUsers}</td>
+              <td className="num">{row.getSearch ?? "-"}</td>
               <td className="num">{row.postUsers}</td>
             </tr>
           ))}
@@ -164,36 +301,28 @@ function HttpTable({ table }: { table: RuntimeTable }) {
 }
 
 export default function Benchmarks() {
-  const denoTrail = httpGetTrail("Deno")
-  const denoHeading =
-    denoTrail === undefined
-      ? "What Nifra checks on Deno's bare GET."
-      : "Why Nifra trails on Deno's bare GET."
   return (
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
       <p className="lead">
-        Each section names the date and toolchain it was captured with. Every number is the median
-        of interleaved rounds - each round measures every framework in turn, so drift on the machine
-        lands on all of them alike - and every row names the version it measured. Compare ratios
-        inside each runtime before absolute request rates, because laptop thermals and warmup move
-        absolute throughput. Reproduce with <code>bun run bench:ssr</code> and{" "}
-        <code>bun run bench:http</code>.
+        Median results from interleaved rounds. Compare within each runtime; absolute rates vary by
+        runner.
       </p>
 
       {/* ---- Frontend: full-stack SSR vs the meta-frameworks ---- */}
       <h2 style={{ marginTop: 40 }}>Full-stack SSR - Nifra vs the meta-frameworks</h2>
       <Captured meta={SSR_CAPTURED} />
       <p className="lead">
-        One section per UI framework, each with two explicitly-labelled tables:{" "}
-        <b>A - dynamic SSR</b> (the page rendered on every request, no caching) and{" "}
-        <b>B - cacheable</b> (the same page from each framework's SSG/ISR mode). Meta-frameworks run
-        on Node through their own production server. Nifra's app rows are real apps, written the way
-        the docs teach it - file routes, a typed loader with an output schema - built by{" "}
-        <code>nifra build --target bun</code> or <code>--target node</code> and served by the{" "}
-        <code>server.js</code> that build generates. Nifra shows <b>Bun</b> and <b>Node</b> rows so
-        the Node rows compare apples-to-apples. The headline multipliers below are Table A only:
-        Nifra's Node app row vs each meta-framework.
+        Each framework has uncached SSR and cached SSG/ISR rows. Compare Nifra's Node app with the
+        Node meta-frameworks; multipliers use the uncached rows.
+      </p>
+      <p className="note">
+        Next.js and all dynamic SSR rows are measured uncompressed (
+        <code>accept-encoding: identity</code>) for like-for-like throughput.
+      </p>
+      <p className="note">
+        Nifra also projects and validates <code>loaderOutput</code> for the client; comparator rows
+        have no equivalent output boundary.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (
@@ -203,18 +332,8 @@ export default function Benchmarks() {
           </div>
         ))}
       </div>
-      <p className="note" style={{ margin: "14px 0 8px" }}>
-        <b>Your own server.</b> The renderer under these app rows is also a plain function:{" "}
-        <code>renderPage</code> from <code>@nifrajs/web</code> renders a page from any request
-        handler, in a <code>Bun.serve</code> or Node server you write, without Nifra&apos;s router
-        or file routes.
-      </p>
       <p className="note" style={{ margin: "0 0 8px" }}>
-        <b>SSG files on a static host.</b> The <code>nifra build --target static</code> output
-        served by a plain Bun file server that reads the file on each request. No Nifra code runs,
-        so the row measures that file server - on a CDN, the number is the CDN's. Nifra's SSG app
-        rows serve the same prerendered page through the generated app server, the way each
-        meta-framework serves its static page through its own server.
+        The static-host row is a plain Bun file server; no Nifra code runs per request.
       </p>
       {SSR_TABLES.map((table) => {
         const tableB = SSR_TABLES_B.find((b) => b.framework === table.framework)
@@ -222,16 +341,13 @@ export default function Benchmarks() {
           <div key={table.framework}>
             <h3 style={{ marginTop: 28 }}>{table.framework}</h3>
             <p className="note" style={{ margin: "6px 0 8px" }}>
-              <b>A - Dynamic SSR.</b> The page is rendered on <b>every request</b>, no caching: the
-              per-request cost, the number that matters for pages that can't be cached.
+              <b>A · Dynamic SSR</b>
             </p>
             <SsrRows rows={table.rows} />
             {tableB !== undefined && (
               <>
                 <p className="note" style={{ margin: "14px 0 8px" }}>
-                  <b>B - Cacheable.</b> The same page served from each framework's cached mode -
-                  SSG, and ISR where supported (cache warmed before measuring). A cached row is not
-                  an SSR row: compare within this table only.
+                  <b>B · Cached SSG/ISR</b> (cache warmed before measurement)
                 </p>
                 <SsrRows rows={tableB.rows} />
               </>
@@ -240,42 +356,19 @@ export default function Benchmarks() {
         )
       })}
       <div className="caveat">
-        Meta-frameworks are Node-only in this matrix; compare them against Nifra's <b>Node</b> app
-        row (the headline multipliers above do exactly that). No Preact meta-framework runs on Node
-        (Fresh is Deno-only), so Preact&apos;s table compares with{" "}
-        <code>preact-render-to-string</code> in a bare Node server: the renderer&apos;s ceiling,
-        with no router, loader or schema. A client-JS of <code>n/a</code> means the run couldn't
-        account that framework's payload from the SSR HTML.
+        Preact uses a renderer-only baseline because Fresh is Deno-only. Bun and Node SSR use
+        separate runners; compare rates within each runtime. <code>n/a</code> means client JS could
+        not be measured from the HTML.
       </div>
+      <SsrOutputGuardCost />
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
       <Captured meta={HTTP_WORKLOADS_CAPTURED} />
-      <p className="lead">
-        Nifra is also a standalone API framework. Two core workloads - a path-param GET and a
-        validated POST - each runtime through Nifra's real adapter, next to the popular libraries on
-        that runtime. Rows are ordered by the geometric mean of the workloads, so no single column
-        decides the ranking.
+      <p className="lead">Four workloads, ranked by their geometric mean.</p>
+      <p className="note">
+        Fastify on Bun/Deno uses <code>node:http</code> compatibility, not native ingress.
       </p>
-      <div className="caveat">
-        <b>{denoHeading}</b> Deno hands an app the request target exactly as the client sent it,
-        joined to the <code>Host</code> header as received. So on Deno, Nifra rejects a malformed{" "}
-        <code>Host</code> and resolves <code>.</code> and <code>..</code> segments before routing,
-        and routes the same path Bun, Node and Workers would. Elysia and Hono route the raw path:
-        both hand <code>..</code> to a <code>/users/:id</code> handler for{" "}
-        <code>/users/%2e%2e</code>, and Hono answers a request for <code>/users/7</code> from{" "}
-        <code>/search</code> when the <code>Host</code> is <code>x/search?q=...#</code>, which Nifra
-        refuses with a 400.
-        {denoTrail !== undefined && (
-          <>
-            {" "}
-            In this capture Nifra {denoTrail.nifra.version} is {denoTrail.behindPercent.toFixed(1)}%
-            behind {denoTrail.rival.name} {denoTrail.rival.version} on that GET (
-            {denoTrail.nifra.getUsers} vs {denoTrail.rival.getUsers} req/s): the two checks are work
-            the rows that route the raw path do not do.
-          </>
-        )}
-      </div>
       <div className="bench-grid">
         {HTTP.map((table) => (
           <HttpTable key={table.title} table={table} />
@@ -287,13 +380,11 @@ export default function Benchmarks() {
           <h2 style={{ marginTop: 48 }}>Backend - the same routes with a real route's work</h2>
           <Captured meta={HTTP_REALWORLD_CAPTURED} />
           <p className="lead">
-            The tables above are the shape every framework publishes: a bare route doing nothing but
-            routing. This is the same GET and POST after the route gains what an actual API route
-            has - security headers, CORS, a request-id hook, bearer auth through a derive, and a
-            cookie read. Nifra compiles that shape - one derive, one before hook and a query or body
-            schema - into its fused derive-and-before lane, so these numbers carry real middleware
-            work on a fused route, not a fallback path. The third column adds one body-observing
-            middleware to the same GET.
+            The same routes with security headers, CORS, request ID, bearer auth, and cookie
+            handling.
+          </p>
+          <p className="note">
+            Allowed-origin GET/POST only; CORS preflight and rejected origins are excluded.
           </p>
           <div className="bench-grid">
             {HTTP_REALWORLD.map((table) => (
@@ -303,67 +394,43 @@ export default function Benchmarks() {
         </>
       )}
 
-      {HTTP_MEMORY !== undefined && (
+      {HTTP_MEMORY.length > 0 && (
         <>
-          <h2 style={{ marginTop: 48 }}>Backend - memory footprint</h2>
+          <h2 style={{ marginTop: 48 }}>Backend - memory footprint across runtimes</h2>
           <p className="note">
-            Captured {HTTP_MEMORY.date} with Node {HTTP_MEMORY.node} on {HTTP_MEMORY.cpu},{" "}
-            {HTTP_MEMORY.platform}. Median of {HTTP_MEMORY.rounds} fresh processes per framework,
-            with {HTTP_MEMORY.requestsPerPhase.toLocaleString("en-US")} GETs and POSTs per process
-            at {HTTP_MEMORY.connections} connections. Lower is better.
+            RSS is process-wide after GC; POST heap is retained JavaScript memory.
           </p>
-          <p className="lead">
-            The same authenticated routes, loaded as native modules for every framework. RSS is
-            resident process memory after a forced collection; heap is retained JavaScript memory
-            after the POST phase. Peak RSS is the OS high-water mark since startup. These are
-            process footprints, including the runtime, rather than bytes allocated per request.
-            Nifra is a workspace build. This capture covers Node; Bun and Deno need their own
-            measurements.
-          </p>
-          <div style={{ overflowX: "auto" }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Framework</th>
-                  <th className="num">Ready RSS</th>
-                  <th className="num">After GET</th>
-                  <th className="num">After POST</th>
-                  <th className="num">Peak RSS</th>
-                  <th className="num">POST heap</th>
-                </tr>
-              </thead>
-              <tbody>
-                {HTTP_MEMORY.rows.map((row) => (
-                  <tr key={row.name} className={row.nifra ? "hl" : undefined}>
-                    <td>
-                      <Named name={row.name} version={row.version} />
-                    </td>
-                    <td className="num">{row.readyRssMiB.toFixed(1)} MiB</td>
-                    <td className="num">{row.getRssMiB.toFixed(1)} MiB</td>
-                    <td
-                      className="num"
-                      title={`Observed range: ${row.postRssMinMiB.toFixed(1)}-${row.postRssMaxMiB.toFixed(1)} MiB`}
-                    >
-                      {row.postRssMiB.toFixed(1)} MiB
-                    </td>
-                    <td className="num">{row.peakRssMiB.toFixed(1)} MiB</td>
-                    <td className="num">{row.postHeapMiB.toFixed(1)} MiB</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
           <p className="note">
-            Reproduce with <code>bun run bench:memory</code>. Forced collection exposes retained
-            memory; it does not establish a leak-free application or measure allocation churn.
+            Median of 5 fresh processes · 50k GETs + POSTs per process · 50 connections · sorted by
+            after-POST RSS; <b>Low</b> marks each column&apos;s minimum.
           </p>
+          {HTTP_MEMORY.map((capture) => {
+            const sourceUrl =
+              "sourceUrl" in capture && typeof capture.sourceUrl === "string"
+                ? capture.sourceUrl
+                : undefined
+            return (
+              <div key={capture.runtime}>
+                <h3 style={{ marginTop: 24 }}>
+                  {capture.runtime[0]?.toUpperCase()}
+                  {capture.runtime.slice(1)} {capture.runtimeVersion}
+                </h3>
+                <p className="note">
+                  {capture.date}
+                  {sourceUrl === undefined ? null : (
+                    <>
+                      {" "}
+                      · <a href={sourceUrl}>Capture run</a>
+                    </>
+                  )}{" "}
+                  · {capture.cpu}
+                </p>
+                <MemoryTable capture={capture} />
+              </div>
+            )
+          })}
         </>
       )}
-      <p className="lead" style={{ marginTop: 32 }}>
-        Reproduce locally with <code>bun run bench:http:update</code>,{" "}
-        <code>bun run bench:http:realworld:update</code>, and <code>bun run bench:ssr</code>.
-        Same-run ratios matter more than absolute req/s.
-      </p>
     </div>
   )
 }

@@ -92,7 +92,7 @@ function liveApp() {
     manifest,
     clientEntry: "/c.js",
     live: live({ secret: SECRET, appId: APP_ID, subject: () => "alice" }),
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
   })
   return { app, calls }
 }

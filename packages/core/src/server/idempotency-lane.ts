@@ -35,6 +35,7 @@ import { markTransportCap, readBoundedBytes, transportCapOf, UNLIMITED_BODY_BYTE
 import type { Platform, RouteSchema } from "./context.ts"
 import { jsonError, urlPartsOf } from "./http.ts"
 import { INSTALL_IDEMPOTENCY } from "./install.ts"
+import { carryToCopy } from "./request-local.ts"
 import { CONTEXT_REQUEST, PRE_DECODED_BODY, preDecodedBody, requestOf } from "./runtime-core.ts"
 import type { AnyServer, IdentityPlugin, RawContext, RequestSource } from "./server.ts"
 
@@ -467,6 +468,7 @@ function prepareRequest(source: RequestSource, platform: Platform | undefined): 
       duplex: "half",
     }
     prepared = new Request(request.url, init)
+    carryToCopy(request, prepared)
     const decoded = preDecodedBody(request)
     if (decoded !== undefined) Object.defineProperty(prepared, PRE_DECODED_BODY, { value: decoded })
   } catch (error) {

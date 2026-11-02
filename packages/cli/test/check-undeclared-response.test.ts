@@ -68,6 +68,24 @@ export const spec = toOpenAPI(app)
   expect(await findings()).toEqual(["backend/routes.ts:7 info", "backend/routes.ts:9 info"])
 })
 
+test("a call with a path but no handler is not a route, whatever the method name", async () => {
+  // headers.get("etag"), searchParams.get("id"), map.delete("/"): every registration takes a handler.
+  const lines = [
+    `import { openapi } from "@nifrajs/middleware"`,
+    `import { server } from "@nifrajs/core/server"`,
+    `declare const store: Record<string, (key: string, options?: object) => unknown>`,
+    `export const app = server().use(openapi())`,
+  ]
+  const expected: string[] = []
+  for (const method of ["get", "post", "put", "patch", "delete", "head", "options", "all"]) {
+    lines.push(`store.${method}("/${method}")`, `store.${method}("/${method}", { fallback: 1 })`)
+    lines.push(`app.${method}("/${method}", { query: {} }, () => "ok")`)
+    expected.push(`backend/app.ts:${lines.length} info`)
+  }
+  writeAppFile(root, "backend/app.ts", `${lines.join("\n")}\n`)
+  expect(await findings()).toEqual(expected)
+})
+
 test("a project that builds no document is not reported", async () => {
   writeAppFile(root, "backend/routes.ts", ROUTES)
   expect(await findings()).toEqual([])

@@ -5,21 +5,14 @@ import {
   defer,
   type Manifest,
   type RenderAdapter,
+  rawHref,
   redirect,
   renderPage,
 } from "../src/index.ts"
+import { streamOf } from "./streams.ts"
 
 // Stub adapter: emits `chain=<len>:<data>` so assertions can see the chain length + the props.data
 // (which, for an error page, is the serialized `{ name, message }`).
-const streamOf = (s: string): ReadableStream<Uint8Array> => {
-  const bytes = new TextEncoder().encode(s)
-  return new ReadableStream({
-    start(c) {
-      c.enqueue(bytes)
-      c.close()
-    },
-  })
-}
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>
     streamOf(`<p>chain=${chain.length}:${JSON.stringify(props.data)}</p>`),
@@ -174,7 +167,7 @@ describe("agnostic loader-error rendering", () => {
   test("a thrown Response (guard redirect) passes through - not caught as an error", async () => {
     const app = createWebApp({
       adapter: stub,
-      manifest: errorManifest(redirect("/login")),
+      manifest: errorManifest(redirect(rawHref("/login"))),
       clientEntry: "/c.js",
     })
     const res = await app.fetch(new Request("http://x/boom"))
@@ -300,7 +293,7 @@ describe("onLoaderError reporting hook", () => {
       ;(boom as { load: () => Promise<unknown> }).load = async () => ({
         default: "boom",
         loader: () => {
-          throw redirect("/login")
+          throw redirect(rawHref("/login"))
         },
       })
     }
@@ -438,7 +431,7 @@ describe("boundary-answered failures reach the server log", () => {
     const { entries, logger } = capture()
     const app = createWebApp({
       adapter: stub,
-      manifest: errorManifest(redirect("/login")),
+      manifest: errorManifest(redirect(rawHref("/login"))),
       clientEntry: "/c.js",
       server: { logger },
     })

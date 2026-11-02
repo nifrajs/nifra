@@ -25,6 +25,7 @@ export {
   type ResvgConstructor,
   type ResvgRenderer,
 } from "./og-png.ts"
+export type { ImageInputProps, ImagePresentationProps, StaticImageProps } from "./resolve.ts"
 export {
   type CloudflareLoaderOptions,
   cloudflareLoader,
@@ -38,3 +39,4 @@ export {
   selfHostedLoader,
   signImageUrl,
 } from "./resolve.ts"
+export type { StaticImageData, StaticImageVariant } from "./static.ts"
