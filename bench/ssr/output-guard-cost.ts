@@ -1,6 +1,7 @@
 /** Measure the loader-output guard itself, then relate it to the same app's local SSR response time. */
 import { cpus } from "node:os"
 import { join } from "node:path"
+import { isRecord } from "../is-record.ts"
 import { ohaVersion, writeSiteBench } from "../site-bench.ts"
 import {
   median,
@@ -29,9 +30,6 @@ interface GuardWorkerCapture {
   readonly identitySamplesUs: readonly number[]
   readonly pairedOverheadSamplesUs: readonly number[]
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const isNumberArray = (value: unknown): value is number[] =>
   Array.isArray(value) && value.every((item) => typeof item === "number" && Number.isFinite(item))
