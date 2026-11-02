@@ -2,9 +2,9 @@
  * Registration-time route-lane selection.
  *
  * A route's lane is a property of its registered shape, not of an individual request. Keeping this
- * decision in a small internal module gives the server kernel one vocabulary for bare/body/query/
- * lifecycle execution while preserving the important invariant: this module is never called from the
- * request path. The returned booleans are consumed by the existing compiled execution plan and fused
+ * decision in a small internal module gives the server kernel one vocabulary for
+ * bare/body/query/input/lifecycle execution. This module is never called from the request path. The
+ * returned booleans are consumed by the existing compiled execution plan and fused
  * builders; no adapter or extra dispatch hop is introduced at runtime.
  */
 import type { RouteSchema } from "../server/context.ts"
@@ -18,7 +18,7 @@ export interface RouteLaneSelection {
   readonly lane: RouteExecutionLane
   readonly lifecycleLane: LifecycleExecutionLane
   readonly lifecycleHookLane: "hooks" | undefined
-  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
+  readonly fusedLane: "bare" | "body" | "query" | "inputs" | "hooks" | undefined
 }
 
 export function selectRouteLanes(options: {
@@ -52,13 +52,20 @@ export function selectRouteLanes(options: {
 
   const authBeforeValidation =
     options.hasAuth === true || schema?.validationOrder === "auth-before-validation"
-  // No fused lane validates params, headers, or cookies: any of those schemas keeps the stage runner.
-  const plain =
-    schema?.params === undefined && schema?.headers === undefined && schema?.cookies === undefined
+  // Narrow body/query runners handle simple shapes; the shared input lane composes schemas.
+  const plain = schema?.headers === undefined && schema?.cookies === undefined
+  const noParams = schema?.params === undefined
+  const hasInputSchema =
+    schema?.headers !== undefined ||
+    schema?.cookies !== undefined ||
+    schema?.params !== undefined ||
+    schema?.body !== undefined ||
+    schema?.query !== undefined
 
   const bare =
     !authBeforeValidation &&
     plain &&
+    noParams &&
     schema?.body === undefined &&
     schema?.query === undefined &&
     !hasIdempotency &&
@@ -69,19 +76,18 @@ export function selectRouteLanes(options: {
     afterHandle === 0 &&
     onError === 0
 
-  // A route whose ONLY lifecycle step is a query schema can fuse too: the parse + validate + handler +
-  // respond collapse into one closure with no lifecycle promise on the sync path. The guards mirror the
-  // query lane below PLUS everything the fused dispatch skips: around hooks, the idempotency/ledger
-  // wrappers, and validation-error recovery (schema or server default) - the fused invalid path is
-  // exactly `validationError(issues)`, so any recovery semantics keep the generic lane.
+  // A route whose only input stages are path params and/or a query schema can fuse too: validate +
+  // handler + respond collapse into one closure with no lifecycle promise on the sync path. The guards
+  // mirror the query lane below PLUS everything the fused dispatch skips: around hooks, the
+  // idempotency/ledger wrappers, and validation-error recovery (schema or server default).
   const fusedQuery =
     !bare &&
     !authBeforeValidation &&
     !hasResponseContract &&
-    schema?.query !== undefined &&
+    (schema?.query !== undefined || schema?.params !== undefined) &&
     schema.body === undefined &&
     plain &&
-    schema.onValidationError === undefined &&
+    schema?.onValidationError === undefined &&
     !defaultOnValidationError &&
     !hasIdempotency &&
     !hasLedger &&
@@ -112,17 +118,32 @@ export function selectRouteLanes(options: {
     !hasLedger &&
     around === 0
 
+  // The shared input runner handles every ordinary validation shape, including body+query and
+  // params+headers+cookies combinations. It also carries lifecycle and error hooks; only recovery
+  // callbacks or outer wrappers that observe the stage sequence need the general program.
+  const fusedInputs =
+    hasInputSchema &&
+    !authBeforeValidation &&
+    !hasResponseContract &&
+    schema.onValidationError === undefined &&
+    !defaultOnValidationError &&
+    !hasIdempotency &&
+    !hasLedger &&
+    decorationsAssignable &&
+    around === 0
+
   // The idempotency gate lives in the general program, so an idempotent route always runs it.
   const lane: RouteExecutionLane =
     authBeforeValidation || hasIdempotency
       ? "lifecycle"
       : bare
         ? "bare"
-        : bodyOnly
+        : bodyOnly && (noParams || fusedBody)
           ? "body"
           : !hasResponseContract &&
               schema?.body === undefined &&
               schema?.query !== undefined &&
+              noParams &&
               plain &&
               derives === 0 &&
               beforeHandle === 0 &&
@@ -131,10 +152,8 @@ export function selectRouteLanes(options: {
             ? "query"
             : "lifecycle"
 
-  // Lifecycle routes with no params schema are the common middleware shape: derive/before plus an
-  // optional query or body schema. Select their complete validation stage at registration so the
-  // request path never re-checks params/body presence. Parameter-schema routes retain the generic
-  // lifecycle runner until their more involved recovery matrix is selected explicitly.
+  // Select the lifecycle stage shape at registration so the request path never re-checks which input
+  // schemas or hook phases are present.
   const lifecycleLane: LifecycleExecutionLane =
     lane !== "lifecycle" || !plain
       ? undefined
@@ -146,12 +165,8 @@ export function selectRouteLanes(options: {
           ? "query"
           : "hooks"
 
-  // A route whose only lifecycle steps are derive, before and after hooks (any number of each, at least
-  // one) runs them in one fused closure chain, with the route's decorations and error hooks. Anything
-  // that can observe around hooks, a response contract or a validation-error recovery keeps the
-  // generic runner. A params, headers or cookies schema
-  // routes back to the generic lane because the fused builder has no validation step for them, and a
-  // `body` schema is the `body-hooks` lane below because this one does not parse the body.
+  // A route with lifecycle hooks and no validated inputs uses the same compiled hook chain. Input
+  // routes use `fusedInputs` above, including when their hooks run after validation.
   const hookCount = derives + beforeHandle + afterHandle
   const lifecycleHookLane =
     lane === "lifecycle" &&
@@ -164,27 +179,10 @@ export function selectRouteLanes(options: {
     !defaultOnValidationError &&
     plain &&
     schema?.body === undefined &&
-    hookCount > 0 &&
+    (hookCount > 0 || onError > 0) &&
     around === 0
       ? "hooks"
       : undefined
-
-  // The same hooks around a body schema: the fused closure runs parse, validate, derive, before,
-  // handler and after in one function frame, the win `fusedBody` already gives the no-hooks shape.
-  const fusedBodyLifecycle =
-    lane === "lifecycle" &&
-    !authBeforeValidation &&
-    schema?.body !== undefined &&
-    schema?.query === undefined &&
-    plain &&
-    schema?.onValidationError === undefined &&
-    !defaultOnValidationError &&
-    !hasResponseContract &&
-    decorationsAssignable &&
-    !hasIdempotency &&
-    !hasLedger &&
-    hookCount > 0 &&
-    around === 0
 
   return {
     bare,
@@ -202,7 +200,9 @@ export function selectRouteLanes(options: {
             ? "body"
             : bare
               ? "bare"
-              : (lifecycleHookLane ?? (fusedBodyLifecycle ? "body-hooks" : undefined))
+              : fusedInputs
+                ? "inputs"
+                : lifecycleHookLane
         : undefined,
   }
 }

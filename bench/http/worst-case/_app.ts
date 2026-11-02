@@ -2,9 +2,11 @@
  * The nifra WORST-CASE app - shared verbatim by the Bun, Node, and Deno servers so every
  * runtime section measures the identical app.
  *
- * This app stresses the hookful route shape. Set BENCH_GENERIC=1 to exclude fusion:
+ * This app stresses the hookful route shape with validated params. Set BENCH_GENERIC=1 to exclude
+ * Nifra's fused lifecycle lanes through the normal validation-recovery API:
  *   - derive + beforeHandle + afterHandle registered (eligible for the fused hook lane)
- *   - BENCH_GENERIC=1 adds a second before hook and an error hook, selecting the generic lifecycle runner
+ *   - params + query and params + body validation are present in both modes
+ *   - BENCH_GENERIC=1 installs an onValidationError recovery hook, selecting the generic runner
  *   - multi-segment path params                       → no static-map route hit
  *   - validated query                                 → query materialization + validate
  *   - JSON body validation on the generic body stage → parse + validate after runtime framing
@@ -71,6 +73,33 @@ export function isTraceQuery(v: unknown): v is { verbose: string; trace: string 
   )
 }
 
+function isTaskGetParams(value: unknown): value is { org: string; proj: string; id: string } {
+  if (typeof value !== "object" || value === null) return false
+  return (
+    "org" in value &&
+    typeof value.org === "string" &&
+    /^[a-z]+$/.test(value.org) &&
+    "proj" in value &&
+    typeof value.proj === "string" &&
+    /^[a-z]+$/.test(value.proj) &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    /^[0-9]+$/.test(value.id)
+  )
+}
+
+function isTaskPostParams(value: unknown): value is { org: string; proj: string } {
+  if (typeof value !== "object" || value === null) return false
+  return (
+    "org" in value &&
+    typeof value.org === "string" &&
+    /^[a-z]+$/.test(value.org) &&
+    "proj" in value &&
+    typeof value.proj === "string" &&
+    /^[a-z]+$/.test(value.proj)
+  )
+}
+
 const taskBatchBody: StandardSchemaV1<unknown, TaskBatch> = {
   "~standard": {
     version: 1,
@@ -97,6 +126,35 @@ const traceQuery: StandardSchemaV1<unknown, { verbose: string; trace: string }> 
   },
 }
 
+const taskGetParams: StandardSchemaV1<unknown, { org: string; proj: string; id: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "nifra-bench",
+    validate(value): StandardResult<{ org: string; proj: string; id: string }> {
+      return isTaskGetParams(value)
+        ? { value }
+        : { issues: [{ message: "expected slug org/project and numeric task id" }] }
+    },
+    types: undefined as unknown as StandardTypes<
+      unknown,
+      { org: string; proj: string; id: string }
+    >,
+  },
+}
+
+const taskPostParams: StandardSchemaV1<unknown, { org: string; proj: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "nifra-bench",
+    validate(value): StandardResult<{ org: string; proj: string }> {
+      return isTaskPostParams(value)
+        ? { value }
+        : { issues: [{ message: "expected slug org/project params" }] }
+    },
+    types: undefined as unknown as StandardTypes<unknown, { org: string; proj: string }>,
+  },
+}
+
 export function makeWorstNifraApp(
   generic = process.env.BENCH_GENERIC === "1",
   protoPoisoning: "reject" | "strip" | "ignore" = "reject",
@@ -111,23 +169,39 @@ export function makeWorstNifraApp(
         : undefined,
     )
     .afterHandle((result) => result)
-  // The second before hook keeps the work equal to the comparators'; the error hook, which never
-  // answers, is what takes the routes off the fused hook lanes.
+  // Keep the generic diagnostic workload's lifecycle hook count aligned with the peers. The
+  // validation-recovery callback selects Nifra's generic runner but is not called by valid requests.
   if (generic) app.beforeHandle(() => undefined).onError(() => undefined)
   return app
-    .get("/orgs/:org/projects/:proj/tasks/:id", { query: traceQuery }, (c) => {
-      c.set.headers["x-request-id"] = c.requestId
-      c.set.headers["x-trace"] = c.query.trace
-      return { org: c.params.org, proj: c.params.proj, id: c.params.id, verbose: c.query.verbose }
-    })
-    .post("/orgs/:org/projects/:proj/tasks", { body: taskBatchBody }, (c) => {
-      c.set.headers["x-request-id"] = c.requestId
-      c.set.headers["x-count"] = String(c.body.items.length)
-      return {
-        org: c.params.org,
-        proj: c.params.proj,
-        count: c.body.items.length,
-        first: c.body.items[0]?.title ?? "",
-      }
-    })
+    .get(
+      "/orgs/:org/projects/:proj/tasks/:id",
+      {
+        params: taskGetParams,
+        ...(generic ? { onValidationError: () => undefined } : {}),
+        query: traceQuery,
+      },
+      (c) => {
+        c.set.headers["x-request-id"] = c.requestId
+        c.set.headers["x-trace"] = c.query.trace
+        return { org: c.params.org, proj: c.params.proj, id: c.params.id, verbose: c.query.verbose }
+      },
+    )
+    .post(
+      "/orgs/:org/projects/:proj/tasks",
+      {
+        params: taskPostParams,
+        ...(generic ? { onValidationError: () => undefined } : {}),
+        body: taskBatchBody,
+      },
+      (c) => {
+        c.set.headers["x-request-id"] = c.requestId
+        c.set.headers["x-count"] = String(c.body.items.length)
+        return {
+          org: c.params.org,
+          proj: c.params.proj,
+          count: c.body.items.length,
+          first: c.body.items[0]?.title ?? "",
+        }
+      },
+    )
 }
