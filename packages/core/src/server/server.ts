@@ -81,6 +81,7 @@ import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
   assertByteLimit,
   clientBodyErrorCode,
+  DEFAULT_MAX_BODY_BYTES,
   hasTrustedBodyFraming,
   markTransportCap,
   markTrustedBodyFraming,
@@ -100,7 +101,7 @@ import {
   headerKeysAllLowercase,
   markLowercaseHeaderKeys,
 } from "./header-case.ts"
-import { declaredHeaders, headerObjectOf } from "./headers.ts"
+import { declaredHeaderNames, declaredHeaders, headerObjectOf } from "./headers.ts"
 import {
   isRoutableMethod,
   jsonError,
@@ -648,7 +649,6 @@ export {
 } from "./plugin.ts"
 export type { IdentityPlugin }
 
-const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const BODY_RESPONSE = (response: Response | ResponseResult): Response | ResponseResult => response
 const BODY_ERROR = (error: unknown): Promise<never> => Promise.reject(error)
 const DEFAULT_DRAIN_MS = 10_000
@@ -884,6 +884,98 @@ interface FusedHooks {
   readonly afters: readonly RawAfterHandle[]
   readonly errors: readonly RawErrorHandler[]
   readonly decorations: Record<PropertyKey, unknown> | undefined
+}
+
+interface FusedValidationStage {
+  readonly schema: StandardSchemaV1
+  readonly kind: "headers" | "cookies" | "params" | "query"
+  readonly headerNames?: readonly string[] | undefined
+}
+
+type FusedValidationFields = {
+  headers: unknown
+  cookies: unknown
+  params: unknown
+  query: unknown
+}
+
+/** Compile the non-body validation stages in the same order as the route program. The selected
+ * fused lane runs this only for routes whose recovery behavior is the ordinary 422 response. */
+function compileFusedValidationStages(
+  schema: RouteSchema | undefined,
+): readonly FusedValidationStage[] {
+  if (schema === undefined) return []
+  const stages: FusedValidationStage[] = []
+  if (schema.headers !== undefined) {
+    stages.push({
+      schema: schema.headers,
+      kind: "headers",
+      headerNames: declaredHeaderNames(schema.headers),
+    })
+  }
+  if (schema.cookies !== undefined) {
+    stages.push({ schema: schema.cookies, kind: "cookies" })
+  }
+  if (schema.params !== undefined) {
+    stages.push({ schema: schema.params, kind: "params" })
+  }
+  if (schema.query !== undefined) {
+    stages.push({ schema: schema.query, kind: "query" })
+  }
+  return stages
+}
+
+/** Run a registration-compiled input sequence without allocating a lifecycle-program continuation
+ * for each synchronous schema. Only an asynchronous validator creates a Promise continuation. */
+function runFusedValidationStages<T>(
+  stages: readonly FusedValidationStage[],
+  source: RequestSource,
+  ctx: RawContext,
+  wrapResponse: Wrap<T>,
+  onError: (error: unknown) => MaybePromise<T>,
+  next: () => MaybePromise<T>,
+  startIndex = 0,
+): MaybePromise<T> {
+  if (stages.length === 0) return next()
+  const validationContext: FusedValidationFields = ctx
+  for (let index = startIndex; index < stages.length; index++) {
+    const stage = stages[index]!
+    let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+    try {
+      const input =
+        stage.kind === "headers"
+          ? stage.headerNames === undefined
+            ? headerObjectOf(source.headers)
+            : declaredHeaders(source.headers, stage.headerNames)
+          : stage.kind === "cookies"
+            ? ctx.cookies
+            : stage.kind === "params"
+              ? ctx.params
+              : queryObjectOf(ctx[CONTEXT_SEARCH])
+      validation = stage.schema["~standard"].validate(input)
+    } catch (error) {
+      return onError(error)
+    }
+    if (validation instanceof Promise) {
+      return validation.then((result) => {
+        if (result.issues !== undefined) return wrapResponse(plainValidationError(result.issues))
+        try {
+          validationContext[stage.kind] = result.value
+        } catch (error) {
+          return onError(error)
+        }
+        return runFusedValidationStages(stages, source, ctx, wrapResponse, onError, next, index + 1)
+      }, onError)
+    }
+    if (validation.issues !== undefined)
+      return wrapResponse(plainValidationError(validation.issues))
+    try {
+      validationContext[stage.kind] = validation.value
+    } catch (error) {
+      return onError(error)
+    }
+  }
+  return next()
 }
 
 /** What a fused lifecycle route runs for its hook shape on the Web lane: the first derive, or the
@@ -2791,9 +2883,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       handler = this.idempotencyRuntime.wrapHandler(handler)
     }
     const { bare, fusedQuery, fusedBody } = lanes
-    // `selectRouteLanes` admits the fused hook lanes only for derive, before and after hooks, so the
-    // three arrays below are the route's whole lifecycle.
-    const fusedLifecycle = lanes.fusedLane === "hooks" || lanes.fusedLane === "body-hooks"
+    // Composite-input routes and hook-only routes share the lifecycle builders; simple shapes use
+    // their narrower runners.
+    const fusedLifecycle =
+      lanes.fusedLane === "hooks" ||
+      lanes.fusedLane === "inputs" ||
+      (lanes.fusedLane === "query" && schema?.params !== undefined)
     // The fused chains keep the arrays they are built from, and `beforeHandle()` inserts into the live
     // ones ahead of `beforeHandler()` guards, so the entry and the fused chains share one snapshot of
     // this route's.
@@ -2817,16 +2912,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ? this.buildFusedBodyRunner(
           handler as unknown as InternalHandler,
           schema?.body as StandardSchemaV1,
+          schema?.params,
           hasDecorations ? routeDecorations : undefined,
           bodyLimit ?? UNLIMITED_BODY_BYTES,
         )
       : fusedHooks !== undefined
-        ? this.buildFusedLifecycleRunner(
-            fusedHooks,
-            schema?.query,
-            schema?.body as StandardSchemaV1 | undefined,
-            bodyLimit ?? UNLIMITED_BODY_BYTES,
-          )
+        ? this.buildFusedLifecycleRunner(fusedHooks, schema, bodyLimit ?? UNLIMITED_BODY_BYTES)
         : undefined
     const fusedWeb =
       bare && this.aroundHooks.length === 0
@@ -2840,18 +2931,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           ? this.buildFusedQueryWeb(
               handler as unknown as InternalHandler,
               hasDecorations ? routeDecorations : undefined,
-              schema?.query as StandardSchemaV1,
+              schema?.query,
+              schema?.params,
               bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
             : fusedHooks !== undefined
-              ? this.buildFusedLifecycleWeb(
-                  fusedHooks,
-                  schema?.query,
-                  schema?.body as StandardSchemaV1 | undefined,
-                  bodyLimit ?? UNLIMITED_BODY_BYTES,
-                )
+              ? this.buildFusedLifecycleWeb(fusedHooks, schema, bodyLimit ?? UNLIMITED_BODY_BYTES)
               : undefined
     const program = compileRouteProgram({
       schema,
@@ -3346,7 +3433,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const lane = entry.execution.fusedLane
     // Type-erase the lane so each `===` branch sees the full union, not the narrowed remainder.
     const laneName: string | undefined = lane
-    const lifecycle = laneName === "hooks" || laneName === "body-hooks"
+    const lifecycle =
+      laneName === "hooks" ||
+      laneName === "inputs" ||
+      (laneName === "query" && entry.schema?.params !== undefined)
     const hooks: FusedHooks | undefined = lifecycle
       ? {
           handler: entry.handler,
@@ -3362,14 +3452,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         ? this.buildFusedBodyRunner(
             entry.handler,
             entry.schema?.body as StandardSchemaV1,
+            entry.schema?.params,
             entry.hasDecorations ? entry.decorations : undefined,
             entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
         : hooks !== undefined
           ? this.buildFusedLifecycleRunner(
               hooks,
-              entry.schema?.query,
-              entry.schema?.body as StandardSchemaV1 | undefined,
+              entry.schema,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : undefined
@@ -3380,14 +3470,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           ? this.buildFusedQueryWeb(
               entry.handler,
               entry.hasDecorations ? entry.decorations : undefined,
-              entry.schema?.query as StandardSchemaV1,
+              entry.schema?.query,
+              entry.schema?.params,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : hooks !== undefined
             ? this.buildFusedLifecycleWeb(
                 hooks,
-                entry.schema?.query,
-                entry.schema?.body as StandardSchemaV1 | undefined,
+                entry.schema,
                 entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
               )
             : this.buildFusedWeb(
@@ -5179,12 +5269,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
   }
 
-  /** Compile the eligible body-only route's parser → validator → handler continuation once. The
+  /** Compile the eligible body route's params → parser → validator → handler continuation once. The
    * bounded parser remains shared with the generic lane; only the route-invariant entry lookups and
    * lifecycle dispatch disappear from the common synchronous-validator/synchronous-handler case. */
   private buildFusedBodyRunner(
     handler: InternalHandler,
     bodySchema: StandardSchemaV1,
+    paramsSchema: StandardSchemaV1 | undefined,
     decorations: Record<PropertyKey, unknown> | undefined,
     maxBodyBytes: number,
   ): FusedBodyRunner {
@@ -5268,6 +5359,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
 
+    const readBody = <T>(
+      source: RequestSource,
+      ctx: RawContext,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
+    ): Promise<T> =>
+      readBodyFramed(
+        source,
+        maxBodyBytes,
+        this.protoPoisoning,
+        (parsed) => runParsed(parsed, ctx, finalize, wrapResponse),
+        wrapResponse,
+        (err) => logError(err, ctx, finalize, wrapResponse),
+        bodySchema,
+        this.formOrigins,
+      )
+
     return <T>(
       source: RequestSource,
       params: Record<string, string>,
@@ -5291,18 +5399,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      const finish = (value: unknown): MaybePromise<T> =>
-        runParsed(value, ctx, finalize, wrapResponse)
-      return readBodyFramed(
-        source,
-        maxBodyBytes,
-        this.protoPoisoning,
-        finish,
-        wrapResponse,
-        (err) => logError(err, ctx, finalize, wrapResponse),
-        bodySchema,
-        this.formOrigins,
-      )
+      if (paramsSchema === undefined) return readBody(source, ctx, finalize, wrapResponse)
+      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+      try {
+        validation = paramsSchema["~standard"].validate(ctx.params)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return wrapResponse(plainValidationError(settled.issues))
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route's params schema defines this validated output; RawContext erases its route-specific type.
+            ctx.params = settled.value as Record<string, string>
+            return readBody(source, ctx, finalize, wrapResponse)
+          },
+          (err) => logError(err, ctx, finalize, wrapResponse),
+        )
+      }
+      if (validation.issues !== undefined)
+        return wrapResponse(plainValidationError(validation.issues))
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route's params schema defines this validated output; RawContext erases its route-specific type.
+      ctx.params = validation.value as Record<string, string>
+      return readBody(source, ctx, finalize, wrapResponse)
     }
   }
 
@@ -5330,17 +5450,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ) as MaybePromise<Response>
   }
 
-  /** The fused Web lane for a route whose only lifecycle step is a query schema: parse + validate +
-   * handler + respond in one closure, no lifecycle promise when the validator and handler are sync.
-   * Eligibility is decided at registration (see `fusedQuery` in {@link register}); the semantics here
-   * are exactly `runQueryOnly`'s for that eligible shape - invalid input returns
-   * `validationError(issues)` (recovery hooks disqualify the route from this lane), a thrown
-   * `Response` passes through, anything else logs and returns a flat 500, and an async validator
-   * falls to a then-chain with the same steps. */
+  /** The fused Web lane for routes with path params and/or a query schema: validate + handler + respond
+   * in one closure, with no lifecycle promise when the validators and handler are sync. */
   private buildFusedQueryWeb(
     handler: InternalHandler,
     decorations: Record<PropertyKey, unknown> | undefined,
-    querySchema: StandardSchemaV1,
+    querySchema: StandardSchemaV1 | undefined,
+    paramsSchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
   ): FusedWebRunner {
     // Same thrown-value contract as the generic lane (`bare-error-lane.ts` via `bareError`); the fused
@@ -5354,7 +5470,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         this.wrapWebResponse,
       )
     const runHandler = (ctx: RawContext, value: unknown): MaybePromise<Response> => {
-      ctx.query = value
+      if (querySchema !== undefined) ctx.query = value
       let result: unknown
       try {
         result = handler(ctx)
@@ -5369,20 +5485,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
     }
-    return (source, params, search, signal, budget, platform, nativeContext) => {
-      const ctx = nativeContext
-        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
-        : new RequestContext(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            maxBodyBytes,
-            this.protoPoisoning,
-          )
-      if (decorations !== undefined) Object.assign(ctx, decorations)
+    const runQuery = (ctx: RawContext): MaybePromise<Response> => {
+      if (querySchema === undefined) return runHandler(ctx, undefined)
       let validation: MaybePromise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
@@ -5401,6 +5505,45 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return this.wrapWebResponse(plainValidationError(validation.issues))
       return runHandler(ctx, validation.value)
+    }
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+      if (decorations !== undefined) Object.assign(ctx, decorations)
+      if (paramsSchema === undefined) return runQuery(ctx)
+      let validation: MaybePromise<StandardResult<unknown>>
+      try {
+        validation = paramsSchema["~standard"].validate(ctx.params)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return this.wrapWebResponse(plainValidationError(settled.issues))
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route's params schema defines this validated output; RawContext erases its route-specific type.
+            ctx.params = settled.value as Record<string, string>
+            return runQuery(ctx)
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (validation.issues !== undefined)
+        return this.wrapWebResponse(plainValidationError(validation.issues))
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route's params schema defines this validated output; RawContext erases its route-specific type.
+      ctx.params = validation.value as Record<string, string>
+      return runQuery(ctx)
     }
   }
 
@@ -5625,13 +5768,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /**
    * Compile a fused lifecycle route's entry closure: parse (body) → validate → the shared stage chain
    * of its hook shape (derive → before → handler → after → respond, see {@link fusedWebStages}) in a
-   * single frame, where the generic program walks staged hook loops. `selectRouteLanes` admits only
-   * derive, before and after hooks - no params or headers schema, onError, around, decorations,
-   * response contract or recovery hook, and never a query schema beside a body schema - so the behavior
-   * is the compiled program's: the same stage order, the same thrown-value contract (`Response` is
-   * control flow, anything else logs and 500s), the same `c.set` semantics and `fusedRespond` render.
-   * The route's own closure holds only its `FusedHooks` and schemas and takes the request's context as
-   * an argument, so a request allocates no step closures.
+   * single frame, where the generic program walks staged hook loops. `selectRouteLanes` admits ordinary
+   * validation stages and derive/before/after/error hooks, while excluding auth-first ordering, custom
+   * validation recovery, outer wrappers and response contracts. The shared input sequence preserves
+   * the program's validation order around body parsing; the hook chain preserves thrown-value, `c.set`
+   * and response-rendering semantics. The route's closure holds its `FusedHooks` and schemas, so a
+   * request allocates no step closures.
    */
   /**
    * Keep the common one-derive/one-before shape bound to its hooks. Inline its synchronous path to
@@ -5781,12 +5923,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   private buildFusedLifecycleWeb(
     route: FusedHooks,
-    querySchema: StandardSchemaV1 | undefined,
-    bodySchema: StandardSchemaV1 | undefined,
+    schema: RouteSchema | undefined,
     maxBodyBytes: number,
   ): FusedWebRunner {
+    const validationStages = compileFusedValidationStages(schema)
+    const bodySchema = schema?.body
     if (
-      querySchema === undefined &&
+      validationStages.length === 0 &&
       bodySchema === undefined &&
       route.errors.length === 0 &&
       route.decorations === undefined &&
@@ -5810,30 +5953,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.fusedWebStages(d, b, a),
     )
     const decorations = route.decorations
-    if (bodySchema !== undefined) {
-      const onParsed = (parsed: unknown, ctx: RawContext): MaybePromise<Response> => {
-        let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
-        try {
-          validation = bodySchema["~standard"].validate(parsed)
-        } catch (err) {
-          return this.fusedWebRouteFail(err, ctx, route)
-        }
-        if (validation instanceof Promise) {
-          return validation.then(
-            (settled) => {
-              if (settled.issues !== undefined)
-                return this.wrapWebResponse(plainValidationError(settled.issues))
-              ctx.body = settled.value
-              return runDerive(ctx, route, 0)
-            },
-            (err) => this.fusedWebRouteFail(err, ctx, route),
-          )
-        }
-        if (validation.issues !== undefined)
-          return this.wrapWebResponse(plainValidationError(validation.issues))
-        ctx.body = validation.value
-        return runDerive(ctx, route, 0)
-      }
+    if (bodySchema === undefined) {
       return (source, params, search, signal, budget, platform, nativeContext) => {
         const ctx = nativeContext
           ? RequestContext.native(
@@ -5855,18 +5975,70 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               this.protoPoisoning,
             )
         if (decorations !== undefined) Object.assign(ctx, decorations)
-        return readBodyFramed(
+        if (validationStages.length === 0) return runDerive(ctx, route, 0)
+        return runFusedValidationStages(
+          validationStages,
           source,
-          maxBodyBytes,
-          this.protoPoisoning,
-          (parsed) => onParsed(parsed, ctx),
+          ctx,
           this.wrapWebResponse,
           (err) => this.fusedWebRouteFail(err, ctx, route),
-          bodySchema,
-          this.formOrigins,
-        ) as MaybePromise<Response>
+          () => runDerive(ctx, route, 0),
+        )
       }
     }
+    const queryIndex =
+      schema?.query === undefined ? validationStages.length : validationStages.length - 1
+    const beforeBodyStages = validationStages.slice(0, queryIndex)
+    const afterBodyStages = validationStages.slice(queryIndex)
+    const runAfterBody = (source: RequestSource, ctx: RawContext): MaybePromise<Response> =>
+      afterBodyStages.length === 0
+        ? runDerive(ctx, route, 0)
+        : runFusedValidationStages(
+            afterBodyStages,
+            source,
+            ctx,
+            this.wrapWebResponse,
+            (err) => this.fusedWebRouteFail(err, ctx, route),
+            () => runDerive(ctx, route, 0),
+          )
+    const onParsed = (
+      parsed: unknown,
+      source: RequestSource,
+      ctx: RawContext,
+    ): MaybePromise<Response> => {
+      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+      try {
+        validation = bodySchema["~standard"].validate(parsed)
+      } catch (err) {
+        return this.fusedWebRouteFail(err, ctx, route)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return this.wrapWebResponse(plainValidationError(settled.issues))
+            ctx.body = settled.value
+            return runAfterBody(source, ctx)
+          },
+          (err) => this.fusedWebRouteFail(err, ctx, route),
+        )
+      }
+      if (validation.issues !== undefined)
+        return this.wrapWebResponse(plainValidationError(validation.issues))
+      ctx.body = validation.value
+      return runAfterBody(source, ctx)
+    }
+    const readBody = (source: RequestSource, ctx: RawContext): Promise<Response> =>
+      readBodyFramed(
+        source,
+        maxBodyBytes,
+        this.protoPoisoning,
+        (parsed) => onParsed(parsed, source, ctx),
+        this.wrapWebResponse,
+        (err) => this.fusedWebRouteFail(err, ctx, route),
+        bodySchema,
+        this.formOrigins,
+      )
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
         ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
@@ -5881,28 +6053,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             this.protoPoisoning,
           )
       if (decorations !== undefined) Object.assign(ctx, decorations)
-      if (querySchema === undefined) return runDerive(ctx, route, 0)
-      let validation: MaybePromise<StandardResult<unknown>>
-      try {
-        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
-      } catch (err) {
-        return this.fusedWebRouteFail(err, ctx, route)
-      }
-      if (validation instanceof Promise) {
-        return validation.then(
-          (settled) => {
-            if (settled.issues !== undefined)
-              return this.wrapWebResponse(plainValidationError(settled.issues))
-            ctx.query = settled.value
-            return runDerive(ctx, route, 0)
-          },
-          (err) => this.fusedWebRouteFail(err, ctx, route),
-        )
-      }
-      if (validation.issues !== undefined)
-        return this.wrapWebResponse(plainValidationError(validation.issues))
-      ctx.query = validation.value
-      return runDerive(ctx, route, 0)
+      if (beforeBodyStages.length === 0) return readBody(source, ctx)
+      return runFusedValidationStages(
+        beforeBodyStages,
+        source,
+        ctx,
+        this.wrapWebResponse,
+        (err) => this.fusedWebRouteFail(err, ctx, route),
+        () => readBody(source, ctx),
+      )
     }
   }
 
@@ -6154,44 +6313,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private buildFusedLifecycleRunner(
     route: FusedHooks,
-    querySchema: StandardSchemaV1 | undefined,
-    bodySchema: StandardSchemaV1 | undefined,
+    schema: RouteSchema | undefined,
     maxBodyBytes: number,
   ): FusedBodyRunner {
+    const validationStages = compileFusedValidationStages(schema)
+    const bodySchema = schema?.body
     const runDerive = sharedStages(NODE_STAGES, this, route, (d, b, a) =>
       this.fusedNodeStages(d, b, a),
     )
     const decorations = route.decorations
 
-    if (bodySchema !== undefined) {
-      const onParsed = <T>(
-        parsed: unknown,
-        ctx: RawContext,
-        finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-        wrapResponse: (response: Response | ResponseResult) => T,
-      ): MaybePromise<T> => {
-        let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
-        try {
-          validation = bodySchema["~standard"].validate(parsed)
-        } catch (err) {
-          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
-        }
-        if (validation instanceof Promise) {
-          return validation.then(
-            (settled) => {
-              if (settled.issues !== undefined)
-                return wrapResponse(plainValidationError(settled.issues))
-              ctx.body = settled.value
-              return runDerive(ctx, route, finalize, wrapResponse, 0)
-            },
-            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
-          )
-        }
-        if (validation.issues !== undefined)
-          return wrapResponse(plainValidationError(validation.issues))
-        ctx.body = validation.value
-        return runDerive(ctx, route, finalize, wrapResponse, 0)
-      }
+    if (bodySchema === undefined) {
       return <T>(
         source: RequestSource,
         params: Record<string, string>,
@@ -6223,41 +6355,84 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               this.protoPoisoning,
             )
         if (decorations !== undefined) Object.assign(ctx, decorations)
-        return readBodyFramed(
+        if (validationStages.length === 0) return runDerive(ctx, route, finalize, wrapResponse, 0)
+        return runFusedValidationStages(
+          validationStages,
           source,
-          maxBodyBytes,
-          this.protoPoisoning,
-          (parsed) => onParsed(parsed, ctx, finalize, wrapResponse),
+          ctx,
           wrapResponse,
           (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
-          bodySchema,
-          this.formOrigins,
+          () => runDerive(ctx, route, finalize, wrapResponse, 0),
         )
       }
     }
 
-    const runValidated = <T>(
-      validation: StandardResult<unknown> | Promise<StandardResult<unknown>>,
+    const queryIndex =
+      schema?.query === undefined ? validationStages.length : validationStages.length - 1
+    const beforeBodyStages = validationStages.slice(0, queryIndex)
+    const afterBodyStages = validationStages.slice(queryIndex)
+    const runAfterBody = <T>(
+      source: RequestSource,
+      ctx: RawContext,
+      finalize: Finalize<T>,
+      wrapResponse: Wrap<T>,
+    ): MaybePromise<T> =>
+      afterBodyStages.length === 0
+        ? runDerive(ctx, route, finalize, wrapResponse, 0)
+        : runFusedValidationStages(
+            afterBodyStages,
+            source,
+            ctx,
+            wrapResponse,
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+            () => runDerive(ctx, route, finalize, wrapResponse, 0),
+          )
+
+    const onParsed = <T>(
+      parsed: unknown,
+      source: RequestSource,
       ctx: RawContext,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
+      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+      try {
+        validation = bodySchema["~standard"].validate(parsed)
+      } catch (err) {
+        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+      }
       if (validation instanceof Promise) {
         return validation.then(
           (settled) => {
             if (settled.issues !== undefined)
               return wrapResponse(plainValidationError(settled.issues))
-            ctx.query = settled.value
-            return runDerive(ctx, route, finalize, wrapResponse, 0)
+            ctx.body = settled.value
+            return runAfterBody(source, ctx, finalize, wrapResponse)
           },
           (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
         )
       }
       if (validation.issues !== undefined)
         return wrapResponse(plainValidationError(validation.issues))
-      ctx.query = validation.value
-      return runDerive(ctx, route, finalize, wrapResponse, 0)
+      ctx.body = validation.value
+      return runAfterBody(source, ctx, finalize, wrapResponse)
     }
+    const readBody = <T>(
+      source: RequestSource,
+      ctx: RawContext,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
+    ): Promise<T> =>
+      readBodyFramed(
+        source,
+        maxBodyBytes,
+        this.protoPoisoning,
+        (parsed) => onParsed(parsed, source, ctx, finalize, wrapResponse),
+        wrapResponse,
+        (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+        bodySchema,
+        this.formOrigins,
+      )
 
     return <T>(
       source: RequestSource,
@@ -6283,14 +6458,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             this.protoPoisoning,
           )
       if (decorations !== undefined) Object.assign(ctx, decorations)
-      if (querySchema === undefined) return runDerive(ctx, route, finalize, wrapResponse, 0)
-      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
-      try {
-        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
-      } catch (err) {
-        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
-      }
-      return runValidated(validation, ctx, finalize, wrapResponse)
+      if (beforeBodyStages.length === 0) return readBody(source, ctx, finalize, wrapResponse)
+      return runFusedValidationStages(
+        beforeBodyStages,
+        source,
+        ctx,
+        wrapResponse,
+        (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+        () => readBody(source, ctx, finalize, wrapResponse),
+      )
     }
   }
 

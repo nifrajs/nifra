@@ -140,7 +140,7 @@ export function compileRouteExecutionPlan(options: {
   readonly hasLedger: boolean
   readonly fusedWeb: FusedWebRunner | undefined
   readonly fusedBody: FusedBodyRunner | undefined
-  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
+  readonly fusedLane: "bare" | "body" | "query" | "inputs" | "hooks" | undefined
 }): RouteExecutionPlan {
   const { lane, contextless, hasAround, hasLedger, fusedWeb, fusedBody, fusedLane } = options
 
@@ -279,9 +279,9 @@ export interface RouteExecutionPlan {
   readonly fusedWeb: FusedWebRunner | undefined
   readonly fusedBody: FusedBodyRunner | undefined
   /** Which builder produced {@link fusedWeb} - a merge rebinds the closure to the executing server
-   * and must rebuild it with the SAME semantics (a query-fused route rebuilt as bare would skip its
-   * validation). `undefined` iff `fusedWeb` is. */
-  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
+   * and must rebuild it with the SAME semantics (a query- or input-fused route rebuilt as bare would
+   * skip its validation). `undefined` iff `fusedWeb` is. */
+  readonly fusedLane: "bare" | "body" | "query" | "inputs" | "hooks" | undefined
 }
 
 export interface RouteEntry {
