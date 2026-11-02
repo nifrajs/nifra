@@ -4548,6 +4548,13 @@
     "doc": "/** Default retention for a stored idempotent response: 24 hours. */"
   },
   {
+    "name": "DEFAULT_MAX_BODY_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const DEFAULT_MAX_BODY_BYTES = 1000000;",
+    "doc": "/** Default request-body cap shared by the full Server and the compact edge server. */"
+  },
+  {
     "name": "DEFAULT_MAX_ENTRIES",
     "kind": "const",
     "package": "@nifrajs/core",

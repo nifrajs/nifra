@@ -10,6 +10,9 @@
 import { jsonError } from "./http.ts"
 import { carryToCopy } from "./request-local.ts"
 
+/** Default request-body cap shared by the full Server and the compact edge server. */
+export const DEFAULT_MAX_BODY_BYTES = 1_000_000
+
 interface BodySource {
   readonly headers: Pick<Headers, "get">
   readonly body: ReadableStream<Uint8Array> | null
