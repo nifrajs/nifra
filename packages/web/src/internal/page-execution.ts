@@ -63,6 +63,7 @@ import {
   type LiveLoad,
   type LiveRouteMatch,
 } from "./live-contract.ts"
+import { forkLoaderContext, markLoaderContextWithLazyRequestAccessors } from "./loader-context.ts"
 import { prepareModules } from "./module-preparation.ts"
 import {
   type HoleLive,
@@ -256,24 +257,6 @@ const liveEnvelopeOf = (
           }),
         ),
       )
-
-/** Copy a loader context without invoking lazy request accessors owned by the framework. */
-const forkLoaderContext = (
-  ctx: LoaderContext,
-  overrides: Partial<LoaderContext>,
-): LoaderContext => {
-  const fork: LoaderContext = Object.create(Object.getPrototypeOf(ctx))
-  Object.defineProperties(fork, Object.getOwnPropertyDescriptors(ctx))
-  for (const [key, value] of Object.entries(overrides)) {
-    Object.defineProperty(fork, key, {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value,
-    })
-  }
-  return fork
-}
 
 /** Run one owner's loader with its `ctx.live`, closing the collector once the loader settles. */
 const runLiveLoader = (
@@ -1925,6 +1908,7 @@ export function createPageRequestExecutor<Env = unknown>(
               request: { configurable: true, enumerable: true, get: ownerRequest },
               req: { configurable: true, enumerable: true, get: ownerRequest },
             })
+            markLoaderContextWithLazyRequestAccessors(ctx)
           }
           if (route.middlewareIds !== undefined || localeGuarded(route)) {
             await runMiddleware(route, ctx, controls, c.req)
