@@ -10,6 +10,7 @@ import {
   type HttpWorkloadTable,
   MULTIPLIERS,
   SSR_CAPTURED,
+  SSR_SCHEMA_IMPACT,
   SSR_TABLES,
   SSR_TABLES_B,
   type SsrTableRow,
@@ -96,6 +97,50 @@ function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+function schemaDelta(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`
+}
+
+function SsrSchemaImpact() {
+  const capture = SSR_SCHEMA_IMPACT
+  return (
+    <section className="bench-block" style={{ marginTop: 24 }}>
+      <h3>Loader output schema A/B (local)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Runtime</th>
+            <th className="num">Detailed t.object</th>
+            <th className="num">Generic t.json()</th>
+            <th className="num">Paired median Δ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(["node", "bun"] as const).map((runtime) => {
+            const result = capture.results[runtime]
+            return (
+              <tr key={runtime}>
+                <td>{`${runtime === "node" ? "Node" : "Bun"} ${capture[runtime]}`}</td>
+                <td className="num">{result.detailedSchemaRps.toLocaleString("en-US")}</td>
+                <td className="num">{result.genericJsonSchemaRps.toLocaleString("en-US")}</td>
+                <td className="num">{schemaDelta(result.throughputDeltaPercent)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <p className="note" style={{ marginTop: 8 }}>
+        Same 50-item React route · {capture.machine} · {capture.date} · oha {capture.oha} ·{" "}
+        {capture.rounds} paired rounds × {capture.durationS}s ({capture.warmupS}s warmup) ·{" "}
+        {capture.connections} connections. <code>t.json()</code> checks JSON safety;{" "}
+        <code>t.object</code> also validates and projects fields. Both keep Nifra's required{" "}
+        <code>loaderOutput</code> boundary; schema-free loader data is rejected. Δ is the median
+        paired RPS ratio; positive values favor the detailed schema.
+      </p>
+    </section>
   )
 }
 
@@ -276,6 +321,10 @@ export default function Benchmarks() {
         Node meta-frameworks; multipliers use the uncached rows.
       </p>
       <p className="note">
+        Next.js and all dynamic SSR rows are measured uncompressed (
+        <code>accept-encoding: identity</code>) for like-for-like throughput.
+      </p>
+      <p className="note">
         Nifra also projects and validates <code>loaderOutput</code> for the client; comparator rows
         have no equivalent output boundary.
       </p>
@@ -315,6 +364,7 @@ export default function Benchmarks() {
         separate runners; compare rates within each runtime. <code>n/a</code> means client JS could
         not be measured from the HTML.
       </div>
+      <SsrSchemaImpact />
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>

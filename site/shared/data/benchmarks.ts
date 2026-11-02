@@ -31,6 +31,29 @@ export interface CaptureMachine {
   readonly vcpus: number
 }
 
+export interface SsrSchemaImpactResult {
+  readonly detailedSchemaRps: number
+  readonly genericJsonSchemaRps: number
+  /** Paired median throughput change with the detailed schema, relative to generic JSON validation. */
+  readonly throughputDeltaPercent: number
+  readonly detailedSchemaSamples: readonly number[]
+  readonly genericJsonSchemaSamples: readonly number[]
+}
+
+export interface SsrSchemaImpactCapture {
+  readonly date: string
+  readonly source: string
+  readonly machine: string
+  readonly bun: string
+  readonly node: string
+  readonly oha: string
+  readonly rounds: number
+  readonly connections: number
+  readonly durationS: number
+  readonly warmupS: number
+  readonly results: Readonly<Record<"bun" | "node", SsrSchemaImpactResult>>
+}
+
 /** When, where, and with which toolchain a slice was measured. */
 export interface CapturedMeta {
   readonly date: string
@@ -148,6 +171,7 @@ export const HTTP_MEMORY = Object.values(data.httpMemory ?? {}).sort(
   (a, b) => ["node", "bun", "deno"].indexOf(a.runtime) - ["node", "bun", "deno"].indexOf(b.runtime),
 )
 export const SSR_CAPTURED: CapturedMeta = data.ssrCaptured
+export const SSR_SCHEMA_IMPACT: SsrSchemaImpactCapture = data.ssrSchemaImpact
 
 export type HttpWorkloadMetric = "getUsers" | "postUsers"
 export type HttpRealworldMetric = "get" | "post" | "body"

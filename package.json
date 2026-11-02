@@ -75,6 +75,7 @@
     "bench:route-ab": "bun run bench/http/_route-ab.ts",
     "bench:http:update": "bun run bench/http/aggregate.ts --runs 3 --full --write",
     "bench:ssr": "bun run bench/ssr/run.ts",
+    "bench:ssr:schema": "bun run bench/ssr/schema-impact.ts",
     "bench:content": "bun bench/content-index.ts",
     "bench:prerender": "bun run bench/ssr/prerender-ttfb.ts",
     "bench:ppr": "bun run bench/ppr/cost.ts && bun run bench/ppr/shared-hole.ts",

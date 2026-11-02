@@ -120,6 +120,29 @@ export interface SsrSiteTable {
   readonly rows: readonly SsrSiteRow[]
 }
 
+export interface SsrSchemaImpactResult {
+  readonly detailedSchemaRps: number
+  readonly genericJsonSchemaRps: number
+  /** Paired median throughput change with the detailed schema, relative to generic JSON validation. */
+  readonly throughputDeltaPercent: number
+  readonly detailedSchemaSamples: readonly number[]
+  readonly genericJsonSchemaSamples: readonly number[]
+}
+
+export interface SsrSchemaImpactCapture {
+  readonly date: string
+  readonly source: string
+  readonly machine: string
+  readonly bun: string
+  readonly node: string
+  readonly oha: string
+  readonly rounds: number
+  readonly connections: number
+  readonly durationS: number
+  readonly warmupS: number
+  readonly results: Readonly<Record<"bun" | "node", SsrSchemaImpactResult>>
+}
+
 export interface SiteBench {
   readonly httpMemory?: Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>>
   readonly _note?: string
@@ -128,6 +151,7 @@ export interface SiteBench {
   readonly httpWorkloadsCaptured?: CapturedMeta
   readonly httpRealworldCaptured?: CapturedMeta
   readonly ssrCaptured?: CapturedMeta
+  readonly ssrSchemaImpact?: SsrSchemaImpactCapture
   readonly heroSsr: readonly BenchRow[]
   readonly frontend: readonly BenchRow[]
   readonly multipliers: readonly Multiplier[]

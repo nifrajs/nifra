@@ -897,6 +897,34 @@
       }
     }
   },
+  "ssrSchemaImpact": {
+    "date": "2026-11-02",
+    "source": "Local paired SSR A/B",
+    "machine": "Apple M3 Max",
+    "bun": "1.4.4",
+    "node": "v26.12.1",
+    "oha": "1.16.0",
+    "rounds": 5,
+    "connections": 50,
+    "durationS": 5,
+    "warmupS": 3,
+    "results": {
+      "node": {
+        "detailedSchemaRps": 27368,
+        "genericJsonSchemaRps": 24279,
+        "throughputDeltaPercent": 12.6,
+        "detailedSchemaSamples": [27525, 27508, 27368, 27329, 27310],
+        "genericJsonSchemaSamples": [24086, 24231, 24298, 24371, 24279]
+      },
+      "bun": {
+        "detailedSchemaRps": 34760,
+        "genericJsonSchemaRps": 30893,
+        "throughputDeltaPercent": 12.8,
+        "detailedSchemaSamples": [34761, 34760, 34852, 34070, 34556],
+        "genericJsonSchemaSamples": [31074, 30611, 30893, 31007, 30516]
+      }
+    }
+  },
   "httpMemory": {
     "node": {
       "date": "2026-11-01",
