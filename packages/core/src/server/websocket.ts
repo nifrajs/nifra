@@ -52,12 +52,29 @@ export interface NifraWebSocket<Data = unknown> {
 }
 
 /**
+ * Per-server topic membership and broadcast adapter. The default {@link TopicRegistry} keeps sockets
+ * in this process; a custom adapter can bridge those operations to a shared fan-out service. The
+ * membership methods are synchronous because socket callbacks are synchronous; `publish` may be
+ * asynchronous, in which case callers can await `app.publish()`.
+ */
+export interface TopicAdapter {
+  /** Add an open socket to a topic; ignore `readyState >= 2` and make repeats idempotent. */
+  subscribe(topic: string, ws: NifraWebSocket): void
+  /** Remove a socket from one topic; repeated unsubscriptions must be idempotent. */
+  unsubscribe(topic: string, ws: NifraWebSocket): void
+  /** Drop every topic membership for a socket when it closes. */
+  unsubscribeAll(ws: NifraWebSocket): void
+  /** Broadcast a frame to the topic; asynchronous fan-out is returned to `app.publish()`. */
+  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void | Promise<void>
+}
+
+/**
  * In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** -
  * topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load
- * balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to
- * `app.publish`. The same registry instance is shared by an app's connections and its `publish`.
+ * balancer) needs a {@link TopicAdapter} backed by a shared fan-out. The same registry instance is
+ * shared by an app's connections and its `publish`.
  */
-export class TopicRegistry {
+export class TopicRegistry implements TopicAdapter {
   private readonly topics = new Map<string, Set<NifraWebSocket>>()
   private readonly memberships = new WeakMap<NifraWebSocket, Set<string>>()
 
@@ -234,8 +251,8 @@ export type WebSocketUpgradeOutcome =
       readonly kind: "upgrade"
       readonly handler: WebSocketHandler
       readonly data: unknown
-      /** The app's pub/sub registry - the adapter wires `ws.subscribe` + close-cleanup to it. */
-      readonly pubsub: TopicRegistry
+      /** The app's topic adapter - the adapter wires `ws.subscribe` + close-cleanup to it. */
+      readonly pubsub: TopicAdapter
       /** The installed runtime's {@link attachWebSocket}, carried on the outcome so an adapter can wire
        * a standard socket without a static import of the WS implementation (which would defeat the
        * `.use(websocket())` tree-shaking). `@nifrajs/workers` may import `attachWebSocket` directly instead. */
@@ -259,7 +276,7 @@ export type WsAttach = (
   socket: StandardWebSocket,
   handler: WebSocketHandler,
   data: unknown,
-  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number | undefined },
+  options: { openNow: boolean; pubsub: TopicAdapter; maxPayloadBytes?: number | undefined },
 ) => NifraWebSocket
 
 /**
@@ -299,7 +316,7 @@ export function attachWebSocket<
   socket: StandardWebSocket,
   handler: WebSocketHandler<Data, Env, Schema, Send>,
   data: unknown,
-  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number | undefined },
+  options: { openNow: boolean; pubsub: TopicAdapter; maxPayloadBytes?: number | undefined },
 ): NifraWebSocket<Data> {
   const { pubsub } = options
   let ws!: NifraWebSocket<Data>

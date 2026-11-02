@@ -71,39 +71,82 @@ function firstIssues(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Precompiled coercion for flat scalar objects - the shape every real query schema has.
+// Precompiled coercion for flat scalar objects, literal sets, and scalar arrays.
 //
 // `Value.Convert` walks the schema tree interpretively on EVERY validate call (measured ~115ns for
 // a 3-field query schema vs ~5ns for the compiled Check it feeds - 23x the cost of validation
-// itself). A `coerce` schema whose properties are all plain String/Number/Integer/Boolean can have
-// its conversion plan extracted ONCE at construction and replayed as a flat loop per request.
+// itself). A `coerce` schema with plain scalars, scalar arrays, or same-kind string/number literal
+// unions can have its conversion plan extracted ONCE at construction and replayed as a flat loop.
 //
 // Every converter below mirrors `@sinclair/typebox/value` `convert.mjs` byte-for-byte - including
 // its quirks (global-`isNaN` string coercion, radix-less `parseInt` so `"0x10"` → 16, `"1"`/
 // `"true"` truthiness, `-0` handling) - and the object walk mirrors `FromObject` (`key in value`
 // including the prototype chain, in-place mutation, arrays/non-objects passed through untouched).
-// A schema with ANY other property kind (unions, literals, arrays, nested objects, dates, refs)
-// gets `plan = null` and keeps taking the full `Value.Convert` path, so semantics never fork. The
-// parity is pinned by a property-based test that diffs this plan against `Value.Convert` itself.
+// Unsupported shapes keep taking the full `Value.Convert` path, so their semantics never fork.
 // ---------------------------------------------------------------------------------------------
 
 type ScalarKind = "String" | "Number" | "Integer" | "Boolean"
-type CoercionPlan = ReadonlyArray<readonly [key: string, kind: ScalarKind]>
+type LiteralKind = "String" | "Number"
+type ScalarCoercion =
+  | { readonly kind: "scalar"; readonly scalar: ScalarKind }
+  | {
+      readonly kind: "literal"
+      readonly scalar: LiteralKind
+      readonly values: readonly (string | number)[]
+    }
+type CoercionStep = ScalarCoercion | { readonly kind: "array"; readonly item: ScalarCoercion }
+type CoercionPlan = ReadonlyArray<readonly [key: string, step: CoercionStep]>
+
+/** One scalar or a same-kind set of primitive literals whose TypeBox conversion is flat. */
+function scalarCoercion(schema: unknown): ScalarCoercion | null {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return null
+  const node = schema as Record<PropertyKey, unknown>
+  const kind = node[Kind]
+  if (kind === "String" || kind === "Number" || kind === "Integer" || kind === "Boolean") {
+    return { kind: "scalar", scalar: kind }
+  }
+  if (kind === "Literal") {
+    const value = node.const
+    if (typeof value === "string") return { kind: "literal", scalar: "String", values: [value] }
+    if (typeof value === "number" && !Number.isNaN(value))
+      return { kind: "literal", scalar: "Number", values: [value] }
+    return null
+  }
+  if (kind === "Union" && Array.isArray(node.anyOf) && node.anyOf.length > 0) {
+    const first = scalarCoercion(node.anyOf[0])
+    if (first?.kind !== "literal") return null
+    const values: (string | number)[] = []
+    for (const branch of node.anyOf) {
+      const converted = scalarCoercion(branch)
+      if (converted?.kind !== "literal" || converted.scalar !== first.scalar) return null
+      values.push(...converted.values)
+    }
+    return { kind: "literal", scalar: first.scalar, values }
+  }
+  return null
+}
+
+function coercionStep(schema: unknown): CoercionStep | null {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return null
+  const node = schema as Record<PropertyKey, unknown>
+  if (node[Kind] === "Array") {
+    const item = scalarCoercion(node.items)
+    return item === null ? null : { kind: "array", item }
+  }
+  return scalarCoercion(schema)
+}
 
 /** Extract a flat conversion plan, or `null` when this schema needs the full recursive Convert. */
 function flatCoercionPlan(schema: TSchema): CoercionPlan | null {
   if ((schema as unknown as Record<symbol, unknown>)[Kind] !== "Object") return null
   const props = (schema as { readonly properties?: unknown }).properties
   if (props === null || typeof props !== "object") return null
-  const record = props as Record<string, TSchema>
-  const plan: Array<readonly [string, ScalarKind]> = []
+  const record = props as Record<string, unknown>
+  const plan: Array<readonly [string, CoercionStep]> = []
   for (const key of Object.getOwnPropertyNames(record)) {
-    const kind = (record[key] as unknown as Record<symbol, unknown> | undefined)?.[Kind]
-    if (kind === "String" || kind === "Number" || kind === "Integer" || kind === "Boolean") {
-      plan.push([key, kind])
-    } else {
-      return null
-    }
+    const step = coercionStep(record[key])
+    if (step === null) return null
+    plan.push([key, step])
   }
   return plan
 }
@@ -201,14 +244,32 @@ export function hasCompileHazard(node: unknown): boolean {
 }
 
 /** Replay a flat plan over `value` - the fast equivalent of `Value.Convert` for eligible schemas. */
+function convertScalarStep(step: ScalarCoercion, value: unknown): unknown {
+  if (step.kind === "scalar") return convertScalar(step.scalar, value)
+  if ((typeof value === "string" || typeof value === "number") && step.values.includes(value))
+    return value
+  const converted = convertScalar(step.scalar, value)
+  return (typeof converted === "string" || typeof converted === "number") &&
+    step.values.includes(converted)
+    ? converted
+    : value
+}
+
+function convertStep(step: CoercionStep, value: unknown): unknown {
+  if (step.kind !== "array") return convertScalarStep(step, value)
+  // TypeBox's FromArray wraps a non-array in a singleton before converting its items.
+  const values = Array.isArray(value) ? value : [value]
+  return values.map((item) => convertScalarStep(step.item, item))
+}
+
 function convertFlat(plan: CoercionPlan, value: unknown): unknown {
   // Mirrors FromObject's guards: only a non-array object is converted (in place), anything else
   // passes through for the Check to reject.
   if (value === null || typeof value !== "object" || Array.isArray(value)) return value
   const record = value as Record<string, unknown>
-  for (const [key, kind] of plan) {
+  for (const [key, step] of plan) {
     if (!(key in record)) continue // `in` (not hasOwn) - TypeBox's HasPropertyKey is `key in value`
-    record[key] = convertScalar(kind, record[key])
+    record[key] = convertStep(step, record[key])
   }
   return value
 }
@@ -345,8 +406,9 @@ export function fromTypeBox<T extends TSchema>(
   options?: { readonly coerce?: boolean },
 ): NifraSchema<T> {
   const coerce = options?.coerce ?? false
-  // Built once per schema: a flat scalar object replays a cheap per-key plan on each validate; any
-  // other shape keeps the full recursive `Value.Convert` (plan stays null). See flatCoercionPlan.
+  // Built once per schema: flat objects with plain scalars, scalar arrays, or same-kind string / number
+  // literal coercions replay a cheap per-key plan on each validate; other shapes use `Value.Convert`.
+  // Schema `default` annotations remain metadata here: like `Value.Convert`, coercion does not apply them.
   const coercionPlan = coerce ? flatCoercionPlan(schema) : null
   let compiled: TypeCheck<T> | undefined
   // A backslash-carrying key/literal would MISCOMPILE (not throw) under TypeCompiler - see

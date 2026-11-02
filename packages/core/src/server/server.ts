@@ -249,7 +249,7 @@ import type {
 } from "./server-types.ts"
 import type { SSEInit, TypedSSEStream } from "./sse.ts"
 import type { SseRuntime } from "./sse-hook.ts"
-import type { TopicRegistry, WebSocketHandler, WebSocketUpgradeOutcome } from "./websocket.ts"
+import type { TopicAdapter, WebSocketHandler, WebSocketUpgradeOutcome } from "./websocket.ts"
 import type { BunWsData } from "./ws-bun.ts"
 import type { WsRuntime } from "./ws-hook.ts"
 
@@ -1380,17 +1380,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private wsMountsCheckedAt = -1
   /** Whether an app mounted here takes WebSocket upgrades, as of `wsMountsCheckedAt`. */
   private wsMountsLive = false
-  /** In-process pub/sub backing `ws.subscribe(topic)` + `app.publish(topic, data)` (single-instance).
-   * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime - `undefined` until then, so a
-   * no-WebSocket app never constructs (or bundles) it. */
-  private topics: TopicRegistry | undefined
+  /** Configured topic adapter, or the in-process default created by the first `app.ws()` route. */
+  private topics: TopicAdapter | undefined
   /** True once any `app.ws()` route sets `validateSend: true` - the one case where a broadcast frame
-   * is validated (and possibly dropped) per socket, so `app.publish` must stay on the JS registry loop
+   * is validated (and possibly dropped) per socket, so `app.publish` must stay on the JS adapter loop
    * rather than delegate to Bun's native `server.publish`. */
   private wsHasValidatedSend = false
   /** Bun's native topic broadcast, bound by `listen()` in native-pubsub mode; `app.publish` uses it
-   * instead of the JS registry. `undefined` off Bun, before `listen()`, with a validated-send route,
-   * or when a mounted app takes upgrades. */
+   * instead of the JS registry. `undefined` off Bun, before `listen()`, with a custom topic adapter,
+   * a validated-send route, or when a mounted app takes upgrades. */
   private nativePublish:
     | ((topic: string, data: string | ArrayBufferView | ArrayBuffer) => void)
     | undefined
@@ -1539,7 +1537,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
     this.wsRoutes = []
-    this.topics = undefined
+    this.topics = options.topicAdapter
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
     this.protoPoisoning = options.protoPoisoning ?? "reject"
@@ -2607,7 +2605,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     // A validated-send route makes broadcast bytes route-dependent (drop-on-invalid per socket), so the
-    // whole app forgoes native pub/sub and keeps the JS registry loop that runs each send through the sender.
+    // whole app forgoes native pub/sub and keeps the JS adapter loop that runs each send through the sender.
     if (handler.validateSend === true) this.wsHasValidatedSend = true
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
@@ -2637,18 +2635,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   /**
    * Broadcast `data` to every WebSocket connection subscribed to `topic` (via `ws.subscribe(topic)`).
-   * In-process and **single-instance** (see {@link TopicRegistry}) - a multi-instance deploy must bridge
-   * an external fan-out (Redis, a Durable Object) to this. A no-op when nobody is subscribed.
+   * Uses the configured {@link ServerOptions.topicAdapter}, or the in-process topic registry by
+   * default. Await the result when a custom adapter publishes asynchronously.
    */
-  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void {
+  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void | Promise<void> {
     // Native-pubsub mode (Bun, no validated-send route): one native broadcast to every subscriber, no
-    // per-connection JS loop. Bound only after `listen()`; before that (or off Bun) the registry runs.
+    // per-connection JS loop. Bound only after `listen()`; before that (or off Bun) the adapter runs.
     if (this.nativePublish !== undefined) {
       this.nativePublish(topic, data)
       return
     }
-    // No `app.ws()` yet ⇒ no registry and necessarily no subscribers - a publish is a no-op anyway.
-    this.topics?.publish(topic, data)
+    // With no custom adapter and no `app.ws()` route, no registry exists and this is a no-op.
+    return this.topics?.publish(topic, data)
   }
 
   private route(
@@ -4017,8 +4015,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
       if (params === null) return refuse(jsonError(400, "malformed_path"))
       const { handler, chain } = match.payload
-      // Non-null: a socket route ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
-      const pubsub = this.topics as TopicRegistry
+      // Non-null: a socket route ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + adapter.
+      const pubsub = this.topics as TopicAdapter
       const runtime = this.wsRuntime as WsRuntime
       // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
       // Origin with 403. Browsers don't CORS-protect WS handshakes but do send cookies, so this
@@ -7519,8 +7517,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // matched route's handler, set by `server.upgrade`.
     // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime - non-null
     // because a socket route means ws() ran, and ws() requires the runtime at registration.
-    // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
-    // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
+    // Native pub/sub when the app has WS routes, no custom adapter, and none validate outbound
+    // frames: `ws.subscribe` and `app.publish` go through Bun's own (uWebSockets) broadcast.
     // A mounted app counts only while it has a WebSocket route (see `[GET_WS_RUNTIME]`), so composing
     // one without any needs no runtime here.
     const wsRuntime = this[GET_WS_RUNTIME]()
@@ -7531,11 +7529,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     // Native pub/sub is safe only when every upgrade belongs to this app. A mounted child that takes
-    // upgrades owns a different TopicRegistry, so force the per-connection JS dispatcher and carry
-    // that registry in the upgrade outcome instead of accidentally broadcasting child sockets through
+    // upgrades owns a different topic adapter, so force the per-connection JS dispatcher and carry
+    // that adapter in the upgrade outcome instead of accidentally broadcasting child sockets through
     // the parent.
     const nativePubsub =
-      this.wsRoutes.length > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
+      this.wsRoutes.length > 0 &&
+      this.options.topicAdapter === undefined &&
+      !this.mountsTakeUpgrades() &&
+      !this.wsHasValidatedSend
     const wsHandlers = wsRuntime?.bunHandlers(
       this.topics ?? wsRuntime.createTopics(),
       nativePubsub,

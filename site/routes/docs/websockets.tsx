@@ -361,13 +361,29 @@ export default function WebSockets() {
       <p>
         Bun, Deno, and Node are long-lived processes, so this works directly on a single instance.
         Across a load balancer, <code>app.publish</code> only reaches sockets on the same instance -
-        bridge an external fan-out (Redis pub/sub, NATS, a queue) to broadcast across all of them. On{" "}
+        configure a <code>TopicAdapter</code> on <code>server()</code> to bridge a shared fan-out. On{" "}
         <strong>Cloudflare Workers</strong>, a stateless isolate can’t broadcast across connections,
         so Nifra ships a Durable Object hub: <code>createWebSocketHub(app)</code> holds the
         connections, and <code>toFetchHandler(app, {"{ webSocketHub }"})</code> routes upgrades to it
         - then <code>ws.subscribe</code> / <code>app.publish</code> behave exactly as on Bun. An
         upgrade request for a path with no WebSocket route still gets that path's HTTP answer, as on
         every other runtime.
+      </p>
+      <CodeBlock
+        code={`import { server } from "@nifrajs/core/server"
+import { websocket } from "@nifrajs/core/ws"
+import { sharedTopics } from "./shared-topics"
+
+const app = server({ topicAdapter: sharedTopics })
+  .use(websocket())
+  .ws("/chat", { open: (ws) => ws.subscribe("room") })
+
+await app.publish("room", "hello from any instance")`}
+      />
+      <p>
+        A <code>TopicAdapter</code> implements socket subscription cleanup and topic broadcasts. Its{" "}
+        <code>publish</code> may return a promise; await <code>app.publish</code> when it does. The
+        default in-process registry remains synchronous.
       </p>
       <CodeBlock code={WORKERS} />
 

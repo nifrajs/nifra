@@ -61,6 +61,7 @@ export function websocket(): IdentityPlugin {
 export type {
   NifraWebSocket,
   StandardWebSocket,
+  TopicAdapter,
   WebSocketContext,
   WebSocketData,
   WebSocketHandler,

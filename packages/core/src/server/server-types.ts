@@ -17,7 +17,7 @@ import type {
   ResponseHeadersHook,
 } from "./node-outcome-hook.ts"
 import type { MaybePromise, OnRequestResult } from "./server.ts"
-import type { WebSocketUpgradeOutcome } from "./websocket.ts"
+import type { TopicAdapter, WebSocketUpgradeOutcome } from "./websocket.ts"
 
 /**
  * The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls
@@ -126,6 +126,12 @@ export interface ServerOptions {
    * the whole message.
    */
   readonly wsMaxPayloadBytes?: number
+  /**
+   * Topic membership and broadcast implementation for WebSocket routes. By default, Nifra uses an
+   * in-process `TopicRegistry`; pass an adapter to bridge subscriptions and publishes to a shared
+   * fan-out service. `app.publish()` returns a promise when the adapter publishes asynchronously.
+   */
+  readonly topicAdapter?: TopicAdapter
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number
   /** WebSocket upgrade admission/guard timeout (ms). Default 10_000; set to 0 only for a deliberate unbounded guard. */
