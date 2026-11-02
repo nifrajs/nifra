@@ -542,7 +542,7 @@ function headerOf(
 // One test per shape keeps each well inside the runner's timeout, coverage instrumentation included.
 for (const shape of shapes()) {
   test(`hooks ${JSON.stringify(shape)} answer as the generic program does, on the Web and Node-direct lanes`, async () => {
-    const expectedLane = shape.schema === "body" ? "body-hooks" : "hooks"
+    const expectedLane = shape.schema === "none" ? "hooks" : "inputs"
     const mismatches: string[] = []
     for (const plan of plans(shape)) {
       const fused = build(shape, plan, false)

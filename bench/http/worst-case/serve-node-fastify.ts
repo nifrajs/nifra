@@ -16,6 +16,7 @@ if (!Number.isInteger(port)) {
 
 // Keep Fastify's JSON body types strict like the other targets.
 const app = Fastify({ logger: false, ajv: { customOptions: { coerceTypes: false } } })
+const generic = process.env.BENCH_GENERIC === "1"
 
 app.get("/health", () => ({ ok: true }))
 
@@ -40,7 +41,7 @@ app.addHook("preHandler", (_request, reply, done) => {
 // Fastify's onSend hook preserves the same no-op result transform for the serialized payload.
 app.addHook("onSend", (_request, _reply, payload, done) => done(null, payload))
 
-if (process.env.BENCH_GENERIC === "1") {
+if (generic) {
   app.addHook("preHandler", (_request, _reply, done) => done())
 }
 
@@ -51,6 +52,16 @@ app.get<{
   "/orgs/:org/projects/:proj/tasks/:id",
   {
     schema: {
+      params: {
+        type: "object",
+        required: ["org", "proj", "id"],
+        additionalProperties: false,
+        properties: {
+          org: { type: "string", pattern: "^[a-z]+$" },
+          proj: { type: "string", pattern: "^[a-z]+$" },
+          id: { type: "string", pattern: "^[0-9]+$" },
+        },
+      },
       querystring: {
         type: "object",
         required: ["verbose", "trace"],
@@ -80,6 +91,15 @@ app.post<{
   "/orgs/:org/projects/:proj/tasks",
   {
     schema: {
+      params: {
+        type: "object",
+        required: ["org", "proj"],
+        additionalProperties: false,
+        properties: {
+          org: { type: "string", pattern: "^[a-z]+$" },
+          proj: { type: "string", pattern: "^[a-z]+$" },
+        },
+      },
       body: {
         type: "object",
         required: ["items"],
