@@ -190,7 +190,7 @@ describe("flat coercion plan vs Value.Convert parity", () => {
       const result = nifra["~standard"].validate(actual)
 
       expect("value" in result).toBe(Value.Check(schema, converted))
-      if ("value" in result) expect(result.value).toEqual(converted)
+      if ("value" in result) expect(JSON.stringify(result.value)).toBe(JSON.stringify(converted))
       expect(actual).toEqual(expected)
     }
 
