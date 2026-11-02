@@ -11,7 +11,7 @@ the eval-free adapter, rather than against Bun's existing dynamic compiled check
 
 `NIFRA_PERF_GATE=1 bun run bench:p99` also refuses a busy host before starting and after measuring.
 
-Both HTTP benchmark aggregators refuse `--write` unless Bun, Node, and Deno match `.tool-versions` and the one-minute host load is at or below half the logical CPU count.
+Both HTTP benchmark aggregators refuse `--write` unless Bun, Node, and Deno match `.tool-versions` and the one-minute host load is at or below the logical CPU count (100% per CPU).
 
 The benchmark **code** lives here; the **results** are not committed. Absolute req/s moves with
 machine load (thermal state, other processes), so numbers are only meaningful as same-run ratios on
