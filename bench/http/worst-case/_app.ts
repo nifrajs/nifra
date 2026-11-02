@@ -20,11 +20,7 @@
  */
 
 import { server } from "../../../packages/core/dist/server.js"
-import type {
-  StandardResult,
-  StandardSchemaV1,
-  StandardTypes,
-} from "../../../packages/core/src/index.ts"
+import type { StandardResult, StandardSchemaV1 } from "../../../packages/core/src/index.ts"
 
 export interface TaskItem {
   readonly title: string
@@ -109,7 +105,6 @@ const taskBatchBody: StandardSchemaV1<unknown, TaskBatch> = {
         ? { value }
         : { issues: [{ message: "expected { items: TaskItem[] }" }] }
     },
-    types: undefined as unknown as StandardTypes<unknown, TaskBatch>,
   },
 }
 
@@ -122,7 +117,6 @@ const traceQuery: StandardSchemaV1<unknown, { verbose: string; trace: string }> 
         ? { value }
         : { issues: [{ message: "expected ?verbose=string&trace=string" }] }
     },
-    types: undefined as unknown as StandardTypes<unknown, { verbose: string; trace: string }>,
   },
 }
 
@@ -135,10 +129,6 @@ const taskGetParams: StandardSchemaV1<unknown, { org: string; proj: string; id: 
         ? { value }
         : { issues: [{ message: "expected slug org/project and numeric task id" }] }
     },
-    types: undefined as unknown as StandardTypes<
-      unknown,
-      { org: string; proj: string; id: string }
-    >,
   },
 }
 
@@ -151,7 +141,6 @@ const taskPostParams: StandardSchemaV1<unknown, { org: string; proj: string }> =
         ? { value }
         : { issues: [{ message: "expected slug org/project params" }] }
     },
-    types: undefined as unknown as StandardTypes<unknown, { org: string; proj: string }>,
   },
 }
 
@@ -172,36 +161,26 @@ export function makeWorstNifraApp(
   // Keep the generic diagnostic workload's lifecycle hook count aligned with the peers. The
   // validation-recovery callback selects Nifra's generic runner but is not called by valid requests.
   if (generic) app.beforeHandle(() => undefined).onError(() => undefined)
+  const getSchema = { params: taskGetParams, query: traceQuery }
+  const postSchema = { params: taskPostParams, body: taskBatchBody }
+  if (generic) {
+    Object.assign(getSchema, { onValidationError: () => undefined })
+    Object.assign(postSchema, { onValidationError: () => undefined })
+  }
   return app
-    .get(
-      "/orgs/:org/projects/:proj/tasks/:id",
-      {
-        params: taskGetParams,
-        ...(generic ? { onValidationError: () => undefined } : {}),
-        query: traceQuery,
-      },
-      (c) => {
-        c.set.headers["x-request-id"] = c.requestId
-        c.set.headers["x-trace"] = c.query.trace
-        return { org: c.params.org, proj: c.params.proj, id: c.params.id, verbose: c.query.verbose }
-      },
-    )
-    .post(
-      "/orgs/:org/projects/:proj/tasks",
-      {
-        params: taskPostParams,
-        ...(generic ? { onValidationError: () => undefined } : {}),
-        body: taskBatchBody,
-      },
-      (c) => {
-        c.set.headers["x-request-id"] = c.requestId
-        c.set.headers["x-count"] = String(c.body.items.length)
-        return {
-          org: c.params.org,
-          proj: c.params.proj,
-          count: c.body.items.length,
-          first: c.body.items[0]?.title ?? "",
-        }
-      },
-    )
+    .get("/orgs/:org/projects/:proj/tasks/:id", getSchema, (c) => {
+      c.set.headers["x-request-id"] = c.requestId
+      c.set.headers["x-trace"] = c.query.trace
+      return { org: c.params.org, proj: c.params.proj, id: c.params.id, verbose: c.query.verbose }
+    })
+    .post("/orgs/:org/projects/:proj/tasks", postSchema, (c) => {
+      c.set.headers["x-request-id"] = c.requestId
+      c.set.headers["x-count"] = String(c.body.items.length)
+      return {
+        org: c.params.org,
+        proj: c.params.proj,
+        count: c.body.items.length,
+        first: c.body.items[0]?.title ?? "",
+      }
+    })
 }

@@ -335,7 +335,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // typebox-form to 73,258 (Bun 1.4.4). The caps crossed take the next 0.1 KiB step.
   // Deno's opt-in Host validation lives in shared core measured by this Bun build; 40,142 B needs
   // the next 0.1 KiB cap.
-  "nifra-bare": 39.3,
+  // Composite ordinary-input validation (headers/cookies/params with body/query and lifecycle hooks)
+  // adds up to 0.5 KiB gzip across the shared core bundles (Bun 1.4.4); reserve that measured cost.
+  "nifra-bare": 39.8,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -362,18 +364,18 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The bounded JSON output preflight is reachable from the typebox lane: typebox-t 67,312 -> 69,159 B
   // (Bun 1.4.4), crossing the next 0.1 KiB cap.
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
-  "nifra-idempotency": 44.1,
-  "nifra-effect-ledger": 41.3,
-  "nifra-mcp": 39.6,
+  "nifra-idempotency": 44.6,
+  "nifra-effect-ledger": 41.8,
+  "nifra-mcp": 40.1,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 40.2,
-  "nifra-valibot": 40.3,
-  "nifra-typebox-t": 67.6,
+  "nifra-sse": 40.7,
+  "nifra-valibot": 40.8,
+  "nifra-typebox-t": 68.1,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only
   // this cap is crossed. A GET/HEAD native slot skipping the framing mark: typebox-form 74,037 B.
-  "nifra-typebox-form": 72.4,
+  "nifra-typebox-form": 72.9,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

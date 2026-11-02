@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 import {
@@ -290,15 +291,23 @@ describe("protoPoisoning end to end (schema lane + c.boundedJson)", () => {
     expect(ran).toBe(false)
   })
 
-  test("default reject holds on the compiled generic lifecycle lane", async () => {
+  test("default reject holds on the fused composite-input lifecycle lane", async () => {
     let ran = false
     const app = server()
       .derive(() => ({ requestId: "req-1" }))
-      .post("/users", { body: anyBody }, () => {
-        ran = true
-        return { ok: true }
-      })
-    const response = await app.fetch(lengthedRequest("/users", POISONED))
+      .post(
+        "/users/:id",
+        {
+          params: t.object({ id: t.string() }),
+          body: anyBody,
+          query: t.query({ trace: t.string() }),
+        },
+        () => {
+          ran = true
+          return { ok: true }
+        },
+      )
+    const response = await app.fetch(lengthedRequest("/users/7?trace=req-1", POISONED))
     expect(response.status).toBe(400)
     expect(ran).toBe(false)
   })

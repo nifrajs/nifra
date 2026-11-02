@@ -65,6 +65,109 @@ describe("fused lifecycle lanes", () => {
     expect(order).toEqual(["derive", "before", "handler", "after"])
   })
 
+  test("mixed input schemas share validation order on Web and Node-direct paths", async () => {
+    const order: string[] = []
+    const app = server()
+      .use(nodeDirect())
+      .derive(() => {
+        order.push("derive")
+        return { scope: "tenant" }
+      })
+      .beforeHandle(() => {
+        order.push("before")
+      })
+      .afterHandle((result) => {
+        order.push("after")
+        return result
+      })
+      .post(
+        "/orgs/:org/projects/:project/tasks/:id",
+        {
+          headers: t.headers({ "x-tenant": t.string() }),
+          cookies: t.cookies({ session: t.string() }),
+          params: t.object({ org: t.string(), project: t.string(), id: t.string() }),
+          body: t.object({ title: t.string() }),
+          query: t.query({ trace: t.string() }),
+        },
+        (c) => {
+          order.push("handler")
+          return {
+            tenant: c.headers["x-tenant"],
+            session: c.cookies.session,
+            org: c.params.org,
+            project: c.params.project,
+            id: c.params.id,
+            title: c.body.title,
+            trace: c.query.trace,
+            scope: c.scope,
+          }
+        },
+      )
+    const path = "/orgs/acme/projects/apollo/tasks/42?trace=req-7"
+    const init = {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-tenant": "t-1",
+        cookie: "session=s-1",
+      },
+      body: JSON.stringify({ title: "Ship" }),
+    }
+    const expected = {
+      tenant: "t-1",
+      session: "s-1",
+      org: "acme",
+      project: "apollo",
+      id: "42",
+      title: "Ship",
+      trace: "req-7",
+      scope: "tenant",
+    }
+
+    const webResponse = await app.fetch(request(path, init))
+    expect(webResponse.status).toBe(200)
+    expect(await webResponse.json()).toEqual(expected)
+    expect(order).toEqual(["derive", "before", "handler", "after"])
+
+    order.length = 0
+    const nodeOutcome = await app.resolveNode(request(path, init))
+    expect(nodeOutcome.kind).toBe("json")
+    if (nodeOutcome.kind !== "json") throw new Error("expected a JSON node outcome")
+    expect(nodeOutcome.status).toBe(200)
+    expect(JSON.parse(nodeOutcome.body ?? "null")).toEqual(expected)
+    expect(order).toEqual(["derive", "before", "handler", "after"])
+
+    order.length = 0
+    const invalid = await app.fetch(
+      request("/orgs/acme/projects/apollo/tasks/42", {
+        ...init,
+        body: "{}",
+      }),
+    )
+    expect(invalid.status).toBe(422)
+    expect((await invalid.json()).issues[0]?.path).toEqual(["title"])
+    expect(order).toEqual([])
+  })
+
+  test("an error-hook-only route uses the shared hook lane", async () => {
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .onError((error) => ({ handled: error instanceof Error }))
+      .get("/error-only", () => {
+        throw new Error("expected failure")
+      })
+
+    const webResponse = await app.fetch(request("/error-only"))
+    expect(webResponse.status).toBe(200)
+    expect(await webResponse.json()).toEqual({ handled: true })
+
+    const nodeOutcome = await app.resolveNode(request("/error-only"))
+    expect(nodeOutcome.kind).toBe("json")
+    if (nodeOutcome.kind !== "json") throw new Error("expected a JSON node outcome")
+    expect(nodeOutcome.status).toBe(200)
+    expect(JSON.parse(nodeOutcome.body ?? "null")).toEqual({ handled: true })
+  })
+
   test("async derive, beforeHandle, handler, and afterHandle use the same continuation", async () => {
     const app = server()
       .derive(async () => {
