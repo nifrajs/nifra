@@ -1,5 +1,18 @@
 # @nifrajs/web
 
+## 5.12.0
+
+### Patch Changes
+
+- 3a42e07: Use shallow copies for ordinary loader contexts while preserving lazy request accessors in specialized contexts.
+- Updated dependencies [d274304]
+- Updated dependencies [91cc290]
+- Updated dependencies [28bdd6c]
+- Updated dependencies [878bb89]
+- Updated dependencies [c4bd5b2]
+  - @nifrajs/core@5.12.0
+  - @nifrajs/island-trigger@5.12.0
+
 ## 5.11.0
 
 ### Minor Changes

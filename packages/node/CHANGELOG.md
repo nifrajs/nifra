@@ -1,5 +1,11 @@
 # @nifrajs/node
 
+## 5.12.0
+
+### Patch Changes
+
+- 8bf72d1: Report WebSocket topic cleanup failures without skipping close callbacks.
+
 ## 5.11.0
 
 No changes in this release.

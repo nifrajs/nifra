@@ -1,5 +1,9 @@
 # create-nifra
 
+## 5.12.0
+
+No changes in this release.
+
 ## 5.11.0
 
 ### Minor Changes

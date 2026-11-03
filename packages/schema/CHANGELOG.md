@@ -1,5 +1,13 @@
 # @nifrajs/schema
 
+## 5.12.0
+
+### Patch Changes
+
+- 1834f5a: A schema key named after an `Object.prototype` member (`constructor`, `toString`, `valueOf`, `hasOwnProperty` and the rest) is absent from a value that does not carry it, as any other key is. An optional one no longer fails `{}` against the inherited member (`Expected array` at `["constructor"]`) in `t.object`, `t.query`, a `fromTypeBox` schema or `compileSchema` output, on the compiled and the eval-free validator alike, so a body, query, params or enforced response contract holding one no longer answers 422 or 500 for a value without it. A coercing schema no longer writes the inherited member onto the input, and a required `unknown` or `any` key is no longer satisfied by it. A present key is checked as before. Such a schema validates a copy of the value whose plain objects have no prototype, so it costs more per call; a coercing one returns that converted copy and leaves a plain-object input untouched. Every other schema validates as before.
+- 2383330: `compileSchema` output typechecks under `strict` TypeScript, `noUnusedLocals` and `noUnusedParameters` included, and Node loads it with its built-in type stripping. An array check no longer annotates its `for...of` binding (TS2483, which Node's type stripping also refuses), the import line names only what the module uses, and the schema literal converts to the source schema's type through `unknown` instead of failing TS2352. A schema whose own text holds the statement `for(const value: any of array)` is refused.
+- c4bd5b2: Allow server apps to provide a WebSocket `TopicAdapter`, and extend the schema coercion fast path to scalar arrays and primitive literal unions.
+
 ## 5.11.0
 
 No changes in this release.

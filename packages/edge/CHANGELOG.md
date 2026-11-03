@@ -1,5 +1,11 @@
 # @nifrajs/edge
 
+## 5.12.0
+
+### Patch Changes
+
+- 91cc290: Export the shared default request-body cap from core's edge kit and use it in both servers.
+
 ## 5.11.0
 
 No changes in this release.
