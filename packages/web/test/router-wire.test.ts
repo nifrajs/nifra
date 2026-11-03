@@ -9,6 +9,7 @@ import {
   HOLE_FILL_HEADER,
   NAV_FROM_HEADER,
   RETAIN_HEADER,
+  RouteDataFetchError,
   routeDataHeaders,
   routeDataOf,
   STATUS_HEADER,
@@ -49,9 +50,15 @@ describe("a data response's status header", () => {
   })
 
   test("is absent from a response that failed without one", async () => {
-    await expect(routeDataOf(new Response("no", { status: 500 }), "/p")).rejects.toThrow(
-      "navigation data fetch failed (500): /p",
+    const error = await routeDataOf(new Response("no", { status: 500 }), "/p").catch(
+      (reason: unknown) => reason,
     )
+    expect(error).toBeInstanceOf(RouteDataFetchError)
+    expect(error).toMatchObject({
+      name: "RouteDataFetchError",
+      status: 500,
+      message: "[nifra/web] navigation data fetch failed (500): /p",
+    })
   })
 })
 

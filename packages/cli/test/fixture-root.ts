@@ -1,5 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
 
 /**
  * A test-only filesystem seam. Every suite gets a unique parent and every logical project can get a
@@ -9,6 +10,13 @@ export function createFixtureRoot(prefix: string): string {
   // Keep fixtures below the package test directory so Bun's upward module resolution can still find
   // the workspace's @nifrajs links. The random suffix from mkdtempSync provides isolation.
   return mkdtempSync(join(import.meta.dir, `.${prefix}`))
+}
+
+export function createFixtureRootOutsideWorkspace(prefix: string): string {
+  // Mutation runs can kill the test process before afterAll, so fixtures must stay outside the checkout.
+  const root = mkdtempSync(join(tmpdir(), prefix))
+  symlinkSync(resolve(import.meta.dir, "../../../node_modules"), join(root, "node_modules"), "dir")
+  return root
 }
 
 /** Create a unique project directory below a suite-owned parent. */

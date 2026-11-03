@@ -410,8 +410,15 @@ describe("exemptions and reports", () => {
     const scan = (exemption: unknown) => () =>
       artifact("", { exemptions: [exemption as SecretExemption] })
     expect(scan({ rule: "key-format", file: "a.ts", reason: " " })).toThrow("needs a reason")
-    expect(scan({ rule: "key-format", reason: "why" })).toThrow("must name a file")
-    expect(scan({ rule: "key-format", env: "X", reason: "why" })).toThrow("must name a file")
+    expect(scan({ rule: "key-format", reason: "why" })).toThrow(
+      "[nifra/web] secretExemptions[0] must name a file",
+    )
+    expect(scan({ rule: "key-format", env: "X", reason: "why" })).toThrow(
+      "[nifra/web] secretExemptions[0] must name a file",
+    )
+    expect(scan({ rule: "private-env-value", reason: "why" })).toThrow(
+      "[nifra/web] secretExemptions[0] must name a file or an env variable; env exemptions cover every finding from that variable",
+    )
     expect(scan({ rule: "everything", file: "a.ts", reason: "why" })).toThrow("rule must be one of")
   })
 

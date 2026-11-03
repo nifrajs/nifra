@@ -4135,12 +4135,6 @@
     },
     {
       "op": "binary &&->||",
-      "fn": "isPunct",
-      "code": "token?.kind === \"punct\" && token.value === value",
-      "from": "&&"
-    },
-    {
-      "op": "binary &&->||",
       "fn": "lexPostgres",
       "code": "if ((sql[i] === \"e\" || sql[i] === \"E\") && /[0-9+-]/.test(sql[i + 1] ?? \"\")) {",
       "from": "&&"
@@ -4283,12 +4277,6 @@
     },
     {
       "op": "binary ===->!==",
-      "fn": "functionCalls",
-      "code": "schema: qualifier?.kind === \"word\" ? identifier(qualifier) : null,",
-      "from": "==="
-    },
-    {
-      "op": "binary ===->!==",
       "fn": "lexPostgres",
       "code": "if ((sql[i] === \"e\" || sql[i] === \"E\") && /[0-9+-]/.test(sql[i + 1] ?? \"\")) {",
       "from": "==="
@@ -4420,12 +4408,6 @@
     },
     {
       "op": "condition->false",
-      "fn": "functionCalls",
-      "code": "if (!isPunct(token, \"(\") || callee?.kind !== \"word\") continue",
-      "from": "!isPunct(token, \"(\") || callee?.kind !== \"word\""
-    },
-    {
-      "op": "condition->false",
       "fn": "lexPostgres",
       "code": "(char === \"B\" ||",
       "from": "(char === \"B\" || char === \"b\" || char === \"X\" || char === \"x\" || char === \"N\" || char === \"n\") && next === \"'\""
@@ -4502,12 +4484,6 @@
       "fn": "tableAliasLists",
       "code": "} else if (isPunct(token, \")\")) {",
       "from": "isPunct(token, \")\")"
-    },
-    {
-      "op": "condition->true",
-      "fn": "functionCalls",
-      "code": "schema: qualifier?.kind === \"word\" ? identifier(qualifier) : null,",
-      "from": "qualifier?.kind === \"word\""
     },
     {
       "op": "condition->true",
@@ -4672,12 +4648,6 @@
       "fn": "tableAliasLists",
       "code": "} else if (FROM_LIST_ENDS.has(word)) inFromList[inFromList.length - 1] = false",
       "from": "false"
-    },
-    {
-      "op": "return undefined",
-      "fn": "lexPostgres",
-      "code": "return { tokens, unterminated, unicodeIdentifier }",
-      "from": "return { tokens, unterminated, unicodeIdentifier }"
     },
     {
       "op": "x++->x--",
@@ -6350,12 +6320,6 @@
     },
     {
       "op": "binary ===->!==",
-      "fn": "assertSecretExemptions",
-      "code": "`[nifra/web] ${where} must name a file${exemption.rule === \"private-env-value\" ? \" or an env variable\" : \"\"}; an exemption covers one location, never a value everywhere`,",
-      "from": "==="
-    },
-    {
-      "op": "binary ===->!==",
       "fn": "catalogSpans",
       "code": "else if (d === \"]\") inClass = false",
       "from": "==="
@@ -6497,12 +6461,6 @@
     },
     {
       "op": "condition->false",
-      "fn": "assertSecretExemptions",
-      "code": "`[nifra/web] ${where} must name a file${exemption.rule === \"private-env-value\" ? \" or an env variable\" : \"\"}; an exemption covers one location, never a value everywhere`,",
-      "from": "exemption.rule === \"private-env-value\""
-    },
-    {
-      "op": "condition->false",
       "fn": "base64Variants",
       "code": "const core = encoded.slice(shift === 0 ? 0 : shift + 1, Math.floor(shifted.length / 3) * 4)",
       "from": "shift === 0"
@@ -6632,12 +6590,6 @@
       "fn": "assertNoSecrets",
       "code": "if (message !== undefined) throw new SecretScanError(message)",
       "from": "message !== undefined"
-    },
-    {
-      "op": "condition->true",
-      "fn": "assertSecretExemptions",
-      "code": "`[nifra/web] ${where} must name a file${exemption.rule === \"private-env-value\" ? \" or an env variable\" : \"\"}; an exemption covers one location, never a value everywhere`,",
-      "from": "exemption.rule === \"private-env-value\""
     },
     {
       "op": "condition->true",
@@ -9749,12 +9701,6 @@
     },
     {
       "op": "delete statement",
-      "fn": "dehydrate",
-      "code": "checkEpoch()",
-      "from": "checkEpoch()"
-    },
-    {
-      "op": "delete statement",
       "fn": "emit",
       "code": "for (const l of listeners) l()",
       "from": "l()"
@@ -9770,12 +9716,6 @@
       "fn": "forget",
       "code": "entry.invalidated = true",
       "from": "entry.invalidated = true"
-    },
-    {
-      "op": "delete statement",
-      "fn": "hasNextPage",
-      "code": "checkEpoch()",
-      "from": "checkEpoch()"
     },
     {
       "op": "delete statement",
@@ -9867,12 +9807,6 @@
       "fn": "rebind",
       "code": "opts = nextOpts",
       "from": "opts = nextOpts"
-    },
-    {
-      "op": "delete statement",
-      "fn": "refetch",
-      "code": "checkEpoch()",
-      "from": "checkEpoch()"
     },
     {
       "op": "delete statement",

@@ -1699,4 +1699,34 @@ describe("checkSlotCss", () => {
     const { entry: placed } = layout()
     checkSlotCss(asElement(placed), asElement(new FakeElement("DIV")))
   })
+
+  test("a slot first rendered hidden is checked when it becomes visible", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const main = new FakeElement("MAIN")
+      const entry = new FakeElement("DIV")
+      const page = new FakeElement("DIV")
+      const section = new FakeElement("SECTION", "", ["first-parked"])
+      main.append(entry.append(page.append(section)))
+      fakeDocument.styleSheets = sheets([new FakeStyleRule("main > .first-parked")])
+      const key = "first-hidden"
+      const hidden: SlotNode = {
+        key,
+        depth: 1,
+        state: state("list", "/list"),
+        hidden: true,
+        wrapped: true,
+      }
+      const parking = createSlotParking()
+      parking.entry(key)(asElement(entry))
+      parking.page(key)(asElement(page))
+      parking.after([hidden])
+      parking.after([{ ...hidden, hidden: false }])
+      expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([
+        expect.stringContaining('selector "main > .first-parked"'),
+      ])
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

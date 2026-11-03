@@ -526,6 +526,18 @@ test("a new epoch while a change's reloads run loads them once more, and one aft
       3,
       3,
     ])
+
+    // Once those reloads settle, a later visitor change starts a new pair instead of being
+    // mistaken for the epoch already covered by the in-flight reloads.
+    await rotate("five")
+    one.snapshot()
+    feed.snapshot()
+    await flush()
+    expect([g.calls(), pages.calls()]).toEqual([4, 4])
+    g.resolve(3, "fourth")
+    pages.resolve(3, "fourth")
+    await flush()
+    expect([one.snapshot().data, feed.snapshot().data?.pages]).toEqual(["fourth", ["fourth"]])
     for (const off of offs) off()
   })
 })

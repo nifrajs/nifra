@@ -47,7 +47,7 @@ describe("createQueryClient", () => {
     const g = gated()
     const c = createQueryClient({ now: () => t })
     const h = c.query(["k"], g.fn)
-    expect(h.snapshot().status).toBe("pending")
+    expect(h.snapshot()).toMatchObject({ status: "pending", isFetching: false })
     const p = h.fetch()
     expect(h.snapshot().isFetching).toBe(true) // fetch started
     expect(g.calls()).toBe(1)
@@ -294,7 +294,10 @@ describe("invalidation epoch (M3) + emit (Perf-6)", () => {
     await p0 // resolves to its raw value, but must not publish to state
     await Promise.resolve()
     expect(h.snapshot().data).not.toBe("STALE") // stale data was discarded, not published as fresh
+    const joined = h.fetch()
+    expect(g.calls()).toBe(2) // the stale fetch's finally block did not clear the newer promise
     g.resolve(1, "FRESH") // the post-mutation fetch resolves
+    await joined
     await Promise.resolve()
     await Promise.resolve()
     expect(h.snapshot()).toMatchObject({ status: "success", data: "FRESH" })

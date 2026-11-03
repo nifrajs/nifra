@@ -171,6 +171,8 @@ describe("createClientRouter", () => {
         return { dashboard: true }
       },
     })
+    const heard: RouterState[] = []
+    router.subscribe(() => heard.push(router.snapshot()))
     expect(router.routeSlotsFor("dashboard")).toEqual({
       inspector: ["/users/:id"],
       activity: ["/activity"],
@@ -185,6 +187,8 @@ describe("createClientRouter", () => {
     await router.navigate(opened)
     expect(router.snapshot().path).toBe(opened)
     expect(router.snapshot().data).toBe(initial.data)
+    expect(router.snapshot()).toMatchObject({ pending: false, pendingPath: undefined })
+    expect(heard.map((state) => state.path)).toEqual([opened])
     expect(pageLoads).toBe(0)
 
     const changed = setRouteSlot(opened, "inspector", "/users/8")
@@ -193,6 +197,8 @@ describe("createClientRouter", () => {
       activity: "/activity",
       inspector: "/users/8",
     })
+    expect(router.snapshot()).toMatchObject({ pending: false, pendingPath: undefined })
+    expect(heard.map((state) => state.path)).toEqual([opened, changed])
     expect(pageLoads).toBe(0)
 
     const closed = setRouteSlot(changed, "inspector", null)
@@ -208,6 +214,36 @@ describe("createClientRouter", () => {
     ).rejects.toMatchObject({ code: "unknown_route" })
     expect(router.snapshot().path).toBe(closed)
     expect(pageLoads).toBe(0)
+
+    await router.navigate("/users/9")
+    expect(router.snapshot()).toMatchObject({ routeId: "user", path: "/users/9" })
+    expect(pageLoads).toBe(1)
+  })
+
+  test("route slot query values are removed from page data requests", async () => {
+    const requested: string[] = []
+    const target = withRouteSlots("/dashboard?tab=activity", { inspector: "/users/7" })
+    const router = createClientRouter({
+      patterns: [
+        { routeId: "dashboard", pattern: "/dashboard" },
+        { routeId: "user", pattern: "/users/:id" },
+      ],
+      initial: {
+        routeId: "dashboard",
+        params: {},
+        path: "/dashboard?tab=overview",
+        data: null,
+        pending: false,
+      },
+      routeHooks: { dashboard: { routeSlots: { inspector: ["/users/:id"] } } },
+      fetchData: async (path) => {
+        requested.push(path)
+        return { dashboard: true }
+      },
+    })
+    await router.navigate(target)
+    expect(requested).toEqual(["/dashboard?tab=activity"])
+    expect(router.snapshot().path).toBe(target)
   })
 
   test("navigate publishes the target as pendingPath while in flight, cleared when settled", async () => {
@@ -1334,6 +1370,48 @@ describe("createClientRouter", () => {
       return { opened, open }
     }
 
+    test("a superseded hydration does not restart the identity reload", async () => {
+      await withEpoch(async (rotate) => {
+        const hydration = gate()
+        const requests: Array<{ readonly resolve: () => void }> = []
+        const r = createClientRouter({
+          patterns,
+          initial,
+          fetchData: (path) =>
+            new Promise((resolve) => {
+              requests.push({ resolve: () => resolve({ from: path }) })
+            }),
+          routeHooks: {
+            index: {
+              clientLoader: async ({ serverLoader, signal }) => {
+                await hydration.opened
+                if (signal.aborted) return { ignored: true }
+                return serverLoader()
+              },
+            },
+          },
+        })
+        const hydrating = r.hydrate()
+        try {
+          await rotate("two")
+          r.snapshot()
+          await settled()
+          hydration.open()
+          await hydrating
+          await settled()
+          expect(requests).toHaveLength(1)
+
+          requests[0]?.resolve()
+          await settled()
+          expect(r.snapshot()).toMatchObject({ data: { from: "/" }, pending: false })
+        } finally {
+          hydration.open()
+          for (const request of requests) request.resolve()
+          await settled()
+        }
+      })
+    })
+
     test("identityChanged() reloads the page on screen, shown as loaded and pending until it lands", async () => {
       const state = { whoami: "alice", version: 0 }
       const r = routerFor(state)
@@ -1917,6 +1995,8 @@ describe("createClientRouter", () => {
       loads[1]?.()
       await navigating
       await expect(submitting).resolves.toBeUndefined()
+      expect(superseded.snapshot()).toMatchObject({ routeId: "index", path: "/", pending: false })
+      expect(superseded.snapshot().documentLoad).toBeUndefined()
     } finally {
       globalThis.fetch = realFetch
     }

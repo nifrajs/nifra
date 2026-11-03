@@ -129,13 +129,6 @@
       "reason": "With neither header the code goes on to rebuild the same request URL."
     },
     {
-      "op": "condition->false",
-      "fn": "unauthenticatedResult",
-      "code": "return custom.headers === undefined",
-      "from": "custom.headers === undefined",
-      "reason": "Passing headers: undefined to status adds no header, the same as the call without the option."
-    },
-    {
       "op": "binary ??->&&",
       "fn": "getSession",
       "code": "const base = normalizeBasePath(options.basePath ?? config.basePath)",

@@ -16,9 +16,9 @@ import {
 } from "../src/capabilities-tool.ts"
 import { collectCheckResult, renderCheckReport } from "../src/check.ts"
 import { collectVerificationLevels } from "../src/levels-tool.ts"
-import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
+import { createFixtureRootOutsideWorkspace, removeFixtureRoot } from "./fixture-root.ts"
 
-const FIXTURES = createFixtureRoot("nifra-capability-fixtures-")
+const FIXTURES = createFixtureRootOutsideWorkspace("nifra-capability-fixtures-")
 
 afterAll(async () => {
   removeFixtureRoot(FIXTURES)

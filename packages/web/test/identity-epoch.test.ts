@@ -77,6 +77,11 @@ test("documentEpoch reads the cookies once per synchronous run", async () => {
   }
 })
 
+test("epochOf reads the cookie value and prefers the host cookie", () => {
+  expect(epochOf("theme=dark; nifra-epoch=local%2Fvalue")).toBe("local%2Fvalue")
+  expect(epochOf("nifra-epoch=local; __Host-nifra-epoch=host%2Fvalue")).toBe("host%2Fvalue")
+})
+
 test("identityChanged runs every observer and defers observer failures", () => {
   const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
   const beforeChannel = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_CHANNEL_SLOT)
@@ -442,6 +447,15 @@ describe("the identity epoch hook", () => {
       { cookie: "authjs.session-token=old" },
     )
     expect(epoch).toEndWith("; Max-Age=60")
+
+    const firstStillSet = run(
+      [
+        "nifra_session=new; Max-Age=30; HttpOnly; Secure",
+        "authjs.session-token=new; Max-Age=60; HttpOnly; Secure",
+      ],
+      { cookie: "nifra_session=old; authjs.session-token=old" },
+    )
+    expect(firstStillSet).toEndWith("; Max-Age=30")
   })
 
   test("local http dev uses the unprefixed cookie, without Secure", () => {

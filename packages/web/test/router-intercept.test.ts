@@ -145,6 +145,21 @@ describe("an open intercept boundary", () => {
     expect(state.boundaries?.user?.status).toBe("unresolved")
   })
 
+  test("a page reload publishes boundaries returned by the new response", async () => {
+    const refreshed: BoundaryStates = {
+      ...pageBoundaries,
+      account: { name: "account", mode: { intercept: "/users/:id" }, status: "unresolved" },
+    }
+    let boundaries: BoundaryStates = pageBoundaries
+    const fetchData: FetchRouteData = async (path, match) =>
+      match.routeId === "index" ? { v: 1, data: { from: path }, boundaries } : { from: path }
+    const router = createClientRouter({ patterns, initial, fetchData, routeHooks: hooks })
+    await router.navigate("/photos/2")
+    boundaries = refreshed
+    await router.invalidate(["/"])
+    expect(router.snapshot().boundaries?.account).toEqual(refreshed.account)
+  })
+
   test("revalidate: false reloads nothing unless the server names a path on screen", async () => {
     const { calls, fetchData } = server()
     const router = await opened(fetchData)
@@ -227,6 +242,30 @@ describe("an open intercept boundary", () => {
     expect(calls).toEqual([{ path: "/about", routeId: "about", from: "/" }])
     expect(router.snapshot().intercepted).toBeUndefined()
     expect(router.snapshot().routeId).toBe("about")
+  })
+
+  test("closing a boundary aborts a newer navigation's pending request", async () => {
+    const { fetchData } = server()
+    let signal: AbortSignal | undefined
+    let release = (): void => {}
+    const gated: FetchRouteData = (path, match, requestSignal) => {
+      if (path === "/about") {
+        signal = requestSignal
+        return new Promise((resolve) => {
+          release = () => resolve({ from: path, routeId: match.routeId })
+        })
+      }
+      return fetchData(path, match, requestSignal)
+    }
+    const router = createClientRouter({ patterns, initial, fetchData: gated, routeHooks: hooks })
+    await router.navigate("/photos/2")
+    const leaving = router.navigate("/about")
+    while (signal === undefined) await Promise.resolve()
+    await router.navigate("/")
+    expect(signal.aborted).toBe(true)
+    release()
+    await leaving
+    expect(router.snapshot()).toMatchObject({ routeId: "index", path: "/", pending: false })
   })
 
   test("navigating to the page's own URL shows the page, not a boundary", async () => {
