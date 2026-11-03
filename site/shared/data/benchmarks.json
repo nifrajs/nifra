@@ -3,7 +3,7 @@
   "heroSsr": [
     {
       "name": "Nifra + React (Node)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 11187,
       "you": true
     },
@@ -21,13 +21,13 @@
   "frontend": [
     {
       "name": "Nifra + React (Bun)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 13298,
       "you": true
     },
     {
       "name": "Nifra + React (Node)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 11187,
       "you": true
     },
@@ -43,13 +43,13 @@
     },
     {
       "name": "Nifra + Solid (Bun)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 13584,
       "you": true
     },
     {
       "name": "Nifra + Solid (Node)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 11303,
       "you": true
     },
@@ -60,13 +60,13 @@
     },
     {
       "name": "Nifra + Vue (Bun)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 12427,
       "you": true
     },
     {
       "name": "Nifra + Vue (Node)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 8473,
       "you": true
     },
@@ -77,13 +77,13 @@
     },
     {
       "name": "Nifra + Svelte (Bun)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 17190,
       "you": true
     },
     {
       "name": "Nifra + Svelte (Node)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 14389,
       "you": true
     },
@@ -94,13 +94,13 @@
     },
     {
       "name": "Nifra + Preact (Bun)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 15160,
       "you": true
     },
     {
       "name": "Nifra + Preact (Node)",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 12953,
       "you": true
     }
@@ -134,7 +134,7 @@
   "http": [
     {
       "name": "Nifra",
-      "version": "5.12.0",
+      "version": "5.12.1",
       "reqs": 56848,
       "you": true
     },
@@ -164,7 +164,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "getRoot": "88,855",
           "getUsers": "87,494",
           "getSearch": "80,582",
@@ -203,7 +203,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "getRoot": "57,920",
           "getUsers": "56,848",
           "getSearch": "54,474",
@@ -250,7 +250,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "getRoot": "89,722",
           "getUsers": "87,193",
           "getSearch": "82,993",
@@ -318,7 +318,7 @@
       "rows": [
         {
           "name": "Nifra + React (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 13298,
           "p50ms": 3.54,
@@ -328,7 +328,7 @@
         },
         {
           "name": "Nifra + React (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 11187,
           "p50ms": 4.23,
@@ -361,7 +361,7 @@
       "rows": [
         {
           "name": "Nifra + Solid (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 13584,
           "p50ms": 3.59,
@@ -371,7 +371,7 @@
         },
         {
           "name": "Nifra + Solid (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 11303,
           "p50ms": 3.89,
@@ -395,7 +395,7 @@
       "rows": [
         {
           "name": "Nifra + Vue (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 12427,
           "p50ms": 3.77,
@@ -405,7 +405,7 @@
         },
         {
           "name": "Nifra + Vue (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 8473,
           "p50ms": 5,
@@ -429,7 +429,7 @@
       "rows": [
         {
           "name": "Nifra + Svelte (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 17190,
           "p50ms": 2.69,
@@ -439,7 +439,7 @@
         },
         {
           "name": "Nifra + Svelte (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 14389,
           "p50ms": 3.26,
@@ -463,7 +463,7 @@
       "rows": [
         {
           "name": "Nifra + Preact (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 15160,
           "p50ms": 3.33,
@@ -473,7 +473,7 @@
         },
         {
           "name": "Nifra + Preact (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 12953,
           "p50ms": 3.47,
@@ -499,7 +499,7 @@
       "rows": [
         {
           "name": "Nifra + React SSG (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 58449,
           "p50ms": 0.81,
@@ -509,7 +509,7 @@
         },
         {
           "name": "Nifra + React ISR (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 48050,
           "p50ms": 0.98,
@@ -519,7 +519,7 @@
         },
         {
           "name": "Nifra + React SSG files on a static host",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 18793,
           "p50ms": 2.63,
@@ -529,7 +529,7 @@
         },
         {
           "name": "Nifra + React SSG (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 25118,
           "p50ms": 1.89,
@@ -548,7 +548,7 @@
         },
         {
           "name": "Nifra + React ISR (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 15970,
           "p50ms": 2.91,
@@ -572,7 +572,7 @@
       "rows": [
         {
           "name": "Nifra + Solid SSG (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 58105,
           "p50ms": 0.81,
@@ -582,7 +582,7 @@
         },
         {
           "name": "Nifra + Solid SSG files on a static host",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 18651,
           "p50ms": 2.65,
@@ -592,7 +592,7 @@
         },
         {
           "name": "Nifra + Solid SSG (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 24988,
           "p50ms": 1.91,
@@ -616,7 +616,7 @@
       "rows": [
         {
           "name": "Nifra + Vue SSG (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 57229,
           "p50ms": 0.81,
@@ -626,7 +626,7 @@
         },
         {
           "name": "Nifra + Vue SSG files on a static host",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 18787,
           "p50ms": 2.63,
@@ -636,7 +636,7 @@
         },
         {
           "name": "Nifra + Vue SSG (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 25540,
           "p50ms": 1.86,
@@ -660,7 +660,7 @@
       "rows": [
         {
           "name": "Nifra + Svelte SSG (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 58971,
           "p50ms": 0.8,
@@ -670,7 +670,7 @@
         },
         {
           "name": "Nifra + Svelte SSG files on a static host",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 18773,
           "p50ms": 2.63,
@@ -680,7 +680,7 @@
         },
         {
           "name": "Nifra + Svelte SSG (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 25584,
           "p50ms": 1.86,
@@ -704,7 +704,7 @@
       "rows": [
         {
           "name": "Nifra + Preact SSG (Bun)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 57977,
           "p50ms": 0.82,
@@ -714,7 +714,7 @@
         },
         {
           "name": "Nifra + Preact SSG files on a static host",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "bun",
           "rps": 18678,
           "p50ms": 2.64,
@@ -724,7 +724,7 @@
         },
         {
           "name": "Nifra + Preact SSG (Node)",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "runtime": "node",
           "rps": 25257,
           "p50ms": 1.88,
@@ -742,7 +742,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "get": "53,188",
           "post": "51,879",
           "body": "42,057",
@@ -777,7 +777,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "get": "38,750",
           "post": "32,265",
           "body": "34,854",
@@ -819,7 +819,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "get": "33,748",
           "post": "41,276",
           "body": "28,374",
@@ -851,7 +851,7 @@
   ],
   "httpWorkloadsCaptured": {
     "date": "2026-11-02",
-    "nifraVersion": "5.12.0",
+    "nifraVersion": "5.12.1",
     "bun": "1.4.4",
     "node": "26.13.0",
     "deno": "2.9.7",
@@ -878,7 +878,7 @@
   },
   "httpRealworldCaptured": {
     "date": "2026-11-02",
-    "nifraVersion": "5.12.0",
+    "nifraVersion": "5.12.1",
     "bun": "1.4.4",
     "node": "26.13.0",
     "deno": "2.9.7",
@@ -905,7 +905,7 @@
   },
   "ssrCaptured": {
     "date": "2026-11-02",
-    "nifraVersion": "5.12.0",
+    "nifraVersion": "5.12.1",
     "bun": "1.4.4",
     "node": "26.13.0",
     "deno": "2.9.7",
@@ -999,7 +999,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "readyRssMiB": 103.28515625,
           "getRssMiB": 123.0703125,
           "postRssMiB": 124.3203125,
@@ -1072,7 +1072,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "readyRssMiB": 37.2421875,
           "getRssMiB": 47.82421875,
           "postRssMiB": 49.65234375,
@@ -1145,7 +1145,7 @@
       "rows": [
         {
           "name": "Nifra",
-          "version": "5.12.0",
+          "version": "5.12.1",
           "readyRssMiB": 57.8671875,
           "getRssMiB": 72.40625,
           "postRssMiB": 73.078125,
