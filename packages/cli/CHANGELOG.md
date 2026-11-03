@@ -4,6 +4,7 @@
 
 ### Patch Changes
 
+- Added a `nifra upgrade` recipe for 5.12.0 with package pins and notes for this release's app-visible changes.
 - Updated dependencies [d274304]
 - Updated dependencies [1834f5a]
 - Updated dependencies [3a42e07]
