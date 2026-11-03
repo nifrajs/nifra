@@ -136,6 +136,36 @@ describe("createBunWsHandlers", () => {
     ).not.toThrow()
   })
 
+  test("a topic cleanup failure is reported without skipping the close callback", () => {
+    const cleanupError = new Error("cleanup failed")
+    const errors: unknown[] = []
+    const closes: string[] = []
+    const topics = {
+      subscribe: () => {},
+      unsubscribe: () => {},
+      unsubscribeAll: () => {
+        throw cleanupError
+      },
+      publish: () => {},
+    }
+    const handler: WebSocketHandler = {
+      open: (ws) => ws.subscribe("room"),
+      close: (_ws, code, reason) => {
+        closes.push(`${code} ${reason}`)
+      },
+      error: (_ws, error) => {
+        errors.push(error)
+      },
+    }
+    const socket = fakeSocket(handler)
+    const handlers = createBunWsHandlers(topics)
+
+    handlers.open(socket)
+    expect(() => handlers.close(socket, 1000, "bye")).not.toThrow()
+    expect(errors).toEqual([cleanupError])
+    expect(closes).toEqual(["1000 bye"])
+  })
+
   test("close drops topic subscriptions so the registry cannot hold a dead socket", () => {
     const topics = new TopicRegistry()
     const handler: WebSocketHandler = {

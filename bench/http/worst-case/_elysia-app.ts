@@ -3,7 +3,8 @@
  * option differs per runtime), serving IDENTICAL routes + semantics to _app.ts:
  * derive + before/after hooks, multi-param path, validated query, JSON body validation
  * (TypeBox, Elysia's idiomatic compiled lane, AOT ON - the default), and per-request
- * dynamic `set.headers` writes.
+ * dynamic `set.headers` writes. Both modes validate path params. BENCH_GENERIC=1 adds a no-op
+ * before hook so the extra Nifra generic-lane hook has a matching peer workload.
  */
 import { Elysia, t } from "elysia"
 
@@ -34,7 +35,14 @@ export function makeWorstElysiaApp(
         set.headers["x-trace"] = query.trace
         return { org: params.org, proj: params.proj, id: params.id, verbose: query.verbose }
       },
-      { query: t.Object({ verbose: t.String(), trace: t.String() }) },
+      {
+        params: t.Object({
+          org: t.String({ pattern: "^[a-z]+$" }),
+          proj: t.String({ pattern: "^[a-z]+$" }),
+          id: t.String({ pattern: "^[0-9]+$" }),
+        }),
+        query: t.Object({ verbose: t.String(), trace: t.String() }),
+      },
     )
     .post(
       "/orgs/:org/projects/:proj/tasks",
@@ -49,6 +57,10 @@ export function makeWorstElysiaApp(
         }
       },
       {
+        params: t.Object({
+          org: t.String({ pattern: "^[a-z]+$" }),
+          proj: t.String({ pattern: "^[a-z]+$" }),
+        }),
         body: t.Object({
           items: t.Array(
             t.Object({

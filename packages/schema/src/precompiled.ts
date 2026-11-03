@@ -5,6 +5,7 @@ import { Errors } from "@sinclair/typebox/errors"
 import { Convert } from "@sinclair/typebox/value"
 import { markAnswerStep } from "./answer-step.ts"
 import { ensureDefaultFormats } from "./formats.ts"
+import { namesInheritedMember, ownView } from "./inherited.ts"
 import { COERCES, TEXT_SLOT } from "./marks.ts"
 
 export { Kind, OptionalKind, ReadonlyKind } from "@sinclair/typebox"
@@ -21,6 +22,8 @@ export function fromPrecompiled<T extends TSchema>(
   schema: T,
   check: (value: unknown) => boolean,
 ): StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T } {
+  // A key named after an `Object.prototype` member is checked on an own view - see ./inherited.ts.
+  const ownOnly = namesInheritedMember(schema)
   const result: StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T } = {
     jsonSchema: schema,
     "~standard": {
@@ -28,10 +31,11 @@ export function fromPrecompiled<T extends TSchema>(
       vendor: "nifra",
       validate(value: unknown): StandardResult<Static<T>> {
         ensureDefaultFormats()
+        const input = ownOnly ? ownView(value) : value
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The generated checker was compiled from this exact schema at build time.
-        if (check(value)) return { value: value as Static<T> }
+        if (check(input)) return { value: value as Static<T> }
         const issues = []
-        for (const error of Errors(schema, value)) {
+        for (const error of Errors(schema, input)) {
           issues.push({
             message: error.message,
             path:
@@ -57,7 +61,8 @@ export function fromPrecompiled<T extends TSchema>(
   Object.defineProperty(result["~standard"].validate, TEXT_SLOT, {
     get: () => {
       if (textForm !== undefined) return textForm
-      const validate = (value: unknown) => result["~standard"].validate(Convert(schema, value))
+      const validate = (value: unknown) =>
+        result["~standard"].validate(Convert(schema, ownOnly ? ownView(value) : value))
       Object.defineProperty(validate, COERCES, { value: true })
       markAnswerStep(validate, schema)
       textForm = { ...result, "~standard": { ...result["~standard"], validate } }

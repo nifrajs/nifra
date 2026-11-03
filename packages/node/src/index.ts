@@ -3074,7 +3074,11 @@ function attachNodeWebSocket(
     safe(() => handler.message?.(nifra, payload))
   })
   ws.on("close", (code, reason) => {
-    pubsub.unsubscribeAll(nifra) // drop topic subscriptions so the registry never holds a dead socket
+    try {
+      pubsub.unsubscribeAll(nifra)
+    } catch (error) {
+      reportError(error)
+    }
     const [sentCode, sentReason] = sentClose ?? [code, reason.toString()]
     safe(() => handler.close?.(nifra, sentCode, sentReason))
   })
