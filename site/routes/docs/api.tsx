@@ -102,9 +102,8 @@ const SET = `export const app = server()
 
 const STATIC_RESPONSE = `import { server, staticResponse } from "@nifrajs/core/server"
 
-export const app = server()
-  .get("/health", staticResponse())
-  .listen(3000)`
+export const app = server().get("/health", staticResponse())
+app.listen(3000)`
 
 const COOKIES = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
@@ -446,10 +445,12 @@ export default function Api() {
       <p>
         For a route whose response is always empty, use <code>staticResponse()</code> instead of
         creating a <code>Response</code> in a handler on every request. Pass fixed status and headers
-        to the helper. On Bun, a plain literal-path GET or HEAD route can use Bun's static response
-        table when no request policy, validation, or response middleware needs to run. Otherwise
-        Nifra keeps the regular route pipeline. <code>app.fetch</code> and other runtimes also
-        produce a fresh response per call.
+        to the helper; caller-supplied <code>Content-Length</code> and <code>Transfer-Encoding</code>
+        are rejected. On Bun, a plain literal-path GET or HEAD route can use Bun's static response
+        table when no request policy, validation, response middleware, or app-wide{" "}
+        <code>.responseHeaders(...)</code> defaults need to run. Null-body status codes use the
+        regular handler path to preserve framing on Bun 1.3. Otherwise Nifra keeps the regular route
+        pipeline. <code>app.fetch</code> and other runtimes also produce a fresh response per call.
       </p>
       <CodeBlock code={STATIC_RESPONSE} />
       <p className="caveat">

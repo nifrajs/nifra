@@ -6,7 +6,10 @@ export interface StaticResponseDefinition {
 
 const definitions = new WeakMap<object, StaticResponseDefinition>()
 
-/** Declare a bodyless response with a status and headers that never vary. */
+/**
+ * Declare a bodyless response with fixed status and headers.
+ * Caller-supplied Content-Length and Transfer-Encoding are rejected.
+ */
 export function staticResponse(init?: ResponseInit): () => Response {
   const normalized = new Response(null, init)
   for (const name of ["content-length", "transfer-encoding"]) {

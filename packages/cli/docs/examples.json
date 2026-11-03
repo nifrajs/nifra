@@ -63,7 +63,7 @@
     "name": "STATIC_RESPONSE",
     "topic": "Nifra - API & typed client",
     "slug": "api",
-    "code": "import { server, staticResponse } from \"@nifrajs/core/server\"\n\nexport const app = server()\n  .get(\"/health\", staticResponse())\n  .listen(3000)"
+    "code": "import { server, staticResponse } from \"@nifrajs/core/server\"\n\nexport const app = server().get(\"/health\", staticResponse())\napp.listen(3000)"
   },
   {
     "name": "TYPED_ERRORS",

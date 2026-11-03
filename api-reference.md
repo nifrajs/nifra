@@ -1837,7 +1837,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
 - **staticResponse** _(function)_ - `staticResponse: (init?: ResponseInit) => () => Response`
-  Declare a bodyless response with a status and headers that never vary.
+  Declare a bodyless response with fixed status and headers. Caller-supplied Content-Length and Transfer-Encoding are rejected.
 - **status** _(function)_ - `status: { <const Code extends number>(code: Code, body?: undefined, init?: { readonly headers?: Readonly<Record<string, string>>; }): StatusResponse<Code, undefined>; <const Code extends number, const Body>(code: Code, …`
   Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
@@ -3210,7 +3210,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
 - **staticResponse** _(function)_ - `staticResponse: (init?: ResponseInit) => () => Response`
-  Declare a bodyless response with a status and headers that never vary.
+  Declare a bodyless response with fixed status and headers. Caller-supplied Content-Length and Transfer-Encoding are rejected.
 - **status** _(function)_ - `status: { <const Code extends number>(code: Code, body?: undefined, init?: { readonly headers?: Readonly<Record<string, string>>; }): StatusResponse<Code, undefined>; <const Code extends number, const Body>(code: Code, …`
   Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
@@ -8345,7 +8345,7 @@ _No named exports (side-effect entrypoint)._
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
 - **staticResponse** _(function)_ - `staticResponse: (init?: ResponseInit) => () => Response`
-  Declare a bodyless response with a status and headers that never vary.
+  Declare a bodyless response with fixed status and headers. Caller-supplied Content-Length and Transfer-Encoding are rejected.
 - **status** _(function)_ - `status: { <const Code extends number>(code: Code, body?: undefined, init?: { readonly headers?: Readonly<Record<string, string>>; }): StatusResponse<Code, undefined>; <const Code extends number, const Body>(code: Code, …`
   Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`

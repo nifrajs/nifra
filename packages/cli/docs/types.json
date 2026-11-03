@@ -25433,14 +25433,14 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function staticResponse(init?: ResponseInit): () => Response;",
-    "doc": "/** Declare a bodyless response with a status and headers that never vary. */"
+    "doc": "/** Declare a bodyless response with fixed status and headers; Content-Length and Transfer-Encoding are rejected. */"
   },
   {
     "name": "staticResponse",
     "kind": "function",
     "package": "nifra",
     "signature": "export declare function staticResponse(init?: ResponseInit): () => Response;",
-    "doc": "/** Declare a bodyless response with a status and headers that never vary. */"
+    "doc": "/** Declare a bodyless response with fixed status and headers; Content-Length and Transfer-Encoding are rejected. */"
   },
   {
     "name": "status",

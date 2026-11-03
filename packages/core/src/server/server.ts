@@ -7600,6 +7600,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         mayUseStaticResponse &&
         staticResponse !== undefined &&
         (method === "GET" || method === "HEAD") &&
+        // Bun 1.3 can misframe null-body status codes in its native static table.
+        staticResponse.status !== 204 &&
+        staticResponse.status !== 205 &&
+        staticResponse.status !== 304 &&
         pattern.paramNames.length === 0 &&
         entry.schema === undefined &&
         entry.idempotent === undefined &&

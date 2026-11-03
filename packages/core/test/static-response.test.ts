@@ -41,6 +41,13 @@ describe("staticResponse", () => {
     expect(direct.headers.get("x-health")).toBe("ok")
   })
 
+  test("keeps null-body status codes on the handler path", () => {
+    for (const status of [204, 205, 304]) {
+      const app = server().get("/empty", staticResponse({ status }))
+      expect(nativeRoutes(app)?.["/empty"]?.GET).not.toBeInstanceOf(Response)
+    }
+  })
+
   test("snapshots init and returns fresh responses through app.fetch", async () => {
     const headers = new Headers({ "x-route": "original" })
     const app = server().get("/health", staticResponse({ headers }))
@@ -72,6 +79,24 @@ describe("staticResponse", () => {
         expect(response.headers.get("x-health")).toBe("ok")
         expect(await response.text()).toBe("")
       }
+    } finally {
+      await app.stop({ drainMs: 0 })
+    }
+  })
+
+  test("serves 204 without body bytes and keeps the next response aligned", async () => {
+    const app = server()
+      .get("/empty", staticResponse({ status: 204 }))
+      .get("/ok", () => ({ ok: true }))
+    const running = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const empty = await fetch(`http://127.0.0.1:${running.port}/empty`)
+      expect(empty.status).toBe(204)
+      expect(await empty.text()).toBe("")
+
+      const next = await fetch(`http://127.0.0.1:${running.port}/ok`)
+      expect(next.status).toBe(200)
+      expect(await next.json()).toEqual({ ok: true })
     } finally {
       await app.stop({ drainMs: 0 })
     }
