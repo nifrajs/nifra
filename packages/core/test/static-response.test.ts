@@ -41,6 +41,27 @@ describe("staticResponse", () => {
     expect(direct.headers.get("x-health")).toBe("ok")
   })
 
+  test("installs a bodyless POST Response in Bun's route table", async () => {
+    const app = server().post("/empty", staticResponse())
+    const direct = nativeRoutes(app)?.["/empty"]?.POST
+
+    expect(direct).toBeInstanceOf(Response)
+    if (!(direct instanceof Response)) throw new Error("expected a Bun static response value")
+    expect(direct.body).toBeNull()
+
+    const running = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const response = await fetch(`http://127.0.0.1:${running.port}/empty`, {
+        method: "POST",
+        body: "ignored",
+      })
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe("")
+    } finally {
+      await app.stop({ drainMs: 0 })
+    }
+  })
+
   test("keeps null-body status codes on the handler path", () => {
     for (const status of [204, 205, 304]) {
       const app = server().get("/empty", staticResponse({ status }))

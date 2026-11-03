@@ -341,7 +341,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A static bodyless route entry and Bun table eligibility/status fallback measured (Bun 1.4.4):
   // bare 41,059 B, idempotency 45,940, effect-ledger 43,078, sse 41,938, mcp 41,326, valibot
   // 42,049, typebox-t 70,471, typebox-form 75,480. Only these eight ceilings advance to the next step.
-  "nifra-bare": 40.1,
+  // Fused raw Responses skip normalization and request lookup when no response controls need them;
+  // the added branch crosses six shared-core ceilings, each by less than 0.1 KiB gzip (Bun 1.4.4).
+  "nifra-bare": 40.2,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -370,12 +372,12 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The bounded JSON output preflight is reachable from the typebox lane: typebox-t 67,312 -> 69,159 B
   // (Bun 1.4.4), crossing the next 0.1 KiB cap.
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
-  "nifra-idempotency": 44.9,
-  "nifra-effect-ledger": 42.1,
-  "nifra-mcp": 40.4,
+  "nifra-idempotency": 45.0,
+  "nifra-effect-ledger": 42.2,
+  "nifra-mcp": 40.5,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 41.0,
-  "nifra-valibot": 41.1,
+  "nifra-sse": 41.1,
+  "nifra-valibot": 41.2,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
   "nifra-typebox-t": 68.9,

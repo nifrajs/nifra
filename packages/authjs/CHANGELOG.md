@@ -1,5 +1,9 @@
 # @nifrajs/authjs
 
+## 5.12.1
+
+No changes in this release.
+
 ## 5.12.0
 
 No changes in this release.

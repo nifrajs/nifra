@@ -21,6 +21,7 @@ test("response bookkeeping stays lazy until hooks or an in-process reader need i
         c.set.status = 201
         return { ok: true }
       })
+      .get("/text", (c) => c.text("resident"))
     const app = make()
     for (const path of ["/plain", "/headers", "/cookies"]) {
       const response = await app.fetch(request(path))
@@ -30,6 +31,9 @@ test("response bookkeeping stays lazy until hooks or an in-process reader need i
       if (path === "/headers") assert.equal(response.headers.get("x-value"), "one")
       if (path === "/cookies") assert.match(response.headers.get("set-cookie"), /sid=value/)
     }
+    const text = await app.fetch(request("/text"))
+    assert.equal(hasResidentBody(text), false)
+    assert.equal(await text.text(), "resident")
     const hooked = make().onResponse((response) => {
       assert.equal(hasResidentBody(response), true)
       response.headers.set("x-hook", "seen")
@@ -38,6 +42,16 @@ test("response bookkeeping stays lazy until hooks or an in-process reader need i
     const observed = await hooked.fetch(request("/headers"))
     assert.equal(observed.headers.get("x-hook"), "seen")
     assert.deepEqual(await observed.json(), { ok: true })
+    const textHooked = server({ logger: silentLogger })
+      .onResponse((response) => {
+        assert.equal(hasResidentBody(response), false)
+        response.headers.set("x-hook", "text")
+        return response
+      })
+      .get("/text", (c) => c.text("resident"))
+    const observedText = await textHooked.fetch(request("/text"))
+    assert.equal(observedText.headers.get("x-hook"), "text")
+    assert.equal(await observedText.text(), "resident")
     const cached = await app.fetch(request("/headers"))
     assert.equal(hasResidentBody(cached), false)
     const reuse = server({ logger: silentLogger })
@@ -59,6 +73,9 @@ test("response bookkeeping stays lazy until hooks or an in-process reader need i
       assert.equal(hasResidentBody(response), true)
       assert.deepEqual(await response.json(), { ok: true })
     }
+    const trackedText = await app.fetch(request("/text"))
+    assert.equal(hasResidentBody(trackedText), true)
+    assert.equal(await trackedText.text(), "resident")
 `
     .replace("SERVER_MODULE", JSON.stringify(new URL("../src/index.ts", import.meta.url).href))
     .replace("MOUNT_MODULE", JSON.stringify(new URL("../src/mount.ts", import.meta.url).href))
