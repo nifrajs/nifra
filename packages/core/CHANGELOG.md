@@ -1,5 +1,11 @@
 # @nifrajs/core
 
+## 5.12.1
+
+### Patch Changes
+
+- eae0213: Use Bun's native response table for eligible bodyless POST routes, return untouched body-bearing `Response` values directly from fused routes when safe, and reduce work on dynamic text responses.
+
 ## 5.12.0
 
 ### Minor Changes

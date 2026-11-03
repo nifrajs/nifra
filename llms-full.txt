@@ -8268,8 +8268,8 @@ starts from unless nothing else, installed or declared, names one.
 
 ```bash
 nifra upgrade --list                # the release targets this CLI knows
-nifra upgrade 5.12.0              # dry-run: every planned edit, nothing written
-nifra upgrade 5.12.0 --write      # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.12.1              # dry-run: every planned edit, nothing written
+nifra upgrade 5.12.1 --write      # apply; it verifies with nifra check once the target is installed
 # if pins were already bumped by hand, add --from <installed-version>
 bun install                         # install the new pins
 nifra check                         # verify against them
@@ -13907,7 +13907,7 @@ the command below, which runs every recipe since its installed version. The 5.6 
 its imports and dependencies; the follow-up changes below need a hand.
 
 ```sh
-nifra upgrade 5.12.0
+nifra upgrade 5.12.1
 ```
 
 -

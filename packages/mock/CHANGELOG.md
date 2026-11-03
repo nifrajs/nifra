@@ -1,5 +1,12 @@
 # @nifrajs/mock
 
+## 5.12.1
+
+### Patch Changes
+
+- Updated dependencies [eae0213]
+  - @nifrajs/core@5.12.1
+
 ## 5.12.0
 
 ### Patch Changes

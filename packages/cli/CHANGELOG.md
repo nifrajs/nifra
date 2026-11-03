@@ -1,5 +1,21 @@
 # @nifrajs/cli
 
+## 5.12.1
+
+### Patch Changes
+
+- Updated dependencies [eae0213]
+  - @nifrajs/core@5.12.1
+  - @nifrajs/client@5.12.1
+  - @nifrajs/i18n@5.12.1
+  - @nifrajs/mcp@5.12.1
+  - @nifrajs/schema@5.12.1
+  - @nifrajs/testing@5.12.1
+  - @nifrajs/web@5.12.1
+  - @nifrajs/agent-review@5.12.1
+  - @nifrajs/mcp-db@5.12.1
+  - @nifrajs/runner@5.12.1
+
 ## 5.12.0
 
 ### Patch Changes

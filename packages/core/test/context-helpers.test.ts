@@ -36,6 +36,20 @@ describe("context helpers - c.request alias + c.json/c.text", () => {
     expect(await res.text()).toBe("hello")
   })
 
+  test("c.text preserves caller headers in a full ResponseInit", async () => {
+    const app = server().get("/t", (c) =>
+      c.text("hello", {
+        status: 202,
+        headers: { "content-type": "text/custom", "x-test": "1" },
+      }),
+    )
+    const res = await app.fetch(new Request("http://x/t"))
+    expect(res.status).toBe(202)
+    expect(res.headers.get("content-type")).toBe("text/custom")
+    expect(res.headers.get("x-test")).toBe("1")
+    expect(await res.text()).toBe("hello")
+  })
+
   test("c.json accepts a full ResponseInit (status + headers)", async () => {
     const app = server().get("/h", (c) =>
       c.json({ a: 1 }, { status: 418, headers: { "x-test": "1" } }),

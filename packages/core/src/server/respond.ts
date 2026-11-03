@@ -613,7 +613,6 @@ export function fusedRespond(
   unstamped = false,
 ): Response {
   const set = ctx[CONTEXT_SET]()
-  const request = unstamped ? undefined : ctx[CONTEXT_REQUEST]
   if (
     set === undefined &&
     statics === undefined &&
@@ -622,8 +621,10 @@ export function fusedRespond(
     !isResponseResult(result) &&
     !responseBodyUsed(result)
   ) {
-    return normalizeBodylessResponse(result, request)
+    if (!isBodylessStatus(result.status)) return result
+    return normalizeBodylessResponse(result, unstamped ? undefined : ctx[CONTEXT_REQUEST])
   }
+  const request = unstamped ? undefined : ctx[CONTEXT_REQUEST]
   if (set === undefined)
     return fusedRespondNoSet(result, tagResponseBody, statics, unstamped, request)
   return toResponse(result as HandlerResult, set, tagResponseBody, statics, request, unstamped)
