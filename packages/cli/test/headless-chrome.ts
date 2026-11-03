@@ -125,9 +125,24 @@ async function startChrome(executable: string): Promise<ChromePage> {
     ],
     { stdout: "ignore", stderr: "pipe" },
   )
-  const cleanup = async (): Promise<void> => {
-    proc.kill()
-    // A busy machine can leave Chrome ignoring SIGTERM long enough to time a test hook out.
+  const terminate = async (): Promise<void> => {
+    if (process.platform === "win32") {
+      const treeKill = Bun.spawn(["taskkill", "/PID", String(proc.pid), "/T", "/F"], {
+        stdout: "ignore",
+        stderr: "ignore",
+      })
+      if ((await treeKill.exited) !== 0 && proc.exitCode === null) proc.kill("SIGKILL")
+    } else {
+      proc.kill("SIGKILL")
+    }
+    await proc.exited.catch(() => 0)
+  }
+  const cleanup = async (graceful = false): Promise<void> => {
+    if (!graceful) {
+      if (process.platform === "win32") await terminate()
+      else proc.kill()
+    }
+    // If Chrome ignores graceful shutdown, terminate its Windows process tree before removing the profile.
     const exited = await Promise.race([
       proc.exited.then(
         () => true,
@@ -135,10 +150,7 @@ async function startChrome(executable: string): Promise<ChromePage> {
       ),
       Bun.sleep(3000).then(() => false),
     ])
-    if (!exited) {
-      proc.kill("SIGKILL")
-      await proc.exited.catch(() => 0)
-    }
+    if (!exited) await terminate()
     await removeProfile(profile)
   }
   try {
@@ -251,8 +263,12 @@ async function startChrome(executable: string): Promise<ChromePage> {
         )
       },
       async close() {
+        if (socket.readyState === WebSocket.OPEN) {
+          // Browser.close can close CDP before acknowledging; this bounded wait only requests graceful exit.
+          await Promise.race([send("Browser.close").catch(() => undefined), Bun.sleep(1000)])
+        }
+        await cleanup(true)
         socket.close()
-        await cleanup()
       },
     }
   } catch (error) {
