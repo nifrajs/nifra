@@ -60,6 +60,12 @@
     "code": "import { client } from \"@nifrajs/client\"\nimport { server } from \"@nifrajs/core/server\"\nimport { method } from \"@nifrajs/core/methods\"\nimport { t } from \"@nifrajs/schema\"\n\n// QUERY: a safe, repeatable read whose filter travels in the body instead of the URL.\nexport const app = server().use(\n  method(\"QUERY\", \"/books\", { body: t.object({ author: t.string() }) }, (c) => ({\n    author: c.body.author,\n  })),\n)\n\nconst api = client<typeof app>(\"https://api.example.com\")\nconst found = await api.books.$query({ author: \"Le Guin\" }) // the body is checked against the schema"
   },
   {
+    "name": "STATIC_RESPONSE",
+    "topic": "Nifra - API & typed client",
+    "slug": "api",
+    "code": "import { server, staticResponse } from \"@nifrajs/core/server\"\n\nexport const app = server()\n  .get(\"/health\", staticResponse())\n  .listen(3000)"
+  },
+  {
     "name": "TYPED_ERRORS",
     "topic": "Nifra - API & typed client",
     "slug": "api",

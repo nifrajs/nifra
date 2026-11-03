@@ -190,6 +190,7 @@ export type {
   SSEStream,
   TypedSSEStream,
 } from "./server/sse.ts"
+export { staticResponse } from "./server/static-response.ts"
 export type {
   NifraWebSocket,
   StandardWebSocket,
