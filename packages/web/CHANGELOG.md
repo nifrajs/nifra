@@ -4,6 +4,7 @@
 
 ### Patch Changes
 
+- Route server-components Vite imports through the guarded importer so strict `Error.captureStackTrace` runtimes do not cache a failed Vite evaluation.
 - 3a42e07: Use shallow copies for ordinary loader contexts while preserving lazy request accessors in specialized contexts.
 - Updated dependencies [d274304]
 - Updated dependencies [91cc290]
