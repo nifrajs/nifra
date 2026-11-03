@@ -410,7 +410,11 @@ function attachDenoWebSocket(
     safe(() => handler.message?.(ws, payload))
   })
   socket.addEventListener("close", (event) => {
-    pubsub.unsubscribeAll(ws) // drop topic subscriptions so the registry never holds a dead socket
+    try {
+      pubsub.unsubscribeAll(ws)
+    } catch (error) {
+      reportError(error)
+    }
     const [code, reason] = sentClose ?? [event.code, event.reason]
     safe(() => handler.close?.(ws, code, reason))
   })

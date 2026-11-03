@@ -4,7 +4,7 @@
  * and outcome types carry the schemas and codecs the adapters never touch.
  */
 
-import type { TopicRegistry, WebSocketHandler, WebSocketUpgradeOutcome } from "./websocket.ts"
+import type { TopicAdapter, WebSocketHandler, WebSocketUpgradeOutcome } from "./websocket.ts"
 
 /** A received frame, normalized: text → `string`, binary → `Uint8Array`. */
 export type NifraWsData = string | Uint8Array
@@ -20,7 +20,7 @@ export interface NifraWs {
   readonly raw: unknown
 }
 
-/** The `TopicRegistry` surface the adapter wires `ws.subscribe` to. */
+/** The socket-membership surface the adapter wires `ws.subscribe` to. */
 export interface WsPubSub {
   subscribe(topic: string, ws: NifraWs): void
   unsubscribe(topic: string, ws: NifraWs): void
@@ -59,5 +59,5 @@ type Fits<View, Actual extends View> = Actual
 export type CoreFitsAdapterView = [
   Fits<WsUpgradeOutcome, WebSocketUpgradeOutcome>,
   Fits<NifraWsHandler, WebSocketHandler>,
-  Fits<WsPubSub, TopicRegistry>,
+  Fits<WsPubSub, TopicAdapter>,
 ]

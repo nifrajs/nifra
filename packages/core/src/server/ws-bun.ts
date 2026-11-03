@@ -10,7 +10,7 @@ import {
   createWebSocketSender,
   exceedsPayloadCap,
   type NifraWebSocket,
-  type TopicRegistry,
+  type TopicAdapter,
   type WebSocketData,
   type WebSocketHandler,
 } from "./websocket.ts"
@@ -20,8 +20,8 @@ import type { BunWsHandlers } from "./ws-hook.ts"
  * `upgrade()`-seeded user data, and the memoized portable {@link NifraWebSocket} wrapper. */
 export interface BunWsData {
   readonly handler: WebSocketHandler
-  /** Mounted/modern upgrades carry this registry; old/manual fixtures may omit it. */
-  readonly pubsub?: TopicRegistry
+  /** Mounted/modern upgrades carry their topic adapter; old/manual fixtures may omit it. */
+  readonly pubsub?: TopicAdapter
   /** The inbound cap of the app this socket belongs to (the upgrade outcome's). Absent, the
    * listening app's applies. */
   readonly maxPayloadBytes?: number | undefined
@@ -79,18 +79,18 @@ function toBinaryData(message: ArrayBuffer | Uint8Array): Uint8Array {
  *
  * `nativePubsub` selects the topic backend: in native mode `subscribe`/`unsubscribe` go straight to
  * Bun's own (uWebSockets) pub/sub so a broadcast via the Bun server's `publish` reaches this socket
- * with no per-connection JS loop; otherwise they use the runtime-neutral {@link TopicRegistry}. Native
+ * with no per-connection JS loop; otherwise they use the configured topic adapter. Native
  * mode is used only when no route validates outbound frames, so raw and validated sends are identical.
  */
 function wrapBunSocket(
   raw: BunSocket,
-  topics: TopicRegistry,
+  topics: TopicAdapter,
   handler: WebSocketHandler,
   nativePubsub: boolean,
 ): NifraWebSocket {
   let ws!: NifraWebSocket
-  // Mounted child apps carry their own TopicRegistry in the upgrade outcome. Keep the argument as a
-  // fallback for old/manual Bun upgrades, but use the per-connection registry for composed mounts.
+  // Mounted child apps carry their own topic adapter in the upgrade outcome. Keep the argument as a
+  // fallback for old/manual Bun upgrades, but use the per-connection adapter for composed mounts.
   const pubsub = raw.data.pubsub ?? topics
   const reportError = (error: unknown): void => reportWsError(error, ws, handler)
   const send = createWebSocketSender(
@@ -167,7 +167,7 @@ const BUN_TOO_BIG_REASON = "Received too big message"
  * `maxPayloadLength`; a socket whose app declares less is closed with `1009` here.
  */
 export function createBunWsHandlers(
-  topics: TopicRegistry,
+  topics: TopicAdapter,
   nativePubsub = false,
   app?: object,
 ): BunWsHandlers {
@@ -209,7 +209,13 @@ export function createBunWsHandlers(
       const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler, nativePubsub)
       // Registry mode: drop topic subscriptions so it never holds a dead socket. Native mode: Bun
       // unsubscribes the socket from every topic on close, so there is nothing to sweep here.
-      if (!nativePubsub) (ws.data.pubsub ?? topics).unsubscribeAll(nifra)
+      if (!nativePubsub) {
+        try {
+          ;(ws.data.pubsub ?? topics).unsubscribeAll(nifra)
+        } catch (error) {
+          reportWsError(error, nifra, ws.data.handler)
+        }
+      }
       // Bun's own maxPayloadLength reports 1006 here, whether it dropped the connection (up to 1.4.3)
       // or sent the peer a 1009 (from 1.4.4); the handler gets the 1009 every other payload cap reports.
       const oversize = code === 1006 && reason === BUN_TOO_BIG_REASON

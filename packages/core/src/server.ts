@@ -180,6 +180,7 @@ export type {
 export type {
   NifraWebSocket,
   StandardWebSocket,
+  TopicAdapter,
   WebSocketContext,
   WebSocketData,
   WebSocketHandler,

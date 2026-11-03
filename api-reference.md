@@ -1765,6 +1765,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A status-bearing response whose code and body remain visible to TypeScript.
 - **ToolAnnotations** _(interface)_ - `interface ToolAnnotations`
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
+- **TopicAdapter** _(interface)_ - `interface TopicAdapter`
+  Per-server topic membership and broadcast adapter. The default {@link TopicRegistry} keeps sockets in this process; a custom adapter can bridge those operations to a shared fan-out service. The membership methods are synchronous because socket callbacks are synchronous; `publish` may be asynchronou…
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
@@ -3137,6 +3139,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A status-bearing response whose code and body remain visible to TypeScript.
 - **ToolAnnotations** _(interface)_ - `interface ToolAnnotations`
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
+- **TopicAdapter** _(interface)_ - `interface TopicAdapter`
+  Per-server topic membership and broadcast adapter. The default {@link TopicRegistry} keeps sockets in this process; a custom adapter can bridge those operations to a shared fan-out service. The membership methods are synchronous because socket callbacks are synchronous; `publish` may be asynchronou…
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
@@ -3464,8 +3468,10 @@ _No named exports (side-effect entrypoint)._
   The portable socket handed to WS lifecycle callbacks. Each adapter wraps its native socket.
 - **StandardWebSocket** _(interface)_ - `interface StandardWebSocket`
   A standard server-side `WebSocket` - the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **TopicAdapter** _(interface)_ - `interface TopicAdapter`
+  Per-server topic membership and broadcast adapter. The default {@link TopicRegistry} keeps sockets in this process; a custom adapter can bridge those operations to a shared fan-out service. The membership methods are synchronous because socket callbacks are synchronous; `publish` may be asynchronou…
 - **TopicRegistry** _(class)_ - `class TopicRegistry`
-  In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** - topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
+  In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** - topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs a {@link TopicAdapter} backed by a shared fan-out. The same registry instance is sha…
 - **WebSocketContext** _(interface)_ - `interface WebSocketContext<Env = unknown>`
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
@@ -8263,6 +8269,8 @@ _No named exports (side-effect entrypoint)._
   A status-bearing response whose code and body remain visible to TypeScript.
 - **ToolAnnotations** _(interface)_ - `interface ToolAnnotations`
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
+- **TopicAdapter** _(interface)_ - `interface TopicAdapter`
+  Per-server topic membership and broadcast adapter. The default {@link TopicRegistry} keeps sockets in this process; a custom adapter can bridge those operations to a shared fan-out service. The membership methods are synchronous because socket callbacks are synchronous; `publish` may be asynchronou…
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`

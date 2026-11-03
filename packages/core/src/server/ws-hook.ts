@@ -12,13 +12,14 @@ import type { ProtoPoisoning } from "./proto-guard.ts"
 import type {
   NifraWebSocket,
   StandardWebSocket,
+  TopicAdapter,
   TopicRegistry,
   WebSocketContext,
   WebSocketHandler,
   WsSender,
 } from "./websocket.ts"
 
-/** The Bun serve `websocket` callback trio, closed over one app's `TopicRegistry`. The `ws`
+/** The Bun serve `websocket` callback trio, closed over one app's topic adapter. The `ws`
  * params are `unknown` so `Bun.*` types never leak into the public `.d.ts`; the implementation
  * narrows to its structural `BunSocket` view. */
 export interface BunWsHandlers {
@@ -43,13 +44,13 @@ export interface WsRuntime {
   /** The Bun `websocket` config for `listen()` when the app has WS routes. `nativePubsub` routes
    * `ws.subscribe` through Bun's own pub/sub (set when no route validates outbound frames). `app` is
    * the listening server, whose mount table names the payload caps the listener has to admit. */
-  bunHandlers(topics: TopicRegistry, nativePubsub?: boolean, app?: object): BunWsHandlers
+  bunHandlers(topics: TopicAdapter, nativePubsub?: boolean, app?: object): BunWsHandlers
   /** `attachWebSocket` - wires a standard server socket (Workers `WebSocketPair`) to a handler. */
   attach(
     socket: StandardWebSocket,
     handler: WebSocketHandler,
     data: unknown,
-    options: { openNow: boolean; pubsub: TopicRegistry },
+    options: { openNow: boolean; pubsub: TopicAdapter },
   ): NifraWebSocket
   /** `webSocketSender` - `ws.send` for an adapter that wires its own sockets (Node, Deno). */
   sender: WsSender
