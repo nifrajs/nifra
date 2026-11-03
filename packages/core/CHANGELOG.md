@@ -1,5 +1,18 @@
 # @nifrajs/core
 
+## 5.12.0
+
+### Minor Changes
+
+- 91cc290: Export the shared default request-body cap from core's edge kit and use it in both servers.
+- 28bdd6c: Add `staticResponse()` for fixed bodyless GET/HEAD routes. Eligible Bun listeners serve a prebuilt response directly from Bun's route table.
+- 878bb89: A capability id joins lowercase segments with `.`, `-` or `_`, so the capability `defineTool` derives, `tool.execute.<name>`, is valid for a snake_case tool name such as `archive_notes`, and a grant of it runs the tool. Before, that derived id failed the capability grammar, and the tool was denied unless it named its own `capability`. The grammar is the same wherever a capability id is read: route and socket `capabilities`, execution-policy ceilings, the effect ledger, assurance policies and manifests. A tool name with an empty segment (`a__b`, a trailing `-`) derives no valid id, and `defineTool` refuses it unless `capability` is passed, rather than returning a tool no grant can run.
+- c4bd5b2: Allow server apps to provide a WebSocket `TopicAdapter`, and extend the schema coercion fast path to scalar arrays and primitive literal unions.
+
+### Patch Changes
+
+- d274304: Route ordinary combinations of validated HTTP inputs and lifecycle hooks through the shared compiled fast path.
+
 ## 5.11.0
 
 ### Minor Changes

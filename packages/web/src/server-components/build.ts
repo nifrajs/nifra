@@ -3,21 +3,22 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { mkdtemp, rename, rm } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import {
-  createBuilder,
+import type {
+  createBuilder as CreateBuilder,
   createServer,
-  loadEnv,
-  type Plugin,
-  type PluginOption,
-  type UserConfig,
-  version as viteVersion,
+  loadEnv as LoadEnv,
+  Plugin,
+  PluginOption,
+  UserConfig,
 } from "vite"
+import { CERTIFIED_COMPONENT_VITE } from "../internal/certified-components.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
 import { assertDisposableDir } from "../internal/disposable-dir.ts"
 import { publicEnvDefines } from "../internal/public-env.ts"
 import { buildEnvironment } from "../internal/secret-scan.ts"
 import { vitePublicEnvPrefix } from "../internal/server-boundary.ts"
 import { unsupportedBuiltin } from "../internal/target-compat.ts"
+import { importVite } from "../internal/vite-import.ts"
 import {
   viteAssetUrlGuard,
   viteBareBuiltinExternal,
@@ -31,11 +32,17 @@ import { componentBundleImports } from "./bundle-proof.ts"
 import { installComponentDevHandler } from "./dev-http.ts"
 import { serverComponentsPlugin } from "./vite.ts"
 
+type ViteModule = {
+  createBuilder: typeof CreateBuilder
+  createServer: typeof createServer
+  loadEnv: typeof LoadEnv
+}
+
 const sourceProofs = new WeakMap<UserConfig, ReadonlyMap<string, string>>()
 
 function compilerGeneration(): string {
   const extension = import.meta.url.endsWith(".ts") ? "ts" : "js"
-  const hash = createHash("sha256").update(viteVersion)
+  const hash = createHash("sha256").update(CERTIFIED_COMPONENT_VITE)
   // Compiler-only modules do not enter the application graph, but their changes invalidate its ABI.
   for (const name of ["build", "vite", "source", "build-target", "bundle-proof", "server-entry"])
     hash.update(readFileSync(fileURLToPath(new URL(`./${name}.${extension}`, import.meta.url))))
@@ -88,6 +95,7 @@ export async function serverComponentsConfig(
   options: ComponentPipelineOptions,
   generationId?: string,
 ): Promise<UserConfig> {
+  const { loadEnv } = await importVite<ViteModule>()
   const root = resolve(options.root)
   if (
     !["react", "vue", "svelte", "solid", "preact"].includes(options.adapter) ||
@@ -132,7 +140,9 @@ export async function serverComponentsConfig(
     generatedFiles,
     componentModules: compiler.api.componentModules,
   })
-  const generation: Plugin & { api: { readonly componentSources: ReadonlyMap<string, string> } } = {
+  const generation: Plugin & {
+    api: { readonly componentSources: ReadonlyMap<string, string> }
+  } = {
     api: { componentSources: sources },
     name: "nifra:component-generation",
     config(_config, env) {
@@ -327,6 +337,7 @@ export async function serverComponentsConfig(
 export async function buildServerComponents(
   options: ComponentPipelineOptions,
 ): Promise<ComponentBuildResult> {
+  const { createBuilder, loadEnv } = await importVite<ViteModule>()
   const out = resolve(options.root, options.outDir ?? "dist")
   const root = resolve(options.root)
   assertDisposableDir("outDir", out, [
@@ -410,6 +421,7 @@ export async function devServerComponents(
   options: ComponentPipelineOptions,
 ): Promise<Awaited<ReturnType<typeof createServer>>> {
   const config = await serverComponentsConfig(options)
+  const { createServer: createViteServer } = await importVite<ViteModule>()
   config.plugins = [
     ...(config.plugins ?? []),
     {
@@ -419,7 +431,7 @@ export async function devServerComponents(
       },
     },
   ]
-  const server = await createServer({ ...config, configFile: false })
+  const server = await createViteServer({ ...config, configFile: false })
   await server.listen()
   return server
 }

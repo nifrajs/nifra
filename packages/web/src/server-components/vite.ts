@@ -2,11 +2,12 @@ import { existsSync, readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { resolve } from "node:path"
 import type * as TS from "typescript"
-import { type Plugin, version as viteVersion } from "vite"
+import type { Plugin } from "vite"
 import {
   CERTIFIED_COMPONENT_REACT,
   CERTIFIED_COMPONENT_VITE,
 } from "../internal/certified-components.ts"
+import { importVite } from "../internal/vite-import.ts"
 import {
   compileComponentModule,
   componentReference,
@@ -116,7 +117,8 @@ export function serverComponentsPlugin(
     api: { componentModules },
     name: "nifra:server-components",
     enforce: "pre",
-    configResolved(config) {
+    async configResolved(config) {
+      const { version: viteVersion } = await importVite<{ version: string }>()
       if (viteVersion !== CERTIFIED_COMPONENT_VITE)
         throw new Error(
           `[nifra/components] Use the certified Vite ${CERTIFIED_COMPONENT_VITE} component pipeline, not ${viteVersion}; Bun remains a supported server runtime`,

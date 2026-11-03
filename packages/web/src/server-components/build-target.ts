@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto"
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
-import { build } from "vite"
+import type { build as ViteBuild } from "vite"
 import { emitPluginImages } from "../internal/image-assets.ts"
 import { unsupportedBuiltin } from "../internal/target-compat.ts"
+import { importVite } from "../internal/vite-import.ts"
 import type { ComponentPipelineOptions } from "./build.ts"
 import { componentBundleImports } from "./bundle-proof.ts"
 import { componentServerEntry } from "./server-entry.ts"
+
+type ViteBuildModule = { build: typeof ViteBuild }
 
 export interface ComponentBuildResult {
   readonly outDir: string
@@ -103,6 +106,7 @@ export async function assembleComponentTarget(
     assets,
   }
   if (target === "cloudflare") {
+    const { build } = await importVite<ViteBuildModule>()
     const source = componentServerEntry({ ...metadata, serverEntry, platform: "cloudflare" })
     const input = resolve(out, ".nifra-entry.backend.js")
     await writeFile(input, source)

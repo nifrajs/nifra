@@ -1,5 +1,29 @@
 # @nifrajs/cli
 
+## 5.12.0
+
+### Patch Changes
+
+- Added a `nifra upgrade` recipe for 5.12.0 with package pins and notes for this release's app-visible changes.
+- Updated dependencies [d274304]
+- Updated dependencies [1834f5a]
+- Updated dependencies [3a42e07]
+- Updated dependencies [2383330]
+- Updated dependencies [91cc290]
+- Updated dependencies [28bdd6c]
+- Updated dependencies [878bb89]
+- Updated dependencies [c4bd5b2]
+  - @nifrajs/core@5.12.0
+  - @nifrajs/schema@5.12.0
+  - @nifrajs/web@5.12.0
+  - @nifrajs/client@5.12.0
+  - @nifrajs/i18n@5.12.0
+  - @nifrajs/mcp@5.12.0
+  - @nifrajs/testing@5.12.0
+  - @nifrajs/agent-review@5.12.0
+  - @nifrajs/mcp-db@5.12.0
+  - @nifrajs/runner@5.12.0
+
 ## 5.11.0
 
 ### Minor Changes
