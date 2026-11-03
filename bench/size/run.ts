@@ -374,7 +374,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-sse": 40.7,
   "nifra-valibot": 40.8,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
-  // The WebSocket topic adapter adds 0.3 KiB to the TypeBox query-schema variant.
+  // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
   "nifra-typebox-t": 68.7,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
