@@ -2,10 +2,13 @@ import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
 import { href } from "@nifrajs/web-react/router"
 
+const NIFRA_VERSION = "5.11.0"
+const CURRENT_UPGRADE = `nifra upgrade ${NIFRA_VERSION}`
+
 export const meta = docsMeta(
   "/docs/migrate-5",
   "Nifra 5 upgrade guide - from 3.x, 4.x or an earlier 5.x",
-  "Upgrade a Nifra 3.x or 4.x application to 5.0: the chained upgrade command, the frontend/backend layout move and its follow-ups, drafted output schemas, the backend's HTTP mount, the 5.0 defaults that changed, and the release gates. Then move a 5.x app to 5.6.",
+  "Upgrade a Nifra 3.x or 4.x application to 5.0, then move a 5.x app to the current Nifra release.",
 )
 
 const COMMANDS = [
@@ -67,7 +70,7 @@ export default function Migrate5() {
         changes a handful of defaults. The upgrade command pins the packages and moves imports; the
         layout migration moves files; this guide covers what each leaves to you and how to tell a
         finished migration from one that needs a decision. An app already on 5.x skips to{" "}
-        <a href="#5-6">Moving to 5.6</a>.
+        <a href="#5-6">The 5.6 migration details</a>.
       </p>
 
       <h2>1. Run the executable upgrade</h2>
@@ -236,12 +239,13 @@ export default function Migrate5() {
         </li>
       </ol>
 
-      <h2 id="5-6">Moving to 5.6</h2>
+      <h2 id="5-6">The 5.6 migration details</h2>
       <p>
-        An app already on 5.x moves with <code>nifra upgrade 5.6.0</code>, which prints every note
-        below with the rest of the release&apos;s. It moves the imports and dependencies itself; the
-        rest needs a hand:
+        An app already on 5.x moves to the current release with{" "}
+        the command below, which runs every recipe since its installed version. The 5.6 recipe moves
+        its imports and dependencies; the follow-up changes below need a hand.
       </p>
+      <CodeBlock code={CURRENT_UPGRADE} lang="sh" />
       <ul>
         <li>
           <code>@nifrajs/islets</code> and <code>@nifrajs/web/nano</code> merge into{" "}

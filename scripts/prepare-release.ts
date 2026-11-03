@@ -28,5 +28,9 @@ run("bun", ["run", "changeset:version"])
 // The pull request carries each package's published file list, so every file a package gains or
 // loses since the last release is in its diff; release verification holds the packs to it.
 run("bun", ["run", "build"])
+// The demo bundle sizes and server bundle figure are deterministic release data. Refresh them from
+// the exact versioned source during preparation; the heavier measured performance suites run later.
+run("bun", ["run", "site/build-frameworks.ts"])
+run("bun", ["run", "bench:size"])
 run("bun", ["run", "check:packed", "--update"])
 console.log("Release versions and generated artifacts are ready to commit on this branch.")

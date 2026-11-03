@@ -14,7 +14,7 @@
  * `--runtime` keeps nifra's rows on one runtime; `--json` then prints the progress to stderr and
  * one result line to stdout, and leaves the website's numbers alone.
  */
-import { capturedMeta, ohaVersion, writeSiteBench } from "../site-bench.ts"
+import { capturedMeta, NIFRA_VERSION, ohaVersion, writeSiteBench } from "../site-bench.ts"
 import {
   nodeVersion,
   SSR_BENCH_CONNECTIONS,
@@ -84,7 +84,7 @@ const resultsOut = Bun.env.BENCH_SSR_RESULTS_JSON
 if (resultsOut !== undefined) {
   await Bun.write(
     resultsOut,
-    `${JSON.stringify({ tableA: tableARows, tableB: tableBRows }, null, 2)}\n`,
+    `${JSON.stringify({ nifraVersion: NIFRA_VERSION, tableA: tableARows, tableB: tableBRows }, null, 2)}\n`,
     { createPath: true },
   )
 }

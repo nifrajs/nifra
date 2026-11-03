@@ -294,14 +294,14 @@ to full-stack later without a rewrite.
 **Throughput - the realistic case.** Router micro-benchmarks flatter Hono (a single compiled
 regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
-99% of Elysia on `GET /users/:id` and
-101% on the validated `POST` - and
-**level with Fastify on Node** (106% of Fastify on GET,
-105% on the validated `POST`), with Elysia, Hono,
-and Express behind. On **Deno** it runs at 105% of Elysia on
-GET and 128% on the validated `POST`. In the realistic shape (security headers + CORS +
+100% of Elysia on `GET /users/:id` and
+103% on the validated `POST` - and
+**level with Fastify on Node** (108% of Fastify on GET,
+107% on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at 107% of Elysia on
+GET and 133% on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured on
-**Bun** with `oha`) Nifra runs at **111% of Elysia on GET and 114% on POST**. Treat benchmark
+**Bun** with `oha`) Nifra runs at **109% of Elysia on GET and 113% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -8249,13 +8249,13 @@ library's `">=3.1.0"` floor never sets the version the upgrade
 starts from unless nothing else, installed or declared, names one.
 
 ```bash
-nifra upgrade --list          # the release targets this CLI knows
-nifra upgrade 5.6.0           # dry-run: every planned edit, nothing written
-nifra upgrade 5.6.0 --write   # apply; it verifies with nifra check once the target is installed
-nifra upgrade 5.6.0 --from 5.4.0 --write   # pins already bumped by hand: apply the recipes they skipped
-bun install                   # install the new pins
-nifra check                   # verify against them
-nifra doctor                  # afterwards: no "mixed nifra versions" advisory left
+nifra upgrade --list                # the release targets this CLI knows
+nifra upgrade 5.11.0              # dry-run: every planned edit, nothing written
+nifra upgrade 5.11.0 --write      # apply; it verifies with nifra check once the target is installed
+# if pins were already bumped by hand, add --from <installed-version>
+bun install                         # install the new pins
+nifra check                         # verify against them
+nifra doctor                        # afterwards: no "mixed nifra versions" advisory left
 ```
 
 It is a dry-run until `--write`, and the same run twice makes no further edits. Once
@@ -13681,13 +13681,13 @@ each deploy adapter it uses.
 
 ## Nifra 5 upgrade guide - from 3.x, 4.x or an earlier 5.x
 
-> Upgrade a Nifra 3.x or 4.x application to 5.0: the chained upgrade command, the frontend/backend layout move and its follow-ups, drafted output schemas, the backend's HTTP mount, the 5.0 defaults that changed, and the release gates. Then move a 5.x app to 5.6.
+> Upgrade a Nifra 3.x or 4.x application to 5.0, then move a 5.x app to the current Nifra release.
 
 Nifra 4.0 split every app into a frontend and a backend half, and 5.0 enforces the split and
 changes a handful of defaults. The upgrade command pins the packages and moves imports; the
 layout migration moves files; this guide covers what each leaves to you and how to tell a
 finished migration from one that needs a decision. An app already on 5.x skips to
-[Moving to 5.6](#5-6).
+[The 5.6 migration details](#5-6).
 
 ### 1. Run the executable upgrade
 
@@ -13882,11 +13882,15 @@ If the project has `nifra.assurance.ts`, run `nifra assure --json`.
 Exercise the pages that load or post data, and every browser call to the backend, under
 `nifra dev` and against the production build.
 
-### Moving to 5.6
+### The 5.6 migration details
 
-An app already on 5.x moves with `nifra upgrade 5.6.0`, which prints every note
-below with the rest of the release's. It moves the imports and dependencies itself; the
-rest needs a hand:
+An app already on 5.x moves to the current release with
+the command below, which runs every recipe since its installed version. The 5.6 recipe moves
+its imports and dependencies; the follow-up changes below need a hand.
+
+```sh
+nifra upgrade 5.11.0
+```
 
 -
 `@nifrajs/islets` and `@nifrajs/web/nano` merge into
@@ -14316,9 +14320,9 @@ Migrate a backend. For the full
 rendering and route model, see Loaders & actions
 and Routing.
 
-The current dynamic SSR snapshot reports Nifra at 15× the throughput
-of Next.js, 6.9× Nuxt, 4.1× SvelteKit, and
-2.6× SolidStart on the measured pages. See the
+The current dynamic SSR snapshot reports Nifra at 18× the throughput
+of Next.js, 7.9× Nuxt, 5.3× SvelteKit, and
+2.7× SolidStart on the measured pages. See the
 benchmark methodology and full results.
 
 ## Nifra - Migrate route by route

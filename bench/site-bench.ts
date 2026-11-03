@@ -52,6 +52,8 @@ export interface CaptureMachine {
 /** When, where, and with which toolchain a slice was measured. */
 export interface CapturedMeta {
   readonly date: string
+  /** The Nifra release the capture was built from, so version labels cannot drift on their own. */
+  readonly nifraVersion: string
   readonly bun: string
   readonly node: string
   readonly deno?: string
@@ -346,6 +348,7 @@ export function capturedMeta(versions: {
   const sourceUrl = benchmarkSourceUrl()
   const captured: CapturedMeta = {
     date: new Date().toISOString().slice(0, 10),
+    nifraVersion: NIFRA_VERSION,
     bun: bare(versions.bun),
     node: bare(versions.node),
     oha: bare(versions.oha),

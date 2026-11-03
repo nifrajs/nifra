@@ -2,6 +2,8 @@ import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
 import { href } from "@nifrajs/web-react/router"
 
+const NIFRA_VERSION = "5.11.0"
+
 export const meta = docsMeta(
   "/docs/cli",
   "Nifra - CLI",
@@ -18,13 +20,13 @@ nifra build --target cloudflare  # also: node | deno | vercel | static; add --re
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)
 #        --vite | --bun (dev/build) force the pipeline`
 
-const UPGRADE = `nifra upgrade --list          # the release targets this CLI knows
-nifra upgrade 5.6.0           # dry-run: every planned edit, nothing written
-nifra upgrade 5.6.0 --write   # apply; it verifies with nifra check once the target is installed
-nifra upgrade 5.6.0 --from 5.4.0 --write   # pins already bumped by hand: apply the recipes they skipped
-bun install                   # install the new pins
-nifra check                   # verify against them
-nifra doctor                  # afterwards: no "mixed nifra versions" advisory left`
+const UPGRADE = `nifra upgrade --list                # the release targets this CLI knows
+nifra upgrade ${NIFRA_VERSION}              # dry-run: every planned edit, nothing written
+nifra upgrade ${NIFRA_VERSION} --write      # apply; it verifies with nifra check once the target is installed
+# if pins were already bumped by hand, add --from <installed-version>
+bun install                         # install the new pins
+nifra check                         # verify against them
+nifra doctor                        # afterwards: no "mixed nifra versions" advisory left`
 
 const FRAMEWORK = `// backend/framework.ts - deploy-safe; the generated server entry imports this file.
 import { reactAdapter } from "@nifrajs/web-react"
