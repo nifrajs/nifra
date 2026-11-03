@@ -168,6 +168,7 @@ import {
   type StatusResponse,
 } from "./runtime-core.ts"
 import { normalizeStaticResponseHeaders, type StaticResponseHeaders } from "./static-headers.ts"
+import { createStaticResponse, staticResponseDefinition } from "./static-response.ts"
 import { withTextSlots } from "./text-slots.ts"
 import { plainValidationError } from "./validation.ts"
 
@@ -453,7 +454,8 @@ class BunPeerPlatform implements PeerPlatform {
 }
 
 type BunNativeHandler = (request: Request, server: BunPeerServer) => MaybePromise<Response>
-type BunNativeMethodTable = Partial<Record<Method, BunNativeHandler>>
+type BunNativeRouteValue = BunNativeHandler | Response
+type BunNativeMethodTable = Partial<Record<Method, BunNativeRouteValue>>
 // Bun's route table has a slot for each of these; a QUERY entry is ignored and the request falls
 // through to the table's fetch, so QUERY routes stay on the portable dispatcher.
 const BUN_TABLE_METHODS: readonly Method[] = METHODS.filter((method) => method !== "QUERY")
@@ -2820,6 +2822,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): CatalogRoute {
+    const staticResponse = staticResponseDefinition(handler)
     schema = withTextSlots(schema)
     // Route provenance for the CLI's capability walk, which sets NIFRA_ROUTE_SITES while it loads the
     // app: the module that registered the route, read where a static scan cannot see the path.
@@ -2965,6 +2968,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     })
     const registeredEntry: RouteEntry = {
       handler: handler as unknown as InternalHandler,
+      staticResponse,
       schema,
       bodyLimit,
       idempotent,
@@ -7474,6 +7478,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     fallback: BunNativeHandler,
     peer: PeerPlatform,
     platformFor?: (request: Request, server: BunPeerServer) => Platform<EnvOf<Ctx>>,
+    allowStaticResponses = true,
   ): BunNativeRoutes | undefined {
     const hooked = this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe
     if (
@@ -7494,6 +7499,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // The capacity gate must wrap every request; the fused lane bypasses fetchMatched, so enabling
       // admission drops fusion (native matching stays) and routes through the gated matched lane.
       this.capacityGate === undefined
+    // A response value skips every request callback, so every policy that could inspect it must be absent.
+    const mayUseStaticResponse =
+      allowStaticResponses &&
+      !this.validateHost &&
+      !this.normalizeTarget &&
+      this.requestTimeoutMs === 0 &&
+      !this.acceptInboundDeadlines &&
+      this.capacityGate === undefined &&
+      this.onRequestHooks.length === 0 &&
+      this.onResponseHooks.length === 0 &&
+      this.onResponseFinalizedHooks.length === 0 &&
+      this.staticResponseHeaders === undefined &&
+      this.responseBodyTag === undefined
     const unboundedSignal = mayUseFusedNative ? getNeverAbortSignal() : undefined
     const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
     let count = 0
@@ -7559,7 +7577,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return routes[key]
     }
     for (let i = 0; i < all.length; i++) {
-      const { method, path, pattern, entry } = all[i]!
+      const route = all[i]!
+      const { method, path, pattern, entry } = route
       const run = lead[i]
       // The route is served from the table unless its path cannot be there, Bun's table has no slot
       // for its method, or a path outside the table outranks it: Bun would hand this route a request
@@ -7574,6 +7593,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         under.get(run)?.some((other) => outranks(other, pattern.segments)) ||
         (method === "GET" && sockets.some((socket) => mayShareRequest(socket, pattern.segments)))
       ) {
+        continue
+      }
+      const staticResponse = entry.staticResponse
+      if (
+        mayUseStaticResponse &&
+        staticResponse !== undefined &&
+        (method === "GET" || method === "HEAD") &&
+        // Bun 1.3 can misframe null-body status codes in its native static table.
+        staticResponse.status !== 204 &&
+        staticResponse.status !== 205 &&
+        staticResponse.status !== 304 &&
+        pattern.paramNames.length === 0 &&
+        entry.schema === undefined &&
+        entry.idempotent === undefined &&
+        entry.ledgered === undefined &&
+        entry.responseContract === undefined &&
+        entry.derives.length === 0 &&
+        entry.authStages.length === 0 &&
+        !entry.hasDecorations &&
+        entry.beforeHandle.length === 0 &&
+        entry.afterHandle.length === 0 &&
+        entry.onError.length === 0 &&
+        entry.around.length === 0 &&
+        route.assurance.length === 0 &&
+        (route.descriptor.capabilities?.length ?? 0) === 0
+      ) {
+        tableAt(path, pattern.segments)[method as Method] = createStaticResponse(staticResponse)
+        count += 1
         continue
       }
       const paramNames = pattern.paramNames
@@ -7776,6 +7823,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       (request, server) =>
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `fallback` hands `fetch` the same platform, which holds no environment.
         new BunPeerPlatform(server, request, setIdleTimeout) as Platform<EnvOf<Ctx>>,
+      options?.static === undefined,
     )
     const first = options?.static
     const before = <S, A>(
@@ -7796,7 +7844,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         const methods = nativeRoutes[path]!
         for (const method of BUN_TABLE_METHODS) {
           const handler = methods[method]
-          if (handler !== undefined) methods[method] = before(handler)
+          if (typeof handler === "function") methods[method] = before(handler)
         }
       }
     }

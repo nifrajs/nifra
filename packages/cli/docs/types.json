@@ -25429,6 +25429,20 @@
     "doc": "/** One mount or several, as `serveStatic()` takes them, each checked by {@link staticMountOf}. */"
   },
   {
+    "name": "staticResponse",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function staticResponse(init?: ResponseInit): () => Response;",
+    "doc": "/**\n * Declare a bodyless response with fixed status and headers.\n * Caller-supplied Content-Length and Transfer-Encoding are rejected.\n */"
+  },
+  {
+    "name": "staticResponse",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function staticResponse(init?: ResponseInit): () => Response;",
+    "doc": "/**\n * Declare a bodyless response with fixed status and headers.\n * Caller-supplied Content-Length and Transfer-Encoding are rejected.\n */"
+  },
+  {
     "name": "status",
     "kind": "function",
     "package": "@nifrajs/core",

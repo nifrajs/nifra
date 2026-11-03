@@ -32,6 +32,7 @@ import type {
 } from "../server/response-contract-lane.ts"
 import type { HandlerResult, ResponseResult } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
+import type { StaticResponseDefinition } from "../server/static-response.ts"
 import type { RouteProgram } from "./route-program.ts"
 
 export type InternalHandler = (ctx: RawContext) => MaybePromise<HandlerResult>
@@ -286,6 +287,7 @@ export interface RouteExecutionPlan {
 
 export interface RouteEntry {
   readonly handler: InternalHandler
+  readonly staticResponse: StaticResponseDefinition | undefined
   readonly schema: RouteSchema | undefined
   /**
    * Effective transport body cap, already resolved at registration: the route's own
