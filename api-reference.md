@@ -1,6 +1,6 @@
 # nifra API reference (generated)
 
-Every public export of every package and documented subpath - name, kind, signature, and doc summary - extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.
+Every public export of every package and documented subpath - name, kind, signature, and doc summary - extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. Packages that ship non-TypeScript bundles without public source exports, such as `@nifrajs/skills`, are intentionally omitted. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.
 
 ## @nifrajs/a2a
 
@@ -5719,7 +5719,7 @@ _No named exports (side-effect entrypoint)._
 - **gone** _(function)_ - `gone: (options?: StatusPageOptions) => never`
   Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and was deliberately removed - a withdrawn listing, a deleted post.
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
-  Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
+  Hash a query key to a stable cache string. Object keys are sorted; arrays keep order. Keys must be serializable - a function/symbol in the key throws. Query-key objects are cached by identity, so treat them as immutable after hashing. Mirrors TanStack Query's structural hashing.
 - **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`
   The in-app URL for a route: the pattern filled with `params` (each value encoded as one path segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the route'…
 - **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`

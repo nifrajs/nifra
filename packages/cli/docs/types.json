@@ -21305,7 +21305,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function hashQueryKey(key: unknown): string;",
-    "doc": "/**\n * Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays\n * keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable\n * identity). Mirrors TanStack Query's structural hashing.\n */"
+    "doc": "/**\n * Hash a query key to a stable cache string. Object keys are sorted; arrays keep order. Keys must be\n * serializable - a function/symbol in the key throws. Query-key objects are cached by identity, so\n * treat them as immutable after hashing. Mirrors TanStack Query's structural hashing.\n */"
   },
   {
     "name": "healthcheck",

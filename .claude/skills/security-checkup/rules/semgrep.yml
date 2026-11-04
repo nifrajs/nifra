@@ -14,6 +14,11 @@ rules:
           - pattern: $REQ.headers.get("cf-connecting-ip")
           - pattern: $H["x-forwarded-for"]
           - pattern: $H["cf-connecting-ip"]
+    paths:
+      exclude:
+        # These paths either implement the trusted proxy boundary or assert its stripping behavior.
+        - 'packages/proxy/**'
+        - '**/test-node/**'
 
   - id: nifra-non-constant-time-secret-compare
     languages: [typescript, javascript]
@@ -70,6 +75,10 @@ rules:
         - '**/web/src/internal/private-env.ts'     # env template tokenizer
         - '**/web/src/internal/secret-scan.ts'     # the secret scanner itself
         - '**/web/src/router.ts'                   # in-flight navigation dedupe tokens
+        - '**/coding-agent/src/cli.ts'             # CLI flag dispatch, not secret comparison
+        - '**/core/src/tool-contract.ts'           # sensitivity enum labels, not credentials
+        - '**/web/src/internal/parity.ts'          # CSS lexer tokens, not credentials
+        - '**/web/src/server-components/html.ts'   # parse5 tag names, not credentials
       # Repo-dev tooling (AST mutation, clone checks, runtime differentials) is not request code.
         - 'scripts/'
         - '**/scripts/'
@@ -85,6 +94,23 @@ rules:
           - pattern: await $REQ.text()
           - pattern: await $REQ.json()
           - pattern: await $REQ.arrayBuffer()
+    paths:
+      exclude:
+        # These are fixtures, scanners, build tooling, and documentation/demo code rather than
+        # deployed request handlers. Keep published package source in scope for manual review.
+        - 'bench/**'
+        - 'scripts/**'
+        - 'site/**'
+        - 'examples/**'
+        - '.claude/**'
+        - '**/test/**'
+        - '**/*.test.*'
+        - '**/test-node/**'
+        - '**/template-batteries/**'
+        - '**/dist/**'
+        # Local files are not request bodies; the receiver pattern otherwise cannot distinguish them.
+        - '**/src/**/build*.ts'
+        - '**/src/**/dev*.ts'
 
   - id: nifra-child-process-shell-true
     languages: [typescript, javascript]
@@ -94,6 +120,9 @@ rules:
       with shell disabled.
     patterns:
       - pattern: '$SPAWN(..., { ..., shell: true, ... })'
+    paths:
+      exclude:
+        - 'scripts/**'
 
   - id: nifra-eval-on-input
     languages: [typescript, javascript]
@@ -103,3 +132,7 @@ rules:
       - pattern-either:
           - pattern: eval(...)
           - pattern: new Function(...)
+    paths:
+      exclude:
+        # The playground intentionally evaluates code typed by the visitor in that visitor's own tab.
+        - 'site/islands/playground.client.ts'

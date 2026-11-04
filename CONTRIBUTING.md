@@ -91,6 +91,8 @@ bun run check
 ```
 
 This runs lint checks, TypeScript checks across all tsconfigs, test suites, and documentation/API schema verifications.
+The normal check intentionally omits the release-only build, full cross-runtime/publish matrix, coverage
+ratchet, and performance gates; run `bun run check:release` when you need release-equivalent verification.
 
 Note: `api-reference.md`, per-package `LLM.md` cards, and the `llms.txt`/`llms-full.txt` corpora are generated. Do not edit them by hand - change the source and run `bun run gen:api && bun run gen:cards` (or `bun run build && bun run gen:llms` when exported types changed); CI rejects stale copies.
 

@@ -176,34 +176,63 @@ export interface QueryClient {
   clear: () => void
 }
 
-/**
- * Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays
- * keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable
- * identity). Mirrors TanStack Query's structural hashing.
- */
-export function hashQueryKey(key: unknown): string {
-  return JSON.stringify(key, (_k, value) => {
-    if (typeof value === "function" || typeof value === "symbol")
-      throw new TypeError("[nifra/web] a query key must be serializable (no functions/symbols)")
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      const obj = value as Record<string, unknown>
-      return Object.fromEntries(
-        Object.keys(obj)
-          .sort()
-          .map((k) => [k, obj[k]]),
-      )
-    }
-    return value
-  })
+const QUERY_KEY_HASHES = new WeakMap<object, string>()
+
+const queryKeyReplacer = (_key: string, value: unknown): unknown => {
+  if (typeof value === "function" || typeof value === "symbol")
+    throw new TypeError("[nifra/web] a query key must be serializable (no functions/symbols)")
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>
+    return Object.fromEntries(
+      Object.keys(obj)
+        .sort()
+        .map((k) => [k, obj[k]]),
+    )
+  }
+  return value
 }
 
-// Structural array-prefix match on un-hashed keys: invalidate(["todo"]) hits ["todo", id]. Non-array
-// keys (or a non-array prefix) match exactly (by hash).
-function keyMatchesPrefix(key: unknown, prefix: unknown): boolean {
-  if (!Array.isArray(key) || !Array.isArray(prefix))
-    return hashQueryKey(key) === hashQueryKey(prefix)
+/**
+ * Hash a query key to a stable cache string. Object keys are sorted; arrays keep order. Keys must be
+ * serializable - a function/symbol in the key throws. Query-key objects are cached by identity, so
+ * treat them as immutable after hashing. Mirrors TanStack Query's structural hashing.
+ */
+export function hashQueryKey(key: unknown): string {
+  if (key !== null && typeof key === "object") {
+    const cached = QUERY_KEY_HASHES.get(key)
+    if (cached !== undefined) return cached
+    const hash = JSON.stringify(key, queryKeyReplacer)
+    if (hash !== undefined) QUERY_KEY_HASHES.set(key, hash)
+    return hash
+  }
+  return JSON.stringify(key, queryKeyReplacer)
+}
+
+type KeyPartHashes = readonly string[]
+
+function hashQueryKeyPart(part: unknown): string {
+  return hashQueryKey(part === undefined ? null : part) ?? "null"
+}
+
+/** Hash array components once when an entry is created, so prefix invalidation compares strings rather
+ * than serializing every component of every cached key on every invalidation. */
+function hashQueryKeyParts(key: unknown): KeyPartHashes | undefined {
+  if (!Array.isArray(key)) return undefined
+  const parts: string[] = []
+  for (let index = 0; index < key.length; index++) parts.push(hashQueryKeyPart(key[index]))
+  return parts
+}
+
+// Structural array-prefix match. Non-array keys (or a non-array prefix) match exactly by their full hash.
+function keyMatchesPrefix(
+  keyHash: string,
+  keyParts: KeyPartHashes | undefined,
+  prefixHash: string,
+  prefixParts: KeyPartHashes | undefined,
+): boolean {
+  if (keyParts === undefined || prefixParts === undefined) return keyHash === prefixHash
   return (
-    prefix.length <= key.length && prefix.every((p, i) => hashQueryKey(key[i]) === hashQueryKey(p))
+    prefixParts.length <= keyParts.length && prefixParts.every((part, i) => keyParts[i] === part)
   )
 }
 
@@ -229,6 +258,7 @@ function relive(entry: LiveFields, live: readonly string[] | undefined): void {
 
 interface Entry extends LiveFields {
   readonly key: unknown
+  readonly keyParts: KeyPartHashes | undefined
   fn: () => Promise<unknown>
   staleTime: number
   /** The {@link liveTick} at the start of the latest fetch, and of the fetch that produced `state`. */
@@ -274,45 +304,107 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   const gcTime = options.gcTime ?? 5 * 60_000
   const max = options.max ?? 1000
   const cache = new Map<string, Entry>()
+  const cacheIndex = new Map<string, Set<string>>()
+  const infiniteIndex = new Map<string, Set<string>>()
+
+  const addToIndex = (
+    index: Map<string, Set<string>>,
+    keyParts: KeyPartHashes | undefined,
+    hash: string,
+  ): void => {
+    const first = keyParts?.[0]
+    if (typeof first !== "string") return
+    let hashes = index.get(first)
+    if (hashes === undefined) {
+      hashes = new Set()
+      index.set(first, hashes)
+    }
+    hashes.add(hash)
+  }
+  const removeFromIndex = (
+    index: Map<string, Set<string>>,
+    keyParts: KeyPartHashes | undefined,
+    hash: string,
+  ): void => {
+    const first = keyParts?.[0]
+    if (typeof first !== "string") return
+    const hashes = index.get(first)
+    if (hashes === undefined) return
+    hashes.delete(hash)
+    if (hashes.size === 0) index.delete(first)
+  }
+  const indexedCandidates = (
+    index: Map<string, Set<string>>,
+    prefixParts: KeyPartHashes | undefined,
+  ): Set<string> | undefined => {
+    const first = prefixParts?.[0]
+    return typeof first === "string" ? index.get(first) : undefined
+  }
 
   // Lazily evict entries whose GC timer has elapsed (no subscribers), then enforce the hard cap by
   // dropping the oldest-inserted unsubscribed entries. Runs from `query()` when `sweepDue()` - no
   // background timer. Returns the earliest GC time still pending, for `sweepAt`.
   const sweepEntries = (
-    entries: Map<string, { readonly subscribers: number; readonly gcAt: number | undefined }>,
+    entries: Map<
+      string,
+      {
+        readonly keyParts: KeyPartHashes | undefined
+        readonly subscribers: number
+        readonly gcAt: number | undefined
+      }
+    >,
+    index: Map<string, Set<string>>,
     t: number,
   ): number => {
     let next = Number.POSITIVE_INFINITY
     for (const [h, e] of entries) {
       if (e.subscribers !== 0 || e.gcAt === undefined) continue
-      if (t >= e.gcAt) entries.delete(h)
-      else if (e.gcAt < next) next = e.gcAt
+      if (t >= e.gcAt) {
+        removeFromIndex(index, e.keyParts, h)
+        entries.delete(h)
+      } else if (e.gcAt < next) next = e.gcAt
     }
     if (entries.size <= max) return next
     for (const [h, e] of entries) {
       if (entries.size <= max) break
-      if (e.subscribers === 0) entries.delete(h) // oldest-inserted unsubscribed first (Map order)
+      if (e.subscribers === 0) {
+        removeFromIndex(index, e.keyParts, h)
+        entries.delete(h) // oldest-inserted unsubscribed first (Map order)
+      }
     }
     return next
   }
-  // The earliest time a GC timer can have elapsed. A read of a cached key walks the caches only once
-  // this has passed or a cache is over its cap; a stale value only costs one extra walk, which resets it.
+  // The earliest time a GC timer can have elapsed. A read walks the caches only once this has passed,
+  // or after an insertion/unsubscribe makes a cap sweep necessary; a stale value then resets it.
   let sweepAt = Number.POSITIVE_INFINITY
-  const sweepDue = (): boolean => cache.size > max || infinite.size > max || now() >= sweepAt
+  let capSweepPending = false
+  const sweepDue = (): boolean => capSweepPending || now() >= sweepAt
+  const markCapSweep = (size: number): void => {
+    if (size > max) capSweepPending = true
+  }
   // Start the GC timer of an entry whose last subscriber left.
   const scheduleGc = (entry: { gcAt: number | undefined }): void => {
     entry.gcAt = now() + gcTime
+    if (cache.size > max || infinite.size > max) capSweepPending = true
     sweepAt = Math.min(sweepAt, entry.gcAt)
   }
   const sweep = (): void => {
     const t = now()
-    sweepAt = Math.min(sweepEntries(cache, t), sweepEntries(infinite, t))
+    sweepAt = Math.min(sweepEntries(cache, cacheIndex, t), sweepEntries(infinite, infiniteIndex, t))
+    // A cap sweep is retried after a new insertion or unsubscribe, not on every render while all
+    // entries over the cap remain mounted and therefore ineligible for eviction.
+    capSweepPending = false
   }
 
   // Build a cache entry + its handle. `fn`/`staleTime` are mutated in place on re-bind (closures change
   // between renders). All the fetch/dedup/generation machinery lives here so query(), prefetchQuery(),
   // setQueryData(), and invalidateQueries() share exactly one implementation.
-  const makeEntry = (key: unknown, fn: () => Promise<unknown>, staleTime: number): Entry => {
+  const makeEntry = (
+    key: unknown,
+    fn: () => Promise<unknown>,
+    staleTime: number,
+    keyParts: KeyPartHashes | undefined,
+  ): Entry => {
     const lq: LiveQuery = {
       keys: () => entry.live,
       tick: () =>
@@ -323,6 +415,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     }
     const entry: Entry = {
       key,
+      keyParts,
       fn,
       staleTime,
       live: [],
@@ -431,6 +524,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           entry.subscribers--
           if (entry.subscribers === 0) {
             scheduleGc(entry)
+            markCapSweep(cache.size)
             querySeam()?.track(lq, false)
           }
         }
@@ -463,8 +557,9 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     fn: () => Promise<unknown>,
     staleTime: number,
     live?: readonly string[],
+    knownHash?: string,
   ): Entry => {
-    const h = hashQueryKey(key)
+    const h = knownHash ?? hashQueryKey(key)
     const existing = cache.get(h)
     if (existing !== undefined) {
       existing.fn = fn
@@ -472,9 +567,11 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       relive(existing, live)
       return existing
     }
-    const entry = makeEntry(key, fn, staleTime)
+    const entry = makeEntry(key, fn, staleTime, hashQueryKeyParts(key))
     relive(entry, live)
     cache.set(h, entry)
+    addToIndex(cacheIndex, entry.keyParts, h)
+    markCapSweep(cache.size)
     return entry
   }
 
@@ -491,11 +588,35 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   const invalidateQueries = (keyOrPrefix: unknown): void => {
     checkEpoch()
-    for (const entry of cache.values()) {
-      if (keyMatchesPrefix(entry.key, keyOrPrefix)) invalidateEntry(entry)
+    const prefixHash = hashQueryKey(keyOrPrefix)
+    const prefixParts = hashQueryKeyParts(keyOrPrefix)
+    if (prefixParts === undefined) {
+      const entry = cache.get(prefixHash)
+      if (entry !== undefined) invalidateEntry(entry)
+      infinite.get(prefixHash)?.invalidate()
+      return
     }
-    for (const entry of infinite.values()) {
-      if (keyMatchesPrefix(entry.key, keyOrPrefix)) entry.invalidate()
+    const invalidateCache = (hash: string): void => {
+      const entry = cache.get(hash)
+      if (entry !== undefined && keyMatchesPrefix(hash, entry.keyParts, prefixHash, prefixParts))
+        invalidateEntry(entry)
+    }
+    const invalidateInfinite = (hash: string): void => {
+      const entry = infinite.get(hash)
+      if (entry !== undefined && keyMatchesPrefix(hash, entry.keyParts, prefixHash, prefixParts))
+        entry.invalidate()
+    }
+    const cacheCandidates = indexedCandidates(cacheIndex, prefixParts)
+    if (cacheCandidates === undefined) {
+      for (const hash of cache.keys()) invalidateCache(hash)
+    } else {
+      for (const hash of cacheCandidates) invalidateCache(hash)
+    }
+    const infiniteCandidates = indexedCandidates(infiniteIndex, prefixParts)
+    if (infiniteCandidates === undefined) {
+      for (const hash of infinite.keys()) invalidateInfinite(hash)
+    } else {
+      for (const hash of infiniteCandidates) invalidateInfinite(hash)
     }
   }
 
@@ -509,14 +630,18 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   const setQueryData = <T>(key: unknown, updater: T | ((prev: T | undefined) => T)): void => {
     checkEpoch()
+    const h = hashQueryKey(key)
+    const existing = cache.get(h)
     // Create a placeholder entry if none exists - its `fn` throws until a real `query(key, fn)` re-binds
     // it, so a `setQueryData` for a key nobody queries yet never triggers a fetch on its own.
     const entry = upsert(
       key,
-      cache.get(hashQueryKey(key))?.fn ??
+      existing?.fn ??
         (() =>
           Promise.reject(new Error("[nifra/web] query has no fetcher (setQueryData-only key)"))),
       defaultStaleTime,
+      undefined,
+      h,
     )
     const prev = entry.state.status === "success" ? (entry.state.data as T) : undefined
     const data =
@@ -535,7 +660,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     opts?: QueryOptions,
   ): Promise<void> => {
     checkEpoch()
-    sweep()
+    if (sweepDue()) sweep()
     await upsert(
       key,
       fn as () => Promise<unknown>,
@@ -580,11 +705,14 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   const hydrate = (state: DehydratedState): void => {
     checkEpoch()
     for (const q of state.queries) {
+      const h = hashQueryKey(q.key)
       const entry = upsert(
         q.key,
-        cache.get(hashQueryKey(q.key))?.fn ??
+        cache.get(h)?.fn ??
           (() => Promise.reject(new Error("[nifra/web] hydrated query has no fetcher yet"))),
         defaultStaleTime,
+        undefined,
+        h,
       )
       // Don't clobber a client entry that's already fresher than the server snapshot (the client may
       // have refetched between SSR and hydration). Seed only when we have no successful data or the
@@ -622,8 +750,10 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       )
       return existing.handle as InfiniteQueryHandle<T, P>
     }
-    const created = makeInfinite<T, P>(key, fn, opts)
+    const created = makeInfinite<T, P>(key, fn, opts, hashQueryKeyParts(key))
     infinite.set(h, created as InfiniteEntry<unknown, unknown>)
+    addToIndex(infiniteIndex, created.keyParts, h)
+    markCapSweep(infinite.size)
     const snapshot = seeded.get(h)
     if (snapshot !== undefined) {
       seeded.delete(h)
@@ -635,6 +765,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   // Infinite entries live in their own map (their data shape + fetch model differ from plain queries).
   interface InfiniteEntry<T, P> extends LiveFields {
     readonly key: unknown
+    readonly keyParts: KeyPartHashes | undefined
     handle: InfiniteQueryHandle<T, P>
     rebind: (fn: (p: P) => Promise<T>, opts: InfiniteQueryOptions<T, P>) => void
     /** Mark stale, drop an in-flight fetch's result, and refetch when mounted. */
@@ -653,6 +784,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     key: unknown,
     fetchPage: (pageParam: P) => Promise<T>,
     initialOpts: InfiniteQueryOptions<T, P>,
+    keyParts: KeyPartHashes | undefined,
   ): InfiniteEntry<T, P> => {
     let fn = fetchPage
     let opts = initialOpts
@@ -784,6 +916,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           entry.subscribers--
           if (entry.subscribers === 0) {
             scheduleGc(entry)
+            markCapSweep(infinite.size)
             querySeam()?.track(lq, false)
           }
         }
@@ -836,6 +969,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     }
     const entry: InfiniteEntry<T, P> = {
       key,
+      keyParts,
       handle,
       rebind: (nextFn, nextOpts) => {
         fn = nextFn

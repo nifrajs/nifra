@@ -71,7 +71,7 @@ const local = inProcessClient(app) // SSR loaders / tests: same call, no network
 ```
 
 **Reserved proxy keys.** The client resolves `get`/`post`/`put`/`patch`/`delete`/`head`/`options`
-(any casing) plus `subscribe`, `ws`, `index`, and `then` (exact) BEFORE path segments, so
+(any casing) plus `subscribe`, `ws`, `index`, `then`, and `$query` (exact) BEFORE path segments, so
 `.post("/api/delete", …)` cannot be reached by dot access (`api.delete.post` calls the DELETE verb
 instead). The typed spelling for such a segment is a call on the parent node -
 `api.api("delete").post()` sends `POST /api/delete` - accepting exactly the colliding names. The
