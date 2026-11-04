@@ -7,7 +7,6 @@ import {
   type BackendPlatformBinder,
   type BackendWebSocketMountHandler,
   type BackendWebSocketRuntimeProvider,
-  hasResidentBody,
   NIFRA_BACKEND_BIND_PLATFORM,
   NIFRA_BACKEND_EVIDENCE,
   NIFRA_BACKEND_MOUNT,
@@ -18,7 +17,6 @@ import {
 import { encodePathSegment } from "@nifrajs/core/pattern"
 import type { Platform } from "@nifrajs/core/server"
 import {
-  assertTransportTextBounded,
   createTransportCodecRegistry,
   decodeTransportResponse,
   decodeTransportText,
@@ -392,10 +390,9 @@ function createInProcessClient<
   ] = evidenceProvider
   // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
   // in-process app has no socket to upgrade - instead of dialing ws://nifra.internal into the void.
-  // LOCAL_FETCH marks the transport as same-process: a body the app serialized into memory
-  // (`hasResidentBody`) may take the native `Response.text()` read (measured ~23x cheaper than the
-  // streaming byte-cap reader), the cap still enforced on the result. Any other body, a handler's own
-  // stream included, and every network client keep the bounded-while-streaming read.
+  // LOCAL_FETCH marks the transport as same-process. The response still goes through the same
+  // bounded reader as a network response: in-process handlers may return an arbitrarily large stream,
+  // and a resident body must not bypass the client's response-size contract.
   const baseOptions = { ...options, [NO_SOCKET]: true, [LOCAL_FETCH]: true } as ClientOptions
   const proxy = client<App>("http://nifra.internal", { ...baseOptions, fetch: bridge })
   // Request scoping: a view whose every call carries one request's platform (clientIp/env/waitUntil),
@@ -1118,17 +1115,15 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // the transport path, so an app that set it there keeps the number it chose.
   const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes
   const bound = decodedBytes === undefined ? {} : { maxBytes: decodedBytes }
-  // An in-process body the framework serialized is memory the app already allocated, so the
-  // streaming byte-cap reader protects nothing there - the native read is ~23x cheaper and the SAME
-  // cap is enforced on the result (identical error). A handler's stream is not: read whole, it would
-  // be buffered past the cap before the check, so it takes the bounded read a network client does.
-  const local =
-    (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true &&
-    hasResidentBody(response)
+  // In-process responses use the same bounded reader as network responses. A handler may return an
+  // arbitrarily large stream, and a framework-resident body must not bypass the client's cap.
+  const local = (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true
+  const readLocalText = async (): Promise<string> =>
+    LENIENT_UTF8.decode(await readBoundedBytes(response, bound))
   if (isTransportMedia(contentType)) {
     if (local) {
       return decodeTransportText(
-        await response.text(),
+        await readLocalText(),
         response.headers.get("content-type"),
         transportRegistry(options),
         bound,
@@ -1145,13 +1140,7 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // Bounded with the same reader JSON uses, but decoded leniently: `.text()` substitutes U+FFFD for a
   // malformed sequence and callers have always seen that, so tightening to a fatal decode here would
   // turn working text responses into failures for a reason nobody asked about.
-  let text: string
-  if (local) {
-    text = await response.text() // native lenient decode - same U+FFFD substitution semantics
-    assertTransportTextBounded(text, bound)
-  } else {
-    text = LENIENT_UTF8.decode(await readBoundedBytes(response, bound))
-  }
+  const text = LENIENT_UTF8.decode(await readBoundedBytes(response, bound))
   if (text === "") return undefined
   try {
     return JSON.parse(text)

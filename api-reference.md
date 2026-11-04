@@ -2505,6 +2505,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **DEFAULT_IDEMPOTENCY_HEADER** _(const)_ - `DEFAULT_IDEMPOTENCY_HEADER: "idempotency-key"`
   Canonical request header carrying the client-chosen idempotency key.
+- **DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES** _(const)_ - `DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES: 1000000`
+  Default maximum response body retained by the standalone idempotency helpers: 1 MB.
 - **DEFAULT_IDEMPOTENCY_PENDING_TTL_MS** _(const)_ - `DEFAULT_IDEMPOTENCY_PENDING_TTL_MS: 60000`
   Default lease on a key whose handler is still running, with a store that can renew it: 60 seconds.
 - **DEFAULT_IDEMPOTENCY_TTL_MS** _(const)_ - `DEFAULT_IDEMPOTENCY_TTL_MS: 86400000`
@@ -2536,9 +2538,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **createMemoryIdempotencyStore** _(function)_ - `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
   Convenience factory mirroring the other core primitives' `create*` style.
 - **responseFromStored** _(function)_ - `responseFromStored: (stored: StoredResponse, options?: { readonly maxBytes?: number; }) => Response`
-  Rebuild a live response from storage, stamping the replay marker header.
+  Rebuild a live response from storage, stamping the replay marker header. Unless a bound is supplied, stored bodies larger than {@link DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES} are rejected.
 - **serializeResponse** _(function)_ - `serializeResponse: (response: Response, options?: { readonly maxBytes?: number; }) => Promise<StoredResponse>`
-  Buffer a response into a storable form. Clones first so the live response body stays intact.
+  Buffer a response into a storable form. Clones first so the live response body stays intact on success. If the body exceeds the bound, both branches may be cancelled to stop the producer and the caller must discard or replace the response. Unless a bound is supplied, at most {@link DEFAULT_IDEMPOTE…
 - **validIdempotencyKey** _(function)_ - `validIdempotencyKey: (key: string) => boolean`
   A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else.
 - **validIdempotencyNamespace** _(function)_ - `validIdempotencyNamespace: (namespace: string) => boolean`
@@ -3413,12 +3415,12 @@ _No named exports (side-effect entrypoint)._
 - **TransportCodecRegistry** _(interface)_ - `interface TransportCodecRegistry`
 - **TransportDecodeOptions** _(interface)_ - `interface TransportDecodeOptions`
 - **assertTransportTextBounded** _(function)_ - `assertTransportTextBounded: (text: string, options: TransportDecodeOptions) => void`
-  Enforce the transport byte cap on already-read text - the same limit (and the same error) the streaming reader applies during a bounded read. Exported for callers that read a body through a native, non-streaming path (the typed client's in-process branch) and still owe the cap contract.
+  Enforce the transport byte cap on already-read text - the same limit (and the same error) the streaming reader applies during a bounded read. Exported for callers that need to decode text after a bounded read while preserving the text decoder's lenient UTF-8 behavior.
 - **createTransportCodecRegistry** _(function)_ - `createTransportCodecRegistry: (codecs: readonly TransportCodec[], fallback?: TransportCodec) => TransportCodecRegistry`
 - **decodeTransportFrame** _(function)_ - `decodeTransportFrame: (frame: string, registry?: TransportCodecRegistry, options?: TransportDecodeOptions) => unknown`
 - **decodeTransportResponse** _(function)_ - `decodeTransportResponse: (response: Response, registry?: TransportCodecRegistry, options?: TransportDecodeOptions) => Promise<unknown>`
 - **decodeTransportText** _(function)_ - `decodeTransportText: (text: string, contentType: string | null, registry?: TransportCodecRegistry, options?: TransportDecodeOptions) => unknown`
-  Decode an ALREADY-READ transport body. The counterpart to {@link decodeTransportResponse} for a caller that obtained the text through its own bounded read - notably the typed client's in-process path, where the response body is same-process memory that was fully resident before the read, so the nat…
+  Decode an ALREADY-READ transport body. The counterpart to {@link decodeTransportResponse} for a caller that obtained the text through its own bounded read - notably the typed client's in-process path, which uses this to preserve lenient UTF-8 decoding after the shared byte-cap reader has completed.
 - **defaultTransportCodecs** _(const)_ - `defaultTransportCodecs: TransportCodecRegistry`
 - **encodeTransportFrame** _(function)_ - `encodeTransportFrame: (value: unknown, codec?: TransportCodec) => string`
 - **encodeTransportResponse** _(function)_ - `encodeTransportResponse: (value: unknown, codec?: TransportCodec, init?: ResponseInit) => Response`

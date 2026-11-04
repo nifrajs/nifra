@@ -22,6 +22,9 @@ export const DEFAULT_IDEMPOTENCY_TTL_MS = 86_400_000
 /** Default lease on a key whose handler is still running, with a store that can renew it: 60 seconds. */
 export const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 60_000
 
+/** Default maximum response body retained by the standalone idempotency helpers: 1 MB. */
+export const DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES = 1_000_000
+
 /** Canonical request header carrying the client-chosen idempotency key. */
 export const DEFAULT_IDEMPOTENCY_HEADER = "idempotency-key"
 
@@ -331,19 +334,21 @@ async function boundedResponseBytes(response: Response, maxBytes: number): Promi
   return bytes
 }
 
-/** Buffer a response into a storable form. Clones first so the live response body stays intact. */
+/**
+ * Buffer a response into a storable form. Clones first so the live response body stays intact on
+ * success. If the body exceeds the bound, both branches may be cancelled to stop the producer and
+ * the caller must discard or replace the response. Unless a bound is supplied, at most
+ * {@link DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES} are retained.
+ */
 export async function serializeResponse(
   response: Response,
   options: { readonly maxBytes?: number } = {},
 ): Promise<StoredResponse> {
-  const maxBytes = options.maxBytes
-  if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0)) {
+  const maxBytes = options.maxBytes ?? DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new RangeError("idempotency: max response bytes must be a non-negative integer")
   }
-  const bytes =
-    maxBytes === undefined
-      ? new Uint8Array(await response.clone().arrayBuffer())
-      : await boundedResponseBytes(response, maxBytes)
+  const bytes = await boundedResponseBytes(response, maxBytes)
   return {
     status: response.status,
     headers: replaySafeHeaders(response.headers),
@@ -351,7 +356,10 @@ export async function serializeResponse(
   }
 }
 
-/** Rebuild a live response from storage, stamping the replay marker header. */
+/**
+ * Rebuild a live response from storage, stamping the replay marker header. Unless a bound is
+ * supplied, stored bodies larger than {@link DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES} are rejected.
+ */
 export function responseFromStored(
   stored: StoredResponse,
   options: { readonly maxBytes?: number } = {},
@@ -360,13 +368,12 @@ export function responseFromStored(
     throw new TypeError("idempotency: corrupt stored response status")
   }
   const decodedLength = base64DecodedLength(stored.body)
-  if (options.maxBytes !== undefined) {
-    if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {
-      throw new RangeError("idempotency: max response bytes must be a non-negative safe integer")
-    }
-    if (decodedLength > options.maxBytes) {
-      throw new IdempotencyResponseTooLargeError(options.maxBytes)
-    }
+  const maxBytes = options.maxBytes ?? DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError("idempotency: max response bytes must be a non-negative safe integer")
+  }
+  if (decodedLength > maxBytes) {
+    throw new IdempotencyResponseTooLargeError(maxBytes)
   }
   const headers = new Headers(replaySafeHeaders(stored.headers) as [string, string][])
   headers.set(IDEMPOTENT_REPLAY_HEADER, "1")

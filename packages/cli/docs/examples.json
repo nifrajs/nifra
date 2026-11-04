@@ -63,7 +63,7 @@
     "name": "STATIC_RESPONSE",
     "topic": "Nifra - API & typed client",
     "slug": "api",
-    "code": "import { server, staticResponse } from \"@nifrajs/core/server\"\n\nexport const app = server().get(\"/health\", staticResponse())\napp.listen(3000)"
+    "code": "import { server, staticResponse } from \"@nifrajs/core/server\"\n\nexport const app = server()\n  .get(\"/health\", staticResponse())\n  .post(\"/flush\", staticResponse())\napp.listen(3000)"
   },
   {
     "name": "TYPED_ERRORS",
@@ -448,6 +448,12 @@
     "topic": "Nifra - Getting started",
     "slug": "index",
     "code": "// routes/index.backend.ts - the loader runs on the server (in-process during SSR, no network),\n// fully typed against your contract. This file never reaches the browser.\nimport { t } from \"@nifrajs/schema\"\nimport type { Route } from \"./+types/index\"\n\n// The page receives exactly this shape; anything else the loader returns stays on the server.\nexport const loaderOutput = t.object({ id: t.string() })\n\nexport async function loader({ api }: Route.LoaderArgs) {\n  const res = await api.users({ id: \"7\" }).get()\n  return { id: res.ok ? res.data.id : \"unknown\" }\n}"
+  },
+  {
+    "name": "ENV",
+    "topic": "Nifra - Integrations (Stripe, and any npm library)",
+    "slug": "integrations",
+    "code": "import { defineEnv, env } from \"@nifrajs/env\"\n\nexport const config = defineEnv({\n  DATABASE_URL: env.url(),\n  PORT: env.port({ default: 3000 }),\n  NODE_ENV: env.enum([\"development\", \"production\", \"test\"], { default: \"development\" }),\n})"
   },
   {
     "name": "BUS_PATTERN",
