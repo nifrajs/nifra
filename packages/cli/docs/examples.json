@@ -63,7 +63,7 @@
     "name": "STATIC_RESPONSE",
     "topic": "Nifra - API & typed client",
     "slug": "api",
-    "code": "import { server, staticResponse } from \"@nifrajs/core/server\"\n\nexport const app = server().get(\"/health\", staticResponse())\napp.listen(3000)"
+    "code": "import { server, staticResponse } from \"@nifrajs/core/server\"\n\nexport const app = server()\n  .get(\"/health\", staticResponse())\n  .post(\"/flush\", staticResponse())\napp.listen(3000)"
   },
   {
     "name": "TYPED_ERRORS",
@@ -324,6 +324,12 @@
     "code": "// vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).\n// Only reach for this when an app needs a Vite-only transform with no Bun equivalent; Nifra's default\n// production bundler stays Bun (buildClient), which is faster and Bun-native.\nimport {\n  viteAssetUrlGuard,\n  viteBareBuiltinExternal,\n  viteLeakGuard,\n} from \"@nifrajs/web/plugins/vite-leak-guard\"\n\nexport default {\n  // Keeps a bare built-in (`fs/promises`) named instead of an empty stub, so the guard sees it.\n  // viteAssetUrlGuard refuses a new URL(\"../backend/x.ts\", import.meta.url) - a file Vite would copy or\n  // inline with no import for the graph guard to see. Last, after any framework plugin.\n  plugins: [viteBareBuiltinExternal(), viteAssetUrlGuard()],\n  build: {\n    // The SAME client-leak guards Nifra's Bun build runs - backend code (a route's .backend.ts half,\n    // backend/) or a node: builtin reaching the browser fails the build, with the identical message. A second production\n    // pipeline must not ship without them. `node:` stays external so the guard can name it.\n    rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },\n  },\n}"
   },
   {
+    "name": "WORKERS_ENV",
+    "topic": "Nifra - Edge & bindings",
+    "slug": "edge",
+    "code": "import { defineEnv, env as schemaEnv } from \"@nifrajs/env\"\n\n// Select string bindings when the Workers env also contains KV/D1 objects.\ntype StringBindings = Record<string, string | undefined>\n\nexport default {\n  fetch(_request: Request, bindings: StringBindings) {\n    const config = defineEnv(\n      { API_URL: schemaEnv.url(), API_TOKEN: schemaEnv.string() },\n      { source: bindings },\n    )\n    return new Response(config.API_URL)\n  },\n}"
+  },
+  {
     "name": "LAB",
     "topic": "Nifra - Failure laboratory",
     "slug": "failure-lab",
@@ -448,6 +454,12 @@
     "topic": "Nifra - Getting started",
     "slug": "index",
     "code": "// routes/index.backend.ts - the loader runs on the server (in-process during SSR, no network),\n// fully typed against your contract. This file never reaches the browser.\nimport { t } from \"@nifrajs/schema\"\nimport type { Route } from \"./+types/index\"\n\n// The page receives exactly this shape; anything else the loader returns stays on the server.\nexport const loaderOutput = t.object({ id: t.string() })\n\nexport async function loader({ api }: Route.LoaderArgs) {\n  const res = await api.users({ id: \"7\" }).get()\n  return { id: res.ok ? res.data.id : \"unknown\" }\n}"
+  },
+  {
+    "name": "ENV",
+    "topic": "Nifra - Integrations (Stripe, and any npm library)",
+    "slug": "integrations",
+    "code": "import { defineEnv, env } from \"@nifrajs/env\"\n\nexport const config = defineEnv({\n  DATABASE_URL: env.url(),\n  PORT: env.port({ default: 3000 }),\n  NODE_ENV: env.enum([\"development\", \"production\", \"test\"], { default: \"development\" }),\n})"
   },
   {
     "name": "BUS_PATTERN",

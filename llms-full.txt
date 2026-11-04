@@ -1409,7 +1409,7 @@ export const app = server()
 For a route whose response is always empty, use `staticResponse()` instead of
 creating a `Response` in a handler on every request. Pass fixed status and headers
 to the helper; caller-supplied `Content-Length` and `Transfer-Encoding`
-are rejected. On Bun, a plain literal-path GET or HEAD route can use Bun's static response
+are rejected. On Bun, a plain literal-path GET, HEAD, or bodyless POST route can use Bun's static response
 table when no request policy, validation, response middleware, or app-wide
 `.responseHeaders(...)` defaults need to run. Null-body status codes use the
 regular handler path to preserve framing on Bun 1.3. Otherwise Nifra keeps the regular route
@@ -1418,7 +1418,9 @@ pipeline. `app.fetch` and other runtimes also produce a fresh response per call.
 ```ts
 import { server, staticResponse } from "@nifrajs/core/server"
 
-export const app = server().get("/health", staticResponse())
+export const app = server()
+  .get("/health", staticResponse())
+  .post("/flush", staticResponse())
 app.listen(3000)
 ```
 
@@ -1723,11 +1725,12 @@ whole path: `RequestPath<"/files/:name.json">` is
 _before_ path segments: the seven HTTP verbs
 (`get`/`post`/`put`/`patch`/`delete`/
 `head`/`options`, any casing) call the route, and
-`subscribe`, `ws`, `index`, and `then` (exact
-match) are the SSE, WebSocket, root-path, and thenable-guard keys. A route whose path
+`subscribe`, `ws`, `index`, `then`, and
+`$query` (exact match) are the SSE, WebSocket, root-path, thenable-guard, and QUERY
+keys. A route whose path
 contains a static segment spelling one of these - `.post("/api/delete", …)` -
-cannot be reached by **dot access**: `api.delete.post` resolves the
-`delete` verb, not the segment. The typed spelling is a **call on the parent
+cannot be reached by **dot access**: `api.delete()` invokes the
+`delete` verb, while `api.delete.post` is undefined. The typed spelling is a **call on the parent
 node** - `api.api("delete").post()` sends `POST /api/delete` - the
 same call params use, accepting exactly the colliding segment names. The client type rejects
 the dot access at compile time with that guidance, and `nifra check` reports the
@@ -3327,6 +3330,12 @@ entry, subscribe a component to a cached, keyed query. Concurrent reads of the s
 third argument's option), a background refetch, and bounded GC. The query cache also has
 mutation and infinite-query bindings across the adapters, using each framework's reactive
 model.
+
+Query keys are serialized structurally. Keep key arrays and objects stable when practical, and
+treat objects as immutable after the first query uses them: Nifra caches object hashes by
+identity, so mutating a reused object can leave it under its old hash, while creating a fresh
+equivalent key repeats serialization work. For example, derive one key from the current
+identity and reuse it for the render rather than mutating it after the query starts.
 
 ```ts
 import { useQuery, useQueryClient } from "@nifrajs/web-react/query"
@@ -7036,6 +7045,29 @@ const app = server<Env>()
 
 export default { fetch: (req: Request, env: Env, ctx: ExecutionContext) =>
   app.fetch(req, { env, waitUntil: ctx.waitUntil.bind(ctx) }) }
+```
+
+For environment variables represented as strings, `@nifrajs/env` can validate the
+Workers binding object with `defineEnv(shape, { source: bindings })`. If the
+platform env also contains KV, D1, or Durable Object bindings, select only the string keys
+into the source object; keep the full binding type on `server<Env>()` for
+`c.env`.
+
+```ts
+import { defineEnv, env as schemaEnv } from "@nifrajs/env"
+
+// Select string bindings when the Workers env also contains KV/D1 objects.
+type StringBindings = Record<string, string | undefined>
+
+export default {
+  fetch(_request: Request, bindings: StringBindings) {
+    const config = defineEnv(
+      { API_URL: schemaEnv.url(), API_TOKEN: schemaEnv.string() },
+      { source: bindings },
+    )
+    return new Response(config.API_URL)
+  },
+}
 ```
 
 Export through `toFetchHandler` rather than handing the app out directly. Besides
@@ -12790,7 +12822,9 @@ app.use(idempotency({ store: new MemoryIdempotencyStore() }))
 
 Stripe redelivers; users double-click. The `idempotency` middleware replays the
 first response for a retried key instead of re-running the charge, and rejects a concurrent
-duplicate while the first is in flight.
+duplicate while the first is in flight. Cached response bodies are bounded to 1 MiB by
+default; set `maxBytes` explicitly for a different cap, and use a separate
+streaming endpoint for responses that should not be replayed.
 
 ### When to write a plugin
 
@@ -12807,6 +12841,47 @@ at the top of the file is the whole integration.
 executor, with your typed nifra context passed to the resolvers. Subscriptions run over
 nifra's WebSocket lane with `graphql-ws`. The request body goes through the same
 bounded parser as every other route, and the query text is never logged.
+
+### Supporting packages
+
+The smaller integrations stay separate so a backend only pays for the surfaces it uses. They
+are all listed in the generated API reference and are
+discoverable from this guide:
+
+-
+`@nifrajs/env` validates and coerces environment variables once at startup. It
+is edge-safe when you pass Workers bindings as `source`.
+
+-
+`@nifrajs/proxy` forwards to one fixed upstream with SSRF-safe URL construction
+and hop-by-hop header hygiene.
+
+-
+`@nifrajs/island-trigger` is the framework-neutral scheduling primitive behind
+web islands; most apps can use the higher-level `@nifrajs/web/islands` API.
+
+-
+`@nifrajs/mcp-db` exposes an explicit SQLite table allowlist as fail-closed MCP
+schema tools, with read-only queries opt-in and bounded.
+
+-
+`@nifrajs/agent-review` parses and composes bounded, content-free review reports
+for agent and CI tooling.
+
+```ts
+import { defineEnv, env } from "@nifrajs/env"
+
+export const config = defineEnv({
+  DATABASE_URL: env.url(),
+  PORT: env.port({ default: 3000 }),
+  NODE_ENV: env.enum(["development", "production", "test"], { default: "development" }),
+})
+```
+
+Keep the returned config frozen and server-only; never copy secret values into a
+`PUBLIC_*` client module. See
+Edge & bindings for the Workers binding form
+and Security for boundary rules.
 
 ## Nifra - Keep-alive
 

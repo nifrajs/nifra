@@ -201,11 +201,11 @@ export function hashQueryKey(key: unknown): string {
   if (key !== null && typeof key === "object") {
     const cached = QUERY_KEY_HASHES.get(key)
     if (cached !== undefined) return cached
-    const hash = JSON.stringify(key, queryKeyReplacer)
-    if (hash !== undefined) QUERY_KEY_HASHES.set(key, hash)
+    const hash = JSON.stringify(key, queryKeyReplacer) ?? "null"
+    QUERY_KEY_HASHES.set(key, hash)
     return hash
   }
-  return JSON.stringify(key, queryKeyReplacer)
+  return JSON.stringify(key, queryKeyReplacer) ?? "null"
 }
 
 type KeyPartHashes = readonly string[]

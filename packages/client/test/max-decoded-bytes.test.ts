@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { type ClientOptions, client, inProcessClient } from "@nifrajs/client"
 import { server } from "@nifrajs/core"
-import { hasResidentBody } from "@nifrajs/core/mount"
 
 /**
  * The response size limit, and the one body it deliberately does not apply to.
@@ -117,17 +116,13 @@ describe("maxDecodedBytes", () => {
     expect(pulled).toBeLessThan(10)
   })
 
-  test("an in-process body the app serialized keeps the whole-read lane", async () => {
+  test("an in-process body the app serialized is still bounded", async () => {
     const app = server()
       .beforeHandle(() => undefined)
       .beforeHandle(() => undefined)
-      .get("/x", (c) => {
-        c.set.headers["x-value"] = "one"
-        return { s: big(10) }
-      })
-    const api = inProcessClient(app)
-    expect(hasResidentBody(await app.fetch(new Request("http://limit.test/x")))).toBe(true)
-    expect((await api.x.get()).data).toEqual({ s: big(10) })
+      .get("/x", () => ({ s: big(5_000) }))
+    const api = inProcessClient(app, { maxDecodedBytes: 1_000 })
+    expect((await api.x.get()).error).toEqual({ error: "response_too_large" })
   })
 
   test("a malformed text body still decodes leniently rather than failing", async () => {

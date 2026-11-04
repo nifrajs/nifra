@@ -1,6 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
-import { href } from "@nifrajs/web-react/router"
+import { href, rawHref } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/integrations",
@@ -51,6 +51,14 @@ import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
 // response - the side effect runs once. Use a shared store (Redis) in production.
 app.use(idempotency({ store: new MemoryIdempotencyStore() }))`
 
+const ENV = `import { defineEnv, env } from "@nifrajs/env"
+
+export const config = defineEnv({
+  DATABASE_URL: env.url(),
+  PORT: env.port({ default: 3000 }),
+  NODE_ENV: env.enum(["development", "production", "test"], { default: "development" }),
+})`
+
 export default function Integrations() {
   return (
     <div className="prose">
@@ -95,7 +103,9 @@ export default function Integrations() {
       <p>
         Stripe redelivers; users double-click. The <code>idempotency</code> middleware replays the
         first response for a retried key instead of re-running the charge, and rejects a concurrent
-        duplicate while the first is in flight.
+        duplicate while the first is in flight. Cached response bodies are bounded to 1 MiB by
+        default; set <code>maxBytes</code> explicitly for a different cap, and use a separate
+        streaming endpoint for responses that should not be replayed.
       </p>
 
       <h2>When to write a plugin</h2>
@@ -114,6 +124,42 @@ export default function Integrations() {
         executor, with your typed nifra context passed to the resolvers. Subscriptions run over
         nifra's WebSocket lane with <code>graphql-ws</code>. The request body goes through the same
         bounded parser as every other route, and the query text is never logged.
+      </p>
+
+      <h2>Supporting packages</h2>
+      <p>
+        The smaller integrations stay separate so a backend only pays for the surfaces it uses. They
+        are all listed in the <a href={rawHref("/api-reference.md")}>generated API reference</a> and are
+        discoverable from this guide:
+      </p>
+      <ul>
+        <li>
+          <code>@nifrajs/env</code> validates and coerces environment variables once at startup. It
+          is edge-safe when you pass Workers bindings as <code>source</code>.
+        </li>
+        <li>
+          <code>@nifrajs/proxy</code> forwards to one fixed upstream with SSRF-safe URL construction
+          and hop-by-hop header hygiene.
+        </li>
+        <li>
+          <code>@nifrajs/island-trigger</code> is the framework-neutral scheduling primitive behind
+          web islands; most apps can use the higher-level <code>@nifrajs/web/islands</code> API.
+        </li>
+        <li>
+          <code>@nifrajs/mcp-db</code> exposes an explicit SQLite table allowlist as fail-closed MCP
+          schema tools, with read-only queries opt-in and bounded.
+        </li>
+        <li>
+          <code>@nifrajs/agent-review</code> parses and composes bounded, content-free review reports
+          for agent and CI tooling.
+        </li>
+      </ul>
+      <CodeBlock code={ENV} lang="ts" />
+      <p>
+        Keep the returned config frozen and server-only; never copy secret values into a{" "}
+        <code>PUBLIC_*</code> client module. See{" "}
+        <a href={href({ to: "/docs/edge" })}>Edge &amp; bindings</a> for the Workers binding form
+        and <a href={href({ to: "/docs/security" })}>Security</a> for boundary rules.
       </p>
     </div>
   )

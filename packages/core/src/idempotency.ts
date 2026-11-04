@@ -22,6 +22,9 @@ export const DEFAULT_IDEMPOTENCY_TTL_MS = 86_400_000
 /** Default lease on a key whose handler is still running, with a store that can renew it: 60 seconds. */
 export const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 60_000
 
+/** Default maximum response body retained by the standalone idempotency helpers: 1 MB. */
+export const DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES = 1_000_000
+
 /** Canonical request header carrying the client-chosen idempotency key. */
 export const DEFAULT_IDEMPOTENCY_HEADER = "idempotency-key"
 
@@ -289,16 +292,24 @@ export class IdempotencyResponseTooLargeError extends Error {
   }
 }
 
+/**
+ * Clone and buffer a response body without exceeding the storage bound. A null body represents no
+ * bytes, even when a HEAD/304 response carries the corresponding GET representation's
+ * `Content-Length`; the body check therefore precedes the header shortcut. Oversize cancellation is
+ * intentionally fire-and-forget because a tee branch can remain pending until its sibling is read.
+ */
 async function boundedResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const body = response.body
+  if (body === null) return new Uint8Array()
   const contentLength = response.headers.get("content-length")
   if (contentLength !== null && /^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
     // Replaced by a terminal error, never read: a streaming producer would otherwise stay open.
-    await response.body?.cancel().catch(() => {})
+    void Promise.allSettled([body.cancel()])
     throw new IdempotencyResponseTooLargeError(maxBytes)
   }
-  const body = response.clone().body
-  if (body === null) return new Uint8Array()
-  const reader = body.getReader()
+  const cloneBody = response.clone().body
+  if (cloneBody === null) return new Uint8Array()
+  const reader = cloneBody.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
   try {
@@ -311,10 +322,11 @@ async function boundedResponseBytes(response: Response, maxBytes: number): Promi
         // unread, so a streaming producer can keep the tee pending forever. This path stores no
         // response and the caller will replace it with a terminal error, so cancel both branches.
         const liveBody = response.body
-        await Promise.allSettled([
-          reader.cancel(),
-          liveBody === null ? Promise.resolve() : liveBody.cancel(),
-        ])
+        // Do not await tee cancellation: either branch can remain pending until the other branch is
+        // consumed, but the size error is already definitive and must reach the caller promptly.
+        const cancellations = [reader.cancel()]
+        if (liveBody !== null) cancellations.push(liveBody.cancel())
+        void Promise.allSettled(cancellations)
         throw new IdempotencyResponseTooLargeError(maxBytes)
       }
       chunks.push(value)
@@ -331,19 +343,21 @@ async function boundedResponseBytes(response: Response, maxBytes: number): Promi
   return bytes
 }
 
-/** Buffer a response into a storable form. Clones first so the live response body stays intact. */
+/**
+ * Buffer a response into a storable form. Clones first so the live response body stays intact on
+ * success. If the body exceeds the bound, both branches may be cancelled to stop the producer and
+ * the caller must discard or replace the response. Unless a bound is supplied, at most
+ * {@link DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES} are retained.
+ */
 export async function serializeResponse(
   response: Response,
   options: { readonly maxBytes?: number } = {},
 ): Promise<StoredResponse> {
-  const maxBytes = options.maxBytes
-  if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0)) {
+  const maxBytes = options.maxBytes ?? DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new RangeError("idempotency: max response bytes must be a non-negative integer")
   }
-  const bytes =
-    maxBytes === undefined
-      ? new Uint8Array(await response.clone().arrayBuffer())
-      : await boundedResponseBytes(response, maxBytes)
+  const bytes = await boundedResponseBytes(response, maxBytes)
   return {
     status: response.status,
     headers: replaySafeHeaders(response.headers),
@@ -351,7 +365,10 @@ export async function serializeResponse(
   }
 }
 
-/** Rebuild a live response from storage, stamping the replay marker header. */
+/**
+ * Rebuild a live response from storage, stamping the replay marker header. Unless a bound is
+ * supplied, stored bodies larger than {@link DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES} are rejected.
+ */
 export function responseFromStored(
   stored: StoredResponse,
   options: { readonly maxBytes?: number } = {},
@@ -360,13 +377,12 @@ export function responseFromStored(
     throw new TypeError("idempotency: corrupt stored response status")
   }
   const decodedLength = base64DecodedLength(stored.body)
-  if (options.maxBytes !== undefined) {
-    if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {
-      throw new RangeError("idempotency: max response bytes must be a non-negative safe integer")
-    }
-    if (decodedLength > options.maxBytes) {
-      throw new IdempotencyResponseTooLargeError(options.maxBytes)
-    }
+  const maxBytes = options.maxBytes ?? DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError("idempotency: max response bytes must be a non-negative safe integer")
+  }
+  if (decodedLength > maxBytes) {
+    throw new IdempotencyResponseTooLargeError(maxBytes)
   }
   const headers = new Headers(replaySafeHeaders(stored.headers) as [string, string][])
   headers.set(IDEMPOTENT_REPLAY_HEADER, "1")

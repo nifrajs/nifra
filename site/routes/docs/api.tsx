@@ -102,7 +102,9 @@ const SET = `export const app = server()
 
 const STATIC_RESPONSE = `import { server, staticResponse } from "@nifrajs/core/server"
 
-export const app = server().get("/health", staticResponse())
+export const app = server()
+  .get("/health", staticResponse())
+  .post("/flush", staticResponse())
 app.listen(3000)`
 
 const COOKIES = `import { server } from "@nifrajs/core/server"
@@ -446,7 +448,7 @@ export default function Api() {
         For a route whose response is always empty, use <code>staticResponse()</code> instead of
         creating a <code>Response</code> in a handler on every request. Pass fixed status and headers
         to the helper; caller-supplied <code>Content-Length</code> and <code>Transfer-Encoding</code>
-        are rejected. On Bun, a plain literal-path GET or HEAD route can use Bun's static response
+        are rejected. On Bun, a plain literal-path GET, HEAD, or bodyless POST route can use Bun's static response
         table when no request policy, validation, response middleware, or app-wide{" "}
         <code>.responseHeaders(...)</code> defaults need to run. Null-body status codes use the
         regular handler path to preserve framing on Bun 1.3. Otherwise Nifra keeps the regular route
@@ -668,11 +670,12 @@ export default function Api() {
         <i>before</i> path segments: the seven HTTP verbs{" "}
         (<code>get</code>/<code>post</code>/<code>put</code>/<code>patch</code>/<code>delete</code>/
         <code>head</code>/<code>options</code>, any casing) call the route, and{" "}
-        <code>subscribe</code>, <code>ws</code>, <code>index</code>, and <code>then</code> (exact
-        match) are the SSE, WebSocket, root-path, and thenable-guard keys. A route whose path
+        <code>subscribe</code>, <code>ws</code>, <code>index</code>, <code>then</code>, and{" "}
+        <code>$query</code> (exact match) are the SSE, WebSocket, root-path, thenable-guard, and QUERY
+        keys. A route whose path
         contains a static segment spelling one of these - <code>.post("/api/delete", …)</code> -
-        cannot be reached by <b>dot access</b>: <code>api.delete.post</code> resolves the{" "}
-        <code>delete</code> verb, not the segment. The typed spelling is a <b>call on the parent
+        cannot be reached by <b>dot access</b>: <code>api.delete()</code> invokes the{" "}
+        <code>delete</code> verb, while <code>api.delete.post</code> is undefined. The typed spelling is a <b>call on the parent
         node</b> - <code>api.api("delete").post()</code> sends <code>POST /api/delete</code> - the
         same call params use, accepting exactly the colliding segment names. The client type rejects
         the dot access at compile time with that guidance, and <code>nifra check</code> reports the

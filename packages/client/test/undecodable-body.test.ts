@@ -37,6 +37,35 @@ describe("a body its content type does not decode", () => {
     })
   })
 
+  test("a streamed in-process transport body keeps fatal UTF-8 decoding", async () => {
+    const app = server().get(
+      "/x",
+      () =>
+        new Response(new Uint8Array([0x22, 0xff, 0x22]), {
+          headers: { "content-type": "application/json" },
+        }),
+    )
+    expect(await inProcessClient(app).x.get()).toEqual({
+      ok: false,
+      status: 0,
+      data: null,
+      error: { error: "malformed_response" },
+    })
+  })
+
+  test("an in-process resident response rejects an unsupported codec before decoding", async () => {
+    const app = server().get("/x", (c) => {
+      c.set.headers["content-type"] = "application/vnd.nifra.unknown"
+      return { ok: true }
+    })
+    expect(await inProcessClient(app).x.get()).toEqual({
+      ok: false,
+      status: 0,
+      data: null,
+      error: { error: "malformed_response" },
+    })
+  })
+
   test("a nifra media type with no codec registered is a Result", async () => {
     const api = answering("{}", 200, "application/vnd.nifra.unknown")
     expect(await api.x.get()).toEqual({

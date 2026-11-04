@@ -5,6 +5,7 @@ import {
   canonicalizeIdempotencyBody,
   computeIdempotencyFingerprint,
   createMemoryIdempotencyStore,
+  DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES,
   DEFAULT_IDEMPOTENCY_PENDING_TTL_MS,
   IDEMPOTENT_REPLAY_HEADER,
   type IdempotencyBeginInput,
@@ -511,6 +512,22 @@ describe("idempotency primitives", () => {
     expect(new Uint8Array(await replayed.arrayBuffer())).toEqual(bytes)
   })
 
+  test("standalone serialization applies a bounded default and cancels oversized bodies", async () => {
+    let cancelled = false
+    const original = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true
+        },
+      }),
+      { headers: { "content-length": String(DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1) } },
+    )
+    await expect(serializeResponse(original)).rejects.toMatchObject({
+      maxBytes: DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES,
+    })
+    expect(cancelled).toBe(true)
+  })
+
   test("oversized streamed serialization cancels both tee branches promptly", async () => {
     const encoder = new TextEncoder()
     const original = new Response(
@@ -547,6 +564,21 @@ describe("idempotency primitives", () => {
     expect(cancelled).toBe(true)
   })
 
+  test("a bodyless response ignores the declared GET representation length", async () => {
+    const stored = await serializeResponse(
+      new Response(null, {
+        status: 304,
+        headers: { "content-length": String(DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1) },
+      }),
+      { maxBytes: 1 },
+    )
+    expect(stored).toEqual({
+      status: 304,
+      headers: [["content-length", String(DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1)]],
+      body: "",
+    })
+  })
+
   test("a refused response whose cancel fails still reports the size error", async () => {
     const original = new Response(
       new ReadableStream<Uint8Array>({
@@ -563,6 +595,13 @@ describe("idempotency primitives", () => {
     expect(() =>
       responseFromStored({ status: 200, headers: [], body: "AQID" }, { maxBytes: 2 }),
     ).toThrow(/response exceeds/i)
+  })
+
+  test("replay applies the bounded default before decoding oversized store data", () => {
+    const encoded = "A".repeat(Math.ceil((DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1) / 3) * 4)
+    expect(() => responseFromStored({ status: 200, headers: [], body: encoded })).toThrow(
+      /response exceeds/i,
+    )
   })
 
   test("legacy stored records cannot replay session or hop-by-hop headers", () => {

@@ -18,7 +18,6 @@ import {
 import { encodePathSegment } from "@nifrajs/core/pattern"
 import type { Platform } from "@nifrajs/core/server"
 import {
-  assertTransportTextBounded,
   createTransportCodecRegistry,
   decodeTransportResponse,
   decodeTransportText,
@@ -392,10 +391,8 @@ function createInProcessClient<
   ] = evidenceProvider
   // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
   // in-process app has no socket to upgrade - instead of dialing ws://nifra.internal into the void.
-  // LOCAL_FETCH marks the transport as same-process: a body the app serialized into memory
-  // (`hasResidentBody`) may take the native `Response.text()` read (measured ~23x cheaper than the
-  // streaming byte-cap reader), the cap still enforced on the result. Any other body, a handler's own
-  // stream included, and every network client keep the bounded-while-streaming read.
+  // LOCAL_FETCH marks the transport as same-process. Resident responses still use the bounded
+  // decoded-size contract; handler-owned streams use the same streaming reader as network responses.
   const baseOptions = { ...options, [NO_SOCKET]: true, [LOCAL_FETCH]: true } as ClientOptions
   const proxy = client<App>("http://nifra.internal", { ...baseOptions, fetch: bridge })
   // Request scoping: a view whose every call carries one request's platform (clientIp/env/waitUntil),
@@ -1107,6 +1104,11 @@ function isPayloadTooLarge(cause: unknown): boolean {
 // a TextDecoder per response cost ~115ns).
 const LENIENT_UTF8 = new TextDecoder()
 
+/** Decode a response body under the client's byte cap, preserving the Result error contract.
+ *
+ * Binary downloads are intentionally exempt; textual and transport bodies are bounded before
+ * decoding, and a malformed transport body becomes `malformed_response` rather than escaping.
+ */
 async function parseBody(response: Response, options: ClientOptions): Promise<unknown> {
   if (response.status === 204) return undefined
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
@@ -1118,23 +1120,27 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // the transport path, so an app that set it there keeps the number it chose.
   const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes
   const bound = decodedBytes === undefined ? {} : { maxBytes: decodedBytes }
-  // An in-process body the framework serialized is memory the app already allocated, so the
-  // streaming byte-cap reader protects nothing there - the native read is ~23x cheaper and the SAME
-  // cap is enforced on the result (identical error). A handler's stream is not: read whole, it would
-  // be buffered past the cap before the check, so it takes the bounded read a network client does.
-  const local =
-    (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true &&
-    hasResidentBody(response)
+  // In-process responses use the same bounded reader as network responses. A handler may return an
+  // arbitrarily large stream, and a framework-resident body must not bypass the client's cap. Keep
+  // the resident distinction for transport decoding: the old resident path used lenient text decode,
+  // while streamed transport responses must retain the fatal UTF-8 contract of the network path.
+  const local = (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true
+  const resident = local && hasResidentBody(response)
+  const readLocalText = async (): Promise<string> =>
+    LENIENT_UTF8.decode(await readBoundedBytes(response, bound))
   if (isTransportMedia(contentType)) {
-    if (local) {
+    const registry = transportRegistry(options)
+    if (resident) {
+      // Reject an unsupported codec before consuming a resident body, matching the network path.
+      registry.forContentType(response.headers.get("content-type"))
       return decodeTransportText(
-        await response.text(),
+        await readLocalText(),
         response.headers.get("content-type"),
-        transportRegistry(options),
+        registry,
         bound,
       )
     }
-    return await decodeTransportResponse(response, transportRegistry(options), bound)
+    return await decodeTransportResponse(response, registry, bound)
   }
   // A binary body comes back as a Blob rather than through `.text()`. Decoding bytes as UTF-8 does not
   // fail, it SUBSTITUTES: every invalid sequence becomes U+FFFD, so a PNG arrived as a string of
@@ -1145,13 +1151,7 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // Bounded with the same reader JSON uses, but decoded leniently: `.text()` substitutes U+FFFD for a
   // malformed sequence and callers have always seen that, so tightening to a fatal decode here would
   // turn working text responses into failures for a reason nobody asked about.
-  let text: string
-  if (local) {
-    text = await response.text() // native lenient decode - same U+FFFD substitution semantics
-    assertTransportTextBounded(text, bound)
-  } else {
-    text = LENIENT_UTF8.decode(await readBoundedBytes(response, bound))
-  }
+  const text = LENIENT_UTF8.decode(await readBoundedBytes(response, bound))
   if (text === "") return undefined
   try {
     return JSON.parse(text)

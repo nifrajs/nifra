@@ -86,6 +86,13 @@ export default function Query() {
         mutation and infinite-query bindings across the adapters, using each framework&apos;s reactive
         model.
       </p>
+      <p>
+        Query keys are serialized structurally. Keep key arrays and objects stable when practical, and
+        treat objects as immutable after the first query uses them: Nifra caches object hashes by
+        identity, so mutating a reused object can leave it under its old hash, while creating a fresh
+        equivalent key repeats serialization work. For example, derive one key from the current
+        identity and reuse it for the render rather than mutating it after the query starts.
+      </p>
       <CodeBlock code={USE_QUERY} />
 
       <h2>Mutations and infinite queries</h2>

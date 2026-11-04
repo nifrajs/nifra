@@ -61,8 +61,8 @@ function byteLength(text: string): number {
 
 /**
  * Enforce the transport byte cap on already-read text - the same limit (and the same error) the
- * streaming reader applies during a bounded read. Exported for callers that read a body through a
- * native, non-streaming path (the typed client's in-process branch) and still owe the cap contract.
+ * streaming reader applies during a bounded read. Exported for callers that need to decode text
+ * after a bounded read while preserving the text decoder's lenient UTF-8 behavior.
  */
 export function assertTransportTextBounded(text: string, options: TransportDecodeOptions): void {
   const maxBytes = maxBytesOf(options)
@@ -278,10 +278,8 @@ async function readBoundedText(
 /**
  * Decode an ALREADY-READ transport body. The counterpart to {@link decodeTransportResponse} for a
  * caller that obtained the text through its own bounded read - notably the typed client's
- * in-process path, where the response body is same-process memory that was fully resident before
- * the read, so the native `Response.text()` is safe and the streaming byte-cap loop would protect
- * nothing while costing ~23x. The byte cap is still enforced here (identical error), just after
- * the read instead of during it.
+ * in-process path, which uses this to preserve lenient UTF-8 decoding after the shared byte-cap
+ * reader has completed.
  */
 export function decodeTransportText(
   text: string,

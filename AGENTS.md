@@ -72,8 +72,8 @@ const local = inProcessClient(app) // SSR loaders / tests: same call, no network
 
 **Reserved proxy keys.** The client resolves `get`/`post`/`put`/`patch`/`delete`/`head`/`options`
 (any casing) plus `subscribe`, `ws`, `index`, `then`, and `$query` (exact) BEFORE path segments, so
-`.post("/api/delete", …)` cannot be reached by dot access (`api.delete.post` calls the DELETE verb
-instead). The typed spelling for such a segment is a call on the parent node -
+`.post("/api/delete", …)` cannot be reached by dot access (`api.delete()` invokes the DELETE verb;
+`api.delete.post` is undefined). The typed spelling for such a segment is a call on the parent node -
 `api.api("delete").post()` sends `POST /api/delete` - accepting exactly the colliding names. The
 client type rejects the dot access with that guidance and `nifra check` reports the collision
 (NF-C018, advisory); prefer a verb-free segment (`/api/remove`) when you control the path.
@@ -143,11 +143,11 @@ backend is loader-only; `nifra check` reports that as NF-C035, and `nifra fix --
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +
   server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency. When capability
   assurance is configured, this also fails on raw effect-import bypasses and declaration/evidence drift.
-- For a release-equivalent repository gate, run **`bun run check:release`**: it builds first, then runs
-  the normal check, the explicit **`bun run check:corpus`** (LLM/docs/cards/Node contract), the
-  core hot-path performance gate, publish-consumer matrix, and coverage ratchet. With
-  `RELEASE_MODE=1` it first refuses a working tree that differs from HEAD, so a release run verifies
-  the commit and nothing beside it.
+- For a release-equivalent repository gate, run **`bun run check:release`**: it builds and runs the
+  release plan, including lint/typecheck/tests, coverage, the explicit **`bun run check:corpus`**
+  (LLM/docs/cards/Node contract), site/public-artifact checks, size and performance gates, publishing
+  and consumer checks, and the cross-runtime matrix. With `RELEASE_MODE=1` it first refuses a working
+  tree that differs from HEAD, so a release run verifies the commit and nothing beside it.
 - If the project has `nifra.assurance.ts`, also run **`nifra assure`** (`--json` in CI). It fails closed
   when a route is unclassified or lacks/forbids the enforcement evidence required by its first policy rule.
 - If that config declares `capabilities`, commit the output of **`nifra capabilities snapshot`** and run
