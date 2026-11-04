@@ -3330,6 +3330,12 @@ third argument's option), a background refetch, and bounded GC. The query cache 
 mutation and infinite-query bindings across the adapters, using each framework's reactive
 model.
 
+Query keys are serialized structurally. Keep key arrays and objects stable when practical, and
+treat objects as immutable after the first query uses them: Nifra caches object hashes by
+identity, so mutating a reused object can leave it under its old hash, while creating a fresh
+equivalent key repeats serialization work. For example, derive one key from the current
+identity and reuse it for the render rather than mutating it after the query starts.
+
 ```ts
 import { useQuery, useQueryClient } from "@nifrajs/web-react/query"
 

@@ -20,6 +20,11 @@ describe("hashQueryKey", () => {
     expect(hashQueryKey(sparse)).toBe(hashQueryKey([null, "x"]))
     expect(hashQueryKey(["todo", { toJSON: () => undefined }])).toBe(hashQueryKey(["todo", null]))
   })
+  test("normalizes top-level undefined serialization to the canonical null hash", () => {
+    expect(hashQueryKey(undefined)).toBe("null")
+    expect(hashQueryKey({ toJSON: () => undefined })).toBe("null")
+    expect(hashQueryKey(undefined)).toBe(hashQueryKey(null))
+  })
 })
 
 // A controllable async fn: each call returns a promise resolved/rejected via the returned controls.

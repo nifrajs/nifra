@@ -24877,7 +24877,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function serializeResponse(response: Response, options?: {\n    readonly maxBytes?: number;\n}): Promise<StoredResponse>;",
-    "doc": "/**\n * Buffer a response into a storable form. Clones first so the live response body stays intact.\n * Unless a bound is supplied, at most {@link DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES} are retained.\n */"
+    "doc": "/**\n * Buffer a response into a storable form. Clones first so the live response body stays intact on\n * success. If the body exceeds the bound, both branches may be cancelled to stop the producer and\n * the caller must discard or replace the response. Unless a bound is supplied, at most\n * {@link DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES} are retained.\n */"
   },
   {
     "name": "serializeSearch",
