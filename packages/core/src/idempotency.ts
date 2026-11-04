@@ -292,16 +292,24 @@ export class IdempotencyResponseTooLargeError extends Error {
   }
 }
 
+/**
+ * Clone and buffer a response body without exceeding the storage bound. A null body represents no
+ * bytes, even when a HEAD/304 response carries the corresponding GET representation's
+ * `Content-Length`; the body check therefore precedes the header shortcut. Oversize cancellation is
+ * intentionally fire-and-forget because a tee branch can remain pending until its sibling is read.
+ */
 async function boundedResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const body = response.body
+  if (body === null) return new Uint8Array()
   const contentLength = response.headers.get("content-length")
   if (contentLength !== null && /^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
     // Replaced by a terminal error, never read: a streaming producer would otherwise stay open.
-    await response.body?.cancel().catch(() => {})
+    void body.cancel().catch(() => {})
     throw new IdempotencyResponseTooLargeError(maxBytes)
   }
-  const body = response.clone().body
-  if (body === null) return new Uint8Array()
-  const reader = body.getReader()
+  const cloneBody = response.clone().body
+  if (cloneBody === null) return new Uint8Array()
+  const reader = cloneBody.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
   try {
@@ -314,10 +322,10 @@ async function boundedResponseBytes(response: Response, maxBytes: number): Promi
         // unread, so a streaming producer can keep the tee pending forever. This path stores no
         // response and the caller will replace it with a terminal error, so cancel both branches.
         const liveBody = response.body
-        await Promise.allSettled([
-          reader.cancel(),
-          liveBody === null ? Promise.resolve() : liveBody.cancel(),
-        ])
+        // Do not await tee cancellation: either branch can remain pending until the other branch is
+        // consumed, but the size error is already definitive and must reach the caller promptly.
+        void reader.cancel().catch(() => {})
+        if (liveBody !== null) void liveBody.cancel().catch(() => {})
         throw new IdempotencyResponseTooLargeError(maxBytes)
       }
       chunks.push(value)

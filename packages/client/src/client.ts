@@ -7,6 +7,7 @@ import {
   type BackendPlatformBinder,
   type BackendWebSocketMountHandler,
   type BackendWebSocketRuntimeProvider,
+  hasResidentBody,
   NIFRA_BACKEND_BIND_PLATFORM,
   NIFRA_BACKEND_EVIDENCE,
   NIFRA_BACKEND_MOUNT,
@@ -390,9 +391,8 @@ function createInProcessClient<
   ] = evidenceProvider
   // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
   // in-process app has no socket to upgrade - instead of dialing ws://nifra.internal into the void.
-  // LOCAL_FETCH marks the transport as same-process. The response still goes through the same
-  // bounded reader as a network response: in-process handlers may return an arbitrarily large stream,
-  // and a resident body must not bypass the client's response-size contract.
+  // LOCAL_FETCH marks the transport as same-process. Resident responses still use the bounded
+  // decoded-size contract; handler-owned streams use the same streaming reader as network responses.
   const baseOptions = { ...options, [NO_SOCKET]: true, [LOCAL_FETCH]: true } as ClientOptions
   const proxy = client<App>("http://nifra.internal", { ...baseOptions, fetch: bridge })
   // Request scoping: a view whose every call carries one request's platform (clientIp/env/waitUntil),
@@ -1104,6 +1104,11 @@ function isPayloadTooLarge(cause: unknown): boolean {
 // a TextDecoder per response cost ~115ns).
 const LENIENT_UTF8 = new TextDecoder()
 
+/** Decode a response body under the client's byte cap, preserving the Result error contract.
+ *
+ * Binary downloads are intentionally exempt; textual and transport bodies are bounded before
+ * decoding, and a malformed transport body becomes `malformed_response` rather than escaping.
+ */
 async function parseBody(response: Response, options: ClientOptions): Promise<unknown> {
   if (response.status === 204) return undefined
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
@@ -1116,20 +1121,26 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes
   const bound = decodedBytes === undefined ? {} : { maxBytes: decodedBytes }
   // In-process responses use the same bounded reader as network responses. A handler may return an
-  // arbitrarily large stream, and a framework-resident body must not bypass the client's cap.
+  // arbitrarily large stream, and a framework-resident body must not bypass the client's cap. Keep
+  // the resident distinction for transport decoding: the old resident path used lenient text decode,
+  // while streamed transport responses must retain the fatal UTF-8 contract of the network path.
   const local = (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true
+  const resident = local && hasResidentBody(response)
   const readLocalText = async (): Promise<string> =>
     LENIENT_UTF8.decode(await readBoundedBytes(response, bound))
   if (isTransportMedia(contentType)) {
-    if (local) {
+    const registry = transportRegistry(options)
+    if (resident) {
+      // Reject an unsupported codec before consuming a resident body, matching the network path.
+      registry.forContentType(response.headers.get("content-type"))
       return decodeTransportText(
         await readLocalText(),
         response.headers.get("content-type"),
-        transportRegistry(options),
+        registry,
         bound,
       )
     }
-    return await decodeTransportResponse(response, transportRegistry(options), bound)
+    return await decodeTransportResponse(response, registry, bound)
   }
   // A binary body comes back as a Blob rather than through `.text()`. Decoding bytes as UTF-8 does not
   // fail, it SUBSTITUTES: every invalid sequence becomes U+FFFD, so a PNG arrived as a string of

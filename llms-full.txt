@@ -1725,11 +1725,12 @@ whole path: `RequestPath<"/files/:name.json">` is
 _before_ path segments: the seven HTTP verbs
 (`get`/`post`/`put`/`patch`/`delete`/
 `head`/`options`, any casing) call the route, and
-`subscribe`, `ws`, `index`, and `then` (exact
-match) are the SSE, WebSocket, root-path, and thenable-guard keys. A route whose path
+`subscribe`, `ws`, `index`, `then`, and
+`$query` (exact match) are the SSE, WebSocket, root-path, thenable-guard, and QUERY
+keys. A route whose path
 contains a static segment spelling one of these - `.post("/api/delete", …)` -
-cannot be reached by **dot access**: `api.delete.post` resolves the
-`delete` verb, not the segment. The typed spelling is a **call on the parent
+cannot be reached by **dot access**: `api.delete()` invokes the
+`delete` verb, while `api.delete.post` is undefined. The typed spelling is a **call on the parent
 node** - `api.api("delete").post()` sends `POST /api/delete` - the
 same call params use, accepting exactly the colliding segment names. The client type rejects
 the dot access at compile time with that guidance, and `nifra check` reports the
@@ -7044,6 +7045,29 @@ const app = server<Env>()
 
 export default { fetch: (req: Request, env: Env, ctx: ExecutionContext) =>
   app.fetch(req, { env, waitUntil: ctx.waitUntil.bind(ctx) }) }
+```
+
+For environment variables represented as strings, `@nifrajs/env` can validate the
+Workers binding object with `defineEnv(shape, { source: bindings })`. If the
+platform env also contains KV, D1, or Durable Object bindings, select only the string keys
+into the source object; keep the full binding type on `server<Env>()` for
+`c.env`.
+
+```ts
+import { defineEnv, env as schemaEnv } from "@nifrajs/env"
+
+// Select string bindings when the Workers env also contains KV/D1 objects.
+type StringBindings = Record<string, string | undefined>
+
+export default {
+  fetch(_request: Request, bindings: StringBindings) {
+    const config = defineEnv(
+      { API_URL: schemaEnv.url(), API_TOKEN: schemaEnv.string() },
+      { source: bindings },
+    )
+    return new Response(config.API_URL)
+  },
+}
 ```
 
 Export through `toFetchHandler` rather than handing the app out directly. Besides

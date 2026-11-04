@@ -564,6 +564,21 @@ describe("idempotency primitives", () => {
     expect(cancelled).toBe(true)
   })
 
+  test("a bodyless response ignores the declared GET representation length", async () => {
+    const stored = await serializeResponse(
+      new Response(null, {
+        status: 304,
+        headers: { "content-length": String(DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1) },
+      }),
+      { maxBytes: 1 },
+    )
+    expect(stored).toEqual({
+      status: 304,
+      headers: [["content-length", String(DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1)]],
+      body: "",
+    })
+  })
+
   test("a refused response whose cancel fails still reports the size error", async () => {
     const original = new Response(
       new ReadableStream<Uint8Array>({

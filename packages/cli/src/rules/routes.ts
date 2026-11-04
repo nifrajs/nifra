@@ -12,8 +12,8 @@ import type { CheckRule, RuleContext } from "./index.ts"
  * NF-C018 exists because the typed client's proxy intercepts a fixed set of property names before
  * path resolution (`resolveSegment` + the thenable guard in @nifrajs/client). A route whose path
  * contains a static segment spelling one of these cannot be reached by DOT ACCESS -
- * `api.delete.post` resolves the DELETE verb, not the path. The typed spelling is a call on the
- * parent node (`api.api("delete").post()`, treaty.ts `SegmentCall`), and the client type rejects
+ * `api.delete()` invokes the DELETE verb and `api.delete.post` is undefined. The typed spelling is a
+ * call on the parent node (`api.api("delete").post()`, treaty.ts `SegmentCall`), and the client type rejects
  * the dot access with the same guidance - so the collision is a warning that teaches the call
  * spelling, not a blocking error: the route IS reachable, just not by the spelling its name
  * suggests.
