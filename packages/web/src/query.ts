@@ -208,14 +208,19 @@ export function hashQueryKey(key: unknown): string {
   return JSON.stringify(key, queryKeyReplacer)
 }
 
-type KeyPartHashes = readonly (string | undefined)[]
+type KeyPartHashes = readonly string[]
+
+function hashQueryKeyPart(part: unknown): string {
+  return hashQueryKey(part === undefined ? null : part) ?? "null"
+}
 
 /** Hash array components once when an entry is created, so prefix invalidation compares strings rather
  * than serializing every component of every cached key on every invalidation. */
 function hashQueryKeyParts(key: unknown): KeyPartHashes | undefined {
-  return Array.isArray(key)
-    ? Array.from(key, (part) => hashQueryKey(part === undefined ? null : part))
-    : undefined
+  if (!Array.isArray(key)) return undefined
+  const parts: string[] = []
+  for (let index = 0; index < key.length; index++) parts.push(hashQueryKeyPart(key[index]))
+  return parts
 }
 
 // Structural array-prefix match. Non-array keys (or a non-array prefix) match exactly by their full hash.

@@ -289,14 +289,23 @@ export async function patternsProbe(ctx: ProbeContext): Promise<ProbeResult> {
     const r = hit as {
       check_id?: string
       path?: string
-      start?: { line?: number }
-      end?: { line?: number }
+      start?: { line?: number; col?: number; offset?: number }
+      end?: { line?: number; col?: number; offset?: number }
       extra?: { message?: string; severity?: string; metadata?: { references?: string[] } }
     }
     const file = repositoryRelativePath(ctx.repoRoot, r.path)
     // Semgrep can return the same match once per equivalent pattern branch. Keep one finding per
     // rule/location so duplicate scanner output does not inflate severity counts or baselines.
-    const location = `${r.check_id ?? "semgrep.rule"}\0${file ?? ""}\0${r.start?.line ?? ""}\0${r.end?.line ?? ""}`
+    const location = [
+      r.check_id ?? "semgrep.rule",
+      file ?? "",
+      r.start?.line ?? "",
+      r.start?.col ?? "",
+      r.start?.offset ?? "",
+      r.end?.line ?? "",
+      r.end?.col ?? "",
+      r.end?.offset ?? "",
+    ].join("\0")
     if (seen.has(location)) continue
     seen.add(location)
     findings.push({
@@ -306,7 +315,11 @@ export async function patternsProbe(ctx: ProbeContext): Promise<ProbeResult> {
       title: (r.extra?.message ?? r.check_id ?? "pattern match").slice(0, 200),
       ...(file !== undefined ? { file } : {}),
       ...(r.start?.line !== undefined ? { startLine: r.start.line } : {}),
+      ...(r.start?.col !== undefined ? { startColumn: r.start.col } : {}),
+      ...(r.start?.offset !== undefined ? { startOffset: r.start.offset } : {}),
       ...(r.end?.line !== undefined ? { endLine: r.end.line } : {}),
+      ...(r.end?.col !== undefined ? { endColumn: r.end.col } : {}),
+      ...(r.end?.offset !== undefined ? { endOffset: r.end.offset } : {}),
       detail: r.extra?.message ?? "A configured taint/unsafe-API rule matched here.",
       remediation: "Review the flagged line against the rule intent and refactor or justify it.",
       ...(r.extra?.metadata?.references?.[0] !== undefined

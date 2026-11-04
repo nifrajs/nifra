@@ -18,6 +18,7 @@ describe("hashQueryKey", () => {
     sparse.length = 2
     sparse[1] = "x"
     expect(hashQueryKey(sparse)).toBe(hashQueryKey([null, "x"]))
+    expect(hashQueryKey(["todo", { toJSON: () => undefined }])).toBe(hashQueryKey(["todo", null]))
   })
 })
 
@@ -332,6 +333,30 @@ describe("createQueryClient", () => {
     client.invalidateQueries(sparsePrefix)
     await otherEntry.fetch()
     expect(otherCalls).toBe(1)
+
+    let customSerializationCalls = 0
+    const customSerializationEntry = client.query(
+      ["custom", { toJSON: () => undefined }],
+      async () => ++customSerializationCalls,
+    )
+    await customSerializationEntry.fetch()
+    client.invalidateQueries(["custom", null])
+    await customSerializationEntry.fetch()
+    expect(customSerializationCalls).toBe(2)
+
+    let iteratorCalls = 0
+    const iteratorKey: unknown[] = ["iterable", 1]
+    Object.defineProperty(iteratorKey, Symbol.iterator, {
+      configurable: true,
+      value: function* () {
+        yield "not-the-key"
+      },
+    })
+    const iteratorEntry = client.query(iteratorKey, async () => ++iteratorCalls)
+    await iteratorEntry.fetch()
+    client.invalidateQueries(["iterable"])
+    await iteratorEntry.fetch()
+    expect(iteratorCalls).toBe(2)
   })
 })
 

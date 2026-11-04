@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test"
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { fingerprint } from "../.claude/skills/security-checkup/scripts/schema.ts"
 
 const SKILL = join(import.meta.dir, "..", ".claude", "skills", "security-checkup")
 const PROBES = join(SKILL, "scripts", "probes.ts")
@@ -43,8 +44,8 @@ async function runProbe(tool: Tool, exit: number, stdout = "", includeFindings =
     const ctx = { repoRoot: ${JSON.stringify(root)}, fast: false, strictTools: false, semgrepRules: "rules.yml" }
     try {
       const result = await probes[${JSON.stringify(PROBE_OF[tool])}](ctx)
-      const files = ${includeFindings ? "result.findings.map((finding) => finding.file ?? null)" : "undefined"}
-      console.log(JSON.stringify({ findings: result.findings.length, degraded: result.degraded ?? null, ...(files === undefined ? {} : { files }) }))
+      const details = ${includeFindings ? "result.findings.map((finding) => ({ file: finding.file ?? null, startLine: finding.startLine ?? null, startColumn: finding.startColumn ?? null, startOffset: finding.startOffset ?? null, endLine: finding.endLine ?? null, endColumn: finding.endColumn ?? null, endOffset: finding.endOffset ?? null }))" : "undefined"}
+      console.log(JSON.stringify({ findings: result.findings.length, degraded: result.degraded ?? null, ...(details === undefined ? {} : { details }) }))
     } catch (error) {
       console.log(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
     }`
@@ -96,27 +97,72 @@ test.skipIf(process.platform === "win32")(
 )
 
 test.skipIf(process.platform === "win32")(
-  "semgrep findings use repository-relative paths",
+  "semgrep findings use repository-relative paths and preserve same-line spans",
   async () => {
     const stdout = JSON.stringify({
       results: [
         {
           check_id: "test.rule",
           path: "__ROOT__/packages/web/src/query.ts",
-          start: { line: 1 },
-          end: { line: 1 },
+          start: { line: 1, col: 1, offset: 0 },
+          end: { line: 1, col: 5, offset: 4 },
+          extra: { message: "test finding", severity: "WARNING" },
+        },
+        {
+          check_id: "test.rule",
+          path: "__ROOT__/packages/web/src/query.ts",
+          start: { line: 1, col: 10, offset: 9 },
+          end: { line: 1, col: 14, offset: 13 },
           extra: { message: "test finding", severity: "WARNING" },
         },
       ],
     })
     const { result } = await runProbe("semgrep", 1, stdout, true)
     expect(result).toEqual({
-      findings: 1,
+      findings: 2,
       degraded: null,
-      files: ["packages/web/src/query.ts"],
+      details: [
+        {
+          file: "packages/web/src/query.ts",
+          startLine: 1,
+          startColumn: 1,
+          startOffset: 0,
+          endLine: 1,
+          endColumn: 5,
+          endOffset: 4,
+        },
+        {
+          file: "packages/web/src/query.ts",
+          startLine: 1,
+          startColumn: 10,
+          startOffset: 9,
+          endLine: 1,
+          endColumn: 14,
+          endOffset: 13,
+        },
+      ],
     })
   },
 )
+
+test("fingerprints retain distinct scanner match spans", () => {
+  const base = {
+    probe: "patterns",
+    severity: "high",
+    ruleId: "test.rule",
+    title: "test",
+    file: "src/test.ts",
+    startLine: 1,
+    endLine: 1,
+    detail: "same line",
+    remediation: "review",
+  } as const
+  expect(
+    fingerprint({ ...base, startColumn: 1, endColumn: 5, startOffset: 0, endOffset: 4 }),
+  ).not.toBe(
+    fingerprint({ ...base, startColumn: 10, endColumn: 14, startOffset: 9, endOffset: 13 }),
+  )
+})
 
 test("every semgrep rule parses, and every pattern in it is a string", async () => {
   const parsed: unknown = Bun.YAML.parse(
