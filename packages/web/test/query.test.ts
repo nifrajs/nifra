@@ -12,6 +12,13 @@ describe("hashQueryKey", () => {
     expect(() => hashQueryKey(["k", () => 1])).toThrow(/serializable/)
     expect(() => hashQueryKey({ s: Symbol("x") })).toThrow(/serializable/)
   })
+  test("serializes undefined array components like full-key JSON", () => {
+    expect(hashQueryKey(["todo", undefined])).toBe(hashQueryKey(["todo", null]))
+    const sparse: unknown[] = []
+    sparse.length = 2
+    sparse[1] = "x"
+    expect(hashQueryKey(sparse)).toBe(hashQueryKey([null, "x"]))
+  })
 })
 
 // A controllable async fn: each call returns a promise resolved/rejected via the returned controls.
@@ -288,11 +295,43 @@ describe("createQueryClient", () => {
     // so neither can be evicted; subsequent reads should only check the clock, not scan the cache again.
     c.query(["q", 0], async () => 0)
     nowCalls = 0
-    expect(c.query(["q", 0], async () => 0)).toBe(first)
-    expect(nowCalls).toBe(1)
+    let walks = 0
+    const iterator = Map.prototype[Symbol.iterator]
+    Map.prototype[Symbol.iterator] = function (this: Map<unknown, unknown>) {
+      walks++
+      return iterator.call(this)
+    }
+    try {
+      expect(c.query(["q", 0], async () => 0)).toBe(first)
+      for (let i = 0; i < 25; i++) expect(c.query(["q", 0], async () => 0)).toBe(first)
+    } finally {
+      Map.prototype[Symbol.iterator] = iterator
+    }
+    expect(walks).toBe(0)
+    expect(nowCalls).toBe(26)
 
     stopFirst()
     stopSecond()
+  })
+
+  test("matches undefined and sparse components by their full-key serialization", async () => {
+    let undefinedCalls = 0
+    const client = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
+    const undefinedEntry = client.query(["todo", undefined], async () => ++undefinedCalls)
+    await undefinedEntry.fetch()
+    client.invalidateQueries(["todo", null])
+    await undefinedEntry.fetch()
+    expect(undefinedCalls).toBe(2)
+
+    let otherCalls = 0
+    const otherEntry = client.query(["other", "x"], async () => ++otherCalls)
+    await otherEntry.fetch()
+    const sparsePrefix: unknown[] = []
+    sparsePrefix.length = 2
+    sparsePrefix[1] = "x"
+    client.invalidateQueries(sparsePrefix)
+    await otherEntry.fetch()
+    expect(otherCalls).toBe(1)
   })
 })
 

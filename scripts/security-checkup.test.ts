@@ -29,7 +29,7 @@ type Tool = keyof typeof PINS
 const PROBE_OF = { "osv-scanner": "depsProbe", gitleaks: "secretsProbe", semgrep: "patternsProbe" }
 
 // Bun.spawn children keep the startup environment, so each probe runs in a child given its own PATH.
-async function runProbe(tool: Tool, exit: number, stdout = "") {
+async function runProbe(tool: Tool, exit: number, stdout = "", includeFindings = false) {
   const root = await mkdtemp(join(tmpdir(), "security-checkup-"))
   scratch.push(root)
   const bin = join(root, ".bin")
@@ -43,7 +43,8 @@ async function runProbe(tool: Tool, exit: number, stdout = "") {
     const ctx = { repoRoot: ${JSON.stringify(root)}, fast: false, strictTools: false, semgrepRules: "rules.yml" }
     try {
       const result = await probes[${JSON.stringify(PROBE_OF[tool])}](ctx)
-      console.log(JSON.stringify({ findings: result.findings.length, degraded: result.degraded ?? null }))
+      const files = ${includeFindings ? "result.findings.map((finding) => finding.file ?? null)" : "undefined"}
+      console.log(JSON.stringify({ findings: result.findings.length, degraded: result.degraded ?? null, ...(files === undefined ? {} : { files }) }))
     } catch (error) {
       console.log(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
     }`
@@ -54,7 +55,7 @@ async function runProbe(tool: Tool, exit: number, stdout = "") {
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       FAKE_VERSION: PINS[tool],
       FAKE_EXIT: String(exit),
-      FAKE_STDOUT: stdout,
+      FAKE_STDOUT: stdout.replaceAll("__ROOT__", root),
       FAKE_LOG: log,
     },
     stdout: "pipe",
@@ -91,6 +92,29 @@ test.skipIf(process.platform === "win32")(
       () => false,
     )
     expect(kept).toBe(false)
+  },
+)
+
+test.skipIf(process.platform === "win32")(
+  "semgrep findings use repository-relative paths",
+  async () => {
+    const stdout = JSON.stringify({
+      results: [
+        {
+          check_id: "test.rule",
+          path: "__ROOT__/packages/web/src/query.ts",
+          start: { line: 1 },
+          end: { line: 1 },
+          extra: { message: "test finding", severity: "WARNING" },
+        },
+      ],
+    })
+    const { result } = await runProbe("semgrep", 1, stdout, true)
+    expect(result).toEqual({
+      findings: 1,
+      degraded: null,
+      files: ["packages/web/src/query.ts"],
+    })
   },
 )
 

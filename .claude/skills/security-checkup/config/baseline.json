@@ -1,14 +1,14 @@
 {
-  "011e7a44f6e24025": {
+  "3e5ce1a61b862ec0": {
     "reason": "resolveClientIp reads X-Forwarded-For only when the explicit trustedHops policy enables it; the default is the socket peer."
   },
-  "28bae4ad4d0a41ad": {
+  "39b3aeb3c4ee54f6": {
     "reason": "IP restriction reads X-Forwarded-For only when trustedProxies is positive; the default path never trusts the header."
   },
-  "3d45c8d45526a2fc": {
+  "72eceb445e145c59": {
     "reason": "Output-guard generated source contains fixed code plus JSON-quoted developer schema keys; browser/edge runtimes use the non-eval fallback."
   },
-  "82789f1b63239b6e": {
+  "5da0d33c8042ca87": {
     "reason": "Rate-limit reads X-Forwarded-For only for an explicit trustedProxies opt-in; the default key uses the adapter-observed client IP."
   }
 }

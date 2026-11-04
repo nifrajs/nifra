@@ -5,7 +5,7 @@
  */
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { isAbsolute, join, relative } from "node:path"
 import type { ProbeId, RawFinding, Severity } from "./schema.ts"
 
 export interface ProbeContext {
@@ -253,6 +253,13 @@ const SEMGREP_SEVERITY: Readonly<Record<string, Severity>> = {
   INFO: "low",
 }
 
+/** Keep scanner locations stable when the same repository is checked out at another absolute path. */
+function repositoryRelativePath(repoRoot: string, file: string | undefined): string | undefined {
+  if (file === undefined) return undefined
+  const path = isAbsolute(file) ? relative(repoRoot, file) : file
+  return path.replaceAll("\\", "/")
+}
+
 export async function patternsProbe(ctx: ProbeContext): Promise<ProbeResult> {
   const probe: ProbeId = "patterns"
   if (ctx.fast) return { probe, findings: [] }
@@ -286,9 +293,10 @@ export async function patternsProbe(ctx: ProbeContext): Promise<ProbeResult> {
       end?: { line?: number }
       extra?: { message?: string; severity?: string; metadata?: { references?: string[] } }
     }
+    const file = repositoryRelativePath(ctx.repoRoot, r.path)
     // Semgrep can return the same match once per equivalent pattern branch. Keep one finding per
     // rule/location so duplicate scanner output does not inflate severity counts or baselines.
-    const location = `${r.check_id ?? "semgrep.rule"}\0${r.path ?? ""}\0${r.start?.line ?? ""}\0${r.end?.line ?? ""}`
+    const location = `${r.check_id ?? "semgrep.rule"}\0${file ?? ""}\0${r.start?.line ?? ""}\0${r.end?.line ?? ""}`
     if (seen.has(location)) continue
     seen.add(location)
     findings.push({
@@ -296,7 +304,7 @@ export async function patternsProbe(ctx: ProbeContext): Promise<ProbeResult> {
       severity: SEMGREP_SEVERITY[(r.extra?.severity ?? "").toUpperCase()] ?? "medium",
       ruleId: r.check_id ?? "semgrep.rule",
       title: (r.extra?.message ?? r.check_id ?? "pattern match").slice(0, 200),
-      ...(r.path !== undefined ? { file: r.path } : {}),
+      ...(file !== undefined ? { file } : {}),
       ...(r.start?.line !== undefined ? { startLine: r.start.line } : {}),
       ...(r.end?.line !== undefined ? { endLine: r.end.line } : {}),
       detail: r.extra?.message ?? "A configured taint/unsafe-API rule matched here.",

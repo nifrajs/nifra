@@ -213,7 +213,9 @@ type KeyPartHashes = readonly (string | undefined)[]
 /** Hash array components once when an entry is created, so prefix invalidation compares strings rather
  * than serializing every component of every cached key on every invalidation. */
 function hashQueryKeyParts(key: unknown): KeyPartHashes | undefined {
-  return Array.isArray(key) ? key.map((part) => hashQueryKey(part)) : undefined
+  return Array.isArray(key)
+    ? Array.from(key, (part) => hashQueryKey(part === undefined ? null : part))
+    : undefined
 }
 
 // Structural array-prefix match. Non-array keys (or a non-array prefix) match exactly by their full hash.
