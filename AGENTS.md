@@ -161,6 +161,15 @@ content-hashed, immutable assets). One `app.fetch` runs on Bun / Node / Deno / C
 Vercel / any VPS. `prerenderRoutes` + `cloudflarePagesRoutes` (`@nifrajs/web/build`) emit the static
 output + `_routes.json`.
 
+Public deployment adapters extend packaging around an existing target without replacing its runtime:
+set `target` to the adapter id and export `{ adapter, options? }` as `deploymentAdapter` from
+`nifra.config.ts`. Keep runtime `adapter`/`clientModule` exports in `backend/framework.ts` and
+re-export them from `nifra.config.ts`, so build-time adapter code cannot enter the deployed server.
+The versioned `DeploymentTargetAdapter` contract is exported from `@nifrajs/web/build`; adapters
+validate config, declare component-pipeline support, and return declarative files plus deploy guidance.
+Nifra rejects unsafe paths and collisions, scans adapter files for credentials, and retains the last
+successful output if the build or adapter fails. `@nifrajs/deploy-fly` is the reference Node adapter.
+
 ## Release policy
 
 Prepare every release on a `release/<name>` branch. Run `bun run release:prepare` there so the one

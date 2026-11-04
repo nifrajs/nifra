@@ -61,6 +61,34 @@ describe("the target in nifra.config.ts", () => {
     expect(await resolveTarget(root, "node")).toEqual({ target: "node", source: "flag" })
   })
 
+  test("maps a configured public deployment adapter to its base runtime from package metadata", async () => {
+    writeAppFile(
+      root,
+      "package.json",
+      JSON.stringify({ dependencies: { "@nifrajs/deploy-fly": "workspace:*" } }),
+    )
+    writeAppFile(
+      root,
+      "node_modules/@nifrajs/deploy-fly/package.json",
+      JSON.stringify({
+        name: "@nifrajs/deploy-fly",
+        nifra: { deploymentAdapter: { apiVersion: 1, id: "fly", baseTarget: "node" } },
+      }),
+    )
+    writeAppFile(root, "nifra.config.ts", 'export const target = "fly"\n')
+
+    expect(await resolveTarget(root)).toEqual({
+      target: "node",
+      source: "adapter",
+      adapterId: "fly",
+    })
+    expect(await resolveTarget(root, "fly")).toEqual({
+      target: "node",
+      source: "adapter",
+      adapterId: "fly",
+    })
+  })
+
   test("the renamed cf-pages is refused with its new name", async () => {
     writeAppFile(root, "nifra.config.ts", 'export const target = "cf-pages"\n')
     await expect(resolveTarget(root)).rejects.toThrow(

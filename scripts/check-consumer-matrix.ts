@@ -134,6 +134,11 @@ const TARGETS: readonly Target[] = [
   { name: "@nifrajs/client", entries: ["@nifrajs/client"] },
   { name: "@nifrajs/web", entries: ["@nifrajs/web", "@nifrajs/web/client"] },
   {
+    name: "@nifrajs/deploy-fly",
+    entries: ["@nifrajs/deploy-fly"],
+    consumerDependencies: { "@types/bun": "^1.3.0" },
+  },
+  {
     name: "@nifrajs/webmcp",
     entries: ["@nifrajs/webmcp"],
     tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"] },
