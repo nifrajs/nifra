@@ -358,7 +358,7 @@ describe("a mutation across a visitor change", () => {
 })
 
 describe("reading a cached query on every render", () => {
-  test("walks no cache and hashes the key once", () => {
+  test("walks no cache and reuses an identity-cached hash", () => {
     let clock = 0
     let nowCalls = 0
     const client = createQueryClient({
@@ -393,7 +393,7 @@ describe("reading a cached query on every render", () => {
       Map.prototype[Symbol.iterator] = iterator
     }
     expect(walks).toBe(0)
-    expect(hashes).toBe(25)
+    expect(hashes).toBe(0)
     expect(nowCalls).toBeLessThanOrEqual(25)
     clock++
   })

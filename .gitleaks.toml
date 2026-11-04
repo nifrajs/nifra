@@ -180,6 +180,16 @@ regexes = [
 ]
 
 [[allowlists]]
+description = "historical stripe-access-token fixtures in deleted packages/web/test/deployment-adapter.test.ts"
+targetRules = ["stripe-access-token", "generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = ["(?:^|/)packages/web/test/deployment-adapter\\.test\\.ts$"]
+regexes = [
+  "^sk_live_0123456789abcdefABCDEF$",
+]
+
+[[allowlists]]
 description = "generic-api-key fixtures in packages/cli/test/check-script-surface.test.ts"
 targetRules = ["generic-api-key"]
 condition = "AND"

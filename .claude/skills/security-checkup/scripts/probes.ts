@@ -269,6 +269,7 @@ export async function patternsProbe(ctx: ProbeContext): Promise<ProbeResult> {
     ctx.repoRoot,
   )
   const findings: RawFinding[] = drift !== undefined ? [{ ...drift, probe }] : []
+  const seen = new Set<string>()
   // semgrep exits 1 for findings under --error and 2 or more when the scan itself failed.
   if (out.code !== 0 && out.code !== 1) throw scannerFailed("semgrep", out)
   let parsed: unknown
@@ -285,6 +286,11 @@ export async function patternsProbe(ctx: ProbeContext): Promise<ProbeResult> {
       end?: { line?: number }
       extra?: { message?: string; severity?: string; metadata?: { references?: string[] } }
     }
+    // Semgrep can return the same match once per equivalent pattern branch. Keep one finding per
+    // rule/location so duplicate scanner output does not inflate severity counts or baselines.
+    const location = `${r.check_id ?? "semgrep.rule"}\0${r.path ?? ""}\0${r.start?.line ?? ""}\0${r.end?.line ?? ""}`
+    if (seen.has(location)) continue
+    seen.add(location)
     findings.push({
       probe,
       severity: SEMGREP_SEVERITY[(r.extra?.severity ?? "").toUpperCase()] ?? "medium",

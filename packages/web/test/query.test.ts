@@ -275,6 +275,25 @@ describe("createQueryClient", () => {
     expect(c.query(["q", 0], g.fn)).not.toBe(first) // ["q",0] was evicted (re-created)
     expect(c.query(["q", 4], g.fn)).toBe(c.query(["q", 4], g.fn)) // recent entry retained
   })
+
+  test("an over-cap cache of mounted entries does not resweep on every query", () => {
+    let nowCalls = 0
+    const c = createQueryClient({ now: () => ++nowCalls, max: 1 })
+    const first = c.query(["q", 0], async () => 0)
+    const second = c.query(["q", 1], async () => 1)
+    const stopFirst = first.subscribe(() => {})
+    const stopSecond = second.subscribe(() => {})
+
+    // The first read after crossing the cap performs the necessary sweep. Both entries are mounted,
+    // so neither can be evicted; subsequent reads should only check the clock, not scan the cache again.
+    c.query(["q", 0], async () => 0)
+    nowCalls = 0
+    expect(c.query(["q", 0], async () => 0)).toBe(first)
+    expect(nowCalls).toBe(1)
+
+    stopFirst()
+    stopSecond()
+  })
 })
 
 describe("invalidation epoch (M3) + emit (Perf-6)", () => {

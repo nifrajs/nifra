@@ -691,6 +691,16 @@ const UNROUTED_CHAR = /[^!$%&'()*+,\-./0-9:;=?@A-Z[\]_a-z|~]/
 const unroutedParam = (value: string | undefined): boolean =>
   value !== undefined && (value === "." || value === ".." || UNROUTED_CHAR.test(value))
 
+/** Native query-schema routes can pass this search substring into RequestContext directly instead of
+ * building both pathname and search with the portable URL helper. Keep fragment handling identical
+ * to `urlPartsOf`; in-process Requests can retain a fragment even though network request targets do not. */
+function searchOfNativeRequest(url: string): string {
+  const fragment = url.indexOf("#")
+  const searchEnd = fragment === -1 ? url.length : fragment
+  const question = url.indexOf("?")
+  return question === -1 || question >= searchEnd ? "" : url.slice(question, searchEnd)
+}
+
 function hasUnroutedParam(params: Record<string, string>): boolean {
   for (const key in params) {
     if (unroutedParam(params[key])) return true
@@ -7335,6 +7345,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       entry.schema?.body === undefined || entry.program.authBeforeValidation
         ? entry.bodyLimit
         : undefined
+    const hasQuerySchema = entry.schema?.query !== undefined
     // The complete plan already preserves general validation, hooks, recovery, around, and ledgers.
     // When native admission is safe, use it directly even if the route has no closed-shape fusion.
     // Idempotency still needs runMatched's request preparation and is excluded from the table.
@@ -7377,7 +7388,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ): MaybePromise<Response> => {
       let outcome: MaybePromise<Response>
       try {
-        outcome = capped!(request, params, undefined, signal!, budget!, peer, true)
+        outcome = capped!(
+          request,
+          params,
+          hasQuerySchema ? searchOfNativeRequest(request.url) : undefined,
+          signal!,
+          budget!,
+          peer,
+          true,
+        )
       } catch (err) {
         // A synchronous render throw, as in runMatchedLanes.
         outcome = this.contextlessBareError(
