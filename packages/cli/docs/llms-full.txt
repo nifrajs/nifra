@@ -12821,7 +12821,7 @@ bounded parser as every other route, and the query text is never logged.
 ### Supporting packages
 
 The smaller integrations stay separate so a backend only pays for the surfaces it uses. They
-are all listed in the [generated API reference](/api-reference.md) and are
+are all listed in the generated API reference and are
 discoverable from this guide:
 
 -
