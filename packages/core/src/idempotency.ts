@@ -304,7 +304,7 @@ async function boundedResponseBytes(response: Response, maxBytes: number): Promi
   const contentLength = response.headers.get("content-length")
   if (contentLength !== null && /^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
     // Replaced by a terminal error, never read: a streaming producer would otherwise stay open.
-    void body.cancel().catch(() => {})
+    void Promise.allSettled([body.cancel()])
     throw new IdempotencyResponseTooLargeError(maxBytes)
   }
   const cloneBody = response.clone().body
@@ -324,8 +324,9 @@ async function boundedResponseBytes(response: Response, maxBytes: number): Promi
         const liveBody = response.body
         // Do not await tee cancellation: either branch can remain pending until the other branch is
         // consumed, but the size error is already definitive and must reach the caller promptly.
-        void reader.cancel().catch(() => {})
-        if (liveBody !== null) void liveBody.cancel().catch(() => {})
+        const cancellations = [reader.cancel()]
+        if (liveBody !== null) cancellations.push(liveBody.cancel())
+        void Promise.allSettled(cancellations)
         throw new IdempotencyResponseTooLargeError(maxBytes)
       }
       chunks.push(value)
