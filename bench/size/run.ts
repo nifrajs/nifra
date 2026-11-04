@@ -343,7 +343,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 42,049, typebox-t 70,471, typebox-form 75,480. Only these eight ceilings advance to the next step.
   // Fused raw Responses skip normalization and request lookup when no response controls need them;
   // the added branch crosses six shared-core ceilings, each by less than 0.1 KiB gzip (Bun 1.4.4).
-  "nifra-bare": 40.2,
+  // Native query-schema GET search handoff keeps Bun's fast lane on the same fragment-free query
+  // substring as the portable router. On Bun 1.4.4 it measures 41,201 B bare, 43,224 B effect-ledger,
+  // 42,203 B valibot, 70,603 B typebox-t and 75,608 B typebox-form; each crossed ceiling advances by
+  // one 0.1 KiB step.
+  "nifra-bare": 40.3,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -373,21 +377,21 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // (Bun 1.4.4), crossing the next 0.1 KiB cap.
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
   "nifra-idempotency": 45.0,
-  "nifra-effect-ledger": 42.2,
+  "nifra-effect-ledger": 42.3,
   "nifra-mcp": 40.5,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 41.1,
-  "nifra-valibot": 41.2,
+  "nifra-valibot": 41.3,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
-  "nifra-typebox-t": 68.9,
+  "nifra-typebox-t": 69.0,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only
   // this cap is crossed. A GET/HEAD native slot skipping the framing mark: typebox-form 74,037 B.
   // Merged ordinary-input and own-only validation measured 74,897 B for TypeBox-form (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox-form variant.
-  "nifra-typebox-form": 73.8,
+  "nifra-typebox-form": 73.9,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
@@ -425,7 +429,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // and `dehydrate` taking a filter: 21,712 -> 22,087 B (Bun 1.4.4). `href` and `rawHref`, a route pattern
   // filled with encoded params and a path checked as same-origin: 22,114 -> 23,476 B (Bun 1.4.4).
   // Route slots add 4,177 B gzip to the 23,476 B href/rawHref baseline (Bun 1.4.4).
-  "nifra-web-client": 27.1,
+  // Identity-cached query hashes, first-component invalidation indexes and amortized cache-cap
+  // sweeps measure 28,019 B gzip on Bun 1.4.4; reserve the measured 27.4 KiB ceiling.
+  "nifra-web-client": 27.4,
   "nifra-i18n": 4.3,
 }
 

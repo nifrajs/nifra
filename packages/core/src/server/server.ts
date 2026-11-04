@@ -695,10 +695,11 @@ const unroutedParam = (value: string | undefined): boolean =>
  * building both pathname and search with the portable URL helper. Keep fragment handling identical
  * to `urlPartsOf`; in-process Requests can retain a fragment even though network request targets do not. */
 function searchOfNativeRequest(url: string): string {
-  const fragment = url.indexOf("#")
-  const searchEnd = fragment === -1 ? url.length : fragment
   const question = url.indexOf("?")
-  return question === -1 || question >= searchEnd ? "" : url.slice(question, searchEnd)
+  const fragment = url.indexOf("#")
+  return question < 0 || (fragment >= 0 && question > fragment)
+    ? ""
+    : url.slice(question, fragment < 0 ? undefined : fragment)
 }
 
 function hasUnroutedParam(params: Record<string, string>): boolean {

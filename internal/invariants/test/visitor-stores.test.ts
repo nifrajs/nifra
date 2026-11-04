@@ -1468,6 +1468,10 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "listeners@createMutation": LISTENERS,
     "listeners@makeEntry": LISTENERS,
     "listeners@makeInfinite": LISTENERS,
+    QUERY_KEY_HASHES:
+      "query-key structural hashes, weakly keyed by caller-owned key objects; no query result data",
+    "hashes@addToIndex":
+      "query-entry hash membership for prefix invalidation; removed with the indexed entry",
     "seeded@createQueryClient": { scenario: "query-seed" },
   },
   "packages/web/src/router.ts": {
