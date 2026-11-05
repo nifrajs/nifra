@@ -273,19 +273,20 @@ const keptOf = (router: KeepAliveRouter): string[] =>
 
 describe("keepAliveClient", () => {
   test("stamping a legacy primitive history state does not copy its characters", () => {
-    fakeHistory.entries[0] = "legacy" as unknown as Record<string, unknown>
+    Reflect.set(fakeHistory.entries, 0, "legacy")
     const { router } = setup(state("list", "/list/1"))
     expect(fakeHistory.state).toEqual({ nifraInstance: router.snapshot().instance })
   })
 
   test("a pending same-entry update prevents the next page from being kept", () => {
-    const { router, fake, push } = setup(state("list", "/list/1"))
+    const { router, fake, push } = setup(state("list", "/list/1"), {
+      hooks: { list: { keepAlive: true }, detail: { keepAlive: true } },
+    })
     push(state("detail", "/detail"))
     fake.publish({ ...fake.inner.snapshot(), pending: true, pendingPath: "/detail" })
     router.dropKept()
-    fake.publish(state("detail", "/detail"))
     push(state("list", "/list/2"))
-    expect(router.snapshot().kept).toBeUndefined()
+    expect(keptOf(router)).not.toContain("/detail")
   })
 
   test("a replace at the current history index does not drop forward kept pages", async () => {

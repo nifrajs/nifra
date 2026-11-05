@@ -1059,27 +1059,6 @@
     {
       "op": "condition->true",
       "fn": "invalidateQueries",
-      "code": "if (entry !== undefined) invalidateEntry(entry)",
-      "from": "entry !== undefined",
-      "reason": "A missing exact cache entry cannot be invalidated; the surrounding branch has no observable work in that case."
-    },
-    {
-      "op": "condition->true",
-      "fn": "invalidateInfinite",
-      "code": "if (entry !== undefined && keyMatchesPrefix(hash, entry.keyParts, prefixHash, prefixParts))",
-      "from": "entry !== undefined && keyMatchesPrefix(hash, entry.keyParts, prefixHash, prefixParts)",
-      "reason": "The index candidate set only contains hashes from the primary map; an absent entry cannot be invalidated, and forcing the branch changes no state."
-    },
-    {
-      "op": "binary &&->||",
-      "fn": "invalidateInfinite",
-      "code": "if (entry !== undefined && keyMatchesPrefix(hash, entry.keyParts, prefixHash, prefixParts))",
-      "from": "&&",
-      "reason": "A candidate hash without a primary entry is a stale advisory-index value; calling no invalidation for it remains the observable result."
-    },
-    {
-      "op": "condition->true",
-      "fn": "invalidateQueries",
       "code": "if (cacheCandidates === undefined) {",
       "from": "cacheCandidates === undefined",
       "reason": "Scanning the whole cache instead of the advisory candidate set preserves the per-entry prefix check and only costs more."
@@ -1092,25 +1071,11 @@
       "reason": "Scanning all infinite entries instead of the advisory candidate set preserves invalidation semantics and only costs more."
     },
     {
-      "op": "binary ??->&&",
-      "fn": "setQueryData",
-      "code": "existing?.fn ??",
-      "from": "??",
-      "reason": "A setQueryData-only entry is not exposed for fetching; query() or prefetchQuery rebinds its fetcher before any run."
-    },
-    {
       "op": "condition->true",
       "fn": "prefetchQuery",
       "code": "if (sweepDue()) sweep()",
       "from": "sweepDue()",
       "reason": "Sweeping before every prefetch only adds a scan when no GC or cap work is due; it leaves the same entries and result."
-    },
-    {
-      "op": "binary ??->&&",
-      "fn": "hydrate",
-      "code": "cache.get(h)?.fn ??",
-      "from": "??",
-      "reason": "Hydration does not run a query; the next query() call rebinds its fetcher before it can be fetched."
     },
     {
       "op": "delete statement",

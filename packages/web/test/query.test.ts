@@ -984,7 +984,7 @@ describe("infinite queries share the cache's invalidation, SSR bridge and evicti
   test("a superseded infinite rejection does not publish an error", async () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
-    const h = c.infiniteQuery(["feed"], () => g.fn() as Promise<string>, {
+    const h = c.infiniteQuery(["feed"], async () => String(await g.fn()), {
       initialPageParam: 0,
       getNextPageParam: () => undefined,
     })
