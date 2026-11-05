@@ -514,6 +514,9 @@ test.skipIf(process.platform === "win32")(
 test("a failed publish is retried from main for a merged release SHA, under the same proofs", () => {
   const release = workflowText("release.yml")
   expect(release).toContain("  workflow_dispatch:\n    inputs:\n      merge_sha:")
+  const dispatch = release.match(/ {2}workflow_dispatch:\n[\s\S]*?(?=\n\npermissions:)/)?.[0] ?? ""
+  expect(dispatch).toContain("      publish_run_id:")
+  expect(dispatch).not.toContain("      publish_sha:")
   const {
     "prove-release": prove,
     "build-release": build,
@@ -549,7 +552,7 @@ test("a failed publish is retried from main for a merged release SHA, under the 
 const GITHUB_RELEASE = "Publish the version's GitHub release"
 
 test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
-  "release recovery publishes a green descendant without changing the prepared release",
+  "release recovery selects a green main CI run without changing the prepared release",
   () => {
     const dir = mkdtempSync(join(tmpdir(), "release-recovery-"))
     try {
@@ -589,11 +592,22 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
         head_sha: merge,
         conclusion: "success",
       }
+      const dispatchRun = {
+        id: 123,
+        event: "push",
+        head_branch: "main",
+        head_repository: { full_name: "nifrajs/nifra" },
+        path: ".github/workflows/ci.yml",
+        conclusion: "success",
+        head_sha: publish,
+      }
+      const runWithSha = (sha: string) => JSON.stringify({ ...dispatchRun, head_sha: sha })
       const PATH = fakeBin(dir, {
         gh: [
           "#!/bin/sh",
           'case "$*" in',
           '  *"/compare/"*) echo "$ON_MAIN" ;;',
+          '  *"/actions/runs/"*) echo "$DISPATCH_CI_RUN_JSON" ;;',
           '  *"/actions/runs?"*) case "$*" in',
           '    *"head_sha=$EXPECTED_CI_SHA&"*) echo "$CI_GREEN" ;;',
           "    *) echo false ;;",
@@ -618,7 +632,8 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
               REPOSITORY: "nifrajs/nifra",
               EVENT_NAME: "workflow_dispatch",
               MERGE_SHA: merge,
-              PUBLISH_SHA: publish,
+              DISPATCH_CI_RUN_ID: "123",
+              DISPATCH_CI_RUN_JSON: JSON.stringify(dispatchRun),
               EXPECTED_CI_SHA: publish,
               GITHUB_OUTPUT: output,
               ON_MAIN: "ahead",
@@ -642,7 +657,11 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
       expect(recovered.outputs).toContain(`release_base_sha=${base}`)
       expect(run({ CI_GREEN: "false" }).exitCode).toBe(1)
       expect(run({ ON_MAIN: "diverged" }).exitCode).toBe(1)
-      expect(run({ PUBLISH_SHA: "main" }).exitCode).toBe(1)
+      expect(run({ DISPATCH_CI_RUN_ID: "main" }).exitCode).toBe(1)
+      expect(
+        run({ DISPATCH_CI_RUN_JSON: JSON.stringify({ ...dispatchRun, event: "pull_request" }) })
+          .exitCode,
+      ).toBe(1)
       expect(run({ MERGE_SHA: "main" }).exitCode).toBe(1)
       expect(run({ CHECK_JSON: '{"check_runs":[]}' }).exitCode).toBe(1)
       expect(run({ PR_JSON: "[]" }).exitCode).toBe(1)
@@ -677,9 +696,9 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
         expect(run({ CHECK_JSON: JSON.stringify({ check_runs: [check] }) }).exitCode).toBe(1)
 
       // The normal retry still requires green CI on the original merge.
-      expect(run({ PUBLISH_SHA: "", EXPECTED_CI_SHA: merge }).exitCode).toBe(0)
+      expect(run({ DISPATCH_CI_RUN_ID: "", EXPECTED_CI_SHA: merge }).exitCode).toBe(0)
       // Automatic runs cannot turn a CI-fix PR into authorization to publish.
-      const ordinary = run({ EVENT_NAME: "workflow_run", PUBLISH_SHA: "", PR_JSON: "[]" })
+      const ordinary = run({ EVENT_NAME: "workflow_run", DISPATCH_CI_RUN_ID: "", PR_JSON: "[]" })
       expect(ordinary.exitCode).toBe(0)
       expect(ordinary.outputs).toBe("is_release=false\n")
 
@@ -693,11 +712,15 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
       ]) {
         git("reset", "--hard", publish)
         const drift = commit(path, "changed release metadata\n")
-        expect(run({ PUBLISH_SHA: drift, EXPECTED_CI_SHA: drift }).exitCode).toBe(1)
+        expect(
+          run({ DISPATCH_CI_RUN_JSON: runWithSha(drift), EXPECTED_CI_SHA: drift }).exitCode,
+        ).toBe(1)
       }
       git("checkout", "-q", "-b", "diverged", base)
       const unrelated = commit("unrelated.txt", "not descended from the release\n")
-      expect(run({ PUBLISH_SHA: unrelated, EXPECTED_CI_SHA: unrelated }).exitCode).toBe(1)
+      expect(
+        run({ DISPATCH_CI_RUN_JSON: runWithSha(unrelated), EXPECTED_CI_SHA: unrelated }).exitCode,
+      ).toBe(1)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

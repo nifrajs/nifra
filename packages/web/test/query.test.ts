@@ -194,6 +194,63 @@ describe("createQueryClient", () => {
     expect(g2.calls()).toBe(2)
   })
 
+  test("array invalidation keeps non-array keys exact and tolerates missing keys", async () => {
+    const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
+    let stringCalls = 0
+    const stringEntry = c.query("settings", async () => ++stringCalls)
+    await stringEntry.fetch()
+
+    c.invalidateQueries(["s"])
+    await stringEntry.fetch()
+    expect(stringCalls).toBe(1)
+
+    expect(() => c.invalidateQueries([1])).not.toThrow()
+    await stringEntry.fetch()
+    expect(stringCalls).toBe(1)
+
+    let objectCalls = 0
+    const structuralKey = { toJSON: () => ["todo", 1] }
+    const objectEntry = c.query(structuralKey, async () => ++objectCalls)
+    await objectEntry.fetch()
+    c.invalidateQueries(["todo", 1])
+    await objectEntry.fetch()
+    expect(objectCalls).toBe(2)
+
+    expect(() => c.invalidateQueries("missing")).not.toThrow()
+    await stringEntry.fetch()
+    expect(stringCalls).toBe(1)
+
+    let infiniteCalls = 0
+    const infinite = c.infiniteQuery("infinite", async () => ++infiniteCalls, {
+      initialPageParam: 0,
+      getNextPageParam: () => undefined,
+    })
+    await infinite.fetch()
+    c.invalidateQueries("infinite")
+    await infinite.fetch()
+    expect(infiniteCalls).toBe(2)
+  })
+
+  test("invalidation scans an empty key that has no indexed first component", async () => {
+    const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
+    let queryCalls = 0
+    const query = c.query([], async () => ++queryCalls)
+    await query.fetch()
+    c.invalidateQueries([])
+    await query.fetch()
+    expect(queryCalls).toBe(2)
+
+    let infiniteCalls = 0
+    const infinite = c.infiniteQuery([], async () => ++infiniteCalls, {
+      initialPageParam: 0,
+      getNextPageParam: () => undefined,
+    })
+    await infinite.fetch()
+    c.invalidateQueries([])
+    await infinite.fetch()
+    expect(infiniteCalls).toBe(2)
+  })
+
   test("invalidateQueries swallows a mounted refetch failure (best-effort)", async () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
@@ -487,6 +544,19 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     t = 500 // still within staleTime
     await c.query(["k"], fn).fetch()
     expect(calls).toBe(1) // fresh cache hit - no refetch
+  })
+
+  test("prefetchQuery sweeps expired entries before storing a new one", async () => {
+    let t = 0
+    const c = createQueryClient({ now: () => t, gcTime: 10 })
+    const old = c.query(["old"], async () => "old")
+    const stop = old.subscribe(() => {})
+    await old.fetch()
+    stop()
+    t = 10
+
+    await c.prefetchQuery(["new"], async () => "new")
+    expect(c.getQueryData(["old"])).toBeUndefined()
   })
 
   test("setQueryData supersedes an in-flight fetch (optimistic write wins)", async () => {
@@ -896,6 +966,38 @@ describe("infinite queries share the cache's invalidation, SSR bridge and evicti
     g.resolve(0, "old")
     await Promise.all([before, after])
     expect(h.snapshot().data?.pages).toEqual(["new"])
+  })
+
+  test("a matching array prefix does not invalidate an infinite key with a different suffix", async () => {
+    let calls = 0
+    const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
+    const feed = c.infiniteQuery(["feed", 1], async () => ++calls, {
+      initialPageParam: 0,
+      getNextPageParam: () => undefined,
+    })
+    await feed.fetch()
+    c.invalidateQueries(["feed", 2])
+    await feed.fetch()
+    expect(calls).toBe(1)
+  })
+
+  test("a superseded infinite rejection does not publish an error", async () => {
+    const g = gated()
+    const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
+    const h = c.infiniteQuery(["feed"], () => g.fn() as Promise<string>, {
+      initialPageParam: 0,
+      getNextPageParam: () => undefined,
+    })
+    h.subscribe(() => {})
+    const old = h.fetch()
+    c.invalidateQueries(["feed"])
+    const fresh = h.fetch()
+    expect(g.calls()).toBe(2)
+    g.resolve(1, "fresh")
+    g.reject(0, new Error("stale-boom"))
+    await Promise.all([old.catch(() => undefined), fresh])
+    await Promise.resolve()
+    expect(h.snapshot()).toMatchObject({ status: "success", data: { pages: ["fresh"] } })
   })
 
   test("dehydrate carries the pages; hydrate seeds them before or after the query exists", async () => {

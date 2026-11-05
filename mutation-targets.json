@@ -46,7 +46,8 @@
       "packages/web/test/navigation.test.ts",
       "packages/web/test/navigation-redirect.test.ts",
       "internal/invariants/test/visitor-stores.test.ts"
-    ]
+    ],
+    "exclude": ["packages/web-preact/test/ppr.test.ts"]
   },
   "web-visitor": {
     "files": [
@@ -87,7 +88,8 @@
     ],
     "tests": [
       "packages/core/test/idempotency-gate.test.ts",
-      "packages/core/test/idempotency-replay-auth.test.ts"
+      "packages/core/test/idempotency-replay-auth.test.ts",
+      "packages/core/test/idempotency.test.ts"
     ]
   },
   "core-ledger": {
@@ -123,7 +125,8 @@
     ],
     "tests": [
       "packages/web/test/leak-matrix.test.ts",
-      "packages/web/test/build-server-only-marker.test.ts"
+      "packages/web/test/build-server-only-marker.test.ts",
+      "packages/web/test/secret-scan.test.ts"
     ]
   }
 }
