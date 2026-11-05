@@ -142,6 +142,30 @@ describe("createClientRouter", () => {
     expect(seen).toEqual([true, false])
   })
 
+  test("a normal navigation omits absent boundaries from its published state", async () => {
+    const r = createClientRouter({ patterns, initial, fetchData: async () => ({ loaded: true }) })
+    await r.navigate("/users/1")
+    expect(Object.hasOwn(r.snapshot(), "boundaries")).toBe(false)
+  })
+
+  test("a query-only navigation without route slots still reloads the route", async () => {
+    let loads = 0
+    const r = createClientRouter({
+      patterns,
+      initial: {
+        routeId: "user",
+        params: { id: "1" },
+        path: "/users/1?tab=old",
+        data: { loaded: 0 },
+        pending: false,
+      },
+      fetchData: async () => ({ loaded: ++loads }),
+    })
+    await r.navigate("/users/1?tab=new")
+    expect(loads).toBe(1)
+    expect(r.snapshot().data).toEqual({ loaded: 1 })
+  })
+
   test("slot-only navigation preserves siblings and skips the page loader", async () => {
     const slotPatterns = [
       { routeId: "dashboard", pattern: "/dashboard" },
@@ -1794,6 +1818,40 @@ describe("createClientRouter", () => {
       await submitP.catch(() => {})
     } finally {
       globalThis.fetch = realFetch
+    }
+  })
+
+  test("a superseded submit failure does not clear the newer navigation's pending state", async () => {
+    let postStarted = false
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () =>
+        new Promise<Response>(() => {
+          postStarted = true
+        }),
+    })
+    let resolveNavigation: ((data: unknown) => void) | undefined
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async () =>
+        new Promise((resolve) => {
+          resolveNavigation = resolve
+        }),
+    })
+    try {
+      const submitting = r.submit(`http://127.0.0.1:${server.port}/`, new URLSearchParams())
+      while (!postStarted) await Bun.sleep(0)
+      const navigating = r.navigate("/users/7")
+      while (resolveNavigation === undefined) await Bun.sleep(0)
+      server.stop(true)
+      await expect(submitting).rejects.toThrow()
+      expect(r.snapshot().pending).toBe(true)
+      resolveNavigation({ id: "7" })
+      await navigating
+    } finally {
+      server.stop(true)
     }
   })
 

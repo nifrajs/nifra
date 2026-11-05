@@ -324,6 +324,14 @@ describe("tokenizer layer", () => {
       "word:FROM:17",
       "word:x:22",
     ])
+    expect(tokens.map((token) => [token.kind, token.bare])).toEqual([
+      ["word", true],
+      ["word", false],
+      ["punct", false],
+      ["param", false],
+      ["word", true],
+      ["word", true],
+    ])
   })
 
   test("withoutTerminator drops only a final semicolon", () => {

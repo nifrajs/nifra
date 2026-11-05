@@ -82,6 +82,12 @@ test("epochOf reads the cookie value and prefers the host cookie", () => {
   expect(epochOf("nifra-epoch=local; __Host-nifra-epoch=host%2Fvalue")).toBe("host%2Fvalue")
 })
 
+test("a Set-Cookie pair without a name is ignored", () => {
+  warn = spyOn(console, "warn").mockImplementation(() => {})
+  expect(run(["=value; HttpOnly"], { hook: identityEpochHook({}, true) })).toBeUndefined()
+  expect(warn).not.toHaveBeenCalled()
+})
+
 test("identityChanged runs every observer and defers observer failures", () => {
   const beforeWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
   const beforeChannel = Object.getOwnPropertyDescriptor(globalThis, IDENTITY_CHANNEL_SLOT)

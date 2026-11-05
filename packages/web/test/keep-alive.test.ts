@@ -13,6 +13,7 @@ import {
   keepAliveClient,
   PAGE_HIDE_EVENT,
   PAGE_SHOW_EVENT,
+  rememberView,
   type SlotNode,
   slotTree,
 } from "../src/keep-alive.ts"
@@ -271,6 +272,86 @@ const keptOf = (router: KeepAliveRouter): string[] =>
 // ---- the router layer ----------------------------------------------------------------------------
 
 describe("keepAliveClient", () => {
+  test("stamping a legacy primitive history state does not copy its characters", () => {
+    Reflect.set(fakeHistory.entries, 0, "legacy")
+    const { router } = setup(state("list", "/list/1"))
+    expect(fakeHistory.state).toEqual({ nifraInstance: router.snapshot().instance })
+  })
+
+  test("a pending same-entry update prevents the next page from being kept", () => {
+    const { router, fake, push } = setup(state("list", "/list/1"), {
+      hooks: { list: { keepAlive: true }, detail: { keepAlive: true } },
+    })
+    push(state("detail", "/detail"))
+    fake.publish({ ...fake.inner.snapshot(), pending: true, pendingPath: "/detail" })
+    router.dropKept()
+    push(state("list", "/list/2"))
+    expect(keptOf(router)).not.toContain("/detail")
+  })
+
+  test("a replace at the current history index does not drop forward kept pages", async () => {
+    const { router, fake, push } = setup(state("list", "/list/1"))
+    push(state("list", "/list/2"))
+    fakeHistory.go(-1)
+    const restoring = router.navigate("/list/1")
+    fake.publish({ ...fake.inner.snapshot(), pending: true, pendingPath: "/list/1" })
+    fake.publish(state("list", "/list/1"))
+    await restoring
+    expect(keptOf(router)).toEqual(["/list/2"])
+
+    fakeHistory.replace()
+    fake.publish(state("item", "/item"))
+    expect(keptOf(router)).toEqual(["/list/2"])
+  })
+
+  test("rememberView is safe when no document exists", () => {
+    const before = Object.getOwnPropertyDescriptor(globalThis, "document")
+    try {
+      Reflect.deleteProperty(globalThis, "document")
+      expect(() => rememberView([])).not.toThrow()
+    } finally {
+      if (before === undefined) Reflect.deleteProperty(globalThis, "document")
+      else Object.defineProperty(globalThis, "document", before)
+    }
+  })
+
+  test("a completed restore stops supplying kept data to later loads", async () => {
+    let baseCalls = 0
+    const { router, push, fake, client } = setup(state("list", "/list/1"), {
+      fetchData: async (path) => {
+        baseCalls++
+        return { from: path }
+      },
+    })
+    push(state("detail", "/detail"))
+    const release = fake.hold()
+    fakeHistory.go(-1)
+    const restoring = router.navigate("/list/1")
+    release()
+    await restoring
+
+    const loaded = await client.fetchData("/list/1", { routeId: "list", params: {} })
+    expect(loaded).toEqual({ from: "/list/1" })
+    expect(baseCalls).toBe(1)
+  })
+
+  test("a restore that lands on another page creates a new active instance", async () => {
+    const modal = state("list", "/photo/3", {
+      intercepted: { boundary: "photo", pagePath: "/list/1" },
+    })
+    const { router, push, fake } = setup(state("list", "/list/1"))
+    const first = router.snapshot().instance
+    push(modal)
+    push(state("detail", "/detail"))
+    const release = fake.hold()
+    fakeHistory.go(-1)
+    const restoring = router.navigate("/photo/3")
+    fake.publish(state("detail", "/detail/2"))
+    expect(router.snapshot().instance).not.toBe(first)
+    release()
+    await restoring
+  })
+
   test("a page left by a push is kept, and back to its own entry shows that same instance", async () => {
     const list = state("list", "/list/1", { params: { id: "1" } })
     const { router, push, fake, traverse } = setup(list)

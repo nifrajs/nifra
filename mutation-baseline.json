@@ -2062,18 +2062,6 @@
     },
     {
       "op": "binary <-><=",
-      "fn": "responseFromStored",
-      "code": "if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {",
-      "from": "<"
-    },
-    {
-      "op": "binary <-><=",
-      "fn": "serializeResponse",
-      "code": "if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0)) {",
-      "from": "<"
-    },
-    {
-      "op": "binary <-><=",
       "fn": "validIdempotencyKey",
       "code": "for (let i = 0; i < key.length; i++) {",
       "from": "<"
@@ -2134,12 +2122,6 @@
     },
     {
       "op": "binary >->>=",
-      "fn": "responseFromStored",
-      "code": "if (decodedLength > options.maxBytes) {",
-      "from": ">"
-    },
-    {
-      "op": "binary >->>=",
       "fn": "serializeResponse",
       "code": "body: bytes.length > 0 ? bytesToBase64(bytes) : \"\",",
       "from": ">"
@@ -2194,18 +2176,6 @@
       "nth": 1
     },
     {
-      "op": "binary ||->&&",
-      "fn": "responseFromStored",
-      "code": "if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {",
-      "from": "||"
-    },
-    {
-      "op": "binary ||->&&",
-      "fn": "serializeResponse",
-      "code": "if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0)) {",
-      "from": "||"
-    },
-    {
       "op": "condition->false",
       "fn": "MemoryIdempotencyStore.abandon",
       "code": "if (entry !== undefined && entry.expiresAt <= this.now()) {",
@@ -2249,12 +2219,6 @@
     },
     {
       "op": "condition->false",
-      "fn": "boundedResponseBytes",
-      "code": "liveBody === null ? Promise.resolve() : liveBody.cancel(),",
-      "from": "liveBody === null"
-    },
-    {
-      "op": "condition->false",
       "fn": "canonicalizeIdempotencyBody",
       "code": "if (mediaType !== \"application/json\" && !mediaType.endsWith(\"+json\")) return body",
       "from": "mediaType !== \"application/json\" && !mediaType.endsWith(\"+json\")"
@@ -2294,24 +2258,6 @@
       "fn": "responseFromStored",
       "code": "if (!Number.isInteger(stored.status) || stored.status < 200 || stored.status > 599) {",
       "from": "!Number.isInteger(stored.status) || stored.status < 200 || stored.status > 599"
-    },
-    {
-      "op": "condition->false",
-      "fn": "responseFromStored",
-      "code": "if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {",
-      "from": "!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0"
-    },
-    {
-      "op": "condition->false",
-      "fn": "serializeResponse",
-      "code": "if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0)) {",
-      "from": "maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0)"
-    },
-    {
-      "op": "condition->false",
-      "fn": "serializeResponse",
-      "code": "maxBytes === undefined",
-      "from": "maxBytes === undefined"
     },
     {
       "op": "condition->true",
@@ -2372,12 +2318,6 @@
       "fn": "MemoryIdempotencyStore.drop",
       "code": "else this.perNamespace.delete(entry.namespace)",
       "from": "this.perNamespace.delete(entry.namespace)"
-    },
-    {
-      "op": "delete statement",
-      "fn": "boundedResponseBytes",
-      "code": "await Promise.allSettled([",
-      "from": "await Promise.allSettled([ reader.cancel(), liveBody === null ? Promise.resolve() : liveBody.cancel(), ])"
     },
     {
       "op": "delete statement",
@@ -4621,12 +4561,6 @@
     {
       "op": "flip boolean",
       "fn": "lexPostgres",
-      "code": "tokens.push({ kind: \"param\", value: sql.slice(start, i), bare: false, offset: start })",
-      "from": "false"
-    },
-    {
-      "op": "flip boolean",
-      "fn": "lexPostgres",
       "code": "tokens.push({ kind: \"punct\", value: char, bare: false, offset: i })",
       "from": "false"
     },
@@ -6014,12 +5948,6 @@
       "from": "at === -1"
     },
     {
-      "op": "condition->false",
-      "fn": "epochOf",
-      "code": "if (name === EPOCH_COOKIE) return part.slice(at + 1).trim()",
-      "from": "name === EPOCH_COOKIE"
-    },
-    {
       "op": "condition->true",
       "fn": "epochOf",
       "code": "if (name === LOCAL_EPOCH_COOKIE) local = part.slice(at + 1).trim()",
@@ -6069,12 +5997,6 @@
       "fn": "parseSetCookies",
       "code": "if (at <= 0) continue",
       "from": "at <= 0"
-    },
-    {
-      "op": "condition->true",
-      "fn": "identityEpochHook",
-      "code": "if (changed === undefined || (changed.deleted && !cookie.deleted)) changed = cookie",
-      "from": "changed === undefined || (changed.deleted && !cookie.deleted)"
     },
     {
       "op": "condition->true",
@@ -6146,12 +6068,6 @@
       "op": "binary &&->||",
       "fn": "add",
       "code": "if (encoded !== value && !forms.some(([, existing]) => existing === encoded)) {",
-      "from": "&&"
-    },
-    {
-      "op": "binary &&->||",
-      "fn": "assertSecretExemptions",
-      "code": "const env = typeof exemption.env === \"string\" && exemption.env !== \"\"",
       "from": "&&"
     },
     {
@@ -6963,12 +6879,6 @@
     },
     {
       "op": "binary !==->===",
-      "fn": "after",
-      "code": "if (process.env.NODE_ENV !== \"production\") checkSlotCss(slot.entry, page)",
-      "from": "!=="
-    },
-    {
-      "op": "binary !==->===",
       "fn": "breaksAround",
       "code": "(prefix === \"\" || matches(parent, prefix) || parent.closest(prefix) !== null)",
       "from": "!=="
@@ -7423,18 +7333,6 @@
       "fn": "after",
       "code": "if (!slot.hid) fire(slot, true)",
       "from": "!slot.hid"
-    },
-    {
-      "op": "condition->false",
-      "fn": "after",
-      "code": "if (!slot.shown && !slot.checked) {",
-      "from": "!slot.shown && !slot.checked"
-    },
-    {
-      "op": "condition->false",
-      "fn": "after",
-      "code": "if (process.env.NODE_ENV !== \"production\") checkSlotCss(slot.entry, page)",
-      "from": "process.env.NODE_ENV !== \"production\""
     },
     {
       "op": "condition->false",
@@ -8003,12 +7901,6 @@
     {
       "op": "delete statement",
       "fn": "after",
-      "code": "if (process.env.NODE_ENV !== \"production\") checkSlotCss(slot.entry, page)",
-      "from": "checkSlotCss(slot.entry, page)"
-    },
-    {
-      "op": "delete statement",
-      "fn": "after",
       "code": "pageRefs.delete(key)",
       "from": "pageRefs.delete(key)"
     },
@@ -8335,18 +8227,6 @@
     },
     {
       "op": "drop !",
-      "fn": "after",
-      "code": "if (!slot.shown && !slot.checked) {",
-      "from": "!slot.checked"
-    },
-    {
-      "op": "drop !",
-      "fn": "after",
-      "code": "if (!slot.shown && !slot.checked) {",
-      "from": "!slot.shown"
-    },
-    {
-      "op": "drop !",
       "fn": "dropKept",
       "code": "if (records.size === 0 && !leaving) {",
       "from": "!leaving"
@@ -8422,12 +8302,6 @@
       "fn": "restore",
       "code": "sources?.has(kept.path) !== true)",
       "from": "true"
-    },
-    {
-      "op": "flip boolean",
-      "fn": "slotOf",
-      "code": "checked: false,",
-      "from": "false"
     },
     {
       "op": "flip boolean",
@@ -9435,12 +9309,6 @@
     },
     {
       "op": "binary &&->||",
-      "fn": "keyMatchesPrefix",
-      "code": "prefix.length <= key.length && prefix.every((p, i) => hashQueryKey(key[i]) === hashQueryKey(p))",
-      "from": "&&"
-    },
-    {
-      "op": "binary &&->||",
       "fn": "seed",
       "code": "if (state.status === \"success\" && state.updatedAt >= updatedAt) return",
       "from": "&&"
@@ -9495,12 +9363,6 @@
     },
     {
       "op": "binary ??->&&",
-      "fn": "hydrate",
-      "code": "cache.get(hashQueryKey(q.key))?.fn ??",
-      "from": "??"
-    },
-    {
-      "op": "binary ??->&&",
       "fn": "isStale",
       "code": "invalidated || now() - state.updatedAt >= (opts.staleTime ?? defaultStaleTime)",
       "from": "??"
@@ -9512,21 +9374,9 @@
       "from": "??"
     },
     {
-      "op": "binary ??->&&",
-      "fn": "setQueryData",
-      "code": "cache.get(hashQueryKey(key))?.fn ??",
-      "from": "??"
-    },
-    {
       "op": "binary ||->&&",
       "fn": "fetchPreviousPage",
       "code": "if (param === undefined || param === null) return Promise.resolve(current)",
-      "from": "||"
-    },
-    {
-      "op": "binary ||->&&",
-      "fn": "keyMatchesPrefix",
-      "code": "if (!Array.isArray(key) || !Array.isArray(prefix))",
       "from": "||"
     },
     {
@@ -9564,12 +9414,6 @@
       "fn": "landed",
       "code": "if (forChange && seen === lastFor) epoch = documentEpoch()",
       "from": "forChange && seen === lastFor"
-    },
-    {
-      "op": "condition->false",
-      "fn": "makeEntry",
-      "code": "if (forChange) reloading++",
-      "from": "forChange"
     },
     {
       "op": "condition->false",
@@ -9624,24 +9468,6 @@
       "fn": "again",
       "code": "if (state.data !== undefined) return Promise.resolve(state.data)",
       "from": "state.data !== undefined"
-    },
-    {
-      "op": "condition->true",
-      "fn": "invalidateQueries",
-      "code": "if (keyMatchesPrefix(entry.key, keyOrPrefix)) entry.invalidate()",
-      "from": "keyMatchesPrefix(entry.key, keyOrPrefix)"
-    },
-    {
-      "op": "condition->true",
-      "fn": "makeEntry",
-      "code": "if (forChange) reloading--",
-      "from": "forChange"
-    },
-    {
-      "op": "condition->true",
-      "fn": "runPaged",
-      "code": "if (forChange) reloading--",
-      "from": "forChange"
     },
     {
       "op": "condition->true",
@@ -9762,27 +9588,9 @@
     },
     {
       "op": "delete statement",
-      "fn": "makeEntry",
-      "code": "if (forChange) reloading++",
-      "from": "reloading++"
-    },
-    {
-      "op": "delete statement",
-      "fn": "makeEntry",
-      "code": "if (forChange) reloading--",
-      "from": "reloading--"
-    },
-    {
-      "op": "delete statement",
       "fn": "prefetchQuery",
       "code": "checkEpoch()",
       "from": "checkEpoch()"
-    },
-    {
-      "op": "delete statement",
-      "fn": "prefetchQuery",
-      "code": "sweep()",
-      "from": "sweep()"
     },
     {
       "op": "delete statement",
@@ -9845,12 +9653,6 @@
       "fn": "runPaged",
       "code": "dataTick = started",
       "from": "dataTick = started"
-    },
-    {
-      "op": "delete statement",
-      "fn": "runPaged",
-      "code": "if (forChange) reloading--",
-      "from": "reloading--"
     },
     {
       "op": "delete statement",
@@ -10063,18 +9865,6 @@
       "fn": "setQueryData",
       "code": "entry.generation++",
       "from": "entry.generation++"
-    },
-    {
-      "op": "x--->x++",
-      "fn": "makeEntry",
-      "code": "if (forChange) reloading--",
-      "from": "reloading--"
-    },
-    {
-      "op": "x--->x++",
-      "fn": "runPaged",
-      "code": "if (forChange) reloading--",
-      "from": "reloading--"
     }
   ],
   "packages/web/src/router.ts": [
@@ -10196,12 +9986,6 @@
     },
     {
       "op": "binary ===->!==",
-      "fn": "hydrate",
-      "code": "if (mine === generation) reloadIfStale()",
-      "from": "==="
-    },
-    {
-      "op": "binary ===->!==",
       "fn": "invalidate",
       "code": "if (paths === undefined) dropPrefetched()",
       "from": "==="
@@ -10288,20 +10072,8 @@
     },
     {
       "op": "binary ??->&&",
-      "fn": "applyClientLoader",
-      "code": "signal: signal ?? new AbortController().signal,",
-      "from": "??"
-    },
-    {
-      "op": "binary ??->&&",
       "fn": "fetchRouteData",
       "code": "const staticRes = await fetch(appUrl(dataUrlFor(pathname)), { signal: signal ?? null })",
-      "from": "??"
-    },
-    {
-      "op": "binary ??->&&",
-      "fn": "reloadActive",
-      "code": "boundaries: { ...(fields.boundaries ?? {}), [intercepted.boundary]: held },",
       "from": "??"
     },
     {

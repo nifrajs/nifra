@@ -755,7 +755,7 @@
     {
       "op": "binary <-><=",
       "fn": "sweepEntries",
-      "code": "else if (e.gcAt < next) next = e.gcAt",
+      "code": "} else if (e.gcAt < next) next = e.gcAt",
       "from": "<",
       "reason": "Two entries due at the same instant give the same earliest time whichever is kept."
     },
@@ -815,6 +815,281 @@
       "code": "return false",
       "from": "return false",
       "reason": "Every caller reads the result only in an `if`, where `undefined` and `false` take the same branch."
+    },
+    {
+      "op": "condition->false",
+      "fn": "hashQueryKeyPart",
+      "code": "return hashQueryKey(part === undefined ? null : part) ?? \"null\"",
+      "from": "part === undefined",
+      "reason": "hashQueryKey canonicalizes an undefined top-level value to the same `null` hash, so the explicit normalization only avoids that call."
+    },
+    {
+      "op": "condition->true",
+      "fn": "addToIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "typeof first !== \"string\"",
+      "reason": "An index entry for a non-string first component is never read; indexedCandidates only consults string first components and otherwise falls back to a full scan."
+    },
+    {
+      "op": "condition->false",
+      "fn": "addToIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "typeof first !== \"string\"",
+      "reason": "Skipping or creating an index bucket for a non-string first component cannot affect candidates; non-string prefixes always use the full cache scan."
+    },
+    {
+      "op": "binary !==->===",
+      "fn": "addToIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "!==",
+      "reason": "The mutated guard only skips the string-index fast path; invalidation falls back to scanning the full cache with the same result."
+    },
+    {
+      "op": "delete statement",
+      "fn": "addToIndex",
+      "code": "index.set(first, hashes)",
+      "from": "index.set(first, hashes)",
+      "reason": "Without the bucket, invalidation scans the full cache; the index only narrows candidates and is not part of the public state."
+    },
+    {
+      "op": "condition->true",
+      "fn": "removeFromIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "typeof first !== \"string\"",
+      "reason": "A non-string first component has no index bucket used by invalidation, so removing or retaining that unused bucket does not change cache results."
+    },
+    {
+      "op": "condition->false",
+      "fn": "removeFromIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "typeof first !== \"string\"",
+      "reason": "The index is only a candidate-set optimization; a missing or extra non-string bucket is never consulted by the fallback scan."
+    },
+    {
+      "op": "binary !==->===",
+      "fn": "removeFromIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "!==",
+      "reason": "Changing this guard only changes maintenance of the unused index fast path; invalidation still scans or validates the cache entries themselves."
+    },
+    {
+      "op": "condition->true",
+      "fn": "removeFromIndex",
+      "code": "if (hashes === undefined) return",
+      "from": "hashes === undefined",
+      "reason": "The index is advisory: if its bucket is absent, invalidation already takes the full-scan path, and no public cache entry is removed here."
+    },
+    {
+      "op": "condition->false",
+      "fn": "removeFromIndex",
+      "code": "if (hashes === undefined) return",
+      "from": "hashes === undefined",
+      "reason": "A missing index bucket contains no candidate to remove; the index is not observable and cache invalidation does not depend on it."
+    },
+    {
+      "op": "binary ===->!==",
+      "fn": "removeFromIndex",
+      "code": "if (hashes === undefined) return",
+      "from": "===",
+      "reason": "The index bucket is only a narrowing hint; changing this guard affects no cache or infinite-query data."
+    },
+    {
+      "op": "delete statement",
+      "fn": "removeFromIndex",
+      "code": "hashes.delete(hash)",
+      "from": "hashes.delete(hash)",
+      "reason": "Retaining a stale hash in the advisory index is harmless: the next candidate lookup rechecks the cache map before invalidating."
+    },
+    {
+      "op": "condition->true",
+      "fn": "removeFromIndex",
+      "code": "if (hashes.size === 0) index.delete(first)",
+      "from": "hashes.size === 0",
+      "reason": "Empty or retained index buckets only affect candidate scanning; cache entries and their invalidation state are held in the primary maps."
+    },
+    {
+      "op": "condition->false",
+      "fn": "removeFromIndex",
+      "code": "if (hashes.size === 0) index.delete(first)",
+      "from": "hashes.size === 0",
+      "reason": "Keeping an empty advisory bucket merely makes a later invalidation scan an empty set instead of the full cache."
+    },
+    {
+      "op": "binary ===->!==",
+      "fn": "removeFromIndex",
+      "code": "if (hashes.size === 0) index.delete(first)",
+      "from": "===",
+      "reason": "The index bucket's lifetime is an optimization only; changing its deletion condition cannot alter primary cache state."
+    },
+    {
+      "op": "delete statement",
+      "fn": "removeFromIndex",
+      "code": "if (hashes.size === 0) index.delete(first)",
+      "from": "index.delete(first)",
+      "reason": "An empty index bucket is equivalent to a retained empty bucket because indexed candidate lookup and the full-scan fallback produce the same results."
+    },
+    {
+      "op": "return undefined",
+      "fn": "indexedCandidates",
+      "code": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "from": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "reason": "Returning no candidates forces the already-correct full scan; the index only improves invalidation cost."
+    },
+    {
+      "op": "condition->true",
+      "fn": "indexedCandidates",
+      "code": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "from": "typeof first === \"string\"",
+      "reason": "An index hit is only a narrowing optimization; using the full scan for every prefix preserves invalidation semantics."
+    },
+    {
+      "op": "condition->false",
+      "fn": "indexedCandidates",
+      "code": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "from": "typeof first === \"string\"",
+      "reason": "Falling back to the complete map scan preserves the same prefix checks when the index is not consulted."
+    },
+    {
+      "op": "binary ===->!==",
+      "fn": "indexedCandidates",
+      "code": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "from": "===",
+      "reason": "The candidate index only narrows work; returning undefined for string components selects the existing full-scan path."
+    },
+    {
+      "op": "delete statement",
+      "fn": "sweepEntries",
+      "code": "removeFromIndex(index, e.keyParts, h)",
+      "from": "removeFromIndex(index, e.keyParts, h)",
+      "reason": "The entry is deleted from the primary map immediately; leaving its hash in the advisory index is harmless because candidate hits recheck the map."
+    },
+    {
+      "op": "delete statement",
+      "fn": "sweepEntries",
+      "code": "removeFromIndex(index, e.keyParts, h)",
+      "from": "removeFromIndex(index, e.keyParts, h)",
+      "nth": 1,
+      "reason": "The cap eviction deletes the primary entry; index cleanup only avoids a stale candidate and is not observable."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "createQueryClient",
+      "code": "let capSweepPending = false",
+      "from": "false",
+      "reason": "Starting with an eager sweep only walks empty or still-mounted entries; it does not change cache contents or query results."
+    },
+    {
+      "op": "condition->true",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "cache.size > max || infinite.size > max",
+      "reason": "An extra cap sweep is a cost-only change; no entry is evicted until the existing sweep applies the same subscriber and max rules."
+    },
+    {
+      "op": "condition->false",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "cache.size > max || infinite.size > max",
+      "reason": "Every call is followed by markCapSweep for the same cache, so over-cap state is still scheduled; this guard only avoids a redundant flag write."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "||",
+      "reason": "The following markCapSweep call observes the relevant cache size, so the cap sweep remains pending when either cache is over its limit."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": ">",
+      "reason": "At exactly max, sweepEntries returns without evicting; scheduling that no-op walk changes only work."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": ">",
+      "nth": 1,
+      "reason": "At exactly max, sweepEntries returns without evicting; scheduling that no-op walk changes only work."
+    },
+    {
+      "op": "delete statement",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "capSweepPending = true",
+      "reason": "The unsubscribe path immediately calls markCapSweep with the same cache size, so this assignment is redundant."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "true",
+      "reason": "The following markCapSweep call restores the required pending flag when the cache is over its cap; otherwise an eager sweep is only extra work."
+    },
+    {
+      "op": "delete statement",
+      "fn": "subscribe",
+      "code": "entry.gcAt = undefined // in use again - cancel any pending eviction",
+      "from": "entry.gcAt = undefined",
+      "reason": "sweepEntries never evicts a subscribed entry, and the next unsubscribe schedules a fresh GC deadline."
+    },
+    {
+      "op": "delete statement",
+      "fn": "subscribe",
+      "code": "markCapSweep(cache.size)",
+      "from": "markCapSweep(cache.size)",
+      "reason": "scheduleGc immediately performs the same over-cap check for this cache; the second flag write is redundant."
+    },
+    {
+      "op": "delete statement",
+      "fn": "upsert",
+      "code": "addToIndex(cacheIndex, entry.keyParts, h)",
+      "from": "addToIndex(cacheIndex, entry.keyParts, h)",
+      "reason": "The index only narrows invalidation candidates; the primary cache map and full-scan fallback preserve all results without this bucket."
+    },
+    {
+      "op": "condition->false",
+      "fn": "invalidateQueries",
+      "code": "if (prefixParts === undefined) {",
+      "from": "prefixParts === undefined",
+      "reason": "With no part index, the following fallback scans both primary maps and keyMatchesPrefix still performs the same exact-hash comparison."
+    },
+    {
+      "op": "condition->true",
+      "fn": "invalidateQueries",
+      "code": "if (cacheCandidates === undefined) {",
+      "from": "cacheCandidates === undefined",
+      "reason": "Scanning the whole cache instead of the advisory candidate set preserves the per-entry prefix check and only costs more."
+    },
+    {
+      "op": "condition->true",
+      "fn": "invalidateQueries",
+      "code": "if (infiniteCandidates === undefined) {",
+      "from": "infiniteCandidates === undefined",
+      "reason": "Scanning all infinite entries instead of the advisory candidate set preserves invalidation semantics and only costs more."
+    },
+    {
+      "op": "condition->true",
+      "fn": "prefetchQuery",
+      "code": "if (sweepDue()) sweep()",
+      "from": "sweepDue()",
+      "reason": "Sweeping before every prefetch only adds a scan when no GC or cap work is due; it leaves the same entries and result."
+    },
+    {
+      "op": "delete statement",
+      "fn": "infiniteQuery",
+      "code": "addToIndex(infiniteIndex, created.keyParts, h)",
+      "from": "addToIndex(infiniteIndex, created.keyParts, h)",
+      "reason": "The infinite index only narrows invalidation candidates; its absence selects the existing full scan."
+    },
+    {
+      "op": "delete statement",
+      "fn": "subscribe",
+      "code": "markCapSweep(infinite.size)",
+      "from": "markCapSweep(infinite.size)",
+      "reason": "scheduleGc already checks the same infinite cache size, so this second cap flag write is redundant."
     }
   ],
   "packages/web/src/router.ts": [
@@ -859,6 +1134,41 @@
       "code": "...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),",
       "from": "payload.boundaries !== undefined",
       "reason": "Passes boundaries: undefined instead of no key; dataFields, cachePut and shareShown all treat an undefined boundaries as absent."
+    },
+    {
+      "op": "binary !==->===",
+      "fn": "cachePut",
+      "code": "...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),",
+      "from": "!==",
+      "reason": "The cache readers currently use only the entry status; retaining or omitting this optional boundary payload does not change navigation behavior."
+    },
+    {
+      "op": "condition->false",
+      "fn": "cachePut",
+      "code": "...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),",
+      "from": "loaded.boundaries !== undefined",
+      "reason": "The keyed cache is read for freshness/status and is rewritten on a load; boundary payload shape is not observable through this cache path."
+    },
+    {
+      "op": "condition->true",
+      "fn": "navigate",
+      "code": "if (Object.keys(routeSlotTargets).length > 0) {",
+      "from": "Object.keys(routeSlotTargets).length > 0",
+      "reason": "Validating an empty route-slot target set is a no-op, so entering the block only adds work."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "navigate",
+      "code": "if (Object.keys(routeSlotTargets).length > 0) {",
+      "from": ">",
+      "reason": "An empty target set has length zero; the >= mutation only enters the same no-op validation block."
+    },
+    {
+      "op": "condition->false",
+      "fn": "navigate",
+      "code": "return pattern === undefined ? null : { pattern }",
+      "from": "pattern === undefined",
+      "reason": "A non-null route match always came from patternsById, so its pattern is defined; the undefined branch is unreachable."
     }
   ],
   "packages/mcp-db/src/internal/pg-exec.ts": [
@@ -1163,6 +1473,52 @@
       "code": "expectations += code(text.slice(previous))",
       "from": "expectations += code(text.slice(previous))",
       "reason": "A line past the last comment holds no comment, and the upward search stops on a missing line as it does on a line of code."
+    }
+  ],
+  "packages/web/src/keep-alive.ts": [
+    {
+      "op": "condition->true",
+      "fn": "refresh",
+      "code": "if (stuck.length > 0) {",
+      "from": "stuck.length > 0",
+      "reason": "When stuck is empty, drop([]) returns immediately and recomposing produces the same page set; entering that block only repeats no-op work."
+    },
+    {
+      "op": "delete statement",
+      "fn": "after",
+      "code": "slot.shown = false",
+      "from": "slot.shown = false",
+      "reason": "The hidden transition already records offsets before this assignment, and every subsequent visible transition sets shown true; retaining true only repeats guarded no-op bookkeeping while parked."
+    },
+    {
+      "op": "condition->false",
+      "fn": "breaksAround",
+      "code": ".map((part, j) => (j === 0 ? part.compound : `${part.before} ${part.compound}`))",
+      "from": "j === 0",
+      "reason": "For the first selector component, the mutated leading descendant whitespace is equivalent to the selector without that whitespace."
+    }
+  ],
+  "packages/core/src/idempotency.ts": [
+    {
+      "op": "condition->false",
+      "fn": "boundedResponseBytes",
+      "code": "if (cloneBody === null) return new Uint8Array()",
+      "from": "cloneBody === null",
+      "reason": "The function has already observed a non-null original body; Response.clone() preserves a non-null body, so the branch is unreachable."
+    },
+    {
+      "op": "return undefined",
+      "fn": "boundedResponseBytes",
+      "code": "if (cloneBody === null) return new Uint8Array()",
+      "from": "return new Uint8Array()",
+      "reason": "The cloned body cannot be null after the original body check, so changing this unreachable return has no observable path."
+    },
+    {
+      "op": "condition->true",
+      "fn": "boundedResponseBytes",
+      "code": "if (liveBody !== null) cancellations.push(liveBody.cancel())",
+      "from": "liveBody !== null",
+      "reason": "The original response body was checked non-null before cloning and remains the live tee branch during the oversize read."
     }
   ]
 }
