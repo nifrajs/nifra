@@ -1553,6 +1553,9 @@ export function generateServerEntry(options: {
     "",
     "const app = createWebApp({",
     "  adapter,",
+    // A deploy bundle owns an immutable route manifest. Make the production module-preparation
+    // policy explicit so a host that does not set NODE_ENV cannot turn every request into an import.
+    "  cacheRouteModules: true,",
     ...(useImport !== undefined ? ["  use,"] : []),
     ...(prerendered.length > 0 ? ["  prerenderedPages,"] : []),
     ...importedOptions.map((name) => `  ${name},`),
