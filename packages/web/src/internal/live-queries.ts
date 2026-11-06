@@ -20,6 +20,7 @@ interface LiveQueryRegistry {
 }
 
 const registry = (() => {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Symbol.for is written only by this module with this registry shape, so duplicate loads can safely reuse it.
   const existing = Reflect.get(globalThis, LIVE_QUERY_REGISTRY) as LiveQueryRegistry | undefined
   if (existing !== undefined) return existing
   const created: LiveQueryRegistry = {
