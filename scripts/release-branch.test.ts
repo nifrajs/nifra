@@ -427,6 +427,18 @@ test("the workflows behind main's required checks run in the merge queue", () =>
 const SITE_GATE = "Require main and its passing push CI"
 const CI_PASSED =
   '(.path | split("@")[0]) == ".github/workflows/ci.yml" and .conclusion == "success"'
+const VALIDATED_RELEASE_SHA = `\${{ needs.prove-release.outputs.publish_sha }}`
+
+const expectValidatedReleaseCheckout = (job: WorkflowJob | undefined): void => {
+  const checkout = job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))
+  expect(checkout?.with?.ref).toBe("refs/heads/main")
+  expect(checkout?.with?.["fetch-depth"]).toBe(0)
+  expect(checkout?.with?.["persist-credentials"]).toBe(false)
+  const select = job?.steps?.find((step) => step.name === "Select the validated release commit")
+  expect(select?.env?.RELEASE_SHA).toBe(VALIDATED_RELEASE_SHA)
+  expect(select?.run).toContain(`git rev-parse --verify "\${RELEASE_SHA}^{commit}"`)
+  expect(select?.run).toContain('git checkout --detach "$expected_sha"')
+}
 
 test("site.yml deploys main by hand, in release.yml's publish queue, with deploy-site's steps", () => {
   const site: unknown = Bun.YAML.parse(workflowText("site.yml"))
@@ -533,11 +545,8 @@ test("a failed publish is retried from main for a merged release SHA, under the 
     '.name == "release-verification"',
   ])
     expect(proof).toContain(check)
-  const merge = `\${{ needs.prove-release.outputs.publish_sha }}`
-  for (const job of [build, publish, deploy])
-    expect(job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))?.with?.ref).toBe(
-      merge,
-    )
+  const merge = VALIDATED_RELEASE_SHA
+  for (const job of [build, publish, deploy]) expectValidatedReleaseCheckout(job)
   expect(
     publish?.steps?.find((step) => step.run === "bun run release:check --merge")?.env
       ?.RELEASE_HEAD_SHA,
@@ -739,9 +748,7 @@ test("a published version gets its GitHub release from the only job that may wri
       .filter(([, job]) => job?.permissions?.contents === "write")
       .map(([id]) => id),
   ).toEqual(["github-release"])
-  const checkout = release?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))
-  expect(checkout?.with?.ref).toBe(`\${{ needs.prove-release.outputs.publish_sha }}`)
-  expect(checkout?.with?.["persist-credentials"]).toBe(false)
+  expectValidatedReleaseCheckout(release)
   expect(release?.steps?.filter((step) => step.run?.includes("install"))).toEqual([])
   expect(release?.steps?.find((step) => step.name === GITHUB_RELEASE)?.env?.MERGE_SHA).toBe(
     `\${{ needs.prove-release.outputs.publish_sha }}`,
@@ -797,7 +804,6 @@ test("what npm serves is read back after the publish, without installing anythin
   expect(job?.needs).toEqual(["prove-release", "publish"])
   expect(job?.permissions).toEqual({ contents: "read" })
   expect(job?.steps?.filter((step) => step.run?.includes("install"))).toEqual([])
-  const checkout = job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"))
-  expect(checkout?.with?.ref).toBe(`\${{ needs.prove-release.outputs.publish_sha }}`)
+  expectValidatedReleaseCheckout(job)
   expect(job?.steps?.at(-1)?.run).toBe("bun scripts/verify-published.ts --wait 900")
 })

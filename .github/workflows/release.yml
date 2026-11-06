@@ -313,11 +313,22 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout the validated merge
+      # Keep the checkout action on a fixed branch: prove-release has validated the target commit,
+      # and selecting it from the complete main history avoids passing a job output into the action ref.
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -356,12 +367,20 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -422,11 +441,20 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -460,11 +488,20 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -494,11 +531,20 @@ jobs:
     env:
       MCP_PUBLISHER_VERSION: v1.8.7
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Confirm the MCP manifest matches the npm release
         id: manifest
@@ -615,11 +661,20 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
