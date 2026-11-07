@@ -378,9 +378,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
   "nifra-idempotency": 45.0,
   "nifra-effect-ledger": 42.3,
-  "nifra-mcp": 40.5,
+  // The `listen()` handle's `Symbol.asyncDispose` measured mcp 41,496 B and sse 42,097 B (Bun 1.4.4),
+  // 24 B and 11 B over their caps. Each takes the next 0.1 KiB step.
+  "nifra-mcp": 40.6,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 41.1,
+  "nifra-sse": 41.2,
   "nifra-valibot": 41.3,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.

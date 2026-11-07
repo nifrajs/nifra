@@ -708,3 +708,31 @@ describe("bodies the client abandons", () => {
     }
   })
 })
+
+describe("subscription disposal", () => {
+  test("using a subscription closes it once when the scope ends", () => {
+    const app = server()
+      .use(streaming())
+      .sse("/feed", { sse: post }, () => {})
+    let closes = 0
+    const api = client<typeof app>("http://x", {
+      fetch: (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          })
+        }),
+    })
+    {
+      using subscription = api.feed.subscribe(() => {}, {
+        onClose: () => {
+          closes++
+        },
+        onError: () => {},
+      })
+      expect(closes).toBe(0)
+      expect(subscription).toBeDefined()
+    }
+    expect(closes).toBe(1)
+  })
+})

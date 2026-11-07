@@ -36,6 +36,8 @@ export interface Scheduler {
   start(checkIntervalMs?: number): void
   /** Stop checking. In-flight handlers are left to finish (graceful). */
   stop(): void
+  /** `using scheduler = createScheduler()`: the same as `stop()`. */
+  [Symbol.dispose](): void
   /** Run every job DUE at `now` that hasn't fired this minute. Exposed for tests + custom drivers. */
   tick(now?: Date): void
   /** Fire a job immediately by name, off-schedule (e.g. a manual admin trigger). No-op if unknown. */
@@ -127,6 +129,9 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler {
         clearInterval(timer)
         timer = undefined
       }
+    },
+    [Symbol.dispose]() {
+      scheduler.stop()
     },
     runNow(name) {
       const job = jobs.get(name)

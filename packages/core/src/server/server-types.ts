@@ -396,6 +396,8 @@ export interface RunningServer {
   readonly hostname: string
   readonly pendingRequests: number
   stop(closeActiveConnections?: boolean): void
+  /** `await using server = app.listen()`: the app's graceful `stop()` with default options, not Bun's raw one. */
+  [Symbol.asyncDispose](): Promise<void>
   /** Bun's native topic broadcast, present on the Bun `Server` handle. `app.publish` delegates to it
    * in native-pubsub mode; absent on other runtimes' running-server views. */
   publish?(topic: string, data: string | ArrayBufferView | ArrayBuffer): number

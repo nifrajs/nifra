@@ -104,6 +104,8 @@ export interface SubscribeOptions<I extends RouteInfo> {
 export interface Subscription {
   /** Stop the subscription: aborts the live stream and cancels any pending reconnect. */
   close(): void
+  /** `using sub = client.x.subscribe(...)`: the same as `close()`. */
+  [Symbol.dispose](): void
 }
 
 type SubscribeCall<I extends RouteInfo> = (
@@ -175,6 +177,8 @@ export interface WsHandle<In, Out> {
   /** Resolves when the socket is open (rejects on a connect failure). */
   readonly opened: Promise<void>
   close(code?: number, reason?: string): void
+  /** `using socket = client.x.ws()`: closes with the default code, as `close()` does. */
+  [Symbol.dispose](): void
   /** The underlying socket, for anything off the typed contract (binary frames, bufferedAmount…). */
   readonly raw: WebSocket
 }

@@ -88,6 +88,8 @@ export interface DenoServer {
    * is force-closed at the deadline too. Mirrors nifra's Bun `stop()`.
    */
   stop(options?: DenoStopOptions): Promise<void>
+  /** `await using server = await serve(app)`: `stop()` with default options. */
+  [Symbol.asyncDispose](): Promise<void>
 }
 
 /** Agrees with core's `SERVER_LIFECYCLE` by the string alone; the stop tests fail on drift. */
@@ -327,7 +329,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
 
   // `addr` is populated synchronously on the returned server (verified via spike).
   const addr = httpServer.addr as Deno.NetAddr
-  return Promise.resolve({ port: addr.port, stop })
+  return Promise.resolve({ port: addr.port, stop, [Symbol.asyncDispose]: () => stop() })
 }
 
 function internalError(): Response {

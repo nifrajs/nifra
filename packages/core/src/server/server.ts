@@ -7902,6 +7902,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           },
         })) as unknown as RunningServer
     this.bunServer = running
+    running[Symbol.asyncDispose] = () => this.stop()
     // Bind `app.publish` to Bun's native broadcast now that the server handle exists. Guarded on the
     // method's presence so a runtime whose handle lacks it simply keeps the registry path. Cleared
     // first: a mounted app may have gained a WebSocket route since an earlier `listen()`.

@@ -5083,7 +5083,7 @@
     "name": "DenoServer",
     "kind": "interface",
     "package": "@nifrajs/deno",
-    "signature": "export interface DenoServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Run the app's `onStopping` hooks, keep serving for `delayMs`, then stop accepting connections,\n     * let in-flight requests drain (up to `drainMs`), force-close stragglers, and run the app's\n     * `onStop` hooks. A request is in flight until its whole response body is sent, so a live stream\n     * is force-closed at the deadline too. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: DenoStopOptions): Promise<void>;\n}"
+    "signature": "export interface DenoServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Run the app's `onStopping` hooks, keep serving for `delayMs`, then stop accepting connections,\n     * let in-flight requests drain (up to `drainMs`), force-close stragglers, and run the app's\n     * `onStop` hooks. A request is in flight until its whole response body is sent, so a live stream\n     * is force-closed at the deadline too. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: DenoStopOptions): Promise<void>;\n    /** `await using server = await serve(app)`: `stop()` with default options. */\n    [Symbol.asyncDispose](): Promise<void>;\n}"
   },
   {
     "name": "DenoStopOptions",
@@ -10713,7 +10713,7 @@
     "name": "NodeServer",
     "kind": "interface",
     "package": "@nifrajs/node",
-    "signature": "export interface NodeServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Run the app's `onStopping` hooks, keep serving for `delayMs`, then stop accepting connections,\n     * let in-flight requests drain (up to `drainMs`), force-close stragglers + idle keep-alives, and\n     * run the app's `onStop` hooks. Open WebSockets get a 1001 close when the drain starts and are\n     * terminated if still open at the deadline. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: NodeStopOptions): Promise<void>;\n}"
+    "signature": "export interface NodeServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Run the app's `onStopping` hooks, keep serving for `delayMs`, then stop accepting connections,\n     * let in-flight requests drain (up to `drainMs`), force-close stragglers + idle keep-alives, and\n     * run the app's `onStop` hooks. Open WebSockets get a 1001 close when the drain starts and are\n     * terminated if still open at the deadline. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: NodeStopOptions): Promise<void>;\n    /** `await using server = await serve(app)`: `stop()` with default options. */\n    [Symbol.asyncDispose](): Promise<void>;\n}"
   },
   {
     "name": "NodeStopOptions",
@@ -14560,14 +14560,14 @@
     "name": "RunningServer",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface RunningServer {\n    readonly port: number;\n    readonly hostname: string;\n    readonly pendingRequests: number;\n    stop(closeActiveConnections?: boolean): void;\n    /** Bun's native topic broadcast, present on the Bun `Server` handle. `app.publish` delegates to it\n     * in native-pubsub mode; absent on other runtimes' running-server views. */\n    publish?(topic: string, data: string | ArrayBufferView | ArrayBuffer): number;\n}",
+    "signature": "export interface RunningServer {\n    readonly port: number;\n    readonly hostname: string;\n    readonly pendingRequests: number;\n    stop(closeActiveConnections?: boolean): void;\n    /** `await using server = app.listen()`: the app's graceful `stop()` with default options, not Bun's raw one. */\n    [Symbol.asyncDispose](): Promise<void>;\n    /** Bun's native topic broadcast, present on the Bun `Server` handle. `app.publish` delegates to it\n     * in native-pubsub mode; absent on other runtimes' running-server views. */\n    publish?(topic: string, data: string | ArrayBufferView | ArrayBuffer): number;\n}",
     "doc": "/**\n * The handle `listen()` returns - the slice of Bun's server nifra holds and exposes.\n * Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type\n * surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.\n */"
   },
   {
     "name": "RunningServer",
     "kind": "interface",
     "package": "nifra",
-    "signature": "export interface RunningServer {\n    readonly port: number;\n    readonly hostname: string;\n    readonly pendingRequests: number;\n    stop(closeActiveConnections?: boolean): void;\n    /** Bun's native topic broadcast, present on the Bun `Server` handle. `app.publish` delegates to it\n     * in native-pubsub mode; absent on other runtimes' running-server views. */\n    publish?(topic: string, data: string | ArrayBufferView | ArrayBuffer): number;\n}",
+    "signature": "export interface RunningServer {\n    readonly port: number;\n    readonly hostname: string;\n    readonly pendingRequests: number;\n    stop(closeActiveConnections?: boolean): void;\n    /** `await using server = app.listen()`: the app's graceful `stop()` with default options, not Bun's raw one. */\n    [Symbol.asyncDispose](): Promise<void>;\n    /** Bun's native topic broadcast, present on the Bun `Server` handle. `app.publish` delegates to it\n     * in native-pubsub mode; absent on other runtimes' running-server views. */\n    publish?(topic: string, data: string | ArrayBufferView | ArrayBuffer): number;\n}",
     "doc": "/**\n * The handle `listen()` returns - the slice of Bun's server nifra holds and exposes.\n * Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type\n * surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.\n */"
   },
   {
@@ -14949,7 +14949,7 @@
     "name": "Scheduler",
     "kind": "interface",
     "package": "@nifrajs/cron",
-    "signature": "export interface Scheduler {\n    /** Register a job. Throws `CronError` now (not at fire time) on a bad expression or duplicate name. */\n    add(name: string, expression: string, handler: CronHandler): Scheduler;\n    /** Begin checking on an interval (default 15s - well under a minute, so no minute is missed). */\n    start(checkIntervalMs?: number): void;\n    /** Stop checking. In-flight handlers are left to finish (graceful). */\n    stop(): void;\n    /** Run every job DUE at `now` that hasn't fired this minute. Exposed for tests + custom drivers. */\n    tick(now?: Date): void;\n    /** Fire a job immediately by name, off-schedule (e.g. a manual admin trigger). No-op if unknown. */\n    runNow(name: string): void;\n    /** Registered job names, in insertion order. */\n    readonly jobNames: readonly string[];\n}"
+    "signature": "export interface Scheduler {\n    /** Register a job. Throws `CronError` now (not at fire time) on a bad expression or duplicate name. */\n    add(name: string, expression: string, handler: CronHandler): Scheduler;\n    /** Begin checking on an interval (default 15s - well under a minute, so no minute is missed). */\n    start(checkIntervalMs?: number): void;\n    /** Stop checking. In-flight handlers are left to finish (graceful). */\n    stop(): void;\n    /** `using scheduler = createScheduler()`: the same as `stop()`. */\n    [Symbol.dispose](): void;\n    /** Run every job DUE at `now` that hasn't fired this minute. Exposed for tests + custom drivers. */\n    tick(now?: Date): void;\n    /** Fire a job immediately by name, off-schedule (e.g. a manual admin trigger). No-op if unknown. */\n    runNow(name: string): void;\n    /** Registered job names, in insertion order. */\n    readonly jobNames: readonly string[];\n}"
   },
   {
     "name": "SchedulerOptions",
@@ -16550,7 +16550,7 @@
     "name": "Subscription",
     "kind": "interface",
     "package": "@nifrajs/client",
-    "signature": "export interface Subscription {\n    /** Stop the subscription: aborts the live stream and cancels any pending reconnect. */\n    close(): void;\n}"
+    "signature": "export interface Subscription {\n    /** Stop the subscription: aborts the live stream and cancels any pending reconnect. */\n    close(): void;\n    /** `using sub = client.x.subscribe(...)`: the same as `close()`. */\n    [Symbol.dispose](): void;\n}"
   },
   {
     "name": "SvelteUI",
@@ -17786,7 +17786,7 @@
     "name": "Worker",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface Worker {\n    /** Stop polling and await every job in flight (graceful). */\n    stop(): Promise<void>;\n    readonly running: boolean;\n}"
+    "signature": "export interface Worker {\n    /** Stop polling and await every job in flight (graceful). */\n    stop(): Promise<void>;\n    /** `await using worker = queue.start()`: the same as `stop()`. */\n    [Symbol.asyncDispose](): Promise<void>;\n    readonly running: boolean;\n}"
   },
   {
     "name": "WorkerOptions",
@@ -17861,7 +17861,7 @@
     "name": "WsHandle",
     "kind": "interface",
     "package": "@nifrajs/client",
-    "signature": "export interface WsHandle<In, Out> {\n    /** Send one typed frame (JSON-encoded). Queued until the socket opens, so it never throws. */\n    send(message: In): void;\n    /** Async-iterate incoming typed frames. Ends when the socket closes (or `signal` aborts). */\n    messages(options?: {\n        signal?: AbortSignal;\n    }): AsyncIterableIterator<Out>;\n    /** Callback form of {@link messages}; returns an unsubscribe. */\n    onMessage(callback: (message: Out) => void): () => void;\n    /** Resolves when the socket is open (rejects on a connect failure). */\n    readonly opened: Promise<void>;\n    close(code?: number, reason?: string): void;\n    /** The underlying socket, for anything off the typed contract (binary frames, bufferedAmount…). */\n    readonly raw: WebSocket;\n}",
+    "signature": "export interface WsHandle<In, Out> {\n    /** Send one typed frame (JSON-encoded). Queued until the socket opens, so it never throws. */\n    send(message: In): void;\n    /** Async-iterate incoming typed frames. Ends when the socket closes (or `signal` aborts). */\n    messages(options?: {\n        signal?: AbortSignal;\n    }): AsyncIterableIterator<Out>;\n    /** Callback form of {@link messages}; returns an unsubscribe. */\n    onMessage(callback: (message: Out) => void): () => void;\n    /** Resolves when the socket is open (rejects on a connect failure). */\n    readonly opened: Promise<void>;\n    close(code?: number, reason?: string): void;\n    /** `using socket = client.x.ws()`: closes with the default code, as `close()` does. */\n    [Symbol.dispose](): void;\n    /** The underlying socket, for anything off the typed contract (binary frames, bufferedAmount…). */\n    readonly raw: WebSocket;\n}",
     "doc": "/**\n * A live typed WebSocket connection to an `app.ws()` route. `send` accepts the route's\n * `messageSchema` input type (validated server-side at the trust boundary); received frames are\n * typed from its `sendSchema` and JSON-parsed. Binary frames are not part of the typed contract\n * and are ignored by `messages()`/`onMessage` - use `raw` for them.\n */"
   },
   {

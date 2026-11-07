@@ -1020,7 +1020,7 @@ function subscribeSse(
     }
   })()
 
-  return { close }
+  return { close, [Symbol.dispose]: close }
 }
 
 // A registry is immutable once built, so a custom codec's registry is built once per client and
