@@ -47,6 +47,11 @@ The adapter uses Nifra's Node target, so the built server and its static assets 
 normal build and portability checks. The adapter only adds deployment metadata. It supports ordinary
 SSR; it currently declares no support for the coordinated component pipeline.
 
+The emitted Dockerfile sets `NODE_ENV=production`, and production refuses in-memory stores. An app
+that uses one (the site scaffold's rate limiter, for example) must configure a shared store or, for
+a single machine, allow it explicitly: the scaffold reads `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`, set
+with `fly secrets set`.
+
 Adapters execute as trusted build-time code in the Nifra CLI process. Their API is versioned, their
 output is declarative, and Nifra rejects unsafe paths, collisions, credential findings, and failed
 builds before replacing the last successful deploy directory.

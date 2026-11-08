@@ -398,16 +398,8 @@ export async function buildWithDeploymentAdapter<T>(
       renameSync(outDir, previousOutDir)
       previousMoved = true
     }
-    try {
-      renameSync(stagingOutDir, outDir)
-      published = true
-    } catch (error) {
-      if (previousMoved) {
-        renameSync(previousOutDir, outDir)
-        previousMoved = false
-      }
-      throw error
-    }
+    renameSync(stagingOutDir, outDir)
+    published = true
     if (previousMoved) {
       try {
         rmSync(previousOutDir, { recursive: true, force: true })
@@ -424,12 +416,19 @@ export async function buildWithDeploymentAdapter<T>(
       baseTarget: adapter.baseTarget,
     }
   } catch (error) {
-    if (previousMoved && !published && lstatIfPresent(outDir) === undefined) {
-      try {
-        renameSync(previousOutDir, outDir)
-      } catch {
+    if (previousMoved && !published) {
+      let restored = false
+      // Another writer may have recreated outDir since the backup moved; never overwrite it.
+      if (lstatIfPresent(outDir) === undefined) {
+        try {
+          renameSync(previousOutDir, outDir)
+          restored = true
+        } catch {
+          // Falls through to keep the backup; the original failure stays reachable as `cause`.
+        }
+      }
+      if (!restored) {
         preserveStage = true
-        // The original failure stays reachable as `cause`; the user needs to know where the backup is.
         throw new Error(
           `[nifra/web] could not restore the previous output; it is kept at ${previousOutDir}`,
           { cause: error },

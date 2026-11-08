@@ -74,16 +74,13 @@ export default toFetchHandler(app)`
 const FLY_SETUP = `bun add @nifrajs/deploy-fly @nifrajs/node
 fly apps create my-nifra-app # once, before the first deploy`
 
-const FLY = `// nifra.config.ts - install both packages and register deploymentAdapter below
-// backend/framework.ts defines and exports the runtime adapter and clientModule.
+const FLY = `// nifra.config.ts - keep your existing adapter and clientModule exports, and add:
 import { flyAdapter } from "@nifrajs/deploy-fly"
-import { adapter, clientModule } from "./backend/framework.ts"
-export { adapter, clientModule }
 
 export const target = "fly"
 export const deploymentAdapter = {
   adapter: flyAdapter,
-  options: { app: "my-nifra-app", primaryRegion: "iad", healthCheckPath: "/healthz" },
+  options: { app: "my-nifra-app", primaryRegion: "iad" },
 }
 
 // Build locally; then deploy the output directory yourself.
@@ -207,6 +204,12 @@ export default function Deployment() {
         coordinated component pipeline; unsupported combinations fail before the previous output is
         replaced. Set Fly's optional <code>healthCheckPath</code> only when that route returns 2xx
         while the app is ready.
+      </p>
+      <p>
+        The emitted Dockerfile sets <code>NODE_ENV=production</code>, and production refuses
+        in-memory stores. An app that uses one, such as the site scaffold's rate limiter, must
+        configure a shared store, or for a single machine allow it explicitly (the scaffold reads{" "}
+        <code>NIFRA_ALLOW_MEMORY_RATE_LIMIT=true</code>, set with <code>fly secrets set</code>).
       </p>
       <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on

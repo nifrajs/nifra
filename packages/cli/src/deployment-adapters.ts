@@ -4,6 +4,13 @@ import { dirname, resolve } from "node:path"
 const BASE_TARGETS = new Set(["bun", "node", "deno", "cloudflare", "vercel", "static"])
 const PACKAGE_NAME = /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i
 
+const DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+]
+
 const isBaseTarget = (value: unknown): value is DeploymentAdapterMetadata["baseTarget"] =>
   typeof value === "string" && BASE_TARGETS.has(value)
 
@@ -35,22 +42,6 @@ export function readDeploymentAdapterMetadata(
   appRoot: string,
   id: string,
 ): DeploymentAdapterMetadata | undefined {
-  const rootPackage = readRecord(resolve(appRoot, "package.json"))
-  if (rootPackage === undefined) return undefined
-  const dependencyNames = new Set<string>()
-  for (const field of [
-    "dependencies",
-    "devDependencies",
-    "optionalDependencies",
-    "peerDependencies",
-  ]) {
-    const dependencies = rootPackage[field]
-    if (typeof dependencies !== "object" || dependencies === null || Array.isArray(dependencies))
-      continue
-    for (const name of Object.keys(dependencies))
-      if (PACKAGE_NAME.test(name)) dependencyNames.add(name)
-  }
-
   const packageRoots: string[] = []
   let directory = resolve(appRoot)
   for (;;) {
@@ -58,6 +49,19 @@ export function readDeploymentAdapterMetadata(
     const parent = dirname(directory)
     if (parent === directory) break
     directory = parent
+  }
+  // A workspace root can declare the adapter for an app package that does not repeat it.
+  const dependencyNames = new Set<string>()
+  for (const packageRoot of packageRoots) {
+    const manifest = readRecord(resolve(packageRoot, "package.json"))
+    if (manifest === undefined) continue
+    for (const field of DEPENDENCY_FIELDS) {
+      const dependencies = manifest[field]
+      if (typeof dependencies !== "object" || dependencies === null || Array.isArray(dependencies))
+        continue
+      for (const name of Object.keys(dependencies))
+        if (PACKAGE_NAME.test(name)) dependencyNames.add(name)
+    }
   }
   const matches: DeploymentAdapterMetadata[] = []
   for (const packageName of dependencyNames) {

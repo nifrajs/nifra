@@ -424,3 +424,28 @@ test("names the kept backup when the previous output cannot be restored", async 
   expect(readFileSync(join(backup ?? "", "old.txt"), "utf8")).toBe("last good build")
   expect(failure instanceof Error ? String(failure.cause) : "").toContain("rename blocked")
 })
+
+test("keeps the backup when another writer recreated the output directory", async () => {
+  const rename = fs.renameSync
+  const racing = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+    if (String(to) === outDir && !fs.existsSync(outDir)) {
+      mkdirSync(outDir)
+      writeFileSync(join(outDir, "other.txt"), "other writer")
+    }
+    return rename(from, to)
+  })
+  let failure: unknown
+  try {
+    await build(adapter())
+  } catch (error) {
+    failure = error
+  } finally {
+    racing.mockRestore()
+  }
+
+  const message = failure instanceof Error ? failure.message : ""
+  const backup = /kept at (.+)$/.exec(message)?.[1]
+  expect(backup).toBeDefined()
+  expect(readFileSync(join(backup ?? "", "old.txt"), "utf8")).toBe("last good build")
+  expect(readFileSync(join(outDir, "other.txt"), "utf8")).toBe("other writer")
+})

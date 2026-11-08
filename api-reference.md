@@ -3530,6 +3530,7 @@ _No named exports (side-effect entrypoint)._
 ## @nifrajs/deploy-fly
 
 - **FlyOptions** _(interface)_ - `interface FlyOptions`
+  The options a project passes; only `app` is required.
 - **flyAdapter** _(const)_ - `flyAdapter: DeploymentTargetAdapter`
 
 ## @nifrajs/devtools

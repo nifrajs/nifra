@@ -6601,7 +6601,8 @@
     "name": "FlyOptions",
     "kind": "interface",
     "package": "@nifrajs/deploy-fly",
-    "signature": "interface FlyOptions {\n    readonly [key: string]: unknown;\n    readonly app: string;\n    readonly primaryRegion?: string;\n    readonly internalPort: number;\n    readonly forceHttps: boolean;\n    readonly healthCheckPath?: string;\n    readonly image: string;\n}"
+    "signature": "interface FlyOptions {\n    readonly app: string;\n    readonly primaryRegion?: string;\n    readonly internalPort?: number;\n    readonly forceHttps?: boolean;\n    readonly healthCheckPath?: string;\n    readonly image?: string;\n}",
+    "doc": "/** The options a project passes; only `app` is required. */"
   },
   {
     "name": "FontAsset",

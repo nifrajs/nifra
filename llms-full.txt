@@ -7668,16 +7668,13 @@ fly apps create my-nifra-app # once, before the first deploy
 ```
 
 ```ts
-// nifra.config.ts - install both packages and register deploymentAdapter below
-// backend/framework.ts defines and exports the runtime adapter and clientModule.
+// nifra.config.ts - keep your existing adapter and clientModule exports, and add:
 import { flyAdapter } from "@nifrajs/deploy-fly"
-import { adapter, clientModule } from "./backend/framework.ts"
-export { adapter, clientModule }
 
 export const target = "fly"
 export const deploymentAdapter = {
   adapter: flyAdapter,
-  options: { app: "my-nifra-app", primaryRegion: "iad", healthCheckPath: "/healthz" },
+  options: { app: "my-nifra-app", primaryRegion: "iad" },
 }
 
 // Build locally; then deploy the output directory yourself.
@@ -7693,6 +7690,11 @@ running in the CLI process. Each adapter must explicitly declare whether it supp
 coordinated component pipeline; unsupported combinations fail before the previous output is
 replaced. Set Fly's optional `healthCheckPath` only when that route returns 2xx
 while the app is ready.
+
+The emitted Dockerfile sets `NODE_ENV=production`, and production refuses
+in-memory stores. An app that uses one, such as the site scaffold's rate limiter, must
+configure a shared store, or for a single machine allow it explicitly (the scaffold reads
+`NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`, set with `fly secrets set`).
 
 The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
 Cloudflare and Vercel the platform serves it.
@@ -18850,6 +18852,11 @@ adapter options. Nifra scans emitted adapter files for credentials before publis
 The adapter uses Nifra's Node target, so the built server and its static assets stay under Nifra's
 normal build and portability checks. The adapter only adds deployment metadata. It supports ordinary
 SSR; it currently declares no support for the coordinated component pipeline.
+
+The emitted Dockerfile sets `NODE_ENV=production`, and production refuses in-memory stores. An app
+that uses one (the site scaffold's rate limiter, for example) must configure a shared store or, for
+a single machine, allow it explicitly: the scaffold reads `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`, set
+with `fly secrets set`.
 
 Adapters execute as trusted build-time code in the Nifra CLI process. Their API is versioned, their
 output is declarative, and Nifra rejects unsafe paths, collisions, credential findings, and failed

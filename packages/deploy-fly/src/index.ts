@@ -1,6 +1,16 @@
 import type { DeploymentAdapterContext, DeploymentTargetAdapter } from "@nifrajs/web/build"
 
+/** The options a project passes; only `app` is required. */
 interface FlyOptions {
+  readonly app: string
+  readonly primaryRegion?: string
+  readonly internalPort?: number
+  readonly forceHttps?: boolean
+  readonly healthCheckPath?: string
+  readonly image?: string
+}
+
+interface ResolvedFlyOptions {
   readonly [key: string]: unknown
   readonly app: string
   readonly primaryRegion?: string
@@ -16,7 +26,7 @@ const IMAGE_REFERENCE =
   /^[a-z0-9][a-z0-9._-]*(?::[0-9]+)?(?:\/[a-z0-9._-]+)*(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?(?:@sha256:[a-f0-9]{64})?$/
 
 /** Parse the Fly-specific settings and fill defaults before Nifra begins a build. */
-function parseOptions(input: unknown): FlyOptions {
+function parseOptions(input: unknown): ResolvedFlyOptions {
   if (typeof input !== "object" || input === null || Array.isArray(input))
     throw new Error("[nifra/deploy-fly] options must be an object with an `app` name")
   const values = new Map<string, unknown>()
@@ -99,7 +109,7 @@ function parseOptions(input: unknown): FlyOptions {
 }
 
 /** Render validated options as a Fly HTTP service manifest. */
-function flyToml(options: FlyOptions): string {
+function flyToml(options: ResolvedFlyOptions): string {
   return [
     `app = ${JSON.stringify(options.app)}`,
     ...(options.primaryRegion !== undefined
@@ -125,7 +135,7 @@ function flyToml(options: FlyOptions): string {
 }
 
 /** Render a non-root Node image whose listener port matches the Fly service configuration. */
-function dockerfile(options: FlyOptions): string {
+function dockerfile(options: ResolvedFlyOptions): string {
   return [
     `FROM ${options.image}`,
     "ENV NODE_ENV=production",
