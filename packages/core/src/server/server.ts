@@ -1549,6 +1549,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
   private bunServer: RunningServer | undefined
+  // The shutdown `stop()` last began, so a handle disposed mid-shutdown waits for it rather than for nothing.
+  private stopRun: Promise<void> | undefined
   // Bun's `pendingRequests` leaves out upgraded sockets, so `stop()` closes these itself.
   private bunSockets: Set<{ close(code?: number): void }> | undefined
   private signalHandler: (() => void) | undefined
@@ -7902,6 +7904,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           },
         })) as unknown as RunningServer
     this.bunServer = running
+    running[Symbol.asyncDispose] = () =>
+      this.bunServer === running ? this.stop() : (this.stopRun ?? Promise.resolve())
     // Bind `app.publish` to Bun's native broadcast now that the server handle exists. Guarded on the
     // method's presence so a runtime whose handle lacks it simply keeps the registry path. Cleared
     // first: a mounted app may have gained a WebSocket route since an earlier `listen()`.
@@ -7930,7 +7934,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * hooks after the drain. Open WebSockets get a 1001 close when the drain starts and the same
    * window to finish it; a socket opened after `stop()` began is closed at once.
    */
-  async stop({ drainMs = DEFAULT_DRAIN_MS, delayMs = 0 }: StopOptions = {}): Promise<void> {
+  stop(options: StopOptions = {}): Promise<void> {
+    const owns = this.bunServer !== undefined
+    const run = this.stopListener(options)
+    if (owns) this.stopRun = run
+    return run
+  }
+
+  private async stopListener({
+    drainMs = DEFAULT_DRAIN_MS,
+    delayMs = 0,
+  }: StopOptions): Promise<void> {
     const onSignal = this.signalHandler
     if (onSignal !== undefined) {
       this.signalHandler = undefined

@@ -1196,3 +1196,46 @@ Deno.test("dot segments are routed as sent unless normalizeTarget is set", async
     await on.stop({ drainMs: 0 })
   }
 })
+
+Deno.test("await using a serve() handle runs the app's stop hooks when the scope ends", async () => {
+  const log: string[] = []
+  const app = server()
+    .get("/", () => "ok")
+    .onStop(() => {
+      log.push("stopped")
+    })
+  {
+    await using running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+    assertEquals((await fetch(`http://127.0.0.1:${running.port}/`)).status, 200)
+    assertEquals(log, [])
+  }
+  assertEquals(log, ["stopped"])
+})
+
+Deno.test("disposing during a shutdown that is under way waits for it", async () => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const log: string[] = []
+  const app = server()
+    .onStopping(async () => {
+      await gate
+    })
+    .onStop(() => {
+      log.push("stopped")
+    })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const stopping = running.stop()
+  const disposed = running[Symbol.asyncDispose]()
+  try {
+    const outcome = await Promise.race([disposed.then(() => "done"), Promise.resolve("pending")])
+    assertEquals(outcome, "pending")
+    assertEquals(log, [])
+  } finally {
+    release()
+  }
+  await disposed
+  await stopping
+  assertEquals(log, ["stopped"])
+})

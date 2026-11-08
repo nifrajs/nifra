@@ -751,6 +751,8 @@ export interface NodeServer {
    * terminated if still open at the deadline. Mirrors nifra's Bun `stop()`.
    */
   stop(options?: NodeStopOptions): Promise<void>
+  /** `await using server = await serve(app, { port: 3000 })`: `stop()` with default options. Waits for a shutdown already under way. */
+  [Symbol.asyncDispose](): Promise<void>
 }
 
 const DEFAULT_DRAIN_MS = 10_000
@@ -1381,10 +1383,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   }
 
   const lifecycle = lifecycleOf(app)
-  async function stop({
+  // The first stop's shutdown, which a handle disposed mid-shutdown waits for.
+  let shutdown: Promise<void> | undefined
+  function stop(options: NodeStopOptions = {}): Promise<void> {
+    const run = stopOnce(options)
+    shutdown ??= run
+    return run
+  }
+  async function stopOnce({
     drainMs = DEFAULT_DRAIN_MS,
     delayMs = 0,
-  }: NodeStopOptions = {}): Promise<void> {
+  }: NodeStopOptions): Promise<void> {
     if (closed) return // idempotent
     closed = true
     if (signals !== undefined) {
@@ -1418,7 +1427,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
         process.once("SIGTERM", onSignal)
         process.once("SIGINT", onSignal)
       }
-      resolve({ port, stop })
+      resolve({ port, stop, [Symbol.asyncDispose]: () => shutdown ?? stop() })
     }
     if (options.hostname === undefined) server.listen(options.port, onListening)
     else server.listen(options.port, options.hostname, onListening)

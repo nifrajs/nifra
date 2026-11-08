@@ -88,6 +88,8 @@ export interface DenoServer {
    * is force-closed at the deadline too. Mirrors nifra's Bun `stop()`.
    */
   stop(options?: DenoStopOptions): Promise<void>
+  /** `await using server = await serve(app, { port: 3000 })`: `stop()` with default options. Waits for a shutdown already under way. */
+  [Symbol.asyncDispose](): Promise<void>
 }
 
 /** Agrees with core's `SERVER_LIFECYCLE` by the string alone; the stop tests fail on drift. */
@@ -287,10 +289,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   }
 
   const lifecycle = lifecycleOf(app)
-  async function stop({
+  // The first stop's shutdown, which a handle disposed mid-shutdown waits for.
+  let shutdown: Promise<void> | undefined
+  function stop(options: DenoStopOptions = {}): Promise<void> {
+    const run = stopOnce(options)
+    shutdown ??= run
+    return run
+  }
+  async function stopOnce({
     drainMs = DEFAULT_DRAIN_MS,
     delayMs = 0,
-  }: DenoStopOptions = {}): Promise<void> {
+  }: DenoStopOptions): Promise<void> {
     if (stopping) return // idempotent
     stopping = true
     if (signals !== undefined) {
@@ -327,7 +336,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
 
   // `addr` is populated synchronously on the returned server (verified via spike).
   const addr = httpServer.addr as Deno.NetAddr
-  return Promise.resolve({ port: addr.port, stop })
+  return Promise.resolve({
+    port: addr.port,
+    stop,
+    [Symbol.asyncDispose]: () => shutdown ?? stop(),
+  })
 }
 
 function internalError(): Response {
