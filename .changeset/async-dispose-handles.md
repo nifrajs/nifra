@@ -7,4 +7,4 @@
 "@nifrajs/client": minor
 ---
 
-Server, worker, scheduler, subscription, and socket handles work with `using` and `await using`: a Bun `listen()` handle, a Node or Deno `serve()` handle, a jobs worker, a cron scheduler, a client subscription, and a client WebSocket each stop when their scope ends.
+Server, worker, scheduler, subscription, and socket handles stop when their scope ends. Hold a Bun `listen()` handle, a Node or Deno `serve()` handle, or a jobs worker with `await using`; hold a cron scheduler, a client subscription, or a client WebSocket with `using`.

@@ -11909,11 +11909,14 @@ delay is the time a load balancer gets to see that and route elsewhere. Register
 To stop at the end of a scope instead of on a signal, hold the handle with
 `await using`. The handle `listen()` returns, the one
 `serve()` returns on Node and Deno, and the worker `@nifrajs/jobs`
-starts all stop when the scope ends, on a throw or an early return too. The server runs the
-app's graceful `stop()` with its default options, onStopping and onStop hooks
-included, not the runtime's raw stop. If a shutdown is already under way, disposal waits for
-that one rather than starting another. A `@nifrajs/cron` scheduler is synchronous,
-so it takes `using`.
+starts all stop when the scope ends, on a throw or an early return too. On Bun, disposal runs
+the app's graceful `app.stop()` with its default options, not Bun's raw stop. On
+Node and Deno it calls the `stop()` of the `serve()` handle, also with
+default options, which runs the same `onStopping` and `onStop` hooks and
+drains the same way; it does not call `app.stop()`, which would leave that listener
+open. If a shutdown is already under way, disposal waits for that one rather than starting
+another. A `@nifrajs/cron` scheduler is synchronous, so it takes
+`using`.
 
 ```ts
 import { server } from "@nifrajs/core"

@@ -356,11 +356,14 @@ export default function CustomServer() {
         To stop at the end of a scope instead of on a signal, hold the handle with{" "}
         <code>await using</code>. The handle <code>listen()</code> returns, the one{" "}
         <code>serve()</code> returns on Node and Deno, and the worker <code>@nifrajs/jobs</code>{" "}
-        starts all stop when the scope ends, on a throw or an early return too. The server runs the
-        app's graceful <code>stop()</code> with its default options, onStopping and onStop hooks
-        included, not the runtime's raw stop. If a shutdown is already under way, disposal waits for
-        that one rather than starting another. A <code>@nifrajs/cron</code> scheduler is synchronous,
-        so it takes <code>using</code>.
+        starts all stop when the scope ends, on a throw or an early return too. On Bun, disposal runs
+        the app's graceful <code>app.stop()</code> with its default options, not Bun's raw stop. On
+        Node and Deno it calls the <code>stop()</code> of the <code>serve()</code> handle, also with
+        default options, which runs the same <code>onStopping</code> and <code>onStop</code> hooks and
+        drains the same way; it does not call <code>app.stop()</code>, which would leave that listener
+        open. If a shutdown is already under way, disposal waits for that one rather than starting
+        another. A <code>@nifrajs/cron</code> scheduler is synchronous, so it takes{" "}
+        <code>using</code>.
       </p>
       <CodeBlock code={DISPOSE} />
       <p>
