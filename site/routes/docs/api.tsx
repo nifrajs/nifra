@@ -706,6 +706,12 @@ export default function Api() {
         <code>.ws()</code> throws.
       </p>
       <p>
+        A <code>.subscribe()</code> handle and a <code>.ws()</code> handle also close at the end of a
+        scope when held with <code>using</code>, the same as calling <code>close()</code>. A
+        browser without <code>Symbol.dispose</code> needs a polyfill first; <code>close()</code>{" "}
+        works without one.
+      </p>
+      <p>
         The same client runs in the browser and on the server. During SSR, a route's{" "}
         <a href={href({ to: "/docs/data" })}>loader</a> calls it <b>in-process</b> (no network hop) via{" "}
         <code>ctx.api</code>. Next: <a href={href({ to: "/docs/routing" })}>file routing</a>,{" "}

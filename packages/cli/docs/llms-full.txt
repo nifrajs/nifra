@@ -1772,6 +1772,11 @@ client sends nothing rather than reach a route the call does not name.
 `.subscribe()` reports it through `onError` and closes;
 `.ws()` throws.
 
+A `.subscribe()` handle and a `.ws()` handle also close at the end of a
+scope when held with `using`, the same as calling `close()`. A
+browser without `Symbol.dispose` needs a polyfill first; `close()`
+works without one.
+
 The same client runs in the browser and on the server. During SSR, a route's
 loader calls it **in-process** (no network hop) via
 `ctx.api`. Next: file routing,
@@ -11900,6 +11905,37 @@ delay is the time a load balancer gets to see that and route elsewhere. Register
 `app.onStopping(fn)` to stop a poller or queue consumer at the same point;
 `app.onStop(fn)` still runs after the drain, on Bun, Node and Deno alike.
 `delayMs + drainMs` has to fit in the kill grace period.
+
+To stop at the end of a scope instead of on a signal, hold the handle with
+`await using`. The handle `listen()` returns, the one
+`serve()` returns on Node and Deno, and the worker `@nifrajs/jobs`
+starts all stop when the scope ends, on a throw or an early return too. The server runs the
+app's graceful `stop()` with its default options, onStopping and onStop hooks
+included, not the runtime's raw stop. If a shutdown is already under way, disposal waits for
+that one rather than starting another. A `@nifrajs/cron` scheduler is synchronous,
+so it takes `using`.
+
+```ts
+import { server } from "@nifrajs/core"
+import { createScheduler } from "@nifrajs/cron"
+import { createQueue } from "@nifrajs/jobs"
+
+const app = server().get("/", () => "ok")
+const queue = createQueue()
+
+export async function runUntilDone(done: Promise<void>): Promise<void> {
+  await using running = app.listen(3000) // graceful stop() when the scope ends
+  await using worker = queue.start() // stops polling, waits for jobs in flight
+  using scheduler = createScheduler() // stop() when the scope ends
+  scheduler.start()
+  await done
+  console.log(running.port, worker.running)
+}
+```
+
+This needs a runtime and a TypeScript `lib` that know explicit resource management
+(`esnext.disposable`). Nifra's own declaration files reference that lib, so
+importing them is enough for the types.
 
 ### Letting check and assure read the app
 

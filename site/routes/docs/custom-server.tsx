@@ -85,7 +85,23 @@ await serve(app, {
   gracefulSignals: { drainMs: 8_000 },
 })`
 
-const BUILD_SERVER = `// doc-check: skip - fragment: a build script; the routes and entry paths are your app's.
+const DISPOSE = `import { server } from "@nifrajs/core"
+import { createScheduler } from "@nifrajs/cron"
+import { createQueue } from "@nifrajs/jobs"
+
+const app = server().get("/", () => "ok")
+const queue = createQueue()
+
+export async function runUntilDone(done: Promise<void>): Promise<void> {
+  await using running = app.listen(3000) // graceful stop() when the scope ends
+  await using worker = queue.start() // stops polling, waits for jobs in flight
+  using scheduler = createScheduler() // stop() when the scope ends
+  scheduler.start()
+  await done
+  console.log(running.port, worker.running)
+}`
+
+const BUILD_SERVER =`// doc-check: skip - fragment: a build script; the routes and entry paths are your app's.
 import { buildClient, buildServer } from "@nifrajs/web/build"
 
 const client = await buildClient({ routesDir: "routes", outDir: "dist/assets", clientModule })
@@ -335,6 +351,22 @@ export default function CustomServer() {
         <code>app.onStopping(fn)</code> to stop a poller or queue consumer at the same point;{" "}
         <code>app.onStop(fn)</code> still runs after the drain, on Bun, Node and Deno alike.{" "}
         <code>delayMs + drainMs</code> has to fit in the kill grace period.
+      </p>
+      <p>
+        To stop at the end of a scope instead of on a signal, hold the handle with{" "}
+        <code>await using</code>. The handle <code>listen()</code> returns, the one{" "}
+        <code>serve()</code> returns on Node and Deno, and the worker <code>@nifrajs/jobs</code>{" "}
+        starts all stop when the scope ends, on a throw or an early return too. The server runs the
+        app's graceful <code>stop()</code> with its default options, onStopping and onStop hooks
+        included, not the runtime's raw stop. If a shutdown is already under way, disposal waits for
+        that one rather than starting another. A <code>@nifrajs/cron</code> scheduler is synchronous,
+        so it takes <code>using</code>.
+      </p>
+      <CodeBlock code={DISPOSE} />
+      <p>
+        This needs a runtime and a TypeScript <code>lib</code> that know explicit resource management
+        (<code>esnext.disposable</code>). Nifra's own declaration files reference that lib, so
+        importing them is enough for the types.
       </p>
 
       <h2>Letting check and assure read the app</h2>
