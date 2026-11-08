@@ -55,6 +55,9 @@ test("nifra build resolves a public adapter target and emits a complete Fly pack
   expect(result.out).toContain("from output directory: fly deploy")
   expect(existsSync(join(root, "dist", "server.js"))).toBe(true)
   expect(existsSync(join(root, "dist", "assets", "manifest.json"))).toBe(true)
+  const server = readFileSync(join(root, "dist", "server.js"), "utf8")
+  expect(server).not.toContain("[http_service]")
+  expect(server).not.toContain("nifra-cli-test")
   expect(readFileSync(join(root, "dist", "Dockerfile"), "utf8")).toContain(
     'CMD ["node", "server.js"]',
   )
@@ -98,4 +101,40 @@ test("requires the configured custom target id instead of silently selecting Bun
   expect(result.out).toContain('deploymentAdapter "fly" is configured')
   expect(result.out).toContain('set target = "fly"')
   expect(readFileSync(join(root, "dist/keep.txt"), "utf8")).toBe("last good build")
+})
+
+test("an adapter that does not support the component pipeline fails before replacing output", async () => {
+  writeAppFile(root, "frontend/entry.client.ts", "export {}\n")
+  writeAppFile(root, "frontend/entry.backend.ts", "export {}\n")
+  writeAppFile(root, "dist/keep.txt", "last good build")
+  writeAppFile(
+    root,
+    "nifra.config.ts",
+    readFileSync(join(root, "nifra.config.ts"), "utf8") +
+      'export const componentPipeline = { adapter: "vue", entries: { client: "frontend/entry.client.ts", ssr: "frontend/entry.backend.ts" } }\n',
+  )
+
+  const result = await nifra("build", "--target", "fly")
+  expect(result.exit).not.toBe(0)
+  expect(result.out).toContain("does not support the component pipeline")
+  expect(readFileSync(join(root, "dist/keep.txt"), "utf8")).toBe("last good build")
+})
+
+test("an unknown target lists the built-in targets and says no adapter is configured", async () => {
+  writeAppFile(
+    root,
+    "nifra.config.ts",
+    'export { adapter, clientModule } from "./backend/framework.ts"\n',
+  )
+
+  const result = await nifra("build", "--target", "fyl")
+  expect(result.exit).not.toBe(0)
+  expect(result.out).toContain('unknown --target "fyl". Valid: bun, node')
+  expect(result.out).toContain("no deploymentAdapter is configured")
+})
+
+test("a target that is not the configured adapter id is refused", async () => {
+  const result = await nifra("build", "--target", "fyl")
+  expect(result.exit).not.toBe(0)
+  expect(result.out).toContain('does not match the configured deployment adapter "fly"')
 })

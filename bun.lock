@@ -404,13 +404,13 @@
     },
     "packages/deploy-fly": {
       "name": "@nifrajs/deploy-fly",
-      "version": "5.11.0",
+      "version": "5.12.1",
       "devDependencies": {
         "@nifrajs/web": "workspace:*",
         "typescript": "^6.0.3",
       },
       "peerDependencies": {
-        "@nifrajs/web": "^5.11.0",
+        "@nifrajs/web": "^5.12.1",
       },
     },
     "packages/devtools": {

@@ -1758,27 +1758,18 @@ const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
     const { readConfigTarget, writeConfigTarget } = await import("./config-target.ts")
     const current = readConfigTarget(dir)
     const requested = value.target ?? current ?? "bun"
+    // A custom id is accepted only when an installed package declares it, so a typo cannot be written.
+    const adapterMetadata = isBuildTarget(requested)
+      ? undefined
+      : readDeploymentAdapterMetadata(dir, requested)
     const target =
-      requested === "cf-pages"
-        ? parseBuildTarget(
-            requested,
-            value.target === undefined ? "target in nifra.config.ts" : "target",
-          )
-        : isBuildTarget(requested)
-          ? parseBuildTarget(
-              requested,
-              value.target === undefined ? "target in nifra.config.ts" : "target",
-            )
-          : /^[a-z][a-z0-9-]{1,62}$/.test(requested)
-            ? requested
-            : (() => {
-                throw new Error(`[nifra] invalid target "${requested}"`)
-              })()
+      adapterMetadata?.id ??
+      parseBuildTarget(
+        requested,
+        value.target === undefined ? "target in nifra.config.ts" : "target",
+      )
     const changed = value.target !== undefined && value.target !== current
     if (changed) writeConfigTarget(dir, target)
-    const adapterMetadata = isBuildTarget(target)
-      ? undefined
-      : readDeploymentAdapterMetadata(dir, target)
     const run = isBuildTarget(target)
       ? planBuildTarget(target, "dist").run
       : `custom deployment adapter "${target}"${adapterMetadata === undefined ? "" : ` (base ${adapterMetadata.baseTarget})`}; configure deploymentAdapter in nifra.config.ts`

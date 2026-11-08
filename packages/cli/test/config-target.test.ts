@@ -124,6 +124,41 @@ describe("nifra target", () => {
     expect(unknown.out).toContain('the target "cf-pages" is now "cloudflare"')
     expect(readConfigTarget(root)).toBe("node")
   })
+
+  test("switches to an installed adapter id and refuses one no package declares", async () => {
+    writeAppFile(root, "nifra.config.ts", 'export const clientModule = "x"\n')
+    writeAppFile(
+      root,
+      "package.json",
+      JSON.stringify({ dependencies: { "@nifrajs/deploy-fly": "workspace:*" } }),
+    )
+    writeAppFile(
+      root,
+      "node_modules/@nifrajs/deploy-fly/package.json",
+      JSON.stringify({
+        name: "@nifrajs/deploy-fly",
+        nifra: { deploymentAdapter: { apiVersion: 1, id: "fly", baseTarget: "node" } },
+      }),
+    )
+
+    const typo = await nifra("target", "fyl")
+    expect(typo.exit).not.toBe(0)
+    expect(typo.out).toContain('unknown target "fyl". Valid: bun, node')
+    expect(readConfigTarget(root)).toBeUndefined()
+
+    const switched = await nifra("target", "fly", "--json")
+    expect(switched.exit).toBe(0)
+    expect(JSON.parse(switched.out)).toMatchObject({
+      ok: true,
+      target: "fly",
+      changed: true,
+      run: expect.stringContaining("(base node)"),
+    })
+    expect(readConfigTarget(root)).toBe("fly")
+
+    const shown = await nifra("target")
+    expect(shown.out).toContain("target: fly")
+  })
 })
 
 test("build refuses a Vercel runtime after a non-Vercel target override, before wiping output", async () => {

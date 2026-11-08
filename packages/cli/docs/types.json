@@ -5108,7 +5108,7 @@
     "name": "DeploymentAdapterBuildInput",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface DeploymentAdapterBuildInput<T> {\n    readonly adapter: DeploymentTargetAdapter;\n    readonly appRoot: string;\n    readonly outDir: string;\n    readonly options?: unknown;\n    readonly secretExemptions?: readonly SecretExemption[];\n    /** External source paths the final output must never replace, especially an external `publicDir`. */\n    readonly protectedPaths: readonly string[];\n    readonly componentPipeline?: boolean;\n    /** The existing target builder, called with a fresh sibling staging directory. */\n    readonly build: (stagingOutDir: string) => Promise<T>;\n}"
+    "signature": "export interface DeploymentAdapterBuildInput<T> {\n    readonly adapter: DeploymentTargetAdapter;\n    readonly appRoot: string;\n    readonly outDir: string;\n    readonly options?: unknown;\n    readonly secretExemptions?: readonly SecretExemption[] | undefined;\n    /** External source paths the final output must never replace, especially an external `publicDir`. */\n    readonly protectedPaths: readonly string[];\n    readonly componentPipeline?: boolean;\n    /** The existing target builder, called with a fresh sibling staging directory. */\n    readonly build: (stagingOutDir: string) => Promise<T>;\n}"
   },
   {
     "name": "DeploymentAdapterBuildResult",
@@ -6601,7 +6601,7 @@
     "name": "FlyOptions",
     "kind": "interface",
     "package": "@nifrajs/deploy-fly",
-    "signature": "interface FlyOptions {\n    readonly [key: string]: unknown;\n    readonly app: string;\n    readonly primaryRegion?: string;\n    readonly internalPort: number;\n    readonly forceHttps: boolean;\n    readonly healthCheckPath?: string;\n}"
+    "signature": "interface FlyOptions {\n    readonly [key: string]: unknown;\n    readonly app: string;\n    readonly primaryRegion?: string;\n    readonly internalPort: number;\n    readonly forceHttps: boolean;\n    readonly healthCheckPath?: string;\n    readonly image: string;\n}"
   },
   {
     "name": "FontAsset",

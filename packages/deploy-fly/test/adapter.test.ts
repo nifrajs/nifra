@@ -52,6 +52,32 @@ test("Fly adapter requires an app name and rejects unknown or unsafe settings", 
   ).toThrow("same-origin path")
 })
 
+test("Fly adapter defaults to an unpinned image and accepts a pinned reference", async () => {
+  const emit = async (options: Record<string, unknown>) =>
+    (
+      await flyAdapter.emit({
+        adapterId: "fly",
+        appRoot: "/app",
+        baseTarget: "node",
+        outDir: "/app/dist",
+        options: flyAdapter.validateOptions({ app: "valid", ...options }),
+        result: {},
+      })
+    ).files[0]?.contents
+  expect(await emit({})).toStartWith("FROM node:22-slim\n")
+  expect(await emit({ image: "node:22.21.1-slim" })).toStartWith("FROM node:22.21.1-slim\n")
+  const digest = `node@sha256:${"a".repeat(64)}`
+  expect(await emit({ image: digest })).toStartWith(`FROM ${digest}\n`)
+  expect(await emit({ image: "registry.example.com:5000/team/node:22" })).toStartWith(
+    "FROM registry.example.com:5000/team/node:22\n",
+  )
+})
+
+test("Fly adapter refuses an image that could add Dockerfile instructions", () => {
+  for (const image of ["node:22\nRUN curl x | sh", "node 22", "", 5, "Node:22", "node@sha256:abc"])
+    expect(() => flyAdapter.validateOptions({ app: "valid", image })).toThrow("`image` must be")
+})
+
 test("packages a real Nifra Node build into a Fly deploy directory", async () => {
   const root = mkdtempSync(join(import.meta.dir, ".tmp-fly-build-"))
   try {

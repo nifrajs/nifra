@@ -854,12 +854,19 @@ async function buildForTarget(
   const adapterSelected = adapter !== undefined && requestedTarget === adapter.id
   if (!isBuildTarget(requestedTarget) && !adapterSelected) {
     if (adapter === undefined) {
-      throw new Error(
-        `[nifra] target "${requestedTarget}" is not built in and no deploymentAdapter is configured in nifra.config.ts`,
-      )
+      try {
+        parseBuildTarget(
+          requestedTarget,
+          flag === undefined ? "target in nifra.config.ts" : "--target",
+        )
+      } catch (error) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} (no deploymentAdapter is configured in nifra.config.ts)`,
+        )
+      }
     }
     throw new Error(
-      `[nifra] target "${requestedTarget}" does not match the configured deployment adapter "${adapter.id}"`,
+      `[nifra] target "${requestedTarget}" does not match the configured deployment adapter "${adapter?.id}"`,
     )
   }
   const target = adapterSelected
@@ -921,6 +928,7 @@ async function buildForTarget(
         appRoot: app.cwd,
         outDir,
         options: configuredAdapter?.options,
+        secretExemptions: fw.secretExemptions,
         componentPipeline: true,
         protectedPaths: [
           app.routesDir,
@@ -1046,7 +1054,7 @@ async function buildForTarget(
       appRoot: cwd,
       outDir,
       options: configuredAdapter?.options,
-      ...(fw.secretExemptions !== undefined ? { secretExemptions: fw.secretExemptions } : {}),
+      secretExemptions: fw.secretExemptions,
       protectedPaths: [
         routesDir,
         workDir,

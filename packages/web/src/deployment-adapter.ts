@@ -79,7 +79,7 @@ export interface DeploymentAdapterBuildInput<T> {
   readonly appRoot: string
   readonly outDir: string
   readonly options?: unknown
-  readonly secretExemptions?: readonly SecretExemption[]
+  readonly secretExemptions?: readonly SecretExemption[] | undefined
   /** External source paths the final output must never replace, especially an external `publicDir`. */
   readonly protectedPaths: readonly string[]
   readonly componentPipeline?: boolean
@@ -158,6 +158,9 @@ function assertOutputUnchanged(
     `[nifra/web] deployment adapter ${adapterId} modified its read-only base output; emit additions through the returned files array`,
   )
 }
+
+/** Fold case and Unicode normalization: macOS and Windows volumes treat these spellings as one path. */
+const collisionKey = (path: string): string => path.normalize("NFC").toLowerCase()
 
 /** Reject control bytes from paths and guidance that Nifra will persist or print. */
 function hasForbiddenControlCharacter(value: string, allowWhitespace = false): boolean {
@@ -240,7 +243,7 @@ function writeAdapterFiles(
   let totalBytes = 0
   const paths = new Map<string, { readonly path: string; readonly kind: "file" | "directory" }>(
     [...reservedPaths].map(([path, stat]) => [
-      path.toLowerCase(),
+      collisionKey(path),
       { path, kind: stat.startsWith("directory:") ? "directory" : "file" },
     ]),
   )
@@ -258,20 +261,20 @@ function writeAdapterFiles(
     const parts = file.path.split("/")
     for (let i = 1; i < parts.length; i += 1) {
       const prefix = parts.slice(0, i).join("/")
-      const prefixKey = prefix.toLowerCase()
+      const prefixKey = collisionKey(prefix)
       const existing = paths.get(prefixKey)
       if (existing !== undefined && existing.path !== prefix)
         throw new Error(
-          `[nifra/web] deployment adapter path ${file.path} has a case-insensitive directory collision at ${prefix}`,
+          `[nifra/web] deployment adapter path ${file.path} has a case or Unicode-normalization directory collision at ${prefix}`,
         )
       if (existing?.kind === "file")
         throw new Error(`[nifra/web] deployment adapter path crosses a file: ${prefix}`)
       if (existing === undefined) paths.set(prefixKey, { path: prefix, kind: "directory" })
     }
-    const portableKey = file.path.toLowerCase()
+    const portableKey = collisionKey(file.path)
     if (paths.has(portableKey))
       throw new Error(
-        `[nifra/web] deployment adapter file ${file.path} collides with an existing path, including case-insensitive filesystems`,
+        `[nifra/web] deployment adapter file ${file.path} collides with an existing path, including case-insensitive and normalizing filesystems`,
       )
     paths.set(portableKey, { path: file.path, kind: "file" })
     if (typeof file.contents !== "string" && !(file.contents instanceof Uint8Array))
@@ -420,15 +423,21 @@ export async function buildWithDeploymentAdapter<T>(
       adapterId: adapter.id,
       baseTarget: adapter.baseTarget,
     }
-  } finally {
+  } catch (error) {
     if (previousMoved && !published && lstatIfPresent(outDir) === undefined) {
       try {
         renameSync(previousOutDir, outDir)
       } catch {
-        // Preserve the original failure; the backup remains in stageRoot for manual recovery.
         preserveStage = true
+        // The original failure stays reachable as `cause`; the user needs to know where the backup is.
+        throw new Error(
+          `[nifra/web] could not restore the previous output; it is kept at ${previousOutDir}`,
+          { cause: error },
+        )
       }
     }
+    throw error
+  } finally {
     if (!preserveStage) {
       try {
         rmSync(stageRoot, { recursive: true, force: true })

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/deploy-fly",
-  "version": "5.11.0",
+  "version": "5.12.1",
   "description": "Build-time Fly.io packaging adapter for Nifra's Node target.",
   "keywords": [
     "nifra",
@@ -41,7 +41,7 @@
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
   },
   "peerDependencies": {
-    "@nifrajs/web": "^5.11.0"
+    "@nifrajs/web": "^5.12.1"
   },
   "devDependencies": {
     "@nifrajs/web": "workspace:*",

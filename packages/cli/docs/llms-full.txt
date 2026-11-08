@@ -18840,8 +18840,9 @@ cd dist
 fly deploy
 ```
 
-`app` is required. `primaryRegion`, `internalPort` (default `3000`), and `forceHttps` (default
-`true`), and `healthCheckPath` are optional. Set `healthCheckPath` only when the app has a route that
+`app` is required. `primaryRegion`, `internalPort` (default `3000`), `forceHttps` (default `true`),
+`healthCheckPath`, and `image` (default `node:22-slim`) are optional. Pin `image` to an exact tag or
+a `node@sha256:<digest>` reference for reproducible images. Set `healthCheckPath` only when the app has a route that
 returns 2xx while ready. The adapter emits Fly service-level checks for that path; without it, no
 health endpoint is assumed. Put secrets in Fly secrets with `fly secrets set`; do not put them in
 adapter options. Nifra scans emitted adapter files for credentials before publishing the output.

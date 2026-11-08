@@ -7,7 +7,13 @@ interface FlyOptions {
   readonly internalPort: number
   readonly forceHttps: boolean
   readonly healthCheckPath?: string
+  readonly image: string
 }
+
+const DEFAULT_IMAGE = "node:22-slim"
+// A registry path, then an optional tag and/or digest; no whitespace, so it cannot add Dockerfile lines.
+const IMAGE_REFERENCE =
+  /^[a-z0-9][a-z0-9._-]*(?::[0-9]+)?(?:\/[a-z0-9._-]+)*(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?(?:@sha256:[a-f0-9]{64})?$/
 
 /** Parse the Fly-specific settings and fill defaults before Nifra begins a build. */
 function parseOptions(input: unknown): FlyOptions {
@@ -15,7 +21,14 @@ function parseOptions(input: unknown): FlyOptions {
     throw new Error("[nifra/deploy-fly] options must be an object with an `app` name")
   const values = new Map<string, unknown>()
   for (const [key, value] of Object.entries(input)) values.set(key, value)
-  const allowed = new Set(["app", "primaryRegion", "internalPort", "forceHttps", "healthCheckPath"])
+  const allowed = new Set([
+    "app",
+    "primaryRegion",
+    "internalPort",
+    "forceHttps",
+    "healthCheckPath",
+    "image",
+  ])
   const unknown = [...values.keys()].filter((key) => !allowed.has(key))
   if (unknown.length > 0)
     throw new Error(`[nifra/deploy-fly] unknown option(s): ${unknown.join(", ")}`)
@@ -41,6 +54,11 @@ function parseOptions(input: unknown): FlyOptions {
   const forceHttps = values.get("forceHttps") ?? true
   if (typeof forceHttps !== "boolean")
     throw new Error("[nifra/deploy-fly] `forceHttps` must be a boolean")
+  const image = values.get("image") ?? DEFAULT_IMAGE
+  if (typeof image !== "string" || image.length > 200 || !IMAGE_REFERENCE.test(image))
+    throw new Error(
+      "[nifra/deploy-fly] `image` must be a container image reference such as `node:22-slim` or `node@sha256:<digest>`",
+    )
   const healthCheckPath = values.get("healthCheckPath")
   if (healthCheckPath !== undefined) {
     let parsed: URL | undefined
@@ -68,10 +86,12 @@ function parseOptions(input: unknown): FlyOptions {
     internalPort: number
     forceHttps: boolean
     healthCheckPath?: string
+    image: string
   } = {
     app,
     internalPort,
     forceHttps,
+    image,
   }
   if (primaryRegion !== undefined) normalized.primaryRegion = primaryRegion
   if (healthCheckPath !== undefined) normalized.healthCheckPath = healthCheckPath
@@ -107,7 +127,7 @@ function flyToml(options: FlyOptions): string {
 /** Render a non-root Node image whose listener port matches the Fly service configuration. */
 function dockerfile(options: FlyOptions): string {
   return [
-    "FROM node:22-slim",
+    `FROM ${options.image}`,
     "ENV NODE_ENV=production",
     `ENV PORT=${options.internalPort}`,
     "WORKDIR /app",

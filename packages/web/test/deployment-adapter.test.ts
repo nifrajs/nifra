@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
+import * as fs from "node:fs"
 import {
   existsSync,
   mkdirSync,
@@ -302,7 +303,27 @@ test("validates adapter file paths, types, limits, and portable path collisions"
         ],
         run: "deploy",
       },
-      /case-insensitive directory collision/,
+      /case or Unicode-normalization directory collision/,
+    ],
+    [
+      {
+        files: [
+          { path: "caf\u00e9/first.txt", contents: "first" },
+          { path: "cafe\u0301/second.txt", contents: "second" },
+        ],
+        run: "deploy",
+      },
+      /case or Unicode-normalization directory collision/,
+    ],
+    [
+      {
+        files: [
+          { path: "caf\u00e9.txt", contents: "first" },
+          { path: "cafe\u0301.txt", contents: "second" },
+        ],
+        run: "deploy",
+      },
+      /normalizing filesystems/,
     ],
   ]
 
@@ -379,4 +400,27 @@ test("refuses an output directory that is already a symlink", async () => {
   symlinkSync(safeTarget, outDir)
 
   await expect(build(adapter())).rejects.toThrow("is a symlink")
+})
+
+test("names the kept backup when the previous output cannot be restored", async () => {
+  const rename = fs.renameSync
+  const blocked = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+    if (String(to) === outDir) throw new Error("rename blocked")
+    return rename(from, to)
+  })
+  let failure: unknown
+  try {
+    await build(adapter())
+  } catch (error) {
+    failure = error
+  } finally {
+    blocked.mockRestore()
+  }
+
+  expect(failure).toBeInstanceOf(Error)
+  const message = failure instanceof Error ? failure.message : ""
+  const backup = /kept at (.+)$/.exec(message)?.[1]
+  expect(backup).toBeDefined()
+  expect(readFileSync(join(backup ?? "", "old.txt"), "utf8")).toBe("last good build")
+  expect(failure instanceof Error ? String(failure.cause) : "").toContain("rename blocked")
 })
