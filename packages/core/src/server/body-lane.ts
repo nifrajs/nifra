@@ -237,6 +237,46 @@ function formOriginAllowed(source: RequestSource, formOrigins: FormOrigins | und
 }
 
 /**
+ * Marks a route handler whose own code decides which origins may post a form to it (`@nifrajs/web`
+ * page actions, which take a per-route `allowedOrigins`). Such a route skips {@link guardsBodylessForm}:
+ * the default would refuse an origin the route allows.
+ */
+export const ROUTE_OWNS_FORM_ORIGIN: unique symbol = Symbol.for("nifra.route.ownsFormOrigin")
+
+const NO_FORM_GUARD_METHODS: ReadonlySet<string> = new Set([
+  "GET",
+  "HEAD",
+  "OPTIONS",
+  "TRACE",
+  "QUERY",
+])
+
+/**
+ * Whether a route needs {@link crossSiteFormRefused} ahead of its lanes: an unsafe method with no
+ * `schema.body`. A route with a body schema reads its body through {@link readBodyFramed}, which
+ * refuses a cross-site form itself; one without never reads a body, so nothing else would.
+ */
+export function guardsBodylessForm(method: string, hasBodySchema: boolean): boolean {
+  return !hasBodySchema && !NO_FORM_GUARD_METHODS.has(method.toUpperCase())
+}
+
+/**
+ * Whether a request is a cross-site HTML form post that {@link readBodyFramed} would refuse: a form
+ * media type whose `Origin` is another site's and not one of `formOrigins`. `Origin` is read first, so a
+ * request without one (any non-browser client) costs a single header lookup.
+ */
+export function crossSiteFormRefused(
+  source: RequestSource,
+  formOrigins: FormOrigins | undefined,
+): boolean {
+  if (headerOf(source, "origin") === null) return false
+  const contentType = headerOf(source, "content-type")
+  return (
+    contentType !== null && isFormMediaType(contentType) && !formOriginAllowed(source, formOrigins)
+  )
+}
+
+/**
  * The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded
  * with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep
  * their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and

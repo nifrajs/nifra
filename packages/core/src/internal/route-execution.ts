@@ -325,6 +325,9 @@ export interface RouteEntry {
   readonly onError: ReadonlyArray<RawErrorHandler>
   /** Registration-specialized hook shape: a route whose only lifecycle steps are derive, before and after hooks. */
   readonly lifecycleHookLane: "hooks" | undefined
+  /** An unsafe method with no body schema: no lane reads a body to refuse a cross-site form, so the
+   * dispatchers refuse it before the lanes run. */
+  readonly formOriginGuard: boolean
   /** Wraps the matched route lifecycle. Empty for the common no-around path. */
   readonly around: ReadonlyArray<RawAround>
   /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */

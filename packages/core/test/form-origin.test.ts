@@ -164,3 +164,130 @@ describe("a form body from another site", () => {
     expect(Object.values(out).flat()).toEqual(everyLane(200))
   })
 })
+
+// An unsafe route without `schema.body` never reads a body, so the body lane's check never runs
+// for it. Each shape below takes a different lane.
+function bodylessLanes(options: ServerOptions = {}) {
+  let ran = 0
+  const hit = () => {
+    ran++
+    return { ok: true }
+  }
+  const apps = {
+    bare: server(options)
+      .use(nodeDirect())
+      .post("/f", () => hit()),
+    context: server(options)
+      .use(nodeDirect())
+      .post("/f", (c) => (c.req.method === "POST" ? hit() : hit())),
+    deriveBefore: server(options)
+      .use(nodeDirect())
+      .derive(() => ({ seen: true }))
+      .beforeHandle(() => undefined)
+      .post("/f", () => hit()),
+    generic: server(options)
+      .use(nodeDirect())
+      .beforeHandle(() => undefined)
+      .beforeHandle(() => undefined)
+      .post("/f", () => hit()),
+    around: server(options)
+      .use(nodeDirect())
+      .around((_c, next) => next())
+      .post("/f", () => hit()),
+    put: server(options)
+      .use(nodeDirect())
+      .put("/f", () => hit()),
+    patch: server(options)
+      .use(nodeDirect())
+      .patch("/f", () => hit()),
+    delete: server(options)
+      .use(nodeDirect())
+      .delete("/f", () => hit()),
+  }
+  return { apps: Object.entries(apps), ran: () => ran }
+}
+
+function send(method: string, contentType: string | null, headers: Record<string, string> = {}) {
+  return new Request("http://app.test/f", {
+    method,
+    headers: { ...(contentType === null ? {} : { "content-type": contentType }), ...headers },
+    body: "a=1",
+  })
+}
+
+const METHOD_OF: Record<string, string> = { put: "PUT", patch: "PATCH", delete: "DELETE" }
+const methodOf = (name: string): string => METHOD_OF[name] ?? "POST"
+
+describe("a form post from another site to a route without a body schema", () => {
+  test("is refused with 403 on every lane and method, before the handler runs", async () => {
+    const { apps, ran } = bodylessLanes()
+    for (const type of [FORM, "multipart/form-data; boundary=b", "text/plain"]) {
+      for (const [name, app] of apps) {
+        const web = await app.fetch(send(methodOf(name), type, crossSite))
+        expect([name, web.status]).toEqual([name, 403])
+        expect(await web.json()).toEqual({ ok: false, error: "forbidden_origin" })
+        const node = await app.resolveNode(send(methodOf(name), type, crossSite))
+        expect([name, node.kind === "response" ? node.response.status : node.status]).toEqual([
+          name,
+          403,
+        ])
+      }
+    }
+    expect(ran()).toBe(0)
+  })
+
+  test("passes from its own origin, without an Origin, as JSON, and with no content type", async () => {
+    const { apps, ran } = bodylessLanes()
+    let expected = 0
+    for (const [name, app] of apps) {
+      for (const request of [
+        () => send(methodOf(name), FORM, { origin: "http://app.test" }),
+        () => send(methodOf(name), FORM),
+        () => send(methodOf(name), "application/json", crossSite),
+        () => send(methodOf(name), null, crossSite),
+      ]) {
+        expect([name, (await app.fetch(request())).status]).toEqual([name, 200])
+        expected++
+      }
+    }
+    expect(ran()).toBe(expected)
+  })
+
+  test("passes from a formOrigins origin and leaves a safe method alone", async () => {
+    const { apps } = bodylessLanes({ formOrigins: ["https://idp.test"] })
+    const bare = apps[0]![1]
+    expect((await bare.fetch(send("POST", FORM, { origin: "https://idp.test" }))).status).toBe(200)
+    expect((await bare.fetch(send("POST", FORM, crossSite))).status).toBe(403)
+    const reader = server().get("/f", () => ({ ok: true }))
+    const read = new Request("http://app.test/f", {
+      headers: { "content-type": FORM, ...crossSite },
+    })
+    expect((await reader.fetch(read)).status).toBe(200)
+  })
+
+  test("is refused by Bun's native route table too", async () => {
+    let ran = 0
+    const app = server().post("/f", () => {
+      ran++
+      return { ok: true }
+    })
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const url = `http://127.0.0.1:${instance.port}/f`
+      const post = (headers: Record<string, string>) =>
+        fetch(url, { method: "POST", headers: { "content-type": FORM, ...headers }, body: "a=1" })
+      expect((await post(crossSite)).status).toBe(403)
+      expect((await post({})).status).toBe(200)
+      expect(ran).toBe(1)
+    } finally {
+      instance.stop(true)
+    }
+  })
+  test("a handler that owns its origin policy is left to it", async () => {
+    const own = Object.assign(() => ({ ok: true }), {
+      [Symbol.for("nifra.route.ownsFormOrigin")]: true,
+    })
+    const app = server().post("/f", own)
+    expect((await app.fetch(send("POST", FORM, crossSite))).status).toBe(200)
+  })
+})

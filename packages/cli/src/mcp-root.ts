@@ -17,7 +17,7 @@
  * Everything here is pure state + fs probes; the I/O wiring lives in `./mcp.ts`.
  */
 
-import { readdir, readFile, stat } from "node:fs/promises"
+import { readdir, readFile, realpath, stat } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -100,8 +100,29 @@ async function workspacePatterns(dir: string): Promise<readonly string[] | null>
   if (!Array.isArray(list)) return null
   return list.filter(
     (pattern): pattern is string =>
-      typeof pattern === "string" && pattern !== "" && !pattern.startsWith("!"),
+      typeof pattern === "string" &&
+      pattern !== "" &&
+      !pattern.startsWith("!") &&
+      !patternLeavesRoot(pattern),
   )
+}
+
+/** An absolute pattern or one with a `..` segment names a directory outside the workspace root, so
+ * a manifest could otherwise make the server adopt a neighbouring project. */
+function patternLeavesRoot(pattern: string): boolean {
+  return (
+    isAbsolute(pattern) ||
+    /^([A-Za-z]:|[\\/~])/.test(pattern) ||
+    pattern.split(/[\\/]/).includes("..")
+  )
+}
+
+/** Whether `member` resolves, symlinks followed, to somewhere inside `rootReal`. */
+async function insideRoot(rootReal: string, member: string): Promise<boolean> {
+  const real = await realpath(member).catch(() => null)
+  if (real === null) return false
+  const rel = relative(rootReal, real)
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
 }
 
 /**
@@ -165,10 +186,11 @@ export async function workspaceMemberDirs(dir: string): Promise<string[] | null>
   if (patterns === null) return null
   const members = new Set<string>()
   const budget = { directories: MAX_WORKSPACE_DIRECTORIES }
+  const rootReal = await realpath(dir).catch(() => dir)
   for (const pattern of patterns) {
     for (const member of await workspaceMatches(dir, pattern, budget)) {
       if (members.size === MAX_WORKSPACE_MEMBERS) break
-      members.add(join(dir, member))
+      if (await insideRoot(rootReal, join(dir, member))) members.add(join(dir, member))
     }
   }
   return [...members]

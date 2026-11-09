@@ -226,6 +226,7 @@ test("the job that can publish runs no install script and nothing after the publ
   expect(deploy?.steps?.map((step) => step.name)).toEqual(
     expect.arrayContaining([
       "Smoke test published registry packages",
+      "Build the site",
       "Deploy site to Cloudflare Pages",
       "Probe production site",
     ]),
@@ -347,6 +348,7 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
   },
 )
 
+const BUILD = "Build the site"
 const DEPLOY = "Deploy site to Cloudflare Pages"
 const PROBE = "Probe production site"
 
@@ -354,7 +356,7 @@ test.skipIf(process.platform === "win32")(
   "the deployment carries its own stamp, written before wrangler deploys the site",
   () => {
     const steps = workflowJobs("release.yml")["deploy-site"]?.steps ?? []
-    const stamps = [DEPLOY, PROBE].map(
+    const stamps = [BUILD, PROBE].map(
       (name) => steps.find((step) => step.name === name)?.env?.DEPLOYMENT,
     )
     expect(stamps).toEqual([
@@ -368,17 +370,36 @@ test.skipIf(process.platform === "win32")(
         bun: "#!/bin/sh\nmkdir -p dist/assets\necho built > dist/index.html\n",
         bunx: `#!/bin/sh\ncat dist/assets/deployment.txt > "${join(dir, "deployed.txt")}"\n`,
       })
-      const deploy = Bun.spawnSync(["bash", "-e", "-c", releaseStep("deploy-site", DEPLOY)], {
-        cwd: join(dir, "site"),
-        env: { HOME: dir, PATH, DEPLOYMENT: "2.1" },
-      })
-      expect(deploy.exitCode).toBe(0)
+      for (const name of [BUILD, DEPLOY]) {
+        const step = Bun.spawnSync(["bash", "-e", "-c", releaseStep("deploy-site", name)], {
+          cwd: join(dir, "site"),
+          env: { HOME: dir, PATH, DEPLOYMENT: "2.1" },
+        })
+        expect(step.exitCode).toBe(0)
+      }
       expect(readFileSync(join(dir, "deployed.txt"), "utf8")).toBe("2.1\n")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   },
 )
+
+test.each([
+  "release.yml",
+  "site.yml",
+])("%s gives the Cloudflare credentials to the deploy step alone, after the build has run", (file) => {
+  const steps = workflowJobs(file)["deploy-site"]?.steps ?? []
+  const holders = steps
+    .filter((step) => Object.keys(step.env ?? {}).some((key) => key.startsWith("CLOUDFLARE_")))
+    .map((step) => step.name)
+  expect(holders).toEqual([DEPLOY])
+  const names = steps.map((step) => step.name)
+  expect(names.indexOf(BUILD)).toBeLessThan(names.indexOf(DEPLOY))
+  expect(steps.find((step) => step.name === DEPLOY)?.run).not.toMatch(/\bbun run\b/)
+  expect(JSON.stringify(steps.filter((step) => step.name !== DEPLOY))).not.toContain(
+    "secrets.CLOUDFLARE",
+  )
+})
 
 test.skipIf(process.platform === "win32")(
   "the site check passes once a healthy nifra.dev serves this deployment's stamp, not just the same pages",
@@ -463,6 +484,7 @@ test("site.yml deploys main by hand, in release.yml's publish queue, with deploy
     "Set up Bun",
     "Install",
     "Build the packages",
+    BUILD,
     DEPLOY,
     PROBE,
   ])
