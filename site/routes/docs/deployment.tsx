@@ -209,7 +209,13 @@ export default function Deployment() {
         The emitted Dockerfile sets <code>NODE_ENV=production</code>, and production refuses
         in-memory stores. An app that uses one, such as the site scaffold's rate limiter, must
         configure a shared store, or for a single machine allow it explicitly (the scaffold reads{" "}
-        <code>NIFRA_ALLOW_MEMORY_RATE_LIMIT=true</code>, set with <code>fly secrets set</code>).
+        <code>NIFRA_ALLOW_MEMORY_RATE_LIMIT=true</code>, set with <code>fly secrets set</code>). An
+        in-memory limiter keeps one quota per machine, and <code>fly deploy</code> adds a spare
+        machine by default: deploy with <code>fly deploy --ha=false</code> and confirm one machine
+        with <code>fly status</code>, or use a shared store. Behind Fly's proxy the socket peer is
+        the proxy, so visitors that share a peer share one bucket and get 429 once it is spent.
+        To key it per visitor, declare <code>clientIp: {"{"} header: "fly-client-ip" {"}"}</code> on
+        the server, and only when the app is reachable exclusively through Fly's proxy.
       </p>
       <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on

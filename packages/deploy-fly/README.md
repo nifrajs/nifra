@@ -50,7 +50,12 @@ SSR; it currently declares no support for the coordinated component pipeline.
 The emitted Dockerfile sets `NODE_ENV=production`, and production refuses in-memory stores. An app
 that uses one (the site scaffold's rate limiter, for example) must configure a shared store or, for
 a single machine, allow it explicitly: the scaffold reads `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`, set
-with `fly secrets set`.
+with `fly secrets set`. An in-memory limiter keeps one quota per machine and `fly deploy` adds a
+spare machine by default, so deploy with `fly deploy --ha=false` and confirm one machine with
+`fly status`, or use a shared store. Behind Fly's proxy the socket peer is the proxy, so visitors
+that share a peer share one bucket and get 429 once it is spent. To key it per visitor, declare
+`clientIp: { header: "fly-client-ip" }` on the server, and only when the app is reachable
+exclusively through Fly's proxy.
 
 Adapters execute as trusted build-time code in the Nifra CLI process. Their API is versioned, their
 output is declarative, and Nifra rejects unsafe paths, collisions, credential findings, and failed
