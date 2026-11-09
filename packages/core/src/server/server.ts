@@ -88,12 +88,7 @@ import {
   type RawBodyReaders,
   UNLIMITED_BODY_BYTES,
 } from "./body.ts"
-import {
-  crossSiteFormRefused,
-  type FormOrigins,
-  guardsBodylessForm,
-  ROUTE_OWNS_FORM_ORIGIN,
-} from "./body-lane.ts"
+import { crossSiteFormRefused, type FormOrigins, guardsBodylessForm } from "./body-lane.ts"
 import {
   type ClientIpTrust,
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
@@ -2841,7 +2836,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     handler: (context: never) => unknown,
   ): CatalogRoute {
     const staticResponse = staticResponseDefinition(handler)
-    const ownsFormOrigin = Reflect.get(handler, ROUTE_OWNS_FORM_ORIGIN) === true
+    // A handler carrying this marker checks the Origin itself (web page actions), so the default stays out.
+    const ownsFormOrigin = Reflect.get(handler, Symbol.for("nifra.route.ownsFormOrigin")) === true
     schema = withTextSlots(schema)
     // Route provenance for the CLI's capability walk, which sets NIFRA_ROUTE_SITES while it loads the
     // app: the module that registered the route, read where a static scan cannot see the path.

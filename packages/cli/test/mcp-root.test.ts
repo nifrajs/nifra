@@ -228,9 +228,15 @@ describe("workspace patterns that leave the root", () => {
     await rm(base, { recursive: true, force: true })
   })
 
-  test("a member inside the root is still found", async () => {
-    const dir = await workspaceRoot(["apps/*"], { "apps/web": true })
-    expect(await workspaceMemberDirs(dir)).toEqual([join(dir, "apps", "web")])
+  test("a member inside the root is still found, including a name that only looks rooted", async () => {
+    const dir = await workspaceRoot(["apps/*", "~tools/*"], {
+      "apps/web": true,
+      "~tools/cli": true,
+    })
+    expect(await workspaceMemberDirs(dir)).toEqual([
+      join(dir, "apps", "web"),
+      join(dir, "~tools", "cli"),
+    ])
     await rm(dir, { recursive: true, force: true })
   })
 })

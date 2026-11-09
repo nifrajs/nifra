@@ -348,7 +348,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 42,203 B valibot, 70,603 B typebox-t and 75,608 B typebox-form; each crossed ceiling advances by
   // one 0.1 KiB step.
   // `listen()` handle disposal and the shutdown a disposed handle waits for: bare 41,276 B (Bun 1.4.4).
-  "nifra-bare": 40.4,
+  // The cross-site form refusal for unsafe routes without a body schema (runMatched and the Bun table's
+  // direct lane): bare 41,276 -> 41,427 B, idempotency 46,096 -> 46,267, effect-ledger 43,295 -> 43,425,
+  // mcp 41,545 -> 41,682, sse 42,153 -> 42,295, valibot 42,280 -> 42,415, typebox-t 70,670 -> 70,810,
+  // typebox-form 75,672 -> 75,834 (Bun 1.4.4). Each cap crossed takes the next 0.1 KiB step.
+  "nifra-bare": 40.5,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -378,25 +382,25 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // (Bun 1.4.4), crossing the next 0.1 KiB cap.
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
   // The same `listen()` disposal: idempotency 46,096 B (Bun 1.4.4).
-  "nifra-idempotency": 45.1,
-  "nifra-effect-ledger": 42.3,
+  "nifra-idempotency": 45.2,
+  "nifra-effect-ledger": 42.5,
   // The same `listen()` disposal crossed the mcp and sse caps (41,496 B and 42,097 B on the first cut,
   // Bun 1.4.4). Each takes the next 0.1 KiB step.
-  "nifra-mcp": 40.6,
+  "nifra-mcp": 40.8,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 41.2,
-  "nifra-valibot": 41.3,
+  "nifra-sse": 41.4,
+  "nifra-valibot": 41.5,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
   // The same `listen()` disposal: typebox-t 70,670 B (Bun 1.4.4).
-  "nifra-typebox-t": 69.1,
+  "nifra-typebox-t": 69.2,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only
   // this cap is crossed. A GET/HEAD native slot skipping the framing mark: typebox-form 74,037 B.
   // Merged ordinary-input and own-only validation measured 74,897 B for TypeBox-form (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox-form variant.
-  "nifra-typebox-form": 73.9,
+  "nifra-typebox-form": 74.1,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

@@ -110,11 +110,7 @@ async function workspacePatterns(dir: string): Promise<readonly string[] | null>
 /** An absolute pattern or one with a `..` segment names a directory outside the workspace root, so
  * a manifest could otherwise make the server adopt a neighbouring project. */
 function patternLeavesRoot(pattern: string): boolean {
-  return (
-    isAbsolute(pattern) ||
-    /^([A-Za-z]:|[\\/~])/.test(pattern) ||
-    pattern.split(/[\\/]/).includes("..")
-  )
+  return isAbsolute(pattern) || pattern.split(/[\\/]/).includes("..")
 }
 
 /** Whether `member` resolves, symlinks followed, to somewhere inside `rootReal`. */

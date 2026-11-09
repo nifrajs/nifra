@@ -208,11 +208,9 @@ function bodylessLanes(options: ServerOptions = {}) {
 }
 
 function send(method: string, contentType: string | null, headers: Record<string, string> = {}) {
-  return new Request("http://app.test/f", {
-    method,
-    headers: { ...(contentType === null ? {} : { "content-type": contentType }), ...headers },
-    body: "a=1",
-  })
+  const all = new Headers(headers)
+  if (contentType !== null) all.set("content-type", contentType)
+  return new Request("http://app.test/f", { method, headers: all, body: "a=1" })
 }
 
 const METHOD_OF: Record<string, string> = { put: "PUT", patch: "PATCH", delete: "DELETE" }
