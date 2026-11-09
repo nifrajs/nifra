@@ -48,6 +48,11 @@ const RULES: readonly Rule[] = [
         reason:
           "a mkdtemp entry directory, and outDir/workDir (or _prerendered inside outDir) after assertDisposableDir",
       },
+      "packages/web/src/deployment-adapter.ts": {
+        count: 2,
+        reason:
+          "a mkdtemp stage and its moved backup, after assertDisposableDir protects the app and build working directory",
+      },
       "packages/web/src/server-components/build.ts": {
         count: 2,
         reason: "a mkdtemp stage and its backup, after assertDisposableDir on outDir",

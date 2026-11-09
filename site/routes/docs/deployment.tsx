@@ -71,6 +71,22 @@ import { server, toFetchHandler } from "@nifrajs/core/server"
 const app = server().get("/", () => ({ ok: true }))
 export default toFetchHandler(app)`
 
+const FLY_SETUP = `bun add @nifrajs/deploy-fly @nifrajs/node
+fly apps create my-nifra-app # once, before the first deploy`
+
+const FLY = `// nifra.config.ts - keep your existing adapter and clientModule exports, and add:
+import { flyAdapter } from "@nifrajs/deploy-fly"
+
+export const target = "fly"
+export const deploymentAdapter = {
+  adapter: flyAdapter,
+  options: { app: "my-nifra-app", primaryRegion: "iad" },
+}
+
+// Build locally; then deploy the output directory yourself.
+// nifra build
+// cd dist && fly deploy`
+
 export default function Deployment() {
   return (
     <div className="prose">
@@ -164,6 +180,50 @@ export default function Deployment() {
         <code>nifra build --target static</code> also builds a site with no server: the prerendered
         pages, the client bundle and <code>public/</code>, for any static host. See{" "}
         <a href={href({ to: "/docs/rendering" })}>SSG &amp; ISR</a>.
+      </p>
+      <h2>Public build-target adapters</h2>
+      <p>
+        A deployment adapter adds host packaging around an existing Nifra build target. It does not
+        replace the runtime, generated server entry, or Nifra's build checks. The versioned contract
+        in <code>@nifrajs/web/build</code> lets an adapter declare its base target, validate options,
+        and return extra files plus deploy guidance. Nifra checks paths and collisions, scans text
+        artifacts for credentials, and only swaps the output directory after the full build passes.
+      </p>
+      <p>
+        Install the Fly adapter with its required Node runtime and create the named Fly app before
+        its first deploy:
+      </p>
+      <CodeBlock code={FLY_SETUP} lang="sh" />
+      <CodeBlock code={FLY} lang="ts" />
+      <p>
+        The Fly reference package wraps the ordinary <code>node</code> target and emits a Dockerfile
+        plus <code>fly.toml</code>. The <code>deploymentAdapter</code> configuration above registers
+        the custom <code>fly</code> target. Run <code>fly deploy</code> from the emitted output
+        directory; Nifra never logs in or deploys for you. Adapter code is trusted build-time code
+        running in the CLI process. Each adapter must explicitly declare whether it supports the
+        coordinated component pipeline; unsupported combinations fail before the previous output is
+        replaced. Set Fly's optional <code>healthCheckPath</code> only when that route returns 2xx
+        while the app is ready.
+      </p>
+      <p>
+        The emitted Dockerfile sets <code>NODE_ENV=production</code>, and production refuses
+        in-memory stores. An app that uses one, such as the site scaffold's rate limiter, must
+        configure a shared store, or for a single machine allow it explicitly (the scaffold reads{" "}
+        <code>NIFRA_ALLOW_MEMORY_RATE_LIMIT=true</code>, set with <code>fly secrets set</code>). An
+        in-memory limiter keeps one quota per machine, and <code>fly deploy</code> adds a spare
+        machine by default. Deploy a new app with <code>fly deploy --ha=false</code>; for an app
+        that already has several machines, run <code>fly scale count 1</code>. Confirm with{" "}
+        <code>fly status</code>, or use a shared store.
+      </p>
+      <p>
+        The generated Node server derives <code>c.clientIp</code> from the socket peer only, which
+        behind Fly's proxy is the proxy. Visitors then share one rate-limit bucket and get 429
+        once it is spent, and a shared store does not change the keying. Passing{" "}
+        <code>header: "fly-client-ip"</code> to <code>rateLimit()</code> keys requests that arrive
+        over HTTP per visitor, but only while Fly's proxy is the sole path to the app; behind a CDN
+        or another proxy the header holds that proxy's address. The server's own page-loader calls
+        to the backend carry no such header, so they stay keyed by the proxy peer. Raise{" "}
+        <code>max</code> for an app that serves its pages from the same server.
       </p>
       <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on

@@ -100,6 +100,8 @@ dv-*/
 /vite-split-*.png
 /docs/
 /.nifra-components-fixtures/
+# Staging directory of a deployment adapter build that was killed before cleanup.
+.*.nifra-adapter-*/
 
 # Output of scripts/mutate.ts (kill matrix, survivors, summary).
 /.mutation/

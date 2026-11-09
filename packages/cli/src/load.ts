@@ -16,7 +16,11 @@
 import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { CreateWebAppOptions, CssLoadingMode } from "@nifrajs/web"
-import type { SecretExemption, ServerEntrySelfHost } from "@nifrajs/web/build"
+import type {
+  DeploymentTargetAdapter,
+  SecretExemption,
+  ServerEntrySelfHost,
+} from "@nifrajs/web/build"
 import { assertCurrentLayout, BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
@@ -68,9 +72,14 @@ export interface NifraFramework {
   readonly conditions?: readonly string[]
   /** Compile-time `define` replacements, e.g. Vue's `__VUE_*` flags. */
   readonly define?: Readonly<Record<string, string>>
-  /** The deploy target `nifra build` emits without `--target` (default `"bun"`); `nifra target <t>`
-   * rewrites it. */
+  /** The built-in target or configured adapter id `nifra build` emits without `--target` (default `"bun"`);
+   * `nifra target <t>` rewrites it. */
   readonly target?: string
+  /** Optional public build-time host adapter. Its code runs in this CLI process during builds. */
+  readonly deploymentAdapter?: {
+    readonly adapter: DeploymentTargetAdapter
+    readonly options?: unknown
+  }
   /** Ordinary Vercel SSR: Edge by default, or opt into a Node.js 22 serverless handler. */
   readonly vercelRuntime?: "edge" | "node"
   /** `"platform"` makes a `cloudflare` / `vercel` build read `c.clientIp` from the header that
@@ -234,6 +243,23 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
   }
   if (fw.target !== undefined && typeof fw.target !== "string") {
     wrong("target", 'a deploy target name such as "bun"')
+  }
+  if (fw.deploymentAdapter !== undefined) {
+    const configured: unknown = fw.deploymentAdapter
+    if (typeof configured !== "object" || configured === null) {
+      wrong("deploymentAdapter", "an object with { adapter, options? }")
+    } else {
+      const adapter: unknown = Reflect.get(configured, "adapter")
+      if (
+        typeof adapter !== "object" ||
+        adapter === null ||
+        typeof Reflect.get(adapter, "id") !== "string" ||
+        typeof Reflect.get(adapter, "baseTarget") !== "string" ||
+        typeof Reflect.get(adapter, "validateOptions") !== "function" ||
+        typeof Reflect.get(adapter, "emit") !== "function"
+      )
+        wrong("deploymentAdapter.adapter", "a public deployment adapter from @nifrajs/web/build")
+    }
   }
   if (
     fw.vercelRuntime !== undefined &&
