@@ -50,12 +50,18 @@ SSR; it currently declares no support for the coordinated component pipeline.
 The emitted Dockerfile sets `NODE_ENV=production`, and production refuses in-memory stores. An app
 that uses one (the site scaffold's rate limiter, for example) must configure a shared store or, for
 a single machine, allow it explicitly: the scaffold reads `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`, set
-with `fly secrets set`. An in-memory limiter keeps one quota per machine and `fly deploy` adds a
-spare machine by default, so deploy with `fly deploy --ha=false` and confirm one machine with
-`fly status`, or use a shared store. Behind Fly's proxy the socket peer is the proxy, so visitors
-that share a peer share one bucket and get 429 once it is spent. To key it per visitor, declare
-`clientIp: { header: "fly-client-ip" }` on the server, and only when the app is reachable
-exclusively through Fly's proxy.
+with `fly secrets set`. An in-memory limiter keeps one quota per machine and
+`fly deploy` adds a spare machine by default. Deploy a new app with `fly deploy --ha=false`; for an
+app that already has several machines, run `fly scale count 1`. Confirm with `fly status`, or use a
+shared store.
+
+The generated Node server derives `c.clientIp` from the socket peer only, which behind Fly's proxy
+is the proxy. Visitors then share one rate-limit bucket and get 429 once it is spent, and a shared
+store does not change the keying. Passing `header: "fly-client-ip"` to `rateLimit()` keys requests
+that arrive over HTTP per visitor, but only while Fly's proxy is the sole path to the app; behind a
+CDN or another proxy the header holds that proxy's address. The server's own page-loader calls to
+the backend carry no such header, so they stay keyed by the proxy peer. Raise `max` for an app that
+serves its pages from the same server.
 
 Adapters execute as trusted build-time code in the Nifra CLI process. Their API is versioned, their
 output is declarative, and Nifra rejects unsafe paths, collisions, credential findings, and failed

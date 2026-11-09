@@ -211,11 +211,19 @@ export default function Deployment() {
         configure a shared store, or for a single machine allow it explicitly (the scaffold reads{" "}
         <code>NIFRA_ALLOW_MEMORY_RATE_LIMIT=true</code>, set with <code>fly secrets set</code>). An
         in-memory limiter keeps one quota per machine, and <code>fly deploy</code> adds a spare
-        machine by default: deploy with <code>fly deploy --ha=false</code> and confirm one machine
-        with <code>fly status</code>, or use a shared store. Behind Fly's proxy the socket peer is
-        the proxy, so visitors that share a peer share one bucket and get 429 once it is spent.
-        To key it per visitor, declare <code>clientIp: {"{"} header: "fly-client-ip" {"}"}</code> on
-        the server, and only when the app is reachable exclusively through Fly's proxy.
+        machine by default. Deploy a new app with <code>fly deploy --ha=false</code>; for an app
+        that already has several machines, run <code>fly scale count 1</code>. Confirm with{" "}
+        <code>fly status</code>, or use a shared store.
+      </p>
+      <p>
+        The generated Node server derives <code>c.clientIp</code> from the socket peer only, which
+        behind Fly's proxy is the proxy. Visitors then share one rate-limit bucket and get 429
+        once it is spent, and a shared store does not change the keying. Passing{" "}
+        <code>header: "fly-client-ip"</code> to <code>rateLimit()</code> keys requests that arrive
+        over HTTP per visitor, but only while Fly's proxy is the sole path to the app; behind a CDN
+        or another proxy the header holds that proxy's address. The server's own page-loader calls
+        to the backend carry no such header, so they stay keyed by the proxy peer. Raise{" "}
+        <code>max</code> for an app that serves its pages from the same server.
       </p>
       <p>
         The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
