@@ -856,7 +856,10 @@ export function createWebApp<Env = unknown>(
         : undefined,
       renderWithValidatedSlots,
     )
-    app.register("POST", pattern, undefined, pageExecutor.post(route))
+    // The action checks the Origin against the route's own `allowedOrigins`, so core's default stays out.
+    const post = pageExecutor.post(route)
+    Object.defineProperty(post, Symbol.for("nifra.route.ownsFormOrigin"), { value: true })
+    app.register("POST", pattern, undefined, post)
   }
   // llms.txt & llms-full.txt describe what a visitor can reach: the pages, and the backend only when it
   // is served over HTTP - a backend the loaders call in-process has no public surface to describe. An

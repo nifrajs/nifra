@@ -236,6 +236,29 @@ function formOriginAllowed(source: RequestSource, formOrigins: FormOrigins | und
     : formOrigins.includes(origin)
 }
 
+/** A route that needs {@link crossSiteFormRefused} ahead of its lanes: an unsafe method with no
+ * `schema.body`. A body schema reads its body through {@link readBodyFramed}, which refuses a
+ * cross-site form itself; a route without one reads nothing, so nothing else would. */
+export const guardsBodylessForm = (method: string, hasBodySchema: boolean): boolean =>
+  !hasBodySchema && !/^(?:GET|HEAD|OPTIONS|TRACE|QUERY)$/i.test(method)
+
+/** Whether a request is a cross-site HTML form post that {@link readBodyFramed} would refuse. It
+ * decides on the cheapest header first: a request without an `Origin` (any non-browser client) costs one
+ * lookup, and a browser's own-origin post stops at `Sec-Fetch-Site` before the URL is parsed. */
+export const crossSiteFormRefused = (
+  source: RequestSource,
+  formOrigins: FormOrigins | undefined,
+): boolean => {
+  const origin = headerOf(source, "origin")
+  return (
+    origin !== null &&
+    headerOf(source, "sec-fetch-site") !== "same-origin" &&
+    isFormMediaType(headerOf(source, "content-type") ?? "") &&
+    !source.url.startsWith(`${origin}/`) &&
+    !formOriginAllowed(source, formOrigins)
+  )
+}
+
 /**
  * The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded
  * with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep

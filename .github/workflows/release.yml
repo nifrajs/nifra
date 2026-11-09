@@ -733,14 +733,19 @@ jobs:
 
       # Two deployments can serve identical pages, so each carries its own stamp for the probe to look for.
       # Pages serves /assets/* statically, without the Worker.
-      - name: Deploy site to Cloudflare Pages
+      # The build runs the site's bundler and plugins, so it runs without the Cloudflare credentials.
+      - name: Build the site
         working-directory: site
         run: |
           bun run build
           printf '%s\n' "$DEPLOYMENT" > dist/assets/deployment.txt
-          bunx wrangler pages deploy --branch main
         env:
           DEPLOYMENT: ${{ github.run_id }}.${{ github.run_attempt }}
+
+      - name: Deploy site to Cloudflare Pages
+        working-directory: site
+        run: bunx wrangler pages deploy --branch main
+        env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 

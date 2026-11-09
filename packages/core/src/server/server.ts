@@ -88,7 +88,7 @@ import {
   type RawBodyReaders,
   UNLIMITED_BODY_BYTES,
 } from "./body.ts"
-import type { FormOrigins } from "./body-lane.ts"
+import { crossSiteFormRefused, type FormOrigins, guardsBodylessForm } from "./body-lane.ts"
 import {
   type ClientIpTrust,
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
@@ -2836,6 +2836,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     handler: (context: never) => unknown,
   ): CatalogRoute {
     const staticResponse = staticResponseDefinition(handler)
+    // A handler carrying this marker checks the Origin itself (web page actions), so the default stays out.
+    const ownsFormOrigin = Reflect.get(handler, Symbol.for("nifra.route.ownsFormOrigin")) === true
     schema = withTextSlots(schema)
     // Route provenance for the CLI's capability walk, which sets NIFRA_ROUTE_SITES while it loads the
     // app: the module that registered the route, read where a static scan cannot see the path.
@@ -2995,6 +2997,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       afterHandle: aftersSnapshot,
       onError: onErrorSnapshot,
       lifecycleHookLane: lanes.lifecycleHookLane,
+      formOriginGuard: !ownsFormOrigin && guardsBodylessForm(method, schema?.body !== undefined),
       around: [...this.aroundHooks],
       execution,
       program,
@@ -4820,6 +4823,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
+    if (entry.formOriginGuard && crossSiteFormRefused(source, this.formOrigins)) {
+      return wrapResponse(plainError(403, "forbidden_origin"))
+    }
     // The route's transport byte cap: one property write here; the capped shadowing of direct
     // `c.req` body readers happens lazily at `c.req` access (`applyTransportCap`), so a route that
     // never direct-reads pays nothing. Framework readers bypass the shadow (`rawBodySourceOf`) and
@@ -7352,7 +7358,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The complete plan already preserves general validation, hooks, recovery, around, and ledgers.
     // When native admission is safe, use it directly even if the route has no closed-shape fusion.
     // Idempotency still needs runMatched's request preparation and is excluded from the table.
-    const inner: FusedWebRunner | undefined =
+    const unguarded: FusedWebRunner | undefined =
       fused ??
       (signal && budget
         ? (source, params, search, activeSignal, activeBudget, platform, nativeContext) =>
@@ -7370,6 +7376,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               this.wrapWebResponse,
             )
         : undefined)
+    const inner: FusedWebRunner | undefined =
+      unguarded === undefined || !entry.formOriginGuard
+        ? unguarded
+        : (source, params, search, fusedSignal, fusedBudget, platform, nativeContext) =>
+            crossSiteFormRefused(source, this.formOrigins)
+              ? this.wrapWebResponse(plainError(403, "forbidden_origin"))
+              : unguarded(source, params, search, fusedSignal, fusedBudget, platform, nativeContext)
     // The cap is never marked on a GET or HEAD, the only methods a GET or HEAD slot is handed, so those
     // slots skip the wrapper and its read of the method on every request.
     const capped: FusedWebRunner | undefined =
