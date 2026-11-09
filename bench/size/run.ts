@@ -349,9 +349,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // one 0.1 KiB step.
   // `listen()` handle disposal and the shutdown a disposed handle waits for: bare 41,276 B (Bun 1.4.4).
   // The cross-site form refusal for unsafe routes without a body schema (runMatched and the Bun table's
-  // direct lane): bare 41,276 -> 41,427 B, idempotency 46,096 -> 46,267, effect-ledger 43,295 -> 43,425,
-  // mcp 41,545 -> 41,682, sse 42,153 -> 42,295, valibot 42,280 -> 42,415, typebox-t 70,670 -> 70,810,
-  // typebox-form 75,672 -> 75,834 (Bun 1.4.4). Each cap crossed takes the next 0.1 KiB step.
+  // direct lane): bare 41,276 -> 41,447 B, idempotency 46,096 -> 46,287, effect-ledger 43,295 -> 43,446,
+  // mcp 41,545 -> 41,703, sse 42,153 -> 42,316, valibot 42,280 -> 42,434, typebox-t 70,670 -> 70,828,
+  // typebox-form 75,672 -> 75,852 (Bun 1.4.4). Each cap crossed takes the next 0.1 KiB step.
   "nifra-bare": 40.5,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -382,7 +382,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // (Bun 1.4.4), crossing the next 0.1 KiB cap.
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
   // The same `listen()` disposal: idempotency 46,096 B (Bun 1.4.4).
-  "nifra-idempotency": 45.2,
+  "nifra-idempotency": 45.3,
   "nifra-effect-ledger": 42.5,
   // The same `listen()` disposal crossed the mcp and sse caps (41,496 B and 42,097 B on the first cut,
   // Bun 1.4.4). Each takes the next 0.1 KiB step.

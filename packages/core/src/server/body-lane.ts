@@ -242,15 +242,22 @@ function formOriginAllowed(source: RequestSource, formOrigins: FormOrigins | und
 export const guardsBodylessForm = (method: string, hasBodySchema: boolean): boolean =>
   !hasBodySchema && !/^(?:GET|HEAD|OPTIONS|TRACE|QUERY)$/i.test(method)
 
-/** Whether a request is a cross-site HTML form post that {@link readBodyFramed} would refuse. `Origin`
- * is read first, so a request without one (any non-browser client) costs one header lookup. */
+/** Whether a request is a cross-site HTML form post that {@link readBodyFramed} would refuse. It
+ * decides on the cheapest header first: a request without an `Origin` (any non-browser client) costs one
+ * lookup, and a browser's own-origin post stops at `Sec-Fetch-Site` before the URL is parsed. */
 export const crossSiteFormRefused = (
   source: RequestSource,
   formOrigins: FormOrigins | undefined,
-): boolean =>
-  headerOf(source, "origin") !== null &&
-  isFormMediaType(headerOf(source, "content-type") ?? "") &&
-  !formOriginAllowed(source, formOrigins)
+): boolean => {
+  const origin = headerOf(source, "origin")
+  return (
+    origin !== null &&
+    headerOf(source, "sec-fetch-site") !== "same-origin" &&
+    isFormMediaType(headerOf(source, "content-type") ?? "") &&
+    !source.url.startsWith(`${origin}/`) &&
+    !formOriginAllowed(source, formOrigins)
+  )
+}
 
 /**
  * The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded

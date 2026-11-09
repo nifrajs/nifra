@@ -251,6 +251,18 @@ describe("a form post from another site to a route without a body schema", () =>
     expect(ran()).toBe(expected)
   })
 
+  test("a browser's own-origin post passes on Sec-Fetch-Site, and a proxy-terminated one on its Origin", async () => {
+    const { apps, ran } = bodylessLanes()
+    const bare = apps[0]![1]
+    const sameOrigin = { origin: "http://app.test", "sec-fetch-site": "same-origin" }
+    expect((await bare.fetch(send("POST", FORM, sameOrigin))).status).toBe(200)
+    // https page, plain-http request URL: what a TLS-terminating proxy looks like to the server.
+    expect((await bare.fetch(send("POST", FORM, { origin: "https://app.test" }))).status).toBe(200)
+    const attacker = { ...crossSite, "sec-fetch-site": "cross-site" }
+    expect((await bare.fetch(send("POST", FORM, attacker))).status).toBe(403)
+    expect(ran()).toBe(2)
+  })
+
   test("passes from a formOrigins origin and leaves a safe method alone", async () => {
     const { apps } = bodylessLanes({ formOrigins: ["https://idp.test"] })
     const bare = apps[0]![1]
