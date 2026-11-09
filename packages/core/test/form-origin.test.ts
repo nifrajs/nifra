@@ -219,7 +219,7 @@ const methodOf = (name: string): string => METHOD_OF[name] ?? "POST"
 describe("a form post from another site to a route without a body schema", () => {
   test("is refused with 403 on every lane and method, before the handler runs", async () => {
     const { apps, ran } = bodylessLanes()
-    for (const type of [FORM, "multipart/form-data; boundary=b", "text/plain"]) {
+    for (const type of [FORM, "multipart/form-data; boundary=b", "text/plain", null]) {
       for (const [name, app] of apps) {
         const web = await app.fetch(send(methodOf(name), type, crossSite))
         expect([name, web.status]).toEqual([name, 403])
@@ -234,7 +234,7 @@ describe("a form post from another site to a route without a body schema", () =>
     expect(ran()).toBe(0)
   })
 
-  test("passes from its own origin, without an Origin, as JSON, and with no content type", async () => {
+  test("passes from its own origin, without an Origin, as JSON, and with a preflight-forcing Authorization", async () => {
     const { apps, ran } = bodylessLanes()
     let expected = 0
     for (const [name, app] of apps) {
@@ -242,7 +242,10 @@ describe("a form post from another site to a route without a body schema", () =>
         () => send(methodOf(name), FORM, { origin: "http://app.test" }),
         () => send(methodOf(name), FORM),
         () => send(methodOf(name), "application/json", crossSite),
-        () => send(methodOf(name), null, crossSite),
+        () => send(methodOf(name), null, { origin: "http://app.test" }),
+        () => send(methodOf(name), null),
+        () => send(methodOf(name), null, { ...crossSite, authorization: "Bearer t" }),
+        () => send(methodOf(name), null, { ...crossSite, "sec-fetch-site": "same-origin" }),
       ]) {
         expect([name, (await app.fetch(request())).status]).toEqual([name, 200])
         expected++
@@ -267,12 +270,20 @@ describe("a form post from another site to a route without a body schema", () =>
     const { apps } = bodylessLanes({ formOrigins: ["https://idp.test"] })
     const bare = apps[0]![1]
     expect((await bare.fetch(send("POST", FORM, { origin: "https://idp.test" }))).status).toBe(200)
+    expect((await bare.fetch(send("POST", null, { origin: "https://idp.test" }))).status).toBe(200)
+    expect((await bare.fetch(send("POST", null, crossSite))).status).toBe(403)
     expect((await bare.fetch(send("POST", FORM, crossSite))).status).toBe(403)
     const reader = server().get("/f", () => ({ ok: true }))
     const read = new Request("http://app.test/f", {
       headers: { "content-type": FORM, ...crossSite },
     })
     expect((await reader.fetch(read)).status).toBe(200)
+  })
+
+  test("a route with a body schema still answers a request with no content type with 415", async () => {
+    const { apps } = lanes()
+    const res = await apps[0]![1].fetch(post("", "a=1", crossSite))
+    expect(res.status).toBe(415)
   })
 
   test("is refused by Bun's native route table too", async () => {
@@ -288,7 +299,10 @@ describe("a form post from another site to a route without a body schema", () =>
         fetch(url, { method: "POST", headers: { "content-type": FORM, ...headers }, body: "a=1" })
       expect((await post(crossSite)).status).toBe(403)
       expect((await post({})).status).toBe(200)
-      expect(ran).toBe(1)
+      const bare = (headers: Record<string, string>) => fetch(url, { method: "POST", headers })
+      expect((await bare(crossSite)).status).toBe(403)
+      expect((await bare({ ...crossSite, authorization: "Bearer t" })).status).toBe(200)
+      expect(ran).toBe(2)
     } finally {
       instance.stop(true)
     }

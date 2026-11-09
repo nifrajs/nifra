@@ -242,18 +242,21 @@ function formOriginAllowed(source: RequestSource, formOrigins: FormOrigins | und
 export const guardsBodylessForm = (method: string, hasBodySchema: boolean): boolean =>
   !hasBodySchema && !/^(?:GET|HEAD|OPTIONS|TRACE|QUERY)$/i.test(method)
 
-/** Whether a request is a cross-site HTML form post that {@link readBodyFramed} would refuse. It
- * decides on the cheapest header first: a request without an `Origin` (any non-browser client) costs one
- * lookup, and a browser's own-origin post stops at `Sec-Fetch-Site` before the URL is parsed. */
+/** Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can
+ * send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request
+ * with no content type that carries an `Authorization` header passes: that header forces a preflight, so
+ * the app's CORS policy has already judged its origin. It decides on the cheapest header first: a request
+ * without an `Origin` (any non-browser client) costs one lookup, and a browser's own-origin post stops at
+ * `Sec-Fetch-Site` before the URL is parsed. */
 export const crossSiteFormRefused = (
   source: RequestSource,
   formOrigins: FormOrigins | undefined,
 ): boolean => {
   const origin = headerOf(source, "origin")
+  if (origin === null || headerOf(source, "sec-fetch-site") === "same-origin") return false
+  const type = headerOf(source, "content-type") ?? ""
   return (
-    origin !== null &&
-    headerOf(source, "sec-fetch-site") !== "same-origin" &&
-    isFormMediaType(headerOf(source, "content-type") ?? "") &&
+    (type === "" ? headerOf(source, "authorization") === null : isFormMediaType(type)) &&
     !source.url.startsWith(`${origin}/`) &&
     !formOriginAllowed(source, formOrigins)
   )
