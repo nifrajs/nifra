@@ -5751,7 +5751,7 @@
     "name": "EdgeOptions",
     "kind": "interface",
     "package": "@nifrajs/edge",
-    "signature": "export interface EdgeOptions {\n    /** Maximum request body size in bytes before a `413`. Defaults to 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for JSON bodies. Defaults to `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /** Other sites whose HTML forms may post to a body-schema route. A form body whose `Origin` is\n     * another site's, and not listed, is refused with `403`. */\n    readonly formOrigins?: FormOrigins;\n    /** Answers a request no route matched, in place of the default `404` body. Build it with\n     * {@link notFound}: `server({ notFound: notFound(handler) })`. */\n    readonly notFound?: EdgeNotFound;\n}",
+    "signature": "export interface EdgeOptions {\n    /** Maximum request body size in bytes before a `413`. Defaults to 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for JSON bodies. Defaults to `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /** Other sites whose HTML forms may post to a route. A urlencoded, multipart or `text/plain`\n     * request whose `Origin` is another site's, and not listed, is refused with `403`: before the body is\n     * read on a body-schema route, and before the handler runs on a `POST`, `PUT`, `PATCH` or `DELETE`\n     * route without one. */\n    readonly formOrigins?: FormOrigins;\n    /** Answers a request no route matched, in place of the default `404` body. Build it with\n     * {@link notFound}: `server({ notFound: notFound(handler) })`. */\n    readonly notFound?: EdgeNotFound;\n}",
     "doc": "/** Construction-time options. The defaults mirror `@nifrajs/core`'s `ServerOptions`. */"
   },
   {
@@ -19974,6 +19974,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassifier;",
     "doc": "/**\n * Create a classifier for one app. Cheap to create; it caches per file and per package directory,\n * so build plugins and dev servers keep one for the life of a build or a session.\n */"
+  },
+  {
+    "name": "crossSiteFormRefused",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const crossSiteFormRefused: (source: RequestSource, formOrigins: FormOrigins | undefined) => boolean;",
+    "doc": "/** Whether a request is a cross-site HTML form post that {@link readBodyFramed} would refuse. It\n * decides on the cheapest header first: a request without an `Origin` (any non-browser client) costs one\n * lookup, and a browser's own-origin post stops at `Sec-Fetch-Site` before the URL is parsed. */"
   },
   {
     "name": "csrf",

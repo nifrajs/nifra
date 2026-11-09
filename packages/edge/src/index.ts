@@ -17,6 +17,7 @@ import {
   answerNotFound,
   assertByteLimit,
   capBodyBytes,
+  crossSiteFormRefused,
   DEFAULT_MAX_BODY_BYTES,
   type FormOrigins,
   jsonResponse,
@@ -70,6 +71,8 @@ export type EdgeHandler<Path extends string = string, Body = unknown> = (
 interface RouteEntry {
   readonly bodySchema?: StandardSchemaV1<unknown>
   readonly handler: EdgeHandler
+  /** An unsafe route with no body schema: no body reader refuses a cross-site form, so `fetch` does. */
+  readonly guardForm?: true
 }
 
 /** Construction-time options. The defaults mirror `@nifrajs/core`'s `ServerOptions`. */
@@ -78,8 +81,10 @@ export interface EdgeOptions {
   readonly maxBodyBytes?: number
   /** Prototype-poisoning policy for JSON bodies. Defaults to `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
-  /** Other sites whose HTML forms may post to a body-schema route. A form body whose `Origin` is
-   * another site's, and not listed, is refused with `403`. */
+  /** Other sites whose HTML forms may post to a route. A urlencoded, multipart or `text/plain`
+   * request whose `Origin` is another site's, and not listed, is refused with `403`: before the body is
+   * read on a body-schema route, and before the handler runs on a `POST`, `PUT`, `PATCH` or `DELETE`
+   * route without one. */
   readonly formOrigins?: FormOrigins
   /** Answers a request no route matched, in place of the default `404` body. Build it with
    * {@link notFound}: `server({ notFound: notFound(handler) })`. */
@@ -188,7 +193,7 @@ export class EdgeServer {
     a: BodySchema<unknown> | EdgeHandler,
     b?: EdgeHandler,
   ): this {
-    if (typeof a === "function") return this.#route(method, path, { handler: a })
+    if (typeof a === "function") return this.#route(method, path, { handler: a, guardForm: true })
     return this.#route(method, path, { bodySchema: a.body, handler: b as EdgeHandler })
   }
 
@@ -211,7 +216,7 @@ export class EdgeServer {
     // malformed escape is a 400 rather than a raw capture.
     const params = decodeRouteParams(match.params)
     if (params === null) return render(plainError(400, "malformed_path"))
-    const { bodySchema, handler } = match.payload
+    const { bodySchema, handler, guardForm } = match.payload
 
     const maxBodyBytes = this.#maxBodyBytes
     const dispatch = async (body: unknown, cap: boolean): Promise<Response> => {
@@ -239,7 +244,11 @@ export class EdgeServer {
       }
     }
 
-    if (bodySchema === undefined) return dispatch(undefined, true)
+    if (bodySchema === undefined) {
+      return guardForm === true && crossSiteFormRefused(request, this.#formOrigins)
+        ? render(plainError(403, "forbidden_origin"))
+        : dispatch(undefined, true)
+    }
 
     // The body trust boundary IS the shipped lane: `readBodyFramed` does the content-type dispatch,
     // the bounded read + Content-Length pre-reject, and the prototype-poisoning guard. This layers
