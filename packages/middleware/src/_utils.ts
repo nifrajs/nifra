@@ -11,6 +11,9 @@ import {
 
 export const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"])
 
+/** Read by `use()` in core: the origins a middleware trusts, which core adds to `formOrigins`. */
+export const TRUSTED_ORIGINS = Symbol.for("nifra.trustedOrigins")
+
 const TEXT = new TextEncoder()
 
 export function jsonError(

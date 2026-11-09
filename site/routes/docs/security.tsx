@@ -612,11 +612,20 @@ export default function Security() {
         <li>
           <b>A form post is a simple cross-origin request.</b> A browser sends{" "}
           <code>multipart/form-data</code>, urlencoded and <code>text/plain</code> with cookies and no
-          preflight. A body-schema route refuses one whose <code>Origin</code> is another site&rsquo;s
-          with <code>403</code> before reading it; list a site that must post forms to the app in the
-          server&rsquo;s <code>formOrigins</code>. A request without an <code>Origin</code> passes, so
-          a cookie-authenticated upload route still needs <code>csrf()</code> like any other state
-          change.
+          preflight. Core refuses one whose <code>Origin</code> is another site&rsquo;s with{" "}
+          <code>403</code> on a body-schema route before reading it, and on any other{" "}
+          <code>POST</code>, <code>PUT</code>, <code>PATCH</code> or <code>DELETE</code> route before
+          the handler runs. A route without a body schema refuses a request with no content type from
+          such a site too, unless it carries an <code>Authorization</code> header a script set (a
+          browser re-sends <code>Basic</code>, <code>Digest</code>, <code>Negotiate</code> and{" "}
+          <code>NTLM</code> credentials from its own cache, so those do not count). List a site that
+          must post to the app in the server&rsquo;s <code>formOrigins</code>; the origins{" "}
+          <code>cors()</code> and <code>csrf({"{ origins }"})</code> name are trusted without a second
+          list, for that server&rsquo;s own routes only: a mounted server keeps its own policy, a
+          parent must list the same sites itself, and a web page action checks the backend&rsquo;s{" "}
+          <code>allowedOrigins</code> instead. Audit those origins: one named there may post a form
+          whatever methods or credentials the CORS policy allows. A request without an <code>Origin</code> passes, so a cookie-authenticated upload
+          route still needs <code>csrf()</code> like any other state change.
         </li>
         <li>
           <b>The form is held in memory.</b> Budget roughly twice <code>bodyLimit</code> per request in

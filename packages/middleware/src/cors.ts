@@ -1,11 +1,13 @@
 import { withResponseObserver } from "@nifrajs/core/response-observer"
 import type { Middleware, NodeRequestContext, NodeResponseContext } from "@nifrajs/core/server"
-import { setNodeHeader } from "./_utils.ts"
+import { setNodeHeader, TRUSTED_ORIGINS } from "./_utils.ts"
 
 const BUN_NATIVE_REQUEST_SAFE = Symbol.for("@nifrajs/core/bun-native-request-safe")
 
 export interface CorsOptions {
-  /** Allowed origin(s): `"*"`, an exact origin, a list, or a predicate. Default `"*"`. */
+  /** Allowed origin(s): `"*"`, an exact origin, a list, or a predicate. Default `"*"`. A named origin
+   * is also trusted to post a form or a bodyless unsafe request to the server, as if it were in the
+   * server's `formOrigins`; `"*"` adds nothing. */
   readonly origin?: string | ReadonlyArray<string> | ((origin: string) => boolean)
   /** Methods advertised in the preflight response. Default the common verbs. */
   readonly methods?: ReadonlyArray<string>
@@ -141,5 +143,14 @@ export function cors(options: CorsOptions = {}): Middleware {
     },
   } satisfies Middleware)
   Object.defineProperty(middleware, BUN_NATIVE_REQUEST_SAFE, { value: true })
+  // A named allow-list is trusted for form posts too; `"*"` trusts nothing extra.
+  if (origin !== "*") {
+    const trusted =
+      typeof origin === "function"
+        ? origin
+        : (candidate: string) =>
+            Array.isArray(origin) ? origin.includes(candidate) : origin === candidate
+    Object.defineProperty(middleware, TRUSTED_ORIGINS, { value: trusted })
+  }
   return middleware
 }

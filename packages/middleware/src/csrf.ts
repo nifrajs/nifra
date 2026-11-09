@@ -9,6 +9,7 @@ import {
   parseCookies,
   SAFE_METHODS,
   secretBytes,
+  TRUSTED_ORIGINS,
   timingSafeEqualString,
   verifyHmacSha256,
 } from "./_utils.ts"
@@ -57,7 +58,8 @@ export interface CsrfOptions {
   /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE/QUERY. */
   readonly methods?: readonly string[]
   /** Allowed request origins. Default: same host as the request URL, where an `https:` Origin may
-   * reach an `http:` URL (what a TLS-terminating proxy looks like from the server). */
+   * reach an `http:` URL (what a TLS-terminating proxy looks like from the server). A listed origin is
+   * also trusted to post a form to the server, as if it were in the server's `formOrigins`. */
   readonly origins?: readonly string[]
   /** Check Origin/Referer on protected requests. Default true. */
   readonly checkOrigin?: boolean
@@ -232,6 +234,10 @@ export function csrf(options: CsrfOptions): Middleware {
       }
       return (await verifyCsrfToken(cookieToken, keys)) ? undefined : jsonError(403, "csrf_failed")
     },
+  }
+  // Origins the app lists here are its own frontends: core trusts them for form posts too.
+  if (origins !== undefined) {
+    Object.defineProperty(middleware, TRUSTED_ORIGINS, { value: (o: string) => origins.has(o) })
   }
   return withRouteAssurance(middleware, {
     id: NIFRA_ASSURANCE.CSRF,

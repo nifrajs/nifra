@@ -261,6 +261,7 @@ export type MaybePromise<T> = T | Promise<T>
 // ordinary registered routes on its native table and send unmatched OPTIONS requests through the
 // normal fetch fallback where the hook still runs.
 const BUN_NATIVE_REQUEST_SAFE = Symbol.for("@nifrajs/core/bun-native-request-safe")
+const TRUSTED_ORIGINS = Symbol.for("nifra.trustedOrigins")
 
 /**
  * Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass
@@ -1499,7 +1500,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     | undefined
   private readonly maxBodyBytes: number
   private readonly protoPoisoning: "reject" | "strip" | "ignore"
-  private readonly formOrigins: FormOrigins | undefined
+  private formOrigins: FormOrigins | undefined
   /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
   private readonly trustBodyFraming: boolean
   private readonly validateHost: boolean
@@ -2334,6 +2335,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         throw new TypeError("response observer middleware has an invalid runtime")
       }
       this[INSTALL_RESPONSE_OBSERVER](responseObserver as ResponseObserverRuntime)
+    }
+    // `cors()` and `csrf()` name the origins they trust; a form post from one of them is the app's own
+    // frontend, so it joins `formOrigins` rather than being listed twice.
+    const trusted: unknown = Reflect.get(arg, TRUSTED_ORIGINS)
+    if (typeof trusted === "function") {
+      const listed = this.formOrigins
+      this.formOrigins = (origin) =>
+        (typeof listed === "function" ? listed(origin) : listed?.includes(origin)) === true ||
+        trusted(origin) === true
     }
     if (arg.onRequest !== undefined) {
       this.assertConfigurable("onRequest()")
