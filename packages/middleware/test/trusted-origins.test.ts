@@ -105,4 +105,30 @@ describe("a post with no content type", () => {
     ).toBe(200)
     expect(await status(app, send(null, {}))).toBe(200)
   })
+
+  test("a browser-managed Authorization scheme does not stand in for a preflight", async () => {
+    const app = bodyless().use(cors({ origin: ["https://app.example"] }))
+    const evil = { origin: "https://evil.test" }
+    for (const authorization of ["Basic dTpw", "digest realm=x", "Negotiate abc", "NTLM abc"]) {
+      expect(await status(app, send(null, { ...evil, authorization }))).toBe(403)
+    }
+    for (const authorization of ["Bearer t", "DPoP t", "Basically t", "opaque-key"]) {
+      expect(await status(app, send(null, { ...evil, authorization }))).toBe(200)
+    }
+    expect(
+      await status(app, send(null, { origin: "https://app.example", authorization: "Basic dTpw" })),
+    ).toBe(200)
+  })
+})
+
+describe("a mounted server", () => {
+  test("keeps its own trusted origins out of the parent's form policy", async () => {
+    const child = bodyless().use(cors({ origin: ["https://app.example"] }))
+    const parent = server().merge(child)
+    const listed = server({ formOrigins: ["https://app.example"] }).merge(child)
+    const origin = { origin: "https://app.example" }
+    expect(await status(child, send(FORM, origin))).toBe(200)
+    expect(await status(parent, send(FORM, origin))).toBe(403)
+    expect(await status(listed, send(FORM, origin))).toBe(200)
+  })
 })

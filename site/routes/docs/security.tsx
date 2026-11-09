@@ -616,10 +616,15 @@ export default function Security() {
           <code>403</code> on a body-schema route before reading it, and on any other{" "}
           <code>POST</code>, <code>PUT</code>, <code>PATCH</code> or <code>DELETE</code> route before
           the handler runs. A route without a body schema refuses a request with no content type from
-          such a site too, unless it carries an <code>Authorization</code> header. List a site that
+          such a site too, unless it carries an <code>Authorization</code> header a script set (a
+          browser re-sends <code>Basic</code>, <code>Digest</code>, <code>Negotiate</code> and{" "}
+          <code>NTLM</code> credentials from its own cache, so those do not count). List a site that
           must post to the app in the server&rsquo;s <code>formOrigins</code>; the origins{" "}
           <code>cors()</code> and <code>csrf({"{ origins }"})</code> name are trusted without a second
-          list. A request without an <code>Origin</code> passes, so a cookie-authenticated upload
+          list, for that server&rsquo;s own routes only: a mounted server keeps its own policy, a
+          parent must list the same sites itself, and a web page action checks the backend&rsquo;s{" "}
+          <code>allowedOrigins</code> instead. Audit those origins: one named there may post a form
+          whatever methods or credentials the CORS policy allows. A request without an <code>Origin</code> passes, so a cookie-authenticated upload
           route still needs <code>csrf()</code> like any other state change.
         </li>
         <li>

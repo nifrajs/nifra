@@ -4789,10 +4789,15 @@ preflight. Core refuses one whose `Origin` is another site's with
 `403` on a body-schema route before reading it, and on any other
 `POST`, `PUT`, `PATCH` or `DELETE` route before
 the handler runs. A route without a body schema refuses a request with no content type from
-such a site too, unless it carries an `Authorization` header. List a site that
+such a site too, unless it carries an `Authorization` header a script set (a
+browser re-sends `Basic`, `Digest`, `Negotiate` and
+`NTLM` credentials from its own cache, so those do not count). List a site that
 must post to the app in the server's `formOrigins`; the origins
 `cors()` and `csrf({ origins })` name are trusted without a second
-list. A request without an `Origin` passes, so a cookie-authenticated upload
+list, for that server's own routes only: a mounted server keeps its own policy, a
+parent must list the same sites itself, and a web page action checks the backend's
+`allowedOrigins` instead. Audit those origins: one named there may post a form
+whatever methods or credentials the CORS policy allows. A request without an `Origin` passes, so a cookie-authenticated upload
 route still needs `csrf()` like any other state change.
 
 -

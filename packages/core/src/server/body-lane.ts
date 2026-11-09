@@ -242,11 +242,17 @@ function formOriginAllowed(source: RequestSource, formOrigins: FormOrigins | und
 export const guardsBodylessForm = (method: string, hasBodySchema: boolean): boolean =>
   !hasBodySchema && !/^(?:GET|HEAD|OPTIONS|TRACE|QUERY)$/i.test(method)
 
+// Schemes a browser keeps in its HTTP-auth cache and re-attaches to a credentialed cross-site request
+// on its own, so a page can send one with no preflight. Any other `Authorization` value has to be set
+// by script, and a cross-origin script cannot set it without a preflight that CORS has judged.
+const BROWSER_MANAGED_AUTH = /^(?:basic|digest|negotiate|ntlm)\b/i
+
 /** Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can
  * send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request
- * with no content type that carries an `Authorization` header passes: that header forces a preflight, so
- * the app's CORS policy has already judged its origin. It decides on the cheapest header first: a request
- * without an `Origin` (any non-browser client) costs one lookup, and a browser's own-origin post stops at
+ * with no content type that carries an `Authorization` header other than a browser-managed scheme
+ * (Basic, Digest, Negotiate, NTLM) passes: script-set, it forced a preflight, so the app's CORS policy
+ * has already judged its origin. It decides on the cheapest header first: a request without an
+ * `Origin` (any non-browser client) costs one lookup, and a browser's own-origin post stops at
  * `Sec-Fetch-Site` before the URL is parsed. */
 export const crossSiteFormRefused = (
   source: RequestSource,
@@ -255,8 +261,11 @@ export const crossSiteFormRefused = (
   const origin = headerOf(source, "origin")
   if (origin === null || headerOf(source, "sec-fetch-site") === "same-origin") return false
   const type = headerOf(source, "content-type") ?? ""
+  const authorization = type === "" ? headerOf(source, "authorization") : null
   return (
-    (type === "" ? headerOf(source, "authorization") === null : isFormMediaType(type)) &&
+    (type === ""
+      ? authorization === null || BROWSER_MANAGED_AUTH.test(authorization)
+      : isFormMediaType(type)) &&
     !source.url.startsWith(`${origin}/`) &&
     !formOriginAllowed(source, formOrigins)
   )

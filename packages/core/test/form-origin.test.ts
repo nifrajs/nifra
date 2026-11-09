@@ -302,6 +302,7 @@ describe("a form post from another site to a route without a body schema", () =>
       const bare = (headers: Record<string, string>) => fetch(url, { method: "POST", headers })
       expect((await bare(crossSite)).status).toBe(403)
       expect((await bare({ ...crossSite, authorization: "Bearer t" })).status).toBe(200)
+      expect((await bare({ ...crossSite, authorization: "Basic dTpw" })).status).toBe(403)
       expect(ran).toBe(2)
     } finally {
       instance.stop(true)
