@@ -27,12 +27,14 @@ test("--shell tauri scaffolds the shell project, the server's CORS for it and th
   }
   expect(read(dir, "src-tauri/Cargo.toml")).toContain('name = "todo-app"')
   expect(read(dir, "src-tauri/src/lib.rs")).toBe(LIB_RS)
-  const app = read(dir, "backend/app.ts")
-  expect(app).toContain('import { SHELL_ORIGINS } from "./shell-origins"')
-  expect(app).toContain(
-    'origin: [process.env.CORS_ORIGIN ?? "http://localhost:3000", ...SHELL_ORIGINS]',
-  )
-  expect(app).toContain('exposedHeaders: ["*"]')
+  const framework = read(dir, "backend/framework.ts")
+  expect(framework).toContain('import { SHELL_ORIGINS } from "./shell-origins"')
+  expect(framework).toContain("export const use = ")
+  expect(framework).toContain('"x-nifra-redirect","x-nifra-status","x-nifra-revalidate"')
+  expect(read(dir, "backend/app.ts")).not.toContain("SHELL_ORIGINS")
+  const index = read(dir, "routes/index.backend.ts")
+  expect(index).toContain('import { SHELL_ORIGINS } from "../backend/shell-origins"')
+  expect(index).toContain("sameOrigin || (origin !== null && SHELL_ORIGINS.includes(origin))")
   expect(read(dir, "backend/shell-origins.ts")).toContain('"tauri://localhost"')
   const pkg = JSON.parse(read(dir, "package.json"))
   expect(pkg.devDependencies["@tauri-apps/cli"]).toBe(TAURI_CLI_VERSION)
@@ -45,7 +47,7 @@ test("every framework's site template takes the shell", async () => {
   for (const framework of ["react", "preact", "vue", "solid", "svelte"]) {
     const dir = fresh(`app-${framework}`)
     await scaffold({ target: dir, template: "site", framework, shell: "tauri" })
-    expect(read(dir, "backend/app.ts")).toContain("...SHELL_ORIGINS")
+    expect(read(dir, "backend/framework.ts")).toContain("export const use = ")
   }
 })
 
@@ -53,7 +55,8 @@ test("a scaffold without --shell has none of it", async () => {
   const dir = fresh("plain")
   await scaffold({ target: dir, template: "site" })
   expect(existsSync(join(dir, "src-tauri"))).toBe(false)
-  expect(read(dir, "backend/app.ts")).not.toContain("SHELL_ORIGINS")
+  expect(read(dir, "backend/framework.ts")).not.toContain("SHELL_ORIGINS")
+  expect(read(dir, "routes/index.backend.ts")).not.toContain("allowedOrigins")
   expect(read(dir, ".gitignore")).not.toContain("dist-shell")
   expect(JSON.parse(read(dir, "package.json")).scripts["shell:dev"]).toBeUndefined()
 })

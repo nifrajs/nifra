@@ -429,6 +429,8 @@ describe("prerenderRoutes include", () => {
     await expect(run(["/abuot"])).rejects.toThrow("no static page route at /abuot")
     await expect(run(["/posts/:id"])).rejects.toThrow("no static page route at /posts/:id")
     await expect(run(["/", "/nope", "/also-nope"])).rejects.toThrow("/nope, /also-nope")
+    // Refused before the first page is rendered, so nothing is left in the output directory.
+    expect(existsSync(join(dir, "index.html"))).toBe(false)
   })
 
   test("without include a route that does not opt in is still skipped", async () => {

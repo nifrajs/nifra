@@ -207,7 +207,16 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
   }
 
   const included = new Set((options.include ?? []).map(normalizeIncluded))
-  const matched = new Set<string>()
+  // Before anything is written: a typo must not leave half a site in `outDir`.
+  const staticPatterns = new Set(
+    options.routes.map((r) => r.pattern).filter((p) => !p.includes(":") && !p.includes("*")),
+  )
+  const unmatched = [...included].filter((path) => !staticPatterns.has(path))
+  if (unmatched.length > 0) {
+    throw new Error(
+      `[nifra/web] prerender: no static page route at ${unmatched.join(", ")} (a dynamic route needs getStaticPaths)`,
+    )
+  }
   for (const route of options.routes) {
     if (route.pattern.includes("*")) {
       skipped.push({ path: route.pattern, reason: "catch-all/wildcard route - not supported" })
@@ -244,7 +253,6 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
     }
 
     // Static route → opt-in flag, or named for this run.
-    if (included.has(route.pattern)) matched.add(route.pattern)
     if (mod.prerender !== true && !included.has(route.pattern)) {
       skipped.push({
         path: route.pattern,
@@ -253,13 +261,6 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       continue
     }
     await renderPath(route.pattern)
-  }
-
-  const unmatched = [...included].filter((path) => !matched.has(path))
-  if (unmatched.length > 0) {
-    throw new Error(
-      `[nifra/web] prerender: no static page route at ${unmatched.join(", ")} (a dynamic route needs getStaticPaths)`,
-    )
   }
 
   // A set too large to inline is handed over as the URL of a list the app serves; the static output

@@ -239,7 +239,11 @@ test("a transport entry hydrates the document it ships, then goes to a URL that 
     "routeId: matched && !terminal && !detour ? matched.routeId : serverRoute,",
   )
   expect(code).toContain("path: detour ? shippedPath : location.pathname + location.search,")
-  expect(code).toContain("if (detour) router.navigate(target)")
+  expect(code).toContain("if (detour) router.navigate(target).then(")
+  // The router is given the path and query, never the fragment, which is put back afterwards.
+  expect(code).toContain("const target = location.pathname + location.search\n")
+  expect(code).toContain("const fragment = location.hash")
+  expect(code).toContain('history.replaceState(history.state, "", target + fragment)')
   // An entry without a transport is exactly the entry it was: none of the above.
   const plain = generateClientEntry(buildManifest(FILES, importer), base)
   for (const token of ["detour", "shippedPath", "__transport", "nifra.fetch"]) {

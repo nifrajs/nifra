@@ -19,7 +19,7 @@ export function crateName(raw: string): string {
     .replace(/^@[^/]+\//, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-|-$/g, "")
   if (base === "") return "app"
   return /^[a-z]/.test(base) ? base : `app-${base}`
 }
@@ -42,8 +42,17 @@ export function transportSource(origin: string): string {
   return `import { serverFetch } from "@nifrajs/web/shell"
 
 // The pages ship inside the shell; the server is another origin. PUBLIC_SHELL_ORIGIN overrides it per
-// build: an Android emulator reaches the host's loopback as 10.0.2.2, the iOS Simulator as 127.0.0.1.
-export default serverFetch({ origin: process.env.PUBLIC_SHELL_ORIGIN ?? ${JSON.stringify(origin)} })
+// build (an Android emulator reaches the host's loopback as 10.0.2.2, the iOS Simulator as 127.0.0.1);
+// the content security policy in src-tauri/tauri.conf.json must then list that origin under connect-src.
+function shellOrigin(): string | undefined {
+  try {
+    return process.env.PUBLIC_SHELL_ORIGIN
+  } catch {
+    return undefined
+  }
+}
+
+export default serverFetch({ origin: shellOrigin() ?? ${JSON.stringify(origin)} })
 `
 }
 

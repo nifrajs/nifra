@@ -57,7 +57,7 @@ export async function runShellInit(
 export function shellNextSteps(): readonly string[] {
   return [
     "bun add -d @tauri-apps/cli",
-    "bunx tauri icon path/to/icon.png",
+    "bunx tauri icon <a square PNG, 1024x1024 recommended>: the app icon set Tauri needs to build",
     "list tauri://localhost and http://tauri.localhost on the server: CORS, route allowedOrigins, serverFunctions origins, live trustedOrigins (docs/native-shells)",
     "the shell build prerenders / (--prerender in src-tauri/tauri.conf.json's beforeBuildCommand): list more pages there, comma-separated",
     `bunx tauri dev, or bunx tauri build (the page build lands in ${SHELL_DIST}/)`,
@@ -107,21 +107,33 @@ export async function initMobile(
       })
       continue
     }
-    const child = Bun.spawn([bin, platform, "init", "--ci"], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    })
-    const timer = setTimeout(() => child.kill(), MOBILE_TIMEOUT_MS)
-    const [out, err, code] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ])
-    clearTimeout(timer)
-    const tail = `${out}\n${err}`.trim().split("\n").slice(-4).join(" | ")
-    results.push({ platform, ok: code === 0, note: code === 0 ? "" : tail || `exited ${code}` })
+    try {
+      const child = Bun.spawn([bin, platform, "init", "--ci"], {
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      })
+      const timer = setTimeout(() => child.kill(), MOBILE_TIMEOUT_MS)
+      try {
+        const [out, err, code] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ])
+        const tail = `${out}\n${err}`.trim().split("\n").slice(-4).join(" | ")
+        results.push({ platform, ok: code === 0, note: code === 0 ? "" : tail || `exited ${code}` })
+      } finally {
+        clearTimeout(timer)
+      }
+    } catch (error) {
+      // A CLI that exists but cannot run (no execute bit, a broken shim) is that platform's failure.
+      results.push({
+        platform,
+        ok: false,
+        note: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
   return results
 }

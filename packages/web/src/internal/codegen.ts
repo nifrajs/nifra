@@ -402,7 +402,10 @@ export function generateClientEntry(
       : [
           // A native shell answers a path it has no page for with the document it ships. That document
           // is hydrated as it stands, and the router goes where the URL points once it is mounted.
-          "const target = location.pathname + location.search + location.hash",
+          // The fragment is not part of the route: the router matches the path and query, and the fragment
+          // is put back once it has gone there.
+          "const target = location.pathname + location.search",
+          "const fragment = location.hash",
           'const detour = !!matched && !terminal && serverRoute !== "" && matched.routeId !== serverRoute',
           "const shipped = patterns.find((p) => p.routeId === serverRoute)",
           'const shippedPath = shipped && !/[:*]/.test(shipped.pattern) ? shipped.pattern : "/"',
@@ -508,7 +511,11 @@ export function generateClientEntry(
     ...(transport === undefined
       ? []
       : [
-          "  if (detour) router.navigate(target).catch((error) => console.error('[nifra/web] deep link failed:', error))",
+          "  if (detour) router.navigate(target).then(() => {",
+          '    if (fragment === "") return',
+          '    history.replaceState(history.state, "", target + fragment)',
+          "    try { document.getElementById(decodeURIComponent(fragment.slice(1)))?.scrollIntoView() } catch {}",
+          "  }).catch((error) => console.error('[nifra/web] deep link failed:', error))",
         ]),
     // Once mounted: the first live load and the socket must not race the hydration.
     ...(live === undefined ? [] : ["  __live.attach(router)"]),

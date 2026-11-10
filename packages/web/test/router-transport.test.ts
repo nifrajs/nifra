@@ -107,6 +107,39 @@ test("serverFetch adds its headers over the request's, awaits a header function,
   expect(seen[2]?.credentials).toBeUndefined()
 })
 
+test("serverFetch keeps its headers and credentials for the server's origin and sends no other host the bearer token", async () => {
+  const seen: { url: string; auth: string | null; credentials: RequestCredentials | undefined }[] =
+    []
+  const send: RouterFetch = async (input, init) => {
+    seen.push({
+      url: input,
+      auth: new Headers(init?.headers).get("authorization"),
+      credentials: init?.credentials,
+    })
+    return new Response(null)
+  }
+  const go = serverFetch({
+    origin: "https://api.example.com",
+    headers: { authorization: "Bearer secret" },
+    credentials: "include",
+    fetch: send,
+  })
+  await go("/mine")
+  await go("https://api.example.com/absolute")
+  await go("https://api.example.com?q=1")
+  await go("https://third-party.example/x")
+  await go("https://api.example.com.evil.example/x")
+  await go("https://api.example.community/x")
+  expect(seen.map((s) => [s.url, s.auth, s.credentials])).toEqual([
+    ["https://api.example.com/mine", "Bearer secret", "include"],
+    ["https://api.example.com/absolute", "Bearer secret", "include"],
+    ["https://api.example.com?q=1", "Bearer secret", "include"],
+    ["https://third-party.example/x", null, undefined],
+    ["https://api.example.com.evil.example/x", null, undefined],
+    ["https://api.example.community/x", null, undefined],
+  ])
+})
+
 const importer = (file: string) => async (): Promise<RouteModule> => ({ default: file })
 const FILES = ["_layout.tsx", "index.tsx", "list.tsx"]
 const base = { clientModule: "@nifrajs/web-react/client", resolve: (f: string) => `/routes/${f}` }
