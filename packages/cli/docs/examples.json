@@ -573,7 +573,7 @@
     "name": "LIVE",
     "topic": "Nifra - Native shells",
     "slug": "native-shells",
-    "code": "import { live } from \"@nifrajs/web/live\"\n\nexport const runtime = live({\n  secret: process.env.LIVE_SECRET ?? \"\",\n  // Anonymous viewers. An app with accounts returns the session's user id, so a change of account\n  // clears the client's cache and revoke(userId) reaches this viewer's grants.\n  subject: () => null,\n  trustedOrigins: [\"tauri://localhost\", \"http://tauri.localhost\", \"capacitor://localhost\"],\n})"
+    "code": "import { live } from \"@nifrajs/web/live\"\n\nexport const runtime = live({\n  // Required in production, at least 32 bytes: set LIVE_SECRET (openssl rand -base64 32).\n  secret: process.env.LIVE_SECRET ?? \"\",\n  // Anonymous viewers. An app with accounts returns the session's user id, so a change of account\n  // clears the client's cache and revoke(userId) reaches this viewer's grants.\n  subject: () => null,\n  trustedOrigins: [\"tauri://localhost\", \"http://tauri.localhost\", \"capacitor://localhost\"],\n})"
   },
   {
     "name": "QUERY",
