@@ -29,7 +29,7 @@ export const meta = pageMeta(
         "@type": "Organization",
         name: "Nifra",
         url: "https://nifra.dev",
-        logo: "https://nifra.dev/assets/og.jpg",
+        logo: "https://nifra.dev/assets/logo-mark.png",
         sameAs: ["https://github.com/nifrajs/nifra", "https://www.npmjs.com/org/nifrajs"],
         contactPoint: {
           "@type": "ContactPoint",
@@ -259,6 +259,7 @@ const SSR_BARS = rankBars(
   })),
 )
 const HOME_SSR_MACHINE = SSR_CAPTURED.machines?.node ?? SSR_CAPTURED.machine
+const HOME_HTTP_MACHINE = HTTP_WORKLOADS_CAPTURED.machines?.node ?? HTTP_WORKLOADS_CAPTURED.machine
 
 function machineLabel(machine: CaptureMachine | undefined): string {
   return machine === undefined
@@ -914,9 +915,9 @@ export default function Home() {
               {HTTP_WORKLOADS_CAPTURED.source ?? "HTTP accuracy CI run"}
             </a>
           )}
-          . The Node API chart used {machineLabel(HTTP_WORKLOADS_CAPTURED.machine)}. Node is shown
-          for the API chart. The Bun and Deno tables, including the rows where Nifra is not first,
-          are on the <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
+          . The Node API chart used {machineLabel(HOME_HTTP_MACHINE)}. Node is shown for the API
+          chart. The Bun and Deno tables, including the rows where Nifra is not first, are on the{" "}
+          <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
         </p>
         <ul className="home-vs" aria-label="Nifra compared with other frameworks">
           {VERSUS.map((item) => (
@@ -936,7 +937,7 @@ export default function Home() {
       <section id="sec-runtime" className="home-section home-split">
         <div className="home-copy">
           <p className="kicker">06 · Portable</p>
-          <h2>One app. Five UI frameworks, four runtime families.</h2>
+          <h2>One app. Five UI frameworks, five runtimes.</h2>
           <p>
             The adapter is one line. Loaders, actions, streaming, and islands stay the same across
             React, Solid, Vue, Preact, and Svelte, and the same app runs on Bun, Node, Deno, and the
