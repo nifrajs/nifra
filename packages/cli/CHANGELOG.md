@@ -1,5 +1,50 @@
 # @nifrajs/cli
 
+## 5.13.0
+
+### Minor Changes
+
+- 99d28ad: `nifra shell tauri` adds a Tauri 2 shell to an existing app: `frontend/shell-transport.ts` and a `src-tauri/` project whose build runs `nifra build --target static --transport` into `dist-shell/` and whose content security policy allows the server's origin and socket. The window opens hidden and shows on the page's first paint (a three second timer shows it if none is reported), so there is no blank window while the web view starts. It writes files only, skips any that exist unless `--force`, and leaves `package.json` and `nifra.config.ts` alone. `--mobile android|ios|all` then runs `tauri android init` and `tauri ios init` with the project's Tauri CLI and reports each platform. The command is in the command catalog (CLI only).
+  
+  `nifra build` and `nifra dev` take `--transport <module>` for one run, ahead of `transport` in the config, so one app can ship a web build and a shell build. `nifra build --target static --prerender <paths>` prerenders the named pages for that build whether or not their route exports `prerender`, so a shell build ships the page it opens on without a web build serving it as a snapshot; it fails on a path that is no static page route.
+- 9c47fad: Add the versioned public deployment adapter contract and a Fly.io reference adapter for Nifra's Node build target.
+- 497449f: Let a page that ships inside a native shell reach its server on another origin. `createClientRouter` takes a `fetch` option that carries the route-data GETs, prefetches and action POSTs. A build takes a `transport` module whose default export the generated entry passes to the router: `buildClient({ transport })`, the Bun and Vite dev servers, and `transport` in `nifra.config.ts`.
+  
+  `serverFetch({ origin, headers, credentials })` from `@nifrajs/web/shell` builds that function. A path-absolute URL goes to `origin`, with headers (or an async header function, such as a refreshing bearer token) added to each request. Prerendered data files still load from the bundle, except for a navigation with a query string and, with live, the loads the live endpoint makes.
+  
+  The same transport reaches the rest of the app. `appFetch` from `@nifrajs/web/shell` is the `fetch` for a `useQuery` fetcher or the typed client (`client(url, { fetch: appFetch })`): the transport in a shell build, the global `fetch` anywhere else. The stubs that stand in for `*.fn.ts` modules call through it, and `serverFunctions(namespace, module, { origins })` lists the shell origins the server accepts besides its own. The live client and socket take the transport and its origin, and keep-alive layers over it.
+  
+  A path the shell has no page for, such as a reload at `/todos`, hydrates the document the shell ships and then navigates to that URL.
+
+### Patch Changes
+
+- 4636191: `nifra dev` inlines the public environment (`PUBLIC_*`, or the configured `publicEnvPrefix`) into the client bundle on the default Bun pipeline, as `nifra build` already does. Before, a `process.env.PUBLIC_X` read in the browser stayed a runtime read and was always undefined there, so a value set for the dev server never reached the page.
+- 3b39e39: Refuse a cross-site HTML form post to an unsafe route that has no `schema.body`. The `403 forbidden_origin` check that body-schema routes already apply now runs ahead of every lane for a `POST`, `PUT`, `PATCH` or `DELETE` route without a body schema too, including Bun's native route table; `formOrigins` admits the same origins as before.
+  
+  `nifra mcp` no longer adopts a workspace member that a `workspaces` pattern reaches through `..`, an absolute path, or a symlink out of the workspace root.
+- 236c56d: Clarify the reserved typed-client segment guidance so the DELETE verb call and the escaped path-segment call are not confused.
+- Updated dependencies [591f74e]
+- Updated dependencies [b427443]
+- Updated dependencies [3b39e39]
+- Updated dependencies [16023e9]
+- Updated dependencies [9c47fad]
+- Updated dependencies [d75437b]
+- Updated dependencies [9c8a464]
+- Updated dependencies [72fe9ce]
+- Updated dependencies [8bba4fa]
+- Updated dependencies [820a05a]
+- Updated dependencies [497449f]
+  - @nifrajs/core@5.13.0
+  - @nifrajs/client@5.13.0
+  - @nifrajs/web@5.13.0
+  - @nifrajs/i18n@5.13.0
+  - @nifrajs/mcp@5.13.0
+  - @nifrajs/schema@5.13.0
+  - @nifrajs/testing@5.13.0
+  - @nifrajs/agent-review@5.13.0
+  - @nifrajs/mcp-db@5.13.0
+  - @nifrajs/runner@5.13.0
+
 ## 5.12.1
 
 ### Patch Changes

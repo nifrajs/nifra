@@ -1,5 +1,11 @@
 # @nifrajs/cron
 
+## 5.13.0
+
+### Minor Changes
+
+- 591f74e: Server, worker, scheduler, subscription, and socket handles stop when their scope ends. Hold a Bun `listen()` handle, a Node or Deno `serve()` handle, or a jobs worker with `await using`; hold a cron scheduler, a client subscription, or a client WebSocket with `using`.
+
 ## 5.12.1
 
 No changes in this release.

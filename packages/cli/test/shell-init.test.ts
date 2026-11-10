@@ -34,6 +34,7 @@ const project = (pkg?: object): string => {
 }
 const tree = (dir: string): string[] =>
   readdirSync(dir, { recursive: true, encoding: "utf8" })
+    .map((p) => p.replaceAll("\\", "/"))
     .filter((p) => /\.[a-z]+$/.test(p) || p.endsWith(".gitignore"))
     .sort()
 
@@ -165,12 +166,19 @@ test("the window opens hidden, shows on the first paint, and a timer shows it if
   expect(LIB_RS).toContain('WebviewWindowBuilder::new(app, "main"')
 })
 
-/** A project whose `node_modules/.bin/tauri` is a script that logs its arguments and exits `code`. */
+/** A project whose `node_modules/.bin/tauri` (`tauri.cmd` on Windows) logs its arguments and exits `code`. */
 function withFakeTauri(code: number, say = ""): { dir: string; log: string } {
   const dir = project()
   const bin = join(dir, "node_modules", ".bin")
   mkdirSync(bin, { recursive: true })
   const log = join(dir, "calls.log")
+  if (process.platform === "win32") {
+    writeFileSync(
+      join(bin, "tauri.cmd"),
+      `@echo off\r\necho %* >> "${log}"\r\n${say === "" ? "" : `echo ${say} 1>&2\r\n`}exit /b ${code}\r\n`,
+    )
+    return { dir, log }
+  }
   writeFileSync(
     join(bin, "tauri"),
     `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\n${say === "" ? "" : `echo ${JSON.stringify(say)} >&2\n`}exit ${code}\n`,
@@ -186,10 +194,12 @@ test("mobile init runs the project's Tauri CLI once per platform, non-interactiv
     { platform: "android", ok: true, note: "" },
     { platform: "ios", ok: true, note: "" },
   ])
-  expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
-    "android init --ci",
-    "ios init --ci",
-  ])
+  expect(
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => line.trim()),
+  ).toEqual(["android init --ci", "ios init --ci"])
 })
 
 test("a platform that fails is reported with what the CLI said, and the others still run", async () => {

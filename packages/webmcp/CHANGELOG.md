@@ -1,5 +1,17 @@
 # @nifrajs/webmcp
 
+## 5.13.0
+
+### Patch Changes
+
+- Updated dependencies [591f74e]
+- Updated dependencies [b427443]
+- Updated dependencies [3b39e39]
+- Updated dependencies [16023e9]
+- Updated dependencies [d75437b]
+- Updated dependencies [9c8a464]
+  - @nifrajs/core@5.13.0
+
 ## 5.12.1
 
 ### Patch Changes

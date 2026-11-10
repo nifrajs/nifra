@@ -1,5 +1,27 @@
 # @nifrajs/core
 
+## 5.13.0
+
+### Minor Changes
+
+- 591f74e: Server, worker, scheduler, subscription, and socket handles stop when their scope ends. Hold a Bun `listen()` handle, a Node or Deno `serve()` handle, or a jobs worker with `await using`; hold a cron scheduler, a client subscription, or a client WebSocket with `using`.
+- 9c8a464: The origins a `cors()` list or predicate and a `csrf({ origins })` list name are now trusted for form posts, so a frontend those already allow no longer needs a second copy in `formOrigins`. `cors()` with `"*"`, the default, adds none, and the server's own `formOrigins` list is kept.
+  
+  A route without a body schema now also refuses an unsafe request that has no content type, which `fetch` with `no-cors` sends, when its `Origin` names a site that neither `formOrigins`, `cors()` nor `csrf({ origins })` trusts. A request that carries a script-set `Authorization` header passes, since a browser preflights it; `Basic`, `Digest`, `Negotiate` and `NTLM` do not count, because a browser re-sends those from its auth cache with no preflight. An app that handles CORS outside nifra, such as a reverse proxy adding the headers, and takes bodyless cross-origin `POST`, `PUT`, `PATCH` or `DELETE` calls from a frontend without `Authorization` needs that frontend's origin in `formOrigins`.
+  
+  Audit the origins you give `cors()` and `csrf({ origins })`: a named origin may now also post a form to this server's routes, whatever methods or credentials that CORS policy allows. The trust covers the server that installs the middleware; a parent that merges or groups it keeps its own `formOrigins`, and a web page action still checks the backend's `allowedOrigins`.
+
+### Patch Changes
+
+- b427443: `@nifrajs/edge` now refuses a cross-site HTML form post to a `POST`, `PUT`, `PATCH` or `DELETE` route that has no body schema, with `403 forbidden_origin` before the handler runs, as it already did for a body-schema route and as `@nifrajs/core`'s `server()` does. `formOrigins` admits the same origins. `@nifrajs/core/edge-kit` exports `crossSiteFormRefused` for it.
+- 3b39e39: Refuse a cross-site HTML form post to an unsafe route that has no `schema.body`. The `403 forbidden_origin` check that body-schema routes already apply now runs ahead of every lane for a `POST`, `PUT`, `PATCH` or `DELETE` route without a body schema too, including Bun's native route table; `formOrigins` admits the same origins as before.
+  
+  `nifra mcp` no longer adopts a workspace member that a `workspaces` pattern reaches through `..`, an absolute path, or a symlink out of the workspace root.
+- 16023e9: Bound standalone idempotency response serialization and replay to 1 MB by default. Explicit `maxBytes` and route-level `maxResponseBytes` settings still control the limit.
+  
+  Keep in-process client response decoding under the same byte cap as network responses, including framework-resident bodies.
+- d75437b: Harden native query URL parsing and remote image body handling, and reduce repeated query-cache hashing, invalidation, and eviction work.
+
 ## 5.12.1
 
 ### Patch Changes

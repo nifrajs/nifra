@@ -1,5 +1,11 @@
 # @nifrajs/image
 
+## 5.13.0
+
+### Patch Changes
+
+- d75437b: Harden native query URL parsing and remote image body handling, and reduce repeated query-cache hashing, invalidation, and eviction work.
+
 ## 5.12.1
 
 No changes in this release.

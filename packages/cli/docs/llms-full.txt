@@ -165,7 +165,7 @@ from one core, with loaders, actions, streaming, and a typed data layer - and a
 ### Nifra's lane
 
 Every other full-stack framework here is **built around one UI library** (TanStack Start
-supports two), and most reach other hosts through adapters. Nifra bets on the other axis: one
+supports three), and most reach other hosts through adapters. Nifra bets on the other axis: one
 core, five front-ends, many runtimes, with a contract-first typed backend in the same project.
 
 Framework
@@ -188,12 +188,12 @@ SvelteKit
 Svelte
 adapters
 
-React Router 7 (Remix)
+React Router 8 (Remix)
 React
 adapters
 
 TanStack Start
-React · Solid
+React · Solid · Vue
 Nitro · host plugins
 
 ### Full-stack parity
@@ -294,14 +294,14 @@ to full-stack later without a rewrite.
 **Throughput - the realistic case.** Router micro-benchmarks flatter Hono (a single compiled
 regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
-100% of Elysia on `GET /users/:id` and
+99% of Elysia on `GET /users/:id` and
 103% on the validated `POST` - and
-**level with Fastify on Node** (108% of Fastify on GET,
-107% on the validated `POST`), with Elysia, Hono,
-and Express behind. On **Deno** it runs at 107% of Elysia on
-GET and 133% on the validated `POST`. In the realistic shape (security headers + CORS +
+**level with Fastify on Node** (109% of Fastify on GET,
+105% on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at 117% of Elysia on
+GET and 143% on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured on
-**Bun** with `oha`) Nifra runs at **109% of Elysia on GET and 113% on POST**. Treat benchmark
+**Bun** with `oha`) Nifra runs at **118% of Elysia on GET and 119% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -8376,8 +8376,8 @@ starts from unless nothing else, installed or declared, names one.
 
 ```bash
 nifra upgrade --list                # the release targets this CLI knows
-nifra upgrade 5.12.1              # dry-run: every planned edit, nothing written
-nifra upgrade 5.12.1 --write      # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.13.0              # dry-run: every planned edit, nothing written
+nifra upgrade 5.13.0 --write      # apply; it verifies with nifra check once the target is installed
 # if pins were already bumped by hand, add --from <installed-version>
 bun install                         # install the new pins
 nifra check                         # verify against them
@@ -14380,7 +14380,7 @@ the command below, which runs every recipe since its installed version. The 5.6 
 its imports and dependencies; the follow-up changes below need a hand.
 
 ```sh
-nifra upgrade 5.12.1
+nifra upgrade 5.13.0
 ```
 
 -
@@ -14812,8 +14812,8 @@ rendering and route model, see Loaders & actions
 and Routing.
 
 The current dynamic SSR snapshot reports Nifra at 18× the throughput
-of Next.js, 7.9× Nuxt, 5.3× SvelteKit, and
-2.7× SolidStart on the measured pages. See the
+of Next.js, 8.3× Nuxt, 5.3× SvelteKit, and
+2.8× SolidStart on the measured pages. See the
 benchmark methodology and full results.
 
 ## Nifra - Migrate route by route
@@ -16128,7 +16128,7 @@ Nifra side: an implementation-level read of every security-relevant module acros
 `core`, `middleware`, `auth`, `node`,
 `web`, `uploads`, and `cli` - defaults and failure modes, not
 marketing claims. Competitor side: current official documentation for defaults, verified as of
-August 2026 against Hono 4.12.x, Fastify 5.x, Express 5.1 / 4.21.x, and Elysia 1.4.x. The
+November 2026 against the published packages of Hono 4.13.17, Fastify 5.12.8, Express 5.3.0 / 4.22.3, and Elysia 1.4.31 (the Elysia 2.0 release candidate is not covered). The
 comparison unit is what a developer gets **by default** and what the framework makes
 **impossible to get wrong**, not what a maximally careful expert could configure - because
 most real-world security incidents are misconfiguration-by-default.
@@ -16228,8 +16228,8 @@ O
 ahead
 
 CSRF
-B two layers (origin + signed double-submit)
-b (origin heuristic)
+B core refuses cross-site form posts on every unsafe route; `csrf()` adds a signed double-submit
+b (Origin / Sec-Fetch-Site on form content types)
 O token-based
 3 (csurf deprecated)
 -
@@ -16359,9 +16359,9 @@ ahead (unique)
 Supply chain (runtime deps in core)
 0
 0
-~dozen
-many
-few
+15
+28
+4
 par with Hono
 
 Machine-checkable route security evidence
@@ -16375,7 +16375,7 @@ B (`nifra assure`)
 unique
 
 Security lint (fail-open, non-constant-time, PII logs)
-B (NF-S001..007)
+B (NF-S001..009)
 -
 -
 -
@@ -16426,9 +16426,10 @@ Nifra's `cors()` throws at construction when `credentials: true`
 meets `origin: "*"`, never reflects an origin by default with credentials,
 and lands headers on error responses too - it is **the only one of the five where the
 dangerous configuration is a construction-time error**. The other four leave
-reflect-with-credentials configurable. CSRF is two independent layers (Origin/Referer check
-plus a signed double-submit token, timing-safe); Hono's CSRF is an Origin /
-Sec-Fetch-Site heuristic, Fastify's official token package is comparable, Express's
+reflect-with-credentials configurable. Core refuses a cross-site HTML form post to every
+unsafe route before the handler runs, and `csrf()` adds an Origin/Referer check
+plus a signed double-submit token, timing-safe; Hono's CSRF is an Origin /
+Sec-Fetch-Site check on form content types, Fastify's official token package is comparable, Express's
 csurf is deprecated, and Elysia ships none in-tree. Uncaught errors become a flat 500
 unconditionally - not env-gated - so no configuration leaks a stack to the wire; Express's
 dev handler printing stacks when `NODE_ENV` is unset is the perennial
@@ -16479,7 +16480,7 @@ shedding; nothing else in the field defaults to an unspoofable key or fails clos
 **Route assurance evidence.** Middleware publishes machine-checkable per-route claims
 (`AUTHENTICATED`, `BODY_BOUNDED`, `CSRF`,
 `RATE_LIMITED`, `IP_RESTRICTED`, `SECURITY_HEADERS`,
-`IDEMPOTENCY_KEY`), and `nifra assure` fails CI when a policy is unmet.
+`IDEMPOTENCY_KEY`, `DURABLE_COMMAND`, `RESPONSE_CONTRACT`), and `nifra assure` fails CI when a policy is unmet.
 Evidence is honest: an escape hatch suppresses its own claim.
 
 -
