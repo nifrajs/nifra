@@ -95,6 +95,7 @@ export const fns = serverFunctions("todos", todos, {
 const LIVE = `import { live } from "@nifrajs/web/live"
 
 export const runtime = live({
+  // Required in production, at least 32 bytes: set LIVE_SECRET (openssl rand -base64 32).
   secret: process.env.LIVE_SECRET ?? "",
   // Anonymous viewers. An app with accounts returns the session's user id, so a change of account
   // clears the client's cache and revoke(userId) reaches this viewer's grants.
