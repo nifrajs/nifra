@@ -294,14 +294,14 @@ to full-stack later without a rewrite.
 **Throughput - the realistic case.** Router micro-benchmarks flatter Hono (a single compiled
 regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
-100% of Elysia on `GET /users/:id` and
+99% of Elysia on `GET /users/:id` and
 103% on the validated `POST` - and
-**level with Fastify on Node** (108% of Fastify on GET,
-107% on the validated `POST`), with Elysia, Hono,
-and Express behind. On **Deno** it runs at 107% of Elysia on
-GET and 133% on the validated `POST`. In the realistic shape (security headers + CORS +
+**level with Fastify on Node** (109% of Fastify on GET,
+105% on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at 117% of Elysia on
+GET and 143% on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured on
-**Bun** with `oha`) Nifra runs at **109% of Elysia on GET and 113% on POST**. Treat benchmark
+**Bun** with `oha`) Nifra runs at **118% of Elysia on GET and 119% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -8376,8 +8376,8 @@ starts from unless nothing else, installed or declared, names one.
 
 ```bash
 nifra upgrade --list                # the release targets this CLI knows
-nifra upgrade 5.12.1              # dry-run: every planned edit, nothing written
-nifra upgrade 5.12.1 --write      # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.13.0              # dry-run: every planned edit, nothing written
+nifra upgrade 5.13.0 --write      # apply; it verifies with nifra check once the target is installed
 # if pins were already bumped by hand, add --from <installed-version>
 bun install                         # install the new pins
 nifra check                         # verify against them
@@ -14380,7 +14380,7 @@ the command below, which runs every recipe since its installed version. The 5.6 
 its imports and dependencies; the follow-up changes below need a hand.
 
 ```sh
-nifra upgrade 5.12.1
+nifra upgrade 5.13.0
 ```
 
 -
@@ -14812,8 +14812,8 @@ rendering and route model, see Loaders & actions
 and Routing.
 
 The current dynamic SSR snapshot reports Nifra at 18× the throughput
-of Next.js, 7.9× Nuxt, 5.3× SvelteKit, and
-2.7× SolidStart on the measured pages. See the
+of Next.js, 8.3× Nuxt, 5.3× SvelteKit, and
+2.8× SolidStart on the measured pages. See the
 benchmark methodology and full results.
 
 ## Nifra - Migrate route by route

@@ -1,5 +1,11 @@
 # @nifrajs/pi
 
+## 5.13.0
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.13.0
+
 ## 5.12.1
 
 ### Patch Changes

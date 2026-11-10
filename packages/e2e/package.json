@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/e2e",
-  "version": "5.12.1",
+  "version": "5.13.0",
   "description": "Browser end-to-end tests for Nifra apps: typed open() from the route table, locators and retrying expect, hydration-aware actions, and an engine seam with Playwright and in-memory implementations.",
   "keywords": [
     "bun",

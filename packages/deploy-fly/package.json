@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/deploy-fly",
-  "version": "5.12.1",
+  "version": "5.13.0",
   "description": "Build-time Fly.io packaging adapter for Nifra's Node target.",
   "keywords": [
     "nifra",

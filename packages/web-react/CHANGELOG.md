@@ -1,5 +1,23 @@
 # @nifrajs/web-react
 
+## 5.13.0
+
+### Patch Changes
+
+- Updated dependencies [591f74e]
+- Updated dependencies [b427443]
+- Updated dependencies [3b39e39]
+- Updated dependencies [16023e9]
+- Updated dependencies [9c47fad]
+- Updated dependencies [d75437b]
+- Updated dependencies [9c8a464]
+- Updated dependencies [72fe9ce]
+- Updated dependencies [8bba4fa]
+- Updated dependencies [820a05a]
+- Updated dependencies [497449f]
+  - @nifrajs/core@5.13.0
+  - @nifrajs/web@5.13.0
+
 ## 5.12.1
 
 ### Patch Changes
