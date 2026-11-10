@@ -62,7 +62,7 @@ export default function VsNextjs() {
           </tr>
           <tr>
             <td>Partial prerendering</td>
-            <td>Experimental, on all five UI frameworks</td>
+            <td>Stable, on all five UI frameworks</td>
             <td>Yes, under Cache Components</td>
           </tr>
           <tr>

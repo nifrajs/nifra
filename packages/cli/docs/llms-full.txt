@@ -165,7 +165,7 @@ from one core, with loaders, actions, streaming, and a typed data layer - and a
 ### Nifra's lane
 
 Every other full-stack framework here is **built around one UI library** (TanStack Start
-supports two), and most reach other hosts through adapters. Nifra bets on the other axis: one
+supports three), and most reach other hosts through adapters. Nifra bets on the other axis: one
 core, five front-ends, many runtimes, with a contract-first typed backend in the same project.
 
 Framework
@@ -188,12 +188,12 @@ SvelteKit
 Svelte
 adapters
 
-React Router 7 (Remix)
+React Router 8 (Remix)
 React
 adapters
 
 TanStack Start
-React · Solid
+React · Solid · Vue
 Nitro · host plugins
 
 ### Full-stack parity

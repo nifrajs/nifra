@@ -21,7 +21,7 @@ export default function Comparison() {
       <h2>Nifra's lane</h2>
       <p>
         Every other full-stack framework here is <b>built around one UI library</b> (TanStack Start
-        supports two), and most reach other hosts through adapters. Nifra bets on the other axis: one
+        supports three), and most reach other hosts through adapters. Nifra bets on the other axis: one
         core, five front-ends, many runtimes, with a contract-first typed backend in the same project.
       </p>
       <table>
@@ -54,13 +54,13 @@ export default function Comparison() {
             <td>adapters</td>
           </tr>
           <tr>
-            <td>React Router 7 (Remix)</td>
+            <td>React Router 8 (Remix)</td>
             <td>React</td>
             <td>adapters</td>
           </tr>
           <tr>
             <td>TanStack Start</td>
-            <td>React · Solid</td>
+            <td>React · Solid · Vue</td>
             <td>Nitro · host plugins</td>
           </tr>
         </tbody>
