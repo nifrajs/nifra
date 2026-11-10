@@ -236,6 +236,7 @@ const SKIPS: Readonly<Record<string, string>> = Object.freeze({
   "@nifrajs/cron": "cron scheduling helpers; covered by package tests",
   "@nifrajs/deno": "proven on the real Deno runtime by test:deno and check:deno-tarball",
   "@nifrajs/devtools": "development tooling; covered by package tests",
+  "@nifrajs/e2e": "browser test tooling; covered by package tests and the on-demand browser smoke",
   "@nifrajs/env": "environment helpers; covered by package tests",
   "@nifrajs/events": "event delivery abstractions; covered by certification profiles",
   "@nifrajs/graphql":

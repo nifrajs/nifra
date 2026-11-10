@@ -3555,6 +3555,111 @@ _No named exports (side-effect entrypoint)._
 - **devtoolsClientScript** _(function)_ - `devtoolsClientScript: (options?: DevToolsClientOptions) => string`
   Returns a self-contained JavaScript string that creates a floating DevTools overlay in the browser. Inject via `<script>` tag in dev mode.
 
+## @nifrajs/e2e
+
+### `@nifrajs/e2e`
+
+- **ActDecision** _(type)_ - `type ActDecision`
+- **ActOptions** _(interface)_ - `interface ActOptions`
+- **ActRequest** _(interface)_ - `interface ActRequest`
+- **ActResult** _(interface)_ - `interface ActResult`
+- **ActionRecord** _(interface)_ - `interface ActionRecord`
+  One thing the agent tried inside a goal, and whether the page took it.
+- **Agent** _(interface)_ - `interface Agent`
+- **AgentReport** _(interface)_ - `interface AgentReport`
+  What the replay cache did for this session, and how many model calls it still took.
+- **CacheEntry** _(interface)_ - `interface CacheEntry`
+- **CacheMode** _(type)_ - `type CacheMode = "read-write" | "read-only" | "strict" | "off"`
+  `read-write` replays and records; `read-only` replays and hands off but never writes or deletes (CI); `strict` replays only, and a missing or stale recording fails; `off` ignores the cache.
+- **CacheOptions** _(interface)_ - `interface CacheOptions`
+- **CacheStore** _(interface)_ - `interface CacheStore`
+- **Clock** _(interface)_ - `interface Clock`
+- **E2EError** _(class)_ - `class E2EError`
+- **E2EErrorCode** _(type)_ - `type E2EErrorCode`
+- **E2EModel** _(interface)_ - `interface E2EModel`
+  The seam to a model. Answer an `act` request with a decision (`{ kind: "tap", target }`, `fill`, `press`, `goto`, `done` or `fail`), an `assert` or `waitFor` with `{ pass, reason }`, and an `extract` with `{ value }`. The answer is unknown until the runner has parsed it. Nothing here names a vendor…
+- **E2EOptions** _(interface)_ - `interface E2EOptions`
+- **E2ESession** _(interface)_ - `interface E2ESession<App>`
+- **ElementAction** _(type)_ - `type ElementAction = | { readonly kind: "tap" } | { readonly kind: "fill"; readonly value: string } | { readonly kind: "press"; readonly key: string }`
+- **ElementState** _(interface)_ - `interface ElementState`
+- **Engine** _(interface)_ - `interface Engine`
+  What a browser or device must offer. `act` waits up to `timeout` ms for exactly one actionable match, then performs the action; it throws `LOCATOR_NOT_FOUND` or `LOCATOR_AMBIGUOUS` otherwise. `resolve` never waits and never throws on zero matches.
+- **EngineFactory** _(type)_ - `type EngineFactory = (init: EngineInit) => Promise<Engine>`
+- **EngineInit** _(interface)_ - `interface EngineInit`
+- **ExtractOptions** _(interface)_ - `interface ExtractOptions<S extends StandardSchemaV1>`
+- **ExtractRequest** _(interface)_ - `interface ExtractRequest`
+- **HandOff** _(interface)_ - `interface HandOff`
+  A recorded run that stopped partway: its actions are already done, so do not redo them.
+- **HydrationMode** _(type)_ - `type HydrationMode = "auto" | "off"`
+  `auto` waits for nifra's `data-nifra-hydrated` marker only on pages that load a module script.
+- **JudgeRequest** _(interface)_ - `interface JudgeRequest`
+- **Locator** _(class)_ - `class Locator`
+- **LocatorContext** _(interface)_ - `interface LocatorContext`
+- **LocatorMatchers** _(interface)_ - `interface LocatorMatchers`
+- **MatcherOptions** _(interface)_ - `interface MatcherOptions`
+- **ModelRequest** _(type)_ - `type ModelRequest = ActRequest | JudgeRequest | ExtractRequest`
+- **OpenArgs** _(type)_ - `type OpenArgs<P extends string>`
+  A route with `:params` must be given them; one without takes only an optional query.
+- **OpenOptions** _(interface)_ - `interface OpenOptions<P extends string>`
+- **Param** _(type)_ - `type Param = string | number | boolean | Secret | Unique`
+- **Params** _(type)_ - `type Params = Readonly<Record<string, Param>>`
+- **PathParams** _(type)_ - ``type PathParams<P extends string> = P extends `${string}:${infer Rest}` ? Rest extends `${infer Name}/${infer Tail}` ? Name | PathParams<`/${Tail}`> : Rest : never``
+  The `:name` segments of a route path.
+- **PerformedDecision** _(type)_ - `type PerformedDecision = Exclude<ActDecision, { kind: "done" } | { kind: "fail" }>`
+- **RecordedAction** _(type)_ - `type RecordedAction`
+  One action as it was taken. A fill's value and a goto's path keep their `{name}` placeholders.
+- **RoleOptions** _(interface)_ - `interface RoleOptions`
+- **Screen** _(class)_ - `class Screen`
+  The page root: every chain starts here.
+- **Secret** _(class)_ - `class Secret`
+  A value a step may use but the model must never read: it is typed into the page by name, and `String(secret)`, `JSON.stringify(secret)` and template literals all print the name only.
+- **Selector** _(type)_ - `type Selector = readonly Step[]`
+- **Step** _(type)_ - `type Step`
+  One link of a locator chain; the first finds from the page, each later one searches inside the matches so far.
+- **StepOptions** _(interface)_ - `interface StepOptions`
+- **StopReason** _(type)_ - `type StopReason = | "target-not-found" | "ambiguous" | "end-mismatch" | "action-uncertain" | "route-mismatch"`
+  Why a replay stopped short of finishing the recorded actions.
+- **Target** _(interface)_ - `interface Target`
+  Which control a step means: exactly one of `role`, `label`, `text`, `testId`.
+- **TextOptions** _(interface)_ - `interface TextOptions`
+- **Unique** _(class)_ - `class Unique`
+  Run-varying data (a generated email, a timestamp). The model and the page get the value; the replay cache keys on the fact that it varies, so a new value does not miss, and re-types the new value.
+- **UrlMatchers** _(interface)_ - `interface UrlMatchers`
+- **UrlSource** _(interface)_ - `interface UrlSource`
+  Anything with a current URL; `E2ESession` is one.
+- **Verdict** _(interface)_ - `interface Verdict`
+- **WaitForOptions** _(interface)_ - `interface WaitForOptions`
+- **e2e** _(function)_ - `e2e: <App extends E2EApp>(app: App, options?: E2EOptions) => Promise<E2ESession<App>>`
+  Serve `app` on an ephemeral port and drive it from a browser. The session is `AsyncDisposable`: `await using t = await e2e(app)` closes the browser and the server at scope exit.
+- **expect** _(function)_ - `expect: { (subject: Locator): LocatorMatchers; (subject: UrlSource): UrlMatchers; }`
+- **fileCacheStore** _(function)_ - `fileCacheStore: (dir: string) => CacheStore`
+  Entries as files under `dir`, one JSON per key: small, diffable and meant to be committed.
+- **formatReport** _(function)_ - `formatReport: (report: AgentReport) => string`
+- **memoryCacheStore** _(function)_ - `memoryCacheStore: () => CacheStore & { readonly entries: Map<string, CacheEntry>; }`
+  Entries in memory, for tests of code built on this package.
+- **unique** _(function)_ - `unique: (value: string | number) => Unique`
+
+### `@nifrajs/e2e/fake`
+
+- **FakeEngineOptions** _(interface)_ - `interface FakeEngineOptions`
+- **FakeLogEntry** _(interface)_ - `interface FakeLogEntry`
+- **FakeNode** _(interface)_ - `interface FakeNode`
+  A node of the in-memory page tree the fake engine matches locators against.
+- **fakeEngine** _(function)_ - `fakeEngine: (options: FakeEngineOptions) => { factory: EngineFactory; log: FakeLogEntry[]; }`
+  An in-memory engine for tests of code built on `@nifrajs/e2e`: no browser, same locator semantics (case-insensitive substring unless `exact`). It does not wait; an `act` on a missing element throws at once.
+
+### `@nifrajs/e2e/playwright`
+
+- **PlaywrightEngineOptions** _(interface)_ - `interface PlaywrightEngineOptions`
+- **PwBrowser** _(interface)_ - `interface PwBrowser`
+- **PwContext** _(interface)_ - `interface PwContext`
+- **PwFinder** _(interface)_ - `interface PwFinder`
+  The slice of Playwright this engine calls, so the package carries no Playwright types and tests can stand in for it.
+- **PwLocator** _(interface)_ - `interface PwLocator`
+- **PwPage** _(interface)_ - `interface PwPage`
+- **playwrightEngine** _(function)_ - `playwrightEngine: (options?: PlaywrightEngineOptions) => EngineFactory`
+  A browser engine over Playwright (`playwright` is an optional peer, loaded on first use).
+
 ## @nifrajs/edge
 
 - **EdgeContext** _(interface)_ - `interface EdgeContext<Path extends string = string, Body = unknown>`

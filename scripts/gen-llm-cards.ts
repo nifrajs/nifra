@@ -213,6 +213,14 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     'An opaque Standard Schema validates normally but cannot synthesize its own known-good input. Supply `witnesses["METHOD /path"]`; missing/invalid witnesses are coverage gaps, never silent passes.',
     "Query mutations are proved invalid after URL serialization, and every failure carries `{ seed, caseId, runtime }`; replay one with `only: caseId`.",
   ],
+  "@nifrajs/e2e": [
+    "Locator names and text match as a **case-insensitive substring**: `getByRole('button', 'Sign in')` also matches `Sign in again`. Pass `{ exact: true }` for a full match.",
+    "`tap`, `fill`, `press` and the one-element assertions (`toHaveText`, `toBeVisible`, ...) refuse a locator that matches several elements (`LOCATOR_AMBIGUOUS`); narrow it with `.filter({ hasText })` or a chained finder.",
+    "Await every action and assertion: assertions retry until `assertionTimeout`, and an un-awaited one is never checked. `open()` only takes a path the app declares and requires its `:params`.",
+    "Actions wait for `data-nifra-hydrated` only on a page that loads a module script; a page that is not a hydrated Nifra page needs `hydration: 'off'` if the wait times out. `playwright` is an optional peer: install it yourself.",
+    "Agent steps need `model` on `e2e()` (`MODEL_MISSING` otherwise). Pass credentials as `new Secret(name, value)` params, never inline in the goal: the model sees `{name}` and the session redacts the value from every snapshot it sends. A goal that runs out of `maxModelCalls`, `maxActions` or `timeout` throws; raise the budget only after reading why it looped.",
+    "The replay cache saves an `act` only after a LATER `expect`/`agent.assert` passes, and deletes it when one fails: end a test with a check. Pass `cache.testId`, or two tests that say the same thing share a recording. Wrap run-varying values in `unique()`; a plain param value is part of the key. Commit `.nifra/e2e-cache`, and use `mode: 'strict'` where a stale recording must fail rather than call a model.",
+  ],
   "@nifrajs/schema": [
     "`t.object` is **strict** - unknown keys → `422`. Reach for `t.looseObject` only when extra keys are intentional.",
     "`t.file` and `t.form` are on the `t` of **`@nifrajs/schema/form`**, not the root `t`. A `t.form` is the route `body` as is and reads `multipart/form-data`; the default body cap is 1 MB, so set `bodyLimit` on a route that takes files.",

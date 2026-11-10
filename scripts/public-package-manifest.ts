@@ -24,6 +24,7 @@ const LIBRARY_PACKAGE_DIRS = [
   "client",
   "cache",
   "testing",
+  "e2e",
   "mcp",
   "schema",
   "middleware",
