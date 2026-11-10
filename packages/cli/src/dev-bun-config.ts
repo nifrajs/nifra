@@ -167,11 +167,12 @@ export function renderDevBunfig(
   serve.static = serveStatic
   serveStatic.plugins = [boundaryPluginPath]
   if (Object.keys(clientDefine).length > 0) {
-    // Client only, as `nifra build` bakes the public environment into the client bundle alone; the
-    // config's `define` below is layered over it.
+    // Client only, as `nifra build` bakes the public environment into the client bundle alone. The
+    // app's own bunfig define beats it, and the config's `define` below beats both.
     serveStatic.define = Object.assign(
-      isTable(serveStatic.define) ? serveStatic.define : {},
+      {},
       clientDefine,
+      isTable(serveStatic.define) ? serveStatic.define : {},
     )
   }
   if (Object.keys(define).length > 0) {
