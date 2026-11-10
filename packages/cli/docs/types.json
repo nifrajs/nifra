@@ -158,6 +158,30 @@
     "signature": "export interface AcpClientInfo {\n    readonly name: string;\n    readonly title?: string;\n    readonly version: string;\n}"
   },
   {
+    "name": "ActDecision",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type ActDecision = {\n    readonly kind: \"tap\";\n    readonly target: Target;\n} | {\n    readonly kind: \"fill\";\n    readonly target: Target;\n    readonly value: string;\n} | {\n    readonly kind: \"press\";\n    readonly target: Target;\n    readonly key: string;\n} | {\n    readonly kind: \"goto\";\n    readonly path: string;\n} | {\n    readonly kind: \"done\";\n    readonly summary?: string;\n} | {\n    readonly kind: \"fail\";\n    readonly reason: string;\n};"
+  },
+  {
+    "name": "ActOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface ActOptions extends StepOptions {\n    /** Model decisions one goal may use. Default 12. */\n    readonly maxModelCalls?: number;\n    /** Page actions one goal may take, failed ones included. Default 25. */\n    readonly maxActions?: number;\n    /** ms for the whole goal on the session clock. Default 120000. */\n    readonly timeout?: number;\n}"
+  },
+  {
+    "name": "ActRequest",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface ActRequest {\n    readonly kind: \"act\";\n    readonly goal: string;\n    readonly context?: string;\n    readonly snapshot: string;\n    readonly history: readonly ActionRecord[];\n    /** Names of params whose values stay out of the goal and the snapshot; write `{name}` to type one. */\n    readonly secrets: readonly string[];\n    readonly modelCallsLeft: number;\n    readonly actionsLeft: number;\n    readonly handoff: HandOff | undefined;\n    readonly signal: AbortSignal;\n}"
+  },
+  {
+    "name": "ActResult",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface ActResult {\n    /** `replay`: no model call. `handoff`: a recording stopped and the model finished the goal. */\n    readonly source: \"model\" | \"replay\" | \"handoff\";\n    readonly modelCalls: number;\n    /** The actions the page accepted, in order. */\n    readonly actions: readonly PerformedDecision[];\n    readonly summary?: string;\n}"
+  },
+  {
     "name": "Action",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -177,6 +201,13 @@
     "package": "@nifrajs/client",
     "signature": "export type ActionData<A> = A extends (...args: never[]) => infer R ? Awaited<R> extends infer D ? D extends {\n    readonly __nifraRevalidate: readonly string[];\n    readonly data: infer W;\n} ? Exclude<W, Response> : Exclude<D, Response> : never : never;",
     "doc": "/**\n * The (awaited) data return of an `action`, for typing a page component's `actionData` prop.\n * A `Response` return (redirect/custom) is excluded - it never reaches the component. A\n * `revalidate(paths, data)` wrapper (from `@nifrajs/web`) is transparent: matched structurally (so this\n * stays decoupled from `@nifrajs/web`) and unwrapped to its inner `data` - what the component receives.\n */"
+  },
+  {
+    "name": "ActionRecord",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface ActionRecord {\n    readonly action: PerformedDecision;\n    readonly ok: boolean;\n    readonly error?: string;\n}",
+    "doc": "/** One thing the agent tried inside a goal, and whether the page took it. */"
   },
   {
     "name": "ActiveObservation",
@@ -326,6 +357,12 @@
     "package": "@nifrajs/ag-ui",
     "signature": "export interface AgUIRunUsage {\n    readonly provider?: string;\n    readonly model?: string;\n    readonly inputTokens?: number;\n    readonly outputTokens?: number;\n    readonly totalTokens?: number;\n    readonly reasoningTokens?: number;\n    readonly cachedInputTokens?: number;\n}",
     "doc": "/**\n * One aggregated token-usage entry in the spec's `RUN_FINISHED.usage` array: the model port's\n * `usage` deltas summed per `(provider, model)` pair, matching AG-UI's `TokenUsage` shape.\n */"
+  },
+  {
+    "name": "Agent",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface Agent {\n    report(): AgentReport;\n    act(goal: string, options?: ActOptions): Promise<ActResult>;\n    assert(statement: string, options?: StepOptions): Promise<void>;\n    waitFor(statement: string, options?: WaitForOptions): Promise<void>;\n    extract<S extends StandardSchemaV1>(prompt: string, options: ExtractOptions<S>): Promise<InferOutput<S>>;\n}"
   },
   {
     "name": "AgentAppClient",
@@ -771,6 +808,13 @@
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
     "signature": "export interface AgentRepairTask {\n    readonly id: string;\n    readonly verification: \"check\" | \"assure\" | \"test\";\n    readonly cwd: string;\n    readonly reason: string;\n    readonly capabilities: readonly string[];\n    readonly output?: string;\n    readonly report?: unknown;\n}"
+  },
+  {
+    "name": "AgentReport",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface AgentReport {\n    readonly replayed: number;\n    readonly handedOff: number;\n    readonly missed: number;\n    readonly modelCalls: number;\n}",
+    "doc": "/** What the replay cache did for this session, and how many model calls it still took. */"
   },
   {
     "name": "AgentResumeMismatchError",
@@ -2570,6 +2614,12 @@
     "signature": "export interface CacheControlOptions {\n    /** Methods whose responses get the header. Default `[\"GET\", \"HEAD\"]`. */\n    readonly methods?: readonly string[];\n    /** Predicate over the response status. Default: 2xx only. */\n    readonly status?: (status: number) => boolean;\n    /** When `true` (default), don't overwrite a `Cache-Control` the handler already set. */\n    readonly respectExisting?: boolean;\n}"
   },
   {
+    "name": "CacheEntry",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface CacheEntry {\n    readonly version: 1;\n    readonly instruction: string;\n    readonly startRoute: string;\n    readonly actions: readonly RecordedAction[];\n    readonly end: {\n        readonly route: string;\n        readonly appeared: readonly string[];\n        readonly disappeared: readonly string[];\n    };\n}"
+  },
+  {
     "name": "CacheEvent",
     "kind": "interface",
     "package": "@nifrajs/cache",
@@ -2582,6 +2632,13 @@
     "package": "@nifrajs/otel",
     "signature": "export type CacheKeyAttribute = \"prefix\" | \"none\" | ((key: string) => string | undefined);",
     "doc": "/**\n * What of a key (or an invalidated tag) a span carries:\n * - `\"prefix\"` (default): the leading token before the first `:`, exported as `nifra.cache.key_prefix`\n *   only when it matches `^[a-z][a-z0-9_-]{0,31}$` - `user:42` gives `user`, a key with no `:` gives\n *   nothing;\n * - `\"none\"`: nothing;\n * - a function: its result is exported as `nifra.cache.key` (return `undefined` to omit). It runs on\n *   raw keys, so it owns the redaction.\n */"
+  },
+  {
+    "name": "CacheMode",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type CacheMode = \"read-write\" | \"read-only\" | \"strict\" | \"off\";",
+    "doc": "/**\n * `read-write` replays and records; `read-only` replays and hands off but never writes or deletes (CI);\n * `strict` replays only, and a missing or stale recording fails; `off` ignores the cache.\n */"
   },
   {
     "name": "CacheObserver",
@@ -2606,6 +2663,12 @@
   {
     "name": "CacheOptions",
     "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface CacheOptions {\n    readonly mode?: CacheMode;\n    /** Where entries live. Default `.nifra/e2e-cache` under the working directory. */\n    readonly dir?: string;\n    /** Replaces the file store. */\n    readonly store?: CacheStore;\n    /** Names the test, so two tests that say the same thing do not share a recording. Pass it: the default is empty. */\n    readonly testId?: string;\n    /** Anything that should invalidate every recording when it changes, such as the app's version. */\n    readonly appIdentity?: string;\n}"
+  },
+  {
+    "name": "CacheOptions",
+    "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface CacheOptions {\n    readonly store: ResponseCacheStore;\n    /** Maximum time to live in milliseconds; response freshness can shorten it. */\n    readonly ttlMs: number;\n    /** Methods cached. Default `[\"GET\", \"HEAD\"]`. */\n    readonly methods?: readonly string[];\n    /** Status predicate. Default: `200` only. */\n    readonly status?: (status: number) => boolean;\n    /** Header names included in the cache key and emitted in `Vary`. */\n    readonly vary?: readonly string[];\n    /** Custom cache key. Receives the normalized `vary` headers through the request itself. */\n    readonly key?: (request: Request) => string;\n    /** Maximum response bytes to store. Default `1_000_000`. Larger responses pass through. */\n    readonly maxBytes?: number;\n    /** Respect request `Cache-Control: no-cache/no-store`. Default `true`. */\n    readonly respectRequestCacheControl?: boolean;\n    /** Respect response private/no-store/no-cache and max-age/s-maxage freshness. Default `true`.\n     * Responses requiring validation bypass this cache, which has no revalidation transport. */\n    readonly respectResponseCacheControl?: boolean;\n    /** Cache responses with `Set-Cookie`. Default `false`. */\n    readonly cacheSetCookie?: boolean;\n    /** Cache responses to requests bearing `Authorization` or `Cookie` even when the response is not\n     * explicitly `Cache-Control: public` (or `s-maxage`). Default `false`: a shared cache must not store a\n     * personalized response (RFC 9111 §3.5), or it would be replayed to other users. Leave this off unless\n     * the cached route is genuinely the same for every caller. */\n    readonly cacheAuthenticated?: boolean;\n    /** Credential headers that make a request private. Defaults to Authorization, Cookie, and x-api-key.\n     * A response to a request an authentication stage accepted (or an integration marked with\n     * `markAuthenticatedRequest`) is treated as private too, whichever header carried the credential. */\n    readonly authenticatedHeaders?: readonly string[];\n    /** Response header for cache status. Default `\"x-nifra-cache\"`; set `false` to disable. */\n    readonly cacheStatusHeader?: string | false;\n}"
   },
@@ -2622,6 +2685,12 @@
     "package": "@nifrajs/cache",
     "signature": "export interface CacheStore {\n    /** The live entry for `key`, or `undefined` if missing or hard-expired (`now >= expiresAt`). */\n    get(key: string): StoredEntry | undefined | Promise<StoredEntry | undefined>;\n    /** Store `entry` under `key`, indexed by `tags` for {@link CacheStore.invalidateTag}. */\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    /** Drop every entry carrying `tag`. */\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n    /**\n     * Optional, with {@link CacheStore.setIfFence}, for a store several caches or processes share. An\n     * opaque token naming this moment for `key` and `tags`. A `wrap` load takes one before it starts.\n     */\n    fence?(key: string, tags: readonly string[]): unknown | Promise<unknown>;\n    /**\n     * Optional, with {@link CacheStore.fence}. Store `entry` only when nothing has run since `fence`\n     * returned `token` that a load must not overwrite: a `set` or `delete` of `key`, an `invalidateTag`\n     * of one of `tags`, or a `clear`, from any cache sharing the store. The check and the write are one\n     * atomic step. Resolves `true` when it wrote. A store that cannot tell may refuse; the load's value\n     * still reaches its caller, it is just not cached.\n     */\n    setIfFence?(key: string, entry: StoredEntry, tags: readonly string[], token: unknown): boolean | Promise<boolean>;\n}",
     "doc": "/**\n * Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV /\n * Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.\n */"
+  },
+  {
+    "name": "CacheStore",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface CacheStore {\n    read(key: string): Promise<CacheEntry | undefined>;\n    write(key: string, entry: CacheEntry): Promise<void>;\n    delete(key: string): Promise<void>;\n}"
   },
   {
     "name": "CacheStore",
@@ -3491,6 +3560,12 @@
     "package": "@nifrajs/web",
     "signature": "export type ClientServerFn<Input, Output> = (input: Input) => MaybePromise<Output>;",
     "doc": "/** The one-argument callable emitted into a client bundle for a {@link ServerFn}. */"
+  },
+  {
+    "name": "Clock",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface Clock {\n    now(): number;\n    sleep(ms: number): Promise<void>;\n}"
   },
   {
     "name": "CloudflareLoaderOptions",
@@ -5681,11 +5756,42 @@
     "doc": "/** The minimal shape a nifra `server()` app satisfies - its own `fetch`. */"
   },
   {
+    "name": "E2EError",
+    "kind": "class",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare class E2EError extends Error {\n    readonly code: E2EErrorCode;\n    constructor(code: E2EErrorCode, message: string, options?: ErrorOptions);\n}"
+  },
+  {
+    "name": "E2EErrorCode",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type E2EErrorCode = \"LOCATOR_NOT_FOUND\" | \"LOCATOR_AMBIGUOUS\" | \"EXPECT_FAILED\" | \"HYDRATION_TIMEOUT\" | \"ENGINE_MISSING\" | \"NAVIGATION_FAILED\" | \"BAD_PATH\" | \"MODEL_MISSING\" | \"MODEL_INVALID\" | \"STEP_FAILED\" | \"STEP_BUDGET_EXCEEDED\" | \"STEP_TIMEOUT\" | \"ASSERTION_FAILED\" | \"ASSERTION_INCONCLUSIVE\" | \"WAIT_TIMEOUT\" | \"EXTRACT_INVALID\" | \"REPLAY_MISSING\" | \"REPLAY_STALE\";"
+  },
+  {
+    "name": "E2EModel",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface E2EModel {\n    decide(request: ModelRequest): unknown | PromiseLike<unknown>;\n}",
+    "doc": "/**\n * The seam to a model. Answer an `act` request with a decision (`{ kind: \"tap\", target }`, `fill`,\n * `press`, `goto`, `done` or `fail`), an `assert` or `waitFor` with `{ pass, reason }`, and an\n * `extract` with `{ value }`. The answer is unknown until the runner has parsed it. Nothing here\n * names a vendor; the caller owns credentials, retries and cost.\n */"
+  },
+  {
+    "name": "E2EOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface E2EOptions {\n    /** Defaults to the Playwright engine (`@nifrajs/e2e/playwright`), which needs `playwright` installed. */\n    readonly engine?: EngineFactory;\n    /** A `testSession().cookies` jar (or anything with `header()`): logs the browser in without a UI login. */\n    readonly cookies?: {\n        header(): string;\n    };\n    readonly hydration?: HydrationMode;\n    /** ms an action waits for its element. Default 5000. */\n    readonly actionTimeout?: number;\n    /** ms an assertion retries before it fails. Default 5000. */\n    readonly assertionTimeout?: number;\n    readonly pollInterval?: number;\n    readonly clock?: Clock;\n    /** Answers agent steps. Without it `t.agent` rejects with `MODEL_MISSING`; locator tests need none. */\n    readonly model?: E2EModel | undefined;\n    /** Words every agent step should know: the product, its jargon, what a plan is called. */\n    readonly agentContext?: string;\n    /** Characters of page outline one model call may carry. Default 12000. */\n    readonly snapshotChars?: number;\n    /** The replay cache for `agent.act`. On by default; `false` turns it off. */\n    readonly cache?: CacheOptions | false;\n}"
+  },
+  {
     "name": "E2EPaths",
     "kind": "type",
     "package": "@nifrajs/testing",
     "signature": "export type E2EPaths<App> = App extends Server<infer R, infer _Ctx> ? keyof R & string : never;",
     "doc": "/** Every route path the app declares - constrains `e2eUrl`, so a wrong path is a type error. */"
+  },
+  {
+    "name": "E2ESession",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface E2ESession<App> extends UrlSource, AsyncDisposable {\n    readonly baseUrl: string;\n    readonly screen: Screen;\n    readonly agent: Agent;\n    open<P extends E2EPaths<App>>(path: P, ...args: OpenArgs<P>): Promise<void>;\n    close(): Promise<void>;\n}"
   },
   {
     "name": "EMPTY_PARAMS",
@@ -5920,6 +6026,18 @@
     "signature": "export interface EffectTracingPlugin extends IdentityPlugin {\n    /** Pass the same observer to `createSagaEngine({ observer })` and reconciliation helpers. */\n    readonly observer: EffectLifecycleObserver;\n}"
   },
   {
+    "name": "ElementAction",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type ElementAction = {\n    readonly kind: \"tap\";\n} | {\n    readonly kind: \"fill\";\n    readonly value: string;\n} | {\n    readonly kind: \"press\";\n    readonly key: string;\n};"
+  },
+  {
+    "name": "ElementState",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface ElementState {\n    readonly visible: boolean;\n    readonly text: string;\n    readonly value?: string;\n}"
+  },
+  {
     "name": "EmitEffectLifecycleInput",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -5936,6 +6054,25 @@
     "kind": "interface",
     "package": "@nifrajs/otel",
     "signature": "export interface EndObservation {\n    readonly statusCode?: number;\n    /** Explicit status wins over status-code and recorded-error classification. */\n    readonly status?: Exclude<SpanStatus, \"unset\">;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n    /** Measured duration in ms, for work recorded after it settled. The end time becomes start + duration. */\n    readonly durationMs?: number;\n}"
+  },
+  {
+    "name": "Engine",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface Engine {\n    goto(url: string): Promise<void>;\n    url(): Promise<string>;\n    resolve(selector: Selector): Promise<readonly ElementState[]>;\n    /** The page as an accessibility-tree outline, one node per line; what an agent step reads. */\n    snapshot(): Promise<string>;\n    act(selector: Selector, action: ElementAction, timeout: number): Promise<void>;\n    close(): Promise<void>;\n}",
+    "doc": "/**\n * What a browser or device must offer. `act` waits up to `timeout` ms for exactly one actionable\n * match, then performs the action; it throws `LOCATOR_NOT_FOUND` or `LOCATOR_AMBIGUOUS` otherwise.\n * `resolve` never waits and never throws on zero matches.\n */"
+  },
+  {
+    "name": "EngineFactory",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type EngineFactory = (init: EngineInit) => Promise<Engine>;"
+  },
+  {
+    "name": "EngineInit",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface EngineInit {\n    readonly baseUrl: string;\n    readonly cookies: readonly {\n        readonly name: string;\n        readonly value: string;\n    }[];\n    readonly hydration: HydrationMode;\n}"
   },
   {
     "name": "EnqueueOptions",
@@ -6225,6 +6362,18 @@
     "doc": "/** A workflow factory keeps orchestration lazy and lets every extension fully customize its steps. */"
   },
   {
+    "name": "ExtractOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface ExtractOptions<S extends StandardSchemaV1> extends StepOptions {\n    readonly schema: S;\n    readonly jsonSchema?: unknown;\n}"
+  },
+  {
+    "name": "ExtractRequest",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface ExtractRequest {\n    readonly kind: \"extract\";\n    readonly prompt: string;\n    readonly context?: string;\n    readonly snapshot: string;\n    readonly secrets: readonly string[];\n    /** The JSON Schema the caller supplied, to put in the prompt; the answer is validated against the real schema. */\n    readonly jsonSchema?: unknown;\n    readonly signal: AbortSignal;\n}"
+  },
+  {
     "name": "FILE_TYPE_PREFIX_BYTES",
     "kind": "const",
     "package": "@nifrajs/core",
@@ -6322,6 +6471,18 @@
     "signature": "export interface FailureScenarioReport {\n    readonly name: string;\n    readonly ok: boolean;\n    readonly replay: FailureReplay;\n    readonly evidence: readonly FailureEvidence[];\n    /** Sanitized failure identity. Messages and stacks are deliberately excluded. */\n    readonly error?: {\n        readonly name: string;\n        readonly kind?: FailureInjectedError[\"kind\"];\n    };\n}"
   },
   {
+    "name": "FakeEngineOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface FakeEngineOptions {\n    /** Pages by `pathname + search`, falling back to bare `pathname`. */\n    readonly pages: Readonly<Record<string, readonly FakeNode[]>>;\n    /** Runs after a tap or press on the matched node; return a path to navigate to it. */\n    readonly onAct?: (node: FakeNode, action: ElementAction) => string | undefined;\n}"
+  },
+  {
+    "name": "FakeLogEntry",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface FakeLogEntry {\n    readonly kind: \"goto\" | ElementAction[\"kind\"];\n    readonly detail: string;\n}"
+  },
+  {
     "name": "FakeModelGateway",
     "kind": "class",
     "package": "@nifrajs/agent",
@@ -6333,6 +6494,13 @@
     "kind": "interface",
     "package": "@nifrajs/agent",
     "signature": "export interface FakeModelGatewayOptions {\n    readonly responses: readonly ModelGatewayRawResult[];\n}"
+  },
+  {
+    "name": "FakeNode",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface FakeNode {\n    role?: string;\n    /** Accessible name, matched by `getByRole(role, name)`. */\n    name?: string;\n    /** Own text, matched by `getByText`. */\n    text?: string;\n    testId?: string;\n    /** Label text, matched by `getByLabel`. */\n    label?: string;\n    value?: string;\n    hidden?: boolean;\n    children?: FakeNode[];\n}",
+    "doc": "/** A node of the in-memory page tree the fake engine matches locators against. */"
   },
   {
     "name": "FastlyOptions",
@@ -6829,6 +6997,13 @@
     "doc": "/**\n * `id` of the inert `<script type=\"application/json\">` a hydrating document hands its page state over\n * in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto\n * `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.\n */"
   },
   {
+    "name": "HandOff",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface HandOff {\n    readonly reason: StopReason;\n    readonly detail: string;\n    /** How many actions at the start of `history` the replay performed. */\n    readonly performed: number;\n}",
+    "doc": "/** A recorded run that stopped partway: its actions are already done, so do not redo them. */"
+  },
+  {
     "name": "Handler",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -7217,6 +7392,13 @@
     "package": "@nifrajs/web-react",
     "signature": "export declare function HydrationBoundary(props: {\n    readonly state: DehydratedState | undefined;\n    readonly children?: ReactNode;\n}): ReactNode;",
     "doc": "/**\n * Seed the context's {@link QueryClient} from a server {@link dehydrate} snapshot - the SSR data bridge.\n * Wrap the app (inside `QueryClientProvider`) so server-prefetched queries are in the cache before the\n * first client render, avoiding a loading flash. Hydration runs during render (idempotent, fresher-wins),\n * so the data is available synchronously to child `useQuery`s.\n */"
+  },
+  {
+    "name": "HydrationMode",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type HydrationMode = \"auto\" | \"off\";",
+    "doc": "/** `auto` waits for nifra's `data-nifra-hydrated` marker only on pages that load a module script. */"
   },
   {
     "name": "I18nProvider",
@@ -8270,6 +8452,12 @@
     "signature": "export type Jsonify<T> = [unknown] extends [T] ? unknown : T extends BinaryResponse ? Blob : T extends RawResponse<infer U> ? Jsonify<U> : T extends string | number | boolean | null ? T : T extends Date ? string : T extends bigint ? string : T extends (...args: never[]) => unknown ? never : T extends undefined ? undefined : T extends BigIntArray ? {\n    [index: number]: string;\n} : T extends NumberArray ? JsonifyNumberArray<T> : T extends ReadonlyArray<infer U> ? Array<Jsonify<U>> : T extends object ? {\n    [K in keyof T as [JsonifyObjectProperty<T[K]>] extends [never] ? never : K]: JsonifyObjectProperty<T[K]>;\n} : never;"
   },
   {
+    "name": "JudgeRequest",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface JudgeRequest {\n    readonly kind: \"assert\" | \"waitFor\";\n    readonly statement: string;\n    readonly context?: string;\n    readonly snapshot: string;\n    readonly secrets: readonly string[];\n    readonly signal: AbortSignal;\n}"
+  },
+  {
     "name": "JwkKey",
     "kind": "interface",
     "package": "@nifrajs/middleware",
@@ -9044,6 +9232,24 @@
     "doc": "/** The parsed current location. `hash` is always `\"\"` - the fragment is client-only and never reaches\n * the router state / server, so exposing a live hash would hydration-mismatch; read `window.location.hash`\n * directly (in an effect) if you truly need it. */"
   },
   {
+    "name": "Locator",
+    "kind": "class",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare class Locator implements Finders {\n    #private;\n    readonly context: LocatorContext;\n    readonly selector: Selector;\n    constructor(context: LocatorContext, selector: Selector);\n    getByRole(role: string, nameOrOptions?: string | RoleOptions): Locator;\n    getByLabel(text: string, options?: TextOptions): Locator;\n    getByText(text: string, options?: TextOptions): Locator;\n    getByTestId(id: string): Locator;\n    nth(index: number): Locator;\n    filter(options: {\n        readonly hasText: string;\n    }): Locator;\n    states(): Promise<readonly ElementState[]>;\n    count(): Promise<number>;\n    tap(): Promise<void>;\n    fill(value: string): Promise<void>;\n    press(key: string): Promise<void>;\n    describe(): string;\n}"
+  },
+  {
+    "name": "LocatorContext",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface LocatorContext {\n    readonly engine: Engine;\n    readonly clock: Clock;\n    readonly actionTimeout: number;\n    readonly assertionTimeout: number;\n    readonly pollInterval: number;\n    /** Told when an assertion passes or fails, so the replay cache learns whether the steps before it held. */\n    readonly onCheck?: ((passed: boolean) => Promise<void>) | undefined;\n}"
+  },
+  {
+    "name": "LocatorMatchers",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface LocatorMatchers {\n    toBeVisible(options?: MatcherOptions): Promise<void>;\n    toBeHidden(options?: MatcherOptions): Promise<void>;\n    toHaveText(expected: string | RegExp, options?: MatcherOptions): Promise<void>;\n    toContainText(expected: string | RegExp, options?: MatcherOptions): Promise<void>;\n    toHaveCount(expected: number, options?: MatcherOptions): Promise<void>;\n    toHaveValue(expected: string | RegExp, options?: MatcherOptions): Promise<void>;\n    readonly not: LocatorMatchers;\n}"
+  },
+  {
     "name": "LogFields",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -9294,6 +9500,12 @@
     "package": "@nifrajs/web",
     "signature": "export interface MatchChain {\n    /** Layout ids (`orgs/[org]/_layout`), then the page's route id. */\n    readonly ids: readonly string[];\n    /** Each module's `handle` export, index-aligned with {@link ids}. */\n    readonly handles: readonly unknown[];\n}",
     "doc": "/**\n * The modules a render stacks, as `useMatches` needs them: each one's id and `handle` export,\n * outermost layout first and the page (or status page) last. Built by the server for SSR and by the\n * generated client entry per route, from the same manifest, so both sides report the same matches.\n */"
+  },
+  {
+    "name": "MatcherOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface MatcherOptions {\n    /** Overrides the session's `assertionTimeout` for this assertion, in ms. */\n    readonly timeout?: number;\n}"
   },
   {
     "name": "MaybePromise",
@@ -9993,6 +10205,12 @@
     "kind": "interface",
     "package": "@nifrajs/agent",
     "signature": "export interface ModelGatewayUsage {\n    readonly inputTokens?: number;\n    readonly outputTokens?: number;\n}"
+  },
+  {
+    "name": "ModelRequest",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type ModelRequest = ActRequest | JudgeRequest | ExtractRequest;"
   },
   {
     "name": "ModelRoute",
@@ -11033,6 +11251,13 @@
     "doc": "/** Scalar API-reference UI options. */"
   },
   {
+    "name": "OpenArgs",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type OpenArgs<P extends string> = [PathParams<P>] extends [never] ? [options?: {\n    readonly query?: OpenOptions<P>[\"query\"];\n}] : [\n    options: {\n        readonly params: Record<PathParams<P>, string | number>;\n        readonly query?: OpenOptions<P>[\"query\"];\n    }\n];",
+    "doc": "/** A route with `:params` must be given them; one without takes only an optional query. */"
+  },
+  {
     "name": "OpenGraphInput",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -11044,6 +11269,12 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface OpenHandoffInput {\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly capability: string;\n    readonly requestId: string;\n    /** Opaque origin role. */\n    readonly from: string;\n    /** Milliseconds until the boundary expires closed. Falls back to the coordinator default. */\n    readonly expiresInMs?: number;\n    /** When true, a paired approval is opened on the composed {@link ApprovalManager}, if present. */\n    readonly requireApproval?: boolean;\n    readonly sessionId?: string;\n}"
+  },
+  {
+    "name": "OpenOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface OpenOptions<P extends string> {\n    readonly params?: Record<PathParams<P>, string | number>;\n    readonly query?: Readonly<Record<string, string | number | boolean>>;\n}"
   },
   {
     "name": "OperationDef",
@@ -11292,6 +11523,12 @@
     "doc": "/** Optional cursor-listing capability. Kept out of {@link StorageAdapter} for simple stores. */"
   },
   {
+    "name": "Param",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type Param = string | number | boolean | Secret | Unique;"
+  },
+  {
     "name": "ParamConstraint",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -11304,6 +11541,12 @@
     "package": "@nifrajs/core",
     "signature": "export type Params<Path extends string> = Path extends `${string}?` ? SplitOptionalRun<Path> extends [infer Head extends string, infer Run extends string] ? Prettify<RawParams<Head> & Partial<RawParams<Run>>> : Prettify<RawParams<Path>> : Prettify<RawParams<Path>>;",
     "doc": "/**\n * The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since\n * the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.\n */"
+  },
+  {
+    "name": "Params",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type Params = Readonly<Record<string, Param>>;"
   },
   {
     "name": "Params",
@@ -11347,6 +11590,13 @@
     "doc": "/** Another locale's catalog for `M`: every key optional at every level, and any string where `M`\n * has one. A key it lacks falls back through the formatter's `fallback` catalogs. */"
   },
   {
+    "name": "PathParams",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type PathParams<P extends string> = P extends `${string}:${infer Rest}` ? Rest extends `${infer Name}/${infer Tail}` ? Name | PathParams<`/${Tail}`> : Rest : never;",
+    "doc": "/** The `:name` segments of a route path. */"
+  },
+  {
     "name": "PendingApprovalView",
     "kind": "interface",
     "package": "@nifrajs/agent-app",
@@ -11358,6 +11608,12 @@
     "package": "@nifrajs/web",
     "signature": "export interface PendingBoundary {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly errorId?: string;\n    readonly promise: Promise<unknown>;\n}",
     "doc": "/** A dynamic load that has started but is not part of the initial render barrier. */"
+  },
+  {
+    "name": "PerformedDecision",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type PerformedDecision = Exclude<ActDecision, {\n    kind: \"done\";\n} | {\n    kind: \"fail\";\n}>;"
   },
   {
     "name": "PgConnection",
@@ -11476,6 +11732,12 @@
     "kind": "interface",
     "package": "nifra",
     "signature": "export interface PlatformResponse {\n    readonly statusCode: number;\n    /** Single-valued headers. `set-cookie` never appears here - see the two fields below. */\n    readonly headers: Readonly<Record<string, string>>;\n    /**\n     * Repeated headers, currently only `set-cookie`. Netlify Functions and API Gateway REST (v1) read\n     * this; omitted when the response sets no cookies.\n     */\n    readonly multiValueHeaders?: Readonly<Record<string, readonly string[]>>;\n    /** API Gateway HTTP API (v2) takes cookies here rather than in a header. Omitted when there are none. */\n    readonly cookies?: readonly string[];\n    readonly body: string;\n    readonly isBase64Encoded: true;\n}"
+  },
+  {
+    "name": "PlaywrightEngineOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface PlaywrightEngineOptions {\n    readonly browser?: \"chromium\" | \"firefox\" | \"webkit\";\n    readonly headless?: boolean;\n    /** ms to wait for `data-nifra-hydrated` before `HYDRATION_TIMEOUT`. Default 5000. */\n    readonly hydrationTimeout?: number;\n    /** Replaces the Playwright launch; used by tests. */\n    readonly launch?: () => Promise<PwBrowser>;\n    /** Replaces the dynamic `import()` of `playwright`; used by tests. */\n    readonly load?: (specifier: string) => Promise<unknown>;\n}"
   },
   {
     "name": "PluginBuilder",
@@ -12124,6 +12386,37 @@
     "signature": "export interface PutOptions {\n    /** MIME type stored alongside the object (returned by `get`). */\n    readonly contentType?: string;\n    /** Arbitrary string metadata stored with the object. */\n    readonly metadata?: Readonly<Record<string, string>>;\n}"
   },
   {
+    "name": "PwBrowser",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface PwBrowser {\n    newContext(): Promise<PwContext>;\n    close(): Promise<void>;\n}"
+  },
+  {
+    "name": "PwContext",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface PwContext {\n    addCookies(cookies: {\n        name: string;\n        value: string;\n        url: string;\n    }[]): Promise<void>;\n    newPage(): Promise<PwPage>;\n    close(): Promise<void>;\n}"
+  },
+  {
+    "name": "PwFinder",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface PwFinder {\n    getByRole(role: string, options?: {\n        name?: string;\n        exact?: boolean;\n    }): PwLocator;\n    getByLabel(text: string, options?: {\n        exact?: boolean;\n    }): PwLocator;\n    getByText(text: string, options?: {\n        exact?: boolean;\n    }): PwLocator;\n    getByTestId(id: string): PwLocator;\n}",
+    "doc": "/** The slice of Playwright this engine calls, so the package carries no Playwright types and tests can stand in for it. */"
+  },
+  {
+    "name": "PwLocator",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface PwLocator extends PwFinder {\n    filter(options: {\n        hasText: string;\n    }): PwLocator;\n    nth(index: number): PwLocator;\n    evaluateAll<R>(pageFunction: (elements: readonly unknown[]) => R): Promise<R>;\n    click(options: {\n        timeout: number;\n    }): Promise<void>;\n    fill(value: string, options: {\n        timeout: number;\n    }): Promise<void>;\n    press(key: string, options: {\n        timeout: number;\n    }): Promise<void>;\n}"
+  },
+  {
+    "name": "PwPage",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface PwPage extends PwFinder {\n    locator(selector: string): {\n        ariaSnapshot(): Promise<string>;\n    };\n    goto(url: string, options: {\n        waitUntil: \"load\";\n    }): Promise<unknown>;\n    url(): string;\n    evaluate<R>(expression: string): Promise<R>;\n    waitForSelector(selector: string, options: {\n        state: \"attached\";\n        timeout: number;\n    }): Promise<unknown>;\n    waitForLoadState(state: \"domcontentloaded\"): Promise<void>;\n}"
+  },
+  {
     "name": "PwaManifestOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -12634,6 +12927,13 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface ReconciliationWorkerResult {\n    readonly acquired: boolean;\n    readonly pages: number;\n    readonly scanned: number;\n    readonly handled: number;\n}"
+  },
+  {
+    "name": "RecordedAction",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type RecordedAction = {\n    readonly kind: \"tap\";\n    readonly target: Target;\n    readonly matches: number;\n} | {\n    readonly kind: \"fill\";\n    readonly target: Target;\n    readonly matches: number;\n    readonly value: string;\n} | {\n    readonly kind: \"press\";\n    readonly target: Target;\n    readonly matches: number;\n    readonly key: string;\n} | {\n    readonly kind: \"goto\";\n    readonly path: string;\n};",
+    "doc": "/** One action as it was taken. A fill's value and a goto's path keep their `{name}` placeholders. */"
   },
   {
     "name": "RecordingObservationLifecycle",
@@ -13744,6 +14044,12 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface RobotsRule {\n    /** A single user-agent token (`\"*\"`, `\"Googlebot\"`, …) or several sharing the same directives. */\n    readonly userAgent: string | readonly string[];\n    readonly allow?: readonly string[];\n    readonly disallow?: readonly string[];\n    /** Seconds between requests (honored by some crawlers). */\n    readonly crawlDelay?: number;\n}"
+  },
+  {
+    "name": "RoleOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface RoleOptions extends TextOptions {\n    readonly name?: string;\n}"
   },
   {
     "name": "RouteActionReturn",
@@ -15039,6 +15345,13 @@
     "doc": "/** Explicit tolerance for a score regression. `rubricId` omitted applies to every rubric. */"
   },
   {
+    "name": "Screen",
+    "kind": "class",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare class Screen implements Finders {\n    #private;\n    constructor(context: LocatorContext);\n    getByRole(role: string, nameOrOptions?: string | RoleOptions): Locator;\n    getByLabel(text: string, options?: TextOptions): Locator;\n    getByText(text: string, options?: TextOptions): Locator;\n    getByTestId(id: string): Locator;\n}",
+    "doc": "/** The page root: every chain starts here. */"
+  },
+  {
     "name": "ScriptDescriptor",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -15096,6 +15409,13 @@
     "package": "@nifrajs/client",
     "signature": "export type SearchSchemaOf<Module> = Module extends {\n    readonly searchSchema: infer S;\n} ? S : undefined;",
     "doc": "/** The `searchSchema` a route's frontend half declares, or `undefined`. */"
+  },
+  {
+    "name": "Secret",
+    "kind": "class",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare class Secret {\n    #private;\n    readonly name: string;\n    constructor(name: string, value: string);\n    /** Read by the step runner when it types the value; nothing else should call it. */\n    static reveal(secret: Secret): string;\n    toJSON(): string;\n    toString(): string;\n}",
+    "doc": "/**\n * A value a step may use but the model must never read: it is typed into the page by name, and\n * `String(secret)`, `JSON.stringify(secret)` and template literals all print the name only.\n */"
   },
   {
     "name": "SecretExemption",
@@ -15168,6 +15488,12 @@
     "package": "@nifrajs/i18n",
     "signature": "export type SegmentMatch<K extends string = string> = {\n    readonly kind: \"ok\";\n    readonly locale: K;\n}\n/** Not a served locale (unknown, or a draft): answer 404. */\n | {\n    readonly kind: \"not-found\";\n}\n/** A served locale under a non-canonical URL - the default's prefix when the default is served\n * unprefixed, the wrong case, or a mapped page's canonical source spelling instead of its translated\n * spelling. `location` is the canonical localized path, query kept and hash dropped. */\n | {\n    readonly kind: \"redirect\";\n    readonly location: string;\n};",
     "doc": "/** What a `[lang]` segment value means for the request. */"
+  },
+  {
+    "name": "Selector",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type Selector = readonly Step[];"
   },
   {
     "name": "SelfHealingController",
@@ -16336,6 +16662,13 @@
     "signature": "export interface StdioTransportOptions {\n    /** Default `process.stdin`. String chunks are UTF-8 encoded before framing. */\n    readonly input?: AsyncIterable<Uint8Array | string>;\n    /** Default `process.stdout`. */\n    readonly output?: StdioOutput;\n    /** Cap on one message in UTF-8 bytes, in either direction. Default {@link MAX_STDIO_MESSAGE_BYTES}. */\n    readonly maxMessageBytes?: number;\n    /**\n     * A client request or notification. Resolve to its response, or `null` to send none. Requests are\n     * dispatched concurrently as their lines arrive. A rejection is answered with a generic `-32603`\n     * error for a request and with nothing for a notification - the rejection's message is never sent.\n     */\n    readonly onRequest: (message: JsonRpcRequest, connection: StdioConnection) => Promise<JsonRpcResponse | null>;\n    /**\n     * A response to a request this side sent through {@link StdioConnection.send}. Return `false` when no\n     * request with that id is pending, and the line is answered as an Invalid Request. Omitted, every\n     * response is invalid.\n     */\n    readonly onResponse?: (message: JsonRpcResponse, connection: StdioConnection) => boolean;\n}"
   },
   {
+    "name": "Step",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type Step = {\n    readonly kind: \"role\";\n    readonly role: string;\n    readonly name?: string;\n    readonly exact?: boolean;\n} | {\n    readonly kind: \"label\";\n    readonly text: string;\n    readonly exact?: boolean;\n} | {\n    readonly kind: \"text\";\n    readonly text: string;\n    readonly exact?: boolean;\n} | {\n    readonly kind: \"testId\";\n    readonly id: string;\n} | {\n    readonly kind: \"hasText\";\n    readonly text: string;\n} | {\n    readonly kind: \"nth\";\n    readonly index: number;\n};",
+    "doc": "/** One link of a locator chain; the first finds from the page, each later one searches inside the matches so far. */"
+  },
+  {
     "name": "StepCatalog",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
@@ -16357,11 +16690,24 @@
     "doc": "/** Why one node failed, handed to {@link OrchestrationHostOptions.onStepFailed}. */"
   },
   {
+    "name": "StepOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface StepOptions {\n    readonly params?: Params;\n    readonly signal?: AbortSignal;\n}"
+  },
+  {
     "name": "StepRunContext",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface StepRunContext {\n    readonly nodeId: string;\n    readonly planDigest: string;\n    readonly signal: AbortSignal;\n    /** Caller-owned artifact sink. The step routes any raw payload here to get a content-free ref. */\n    readonly artifact: ArtifactPort;\n    readonly values: ReadonlyMap<string, unknown>;\n    set(name: string, value: unknown): void;\n}",
     "doc": "/** Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}. */"
+  },
+  {
+    "name": "StopReason",
+    "kind": "type",
+    "package": "@nifrajs/e2e",
+    "signature": "export type StopReason = \"target-not-found\" | \"ambiguous\" | \"end-mismatch\" | \"action-uncertain\" | \"route-mismatch\";",
+    "doc": "/** Why a replay stopped short of finishing the recorded actions. */"
   },
   {
     "name": "StorageAdapter",
@@ -16667,6 +17013,13 @@
     "doc": "/** Copy tables as one catalog per locale, for {@link checkCatalogs}. */"
   },
   {
+    "name": "Target",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface Target {\n    readonly role?: string;\n    readonly name?: string;\n    readonly label?: string;\n    readonly text?: string;\n    readonly testId?: string;\n    readonly exact?: boolean;\n    /** Zero-based pick among several matches. */\n    readonly nth?: number;\n}",
+    "doc": "/** Which control a step means: exactly one of `role`, `label`, `text`, `testId`. */"
+  },
+  {
     "name": "Template",
     "kind": "class",
     "package": "@nifrajs/web-vanilla",
@@ -16703,6 +17056,12 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface TestSessionOptions extends Omit<ClientOptions, \"fetch\"> {\n    /** Origin used to resolve relative paths. Default `\"http://nifra.internal\"`. */\n    readonly origin?: string;\n    /** Reuse an existing jar (e.g. seed a session cookie, or share one across sessions). */\n    readonly cookies?: CookieJar;\n}"
+  },
+  {
+    "name": "TextOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface TextOptions {\n    readonly exact?: boolean;\n}"
   },
   {
     "name": "TimingControls",
@@ -17313,6 +17672,13 @@
     "signature": "export interface UndiciTransportOptions {\n    /**\n     * Connection pool to dial through - an undici `Agent`, `Pool`, or any other `Dispatcher`. Omit to\n     * use undici's global dispatcher. Supply one to tune `connections` per origin, which is the knob\n     * that matters under load. It must not compose a redirect interceptor: this proxy relays 3xx\n     * rather than following it, and a dispatcher that follows would hand the upstream the next hop.\n     */\n    readonly dispatcher?: Dispatcher;\n    /**\n     * Milliseconds of silence tolerated *within* the response body before undici destroys it.\n     * `createProxy`'s own `timeoutMs` only covers the wait for response headers - after the status is\n     * relayed a `504` is no longer sendable - so this is what protects against a body that starts and\n     * then stalls. Default `30_000`; `0` disables it.\n     */\n    readonly bodyTimeoutMs?: number;\n}"
   },
   {
+    "name": "Unique",
+    "kind": "class",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare class Unique {\n    readonly value: string;\n    constructor(value: string);\n    toString(): string;\n}",
+    "doc": "/**\n * Run-varying data (a generated email, a timestamp). The model and the page get the value; the replay\n * cache keys on the fact that it varies, so a new value does not miss, and re-types the new value.\n */"
+  },
+  {
     "name": "UnlocalizedPath",
     "kind": "interface",
     "package": "@nifrajs/i18n",
@@ -17340,6 +17706,12 @@
     "doc": "/**\n * Validate an upload's **size** and **real type** (by magic bytes, not the client's `Content-Type`).\n * Direct request reads follow the configured route body limit. Use `c.boundedBody(maxBytes)` from `@nifrajs/core`\n * for an explicit per-read cap, then `validateUpload(bytes, …)` to confirm the size and sniff the type.\n */"
   },
   {
+    "name": "UrlMatchers",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface UrlMatchers {\n    toHaveURL(expected: string | RegExp, options?: MatcherOptions): Promise<void>;\n    readonly not: UrlMatchers;\n}"
+  },
+  {
     "name": "UrlParts",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -17350,6 +17722,13 @@
     "kind": "interface",
     "package": "nifra",
     "signature": "export interface UrlParts {\n    readonly pathname: string;\n    readonly search: string;\n}"
+  },
+  {
+    "name": "UrlSource",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface UrlSource {\n    readonly context: LocatorContext;\n    url(): Promise<string>;\n    /** Path plus query of the current URL. */\n    path(): Promise<string>;\n}",
+    "doc": "/** Anything with a current URL; `E2ESession` is one. */"
   },
   {
     "name": "UseCapabilityOptions",
@@ -17521,6 +17900,12 @@
     "doc": "/** Ordinary Vercel SSR uses Edge unless Node is explicitly selected. */"
   },
   {
+    "name": "Verdict",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface Verdict {\n    readonly pass: boolean | \"inconclusive\";\n    readonly reason: string;\n}"
+  },
+  {
     "name": "VerificationCompletedView",
     "kind": "interface",
     "package": "@nifrajs/agent-app",
@@ -17591,6 +17976,12 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     *\n     * Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders still reach the\n     * dev feed (`nifra errors`).\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>, dev: DevAppHooks) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins - inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults - some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes - there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n    /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Client-visible environment prefix (default `\"PUBLIC_\"`; empty disables exposure). */\n    readonly publicEnvPrefix?: string;\n    /**\n     * Downgrade the startup identity-parity check from a hard failure to a loud warning (dev only).\n     * The check catches two physical copies of an identity-sensitive package (e.g. React) resolving in\n     * one process, which reliably breaks hydration and framework context. When a duplicate comes from a\n     * linked sibling repo you cannot fix in the moment, set this to keep the dev server running while you\n     * resolve it; `nifra build` never honors it. Wired to `nifra dev --allow-duplicate-identity`.\n     */\n    readonly allowDuplicateIdentity?: boolean;\n    /**\n     * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)\n     * and the persisted dev log beside it (default `true`).\n     */\n    readonly record?: boolean;\n    /**\n     * Show the browser errors a dev page reports in a badge on that page, with a Copy prompt button per\n     * fix (default `true`). Off, the errors still reach the feed.\n     */\n    readonly indicator?: boolean;\n    /** The app runs `createWebApp({ live })`: the same option as the build's (`BuildClientOptions.live`). */\n    readonly live?: LiveClientEntry | undefined;\n}"
+  },
+  {
+    "name": "WaitForOptions",
+    "kind": "interface",
+    "package": "@nifrajs/e2e",
+    "signature": "export interface WaitForOptions extends StepOptions {\n    /** ms to wait for the statement to hold. Default 30000. */\n    readonly timeout?: number;\n}"
   },
   {
     "name": "WaitForStylesOptions",
@@ -20613,6 +21004,13 @@
     "doc": "/**\n * Journal every capability effect on the routes below it, and declare the evidence that says so.\n *\n * A capability defined `idempotency: \"durable\"` requires `nifra.durable-command` evidence, and until\n * this adapter existed nothing in the framework produced it. The only way to satisfy the tier was to\n * write `assurance: [\"nifra.durable-command\"]` on the route - an assertion with nothing behind it,\n * wrong in both directions: a route that genuinely journals its effects but omits the string fails\n * `nifra check`, and a route that journals nothing but includes it passes.\n *\n * The evidence is a by-product here rather than a claim. Installing the adapter puts the journal on\n * the request, so `executeCapability` records intent before an effect runs and exactly one terminal\n * outcome after - which is what the tier is asking about. A call that passes its own `journal` still\n * uses that one.\n *\n *     const commands = durableCommand({ journal: createDurableEffectJournal({ store }) })\n *     const app = server().use(commands).post(\"/charge\", { capabilities: [\"billing.charge\"] }, …)\n *\n * `beforeHandle` is order-scoped, like the auth plugins: routes registered before `.use(...)` are not\n * covered, and the `subsequent` scope on the evidence says the same thing to `nifra check`.\n *\n * Note what this does NOT claim. Response replay (`schema.idempotency`) is a different guarantee and\n * deliberately never proves this one: replaying a stored response after a crash mid-effect does not\n * make the effect exactly-once, and the journal is what survives the crash.\n */"
   },
   {
+    "name": "e2e",
+    "kind": "function",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare function e2e<App extends E2EApp>(app: App, options?: E2EOptions): Promise<E2ESession<App>>;",
+    "doc": "/**\n * Serve `app` on an ephemeral port and drive it from a browser. The session is `AsyncDisposable`:\n * `await using t = await e2e(app)` closes the browser and the server at scope exit.\n */"
+  },
+  {
     "name": "e2eUrl",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -20879,6 +21277,12 @@
     "doc": "/**\n * The concrete patterns an optional-parameter pattern stands for, shortest first.\n *\n * A path may END in a run of whole-segment optional parameters, `:name?` or, with a constraint,\n * `:name{[0-9]+}?`. It is shorthand for one\n * route per prefix of that run: `/users/:id?` is `/users` and `/users/:id`, and `/a/:b?/:c?` is `/a`,\n * `/a/:b`, and `/a/:b/:c`. A later parameter is only present when every earlier one is, so a run of\n * `n` parameters is `n + 1` patterns, never `2^n`.\n *\n * Every other pattern comes back unchanged as the only element. That includes a `?` anywhere but the\n * trailing run (`/a/:b?/c`) or inside a mixed segment (`/files/:name.:ext?`): there it is literal\n * text, as it always was.\n *\n * Expansion happens before compilation, so each result is an ordinary pattern for\n * {@link compileRoutePattern} and a matcher never learns that a parameter was optional.\n */"
   },
   {
+    "name": "expect",
+    "kind": "function",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare function expect(subject: UrlSource): UrlMatchers;"
+  },
+  {
     "name": "explainAutoReflectJsonSchema",
     "kind": "function",
     "package": "@nifrajs/mock",
@@ -20927,6 +21331,13 @@
     "doc": "/** Project a set of extensions under a single trusted allowlist, preserving order. */"
   },
   {
+    "name": "fakeEngine",
+    "kind": "function",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare function fakeEngine(options: FakeEngineOptions): {\n    factory: EngineFactory;\n    log: FakeLogEntry[];\n};",
+    "doc": "/**\n * An in-memory engine for tests of code built on `@nifrajs/e2e`: no browser, same locator\n * semantics (case-insensitive substring unless `exact`). It does not wait; an `act` on a missing\n * element throws at once.\n */"
+  },
+  {
     "name": "fastly",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -20938,6 +21349,13 @@
     "package": "@nifrajs/proxy",
     "signature": "export declare function fetchTransport(options?: FetchTransportOptions): ProxyTransport;",
     "doc": "/**\n * Create the portable `fetch`-backed {@link ProxyTransport} - the default off Node, and the fallback\n * everywhere the undici transport cannot be used. `redirect: \"manual\"` is not a preference: following\n * an upstream redirect would let the upstream choose the proxy's next destination, so it is pinned\n * here and a 3xx is relayed to the caller untouched.\n *\n * Pass it explicitly only to tune {@link FetchTransportOptions.bodyTimeoutMs} or to pin the choice\n * on Node; leaving `transport` unset picks the right one per runtime.\n */"
+  },
+  {
+    "name": "fileCacheStore",
+    "kind": "function",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare function fileCacheStore(dir: string): CacheStore;",
+    "doc": "/** Entries as files under `dir`, one JSON per key: small, diffable and meant to be committed. */"
   },
   {
     "name": "filePathToPattern",
@@ -21068,6 +21486,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare function formatNodeBuiltinLeak(findings: ReadonlyArray<NodeBuiltinFinding>): string | undefined;",
     "doc": "/** The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean. */"
+  },
+  {
+    "name": "formatReport",
+    "kind": "function",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare function formatReport(report: AgentReport): string;"
   },
   {
     "name": "formatServerOnlyLeak",
@@ -22356,6 +22780,13 @@
     "doc": "/**\n * The single-process bus: an in-memory clock, events delivered to every subscriber before `append`\n * resolves. Processes do not share it; run several behind a shared bus instead.\n */"
   },
   {
+    "name": "memoryCacheStore",
+    "kind": "function",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare function memoryCacheStore(): CacheStore & {\n    readonly entries: Map<string, CacheEntry>;\n};",
+    "doc": "/** Entries in memory, for tests of code built on this package. */"
+  },
+  {
     "name": "memoryChannelHub",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -23371,6 +23802,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function planStatic(mount: StaticMount, immutable: boolean, request: StaticRequest, file: StaticFileAccess): Promise<StaticPlan>;",
     "doc": "/**\n * The answer for an opened file, the one sequence every runtime's reader runs: the mount's headers\n * (a caller's own `cache-control`, `last-modified` or `etag` kept), a strong tag from the snapshot\n * served for a file up to {@link CONTENT_SNAPSHOT_MAX} bytes, a `304` for a current copy, then one\n * byte range or the whole file. A larger file streams with no tag, and its date is weak: an\n * `If-Range` gets the whole file rather than a range spliced from two versions.\n */"
+  },
+  {
+    "name": "playwrightEngine",
+    "kind": "function",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare function playwrightEngine(options?: PlaywrightEngineOptions): EngineFactory;",
+    "doc": "/** A browser engine over Playwright (`playwright` is an optional peer, loaded on first use). */"
   },
   {
     "name": "port",
@@ -26149,6 +26587,12 @@
     "package": "@nifrajs/mcp-db",
     "signature": "export declare function unexposedPlanRelation(planRows: readonly {\n    readonly detail?: unknown;\n}[], exposed: (relation: string) => boolean): string | undefined;",
     "doc": "/**\n * The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the\n * plan spells it, or `undefined` when every scanned relation is exposed. The plan names a scan by its\n * alias (`FROM habits h` plans as `SCAN h`, `users AS habits` as `SCAN habits`), so it cannot decide\n * on its own which tables a statement reads: the compiled program names them by root page.\n */"
+  },
+  {
+    "name": "unique",
+    "kind": "function",
+    "package": "@nifrajs/e2e",
+    "signature": "export declare function unique(value: string | number): Unique;"
   },
   {
     "name": "unsafeInlineScript",

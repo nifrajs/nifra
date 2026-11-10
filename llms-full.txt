@@ -12352,6 +12352,294 @@ Complete runnable references - a typed CRUD API you can diff your own against:
 `examples/db-sqlite` (the same API on raw `bun:sqlite`, parameterized
 queries, boundary validation).
 
+## Nifra - Browser end-to-end tests
+
+> Browser tests for a Nifra app with typed paths, locators, retrying assertions, goal-driven agent steps and a replay cache that makes the second run model-free, with @nifrajs/e2e.
+
+`@nifrajs/e2e` serves your app on an ephemeral port, drives it through a browser,
+and gives you typed paths, locators and retrying assertions. On top it adds goal-driven agent
+steps and a replay cache, so a test can say what it wants in words and still run model-free
+after the first pass. It is a library: use `bun:test`, Vitest or anything that
+runs `async` functions.
+
+### A first test
+
+```ts
+import { test } from "bun:test"
+import { server } from "@nifrajs/core/server"
+import { e2e, expect } from "@nifrajs/e2e"
+
+const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
+
+const app = server().get("/users/:id", (c) =>
+  html(`<input aria-label="Nickname" value="ada"><h1>User ${c.params.id}`),
+)
+
+test("a user page renders", async () => {
+  await using t = await e2e(app)
+  await t.open("/users/:id", { params: { id: 42 } }) // a path or param the app lacks fails typecheck
+  await expect(t.screen.getByRole("heading")).toHaveText("User 42")
+  await t.screen.getByLabel("Nickname").fill("grace")
+  await expect(t).toHaveURL("/users/42")
+})
+```
+
+`open()` takes only paths the app declares and requires their
+`:params`. `await using` closes the browser and the server at scope exit.
+Names and text match as a case-insensitive substring; pass `{ exact: true }` for
+a full match. A locator that matches several elements is an error for `tap`,
+`fill`, `press` and the one-element assertions, never a guess at the
+first. Assertions retry until `assertionTimeout` (5000 ms by default).
+
+On a page that loads a module script, actions wait for `data-nifra-hydrated` on
+`<html>`, so a tap never lands before its handler exists. Pass
+`hydration: "off"` for a page that is not a hydrated Nifra page.
+
+### Signed-in sessions
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { testSession } from "@nifrajs/testing"
+import { e2e, expect } from "@nifrajs/e2e"
+
+const app = server().get("/me", (c) =>
+  new Response(`<p>session ${c.cookies.sid ?? "none"}`, { headers: { "content-type": "text/html" } }),
+)
+
+// Log in through the API, in process, then hand the cookie jar to the browser.
+const { cookies } = testSession<typeof app>(app)
+cookies.set("sid", "abc123")
+
+await using t = await e2e(app, { cookies })
+await t.open("/me")
+await expect(t.screen.getByText("session abc123")).toBeVisible()
+```
+
+### Agent steps
+
+`t.agent.act` takes one goal; `assert` and `waitFor` take a
+statement; `extract` returns data your schema accepts. The model is a port you
+supply: `{ decide(request) }`. The request carries a pruned outline of the page
+(at most `snapshotChars`, 12000 by default) and what was already tried; the answer is
+a small JSON decision.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { e2e, expect, Secret, type E2EModel } from "@nifrajs/e2e"
+
+const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
+
+// A sign-in form that lands on a dashboard, so a model has controls to find and a place to end.
+const app = server()
+  .get("/login", () =>
+    html(`<input aria-label="Email"><input aria-label="Password" type="password"><button onclick="location.href='/dashboard'">Sign in`),
+  )
+  .get("/dashboard", () => html("<h1>Welcome, Ada"))
+
+// The seam to a model. Nothing here names a vendor: you call your provider inside decide().
+// doc-check: skip - the provider call is yours; a real adapter would await a model API here.
+declare const askMyModel: (request: unknown) => Promise<unknown>
+const model: E2EModel = { decide: (request) => askMyModel(request) }
+
+await using t = await e2e(app, { model, agentContext: "Acme calls a plan a seat" })
+await t.open("/login")
+
+await t.agent.act("sign in as {email} with {password}", {
+  params: { email: "ada@example.test", password: new Secret("password", process.env.PASSWORD ?? "") },
+})
+await t.agent.assert("the dashboard greets Ada")
+await expect(t.screen.getByRole("heading")).toHaveText("Welcome, Ada") // locators and agent steps mix in one test
+```
+
+```ts
+// What decide() receives and returns, by request kind.
+//
+//   act      { goal, snapshot, history, secrets, handoff, ... }
+//            -> { kind: "tap" | "fill" | "press", target, value?, key? }
+//             | { kind: "goto", path } | { kind: "done", summary? } | { kind: "fail", reason }
+//   assert   { statement, snapshot }   -> { pass: true | false | "inconclusive", reason }
+//   waitFor  { statement, snapshot }   -> { pass, reason }
+//   extract  { prompt, snapshot }      -> { value }   (validated with your Standard Schema)
+//
+// target is one of { role, name? } | { label } | { text } | { testId }, plus exact? and nth?.
+// doc-check: skip - protocol sketch, not code.
+```
+
+-
+**Budgets.** `act` stops at `maxModelCalls` (12),
+`maxActions` (25) or `timeout` (120000 ms), each its own error. A tap
+that finds nothing, or several, goes back to the model, which can retry with
+`nth`. The time limit is checked between decisions: it does not interrupt a
+`decide()` call that never resolves, so enforce your own deadline inside
+`decide` (the request carries a `signal`).
+
+-
+**Secrets.** A `Secret` is typed into the page by name. The model sees
+`{password}`, never the value, and every outline a session sends has any secret
+it was given replaced by its placeholder.
+
+-
+**Same origin.** `goto` takes an app path only; anything else is refused and
+reported back to the model.
+
+-
+**No model.** Agent steps reject with `MODEL_MISSING`; locator tests need
+none.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { t as s } from "@nifrajs/schema"
+import { e2e } from "@nifrajs/e2e"
+
+const app = server().get("/plan", () => new Response("<p>Pro, 5 seats", {
+  headers: { "content-type": "text/html" },
+}))
+
+const model = {
+  decide: () => ({ value: { plan: "Pro", seats: 5 } }), // a real model reads the outline in the request
+}
+
+await using t = await e2e(app, { model })
+await t.open("/plan")
+const plan = await t.agent.extract("the current plan and seat count", {
+  schema: s.object({ plan: s.string(), seats: s.number() }),
+})
+plan.seats // number
+```
+
+### The replay cache
+
+The first run of an `act` asks the model. The next runs replay what it did, with no
+model call. A recording is written only after a **later** locator assertion,
+`agent.assert` or `agent.waitFor` passes, and a failing one deletes it, so
+a test should end with a check.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { e2e, expect, formatReport, unique, type E2EModel } from "@nifrajs/e2e"
+
+const app = server().get("/signup", () => new Response("<h1>Sign up", {
+  headers: { "content-type": "text/html" },
+}))
+const model: E2EModel = { decide: () => ({ kind: "done" }) }
+
+await using t = await e2e(app, {
+  model,
+  cache: { testId: "a visitor signs up", mode: "read-write" },
+})
+await t.open("/signup")
+
+// unique() keeps a run-varying value from missing the cache; it is typed again on replay.
+await t.agent.act("sign up as {email}", { params: { email: unique(`ada-${Date.now()}@example.test`) } })
+
+// The recording is written only when a LATER check passes.
+await expect(t.screen.getByRole("heading")).toBeVisible()
+console.log(formatReport(t.agent.report())) // Cache: 1 replayed - 0 handed off - 0 missed (0 model calls)
+```
+
+-
+**Replay** needs the same start route, finds each control by the role, name, label, text
+or test id it had and requires the same number of matches, then checks the end route and the
+controls and headings that appeared or went away. It never taps a near miss.
+
+-
+**Hand-off.** When a replay stops (`target-not-found`, `ambiguous`,
+`end-mismatch`, `action-uncertain`, `route-mismatch`) the
+actions already done stay done, and the model finishes the goal from the current page.
+`request.handoff` carries the reason. A passing check re-records the repaired steps;
+if the goal then fails, the recording is deleted.
+
+-
+**The key** is `cache.testId` (set it: two tests that say the same thing
+otherwise share a recording), the goal text, the params, `agentContext` and
+`cache.appIdentity`. A `unique()` value and a `Secret` do not
+change it, and a secret is stored by name only.
+
+-
+**Where.** `.nifra/e2e-cache/<hash>.json` under the working directory,
+small and meant to be committed. `cache.store` swaps in your own;
+`cache: false` turns the cache off.
+
+#### Modes
+
+Mode
+Replays
+Writes and deletes
+Stale or missing recording
+
+`read-write`
+
+yes
+yes
+hand-off to the model
+
+`read-only` (default when `CI` is set)
+
+yes
+no
+hand-off to the model
+
+`strict`
+
+yes
+no
+
+`REPLAY_STALE` / `REPLAY_MISSING`, no model call
+
+`off`
+
+no
+no
+the model runs every time
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { e2e, expect } from "@nifrajs/e2e"
+
+const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
+
+const app = server()
+  .get("/", () => html('<a href="/dashboard">Dashboard'))
+  .get("/dashboard", () => html("<h1>Dashboard"))
+
+// CI replays committed recordings and never writes or deletes them. With no model, a recording that
+// no longer matches fails with MODEL_MISSING; mode: "strict" fails with REPLAY_STALE (or
+// REPLAY_MISSING when nothing was recorded) instead of ever calling a model.
+await using t = await e2e(app, { cache: { testId: "home to dashboard", mode: "strict" } })
+await t.open("/")
+await t.agent.act("open the dashboard") // reads the committed recording; strict mode checks it here
+await expect(t.screen.getByRole("heading")).toHaveText("Dashboard")
+```
+
+`t.agent.report()` returns `{ replayed, handedOff, missed, modelCalls }`
+and `formatReport` prints it. Token counts are not reported: the model port returns
+decisions, not usage. A cache store that refuses a write is counted, never thrown.
+
+### Engines
+
+`e2e()` uses Playwright by default. Install it yourself (`playwright` is
+an optional peer dependency) and a browser with `bunx playwright install chromium`.
+The engine is a six-method interface, so anything else plugs in with
+`e2e(app, { engine })`; `@nifrajs/e2e/fake` is an in-memory engine with
+the same locator rules, for testing code built on this package.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { e2e } from "@nifrajs/e2e"
+import { fakeEngine } from "@nifrajs/e2e/fake"
+
+const app = server().get("/", () => new Response("ok"))
+
+// An in-memory engine with the same locator rules, for testing code built on this package.
+const { factory } = fakeEngine({ pages: { "/": [{ role: "heading", name: "Home", text: "Home" }] } })
+await using t = await e2e(app, { engine: factory, cache: false })
+await t.open("/")
+await t.screen.getByRole("heading").count()
+```
+
+An agent step is only as safe as the app state behind it. Point it at a test database and an
+isolated fixture, never at production, and keep credentials in `Secret` params.
+
 ## Nifra - Error codes
 
 > Every error code Nifra recognises: what each one means and how to fix it. The dev overlay, nifra_explain and nifra_errors name these codes and link here.
@@ -16532,6 +16820,8 @@ browser: `serveTestApp` binds the app to an ephemeral port,
 `e2eUrl` typechecks the visited path against the route registry, and the
 session jar crosses into the browser as a `Cookie` header. Bring Playwright
 (or Vitest Browser) for the browser itself - nifra supplies the glue, not another runner.
+@nifrajs/e2e wraps that glue into locators, assertions, agent steps
+and a replay cache.
 
 ```ts
 import { chromium } from "@playwright/test"
@@ -18926,6 +19216,135 @@ connection slot. Already queued frames drain before EOF; the overflow frame is d
 `EventSource` reconnects automatically. Initial delivery includes only the newest history suffix
 that fits the byte budget. This is a recent trace view, so reconnects can have event-id gaps when
 older events no longer fit the history or connection budget; it does not guarantee lossless replay.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/e2e
+
+Browser end-to-end tests for Nifra apps. It serves your app on an ephemeral port, drives it through
+a browser engine, and gives you locators and retrying assertions. The route table types `open()`.
+
+```ts
+import { test } from "bun:test"
+import { e2e, expect } from "@nifrajs/e2e"
+import { app } from "../src/app"
+
+test("a user page renders", async () => {
+  await using t = await e2e(app)
+  await t.open("/users/:id", { params: { id: 42 } })   // a path or param the app lacks fails typecheck
+  await expect(t.screen.getByRole("heading")).toHaveText("User 42")
+  await t.screen.getByLabel("Nickname").fill("grace")
+  await expect(t).toHaveURL("/users/42")
+})
+```
+
+`await using` closes the browser and the server at scope exit; `t.close()` does the same by hand.
+
+## Locators and assertions
+
+`getByRole(role, name)`, `getByLabel`, `getByText`, `getByTestId`, `.filter({ hasText })`, and chaining
+to scope into a row. Names and text match as a case-insensitive substring; pass `{ exact: true }` for
+a full match. Actions: `tap`, `fill`, `press`. Assertions retry until they pass or `assertionTimeout`
+(default 5000 ms) runs out: `toBeVisible`, `toBeHidden`, `toHaveText`, `toContainText`, `toHaveCount`,
+`toHaveValue`, `toHaveURL`, each with `.not`.
+
+A locator that matches several elements is an error for `tap`, `fill`, `press` and the one-element
+assertions (`LOCATOR_AMBIGUOUS`, or a failed assertion naming the count).
+
+## Hydration
+
+On a page that loads a module script, the Playwright engine waits for `data-nifra-hydrated` on `<html>`
+after each navigation and before each action, so a tap does not land before its handler exists. Pass
+`hydration: "off"` for a page that is not a hydrated Nifra page.
+
+## Signed-in sessions
+
+```ts
+const { client, cookies } = testSession<typeof app>(app)
+await client.auth.login.post(credentials)
+await using t = await e2e(app, { cookies })
+```
+
+## Agent steps
+
+Say what you want in words; a model you supply drives the page. Locators and agent steps mix in one test.
+
+```ts
+await using t = await e2e(app, { model, agentContext: "Acme calls a plan a seat" })
+await t.open("/login")
+await t.agent.act("sign in as {email} with {password}", {
+  params: { email: "ada@example.test", password: new Secret("password", process.env.PASSWORD ?? "") },
+})
+await t.agent.assert("the dashboard greets Ada")
+await t.agent.waitFor("the export is finished", { timeout: 60_000 })
+const plan = await t.agent.extract("the current plan", { schema: PlanSchema })
+```
+
+`model` is `{ decide(request) }`: the request carries the goal, a pruned outline of the page and what was
+already tried, and the answer is `{ kind: "tap" | "fill" | "press" | "goto" | "done" | "fail", ... }` for
+`act`, `{ pass, reason }` for `assert` and `waitFor`, and `{ value }` for `extract`. Nothing here names a
+vendor; you own the credentials, the retries and the cost. Without `model`, agent steps reject with
+`MODEL_MISSING` and locator tests are unaffected.
+
+- **Budgets.** `act` stops at `maxModelCalls` (12), `maxActions` (25) or `timeout` (120000 ms), each a
+  distinct error. The time limit is checked between decisions; it does not interrupt a `decide()` call
+  that never resolves, so enforce a deadline inside `decide` (the request carries a `signal`). A tap that finds no element or several goes back to the model, which can retry with `nth`.
+- **Secrets.** A `Secret` is typed into the page by name. The model sees `{password}`, never the value,
+  and every snapshot a session sends has any secret it was given replaced by its placeholder.
+- **Same origin.** `goto` takes an app path only; anything else is refused and reported to the model.
+- **`extract`** validates the answer with your Standard Schema (`EXTRACT_INVALID` on a mismatch).
+- **`waitFor`** asks the model again only when the page outline changed.
+
+## Replay cache
+
+The first run of an `act` asks the model; the next runs replay what it did, with no model call.
+
+```ts
+await using t = await e2e(app, { model, cache: { testId: "member upgrades to Pro" } })
+await t.open("/settings/billing")
+await t.agent.act("upgrade the workspace to the {plan} plan", { params: { plan: "Pro" } })
+await expect(t.screen.getByRole("status")).toHaveText("Pro")   // a later check that passes saves the recording
+console.log(formatReport(t.agent.report()))                    // Cache: 1 replayed - 0 handed off - 0 missed (0 model calls)
+```
+
+- **Written only after a later check passes.** A locator `expect` or `agent.assert`/`waitFor` that passes
+  saves what the `act`s before it recorded. One that fails deletes them. A test that ends with no check
+  records nothing.
+- **Replay** needs the same start route, finds each control by the role, name, label, text or test id
+  it had, and requires it to match exactly as often as it did. It never taps a near miss. It then checks
+  the end route and the controls and headings that appeared or went away.
+- **Hand-off.** When a replay stops (`target-not-found`, `ambiguous`, `end-mismatch`, `action-uncertain`,
+  `route-mismatch`) the actions it already did stay done, and the model finishes the goal from the current
+  page. `ActRequest.handoff` carries the reason and how many actions to leave alone. A passing check
+  re-records the repaired steps. If the goal then fails, the recording is deleted.
+- **Modes** (`cache.mode`): `read-write` (default; `read-only` when `CI` is set), `read-only` (replays and
+  hands off, never writes or deletes), `strict` (replay only: a stale recording is `REPLAY_STALE`, a
+  missing one `REPLAY_MISSING`), `off`.
+- **The key** is the test (`cache.testId`: pass it), the goal text, the params, `agentContext`, and
+  `cache.appIdentity`. Wrap run-varying data in `unique(value)` so a new value does not miss; it is
+  typed again on replay. A `Secret` is stored by name only, never by value.
+- **Where.** `.nifra/e2e-cache/<hash>.json` under the working directory (`cache.dir`), small and meant to
+  be committed. `cache.store` swaps in your own store; `memoryCacheStore()` is one for tests. A store
+  that refuses a write is counted in the cache, not thrown. `cache: false` turns the whole thing off.
+- Replay needs no model: in CI `model` can be left out and a stale recording then fails with
+  `MODEL_MISSING`. `assert`, `waitFor` and `extract` always ask the model.
+
+## Engines
+
+`e2e()` uses the Playwright engine by default; install `playwright` yourself (optional peer). The engine
+is a six-method interface (`goto`, `url`, `resolve`, `act`, `snapshot`, `close`), so anything else can plug in with
+`e2e(app, { engine })`. `@nifrajs/e2e/fake` is an in-memory engine with the same locator semantics, for
+testing code built on this package without a browser.
+
+## Not included yet
+
+Token counts (the model port returns decisions, not usage) and a test runner. Use `bun:test` or Vitest.
 
 ## For AI agents
 
@@ -21752,6 +22171,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/devtools
 
 `DevToolsClientOptions`, `DevToolsEvent`, `DevToolsOptions`, `DevToolsQuery`, `devtools`, `devtoolsClientScript`, `filterDevToolsEvents`
+
+## @nifrajs/e2e
+
+`ActDecision`, `ActOptions`, `ActRequest`, `ActResult`, `ActionRecord`, `Agent`, `AgentReport`, `CacheEntry`, `CacheMode`, `CacheOptions`, `CacheStore`, `Clock`, `E2EError`, `E2EErrorCode`, `E2EModel`, `E2EOptions`, `E2ESession`, `ElementAction`, `ElementState`, `Engine`, `EngineFactory`, `EngineInit`, `ExtractOptions`, `ExtractRequest`, `HandOff`, `HydrationMode`, `JudgeRequest`, `Locator`, `LocatorContext`, `LocatorMatchers`, `MatcherOptions`, `ModelRequest`, `OpenArgs`, `OpenOptions`, `Param`, `Params`, `PathParams`, `PerformedDecision`, `RecordedAction`, `RoleOptions`, `Screen`, `Secret`, `Selector`, `Step`, `StepOptions`, `StopReason`, `Target`, `TextOptions`, `Unique`, `UrlMatchers`, `UrlSource`, `Verdict`, `WaitForOptions`, `e2e`, `expect`, `fileCacheStore`, `formatReport`, `memoryCacheStore`, `unique`
 
 ## @nifrajs/edge
 

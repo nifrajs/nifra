@@ -33,6 +33,7 @@
     "@nifrajs/content": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/deno": "workspace:*",
+    "@nifrajs/e2e": "workspace:*",
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/image": "workspace:*",
     "@nifrajs/mcp": "workspace:*",

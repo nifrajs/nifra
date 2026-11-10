@@ -244,7 +244,9 @@ export default function ContractTesting() {
         browser: <code>serveTestApp</code> binds the app to an ephemeral port,{" "}
         <code>e2eUrl</code> typechecks the visited path against the route registry, and the
         session jar crosses into the browser as a <code>Cookie</code> header. Bring Playwright
-        (or Vitest Browser) for the browser itself - nifra supplies the glue, not another runner.
+        (or Vitest Browser) for the browser itself - nifra supplies the glue, not another runner.{" "}
+        <a href={href({ to: "/docs/e2e" })}>@nifrajs/e2e</a> wraps that glue into locators, assertions, agent steps
+        and a replay cache.
       </p>
       <CodeBlock code={E2E} lang="ts" />
 

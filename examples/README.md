@@ -10,6 +10,7 @@ excluded from the monorepo typecheck and browser-verified instead.
 | [`contract-client.ts`](contract-client.ts) | `defineContract` + `implement` + an end-to-end-typed client |
 | [`schema-openapi.ts`](schema-openapi.ts) | `t` validation + `toOpenAPI` |
 | [`hardened.ts`](hardened.ts) | `securityHeaders` + `cors` + `rateLimit` via `app.use()` |
+| [`e2e-signin.ts`](e2e-signin.ts) | `@nifrajs/e2e` - a browser test with an agent step; the second run replays it with no model call (needs Playwright) |
 | [`edge.ts`](edge.ts) | `app.fetch` as the universal handler (Workers / Deno / edge) |
 | [`serve-on-node.ts`](serve-on-node.ts) | `@nifrajs/node` - serve a nifra app on Node's `http` server |
 | [`web-solid/`](web-solid/) | Full-stack SSR - `@nifrajs/web` + `@nifrajs/web-solid` server-render a Solid page, then hydrate it |

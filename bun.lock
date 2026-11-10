@@ -105,6 +105,7 @@
         "@nifrajs/content": "workspace:*",
         "@nifrajs/core": "workspace:*",
         "@nifrajs/deno": "workspace:*",
+        "@nifrajs/e2e": "workspace:*",
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
         "@nifrajs/mcp": "workspace:*",
@@ -426,6 +427,24 @@
       "peerDependencies": {
         "@nifrajs/core": "workspace:^",
       },
+    },
+    "packages/e2e": {
+      "name": "@nifrajs/e2e",
+      "version": "5.12.1",
+      "dependencies": {
+        "@nifrajs/core": "workspace:*",
+        "@nifrajs/node": "workspace:*",
+        "@nifrajs/testing": "workspace:*",
+      },
+      "devDependencies": {
+        "playwright": "1.63.0",
+      },
+      "peerDependencies": {
+        "playwright": ">=1.50.0",
+      },
+      "optionalPeers": [
+        "playwright",
+      ],
     },
     "packages/edge": {
       "name": "@nifrajs/edge",
@@ -1359,6 +1378,8 @@
     "@nifrajs/deploy-fly": ["@nifrajs/deploy-fly@workspace:packages/deploy-fly"],
 
     "@nifrajs/devtools": ["@nifrajs/devtools@workspace:packages/devtools"],
+
+    "@nifrajs/e2e": ["@nifrajs/e2e@workspace:packages/e2e"],
 
     "@nifrajs/edge": ["@nifrajs/edge@workspace:packages/edge"],
 
