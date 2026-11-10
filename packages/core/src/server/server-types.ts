@@ -64,11 +64,19 @@ export interface ServerOptions {
    */
   readonly protoPoisoning?: "reject" | "strip" | "ignore"
   /**
-   * Other sites whose HTML forms may post to a body-schema route: exact origins, or a function that
-   * receives the `Origin`. A urlencoded, multipart or `text/plain` body is one a form on any site can
-   * send with the visitor's cookies and no preflight, so one whose `Origin` names another site is
-   * refused with `403` before it is read. Same-origin posts and requests without an `Origin`, such
-   * as server-to-server calls, pass. JSON is not affected: a browser preflights it, so CORS decides.
+   * Other sites whose HTML forms may post to a route: exact origins, or a function that receives the
+   * `Origin`. A urlencoded, multipart or `text/plain` body is one a form on any site can send with the
+   * visitor's cookies and no preflight, so one whose `Origin` names another site is refused with `403`
+   * before it is read. A route without a body schema refuses the same sites' unsafe requests that carry
+   * no content type too, which `fetch` with `no-cors` sends; one with a script-set `Authorization` header
+   * passes, since a browser preflights it, but `Basic`, `Digest`, `Negotiate` and `NTLM` do not, because
+   * a browser re-sends those from its auth cache without one. Same-origin posts and requests without an `Origin`, such as
+   * server-to-server calls, pass. JSON is not affected: a browser preflights it, so CORS decides.
+   * The origins a `cors()` list or predicate and a `csrf({ origins })` list name are trusted as well,
+   * so a frontend those already allow needs no second list here; `cors()` with `"*"` adds none. That
+   * trust is for form posts to this server's own routes only: a mounted or grouped server keeps its own
+   * policy, so a parent that must accept the same sites sets them in its own `formOrigins`, and a web
+   * page action checks the origin against the backend's `allowedOrigins`, not this list.
    */
   readonly formOrigins?: ReadonlyArray<string> | ((origin: string) => boolean)
   /**
