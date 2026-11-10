@@ -514,7 +514,10 @@ export function generateClientEntry(
     ...(live === undefined ? [] : ["  __live.attach(router)"]),
     // Next frame: the adapter has committed its initial hydration, so handlers are attached. Flip the
     // document to interactive (`data-nifra-hydrated` + `nifra:hydrated`) for apps to gate pre-hydration UI.
-    "  requestAnimationFrame(signalHydrated)",
+    // A hidden view (a window created hidden, a minimized or occluded one) runs no frames, so a pending
+    // `requestAnimationFrame` would hold the marker until someone shows it - and a shell that shows its
+    // window once the page is ready would never show it.
+    '  document.visibilityState === "hidden" ? setTimeout(signalHydrated, 0) : requestAnimationFrame(signalHydrated)',
     "  router.subscribe(() => {",
     "    const s = router.snapshot()",
     // Merge the matched route's chain meta (layouts→page) into one head - same contract as SSR.
