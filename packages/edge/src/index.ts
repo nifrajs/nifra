@@ -84,7 +84,9 @@ export interface EdgeOptions {
   /** Other sites whose HTML forms may post to a route. A urlencoded, multipart or `text/plain`
    * request whose `Origin` is another site's, and not listed, is refused with `403`: before the body is
    * read on a body-schema route, and before the handler runs on a `POST`, `PUT`, `PATCH` or `DELETE`
-   * route without one. */
+   * route without one. On a route without one, an unsafe request with no content type, which `fetch`
+   * with `no-cors` sends, is refused the same way, unless it carries an `Authorization` header whose
+   * scheme is not Basic, Digest, Negotiate or NTLM: a script set that one, so a preflight judged it. */
   readonly formOrigins?: FormOrigins
   /** Answers a request no route matched, in place of the default `404` body. Build it with
    * {@link notFound}: `server({ notFound: notFound(handler) })`. */
