@@ -31,9 +31,16 @@ const BUILD = `nifra build --target static --out dist`
 
 const SCAFFOLD = `nifra shell tauri --origin https://api.example.com`
 
+const NEW_APP = `bun create nifra my-app --shell tauri
+cd my-app && bun install
+bunx tauri icon app-icon.png
+bun run shell:dev`
+
 const TAURI_BUILD = `bun add -d @tauri-apps/cli
 bunx tauri icon app-icon.png
 bunx tauri dev`
+
+const MOBILE = `nifra shell tauri --mobile android   # or ios, or all`
 
 const TRANSPORT_FLAG = `nifra build --target static --out dist-shell --transport ./frontend/shell-transport.ts`
 
@@ -175,6 +182,19 @@ export default function NativeShells() {
       </p>
       <CodeBlock code={SCAFFOLD} lang="bash" />
       <CodeBlock code={TAURI_BUILD} lang="bash" />
+      <p>
+        A new site can start with a shell: <code>--shell tauri</code> adds the same project, lets
+        the server's CORS accept the shell origins in <code>backend/shell-origins.ts</code>, and
+        adds <code>shell:dev</code> and <code>shell:build</code> scripts.
+      </p>
+      <CodeBlock code={NEW_APP} lang="bash" />
+      <p>
+        <code>--mobile</code> also runs <code>tauri android init</code> or{" "}
+        <code>tauri ios init</code> with the project&apos;s Tauri CLI, which needs the platform
+        toolchain: the Android SDK and NDK, or Xcode. A platform that fails is reported and the
+        files already written stay.
+      </p>
+      <CodeBlock code={MOBILE} lang="bash" />
       <p>
         By hand, point <code>frontendDist</code> at the build and allow the server in the content
         security policy. On iOS, a development server on a local address needs{" "}

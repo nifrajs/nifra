@@ -1,18 +1,26 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { parseFlags } from "../src/cli.ts"
-import { runShellCommand } from "../src/shell-command.ts"
+import { bindCommandArgv, findCommandSpec } from "../src/command-catalog.ts"
 import {
   cargoToml,
   crateName,
   LIB_RS,
   originOf,
-  runShellInit,
   tauriConf,
   transportSource,
-} from "../src/shell-init.ts"
+} from "../src/shell-files.ts"
+import { initMobile, runShellInit } from "../src/shell-init.ts"
 
 const dirs: string[] = []
 afterEach(() => {
@@ -107,38 +115,37 @@ test("a bad bundle id or origin writes nothing", async () => {
   expect(tree(dir)).toEqual([])
 })
 
-test("the command refuses an unknown kind, option or empty value", async () => {
-  const dir = project()
-  const quiet = console.error
-  console.error = () => {}
-  try {
-    expect(await runShellCommand(dir, [])).toBe(1)
-    expect(await runShellCommand(dir, ["electron"])).toBe(1)
-    expect(await runShellCommand(dir, ["tauri", "--bogus"])).toBe(1)
-    expect(await runShellCommand(dir, ["tauri", "--origin"])).toBe(1)
-    expect(await runShellCommand(dir, ["tauri", "--origin", "--force"])).toBe(1)
-    expect(tree(dir)).toEqual([])
-  } finally {
-    console.error = quiet
-  }
+const field = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined
+const actions = (out: unknown): unknown[] => {
+  const files = field(out, "files")
+  return Array.isArray(files) ? files.map((f) => field(f, "action")) : []
+}
+
+const shell = (): NonNullable<ReturnType<typeof findCommandSpec>> => {
+  const spec = findCommandSpec("shell")
+  if (spec === undefined) throw new Error("shell is not in the command catalog")
+  return spec
+}
+
+test("the shell command is a CLI catalog command that refuses an unknown kind, option or empty value", () => {
+  expect(shell().transports).toEqual(["cli"])
+  expect(() => bindCommandArgv(shell(), [])).toThrow("kind must be tauri")
+  expect(() => bindCommandArgv(shell(), ["electron"])).toThrow("kind must be tauri")
+  expect(() => bindCommandArgv(shell(), ["tauri", "--bogus"])).toThrow()
+  expect(() => bindCommandArgv(shell(), ["tauri", "--origin"])).toThrow()
 })
 
-test("the command writes the files and reports them", async () => {
+test("the shell command writes the files, reports them and what to do next", async () => {
   const dir = project({ name: "demo" })
-  const lines: string[] = []
-  const log = console.log
-  console.log = (...parts: unknown[]) => void lines.push(parts.join(" "))
-  try {
-    expect(await runShellCommand(dir, ["tauri", "--origin=https://api.example.com"])).toBe(0)
-    expect(lines.join("\n")).toContain("wrote    src-tauri/tauri.conf.json")
-    lines.length = 0
-    expect(await runShellCommand(dir, ["tauri", "--json"])).toBe(0)
-    expect(
-      JSON.parse(lines.join("\n")).files.every((f: { action: string }) => f.action === "skipped"),
-    ).toBe(true)
-  } finally {
-    console.log = log
-  }
+  const input = bindCommandArgv(shell(), ["tauri", "--origin=https://api.example.com"])
+  const out = await shell().run(input, { cwd: dir, cliVersion: "0" })
+  expect(actions(out).every((action) => action === "wrote")).toBe(true)
+  const text = shell().render(out, input).join("\n")
+  expect(text).toContain("wrote    src-tauri/tauri.conf.json")
+  expect(text).toContain("1. bun add -d @tauri-apps/cli")
+  const again = await shell().run(input, { cwd: dir, cliVersion: "0" })
+  expect(actions(again).every((action) => action === "skipped")).toBe(true)
 })
 
 test("--transport is a build flag with a value", () => {
@@ -156,4 +163,66 @@ test("the window opens hidden, shows on the first paint, and a timer shows it if
   expect(LIB_RS).toContain("Duration::from_secs(3)")
   // The shown window is the one the capability names.
   expect(LIB_RS).toContain('WebviewWindowBuilder::new(app, "main"')
+})
+
+/** A project whose `node_modules/.bin/tauri` is a script that logs its arguments and exits `code`. */
+function withFakeTauri(code: number, say = ""): { dir: string; log: string } {
+  const dir = project()
+  const bin = join(dir, "node_modules", ".bin")
+  mkdirSync(bin, { recursive: true })
+  const log = join(dir, "calls.log")
+  writeFileSync(
+    join(bin, "tauri"),
+    `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\n${say === "" ? "" : `echo ${JSON.stringify(say)} >&2\n`}exit ${code}\n`,
+  )
+  chmodSync(join(bin, "tauri"), 0o755)
+  return { dir, log }
+}
+
+test("mobile init runs the project's Tauri CLI once per platform, non-interactively", async () => {
+  const { dir, log } = withFakeTauri(0)
+  const results = await initMobile(dir, ["android", "ios"], "darwin")
+  expect(results).toEqual([
+    { platform: "android", ok: true, note: "" },
+    { platform: "ios", ok: true, note: "" },
+  ])
+  expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+    "android init --ci",
+    "ios init --ci",
+  ])
+})
+
+test("a platform that fails is reported with what the CLI said, and the others still run", async () => {
+  const { dir } = withFakeTauri(1, "no Android SDK found")
+  const [android] = await initMobile(dir, ["android"], "linux")
+  expect(android?.ok).toBe(false)
+  expect(android?.note).toContain("no Android SDK found")
+})
+
+test("mobile init says what is missing instead of throwing", async () => {
+  const noCli = await initMobile(project(), ["android"], "darwin")
+  expect(noCli[0]).toMatchObject({ ok: false })
+  expect(noCli[0]?.note).toContain("bun add -d @tauri-apps/cli")
+  const { dir, log } = withFakeTauri(0)
+  const ios = await initMobile(dir, ["ios"], "linux")
+  expect(ios[0]).toMatchObject({
+    platform: "ios",
+    ok: false,
+    note: "an iOS project needs macOS and Xcode",
+  })
+  expect(() => readFileSync(log, "utf8")).toThrow()
+})
+
+test("--mobile takes android, ios or all, and the command fails when a platform does", async () => {
+  expect(() => bindCommandArgv(shell(), ["tauri", "--mobile", "windows"])).toThrow("mobile must be")
+  const input = bindCommandArgv(shell(), ["tauri", "--mobile", "android"])
+  const out = await shell().run(input, { cwd: project({ name: "m" }), cliVersion: "0" })
+  expect(field(out, "ok")).toBe(false)
+  expect(field(out, "mobile")).toHaveLength(1)
+  expect(shell().success?.(out, input)).toBe(false)
+  const none = await shell().run(bindCommandArgv(shell(), ["tauri"]), {
+    cwd: project(),
+    cliVersion: "0",
+  })
+  expect(none).toMatchObject({ ok: true, mobile: [] })
 })

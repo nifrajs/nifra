@@ -92,6 +92,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   const deployTarget = take("--target")
   const docker = hasFlag("--docker")
   const ci = take("--ci", "-c")
+  const shell = take("--shell")
   const db = take("--db")
   const auth = take("--auth")
   const link = take("--link")
@@ -99,7 +100,11 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   const target = rest.find((a) => !a.startsWith("-"))
   // `--framework`/`--target`/`--docker`/`--ci` imply the site template unless one was named explicitly.
   const template = (templateFlag ??
-    (framework !== undefined || deployTarget !== undefined || docker || ci !== undefined
+    (framework !== undefined ||
+    deployTarget !== undefined ||
+    docker ||
+    ci !== undefined ||
+    shell !== undefined
       ? "site"
       : undefined)) as TemplateName | undefined
   return {
@@ -109,6 +114,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     ...(deployTarget !== undefined ? { deployTarget } : {}),
     ...(docker ? { docker } : {}),
     ...(ci !== undefined ? { ci } : {}),
+    ...(shell !== undefined ? { shell } : {}),
     ...(db !== undefined ? { db } : {}),
     ...(auth !== undefined ? { auth } : {}),
     ...(link !== undefined ? { link } : {}),
@@ -116,7 +122,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   }
 }
 
-const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|batteries] [--framework react|preact|vue|solid|svelte] [--target bun|node|deno|cloudflare|vercel] [--docker] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
+const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|batteries] [--framework react|preact|vue|solid|svelte] [--target bun|node|deno|cloudflare|vercel] [--docker] [--ci github] [--shell tauri] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
 
 /**
  * Run the CLI for `argv` and return the exit code + the message to print - no `process.exit`, `console`,
@@ -161,6 +167,12 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
     steps[2] = "bun run dev          # local preview"
     steps.push(...targetSteps(result.deploy.target, result.deploy.docker))
   }
+  if (result.shell === "tauri") {
+    steps.push(
+      "bunx tauri icon path/to/icon.png  # the app icon set; then `bun run shell:dev` opens the desktop shell (needs `bun run dev` for the server)",
+      "# a shell build wraps `nifra build --target static`: add `export const prerender = true` to the page it opens on (routes/index.backend.ts)",
+    )
+  }
   if (result.db !== undefined) {
     // After install: set the connection string. When auth is wired, generate its tables into the schema
     // FIRST, then create + apply the migration so the auth tables are included.
@@ -176,6 +188,7 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
   const tags = [
     ...(result.framework !== undefined ? [result.framework] : []),
     ...(result.deploy !== undefined ? [result.deploy.label] : []),
+    ...(result.shell !== undefined ? ["Tauri shell"] : []),
     ...(result.db !== undefined ? [DB_PRESETS[result.db].label] : []),
     ...(result.auth !== undefined ? [AUTH_PRESETS[result.auth].label] : []),
   ]

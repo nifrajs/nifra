@@ -30,6 +30,7 @@ test("the stable catalog is the public command allowlist", () => {
     "migrate",
     "scaffold",
     "target",
+    "shell",
     "types",
     "schemas",
     "snapshot",

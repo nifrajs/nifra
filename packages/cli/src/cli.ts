@@ -191,10 +191,6 @@ Usage:
                [--since <file>]          paths actually run: kind, plugin name, and where it was
                                          registered (app, group, merge, mount). --since diffs against a
                                          saved --json report.
-  nifra shell tauri [--origin <url>]     Add a Tauri 2 shell to the app: frontend/shell-transport.ts and a
-                [--name <n>] [--id <bundle>] src-tauri/ project that wraps a static build made with
-                [--force] [--json]       --transport. Writes files only, never over one that exists
-                                         unless --force; package.json and nifra.config.ts are untouched.
   nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent files a new app ships:
                                          .mcp.json + .cursor/mcp.json (register this project's nifra MCP),
                                          each agent's pointer to AGENTS.md (CLAUDE.md, GEMINI.md,
@@ -1539,11 +1535,6 @@ async function main(): Promise<void> {
   // `init-agents` retrofits the agent files (.mcp.json, CLAUDE.md, AGENTS.md, …) into the cwd. It's a
   // pure file-writing command independent of the app loading, so dispatch it before the eager `loadApp`
   // (an existing app might be API-only or not yet built). It always succeeds unless a write throws.
-  if (command === "shell") {
-    const { runShellCommand } = await import("./shell-command.ts")
-    process.exitCode = await runShellCommand(process.cwd(), argv.slice(1))
-    return
-  }
   if (command === "init-agents") {
     const { runInitAgents } = await import("./init-agents.ts")
     await runInitAgents(process.cwd(), {
@@ -1718,7 +1709,6 @@ function isCliCommandToken(value: string): boolean {
     value === "start" ||
     value === "mcp" ||
     value === "init-agents" ||
-    value === "shell" ||
     value === "upgrade" ||
     value === "db" ||
     value === "help" ||

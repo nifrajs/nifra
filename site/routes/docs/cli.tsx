@@ -425,9 +425,9 @@ export default function Cli() {
           </tr>
           <tr>
             <td>
-              <code>nifra shell tauri [--origin &lt;url&gt;] [--name &lt;n&gt;] [--id &lt;bundle&gt;] [--force]</code>
+              <code>nifra shell tauri [--origin &lt;url&gt;] [--name &lt;n&gt;] [--id &lt;bundle&gt;] [--mobile android|ios|all] [--force]</code>
             </td>
-            <td>Add a Tauri 2 shell to an existing app: <code>frontend/shell-transport.ts</code> and a <code>src-tauri/</code> project that wraps a static build made with <code>--transport</code>. Writes files only and keeps any that exist unless <code>--force</code>. See <a href={href({ to: "/docs/native-shells" })}>native shells</a>.</td>
+            <td>Add a Tauri 2 shell to an existing app: <code>frontend/shell-transport.ts</code> and a <code>src-tauri/</code> project that wraps a static build made with <code>--transport</code>. Writes files only and keeps any that exist unless <code>--force</code>; <code>--mobile</code> then runs <code>tauri android init</code> and <code>tauri ios init</code>. See <a href={href({ to: "/docs/native-shells" })}>native shells</a>.</td>
           </tr>
           <tr>
             <td>
