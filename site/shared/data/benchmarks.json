@@ -304,11 +304,11 @@
   ],
   "proof": [
     {
-      "value": "5 + 4",
-      "label": "UI frameworks + runtime families, from one app"
+      "value": "5 + 5",
+      "label": "UI frameworks + runtimes, from one app"
     },
     {
-      "value": "55",
+      "value": "57",
       "label": "typed packages, all optional"
     }
   ],

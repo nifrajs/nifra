@@ -46,7 +46,7 @@ export interface PageMetaExtras {
 }
 
 // Brand assets in public/ → /assets/* at deploy: the no-text ice-wolf mark is favicon (tab),
-// apple-touch-icon (iOS), and logo-mark (header); og.jpg is the wordmark logo for social cards.
+// apple-touch-icon (iOS), and logo-mark (header); og.jpg is the 1200x630 social card.
 export function pageMeta(
   title: string,
   description: string,
@@ -58,8 +58,7 @@ export function pageMeta(
     title,
     meta: [
       { name: "description", content: description },
-      // The wordmark logo (served at /assets/og.jpg on every target). A purpose-built 1200×630 crop
-      // is ideal for pixel-perfect cards; this square brand image renders everywhere.
+      // The 1200x630 card, served at /assets/og.jpg on every target.
       ...openGraph({
         title,
         description,
