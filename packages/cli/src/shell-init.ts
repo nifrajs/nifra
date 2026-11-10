@@ -98,9 +98,53 @@ export const BUILD_RS = `fn main() {
 }
 `
 
-export const LIB_RS = `#[cfg_attr(mobile, tauri::mobile_entry_point)]
+/**
+ * The window opens hidden and shows when the page has painted, so the user never sees the blank
+ * window between the web view appearing and the first paint. A timer shows it anyway if no paint
+ * is reported, so a page that fails to load cannot leave the app invisible.
+ */
+export const LIB_RS = `use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+const SHOW_WHEN_PAINTED: &str = r#"
+(function () {
+  try {
+    new PerformanceObserver(function (list) {
+      for (var entry of list.getEntries()) {
+        if (entry.name === 'first-contentful-paint') {
+          window.__TAURI_INTERNALS__.invoke('shell_painted');
+        }
+      }
+    }).observe({ type: 'paint', buffered: true });
+  } catch (_) {}
+})();
+"#;
+
+#[tauri::command]
+fn shell_painted(window: tauri::WebviewWindow) {
+    let _ = window.show();
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![shell_painted])
+        .setup(|app| {
+            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .initialization_script(SHOW_WHEN_PAINTED);
+            #[cfg(desktop)]
+            let builder = builder
+                .title(app.config().product_name.clone().unwrap_or_default())
+                .inner_size(900.0, 640.0)
+                .visible(false);
+            #[allow(unused_variables)]
+            let window = builder.build()?;
+            #[cfg(desktop)]
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let _ = window.show();
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running the app");
 }
@@ -137,7 +181,7 @@ export function tauriConf(name: string, id: string, origin: string): string {
       beforeBuildCommand: `nifra build --target static --out ${SHELL_DIST} --transport ./${TRANSPORT_PATH}`,
     },
     app: {
-      windows: [{ label: "main", title: name, width: 900, height: 640 }],
+      windows: [],
       security: {
         csp: `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ${origin} ${socket}`,
       },

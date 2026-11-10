@@ -169,7 +169,9 @@ export default function NativeShells() {
         an existing app. It writes files only, skips any that exist unless <code>--force</code>,
         and leaves <code>package.json</code> and the config alone. The project builds the static
         target with <code>--transport</code> into <code>dist-shell/</code>, and its content
-        security policy allows the server's origin and socket.
+        security policy allows the server's origin and socket. The window opens hidden and shows
+        on the page's first paint, with a three second timer as the fallback, so there is no blank
+        window while the web view starts.
       </p>
       <CodeBlock code={SCAFFOLD} lang="bash" />
       <CodeBlock code={TAURI_BUILD} lang="bash" />

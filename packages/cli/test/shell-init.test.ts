@@ -7,6 +7,7 @@ import { runShellCommand } from "../src/shell-command.ts"
 import {
   cargoToml,
   crateName,
+  LIB_RS,
   originOf,
   runShellInit,
   tauriConf,
@@ -77,6 +78,8 @@ test("the generated config names the dist, both builds and the server in the CSP
   expect(conf.build.beforeDevCommand).toContain("--transport ./frontend/shell-transport.ts")
   expect(conf.build.devUrl).toBe("http://localhost:3112")
   expect(conf.identifier).toBe("com.example.todo")
+  // The window is built in lib.rs, which hides it until the first paint.
+  expect(conf.app.windows).toEqual([])
   expect(conf.app.security.csp).toContain(
     "connect-src 'self' https://api.example.com wss://api.example.com",
   )
@@ -143,4 +146,14 @@ test("--transport is a build flag with a value", () => {
   expect(parseFlags(["--transport", "./t.ts"]).transport).toBe("./t.ts")
   expect(parseFlags(["--transport=./t.ts", "--target", "static"]).transport).toBe("./t.ts")
   expect(() => parseFlags(["--transport"])).toThrow("--transport needs a value")
+})
+
+test("the window opens hidden, shows on the first paint, and a timer shows it if none comes", () => {
+  expect(LIB_RS).toContain(".visible(false)")
+  expect(LIB_RS).toContain("first-contentful-paint")
+  expect(LIB_RS).toContain("invoke('shell_painted')")
+  expect(LIB_RS).toContain("generate_handler![shell_painted]")
+  expect(LIB_RS).toContain("Duration::from_secs(3)")
+  // The shown window is the one the capability names.
+  expect(LIB_RS).toContain('WebviewWindowBuilder::new(app, "main"')
 })
