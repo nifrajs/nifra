@@ -1,10 +1,10 @@
 import { afterEach, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { parseArgs, run } from "../src/cli.ts"
 import { scaffold } from "../src/scaffold/project.ts"
-import { SHELL_FEATURE, TAURI_CLI_VERSION } from "../src/scaffold/shell.ts"
+import { SHELL_FEATURE, TAURI_CLI_VERSION, writeShellFiles } from "../src/scaffold/shell.ts"
 import { LIB_RS, resolveShellSpec, shellFiles } from "../src/shell-files.ts"
 
 const dirs: string[] = []
@@ -82,4 +82,15 @@ test("--shell implies the site template and is reported", async () => {
 test("the shell's package contribution declares what it adds", () => {
   expect(SHELL_FEATURE.replaces).toBeUndefined()
   expect(Object.keys(SHELL_FEATURE.scripts ?? {})).toEqual(["shell:dev", "shell:build"])
+})
+
+test("a template whose framework.ts or index.backend.ts lost the edited text fails instead of scaffolding a shell the server refuses", async () => {
+  const dir = fresh("drifted")
+  mkdirSync(join(dir, "backend"), { recursive: true })
+  mkdirSync(join(dir, "routes"), { recursive: true })
+  writeFileSync(join(dir, "backend/framework.ts"), "export const other = 1\n")
+  await expect(writeShellFiles(dir, "drifted")).rejects.toThrow("backend/framework.ts changed")
+  writeFileSync(join(dir, "backend/framework.ts"), "export const adapter = 1\n")
+  writeFileSync(join(dir, "routes/index.backend.ts"), "export const other = 1\n")
+  await expect(writeShellFiles(dir, "drifted")).rejects.toThrow("routes/index.backend.ts changed")
 })
