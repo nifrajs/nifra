@@ -154,6 +154,7 @@ export function renderDevBunfig(
   user: BunfigData,
   appRoot: string,
   define: Readonly<Record<string, string>> = {},
+  clientDefine: Readonly<Record<string, string>> = {},
 ): string {
   const data: BunfigData = structuredClone(user)
   if (data.preload !== undefined) {
@@ -165,6 +166,14 @@ export function renderDevBunfig(
   const serveStatic = isTable(serve.static) ? serve.static : {}
   serve.static = serveStatic
   serveStatic.plugins = [boundaryPluginPath]
+  if (Object.keys(clientDefine).length > 0) {
+    // Client only, as `nifra build` bakes the public environment into the client bundle alone; the
+    // config's `define` below is layered over it.
+    serveStatic.define = Object.assign(
+      isTable(serveStatic.define) ? serveStatic.define : {},
+      clientDefine,
+    )
+  }
   if (Object.keys(define).length > 0) {
     for (const [key, value] of Object.entries(define)) {
       if (typeof value !== "string") {
@@ -310,12 +319,14 @@ const TOKEN_FILE = "launch-token"
 /** Write the generated config for an app; returns the bunfig path to re-exec with and the fresh
  * launch token to pass in the child's environment. `configPath` (the app's `nifra.config.ts` /
  * `backend/framework.ts`) is what lets the app's own `clientPlugins` reach Bun's dev-server
- * bundler; `define` and `publicEnvPrefix` are the loaded config's own. */
+ * bundler; `define` and `publicEnvPrefix` are the loaded config's own. `clientDefine` is what only the
+ * client bundle gets: the public environment, which `nifra build` inlines and Bun's dev bundler does not. */
 export async function writeBunDevConfig(
   appRoot: string,
   configPath?: string,
   define?: Readonly<Record<string, string>>,
   publicEnvPrefix?: string,
+  clientDefine?: Readonly<Record<string, string>>,
 ): Promise<BunDevConfig> {
   const dir = resolve(appRoot, ".nifra", "dev-bun")
   mkdirSync(dir, { recursive: true })
@@ -335,7 +346,7 @@ export async function writeBunDevConfig(
     ),
   )
   const bunfigPath = resolve(dir, "bunfig.toml")
-  writeFileSync(bunfigPath, renderDevBunfig(pluginPath, user, appRoot, define))
+  writeFileSync(bunfigPath, renderDevBunfig(pluginPath, user, appRoot, define, clientDefine))
   const launchToken = crypto.randomUUID()
   writeFileSync(resolve(dir, TOKEN_FILE), launchToken)
   return { bunfigPath, launchToken }

@@ -505,11 +505,13 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
             "launches; refusing to serve without the client-boundary plugins.",
         )
       }
+      const { publicEnvDefines } = await import("@nifrajs/web/build")
       const { bunfigPath, launchToken } = await writeBunDevConfig(
         app.cwd,
         app.configPath,
         app.framework.define,
         app.framework.publicEnvPrefix,
+        publicEnvDefines(app.framework.publicEnvPrefix ?? "PUBLIC_", process.env),
       )
       // Bun 1.4 on Windows may discard the script-relative portion of argv when `--config` is
       // present. Keep a second, authenticated copy of the user vector in the child's environment so

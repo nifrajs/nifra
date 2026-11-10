@@ -117,6 +117,29 @@ test("serializeBunfig refuses a shape it cannot round-trip instead of dropping i
   expect(() => serializeBunfig({ weird: [{ nested: true }] })).toThrow(/cannot re-serialize/)
 })
 
+test("the public environment reaches the client bundle only, and the config's define wins a clash", () => {
+  const toml = renderDevBunfig(
+    "/app/.nifra/dev-bun/boundary-plugin.ts",
+    {},
+    "/app",
+    { "process.env.PUBLIC_A": '"from-config"' },
+    { "process.env.PUBLIC_A": '"from-env"', "process.env.PUBLIC_B": '"b"' },
+  )
+  const parsed = parseUserBunfig(toml)
+  const field = (value: unknown, key: string): unknown =>
+    typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined
+  const staticDefine = field(field(field(parsed, "serve"), "static"), "define")
+  expect(staticDefine).toEqual({
+    "process.env.PUBLIC_A": '"from-config"',
+    "process.env.PUBLIC_B": '"b"',
+  })
+  expect(parsed.define).toEqual({ "process.env.PUBLIC_A": '"from-config"' })
+  const onlyEnv = parseUserBunfig(
+    renderDevBunfig("/p.ts", {}, "/app", {}, { "process.env.PUBLIC_B": '"b"' }),
+  )
+  expect(onlyEnv.define).toBeUndefined()
+})
+
 test("renderDevBunfig without a user bunfig still emits the boundary plugin", () => {
   const toml = renderDevBunfig("/app/.nifra/dev-bun/boundary-plugin.ts", {}, "/app")
   expect(toml).toContain('plugins = ["/app/.nifra/dev-bun/boundary-plugin.ts"]')
