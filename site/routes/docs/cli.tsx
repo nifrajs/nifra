@@ -175,9 +175,9 @@ export default function Cli() {
           </tr>
           <tr>
             <td>
-              <code>nifra build [--target &lt;t&gt;] [--out &lt;dir&gt;] [--report]</code>
+              <code>nifra build [--target &lt;t&gt;] [--out &lt;dir&gt;] [--transport &lt;module&gt;] [--report]</code>
             </td>
-            <td>A complete deploy directory for <code>bun</code>, <code>node</code>, <code>deno</code>, <code>cloudflare</code>, <code>vercel</code> or <code>static</code>. The server entry is generated from <code>backend/framework.ts</code>, <code>backend/app.ts</code> and <code>routes/</code>. <code>--report</code> prints each chunk&apos;s size.</td>
+            <td>A complete deploy directory for <code>bun</code>, <code>node</code>, <code>deno</code>, <code>cloudflare</code>, <code>vercel</code> or <code>static</code>. The server entry is generated from <code>backend/framework.ts</code>, <code>backend/app.ts</code> and <code>routes/</code>. <code>--report</code> prints each chunk&apos;s size. <code>--transport</code> builds the client to reach its server through that module&apos;s <code>fetch</code>, for a native shell.</td>
           </tr>
           <tr>
             <td>
@@ -422,6 +422,12 @@ export default function Cli() {
               <code>nifra learn [&lt;step&gt;]</code>
             </td>
             <td>Print the guided build-an-app path, or one step&apos;s goal, actions and check.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>nifra shell tauri [--origin &lt;url&gt;] [--name &lt;n&gt;] [--id &lt;bundle&gt;] [--force]</code>
+            </td>
+            <td>Add a Tauri 2 shell to an existing app: <code>frontend/shell-transport.ts</code> and a <code>src-tauri/</code> project that wraps a static build made with <code>--transport</code>. Writes files only and keeps any that exist unless <code>--force</code>. See <a href={href({ to: "/docs/native-shells" })}>native shells</a>.</td>
           </tr>
           <tr>
             <td>

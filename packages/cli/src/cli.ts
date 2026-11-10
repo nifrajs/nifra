@@ -49,6 +49,10 @@ export interface Flags {
   /** `nifra build --target <t>`: emit a full deploy dir for this target. Without it, use `target` from
    * `nifra.config.ts`, else `bun`; a configured adapter must be selected by its id. */
   readonly target: string | undefined
+  /** `nifra build|dev --transport <module>`: the module whose default export is the `fetch` the client
+   * reaches its server through, for this run only. It overrides `transport` from the framework config,
+   * so one app can ship a web build and a native-shell build. */
+  readonly transport: string | undefined
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
   /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is
@@ -151,6 +155,7 @@ Usage:
   nifra db role                          Print the SQL for a read-only Postgres role. Runs nothing.
   nifra db audit [--limit <n>]           What nifra db ran (.nifra/db-audit.jsonl), never the rows.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
+                [--transport <module>]     Reach the server through this module's fetch (a native shell).
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cloudflare | vercel | static, or an installed
                                          public adapter selected by deploymentAdapter in nifra.config.ts. Packages
@@ -186,6 +191,10 @@ Usage:
                [--since <file>]          paths actually run: kind, plugin name, and where it was
                                          registered (app, group, merge, mount). --since diffs against a
                                          saved --json report.
+  nifra shell tauri [--origin <url>]     Add a Tauri 2 shell to the app: frontend/shell-transport.ts and a
+                [--name <n>] [--id <bundle>] src-tauri/ project that wraps a static build made with
+                [--force] [--json]       --transport. Writes files only, never over one that exists
+                                         unless --force; package.json and nifra.config.ts are untouched.
   nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent files a new app ships:
                                          .mcp.json + .cursor/mcp.json (register this project's nifra MCP),
                                          each agent's pointer to AGENTS.md (CLAUDE.md, GEMINI.md,
@@ -626,7 +635,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       indicator: showsIndicator(flags, fw),
       allowedHosts: fw.dev?.allowedHosts ?? [],
       live: fw.live?.clientEntry,
-      ...(fw.transport !== undefined ? { transport: resolve(app.cwd, fw.transport) } : {}),
+      ...transportOption(flags, fw, app.cwd),
       createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
@@ -685,7 +694,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     ...(flags.allowDuplicateIdentity ? { allowDuplicateIdentity: true } : {}),
     indicator: showsIndicator(flags, fw),
     live: fw.live?.clientEntry,
-    ...(fw.transport !== undefined ? { transport: resolve(cwd, fw.transport) } : {}),
+    ...transportOption(flags, fw, cwd),
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
@@ -1041,7 +1050,7 @@ async function buildForTarget(
     ...(fw.vercelRuntime !== undefined ? { vercelRuntime: fw.vercelRuntime } : {}),
     ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
     live: fw.live?.clientEntry,
-    ...(fw.transport !== undefined ? { transport: resolve(cwd, fw.transport) } : {}),
+    ...transportOption(flags, fw, cwd),
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server
     // answers its prerendered pages from their file. Not under Vite, whose server bundle may rely on
     // transforms the prerender pass (Bun's runtime) does not apply: those pages keep rendering on demand.
@@ -1147,11 +1156,12 @@ async function start(app: LoadedApp, flags: Flags): Promise<void> {
   await import(serverFile)
 }
 
-const VALUE_FLAGS: Readonly<Record<string, "port" | "out" | "target">> = {
+const VALUE_FLAGS: Readonly<Record<string, "port" | "out" | "target" | "transport">> = {
   "--port": "port",
   "-p": "port",
   "--out": "out",
   "--target": "target",
+  "--transport": "transport",
 }
 
 type SwitchField = "poll" | "report" | "vite" | "bun" | "allowDuplicateIdentity" | "noIndicator"
@@ -1165,6 +1175,16 @@ const SWITCH_FLAGS: Readonly<Record<string, SwitchField>> = {
   "--no-indicator": "noIndicator",
 }
 
+/** The `transport` build option: `--transport` for this run, else the framework config's. */
+function transportOption(
+  flags: Pick<Flags, "transport">,
+  fw: { readonly transport?: string },
+  cwd: string,
+): { transport?: string } {
+  const module = flags.transport ?? fw.transport
+  return module === undefined ? {} : { transport: resolve(cwd, module) }
+}
+
 /** The flags of `nifra dev`, `build` and `start`, as `--flag value` or `--flag=value`. Anything else is
  * refused: an ignored `--target=vercel` would build the default target and exit 0. */
 export function parseFlags(args: readonly string[]): Flags {
@@ -1174,6 +1194,7 @@ export function parseFlags(args: readonly string[]): Flags {
   let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
   let out: string | undefined
   let target: string | undefined
+  let transport: string | undefined
   const switches: Record<SwitchField, boolean> = {
     poll: Bun.env.CHOKIDAR_USEPOLLING === "1",
     report: false,
@@ -1193,6 +1214,7 @@ export function parseFlags(args: readonly string[]): Flags {
         throw new Error(`[nifra] ${name} needs a value`)
       if (valueField === "port") port = Number(value)
       else if (valueField === "out") out = value
+      else if (valueField === "transport") transport = value
       else target = value
       continue
     }
@@ -1213,7 +1235,7 @@ export function parseFlags(args: readonly string[]): Flags {
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, target, ...switches }
+  return { port, out, target, transport, ...switches }
 }
 
 /**
@@ -1517,6 +1539,11 @@ async function main(): Promise<void> {
   // `init-agents` retrofits the agent files (.mcp.json, CLAUDE.md, AGENTS.md, …) into the cwd. It's a
   // pure file-writing command independent of the app loading, so dispatch it before the eager `loadApp`
   // (an existing app might be API-only or not yet built). It always succeeds unless a write throws.
+  if (command === "shell") {
+    const { runShellCommand } = await import("./shell-command.ts")
+    process.exitCode = await runShellCommand(process.cwd(), argv.slice(1))
+    return
+  }
   if (command === "init-agents") {
     const { runInitAgents } = await import("./init-agents.ts")
     await runInitAgents(process.cwd(), {
@@ -1691,6 +1718,7 @@ function isCliCommandToken(value: string): boolean {
     value === "start" ||
     value === "mcp" ||
     value === "init-agents" ||
+    value === "shell" ||
     value === "upgrade" ||
     value === "db" ||
     value === "help" ||

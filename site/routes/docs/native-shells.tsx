@@ -29,6 +29,14 @@ export const prerender = true`
 
 const BUILD = `nifra build --target static --out dist`
 
+const SCAFFOLD = `nifra shell tauri --origin https://api.example.com`
+
+const TAURI_BUILD = `bun add -d @tauri-apps/cli
+bunx tauri icon app-icon.png
+bunx tauri dev`
+
+const TRANSPORT_FLAG = `nifra build --target static --out dist-shell --transport ./frontend/shell-transport.ts`
+
 const QUERY = `import { appFetch } from "@nifrajs/web/shell"
 
 // The transport in a shell build, the global fetch anywhere else.
@@ -101,6 +109,11 @@ export default function NativeShells() {
         document the shell ships and then navigates to that URL. Route data for prerendered pages
         loads from the bundle; everything else goes to the server.
       </p>
+      <p>
+        <code>--transport</code> names the module for one run and wins over the config, so an app
+        can ship a web build and a shell build from one tree:
+      </p>
+      <CodeBlock code={TRANSPORT_FLAG} lang="bash" />
       <h2 id="requests">What goes through the transport</h2>
       <ul>
         <li>Route data, prefetches and action posts of the router.</li>
@@ -152,8 +165,17 @@ export default function NativeShells() {
       <CodeBlock code={LIVE} lang="ts" />
       <h2 id="tauri">Tauri 2</h2>
       <p>
-        Point <code>frontendDist</code> at the build and allow the server in the content security
-        policy. On iOS, a development server on a local address needs{" "}
+        <code>nifra shell tauri</code> adds the transport and a <code>src-tauri/</code> project to
+        an existing app. It writes files only, skips any that exist unless <code>--force</code>,
+        and leaves <code>package.json</code> and the config alone. The project builds the static
+        target with <code>--transport</code> into <code>dist-shell/</code>, and its content
+        security policy allows the server's origin and socket.
+      </p>
+      <CodeBlock code={SCAFFOLD} lang="bash" />
+      <CodeBlock code={TAURI_BUILD} lang="bash" />
+      <p>
+        By hand, point <code>frontendDist</code> at the build and allow the server in the content
+        security policy. On iOS, a development server on a local address needs{" "}
         <code>NSAllowsLocalNetworking</code> in the app's <code>Info.plist</code>.
       </p>
       <CodeBlock code={TAURI} lang="json" />
