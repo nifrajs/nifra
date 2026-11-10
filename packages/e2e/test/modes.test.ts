@@ -1,9 +1,17 @@
 import { expect, test } from "bun:test"
+import type { ModelRequest } from "../src/index.ts"
 import { app, refusing } from "./replay-world.ts"
 
 test("the refusing model counts the ask and throws", () => {
   const model = refusing()
-  expect(() => model.decide()).toThrow("the model should not have been asked")
+  const request: ModelRequest = {
+    kind: "assert",
+    statement: "x",
+    snapshot: "",
+    secrets: [],
+    signal: new AbortController().signal,
+  }
+  expect(() => model.decide(request)).toThrow("the model should not have been asked")
   expect(model.calls).toBe(1)
 })
 
