@@ -95,15 +95,25 @@ types, scaffold in the correct route directory, run HTTP/SSR/WebSocket checks, i
 and loop on structured fixes:
 
 ```sh
-claude mcp add nifra -- bunx nifra mcp
-nifra init-agents
-
-nifra context       # live route and convention map
-nifra smoke         # real SSR, API, auth and hydration requests against the build
-nifra check         # typecheck, drift, and bundle-boundary gate
-nifra assure        # route security evidence gate
-nifra levels        # cumulative proof level and next missing rung
+claude mcp add nifra -- bunx @nifrajs/cli mcp
 ```
+
+`bun create nifra` installs `@nifrajs/cli` as a dev dependency, so inside the project `bunx nifra`
+runs the local copy:
+
+```sh
+bunx nifra init-agents
+
+bunx nifra context       # live route and convention map
+bunx nifra check         # typecheck, drift, and bundle-boundary gate
+bunx nifra assure        # route security evidence gate
+bunx nifra levels        # cumulative proof level and next missing rung
+bunx nifra smoke         # real SSR, API, auth and hydration requests against the build
+```
+
+`nifra smoke` reads a fixture from `nifra.smoke.ts` (or `--fixture <file>`) that configures SSR; the
+auth and hydration checks run only when the fixture supplies them. See the
+[CLI reference](https://nifra.dev/docs/cli).
 
 The local server runs where your code lives - your source never reaches Nifra. The teaching tools are
 also hosted at [`mcp.nifra.dev`](https://mcp.nifra.dev) for agents that only need the verified Nifra
@@ -164,6 +174,10 @@ export const addToCart = defineAgentCapability({
   predict: ({ input, version }) => ({
     baseVersion: version,
     patch: [{ op: "add", path: "/items/-", value: input }],
+  }),
+  reconcile: ({ previous, input, output }) => ({
+    state: { items: [...previous.state.items, input] },
+    version: output.cartVersion,
   }),
 })
 
@@ -229,11 +243,11 @@ The runner is the center; protocol adapters are edges:
 Agentic systems need more than “the model said it worked.” Nifra turns the important claims into gates:
 
 ```sh
-nifra check
-nifra assure
-nifra capabilities check
-nifra manifest diff
-nifra levels --min 1
+bunx nifra check
+bunx nifra assure
+bunx nifra capabilities check
+bunx nifra manifest diff
+bunx nifra levels --min 1
 ```
 
 - `nifra check` catches type drift, raw calls around the typed client, server-only bundle leaks, and other contract violations.

@@ -784,7 +784,7 @@ export default function Home() {
             gates your CI runs.
           </p>
           <InstallWidget
-            command="claude mcp add nifra -- bunx nifra mcp"
+            command="claude mcp add nifra -- bunx @nifrajs/cli mcp"
             label="Copy the MCP setup command"
           />
           <div className="home-band-links">
