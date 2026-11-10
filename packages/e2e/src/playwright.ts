@@ -187,10 +187,11 @@ async function settle(page: PwPage, mode: HydrationMode, timeout: number): Promi
 export function playwrightEngine(options: PlaywrightEngineOptions = {}): EngineFactory {
   return async (init) => {
     const browser = await loadBrowser(options)
-    const context = await browser.newContext()
     const hydrationTimeout = options.hydrationTimeout ?? 5000
+    let context: PwContext
     let page: PwPage
     try {
+      context = await browser.newContext()
       if (init.cookies.length > 0) {
         await context.addCookies(init.cookies.map((cookie) => ({ ...cookie, url: init.baseUrl })))
       }

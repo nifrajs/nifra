@@ -12372,7 +12372,7 @@ import { e2e, expect } from "@nifrajs/e2e"
 const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
 
 const app = server().get("/users/:id", (c) =>
-  html(`<h1>User ${c.params.id}<label>Nickname <input value="ada">`),
+  html(`<input aria-label="Nickname" value="ada"><h1>User ${c.params.id}`),
 )
 
 test("a user page renders", async () => {
@@ -12427,9 +12427,14 @@ a small JSON decision.
 import { server } from "@nifrajs/core/server"
 import { e2e, expect, Secret, type E2EModel } from "@nifrajs/e2e"
 
-const app = server().get("/login", () => new Response("<h1>Sign in", {
-  headers: { "content-type": "text/html" },
-}))
+const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
+
+// A sign-in form that lands on a dashboard, so a model has controls to find and a place to end.
+const app = server()
+  .get("/login", () =>
+    html(`<input aria-label="Email"><input aria-label="Password" type="password"><button onclick="location.href='/dashboard'">Sign in`),
+  )
+  .get("/dashboard", () => html("<h1>Welcome, Ada"))
 
 // The seam to a model. Nothing here names a vendor: you call your provider inside decide().
 // doc-check: skip - the provider call is yours; a real adapter would await a model API here.
@@ -12443,8 +12448,7 @@ await t.agent.act("sign in as {email} with {password}", {
   params: { email: "ada@example.test", password: new Secret("password", process.env.PASSWORD ?? "") },
 })
 await t.agent.assert("the dashboard greets Ada")
-await t.agent.waitFor("the export is finished", { timeout: 60_000 })
-await expect(t.screen.getByRole("heading")).toBeVisible() // locators and agent steps mix in one test
+await expect(t.screen.getByRole("heading")).toHaveText("Welcome, Ada") // locators and agent steps mix in one test
 ```
 
 ```ts
@@ -12465,7 +12469,9 @@ await expect(t.screen.getByRole("heading")).toBeVisible() // locators and agent 
 **Budgets.** `act` stops at `maxModelCalls` (12),
 `maxActions` (25) or `timeout` (120000 ms), each its own error. A tap
 that finds nothing, or several, goes back to the model, which can retry with
-`nth`.
+`nth`. The time limit is checked between decisions: it does not interrupt a
+`decide()` call that never resolves, so enforce your own deadline inside
+`decide` (the request carries a `signal`).
 
 -
 **Secrets.** A `Secret` is typed into the page by name. The model sees
@@ -12588,15 +12594,21 @@ the model runs every time
 
 ```ts
 import { server } from "@nifrajs/core/server"
-import { e2e } from "@nifrajs/e2e"
+import { e2e, expect } from "@nifrajs/e2e"
 
-const app = server().get("/", () => new Response("<h1>Home", { headers: { "content-type": "text/html" } }))
+const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
+
+const app = server()
+  .get("/", () => html('<a href="/dashboard">Dashboard'))
+  .get("/dashboard", () => html("<h1>Dashboard"))
 
 // CI replays committed recordings and never writes or deletes them. With no model, a recording that
-// no longer matches fails with MODEL_MISSING; add mode: "strict" to fail with REPLAY_STALE instead
-// of ever calling a model.
-await using t = await e2e(app, { cache: { testId: "home", mode: "strict" } })
+// no longer matches fails with MODEL_MISSING; mode: "strict" fails with REPLAY_STALE (or
+// REPLAY_MISSING when nothing was recorded) instead of ever calling a model.
+await using t = await e2e(app, { cache: { testId: "home to dashboard", mode: "strict" } })
 await t.open("/")
+await t.agent.act("open the dashboard") // reads the committed recording; strict mode checks it here
+await expect(t.screen.getByRole("heading")).toHaveText("Dashboard")
 ```
 
 `t.agent.report()` returns `{ replayed, handedOff, missed, modelCalls }`
@@ -19254,8 +19266,8 @@ after each navigation and before each action, so a tap does not land before its 
 ## Signed-in sessions
 
 ```ts
-const { cookies } = testSession<typeof app>(app)
-await api.auth.login.post(credentials)
+const { client, cookies } = testSession<typeof app>(app)
+await client.auth.login.post(credentials)
 await using t = await e2e(app, { cookies })
 ```
 
@@ -19281,7 +19293,8 @@ vendor; you own the credentials, the retries and the cost. Without `model`, agen
 `MODEL_MISSING` and locator tests are unaffected.
 
 - **Budgets.** `act` stops at `maxModelCalls` (12), `maxActions` (25) or `timeout` (120000 ms), each a
-  distinct error. A tap that finds no element or several goes back to the model, which can retry with `nth`.
+  distinct error. The time limit is checked between decisions; it does not interrupt a `decide()` call
+  that never resolves, so enforce a deadline inside `decide` (the request carries a `signal`). A tap that finds no element or several goes back to the model, which can retry with `nth`.
 - **Secrets.** A `Secret` is typed into the page by name. The model sees `{password}`, never the value,
   and every snapshot a session sends has any secret it was given replaced by its placeholder.
 - **Same origin.** `goto` takes an app path only; anything else is refused and reported to the model.

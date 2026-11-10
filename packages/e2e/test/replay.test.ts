@@ -4,6 +4,7 @@ import {
   type CacheOptions,
   E2EError,
   type E2EModel,
+  type EngineFactory,
   e2e,
   expect,
   formatReport,
@@ -293,5 +294,44 @@ describe("modes and misses", () => {
     const { outcome } = await run({ model, store, check: "pass", appIdentity: "v2" })
     check(outcome).toMatchObject({ source: "model" })
     check(store.entries.size).toBe(2)
+  })
+  test("a replay stop that echoes a secret is redacted before the model reads it", async () => {
+    const store = memoryCacheStore()
+    const params = { email: new Secret("email", "hunter2") }
+    const session = async (factory: EngineFactory, model: E2EModel) => {
+      await using t = await e2e(app, {
+        engine: factory,
+        model,
+        clock: virtualClock(),
+        assertionTimeout: 50,
+        cache: { store, testId: "echo", mode: "read-write" },
+      })
+      await t.open("/")
+      await t.agent.act("sign in as {email}", { params })
+      await expect(t.screen.getByRole("heading")).toBeVisible()
+    }
+    await session(worldEngine({}).factory, solver())
+
+    const base = worldEngine({}).factory
+    let echoed = false
+    const echoing: EngineFactory = async (init) => {
+      const engine = await base(init)
+      return {
+        ...engine,
+        act: async (selector, action, timeout) => {
+          if (action.kind === "fill" && !echoed) {
+            echoed = true
+            throw new E2EError("NAVIGATION_FAILED", `typed ${action.value}, outcome unknown`)
+          }
+          return engine.act(selector, action, timeout)
+        },
+      }
+    }
+    const model = solver()
+    await session(echoing, model)
+    const handoff = lastAct(model.requests)?.handoff
+    check(handoff?.reason).toBe("action-uncertain")
+    check(handoff?.detail).toContain("typed {email}, outcome unknown")
+    check(JSON.stringify(model.requests)).not.toContain("hunter2")
   })
 })

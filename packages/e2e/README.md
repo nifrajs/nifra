@@ -39,8 +39,8 @@ after each navigation and before each action, so a tap does not land before its 
 ## Signed-in sessions
 
 ```ts
-const { cookies } = testSession<typeof app>(app)
-await api.auth.login.post(credentials)
+const { client, cookies } = testSession<typeof app>(app)
+await client.auth.login.post(credentials)
 await using t = await e2e(app, { cookies })
 ```
 
@@ -66,7 +66,8 @@ vendor; you own the credentials, the retries and the cost. Without `model`, agen
 `MODEL_MISSING` and locator tests are unaffected.
 
 - **Budgets.** `act` stops at `maxModelCalls` (12), `maxActions` (25) or `timeout` (120000 ms), each a
-  distinct error. A tap that finds no element or several goes back to the model, which can retry with `nth`.
+  distinct error. The time limit is checked between decisions; it does not interrupt a `decide()` call
+  that never resolves, so enforce a deadline inside `decide` (the request carries a `signal`). A tap that finds no element or several goes back to the model, which can retry with `nth`.
 - **Secrets.** A `Secret` is typed into the page by name. The model sees `{password}`, never the value,
   and every snapshot a session sends has any secret it was given replaced by its placeholder.
 - **Same origin.** `goto` takes an app path only; anything else is refused and reported to the model.

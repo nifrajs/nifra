@@ -292,7 +292,7 @@ See [benchmark methodology and full results](https://nifra.dev/benchmarks), and 
 | Agent runtime | [`agent`](packages/agent) · [`prompt`](packages/prompt) · [`runner`](packages/runner) · [`agent-telemetry`](packages/agent-telemetry) |
 | Agent UI and protocols | [`webmcp`](packages/webmcp) · [`agent-app`](packages/agent-app) · [`mcp`](packages/mcp) · [`a2a`](packages/a2a) · [`ag-ui`](packages/ag-ui) |
 | Coding agents | [`coding-agent`](packages/coding-agent) · [`agent-protocol`](packages/agent-protocol) · [`pi`](packages/pi) · [`acp`](packages/acp) · [`skills`](packages/skills) |
-| App services and quality | [`auth`](packages/auth) · [`better-auth`](packages/better-auth) · [`authjs`](packages/authjs) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`testing`](packages/testing) · [`mock`](packages/mock) · [`otel`](packages/otel) |
+| App services and quality | [`auth`](packages/auth) · [`better-auth`](packages/better-auth) · [`authjs`](packages/authjs) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`testing`](packages/testing) · [`e2e`](packages/e2e) · [`mock`](packages/mock) · [`otel`](packages/otel) |
 | Supporting surfaces | [`env`](packages/env) · [`events`](packages/events) · [`graphql`](packages/graphql) · [`island-trigger`](packages/island-trigger) · [`mcp-db`](packages/mcp-db) · [`nifra`](packages/nifra) · [`proxy`](packages/proxy) · [`agent-review`](packages/agent-review) |
 | Tooling | [`cli`](packages/cli) · [`create-nifra`](packages/create-nifra) · [`devtools`](packages/devtools) · [`ts-plugin`](packages/ts-plugin) |
 

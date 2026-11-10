@@ -10,7 +10,15 @@ import {
 } from "./decision.ts"
 import { type Clock, E2EError, type Engine } from "./engine.ts"
 import { diffEvidence } from "./evidence.ts"
-import { forModel, forPage, type Params, redact, Secret, templatize } from "./params.ts"
+import {
+  forModel,
+  forPage,
+  type NamedSecret,
+  type Params,
+  redactSecrets,
+  Secret,
+  templatize,
+} from "./params.ts"
 import { replayEntry, type StopReason, visibleCount, withoutNth } from "./replay.ts"
 import { normalizeRoute } from "./route.ts"
 import { pruneSnapshot } from "./snapshot.ts"
@@ -193,16 +201,20 @@ export function createAgent(deps: AgentDeps): Agent {
   }
 
   // Every secret any step has been given stays redacted for the whole session: a value typed in one
-  // step is still on the page when a later step, which was not handed it, takes a snapshot.
-  const vault: Record<string, Secret> = {}
+  // step is still on the page when a later step, which was not handed it, takes a snapshot. They are
+  // kept by value, so two steps that reuse a name for different secrets are both redacted.
+  const vault: NamedSecret[] = []
   const remember = (params: Params): void => {
     for (const [name, param] of Object.entries(params)) {
-      if (param instanceof Secret) vault[name] = param
+      if (!(param instanceof Secret)) continue
+      const known = vault.some(([, held]) => Secret.reveal(held) === Secret.reveal(param))
+      if (!known) vault.push([name, param])
     }
   }
+  const scrub = (text: string): string => redactSecrets(text, vault)
 
   const observe = async (): Promise<{ raw: string; shown: string }> => {
-    const raw = redact(await engine.snapshot(), vault)
+    const raw = scrub(await engine.snapshot())
     return { raw, shown: pruneSnapshot(raw, deps.snapshotChars) }
   }
   const look = async (): Promise<string> => (await observe()).shown
@@ -250,7 +262,7 @@ export function createAgent(deps: AgentDeps): Agent {
     } catch (error) {
       if (error instanceof E2EError || error instanceof TypeError) {
         return {
-          record: { action: decision, ok: false, error: error.message },
+          record: { action: decision, ok: false, error: scrub(error.message) },
           recorded: undefined,
         }
       }
@@ -309,7 +321,7 @@ export function createAgent(deps: AgentDeps): Agent {
           stats.handedOff += 1
           handoff = {
             reason: outcome.reason,
-            detail: outcome.detail,
+            detail: scrub(outcome.detail),
             performed: outcome.performed.length,
           }
           for (const action of outcome.performed) {

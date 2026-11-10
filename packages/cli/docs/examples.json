@@ -345,7 +345,7 @@
     "name": "CI",
     "topic": "Nifra - Browser end-to-end tests",
     "slug": "e2e",
-    "code": "import { server } from \"@nifrajs/core/server\"\nimport { e2e } from \"@nifrajs/e2e\"\n\nconst app = server().get(\"/\", () => new Response(\"<h1>Home\", { headers: { \"content-type\": \"text/html\" } }))\n\n// CI replays committed recordings and never writes or deletes them. With no model, a recording that\n// no longer matches fails with MODEL_MISSING; add mode: \"strict\" to fail with REPLAY_STALE instead\n// of ever calling a model.\nawait using t = await e2e(app, { cache: { testId: \"home\", mode: \"strict\" } })\nawait t.open(\"/\")"
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { e2e, expect } from \"@nifrajs/e2e\"\n\nconst html = (body: string) => new Response(body, { headers: { \"content-type\": \"text/html\" } })\n\nconst app = server()\n  .get(\"/\", () => html('<a href=\"/dashboard\">Dashboard'))\n  .get(\"/dashboard\", () => html(\"<h1>Dashboard\"))\n\n// CI replays committed recordings and never writes or deletes them. With no model, a recording that\n// no longer matches fails with MODEL_MISSING; mode: \"strict\" fails with REPLAY_STALE (or\n// REPLAY_MISSING when nothing was recorded) instead of ever calling a model.\nawait using t = await e2e(app, { cache: { testId: \"home to dashboard\", mode: \"strict\" } })\nawait t.open(\"/\")\nawait t.agent.act(\"open the dashboard\") // reads the committed recording; strict mode checks it here\nawait expect(t.screen.getByRole(\"heading\")).toHaveText(\"Dashboard\")"
   },
   {
     "name": "ENGINE",
@@ -363,7 +363,7 @@
     "name": "FIRST",
     "topic": "Nifra - Browser end-to-end tests",
     "slug": "e2e",
-    "code": "import { test } from \"bun:test\"\nimport { server } from \"@nifrajs/core/server\"\nimport { e2e, expect } from \"@nifrajs/e2e\"\n\nconst html = (body: string) => new Response(body, { headers: { \"content-type\": \"text/html\" } })\n\nconst app = server().get(\"/users/:id\", (c) =>\n  html(`<h1>User ${c.params.id}<label>Nickname <input value=\"ada\">`),\n)\n\ntest(\"a user page renders\", async () => {\n  await using t = await e2e(app)\n  await t.open(\"/users/:id\", { params: { id: 42 } }) // a path or param the app lacks fails typecheck\n  await expect(t.screen.getByRole(\"heading\")).toHaveText(\"User 42\")\n  await t.screen.getByLabel(\"Nickname\").fill(\"grace\")\n  await expect(t).toHaveURL(\"/users/42\")\n})"
+    "code": "import { test } from \"bun:test\"\nimport { server } from \"@nifrajs/core/server\"\nimport { e2e, expect } from \"@nifrajs/e2e\"\n\nconst html = (body: string) => new Response(body, { headers: { \"content-type\": \"text/html\" } })\n\nconst app = server().get(\"/users/:id\", (c) =>\n  html(`<input aria-label=\"Nickname\" value=\"ada\"><h1>User ${c.params.id}`),\n)\n\ntest(\"a user page renders\", async () => {\n  await using t = await e2e(app)\n  await t.open(\"/users/:id\", { params: { id: 42 } }) // a path or param the app lacks fails typecheck\n  await expect(t.screen.getByRole(\"heading\")).toHaveText(\"User 42\")\n  await t.screen.getByLabel(\"Nickname\").fill(\"grace\")\n  await expect(t).toHaveURL(\"/users/42\")\n})"
   },
   {
     "name": "SESSION",

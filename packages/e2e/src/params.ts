@@ -77,15 +77,25 @@ export function forPage(text: string, params: Params): string {
   })
 }
 
+/** A secret and the name it was given, which is the placeholder that stands in for its value. */
+export type NamedSecret = readonly [name: string, secret: Secret]
+
 /** Every secret value in `text` replaced by its placeholder, so a page that echoes one cannot leak it. */
-export function redact(text: string, params: Params): string {
+export function redactSecrets(text: string, secrets: readonly NamedSecret[]): string {
   let out = text
-  for (const [name, param] of Object.entries(params)) {
-    if (!(param instanceof Secret)) continue
-    const value = Secret.reveal(param)
+  for (const [name, secret] of secrets) {
+    const value = Secret.reveal(secret)
     if (value !== "") out = out.split(value).join(`{${name}}`)
   }
   return out
+}
+
+export function redact(text: string, params: Params): string {
+  const secrets: NamedSecret[] = []
+  for (const [name, param] of Object.entries(params)) {
+    if (param instanceof Secret) secrets.push([name, param])
+  }
+  return redactSecrets(text, secrets)
 }
 
 /** The params as a replay-cache key sees them: plain values by value, a secret or a unique by kind. */

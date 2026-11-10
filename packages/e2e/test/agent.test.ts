@@ -144,6 +144,39 @@ describe("agent.act", () => {
     expect(JSON.stringify(requests)).not.toContain("hunter2")
   })
 
+  test("two steps that reuse a name for different secrets are both redacted", async () => {
+    const { model, requests } = scripted([done, { pass: true }, { pass: true }])
+    const { agent } = await agentOver(
+      { "/": [...loginPage, { text: "echo hunter2 and second" }] },
+      model,
+    )
+    await agent.act("first", { params: { pw: new Secret("pw", "hunter2") } })
+    await agent.assert("the page echoes", { params: { pw: new Secret("pw", "second") } })
+    await agent.assert("still redacted")
+    const later = JSON.stringify(requests.slice(1))
+    expect(later).not.toContain("hunter2")
+    expect(later).not.toContain('second"')
+    expect(requests[2]?.snapshot).toContain("echo {pw} and {pw}")
+  })
+
+  test("an engine error that echoes a secret is redacted before the model reads it", async () => {
+    const { model, requests } = scripted([
+      { kind: "fill", target: { label: "Password" }, value: "{pw}" },
+      done,
+    ])
+    const { engine } = await agentOver({ "/": loginPage }, model)
+    const failing = {
+      ...engine,
+      act: async () => {
+        throw new E2EError("NAVIGATION_FAILED", "could not type hunter2 into the field")
+      },
+    }
+    const { agent } = await agentOver({ "/": loginPage }, model, { engine: failing })
+    await agent.act("enter it", { params: { pw: new Secret("pw", "hunter2") } })
+    expect(JSON.stringify(requests)).not.toContain("hunter2")
+    expect(actAt(requests, 1).history[0]?.error).toBe("could not type {pw} into the field")
+  })
+
   test("a failed action goes back to the model, which can narrow with nth", async () => {
     const { model, requests } = scripted([
       tap("Sign in"),

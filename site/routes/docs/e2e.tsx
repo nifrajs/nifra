@@ -14,7 +14,7 @@ import { e2e, expect } from "@nifrajs/e2e"
 const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
 
 const app = server().get("/users/:id", (c) =>
-  html(\`<h1>User \${c.params.id}<label>Nickname <input value="ada">\`),
+  html(\`<input aria-label="Nickname" value="ada"><h1>User \${c.params.id}\`),
 )
 
 test("a user page renders", async () => {
@@ -44,9 +44,14 @@ await expect(t.screen.getByText("session abc123")).toBeVisible()`
 const AGENT = `import { server } from "@nifrajs/core/server"
 import { e2e, expect, Secret, type E2EModel } from "@nifrajs/e2e"
 
-const app = server().get("/login", () => new Response("<h1>Sign in", {
-  headers: { "content-type": "text/html" },
-}))
+const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
+
+// A sign-in form that lands on a dashboard, so a model has controls to find and a place to end.
+const app = server()
+  .get("/login", () =>
+    html(\`<input aria-label="Email"><input aria-label="Password" type="password"><button onclick="location.href='/dashboard'">Sign in\`),
+  )
+  .get("/dashboard", () => html("<h1>Welcome, Ada"))
 
 // The seam to a model. Nothing here names a vendor: you call your provider inside decide().
 // doc-check: skip - the provider call is yours; a real adapter would await a model API here.
@@ -60,8 +65,7 @@ await t.agent.act("sign in as {email} with {password}", {
   params: { email: "ada@example.test", password: new Secret("password", process.env.PASSWORD ?? "") },
 })
 await t.agent.assert("the dashboard greets Ada")
-await t.agent.waitFor("the export is finished", { timeout: 60_000 })
-await expect(t.screen.getByRole("heading")).toBeVisible() // locators and agent steps mix in one test`
+await expect(t.screen.getByRole("heading")).toHaveText("Welcome, Ada") // locators and agent steps mix in one test`
 
 const DECISIONS = `// What decide() receives and returns, by request kind.
 //
@@ -116,15 +120,21 @@ await expect(t.screen.getByRole("heading")).toBeVisible()
 console.log(formatReport(t.agent.report())) // Cache: 1 replayed - 0 handed off - 0 missed (0 model calls)`
 
 const CI = `import { server } from "@nifrajs/core/server"
-import { e2e } from "@nifrajs/e2e"
+import { e2e, expect } from "@nifrajs/e2e"
 
-const app = server().get("/", () => new Response("<h1>Home", { headers: { "content-type": "text/html" } }))
+const html = (body: string) => new Response(body, { headers: { "content-type": "text/html" } })
+
+const app = server()
+  .get("/", () => html('<a href="/dashboard">Dashboard'))
+  .get("/dashboard", () => html("<h1>Dashboard"))
 
 // CI replays committed recordings and never writes or deletes them. With no model, a recording that
-// no longer matches fails with MODEL_MISSING; add mode: "strict" to fail with REPLAY_STALE instead
-// of ever calling a model.
-await using t = await e2e(app, { cache: { testId: "home", mode: "strict" } })
-await t.open("/")`
+// no longer matches fails with MODEL_MISSING; mode: "strict" fails with REPLAY_STALE (or
+// REPLAY_MISSING when nothing was recorded) instead of ever calling a model.
+await using t = await e2e(app, { cache: { testId: "home to dashboard", mode: "strict" } })
+await t.open("/")
+await t.agent.act("open the dashboard") // reads the committed recording; strict mode checks it here
+await expect(t.screen.getByRole("heading")).toHaveText("Dashboard")`
 
 const ENGINE = `import { server } from "@nifrajs/core/server"
 import { e2e } from "@nifrajs/e2e"
@@ -184,7 +194,9 @@ export default function E2E() {
           <b>Budgets.</b> <code>act</code> stops at <code>maxModelCalls</code> (12),{" "}
           <code>maxActions</code> (25) or <code>timeout</code> (120000 ms), each its own error. A tap
           that finds nothing, or several, goes back to the model, which can retry with{" "}
-          <code>nth</code>.
+          <code>nth</code>. The time limit is checked between decisions: it does not interrupt a{" "}
+          <code>decide()</code> call that never resolves, so enforce your own deadline inside{" "}
+          <code>decide</code> (the request carries a <code>signal</code>).
         </li>
         <li>
           <b>Secrets.</b> A <code>Secret</code> is typed into the page by name. The model sees{" "}

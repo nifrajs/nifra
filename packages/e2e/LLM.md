@@ -34,7 +34,7 @@ _…and 56 more - see [`api-reference.md`](../../api-reference.md#nifrajse2e) fo
 ## Footguns
 
 - Locator names and text match as a **case-insensitive substring**: `getByRole('button', 'Sign in')` also matches `Sign in again`. Pass `{ exact: true }` for a full match.
-- `tap`, `fill`, `press` and the one-element assertions (`toHaveText`, `toBeVisible`, ...) refuse a locator that matches several elements (`LOCATOR_AMBIGUOUS`); narrow it with `.filter({ hasText })` or a chained finder.
+- `tap`, `fill` and `press` refuse a locator that matches several elements (`LOCATOR_AMBIGUOUS`); the one-element assertions (`toHaveText`, `toBeVisible`, ...) retry and then fail with `EXPECT_FAILED` naming the count. Narrow the locator with `.filter({ hasText })`, a chained finder or `nth`.
 - Await every action and assertion: assertions retry until `assertionTimeout`, and an un-awaited one is never checked. `open()` only takes a path the app declares and requires its `:params`.
 - Actions wait for `data-nifra-hydrated` only on a page that loads a module script; a page that is not a hydrated Nifra page needs `hydration: 'off'` if the wait times out. `playwright` is an optional peer: install it yourself.
 - Agent steps need `model` on `e2e()` (`MODEL_MISSING` otherwise). Pass credentials as `new Secret(name, value)` params, never inline in the goal: the model sees `{name}` and the session redacts the value from every snapshot it sends. A goal that runs out of `maxModelCalls`, `maxActions` or `timeout` throws; raise the budget only after reading why it looped.

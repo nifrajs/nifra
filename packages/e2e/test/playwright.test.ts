@@ -16,6 +16,7 @@ interface Rig {
   elements: readonly unknown[]
   actionError: unknown
   cookieError: Error | undefined
+  contextError: Error | undefined
   currentUrl: string
 }
 
@@ -30,6 +31,7 @@ function rig(): Rig {
     elements: [],
     actionError: undefined,
     cookieError: undefined,
+    contextError: undefined,
     currentUrl: "about:blank",
     browser: {
       newContext: async () => {
@@ -90,16 +92,19 @@ function rig(): Rig {
     },
   }
   state.browser = {
-    newContext: async () => ({
-      addCookies: async (cookies) => {
-        record("addCookies", [cookies])
-        if (state.cookieError !== undefined) throw state.cookieError
-      },
-      newPage: async () => page,
-      close: async () => {
-        closed.push("context")
-      },
-    }),
+    newContext: async () => {
+      if (state.contextError !== undefined) throw state.contextError
+      return {
+        addCookies: async (cookies) => {
+          record("addCookies", [cookies])
+          if (state.cookieError !== undefined) throw state.cookieError
+        },
+        newPage: async () => page,
+        close: async () => {
+          closed.push("context")
+        },
+      }
+    },
     close: async () => {
       closed.push("browser")
     },
@@ -291,6 +296,15 @@ describe("playwright engine", () => {
     })
     await engine.close()
     expect(r.closed).toEqual(["context", "browser"])
+  })
+
+  test("a browser that cannot make a context is closed", async () => {
+    const r = rig()
+    r.contextError = new Error("no context")
+    await expect(playwrightEngine({ launch: async () => r.browser })(init)).rejects.toThrow(
+      "no context",
+    )
+    expect(r.closed).toEqual(["browser"])
   })
 
   test("a failure while preparing the page closes the browser and rethrows", async () => {
