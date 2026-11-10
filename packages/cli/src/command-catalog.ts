@@ -394,6 +394,36 @@ interface TargetInput {
   readonly dir?: string | undefined
 }
 
+interface ShellInput {
+  readonly kind?: string | undefined
+  readonly origin?: string | undefined
+  readonly name?: string | undefined
+  readonly id?: string | undefined
+  readonly mobile?: "android" | "ios" | "all" | undefined
+  readonly force?: boolean | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface ShellOutput {
+  readonly ok: boolean
+  readonly kind: "tauri"
+  readonly files: readonly {
+    readonly path: string
+    readonly action: string
+    readonly note?: string | undefined
+  }[]
+  readonly origin: string
+  readonly id: string
+  readonly name: string
+  readonly next: readonly string[]
+  readonly mobile: readonly {
+    readonly platform: string
+    readonly ok: boolean
+    readonly note: string
+  }[]
+}
+
 interface TargetOutput {
   readonly ok: boolean
   readonly target: string
@@ -828,6 +858,36 @@ const MIGRATE_SCHEMA = input<MigrateInput>(
     if (from !== "tailwind") throw new TypeError("from must be tailwind")
     if (to !== "stylex") throw new TypeError("to must be stylex")
     return { from, to, ...flags }
+  },
+)
+
+const SHELL_SCHEMA = input<ShellInput>(
+  objectSchema({
+    kind: { type: "string", enum: ["tauri"] },
+    origin: { type: "string" },
+    name: { type: "string" },
+    id: { type: "string" },
+    mobile: { type: "string", enum: ["android", "ios", "all"] },
+    force: { type: "boolean" },
+    json: { type: "boolean" },
+    dir: { type: "string" },
+  }),
+  (value) => {
+    const raw = withDir(record(value))
+    const kind = optionalString(raw.kind, "kind")
+    if (kind !== "tauri") throw new TypeError("kind must be tauri: `nifra shell tauri`")
+    const mobile = optionalString(raw.mobile, "mobile")
+    if (mobile !== undefined && mobile !== "android" && mobile !== "ios" && mobile !== "all")
+      throw new TypeError("mobile must be android, ios or all")
+    return {
+      kind,
+      origin: optionalString(raw.origin, "origin"),
+      name: optionalString(raw.name, "name"),
+      id: optionalString(raw.id, "id"),
+      mobile,
+      dir: raw.dir,
+      ...parseBooleanFlags(raw, ["force", "json"]),
+    }
   },
 )
 
@@ -1726,6 +1786,70 @@ const scaffoldSpec: CommandSpec<ScaffoldInput, HoleScaffoldResult> = {
   success: (out) => out.ok,
 }
 
+const shellSpec: CommandSpec<ShellInput, ShellOutput> = {
+  name: "shell",
+  summary:
+    "Add a Tauri 2 shell to the app (`shell tauri`): the transport module and a src-tauri/ project that wraps a static build made with --transport. Writes files only and keeps any that exist unless --force.",
+  input: SHELL_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      kind: { type: "string" },
+      files: { type: "array" },
+      origin: { type: "string" },
+      id: { type: "string" },
+      name: { type: "string" },
+      next: { type: "array" },
+      mobile: { type: "array" },
+    },
+    required: ["ok", "kind", "files", "origin", "id", "name", "next", "mobile"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    positionals: ["kind"],
+    flags: [
+      { name: "dir", field: "dir", type: "string" },
+      { name: "json", field: "json", type: "boolean" },
+      { name: "origin", field: "origin", type: "string" },
+      { name: "name", field: "name", type: "string" },
+      { name: "id", field: "id", type: "string" },
+      { name: "mobile", field: "mobile", type: "string" },
+      { name: "force", field: "force", type: "boolean" },
+    ],
+  },
+  async run(value, ctx) {
+    const { initMobile, runShellInit, shellNextSteps } = await import("./shell-init.ts")
+    const dir = resolve(ctx.cwd, value.dir ?? ".")
+    const result = await runShellInit(dir, {
+      origin: value.origin,
+      name: value.name,
+      id: value.id,
+      force: value.force === true,
+    })
+    const platforms: readonly ("android" | "ios")[] =
+      value.mobile === undefined ? [] : value.mobile === "all" ? ["android", "ios"] : [value.mobile]
+    const mobile = await initMobile(dir, platforms)
+    return {
+      ok: mobile.every((m) => m.ok),
+      kind: "tauri",
+      ...result,
+      next: shellNextSteps(),
+      mobile,
+    }
+  },
+  render: (out) => [
+    ...out.files.map(
+      (file) => `${file.action.padEnd(8)} ${file.path}${file.note ? `  (${file.note})` : ""}`,
+    ),
+    `server origin ${out.origin}, bundle id ${out.id} (change both if they are not yours)`,
+    ...out.mobile.map((m) => (m.ok ? `✓ tauri ${m.platform} init` : `✖ ${m.platform}: ${m.note}`)),
+    ...out.next.map((step, i) => `  ${i + 1}. ${step}`),
+  ],
+  success: (out) => out.ok,
+}
+
 const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
   name: "target",
   summary:
@@ -2192,6 +2316,7 @@ export const commandSpecs = Object.freeze([
   migrateSpec,
   scaffoldSpec,
   targetSpec,
+  shellSpec,
   typesSpec,
   schemasSpec,
   snapshotSpec,

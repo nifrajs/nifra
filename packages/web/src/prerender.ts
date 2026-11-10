@@ -28,6 +28,10 @@ export interface PrerenderOptions {
   /** The route manifest's `routes`. Only **static** routes whose module exports `prerender === true`
    * are emitted; everything else is recorded in {@link PrerenderResult.skipped} with a reason. */
   readonly routes: readonly RouteEntry[]
+  /** Static routes to prerender for this run whether or not their module exports `prerender`, by path
+   * (`"/"`, `"/about"`). A path that is not a static route of {@link routes} throws, so a typo cannot
+   * build a site without the page it was meant to hold. */
+  readonly include?: readonly string[] | undefined
   /** Absolute output directory. `<pattern>/index.html` is written under it (`/` → `index.html`). */
   readonly outDir: string
   /** Origin for the synthetic request URL. Default `http://localhost`. Only the path is meaningful;
@@ -123,6 +127,12 @@ const outputPath = (root: string, file: string): string | undefined => {
  * worker so the CDN serves the static file). Never throws on a per-route miss: a non-OK response or a
  * non-opted/dynamic route is recorded in `skipped` and the build continues.
  */
+/** `about/` -> `/about`, `/` stays: the form a route pattern has. */
+function normalizeIncluded(path: string): string {
+  const withSlash = path.startsWith("/") ? path : `/${path}`
+  return withSlash === "/" ? "/" : trimTrailingSlashes(withSlash)
+}
+
 export async function prerenderRoutes(options: PrerenderOptions): Promise<PrerenderResult> {
   const origin = options.origin ?? "http://localhost"
   const prerendered: PrerenderEntry[] = []
@@ -196,6 +206,17 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
     })
   }
 
+  const included = new Set((options.include ?? []).map(normalizeIncluded))
+  // Before anything is written: a typo must not leave half a site in `outDir`.
+  const staticPatterns = new Set(
+    options.routes.map((r) => r.pattern).filter((p) => !p.includes(":") && !p.includes("*")),
+  )
+  const unmatched = [...included].filter((path) => !staticPatterns.has(path))
+  if (unmatched.length > 0) {
+    throw new Error(
+      `[nifra/web] prerender: no static page route at ${unmatched.join(", ")} (a dynamic route needs getStaticPaths)`,
+    )
+  }
   for (const route of options.routes) {
     if (route.pattern.includes("*")) {
       skipped.push({ path: route.pattern, reason: "catch-all/wildcard route - not supported" })
@@ -231,8 +252,8 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       continue
     }
 
-    // Static route → opt-in flag.
-    if (mod.prerender !== true) {
+    // Static route → opt-in flag, or named for this run.
+    if (mod.prerender !== true && !included.has(route.pattern)) {
       skipped.push({
         path: route.pattern,
         reason: "not opted in (`export const prerender = true`)",

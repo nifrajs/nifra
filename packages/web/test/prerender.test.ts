@@ -383,6 +383,64 @@ describe("prerenderRoutes", () => {
   })
 })
 
+describe("prerenderRoutes include", () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "nifra-prerender-include-"))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("a named static route is prerendered without exporting prerender, the others are not", async () => {
+    const { app } = fakeApp()
+    const result = await prerenderRoutes({
+      app,
+      routes: [route("/"), route("/about"), route("/pricing", true)],
+      outDir: dir,
+      include: ["/"],
+    })
+    expect(result.prerendered.map((p) => p.path).sort()).toEqual(["/", "/pricing"])
+    expect(existsSync(join(dir, "index.html"))).toBe(true)
+    expect(existsSync(join(dir, "about/index.html"))).toBe(false)
+    expect(result.skipped.map((s) => s.path)).toEqual(["/about"])
+  })
+
+  test("a path is read as a route pattern whatever its slashes", async () => {
+    const { app } = fakeApp()
+    const result = await prerenderRoutes({
+      app,
+      routes: [route("/about"), route("/team/people")],
+      outDir: dir,
+      include: ["about/", "/team/people/"],
+    })
+    expect(result.prerendered.map((p) => p.path).sort()).toEqual(["/about", "/team/people"])
+  })
+
+  test("a path that is no static route throws, so a typo cannot ship a site without its page", async () => {
+    const { app } = fakeApp()
+    const run = (include: string[]) =>
+      prerenderRoutes({
+        app,
+        routes: [route("/"), dynamicRoute("/posts/:id", async () => ({ paths: [] }))],
+        outDir: dir,
+        include,
+      })
+    await expect(run(["/abuot"])).rejects.toThrow("no static page route at /abuot")
+    await expect(run(["/posts/:id"])).rejects.toThrow("no static page route at /posts/:id")
+    await expect(run(["/", "/nope", "/also-nope"])).rejects.toThrow("/nope, /also-nope")
+    // Refused before the first page is rendered, so nothing is left in the output directory.
+    expect(existsSync(join(dir, "index.html"))).toBe(false)
+  })
+
+  test("without include a route that does not opt in is still skipped", async () => {
+    const { app } = fakeApp()
+    const result = await prerenderRoutes({ app, routes: [route("/")], outDir: dir })
+    expect(result.prerendered).toEqual([])
+    expect(result.skipped).toHaveLength(1)
+  })
+})
+
 describe("cloudflarePagesRoutes", () => {
   test("excludes assets + each prerendered doc and its _data.json from the worker", () => {
     const routes = cloudflarePagesRoutes({ prerendered: ["/", "/users/7"] })

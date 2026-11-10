@@ -126,3 +126,23 @@ export const vercelRuntime = ${JSON.stringify(value)}`,
     await expect(loadApp(root)).rejects.toThrow('`vercelRuntime` must be "edge" or "node"')
   })
 }
+
+async function loadWithTransport(literal: string): Promise<{ transport?: string }> {
+  const root = createFixtureRoot("tmp-load-")
+  dirs.push(root)
+  mkdirSync(join(root, "routes"))
+  writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
+  writeAppFile(
+    root,
+    "backend/framework.ts",
+    `export const adapter = {}\nexport const clientModule = "./client.ts"\nexport const transport = ${literal}\n`,
+  )
+  const app = await loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` })
+  return app.framework
+}
+
+test("a transport module path is read from the framework config and anything else is refused", async () => {
+  expect((await loadWithTransport('"./shell/transport.ts"')).transport).toBe("./shell/transport.ts")
+  await expect(loadWithTransport('""')).rejects.toThrow("`transport` must be a module path")
+  await expect(loadWithTransport("42")).rejects.toThrow("`transport` must be a module path")
+})

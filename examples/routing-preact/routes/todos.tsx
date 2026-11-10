@@ -1,5 +1,6 @@
 /** @jsxImportSource preact */
 
+import { appFetch } from "@nifrajs/web/shell"
 import { useFetcher } from "@nifrajs/web-preact/fetcher"
 import { useQuery, useQueryClient } from "@nifrajs/web-preact/query"
 import type { Route } from "./+types/todos"
@@ -10,7 +11,7 @@ import type { Route } from "./+types/todos"
 function CountQuery() {
   const qc = useQueryClient()
   const q = useQuery(["count"], () =>
-    fetch("/", { headers: { "x-nifra-data": "1" } })
+    appFetch("/", { headers: { "x-nifra-data": "1" } })
       .then((r) => r.json())
       .then((d: { count: number }) => d.count),
   )

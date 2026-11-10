@@ -6068,7 +6068,6 @@ _No named exports (side-effect entrypoint)._
   Resolve the target-specific deploy shape before any bundling starts. Keeping this decision pure means Bun and Vite strategies share the same output filename, server target, and hand-off text; the filesystem emitter only has to execute the plan.
 - **preactDedupePlugin** _(const)_ - `preactDedupePlugin: (from: string) => BunPlugin`
 - **prerenderRoutes** _(function)_ - `prerenderRoutes: (options: PrerenderOptions) => Promise<PrerenderResult>`
-  Render every opted-in static route to a static `index.html` under `outDir`. Run AFTER `buildClient` (so the app references the hashed client entry). Returns a report of what was emitted vs skipped - the caller can use `prerendered` to wire a hybrid deploy (e.g. exclude those paths from the SSR work…
 - **publicEnvDefines** _(function)_ - `publicEnvDefines: (prefix: string, env: Readonly<Record<string, string | undefined>>) => Record<string, string>`
 - **reactDedupePlugin** _(const)_ - `reactDedupePlugin: (from: string) => BunPlugin`
 - **renderSizeReport** _(function)_ - `renderSizeReport: (report: SizeReport) => string`
@@ -6158,6 +6157,8 @@ _No named exports (side-effect entrypoint)._
 - **RouteSlotStatus** _(type)_ - `type RouteSlotStatus = "idle" | "loading" | "ready" | "error"`
 - **RouteSlotStore** _(class)_ - `class RouteSlotStore`
   One shared lifecycle for every adapter consuming the same parent page and slot name.
+- **RouterFetch** _(type)_ - `type RouterFetch = (input: string, init?: RequestInit) => Promise<Response>`
+  A `fetch` the router sends its server requests through.
 - **WaitForStylesOptions** _(interface)_ - `interface WaitForStylesOptions`
   Options for {@link waitForStyles}.
 - **applyHead** _(function)_ - `applyHead: (head: Meta, path?: string) => void`
@@ -6418,9 +6419,10 @@ _No named exports (side-effect entrypoint)._
   Every server function a module exports, keyed by export name.
 - **ServerFnReference** _(type)_ - `type ServerFnReference<Input, Output> = | ServerFn<Input, Output> | ClientServerFn<Input, Output>`
   A UI binding boundary: source declarations and generated client stubs are both accepted.
+- **ServerFunctionsOptions** _(interface)_ - `interface ServerFunctionsOptions`
 - **serverFn** _(function)_ - `serverFn: <Input = void, Output = unknown>(config: ServerFnConfig<Input>, fn: (input: Input, context: Context) => MaybePromise<Output>) => ServerFn<Input, Output>`
   Declare a server function.
-- **serverFunctions** _(function)_ - `serverFunctions: (namespace: string, module: ServerFnModule) => IdentityPlugin`
+- **serverFunctions** _(function)_ - `serverFunctions: (namespace: string, module: ServerFnModule, options?: ServerFunctionsOptions) => IdentityPlugin`
   Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.
 
 ### `@nifrajs/web/fn-state`
@@ -7060,6 +7062,20 @@ _No named exports (side-effect entrypoint)._
   Generate the service worker source for a build.
 - **serviceWorkerRegistration** _(function)_ - `serviceWorkerRegistration: (scriptUrl?: string) => string`
   The registration snippet, for a `<script>` in your document shell.
+
+### `@nifrajs/web/shell`
+
+- **RouterFetch** _(type)_ - `type RouterFetch = (input: string, init?: RequestInit) => Promise<Response>`
+  A `fetch` the router sends its server requests through.
+- **ServerFetch** _(type)_ - `type ServerFetch = RouterFetch & { readonly origin: string }`
+  A router `fetch` that also names the origin it sends to, which the live socket needs.
+- **ServerFetchOptions** _(interface)_ - `interface ServerFetchOptions`
+- **appFetch** _(const)_ - `appFetch: RouterFetch`
+  The `fetch` an app's own requests to its server should use: the build's `transport` when it has one, the global `fetch` otherwise. Hand it to `useQuery`'s fetcher or to the typed client (`client(url, { fetch: appFetch })`) and the same code runs in a browser and in a native shell.
+- **routeDataTransport** _(const)_ - `routeDataTransport: (send: RouterFetch) => FetchRouteData`
+  The router's own route-data transport, over `send`: for a layer that wraps the data fetch (keep-alive in a build with a `transport`) and has to leave the request going where the router would send it.
+- **serverFetch** _(function)_ - `serverFetch: (options: ServerFetchOptions) => ServerFetch`
+  A router `fetch` for an app whose pages ship inside a native shell and whose server lives elsewhere. A path-absolute URL (`/todos`) is sent to `origin`, with the headers and credentials; a URL on `origin` gets them too, and any other URL is sent as written without them, so a call to a third party n…
 
 ### `@nifrajs/web/vitals`
 

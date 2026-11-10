@@ -141,7 +141,7 @@ async function nonRegularTarget(
  * Write a whole-file generator's output to `path` unless it already exists and `force` is false.
  * Returns the per-file result for the report.
  */
-async function writeOwned(
+export async function writeOwned(
   cwd: string,
   rel: string,
   content: string,

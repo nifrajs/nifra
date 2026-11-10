@@ -231,6 +231,12 @@ export interface BuildClientOptions {
    * endpoint and keeps what is on screen fresh: the runtime's `clientEntry`.
    */
   readonly live?: LiveClientEntry | undefined
+  /**
+   * A module whose default export is the `fetch` the client router reaches its server through (see
+   * {@link serverFetch}). For pages that ship inside a native shell while the server lives elsewhere:
+   * the route-data GETs, prefetches and action POSTs go through it.
+   */
+  readonly transport?: string | undefined
 }
 
 /**
@@ -498,6 +504,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       resolve,
       copyChunks: copySplit !== undefined,
       live: options.live,
+      transport: options.transport === undefined ? undefined : resolvePath(options.transport),
     },
   )
 
@@ -1735,6 +1742,10 @@ export interface BuildTargetOptions {
    * optional: given, the opted-in routes are prerendered into `_prerendered/` and the server answers
    * them from their file; the other targets ignore it. */
   readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>
+  /** `static` only: pages to prerender for this build whether or not their route exports `prerender`, by
+   * path. A shell build uses it to ship the page the shell opens on without making a web build of the
+   * same app serve that page as a snapshot. Refused for any other target. */
+  readonly prerenderPaths?: readonly string[] | undefined
   /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */
   readonly clientPlugins?: readonly BunPlugin[]
   /** Server-build plugins (e.g. the SSR variants). */
@@ -1771,6 +1782,9 @@ export interface BuildTargetOptions {
   readonly selfHost?: ServerEntrySelfHost
   /** The client entry for a server built with `optionImports.live`: that runtime's `clientEntry`. */
   readonly live?: LiveClientEntry | undefined
+  /** A module whose default export is the `fetch` the client router reaches its server through: see
+   * {@link BuildClientOptions.transport}. */
+  readonly transport?: string | undefined
 }
 
 /** Minimal app surface `buildTarget`'s static path needs - a fetch handler (a built `createWebApp`). */
@@ -1827,6 +1841,7 @@ export const bunBundler: Bundler = {
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
       ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
       live: input.live,
+      transport: input.transport,
     })
   },
   buildServer: ({ plugins, root, ...fields }) =>
@@ -1936,6 +1951,11 @@ export async function buildTargetWith(
   const requestedCssLoading =
     options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
   const targetPlan = planBuildTarget(parseBuildTarget(target), outDir, options.vercelRuntime)
+  if (options.prerenderPaths !== undefined && targetPlan.kind !== "static") {
+    throw new Error(
+      `[nifra/web] prerenderPaths applies to the static target only, not ${target}: other targets prerender the routes that export \`prerender\``,
+    )
+  }
   const sources = [
     routesDir,
     process.cwd(),
@@ -1980,6 +2000,7 @@ export async function buildTargetWith(
     ...(requestedCssLoading !== undefined ? { cssLoading: requestedCssLoading } : {}),
     root: resolvePath(dirname(routesDir)),
     live: options.live,
+    transport: options.transport,
   })
   // Bun's client builder has no CSS-loading field, but the server-side document policy is bundler
   // independent. Carry the requested policy into the result so static prerender callbacks and the
@@ -2066,13 +2087,14 @@ export async function buildTargetWith(
       routes: manifest.routes,
       outDir,
       secrets: secretScan,
+      include: options.prerenderPaths,
     })
     if (result.prerendered.length === 0) {
       // A static build that renders nothing is almost always a misconfig (no `prerender = true` / no
       // getStaticPaths) - fail loudly rather than ship an empty dir the dev thinks is their site.
       throw new Error(
         "[nifra/web] buildTarget(static): no routes were prerendered - opt routes in with " +
-          "`export const prerender = true` (static) or `getStaticPaths` (dynamic).",
+          "`export const prerender = true` (static) or `getStaticPaths` (dynamic), or name pages for this build with `prerenderPaths`.",
       )
     }
     collectImages()

@@ -42,6 +42,11 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./shell": {
+      "bun": "./src/shell.ts",
+      "types": "./dist/shell.d.ts",
+      "default": "./dist/shell.js"
+    },
     "./keep-alive": {
       "bun": "./src/keep-alive.ts",
       "types": "./dist/keep-alive.d.ts",

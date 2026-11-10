@@ -104,7 +104,33 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
     "matchChains[id] = { ids: [...(layoutIdsOf[id] ?? []), id], handles: mods.map((m) => m.handle) }",
   )
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
-  expect(code).toContain("requestAnimationFrame(signalHydrated)")
+  expect(code).toContain(
+    'document.visibilityState === "hidden" ? setTimeout(signalHydrated, 0) : requestAnimationFrame(signalHydrated)',
+  )
+  // The line behaves as written: a frame while the view is visible, a timer while it is hidden (a hidden
+  // view runs no frames, so waiting for one would hold the marker for as long as the window stays hidden).
+  const signalLine = code
+    .split("\n")
+    .find((l) => l.includes("requestAnimationFrame(signalHydrated)"))
+  const run = (visibilityState: string): string[] => {
+    const calls: string[] = []
+    // The generated line, run against stand-ins for the four names it uses.
+    new Function(
+      "document",
+      "setTimeout",
+      "requestAnimationFrame",
+      "signalHydrated",
+      signalLine ?? "",
+    )(
+      { visibilityState },
+      () => calls.push("timer"),
+      () => calls.push("frame"),
+      () => {},
+    )
+    return calls
+  }
+  expect(run("visible")).toEqual(["frame"])
+  expect(run("hidden")).toEqual(["timer"])
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data - #3.
   // A layout's function meta reads its own loader data; the page's (last) reads the page's.
   expect(code).toContain(

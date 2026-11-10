@@ -209,6 +209,8 @@ export interface Bundler {
     readonly secretExemptions?: readonly SecretExemption[]
     /** The client entry for a live server (`BuildClientOptions.live`). */
     readonly live?: LiveClientEntry | undefined
+    /** The router's server `fetch` module (`BuildClientOptions.transport`). */
+    readonly transport?: string | undefined
   }): Promise<BuildManifest>
   /** Build the server worker → the shared {@link ServerBuild}. */
   buildServer(input: {

@@ -107,6 +107,10 @@ export interface NifraFramework {
   /** Reviewed false positives of `nifra build`'s secret scan. A `file` scope applies throughout that
    * file; for `private-env-value`, an `env` scope applies to every finding from that variable. */
   readonly secretExemptions?: readonly SecretExemption[]
+  /** A module, relative to the app, whose default export is the `fetch` the client reaches its server
+   * through, such as `serverFetch({ origin })` from `@nifrajs/web/client`. For a build that ships
+   * inside a native shell while the server lives elsewhere. */
+  readonly transport?: string
   /** Vite production CSS output policy. `false` emits one aggregate stylesheet for the whole client. */
   readonly cssCodeSplit?: boolean
   /** Framework-owned SSR stylesheet activation. Deferred mode is intended for aggregate CSS. */
@@ -240,6 +244,9 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
       "secretExemptions",
       'an array of { rule, file, reason } entries (or { rule: "private-env-value", env, reason })',
     )
+  }
+  if (fw.transport !== undefined && (typeof fw.transport !== "string" || fw.transport === "")) {
+    wrong("transport", 'a module path such as "./shell/transport.ts"')
   }
   if (fw.target !== undefined && typeof fw.target !== "string") {
     wrong("target", 'a deploy target name such as "bun"')
