@@ -224,6 +224,8 @@ interface WriteDevFilesOptions {
   readonly routesDir: string
   readonly clientModule: string
   readonly live?: LiveClientEntry | undefined
+  /** The router's server `fetch` module: see `BuildClientOptions.transport`. */
+  readonly transport?: string | undefined
   readonly entryPath: string
   readonly htmlPath: string
 }
@@ -236,15 +238,16 @@ interface WriteDevFilesOptions {
  * the way the runtime does, so a leading slash there would mean the filesystem root.
  */
 export function writeDevFiles(options: WriteDevFilesOptions): void {
-  const { routesDir, clientModule, entryPath, htmlPath, live } = options
+  const { routesDir, clientModule, entryPath, htmlPath, live, transport } = options
   mkdirSync(dirname(entryPath), { recursive: true })
   const manifest = discoverRoutes(routesDir)
   const entryDir = dirname(entryPath)
-  const toSpecifier = (file: string): string => {
-    const rel = relative(entryDir, `${routesDir}/${file}`).replaceAll("\\", "/")
+  const specifierOf = (path: string): string => {
+    const rel = relative(entryDir, path).replaceAll("\\", "/")
     // A bare relative path reads as a PACKAGE specifier to a bundler; `./` is what makes it a file.
     return rel.startsWith(".") ? rel : `./${rel}`
   }
+  const toSpecifier = (file: string): string => specifierOf(`${routesDir}/${file}`)
   // No `import.meta.hot.accept` here, deliberately. When an edit lands OUTSIDE a Fast Refresh boundary -
   // a route file, which also exports `loader`/`meta` - Bun walks up to this generated entry, finds no
   // `accept`, logs "hot update was not accepted" and does a full reload. That reload is correct: the route
@@ -256,7 +259,12 @@ export function writeDevFiles(options: WriteDevFilesOptions): void {
   // applies React Fast Refresh there and state is preserved.
   writeIfChanged(
     entryPath,
-    generateClientEntry(manifest, { clientModule, resolve: toSpecifier, live }),
+    generateClientEntry(manifest, {
+      clientModule,
+      resolve: toSpecifier,
+      live,
+      transport: transport === undefined ? undefined : specifierOf(resolve(transport)),
+    }),
   )
   const entryHref = `./${relative(dirname(htmlPath), entryPath).replaceAll("\\", "/")}`
   writeIfChanged(htmlPath, devHtml(entryHref))
@@ -381,7 +389,14 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
     hashedFiles: () => true,
   })
 
-  writeDevFiles({ routesDir, clientModule, entryPath, htmlPath, live: options.live })
+  writeDevFiles({
+    routesDir,
+    clientModule,
+    entryPath,
+    htmlPath,
+    live: options.live,
+    transport: options.transport,
+  })
   // Importing the generated HTML is what hands it to Bun's bundler. A runtime-computed path is fine:
   // Bun resolves and bundles the HTML, and everything it references, at import time.
   const htmlModule = (await import(htmlPath)) as { default: HtmlBundle }
@@ -595,7 +610,14 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       syncWatchedFiles(false)
       session.markChange()
       try {
-        writeDevFiles({ routesDir, clientModule, entryPath, htmlPath, live: options.live })
+        writeDevFiles({
+          routesDir,
+          clientModule,
+          entryPath,
+          htmlPath,
+          live: options.live,
+          transport: options.transport,
+        })
       } catch (err) {
         // A half-saved file can fail the scan mid-edit; the next change re-runs this.
         console.error("[nifra/web/dev] client entry regeneration failed:", err)

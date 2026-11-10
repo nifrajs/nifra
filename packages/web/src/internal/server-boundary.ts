@@ -138,6 +138,8 @@ export function scanServerFnExports(source: string): string[] {
  *
  * `credentials: "same-origin"` is explicit rather than relied upon - the server refuses a cross-origin
  * call, and stating it here means the browser never sends cookies somewhere that would reject them.
+ * A build with a `transport` installs it under `Symbol.for("nifra.fetch")`, and the call goes through
+ * that instead: the stub neither imports it nor knows where the server is.
  * The content type is not decoration either: it is what makes a cross-origin form unable to forge one
  * of these calls, so the stub and the server guard have to agree on it.
  */
@@ -150,7 +152,7 @@ export function generateServerFnStub(source: string, namespace: string): string 
 const __nifraBase = ${jsStringLiteral(`/_nifra/fn/${namespace}`)}
 
 async function __nifraCall(name, input) {
-  const response = await fetch(\`\${__nifraBase}/\${name}\`, {
+  const response = await (globalThis[Symbol.for("nifra.fetch")] ?? fetch)(\`\${__nifraBase}/\${name}\`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input === undefined ? {} : input),

@@ -416,6 +416,12 @@ export interface ClientRouterOptions {
   readonly initial: RouterState
   /** Override the loader-data fetch (tests inject a stub; defaults to a same-origin JSON GET). */
   readonly fetchData?: FetchRouteData
+  /**
+   * How the router reaches its server: the route-data GET, prefetches and action POSTs. Defaults to
+   * the global `fetch` against this document's own origin; an app served from a native shell passes
+   * {@link serverFetch}. Prerendered data files ship in the bundle and always load locally.
+   */
+  readonly fetch?: RouterFetch
   /** Ensure a route's code chunk is loaded before rendering (code-splitting). Awaited in parallel
    * with the loader data, so `pending` covers both. Omit when the bundle isn't split. `path` is the URL
    * the route is about to render, for code loaded per URL (a production build's copy chunks). */
@@ -567,8 +573,16 @@ export const routeDataHeaders = (
   return headers
 }
 
+/** A `fetch` the router sends its server requests through. */
+export type RouterFetch = (input: string, init?: RequestInit) => Promise<Response>
+
+/** {@link FetchRouteData} that also takes the `fetch` the dynamic GET goes out through. */
+export type FetchRouteDataVia = (
+  ...args: [...Parameters<FetchRouteData>, send?: RouterFetch]
+) => ReturnType<FetchRouteData>
+
 /** The router's own transport, which a `fetchData` override may layer over. */
-export const fetchRouteData: FetchRouteData = async (
+export const fetchRouteData: FetchRouteDataVia = async (
   path,
   _match,
   signal,
@@ -576,6 +590,7 @@ export const fetchRouteData: FetchRouteData = async (
   purpose,
   hosts,
   read,
+  send = fetch,
 ) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
@@ -589,6 +604,7 @@ export const fetchRouteData: FetchRouteData = async (
   if (Array.isArray(prerendered) && (query === -1 || (hash !== -1 && hash < query))) {
     const pathname = hash === -1 ? path : path.slice(0, hash)
     if (prerenderedSetOf(prerendered).has(pathname)) {
+      // The global `fetch`, not `send`: the file is part of this bundle, not of the server.
       const staticRes = await fetch(appUrl(dataUrlFor(pathname)), { signal: signal ?? null })
       if (staticRes.ok) return readResponseData(staticRes, signal, read)
     }
@@ -596,7 +612,7 @@ export const fetchRouteData: FetchRouteData = async (
   const headers = routeDataHeaders(navigation, hosts)
   if (purpose === "prefetch") headers.set(PREFETCH_HEADER, "1")
   return routeDataOf(
-    await fetch(appUrl(path), { headers, signal: signal ?? null }),
+    await send(appUrl(path), { headers, signal: signal ?? null }),
     path,
     signal,
     read,
@@ -630,9 +646,15 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     options.patterns.map((pattern) => [pattern.routeId, pattern.pattern]),
   )
   const knownPatterns = new Set(options.patterns.map((pattern) => pattern.pattern))
-  const fetchData = options.fetchData ?? fetchRouteData
+  const send = options.fetch
+  const fetchData: FetchRouteData =
+    options.fetchData ??
+    (send === undefined
+      ? fetchRouteData
+      : (path, match, signal, navigation, purpose, hosts, read) =>
+          fetchRouteData(path, match, signal, navigation, purpose, hosts, read, send))
   // Start a handed-over list's fetch now, so the first navigation rarely waits for it.
-  if (fetchData === fetchRouteData) prerenderedOf()
+  if (options.fetchData === undefined) prerenderedOf()
   // routeId → the route's client-only search keys. Read by reference (the generated entry keeps writing
   // to it as routes load), so a same-route nav always sees the current route's keys.
   const searchClientKeys = options.searchClientKeys ?? {}
@@ -1376,7 +1398,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         fEmit()
         try {
-          const res = await fetch(appUrl(action), {
+          const res = await (send ?? fetch)(appUrl(action), {
             method: "POST",
             body,
             headers: { [DATA_HEADER]: "1" },
@@ -1710,7 +1732,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           state = { ...state, ...answered(state, prepared.optimisticData) }
           emit()
         }
-        const res = await fetch(appUrl(action), {
+        const res = await (send ?? fetch)(appUrl(action), {
           method: "POST",
           body: prepared.body,
           headers: { [DATA_HEADER]: "1" },

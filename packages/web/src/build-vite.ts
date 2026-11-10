@@ -181,7 +181,13 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     routesDir,
     ".nifra-vite-client-",
     routeManifest,
-    { clientModule, resolve, copyChunks: copySplit !== undefined, live: options.live },
+    {
+      clientModule,
+      resolve,
+      copyChunks: copySplit !== undefined,
+      live: options.live,
+      transport: options.transport === undefined ? undefined : resolvePath(options.transport),
+    },
   )
 
   // Each an additional entry, giving the per-route chunk + CSS mapping below.
@@ -680,6 +686,7 @@ export const viteBundler: Bundler = {
       ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
       ...(input.root ? { root: input.root } : {}),
       live: input.live,
+      transport: input.transport,
     }),
   buildServer: ({ plugins, root, ...fields }) =>
     buildServerVite({

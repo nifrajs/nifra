@@ -558,6 +558,36 @@
     "code": "import { Hono } from \"hono\"\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nconst legacy = new Hono()\nlegacy.get(\"/users\", (c) => c.json({ source: \"hono\", users: [] }))\nlegacy.post(\"/users\", async (c) => c.json(await c.req.json()))\n\nexport const app = server()\n  // The wildcard is a literal mount prefix, not a typed Nifra route.\n  .mountFetch(\"/legacy/*\", legacy.fetch, { stripPrefix: true })\n  // Typed routes take precedence, so move one route out of Hono at a time.\n  .get(\"/legacy/users/:id\", (c) => ({ id: c.params.id, source: \"nifra\" }))\n  .post(\n    \"/users\",\n    { body: t.object({ name: t.string() }) },\n    (c) => ({ id: crypto.randomUUID(), name: c.body.name }),\n  )"
   },
   {
+    "name": "FUNCTIONS",
+    "topic": "Nifra - Native shells",
+    "slug": "native-shells",
+    "code": "import { serverFunctions } from \"@nifrajs/web/fn\"\nimport * as todos from \"./todos.fn.ts\"\n\nexport const fns = serverFunctions(\"todos\", todos, {\n  origins: [\"tauri://localhost\", \"http://tauri.localhost\"],\n})"
+  },
+  {
+    "name": "LIVE",
+    "topic": "Nifra - Native shells",
+    "slug": "native-shells",
+    "code": "import { live } from \"@nifrajs/web/live\"\n\nexport const runtime = live({\n  secret: process.env.LIVE_SECRET ?? \"\",\n  subject: () => null,\n  trustedOrigins: [\"tauri://localhost\", \"http://tauri.localhost\"],\n})"
+  },
+  {
+    "name": "QUERY",
+    "topic": "Nifra - Native shells",
+    "slug": "native-shells",
+    "code": "import { appFetch } from \"@nifrajs/web/shell\"\n\n// The transport in a shell build, the global fetch anywhere else.\nexport const todos = (): Promise<unknown> => appFetch(\"/api/todos\").then((res) => res.json())"
+  },
+  {
+    "name": "SERVER",
+    "topic": "Nifra - Native shells",
+    "slug": "native-shells",
+    "code": "import { cors } from \"@nifrajs/middleware\"\nimport { server } from \"@nifrajs/core\"\n\nconst SHELLS = [\"tauri://localhost\", \"http://tauri.localhost\", \"capacitor://localhost\"]\n\nexport const app = server().use(\n  cors({ origin: SHELLS, exposedHeaders: [\"*\"], credentials: true }),\n)"
+  },
+  {
+    "name": "TRANSPORT",
+    "topic": "Nifra - Native shells",
+    "slug": "native-shells",
+    "code": "// frontend/transport.ts\nimport { serverFetch } from \"@nifrajs/web/shell\"\n\nexport default serverFetch({\n  origin: \"https://api.example.com\",\n  // A bearer token that refreshes: the function runs before each request.\n  headers: async () => ({ authorization: `Bearer ${await currentToken()}` }),\n})\n\ndeclare function currentToken(): Promise<string>"
+  },
+  {
     "name": "BACKEND",
     "topic": "Nifra - Partial prerendering",
     "slug": "partial-prerendering",

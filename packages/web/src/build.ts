@@ -231,6 +231,12 @@ export interface BuildClientOptions {
    * endpoint and keeps what is on screen fresh: the runtime's `clientEntry`.
    */
   readonly live?: LiveClientEntry | undefined
+  /**
+   * A module whose default export is the `fetch` the client router reaches its server through (see
+   * {@link serverFetch}). For pages that ship inside a native shell while the server lives elsewhere:
+   * the route-data GETs, prefetches and action POSTs go through it.
+   */
+  readonly transport?: string | undefined
 }
 
 /**
@@ -498,6 +504,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       resolve,
       copyChunks: copySplit !== undefined,
       live: options.live,
+      transport: options.transport === undefined ? undefined : resolvePath(options.transport),
     },
   )
 
@@ -1771,6 +1778,9 @@ export interface BuildTargetOptions {
   readonly selfHost?: ServerEntrySelfHost
   /** The client entry for a server built with `optionImports.live`: that runtime's `clientEntry`. */
   readonly live?: LiveClientEntry | undefined
+  /** A module whose default export is the `fetch` the client router reaches its server through: see
+   * {@link BuildClientOptions.transport}. */
+  readonly transport?: string | undefined
 }
 
 /** Minimal app surface `buildTarget`'s static path needs - a fetch handler (a built `createWebApp`). */
@@ -1827,6 +1837,7 @@ export const bunBundler: Bundler = {
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
       ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
       live: input.live,
+      transport: input.transport,
     })
   },
   buildServer: ({ plugins, root, ...fields }) =>
@@ -1980,6 +1991,7 @@ export async function buildTargetWith(
     ...(requestedCssLoading !== undefined ? { cssLoading: requestedCssLoading } : {}),
     root: resolvePath(dirname(routesDir)),
     live: options.live,
+    transport: options.transport,
   })
   // Bun's client builder has no CSS-loading field, but the server-side document policy is bundler
   // independent. Carry the requested policy into the result so static prerender callbacks and the

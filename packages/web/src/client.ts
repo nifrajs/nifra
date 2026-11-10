@@ -84,7 +84,7 @@ export {
   stripRouteSlots,
   withRouteSlots,
 } from "./route-slots.ts"
-export { createClientRouter, createMatcher } from "./router.ts"
+export { createClientRouter, createMatcher, type RouterFetch } from "./router.ts"
 // Same reason, for the ADAPTER packages (`@nifrajs/web-react` and friends). Every one of them reaches
 // for these from the root - `searchOfChain` in its `/client` entry, the navigation and query values in
 // its router/query modules - and every one of those modules is in the browser graph. They are defined

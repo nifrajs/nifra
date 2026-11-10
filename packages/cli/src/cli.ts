@@ -626,6 +626,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       indicator: showsIndicator(flags, fw),
       allowedHosts: fw.dev?.allowedHosts ?? [],
       live: fw.live?.clientEntry,
+      ...(fw.transport !== undefined ? { transport: resolve(app.cwd, fw.transport) } : {}),
       createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
@@ -684,6 +685,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     ...(flags.allowDuplicateIdentity ? { allowDuplicateIdentity: true } : {}),
     indicator: showsIndicator(flags, fw),
     live: fw.live?.clientEntry,
+    ...(fw.transport !== undefined ? { transport: resolve(cwd, fw.transport) } : {}),
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
@@ -1039,6 +1041,7 @@ async function buildForTarget(
     ...(fw.vercelRuntime !== undefined ? { vercelRuntime: fw.vercelRuntime } : {}),
     ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
     live: fw.live?.clientEntry,
+    ...(fw.transport !== undefined ? { transport: resolve(cwd, fw.transport) } : {}),
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server
     // answers its prerendered pages from their file. Not under Vite, whose server bundle may rely on
     // transforms the prerender pass (Bun's runtime) does not apply: those pages keep rendering on demand.

@@ -14599,6 +14599,179 @@ handler. Pass its fetch-compatible function directly. For a Workers-style handle
 platform argument carries bindings and `waitUntil`; mounted code remains responsible
 for its own framework-specific request and response conventions.
 
+## Nifra - Native shells
+
+> Ship an app's pages inside Tauri, Capacitor or Electron while its server stays on the web: one transport for route data, actions, server functions and the live socket.
+
+A shell wraps an app's pages in a native window or a phone app: Tauri, Capacitor and
+Electron all load the built client from disk. The pages then live on one origin, such as
+`tauri://localhost`, and the server on another. A `transport` tells
+the client where the server is, and every request the app makes goes through it.
+
+### Build the pages
+
+Write the transport in a frontend file with `serverFetch` from
+`@nifrajs/web/shell`. A path-absolute URL, such as `/todos`, goes to
+`origin`. The headers are added to each request, and may be a function that
+returns them.
+
+```ts
+// frontend/transport.ts
+import { serverFetch } from "@nifrajs/web/shell"
+
+export default serverFetch({
+  origin: "https://api.example.com",
+  // A bearer token that refreshes: the function runs before each request.
+  headers: async () => ({ authorization: `Bearer ${await currentToken()}` }),
+})
+
+declare function currentToken(): Promise<string>
+```
+
+Name the module in the framework config and build the static target:
+
+```ts
+// doc-check: skip - nifra.config.ts for the CLI; the adapter is the app's own.
+export { adapter } from "./backend/framework"
+export const clientModule = "@nifrajs/web-react/client"
+export const transport = "./frontend/transport.ts"
+```
+
+```ts
+// routes/index.backend.ts
+export const prerender = true
+```
+
+```bash
+nifra build --target static --out dist
+```
+
+The output has an `index.html` for each prerendered route and the assets they
+load, which is what a shell's `frontendDist` points at. The same option reaches
+the Bun and Vite builds and both dev servers, and `buildClient` takes it as
+`transport`.
+
+A path the shell has no page for, such as a reload at `/todos`, hydrates the
+document the shell ships and then navigates to that URL. Route data for prerendered pages
+loads from the bundle; everything else goes to the server.
+
+### What goes through the transport
+
+- Route data, prefetches and action posts of the router.
+
+-
+Server functions: the stub that stands in for a
+`*.fn.ts` module calls through it.
+
+-
+The live socket and its load endpoint. The
+socket connects to the transport's origin.
+
+-
+Keep-alive pages, layered over the
+transport.
+
+-
+Your own calls, with `appFetch`. Hand it to a `useQuery` fetcher or
+to the typed client: `client(url, { fetch: appFetch })`.
+
+```ts
+import { appFetch } from "@nifrajs/web/shell"
+
+// The transport in a shell build, the global fetch anywhere else.
+export const todos = (): Promise<unknown> => appFetch("/api/todos").then((res) => res.json())
+```
+
+### Let the server accept the shell
+
+A shell's requests carry its own scheme as their `Origin`, so the server refuses
+them until it lists that origin. Tauri uses `tauri://localhost` on macOS, iOS
+and Linux and `http://tauri.localhost` on Windows and Android; Capacitor uses
+`capacitor://localhost` on iOS.
+
+-
+CORS, with `exposedHeaders: ["*"]`. Without it the page cannot read the
+status or redirect headers of its own responses. A named CORS origin also admits that
+origin's form posts.
+
+-
+A page action checks the route's own `allowedOrigins`.
+
+-
+`serverFunctions` takes `origins`.
+
+-
+`live` takes `trustedOrigins`, for the load endpoint and the
+socket.
+
+```ts
+import { cors } from "@nifrajs/middleware"
+import { server } from "@nifrajs/core"
+
+const SHELLS = ["tauri://localhost", "http://tauri.localhost", "capacitor://localhost"]
+
+export const app = server().use(
+  cors({ origin: SHELLS, exposedHeaders: ["*"], credentials: true }),
+)
+```
+
+```ts
+// doc-check: skip - a route's backend half; the action is the app's own.
+// routes/todos.backend.ts
+export const allowedOrigins = ["tauri://localhost", "http://tauri.localhost"]
+```
+
+```ts
+import { serverFunctions } from "@nifrajs/web/fn"
+import * as todos from "./todos.fn.ts"
+
+export const fns = serverFunctions("todos", todos, {
+  origins: ["tauri://localhost", "http://tauri.localhost"],
+})
+```
+
+```ts
+import { live } from "@nifrajs/web/live"
+
+export const runtime = live({
+  secret: process.env.LIVE_SECRET ?? "",
+  subject: () => null,
+  trustedOrigins: ["tauri://localhost", "http://tauri.localhost"],
+})
+```
+
+### Tauri 2
+
+Point `frontendDist` at the build and allow the server in the content security
+policy. On iOS, a development server on a local address needs
+`NSAllowsLocalNetworking` in the app's `Info.plist`.
+
+```json
+// doc-check: skip - src-tauri/tauri.conf.json
+{
+  "build": { "frontendDist": "../dist" },
+  "app": { "security": { "csp": "default-src 'self'; connect-src 'self' https://api.example.com wss://api.example.com" } }
+}
+```
+
+### Limits
+
+-
+The transport module must sit in a zone: `frontend/`, or a package that
+declares `"nifra": { "environment": "frontend" }`.
+
+-
+Tauri on macOS, the iOS Simulator and an Android emulator are what this was run on.
+Windows and Linux use the same transport but have not been run.
+
+-
+On Android the web view draws under the status bar, so a page that starts at the top
+needs its own top padding.
+
+-
+A page in a shell starts in the system web view, so its first paint comes after the
+view does.
+
 ## Nifra - Tracing & observability
 
 > One trace from the request through the cache, the job queue and the worker, plus the OpenTelemetry SDK's own database and HTTP spans, without bundling the SDK.

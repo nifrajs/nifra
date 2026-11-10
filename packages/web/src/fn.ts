@@ -145,6 +145,15 @@ export interface ServerFnHost {
   ): void
 }
 
+export interface ServerFunctionsOptions {
+  /**
+   * Origins besides the server's own that may call these functions, as the `Origin` header writes
+   * them: a native shell's pages post from `tauri://localhost` or `capacitor://localhost`. Exact
+   * matches, or a function that decides. Left out, only the server's own origin is accepted.
+   */
+  readonly origins?: ReadonlyArray<string> | ((origin: string) => boolean)
+}
+
 /** Every server function a module exports, keyed by export name. */
 export type ServerFnModule = Readonly<Record<string, unknown>>
 
@@ -161,7 +170,11 @@ export type ServerFnModule = Readonly<Record<string, unknown>>
  *
  * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.
  */
-export function serverFunctions(namespace: string, module: ServerFnModule): IdentityPlugin {
+export function serverFunctions(
+  namespace: string,
+  module: ServerFnModule,
+  options: ServerFunctionsOptions = {},
+): IdentityPlugin {
   if (!SERVER_FN_NAMESPACE.test(namespace)) {
     throw new Error(
       `[nifra/fn] invalid server-function namespace ${JSON.stringify(namespace)} - use lowercase dot/dash segments (it becomes a URL path).`,
@@ -170,6 +183,14 @@ export function serverFunctions(namespace: string, module: ServerFnModule): Iden
   const mounted = Object.entries(module).filter(
     (entry): entry is [string, ServerFn<unknown, unknown>] => isServerFn(entry[1]),
   )
+
+  const origins = options.origins
+  const trusted = (origin: string): boolean =>
+    origins === undefined
+      ? false
+      : typeof origins === "function"
+        ? origins(origin) === true
+        : origins.includes(origin)
 
   const apply = <S extends AnyServer>(app: S): S => {
     for (const [name, fn] of mounted) {
@@ -206,7 +227,7 @@ export function serverFunctions(namespace: string, module: ServerFnModule): Iden
           return c.json({ ok: false, error: "unsupported_media_type" }, 415)
         }
         const origin = request.headers.get("origin")
-        if (origin !== null && !sameOrigin(origin, request)) {
+        if (origin !== null && !sameOrigin(origin, request) && !trusted(origin)) {
           return c.json({ ok: false, error: "forbidden_origin" }, 403)
         }
         return guarded(config.input === undefined ? undefined : c.body, c)
