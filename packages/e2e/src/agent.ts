@@ -321,7 +321,6 @@ export function createAgent(deps: AgentDeps): Agent {
 
       const runGoal = async (): Promise<ActResult> => {
         let calls = 0
-        let latest = before
         for (;;) {
           if (clock.now() >= deadline) {
             throw new E2EError("STEP_TIMEOUT", `goal "${text}" ran past its time limit`)
@@ -334,7 +333,6 @@ export function createAgent(deps: AgentDeps): Agent {
           }
           const model = requireModel()
           const seen = await observe()
-          latest = seen.raw
           calls += 1
           const raw = await ask(model, {
             kind: "act",
@@ -368,7 +366,7 @@ export function createAgent(deps: AgentDeps): Agent {
                   startRoute,
                   taken,
                   before,
-                  latest,
+                  seen.raw,
                   normalizeRoute(await engine.url(), deps.origin),
                   params,
                 ),

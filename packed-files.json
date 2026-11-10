@@ -2233,6 +2233,7 @@
     "src/index.ts"
   ],
   "@nifrajs/e2e": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "dist/agent.d.ts",

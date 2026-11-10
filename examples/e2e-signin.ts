@@ -34,7 +34,10 @@ const model: E2EModel = {
 const cacheDir = await mkdtemp(join(tmpdir(), "e2e-example-"))
 try {
   for (const run of [1, 2]) {
-    await using t = await e2e(app, { model, cache: { dir: cacheDir, testId: "sign in" } })
+    await using t = await e2e(app, {
+      model,
+      cache: { dir: cacheDir, testId: "sign in", mode: "read-write" },
+    })
     await t.open("/signin")
     await t.agent.act("sign in")
     // The recording is saved only because this check passes after the act.

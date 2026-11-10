@@ -146,7 +146,10 @@ try {
     },
   }
   const pass = async (model: E2EModel) => {
-    await using t = await e2e(app, { model, cache: { dir: cacheDir, testId: "smoke" } })
+    await using t = await e2e(app, {
+      model,
+      cache: { dir: cacheDir, testId: "smoke", mode: "read-write" },
+    })
     await t.open("/signin")
     const result = await t.agent.act("sign in")
     await expect(t.screen.getByRole("heading")).toHaveText("Welcome")

@@ -37,9 +37,11 @@ interface RunOptions {
 
 async function run(options: RunOptions) {
   const { factory } = worldEngine(options.world ?? {})
-  const cache: CacheOptions = { store: options.store, testId: "login" }
-  const withMode: CacheOptions =
-    options.mode === undefined ? cache : { ...cache, mode: options.mode }
+  const withMode: CacheOptions = {
+    store: options.store,
+    testId: "login",
+    mode: options.mode ?? "read-write",
+  }
   await using t = await e2e(app, {
     engine: factory,
     model: options.model,
@@ -141,7 +143,7 @@ describe("acceptance on a fake engine", () => {
         engine: factory,
         model,
         clock: virtualClock(),
-        cache: { store, testId: "unique" },
+        cache: { store, testId: "unique", mode: "read-write" },
       })
       await t.open("/")
       await t.agent.act("sign in as {email}", { params: { email: unique(email) } })
@@ -168,7 +170,7 @@ describe("acceptance on a fake engine", () => {
         engine: factory,
         model: m,
         clock: virtualClock(),
-        cache: { store, testId: "secret" },
+        cache: { store, testId: "secret", mode: "read-write" },
       })
       await t.open("/")
       await t.agent.act("enter the password", { params: { pw: new Secret("pw", "hunter2") } })
