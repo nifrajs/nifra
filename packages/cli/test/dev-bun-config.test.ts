@@ -146,6 +146,19 @@ test("the public environment reaches the client bundle only, and the config's de
   expect(field(field(field(ownDefine, "serve"), "static"), "define")).toEqual({
     "process.env.PUBLIC_B": '"from-bunfig"',
   })
+  const topLevel = parseUserBunfig(
+    renderDevBunfig(
+      "/p.ts",
+      { define: { "process.env.PUBLIC_C": '"from-bunfig"' } },
+      "/app",
+      {},
+      { "process.env.PUBLIC_C": '"from-env"', "process.env.PUBLIC_D": '"d"' },
+    ),
+  )
+  expect(field(field(field(topLevel, "serve"), "static"), "define")).toEqual({
+    "process.env.PUBLIC_C": '"from-bunfig"',
+    "process.env.PUBLIC_D": '"d"',
+  })
   const onlyEnv = parseUserBunfig(
     renderDevBunfig("/p.ts", {}, "/app", {}, { "process.env.PUBLIC_B": '"b"' }),
   )
