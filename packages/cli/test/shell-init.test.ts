@@ -81,7 +81,7 @@ test("the generated config names the dist, both builds and the server in the CSP
   const conf = JSON.parse(tauriConf("Todo", "com.example.todo", "https://api.example.com"))
   expect(conf.build.frontendDist).toBe("../dist-shell")
   expect(conf.build.beforeBuildCommand).toBe(
-    "nifra build --target static --out dist-shell --transport ./frontend/shell-transport.ts",
+    "nifra build --target static --out dist-shell --transport ./frontend/shell-transport.ts --prerender /",
   )
   expect(conf.build.beforeDevCommand).toContain("--transport ./frontend/shell-transport.ts")
   expect(conf.build.devUrl).toBe("http://localhost:3112")

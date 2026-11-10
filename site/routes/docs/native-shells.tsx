@@ -24,10 +24,7 @@ export { adapter } from "./backend/framework"
 export const clientModule = "@nifrajs/web-react/client"
 export const transport = "./frontend/transport.ts"`
 
-const PRERENDER = `// routes/index.backend.ts
-export const prerender = true`
-
-const BUILD = `nifra build --target static --out dist`
+const BUILD = `nifra build --target static --out dist --prerender /`
 
 const SCAFFOLD = `nifra shell tauri --origin https://api.example.com`
 
@@ -42,7 +39,7 @@ bunx tauri dev`
 
 const MOBILE = `nifra shell tauri --mobile android   # or ios, or all`
 
-const TRANSPORT_FLAG = `nifra build --target static --out dist-shell --transport ./frontend/shell-transport.ts`
+const TRANSPORT_FLAG = `nifra build --target static --out dist-shell --transport ./frontend/shell-transport.ts --prerender /`
 
 const QUERY = `import { appFetch } from "@nifrajs/web/shell"
 
@@ -101,9 +98,14 @@ export default function NativeShells() {
         returns them.
       </p>
       <CodeBlock code={TRANSPORT} lang="ts" />
-      <p>Name the module in the framework config and build the static target:</p>
+      <p>
+        Name the module in the framework config, and name the pages the shell opens on with{" "}
+        <code>--prerender</code> (comma-separated paths such as <code>/,/about</code>). Only this
+        build prerenders them, so a web build of the same app keeps rendering them per request; a
+        route that exports <code>prerender = true</code> is included too. A path that is not a
+        static page route fails the build.
+      </p>
       <CodeBlock code={CONFIG} lang="ts" />
-      <CodeBlock code={PRERENDER} lang="ts" />
       <CodeBlock code={BUILD} lang="bash" />
       <p>
         The output has an <code>index.html</code> for each prerendered route and the assets they
@@ -118,7 +120,8 @@ export default function NativeShells() {
       </p>
       <p>
         <code>--transport</code> names the module for one run and wins over the config, so an app
-        can ship a web build and a shell build from one tree:
+        can ship a web build and a shell build from one tree. <code>--prerender</code> only
+        applies to <code>--target static</code>:
       </p>
       <CodeBlock code={TRANSPORT_FLAG} lang="bash" />
       <h2 id="requests">What goes through the transport</h2>

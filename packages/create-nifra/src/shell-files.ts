@@ -159,7 +159,7 @@ export function tauriConf(name: string, id: string, origin: string): string {
       frontendDist: `../${SHELL_DIST}`,
       devUrl: `http://localhost:${SHELL_DEV_PORT}`,
       beforeDevCommand: `nifra dev --port ${SHELL_DEV_PORT} --transport ./${TRANSPORT_PATH}`,
-      beforeBuildCommand: `nifra build --target static --out ${SHELL_DIST} --transport ./${TRANSPORT_PATH}`,
+      beforeBuildCommand: `nifra build --target static --out ${SHELL_DIST} --transport ./${TRANSPORT_PATH} --prerender /`,
     },
     app: {
       windows: [],

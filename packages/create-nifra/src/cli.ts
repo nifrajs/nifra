@@ -170,7 +170,6 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
   if (result.shell === "tauri") {
     steps.push(
       "bunx tauri icon path/to/icon.png  # the app icon set; then `bun run shell:dev` opens the desktop shell (needs `bun run dev` for the server)",
-      "# a shell build wraps `nifra build --target static`: add `export const prerender = true` to the page it opens on (routes/index.backend.ts)",
     )
   }
   if (result.db !== undefined) {

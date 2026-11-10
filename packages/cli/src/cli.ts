@@ -53,6 +53,9 @@ export interface Flags {
    * reaches its server through, for this run only. It overrides `transport` from the framework config,
    * so one app can ship a web build and a native-shell build. */
   readonly transport: string | undefined
+  /** `nifra build --target static --prerender <paths>`: comma-separated page paths to prerender for this
+   * build whether or not their route exports `prerender`. */
+  readonly prerender: string | undefined
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
   /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is
@@ -156,6 +159,8 @@ Usage:
   nifra db audit [--limit <n>]           What nifra db ran (.nifra/db-audit.jsonl), never the rows.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--transport <module>]     Reach the server through this module's fetch (a native shell).
+                [--prerender <paths>]      With --target static: also prerender these pages (comma-separated,
+                                         such as /,/about) whether or not their route exports prerender.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cloudflare | vercel | static, or an installed
                                          public adapter selected by deploymentAdapter in nifra.config.ts. Packages
@@ -1047,6 +1052,7 @@ async function buildForTarget(
     ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
     live: fw.live?.clientEntry,
     ...transportOption(flags, fw, cwd),
+    prerenderPaths: prerenderPaths(flags, target),
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server
     // answers its prerendered pages from their file. Not under Vite, whose server bundle may rely on
     // transforms the prerender pass (Bun's runtime) does not apply: those pages keep rendering on demand.
@@ -1152,13 +1158,15 @@ async function start(app: LoadedApp, flags: Flags): Promise<void> {
   await import(serverFile)
 }
 
-const VALUE_FLAGS: Readonly<Record<string, "port" | "out" | "target" | "transport">> = {
-  "--port": "port",
-  "-p": "port",
-  "--out": "out",
-  "--target": "target",
-  "--transport": "transport",
-}
+const VALUE_FLAGS: Readonly<Record<string, "port" | "out" | "target" | "transport" | "prerender">> =
+  {
+    "--port": "port",
+    "-p": "port",
+    "--out": "out",
+    "--target": "target",
+    "--transport": "transport",
+    "--prerender": "prerender",
+  }
 
 type SwitchField = "poll" | "report" | "vite" | "bun" | "allowDuplicateIdentity" | "noIndicator"
 
@@ -1181,6 +1189,20 @@ function transportOption(
   return module === undefined ? {} : { transport: resolve(cwd, module) }
 }
 
+/** `--prerender /,/about` as page paths, which only a static build can honour. */
+function prerenderPaths(flags: Pick<Flags, "prerender">, target: string): string[] | undefined {
+  if (flags.prerender === undefined) return undefined
+  if (target !== "static") {
+    throw new Error(
+      `[nifra] --prerender applies to \`--target static\` (this build is ${target}): other targets prerender the routes that export \`prerender\``,
+    )
+  }
+  return flags.prerender
+    .split(",")
+    .map((path) => path.trim())
+    .filter((path) => path !== "")
+}
+
 /** The flags of `nifra dev`, `build` and `start`, as `--flag value` or `--flag=value`. Anything else is
  * refused: an ignored `--target=vercel` would build the default target and exit 0. */
 export function parseFlags(args: readonly string[]): Flags {
@@ -1191,6 +1213,7 @@ export function parseFlags(args: readonly string[]): Flags {
   let out: string | undefined
   let target: string | undefined
   let transport: string | undefined
+  let prerender: string | undefined
   const switches: Record<SwitchField, boolean> = {
     poll: Bun.env.CHOKIDAR_USEPOLLING === "1",
     report: false,
@@ -1211,6 +1234,7 @@ export function parseFlags(args: readonly string[]): Flags {
       if (valueField === "port") port = Number(value)
       else if (valueField === "out") out = value
       else if (valueField === "transport") transport = value
+      else if (valueField === "prerender") prerender = value
       else target = value
       continue
     }
@@ -1231,7 +1255,7 @@ export function parseFlags(args: readonly string[]): Flags {
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, target, transport, ...switches }
+  return { port, out, target, transport, prerender, ...switches }
 }
 
 /**

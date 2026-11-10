@@ -74,7 +74,6 @@ test("--shell implies the site template and is reported", async () => {
   expect(out.code).toBe(0)
   expect(out.message).toContain("Tauri shell")
   expect(out.message).toContain("bunx tauri icon")
-  expect(out.message).toContain("export const prerender = true")
 })
 
 test("the shell's package contribution declares what it adds", () => {

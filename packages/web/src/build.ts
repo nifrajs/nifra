@@ -1742,6 +1742,10 @@ export interface BuildTargetOptions {
    * optional: given, the opted-in routes are prerendered into `_prerendered/` and the server answers
    * them from their file; the other targets ignore it. */
   readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>
+  /** `static` only: pages to prerender for this build whether or not their route exports `prerender`, by
+   * path. A shell build uses it to ship the page the shell opens on without making a web build of the
+   * same app serve that page as a snapshot. Refused for any other target. */
+  readonly prerenderPaths?: readonly string[] | undefined
   /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */
   readonly clientPlugins?: readonly BunPlugin[]
   /** Server-build plugins (e.g. the SSR variants). */
@@ -1947,6 +1951,11 @@ export async function buildTargetWith(
   const requestedCssLoading =
     options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
   const targetPlan = planBuildTarget(parseBuildTarget(target), outDir, options.vercelRuntime)
+  if (options.prerenderPaths !== undefined && targetPlan.kind !== "static") {
+    throw new Error(
+      `[nifra/web] prerenderPaths applies to the static target only, not ${target}: other targets prerender the routes that export \`prerender\``,
+    )
+  }
   const sources = [
     routesDir,
     process.cwd(),
@@ -2078,13 +2087,14 @@ export async function buildTargetWith(
       routes: manifest.routes,
       outDir,
       secrets: secretScan,
+      include: options.prerenderPaths,
     })
     if (result.prerendered.length === 0) {
       // A static build that renders nothing is almost always a misconfig (no `prerender = true` / no
       // getStaticPaths) - fail loudly rather than ship an empty dir the dev thinks is their site.
       throw new Error(
         "[nifra/web] buildTarget(static): no routes were prerendered - opt routes in with " +
-          "`export const prerender = true` (static) or `getStaticPaths` (dynamic).",
+          "`export const prerender = true` (static) or `getStaticPaths` (dynamic), or name pages for this build with `prerenderPaths`.",
       )
     }
     collectImages()

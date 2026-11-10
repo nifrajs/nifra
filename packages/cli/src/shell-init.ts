@@ -59,7 +59,7 @@ export function shellNextSteps(): readonly string[] {
     "bun add -d @tauri-apps/cli",
     "bunx tauri icon path/to/icon.png",
     "list tauri://localhost and http://tauri.localhost on the server: CORS, route allowedOrigins, serverFunctions origins, live trustedOrigins (docs/native-shells)",
-    "export const prerender = true in a route's .backend.ts, for each page a shell opens on",
+    "the shell build prerenders / (--prerender in src-tauri/tauri.conf.json's beforeBuildCommand): list more pages there, comma-separated",
     `bunx tauri dev, or bunx tauri build (the page build lands in ${SHELL_DIST}/)`,
   ]
 }

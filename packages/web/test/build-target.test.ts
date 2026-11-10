@@ -200,6 +200,38 @@ test("--target static with no prerenderable route throws a clear error", async (
   await expect(promise).rejects.toThrow(/no routes were prerendered/)
 }, 60_000)
 
+test("--target static prerenders the pages the build names, not only the routes that opt in", async () => {
+  writeFileSync(join(routesDir, "index.tsx"), "export default function Home() { return null }\n")
+  rmSync(join(routesDir, "index.backend.ts"))
+  const manifest = discoverRoutes(routesDir)
+  const app = (client: { entry: string }) =>
+    createWebApp({ adapter: stubAdapter, manifest, clientEntry: client.entry })
+  const outDir = join(projectRoot, "dist-named")
+  await buildTarget("static", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-named"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+    prerenderApp: app,
+    prerenderPaths: ["/"],
+  })
+  expect(existsSync(join(outDir, "index.html"))).toBe(true)
+}, 60_000)
+
+test("prerenderPaths is for the static target: a server target refuses it before building", async () => {
+  const promise = buildTarget("bun", {
+    routesDir,
+    outDir: join(projectRoot, "dist-bun-named"),
+    workDir: join(projectRoot, ".work-bun-named"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+    prerenderPaths: ["/"],
+  })
+  await expect(promise).rejects.toThrow(/prerenderPaths applies to the static target only, not bun/)
+  expect(existsSync(join(projectRoot, "dist-bun-named"))).toBe(false)
+}, 60_000)
+
 test("a public file that shares the server bundle's path is refused, not served as the bundle", async () => {
   mkdirSync(join(projectRoot, "public"), { recursive: true })
   writeFileSync(join(projectRoot, "public", "Server.js"), "console.log('a public script')\n")
