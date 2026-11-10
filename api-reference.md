@@ -5963,7 +5963,6 @@ _No named exports (side-effect entrypoint)._
   Resolve the target-specific deploy shape before any bundling starts. Keeping this decision pure means Bun and Vite strategies share the same output filename, server target, and hand-off text; the filesystem emitter only has to execute the plan.
 - **preactDedupePlugin** _(const)_ - `preactDedupePlugin: (from: string) => BunPlugin`
 - **prerenderRoutes** _(function)_ - `prerenderRoutes: (options: PrerenderOptions) => Promise<PrerenderResult>`
-  Render every opted-in static route to a static `index.html` under `outDir`. Run AFTER `buildClient` (so the app references the hashed client entry). Returns a report of what was emitted vs skipped - the caller can use `prerendered` to wire a hybrid deploy (e.g. exclude those paths from the SSR work…
 - **publicEnvDefines** _(function)_ - `publicEnvDefines: (prefix: string, env: Readonly<Record<string, string | undefined>>) => Record<string, string>`
 - **reactDedupePlugin** _(const)_ - `reactDedupePlugin: (from: string) => BunPlugin`
 - **renderSizeReport** _(function)_ - `renderSizeReport: (report: SizeReport) => string`
@@ -6971,7 +6970,7 @@ _No named exports (side-effect entrypoint)._
 - **routeDataTransport** _(const)_ - `routeDataTransport: (send: RouterFetch) => FetchRouteData`
   The router's own route-data transport, over `send`: for a layer that wraps the data fetch (keep-alive in a build with a `transport`) and has to leave the request going where the router would send it.
 - **serverFetch** _(function)_ - `serverFetch: (options: ServerFetchOptions) => ServerFetch`
-  A router `fetch` for an app whose pages ship inside a native shell and whose server lives elsewhere. A path-absolute URL (`/todos`) is sent to `origin`; anything else is sent as written. Pass it as `createClientRouter({ fetch })`, or build with it as the `transport` module.
+  A router `fetch` for an app whose pages ship inside a native shell and whose server lives elsewhere. A path-absolute URL (`/todos`) is sent to `origin`, with the headers and credentials; a URL on `origin` gets them too, and any other URL is sent as written without them, so a call to a third party n…
 
 ### `@nifrajs/web/vitals`
 
