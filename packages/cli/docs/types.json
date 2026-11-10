@@ -19980,7 +19980,7 @@
     "kind": "const",
     "package": "@nifrajs/core",
     "signature": "export declare const crossSiteFormRefused: (source: RequestSource, formOrigins: FormOrigins | undefined) => boolean;",
-    "doc": "/** Whether a request is a cross-site HTML form post that {@link readBodyFramed} would refuse. It\n * decides on the cheapest header first: a request without an `Origin` (any non-browser client) costs one\n * lookup, and a browser's own-origin post stops at `Sec-Fetch-Site` before the URL is parsed. */"
+    "doc": "/** Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can\n * send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request\n * with no content type that carries an `Authorization` header other than a browser-managed scheme\n * (Basic, Digest, Negotiate, NTLM) passes: script-set, it forced a preflight, so the app's CORS policy\n * has already judged its origin. It decides on the cheapest header first: a request without an\n * `Origin` (any non-browser client) costs one lookup, and a browser's own-origin post stops at\n * `Sec-Fetch-Site` before the URL is parsed. */"
   },
   {
     "name": "csrf",

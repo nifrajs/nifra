@@ -18,7 +18,7 @@ beforeEach(() => {
   renderToStream: () => new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("<html></html>")); controller.close() } }),
   hydrationHead: () => "",
 }
-export const clientModule = new URL("../frontend/client.ts", import.meta.url).pathname
+export const clientModule = Bun.fileURLToPath(new URL("../frontend/client.ts", import.meta.url))
 `,
   )
   writeAppFile(
