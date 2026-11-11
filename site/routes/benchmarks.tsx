@@ -10,7 +10,6 @@ import {
   type HttpWorkloadTable,
   MULTIPLIERS,
   SSR_CAPTURED,
-  SSR_OUTPUT_GUARD_COST,
   SSR_TABLES,
   SSR_TABLES_B,
   type SsrTableRow,
@@ -97,46 +96,6 @@ function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
         ))}
       </tbody>
     </table>
-  )
-}
-
-function SsrOutputGuardCost() {
-  const capture = SSR_OUTPUT_GUARD_COST
-  return (
-    <section className="bench-block" style={{ marginTop: 24 }}>
-      <h3>Loader output work per request (local)</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Runtime</th>
-            <th className="num">Added per request</th>
-            <th className="num">Local SSR p50</th>
-            <th className="num">Share of p50</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(["node", "bun"] as const).map((runtime) => {
-            const result = capture.results[runtime]
-            return (
-              <tr key={runtime}>
-                <td>{`${runtime === "node" ? "Node" : "Bun"} ${result.runtimeVersion}`}</td>
-                <td className="num">{result.addedUsPerRequest.toFixed(2)} µs</td>
-                <td className="num">{result.p50ms.toFixed(2)} ms</td>
-                <td className="num">{result.guardShareOfP50Percent.toFixed(2)}%</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      <p className="note" style={{ marginTop: 8 }}>
-        Direct timing of the compiled <code>loaderOutput</code> guard on a {capture.items}-item
-        result; the added time subtracts an identity control. {capture.guardRounds} paired rounds ×{" "}
-        {capture.iterationsPerRound.toLocaleString("en-US")} calls on {capture.machine} (
-        {capture.date}). Local p50 comes from the same Nifra + React route ({capture.durationS}s
-        samples, {capture.warmupS}s warmup, {capture.connections} connections, oha {capture.oha}).
-        This is latency context, not a throughput uplift.
-      </p>
-    </section>
   )
 }
 
@@ -360,7 +319,6 @@ export default function Benchmarks() {
         separate runners; compare rates within each runtime. <code>n/a</code> means client JS could
         not be measured from the HTML.
       </div>
-      <SsrOutputGuardCost />
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
