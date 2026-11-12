@@ -3,35 +3,6 @@ import type { HttpRequest, HttpResponse } from "./uws.ts"
 
 const decoder = new TextDecoder()
 
-/** What a nifra app reads of the connection: the socket peer, resolved only when something asks. */
-export class UwsPlatform {
-  private res: HttpResponse | null
-  private ip: string | undefined
-
-  constructor(res: HttpResponse) {
-    this.res = res
-  }
-
-  get clientIp(): string | undefined {
-    if (this.ip === undefined && this.res !== null) {
-      try {
-        this.ip = decoder.decode(this.res.getRemoteAddressAsText())
-      } catch {
-        // Read after the response ended (an after-response hook): the peer is no longer available.
-        this.res = null
-      }
-    }
-    return this.ip
-  }
-
-  /** The uWS response is gone once the handler returns and the answer is async: keep the peer. */
-  detach(): void {
-    if (this.res === null) return
-    void this.clientIp
-    this.res = null
-  }
-}
-
 interface RawBodyReaders {
   readonly headers: Pick<Headers, "get">
   readonly body: ReadableStream<Uint8Array> | null
@@ -44,7 +15,14 @@ function detached(bytes: Uint8Array): ArrayBuffer {
   return new Uint8Array(bytes).buffer
 }
 
-const parseJson = (bytes: Uint8Array): unknown => JSON.parse(decoder.decode(bytes))
+// Fetch's `json()` decodes UTF-8 without a leading byte order mark; `Buffer#toString` keeps one, and
+// `JSON.parse` then refuses a body every other runtime parses.
+const utf8Text = (body: Buffer): string =>
+  body[0] === 0xef && body[1] === 0xbb && body[2] === 0xbf
+    ? body.toString("utf8", 3)
+    : body.toString("utf8")
+
+const parseJson = (body: Buffer): unknown => JSON.parse(utf8Text(body))
 
 /**
  * One request as `app.resolveNodeSource` reads it. The uWS request object is valid only until the
@@ -52,6 +30,19 @@ const parseJson = (bytes: Uint8Array): unknown => JSON.parse(decoder.decode(byte
  * moment it goes asynchronous ({@link detach}).
  */
 export class UwsSource {
+  /** Also the `platform` handed to the app: the socket peer, resolved only when something asks. */
+  get clientIp(): string | undefined {
+    if (this.peer === undefined && this.res !== null) {
+      try {
+        this.peer = decoder.decode(this.res.getRemoteAddressAsText())
+      } catch {
+        // Read after the response ended (an after-response hook): the peer is no longer available.
+        this.res = null
+      }
+    }
+    return this.peer
+  }
+
   readonly method: string
   readonly channel: BodyChannel | null
   /** The client disconnected before the answer was written. */
@@ -67,7 +58,10 @@ export class UwsSource {
   private readonly authority: string
   private readonly protocol: string
   private req: HttpRequest | null
-  private snapshot: Record<string, string> | undefined
+  private res: HttpResponse | null
+  private peer: string | undefined
+  /** `[name, value, ...]`, copied out when the app goes asynchronous. */
+  private captured: string[] | undefined
   private urlValue: string | undefined
   private headersValue: Headers | undefined
   private requestValue: Request | undefined
@@ -87,6 +81,7 @@ export class UwsSource {
     this.authority = authority
     this.protocol = protocol
     this.req = req
+    this.res = res
     this.channel = method === "GET" || method === "HEAD" ? null : new BodyChannel(res)
   }
 
@@ -115,22 +110,44 @@ export class UwsSource {
   header(name: string): string | null {
     const lower = name.toLowerCase()
     if (this.req !== null) return this.req.getHeader(lower) || null
-    return this.snapshot?.[lower] ?? null
+    const pairs = this.captured
+    if (pairs === undefined) return null
+    let found: string | undefined
+    for (let i = 0; i < pairs.length; i += 2) {
+      if (pairs[i] === lower) {
+        const value = pairs[i + 1] as string
+        found = found === undefined ? value : `${found}, ${value}`
+      }
+    }
+    return found || null
   }
 
   detach(): void {
     if (this.req === null) return
-    this.snapshot = this.collect()
+    const pairs: string[] = []
+    this.req.forEach((key, value) => {
+      pairs.push(key, value)
+    })
+    this.captured = pairs
     this.req = null
   }
 
+  /** The uWS objects are gone once the response ended, so nothing may reach for them again. */
+  release(): void {
+    this.req = null
+    this.res = null
+  }
+
   private collect(): Record<string, string> {
-    if (this.snapshot !== undefined) return this.snapshot
     const record: Record<string, string> = Object.create(null)
-    this.req?.forEach((key, value) => {
+    const add = (key: string, value: string): void => {
       const seen = record[key]
       record[key] = seen === undefined ? value : `${seen}, ${value}`
-    })
+    }
+    const pairs = this.captured
+    if (pairs !== undefined)
+      for (let i = 0; i < pairs.length; i += 2) add(pairs[i] as string, pairs[i + 1] as string)
+    else this.req?.forEach(add)
     return record
   }
 

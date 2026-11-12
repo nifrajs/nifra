@@ -21,7 +21,7 @@ import {
   resolveRequestHost,
   resolveRequestTarget,
 } from "@nifrajs/node/transport"
-import { UwsPlatform, UwsSource } from "./source.ts"
+import { UwsSource } from "./source.ts"
 import {
   type AppOptions,
   type HttpRequest,
@@ -85,16 +85,6 @@ export interface UwsServer {
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
 
-const METHODS = new Map<string, string>([
-  ["get", "GET"],
-  ["post", "POST"],
-  ["put", "PUT"],
-  ["delete", "DELETE"],
-  ["patch", "PATCH"],
-  ["head", "HEAD"],
-  ["options", "OPTIONS"],
-])
-
 const UNSUPPORTED = ["static", "fastResponse"] as const
 
 export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServer> {
@@ -123,14 +113,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
 
   let inFlight = 0
   let closed = false
-  const live = new Set<HttpResponse>()
 
-  const finish = (res: HttpResponse, source: UwsSource): void => {
+  const finish = (source: UwsSource): void => {
     if (source.settled) return
     source.settled = true
     source.channel?.close()
+    source.release()
     inFlight -= 1
-    live.delete(res)
   }
 
   const fail = (res: HttpResponse, source: UwsSource, error: unknown): void => {
@@ -144,32 +133,40 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
     } catch {
       // The connection went away between the failure and the write.
     }
-    finish(res, source)
+    finish(source)
+  }
+
+  // uWS wants an abort handler on any response that outlives the route callback, and none on one that
+  // ends inside it: a synchronous answer skips the registration (a native call and a closure).
+  const watch = (res: HttpResponse, source: UwsSource): void => {
+    res.onAborted(() => {
+      source.abort()
+      finish(source)
+    })
   }
 
   const answer = (
     res: HttpResponse,
     source: UwsSource,
     outcome: NodeServeOutcome | Promise<NodeServeOutcome>,
-    platform: UwsPlatform,
     isHead: boolean,
   ): void => {
     if (outcome instanceof Promise) {
       source.detach()
-      platform.detach()
+      watch(res, source)
       outcome.then(
         (settled) => {
           if (source.aborted) return
           try {
-            const written = writeOutcome(res, source, settled, isHead)
+            const written = writeOutcome(res, source, settled, isHead, false)
             if (written instanceof Promise) {
               written.then(
-                () => finish(res, source),
+                () => finish(source),
                 (error: unknown) => fail(res, source, error),
               )
               return
             }
-            finish(res, source)
+            finish(source)
           } catch (error) {
             fail(res, source, error)
           }
@@ -181,17 +178,19 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
       return
     }
     try {
-      const written = writeOutcome(res, source, outcome, isHead)
+      // uWS corks a response written from the handler's own synchronous part; a write after an
+      // `await` is the one that needs `cork`.
+      const written = writeOutcome(res, source, outcome, isHead, true)
       if (written instanceof Promise) {
         source.detach()
-        platform.detach()
+        watch(res, source)
         written.then(
-          () => finish(res, source),
+          () => finish(source),
           (error: unknown) => fail(res, source, error),
         )
         return
       }
-      finish(res, source)
+      finish(source)
     } catch (error) {
       fail(res, source, error)
     }
@@ -207,45 +206,48 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
 
   const app$ = options.tls === undefined ? uWS.App() : uWS.SSLApp(sslOptions(options.tls))
 
-  app$.any("/*", (res: HttpResponse, req: HttpRequest) => {
+  const handle = (method: string | undefined) => (res: HttpResponse, req: HttpRequest) => {
     const authority = resolveRequestHost(req.getHeader("host") || undefined, policy)
     if (authority === undefined) {
       refuse(res)
       return
     }
-    const lowered = req.getMethod()
-    const method = METHODS.get(lowered) ?? req.getCaseSensitiveMethod().toUpperCase()
+    const verb = method ?? req.getCaseSensitiveMethod().toUpperCase()
     let target = req.getUrl()
     const query = req.getQuery()
     if (query !== undefined) target = `${target}?${query}`
     target = resolveRequestTarget(target, policy.normalizeTarget)
 
     inFlight += 1
-    live.add(res)
-    const source = new UwsSource(method, target, authority, protocol, req, res)
-    // Without an abort handler uWS terminates the process on a client that hangs up mid-response.
-    res.onAborted(() => {
-      source.abort()
-      finish(res, source)
-    })
-    const platform = new UwsPlatform(res)
-    const isHead = method === "HEAD"
+    const source = new UwsSource(verb, target, authority, protocol, req, res)
     let outcome: NodeServeOutcome | Promise<NodeServeOutcome>
     try {
       if (resolveNodeSource === undefined) {
-        outcome = Promise.resolve(app.fetch(source.request, platform)).then((response) => ({
+        outcome = Promise.resolve(app.fetch(source.request, source)).then((response) => ({
           kind: "response",
           response,
         }))
       } else {
-        outcome = resolveNodeSource.call(app, source, platform, nodeOutcomeRuntime)
+        outcome = resolveNodeSource.call(app, source, source, nodeOutcomeRuntime)
       }
     } catch (error) {
       fail(res, source, error)
       return
     }
-    answer(res, source, outcome, platform, isHead)
-  })
+    answer(res, source, outcome, verb === "HEAD")
+  }
+
+  // One route per common method: uWS has already matched the verb, so none of them reads it back
+  // across the native boundary. `any` catches the rest (QUERY, PROPFIND, ...).
+  app$
+    .get("/*", handle("GET"))
+    .post("/*", handle("POST"))
+    .put("/*", handle("PUT"))
+    .del("/*", handle("DELETE"))
+    .patch("/*", handle("PATCH"))
+    .head("/*", handle("HEAD"))
+    .options("/*", handle("OPTIONS"))
+    .any("/*", handle(undefined))
 
   // A WebSocket handshake never reaches the route above: uWS hands it to this one, and nothing here
   // serves sockets, so it is refused instead of being answered as a plain GET.

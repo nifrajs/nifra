@@ -24,6 +24,11 @@ function statusLine(status: number): string {
   return line
 }
 
+// An enumerable property on Object.prototype must never become a response header.
+const hasOwn = Object.hasOwn
+// Null-prototype records (what the core builds) cannot inherit anything, so they skip the per-key check.
+const inherits = (record: object): boolean => Object.getPrototypeOf(record) !== null
+
 const checkedNames = new Set<string>()
 function checkName(name: string): void {
   if (checkedNames.has(name)) return
@@ -62,7 +67,9 @@ function validate(
 ): void {
   statusLine(status)
   if (headers !== undefined) {
+    const guard = inherits(headers)
     for (const name in headers) {
+      if (guard && !hasOwn(headers, name)) continue
       checkName(name)
       const value = headers[name]
       if (typeof value === "string") checkValue(value)
@@ -81,8 +88,9 @@ function emitHeaders(
 ): void {
   let typed = false
   if (headers !== undefined) {
+    const guard = inherits(headers)
     for (const name in headers) {
-      if (owned(name)) continue
+      if ((guard && !hasOwn(headers, name)) || owned(name)) continue
       if (!typed && name.length === 12 && name.toLowerCase() === "content-type") typed = true
       const value = headers[name]
       if (typeof value === "string") res.writeHeader(name, value)
@@ -101,7 +109,8 @@ const byteLengthOf = (body: string | Uint8Array): number =>
 function declaredLength(headers: HeaderRecord | undefined): number | undefined {
   if (headers === undefined) return undefined
   for (const name in headers) {
-    if (name.length !== 14 || name.toLowerCase() !== "content-length") continue
+    if (name.length !== 14 || !hasOwn(headers, name) || name.toLowerCase() !== "content-length")
+      continue
     const value = headers[name]
     const text = typeof value === "string" ? value : value?.[0]
     if (text === undefined || !/^\d{1,15}$/.test(text)) return undefined
@@ -110,7 +119,30 @@ function declaredLength(headers: HeaderRecord | undefined): number | undefined {
   return undefined
 }
 
-/** A buffered answer: status, headers, and the whole body (or none) in one corked write. */
+function emitBuffered(
+  res: HttpResponse,
+  status: number,
+  headers: HeaderRecord | undefined,
+  cookies: readonly string[] | undefined,
+  body: string | Uint8Array | null,
+  isHead: boolean,
+  defaultType: string | undefined,
+  headLength: number | undefined,
+): void {
+  const bodyless = isBodyless(status)
+  res.writeStatus(statusLine(status))
+  emitHeaders(res, headers, cookies, bodyless || body === null ? undefined : defaultType)
+  if (bodyless) res.endWithoutBody()
+  else if (isHead) res.endWithoutBody(headLength ?? (body === null ? 0 : byteLengthOf(body)))
+  else if (body === null) res.end()
+  else res.end(body)
+}
+
+/**
+ * A buffered answer: status, headers, and the whole body (or none) in one write. `inHandler` is true
+ * while still inside uWS's route callback, where the socket is already corked; anywhere else the write
+ * is corked here.
+ */
 function writeBuffered(
   res: HttpResponse,
   source: UwsSource,
@@ -120,18 +152,17 @@ function writeBuffered(
   body: string | Uint8Array | null,
   isHead: boolean,
   defaultType: string | undefined,
+  inHandler: boolean,
   headLength?: number,
 ): void {
   validate(status, headers, cookies)
-  const bodyless = isBodyless(status)
-  res.cork(() => {
-    res.writeStatus(statusLine(status))
-    emitHeaders(res, headers, cookies, bodyless || body === null ? undefined : defaultType)
-    if (bodyless) res.endWithoutBody()
-    else if (isHead) res.endWithoutBody(headLength ?? (body === null ? 0 : byteLengthOf(body)))
-    else if (body === null) res.end()
-    else res.end(body)
-  })
+  if (inHandler) {
+    emitBuffered(res, status, headers, cookies, body, isHead, defaultType, headLength)
+  } else {
+    res.cork(() => {
+      emitBuffered(res, status, headers, cookies, body, isHead, defaultType, headLength)
+    })
+  }
   source.headWritten = true
 }
 
@@ -155,6 +186,7 @@ export function writeOutcome(
   source: UwsSource,
   outcome: NodeServeOutcome,
   isHead: boolean,
+  inHandler: boolean,
 ): void | Promise<void> {
   if (source.aborted) return
   switch (outcome.kind) {
@@ -168,6 +200,7 @@ export function writeOutcome(
         outcome.body,
         isHead,
         JSON_CONTENT_TYPE,
+        inHandler,
       )
       return
     case "body":
@@ -180,10 +213,11 @@ export function writeOutcome(
         outcome.body,
         isHead,
         undefined,
+        inHandler,
       )
       return
     case "response":
-      return writeResponse(res, source, outcome.response, isHead)
+      return writeResponse(res, source, outcome.response, isHead, inHandler)
   }
 }
 
@@ -192,6 +226,7 @@ function writeResponse(
   source: UwsSource,
   response: Response,
   isHead: boolean,
+  inHandler: boolean,
 ): void | Promise<void> {
   const headers: Record<string, string> = {}
   response.headers.forEach((value, name) => {
@@ -201,7 +236,7 @@ function writeResponse(
   const status = response.status
   const stream = response.body
   if (stream === null || isBodyless(status)) {
-    writeBuffered(res, source, status, headers, cookies, null, isHead, undefined)
+    writeBuffered(res, source, status, headers, cookies, null, isHead, undefined, inHandler)
     return
   }
   if (isHead) {
@@ -215,6 +250,7 @@ function writeResponse(
       null,
       true,
       undefined,
+      inHandler,
       declaredLength(headers) ?? 0,
     )
     return
@@ -253,7 +289,7 @@ async function pump(
   if (finished) {
     const [first] = pending
     const only = first === undefined ? null : pending.length === 1 ? first : Buffer.concat(pending)
-    writeBuffered(res, source, status, headers, cookies, only, false, undefined)
+    writeBuffered(res, source, status, headers, cookies, only, false, undefined, false)
     return
   }
   validate(status, headers, cookies)

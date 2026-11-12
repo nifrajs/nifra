@@ -1,5 +1,9 @@
-// node bench/node-uws/bench.mjs [rounds] [seconds] [connections]
-// Interleaved A/B of the same nifra app on node:http (@nifrajs/node serve) vs the uWS spike.
+// node bench/node-uws/bench.mjs [rounds] [seconds] [connections] [arms]
+//
+// Interleaved A/B of the same nifra app behind different HTTP transports, plus a raw uWebSockets.js
+// ceiling. `arms` is a comma list of `label=transport@bundle` (transport: node | uws | raw; bundle: a
+// file built from serve.ts, default dist/serve.js), e.g.
+//   node bench.mjs 9 5 50 node,raw,uws,uws-old=uws@/tmp/old/serve.js
 // Each sample is discarded if other processes were busy before, 400 ms into, or after the run.
 import { execFileSync, spawn } from "node:child_process"
 import { fileURLToPath } from "node:url"
@@ -7,9 +11,16 @@ import { fileURLToPath } from "node:url"
 const rounds = Number(process.argv[2] ?? 7)
 const secs = Number(process.argv[3] ?? 6)
 const conns = Number(process.argv[4] ?? 50)
+const armSpec = process.argv[5] ?? "node,raw,uws"
 const dir = fileURLToPath(new URL(".", import.meta.url))
 const AUTH = "Bearer abcdefghijklmnopqrstuvwxyz"
-const ports = { node: { bare: 47311, real: 47312 }, uws: { bare: 47321, real: 47322 } }
+
+const arms = armSpec.split(",").map((spec, index) => {
+  const [label, rest] = spec.includes("=") ? spec.split("=") : [spec, spec]
+  const [transport, bundle] = rest.split("@")
+  if (!["node", "uws", "raw"].includes(transport)) throw new Error(`unknown transport in ${spec}`)
+  return { label, transport, bundle: bundle ?? `${dir}dist/serve.js`, index }
+})
 
 const shapes = [
   { name: "bare GET /", app: "bare", path: "/", args: [] },
@@ -35,20 +46,21 @@ const shapes = [
     ],
   },
 ]
+const only = process.env.SHAPES?.split(",")
+const activeShapes =
+  only === undefined ? shapes : shapes.filter((s) => only.some((o) => s.name.includes(o)))
 
 const servers = []
-for (const transport of ["node", "uws"]) {
+let nextPort = 47400
+for (const arm of arms) {
   for (const app of ["bare", "real"]) {
-    const child = spawn(
-      "node",
-      [`${dir}dist/serve.js`, transport, app, String(ports[transport][app])],
-      {
-        stdio: "ignore",
-        // uWebSockets.js is a devDependency of packages/node-uws; the bundle keeps it external.
-        env: { ...process.env, NODE_PATH: `${dir}../../packages/node-uws/node_modules` },
-      },
-    )
-    servers.push({ transport, app, pid: child.pid, child })
+    const port = nextPort++
+    const child = spawn("node", [arm.bundle, arm.transport, app, String(port)], {
+      stdio: "ignore",
+      // uWebSockets.js is a devDependency of packages/node-uws; the bundles keep it external.
+      env: { ...process.env, NODE_PATH: `${dir}../../packages/node-uws/node_modules` },
+    })
+    servers.push({ arm, app, port, pid: child.pid, child })
   }
 }
 const ours = new Set(servers.map((s) => s.pid))
@@ -66,7 +78,7 @@ function othersCpu() {
   }
   return sum
 }
-const CPU_LIMIT = 650
+const CPU_LIMIT = Number(process.env.CPU_LIMIT ?? 650)
 async function quiet() {
   for (let i = 0; i < 90; i++) {
     if (othersCpu() < CPU_LIMIT) return true
@@ -80,9 +92,8 @@ function cpuSeconds(pid) {
   return Number(mins) * 60 + Number(rest)
 }
 
-async function sample(shape, transport) {
-  const server = servers.find((s) => s.transport === transport && s.app === shape.app)
-  const port = ports[transport][shape.app]
+async function sample(shape, arm) {
+  const server = servers.find((s) => s.arm === arm && s.app === shape.app)
   if (!(await quiet())) return { discarded: "never quiet" }
   const before = othersCpu()
   const cpu0 = cpuSeconds(server.pid)
@@ -97,7 +108,7 @@ async function sample(shape, transport) {
       "--output-format",
       "json",
       ...shape.args,
-      `http://127.0.0.1:${port}${shape.path}`,
+      `http://127.0.0.1:${server.port}${shape.path}`,
     ],
     { stdio: ["ignore", "pipe", "ignore"] },
   )
@@ -123,38 +134,48 @@ async function sample(shape, transport) {
 
 const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]
 const results = {}
-for (const shape of shapes) {
-  results[shape.name] = { node: [], uws: [] }
+for (const shape of activeShapes) {
+  results[shape.name] = Object.fromEntries(arms.map((a) => [a.label, []]))
   for (let r = 0; r < rounds; r++) {
-    const order = r % 2 === 0 ? ["node", "uws"] : ["uws", "node"]
+    // Rotate the order each round so no arm always runs first or last.
+    const order = arms.map((_, i) => arms[(i + r) % arms.length])
     const pair = {}
-    for (const transport of order) pair[transport] = await sample(shape, transport)
-    for (const t of order) {
-      if (pair[t].discarded) console.log(`  discard ${shape.name} r${r} ${t}: ${pair[t].discarded}`)
-    }
-    if (pair.node.discarded || pair.uws.discarded) continue
-    results[shape.name].node.push(pair.node)
-    results[shape.name].uws.push(pair.uws)
+    for (const arm of order) pair[arm.label] = await sample(shape, arm)
+    const bad = arms.filter((a) => pair[a.label].discarded)
+    for (const a of bad)
+      console.log(`  discard ${shape.name} r${r} ${a.label}: ${pair[a.label].discarded}`)
+    if (bad.length > 0) continue
+    for (const a of arms) results[shape.name][a.label].push(pair[a.label])
     console.log(
-      `${shape.name} r${r}: node ${pair.node.rps.toFixed(0)} uws ${pair.uws.rps.toFixed(0)} ratio ${(pair.uws.rps / pair.node.rps).toFixed(3)}`,
+      `${shape.name} r${r}: ${arms.map((a) => `${a.label} ${pair[a.label].rps.toFixed(0)}`).join(" ")}`,
     )
   }
 }
 
 console.log("\n== summary (paired, clean samples only) ==")
-for (const [name, r] of Object.entries(results)) {
-  const n = r.node.length
+for (const [name, byArm] of Object.entries(results)) {
+  const first = arms[0].label
+  const n = byArm[first].length
   if (n === 0) {
     console.log(`${name}: no clean samples`)
     continue
   }
-  const ratios = r.node.map((x, i) => r.uws[i].rps / x.rps)
-  const wins = ratios.filter((x) => x > 1).length
-  console.log(
-    `${name}: n=${n} node ${median(r.node.map((x) => x.rps)).toFixed(0)} rps / ${median(r.node.map((x) => x.usPerReq)).toFixed(1)} us / p99 ${median(r.node.map((x) => x.p99)).toFixed(2)} ms | ` +
-      `uws ${median(r.uws.map((x) => x.rps)).toFixed(0)} rps / ${median(r.uws.map((x) => x.usPerReq)).toFixed(1)} us / p99 ${median(r.uws.map((x) => x.p99)).toFixed(2)} ms | ` +
-      `rps ratio median ${median(ratios).toFixed(3)} (uws faster in ${wins}/${n})`,
-  )
+  console.log(`${name} (n=${n})`)
+  for (const arm of arms) {
+    const rows = byArm[arm.label]
+    const ratios = rows.map((x, i) => x.rps / byArm[first][i].rps)
+    const wins = ratios.filter((x) => x > 1).length
+    console.log(
+      `  ${arm.label.padEnd(10)} ${median(rows.map((x) => x.rps))
+        .toFixed(0)
+        .padStart(7)} rps  ` +
+        `${median(rows.map((x) => x.usPerReq))
+          .toFixed(2)
+          .padStart(6)} us/req  ` +
+        `p99 ${median(rows.map((x) => x.p99)).toFixed(2)} ms  ` +
+        `x${median(ratios).toFixed(3)} vs ${first} (${wins}/${n})`,
+    )
+  }
 }
 for (const s of servers) s.child.kill()
 process.exit(0)

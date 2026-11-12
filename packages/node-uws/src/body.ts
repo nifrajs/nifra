@@ -34,7 +34,11 @@ export class BodyChannel {
       // uWS keeps delivering an upload after the answer went out; the response is no longer ours to touch.
       if (this.gone) return
       if (chunk.byteLength > 0 && !this.discarded) {
-        this.chunks.push(Buffer.from(chunk.slice(0)))
+        // uWS neuters `chunk` when this returns. A pooled copy: no backing store per small body.
+        const view = new Uint8Array(chunk)
+        const copy = Buffer.allocUnsafe(view.byteLength)
+        copy.set(view)
+        this.chunks.push(copy)
         this.queued += chunk.byteLength
         if (!isLast && !this.paused && this.queued >= BODY_HIGH_WATER) {
           this.paused = true
