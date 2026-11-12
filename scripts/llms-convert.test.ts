@@ -30,6 +30,17 @@ describe("doc consts", () => {
     expect(values.get("ESCAPED")).toBe("a ` b ${c}")
     expect(unresolved.get("meta")).toBe("CallExpression is not a string the page can show")
   })
+
+  test("literal two-column rows evaluate for static JSX tables", () => {
+    const { tuples } = evaluateDocConsts(
+      "page.tsx",
+      'const TUPLE = [["React", "19.3.1"], ["TypeScript", "6.0.3"]] as const',
+    )
+    expect(tuples.get("TUPLE")).toEqual([
+      ["React", "19.3.1"],
+      ["TypeScript", "6.0.3"],
+    ])
+  })
 })
 
 describe("jsxToMarkdown", () => {
@@ -51,6 +62,19 @@ describe("jsxToMarkdown", () => {
       page('const A = "a"', '<CodeBlock\n  code={\n    A + "\\nb"\n  }\n  lang="ts"\n/>'),
     )
     expect(md).toBe("```ts\na\nb\n```")
+  })
+
+  test("a literal tuple map renders table rows instead of JSX residue", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["React", "19.3.1"], ["TypeScript", "6.0.3"]] as const',
+        "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("Dependency | Certified tuple |")
+    expect(md).toContain("React | 19.3.1 |")
+    expect(md).toContain("TypeScript | 6.0.3 |")
+    expect(md).not.toContain("TUPLE.map")
   })
 
   test("a block whose code cannot be evaluated fails, naming the page and the const", () => {

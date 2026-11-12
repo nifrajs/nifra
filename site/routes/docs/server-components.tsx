@@ -36,7 +36,7 @@ const components = createServerComponents({
   deployment: deploymentId,
   adapter: vueServerComponents(),
   owners: {
-    product: { // exact manifest route id, not a URL pattern
+    "product/[id]": { // exact manifest route id, not a URL pattern
       components: [Product],
       scope: "anonymous", // personalized pages supply a public auth-scope token
       cache: {

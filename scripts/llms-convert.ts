@@ -41,6 +41,30 @@ function isJsxResidue(line: string): boolean {
   return false
 }
 
+const STATIC_TUPLE_TABLE =
+  /<table\b[^>]*>\s*<thead\b[^>]*>\s*<tr\b[^>]*>\s*<th\b[^>]*>([\s\S]*?)<\/th>\s*<th\b[^>]*>([\s\S]*?)<\/th>\s*<\/tr>\s*<\/thead>\s*<tbody\b[^>]*>\s*\{([A-Za-z_$][\w$]*)\.map\(\(\[([A-Za-z_$][\w$]*),\s*([A-Za-z_$][\w$]*)\]\)\s*=>\s*(?:\(\s*)?<tr\b[^>]*>\s*<td\b[^>]*>\{\4\}<\/td>\s*<td\b[^>]*>\{\5\}<\/td>\s*<\/tr>\s*\)?\)\}\s*<\/tbody>\s*<\/table>/g
+
+function escapeText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+/** Render the literal two-column JSX tuple table before the generic tag stripping pass. */
+function renderStaticTupleTable(
+  body: string,
+  tuples: ReadonlyMap<string, readonly (readonly [string, string])[]>,
+): string {
+  return body.replace(
+    STATIC_TUPLE_TABLE,
+    (match: string, header: string, valueHeader: string, name: string): string => {
+      const rows = tuples.get(name)
+      if (rows === undefined) return match
+      return `${header} | ${valueHeader} |\n\n${rows
+        .map(([label, value]) => `${escapeText(label)} | ${escapeText(value)} |`)
+        .join("\n\n")}`
+    },
+  )
+}
+
 // A braced value is a run of template literals and other non-brace characters. The two never start
 // with the same character, so a tag that fails to match backtracks linearly.
 const CODE_BLOCK_TAG =
@@ -106,6 +130,7 @@ export function jsxToMarkdown(
   if (body.includes("<CodeBlock"))
     throw new Error(`${file}: a <CodeBlock> is written in a form the converter cannot read`)
   body = evaluateDataCalls(file, body, data)
+  body = renderStaticTupleTable(body, consts.tuples)
   // Inline code is text, never markup: `<reason>` inside it must survive the leftover-tag pass.
   const spans: string[] = []
   body = body.replace(/<code>([\s\S]*?)<\/code>/g, (_, t: string) => {

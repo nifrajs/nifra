@@ -2258,7 +2258,7 @@ const components = createServerComponents({
   deployment: deploymentId,
   adapter: vueServerComponents(),
   owners: {
-    product: { // exact manifest route id, not a URL pattern
+    "product/[id]": { // exact manifest route id, not a URL pattern
       components: [Product],
       scope: "anonymous", // personalized pages supply a public auth-scope token
       cache: {
@@ -2375,7 +2375,21 @@ The pipeline has complete application client/SSR entries; React adds an RSC entr
 
 Keep the certified compiler tuple pinned in the application lockfile. React's framework-facing RSC APIs require exact alignment even when ordinary React SSR allows a broader peer range. The pipeline reads component modules with the TypeScript compiler API, which TypeScript 7 does not ship: on TypeScript 7 the build stops with `NIFRA_TS_UNSUPPORTED`, and `nifra check` reports the same code and checks each component module as an ordinary backend import.
 
-DependencyCertified tuple{TUPLE.map(([name, version]) => {name}{version})}
+Dependency | Certified tuple |
+
+React / React DOM / Flight | 19.3.1 / 19.3.1 / 19.3.1 |
+
+Vue / plugin-vue | 3.5.40 / 6.0.9 |
+
+Svelte / plugin-svelte | 5.56.8 / 7.3.1 |
+
+Solid / vite-plugin-solid | 1.9.14 / 2.11.14 |
+
+Preact / render-to-string / preset-vite | 10.29.8 / 6.7.0 / 2.10.5 |
+
+Vite / plugin-rsc | 8.3.4 / 0.5.35 |
+
+TypeScript | 6.0.3 |
 
 The runtime matrix covers Bun 1.3.14 and 1.4.4, Node 22.23.3 and 26.12.0, Deno 2.0.0 and 2.9.7, Cloudflare Workers and Pages under workerd compatibility date 2026-09-18, and Vercel's Node 22 entry. Browser certification uses Playwright 1.63.0 with Chromium 153.0.8010.12, Firefox 155.0 and WebKit 26.6. Vanilla retains ordinary SSR; its server-component opt-in is rejected.
 
