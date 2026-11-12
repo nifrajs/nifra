@@ -208,7 +208,25 @@ export interface Waiver {
   readonly id: string
   readonly why: string
   matches(violation: Violation, testCase: Case, outcomes: Outcomes): boolean
+  /** The one lane this quirk moves and the requests that trigger it. Two quirks in one case split the
+   * lanes three ways, which neither `matches` alone; `judge` excuses that when the rest agree. */
+  readonly quirk?: { readonly lane: LaneName; triggeredBy(testCase: Case): boolean }
 }
+
+const hasNonAsciiHeader = (testCase: Case) =>
+  testCase.request.headers.some(([, value]) => nonAscii(value))
+
+const repeatsEmptyMember = (testCase: Case) => {
+  const seen = new Map<string, number>()
+  for (const [name] of testCase.request.headers)
+    seen.set(name.toLowerCase(), (seen.get(name.toLowerCase()) ?? 0) + 1)
+  return testCase.request.headers.some(
+    ([name, value]) => value.trim() === "" && (seen.get(name.toLowerCase()) ?? 0) > 1,
+  )
+}
+
+const hasTrailingSpace = (testCase: Case) =>
+  testCase.request.headers.some(([, value]) => value !== value.trimEnd())
 
 const statusOf = (outcomes: Outcomes, lane: LaneName) => {
   const outcome = outcomes.get(lane)
@@ -294,12 +312,15 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
     id: "U4 workerd-waits-after-early-eof",
     why:
       "When a request's body ends early (the client half-closes inside its framing), local workerd keeps " +
-      "the Worker's body read waiting and never answers. Bun and Node close; Deno answers 400.",
-    matches: (violation, testCase) =>
-      violation.kind === "hang" &&
-      violation.lanes.length === 1 &&
-      violation.lanes[0] === "workerd" &&
-      testCase.refusable.includes("body shorter than its framing"),
+      "the Worker's body read waiting and never answers. Bun and Node close; Deno answers 400. Where the " +
+      "handler never reads the body, Bun and Node answer it, so the wait is also a difference.",
+    matches: (violation, testCase, outcomes) =>
+      testCase.refusable.includes("body shorter than its framing") &&
+      (violation.kind === "hang"
+        ? violation.lanes.length === 1 && violation.lanes[0] === "workerd"
+        : violation.kind === "difference" &&
+          outcomes.get("workerd")?.kind === "timeout" &&
+          othersAgree(outcomes, "workerd")),
   },
   {
     id: "U5 workerd-decodes-header-bytes-as-utf8",
@@ -308,8 +329,9 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       "Fetch's ByteString says; workerd decodes it as UTF-8. An app echoing such a header differs.",
     matches: (violation, testCase, outcomes) =>
       violation.kind === "difference" &&
-      testCase.request.headers.some(([, value]) => nonAscii(value)) &&
+      hasNonAsciiHeader(testCase) &&
       othersAgree(outcomes, "workerd"),
+    quirk: { lane: "workerd", triggeredBy: hasNonAsciiHeader },
   },
   {
     id: "U6 repeated-header-empty-member",
@@ -317,15 +339,11 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       "A field repeated with an empty member (`x:` and `x: 1`) is read two ways: Bun, Node and workerd " +
       "join it as ', 1', while Deno's `Headers` iteration drops the empty member (`get` does not). A " +
       "header schema or an echo of the value differs by runtime.",
-    matches: (violation, testCase, outcomes) => {
-      if (violation.kind !== "difference" || !othersAgree(outcomes, "deno")) return false
-      const seen = new Map<string, number>()
-      for (const [name] of testCase.request.headers)
-        seen.set(name.toLowerCase(), (seen.get(name.toLowerCase()) ?? 0) + 1)
-      return testCase.request.headers.some(
-        ([name, value]) => value.trim() === "" && (seen.get(name.toLowerCase()) ?? 0) > 1,
-      )
-    },
+    matches: (violation, testCase, outcomes) =>
+      violation.kind === "difference" &&
+      othersAgree(outcomes, "deno") &&
+      repeatsEmptyMember(testCase),
+    quirk: { lane: "deno", triggeredBy: repeatsEmptyMember },
   },
   {
     id: "U18 workerd-drops-leading-empty-content-type",
@@ -365,8 +383,9 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       "trailing space (' pad ' reads as 'pad '). An app echoing such a header differs.",
     matches: (violation, testCase, outcomes) =>
       violation.kind === "difference" &&
-      testCase.request.headers.some(([, value]) => value !== value.trimEnd()) &&
+      hasTrailingSpace(testCase) &&
       othersAgree(outcomes, "workerd"),
+    quirk: { lane: "workerd", triggeredBy: hasTrailingSpace },
   },
   {
     id: "U3 deno-truncates-after-early-eof",
@@ -616,8 +635,22 @@ export function judge(
       (candidate) =>
         !isExposed(candidate.id, exposed) && candidate.matches(violation, testCase, outcomesFor),
     )
-    if (waiver !== undefined) excusedBy.add(waiver.id)
-    return waiver === undefined
+    if (waiver !== undefined) {
+      excusedBy.add(waiver.id)
+      return false
+    }
+    if (violation.kind !== "difference") return true
+    const quirks = OPEN_FINDINGS.flatMap((candidate) =>
+      candidate.quirk !== undefined &&
+      !isExposed(candidate.id, exposed) &&
+      candidate.quirk.triggeredBy(testCase)
+        ? [{ id: candidate.id, lane: candidate.quirk.lane }]
+        : [],
+    )
+    const lanes = [...new Set(quirks.map((quirk) => quirk.lane))]
+    if (lanes.length < 2 || !othersAgree(compared, ...lanes)) return true
+    for (const quirk of quirks) excusedBy.add(quirk.id)
+    return false
   })
   return { violations: open, excusedBy: [...excusedBy] }
 }

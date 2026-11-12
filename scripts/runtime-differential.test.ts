@@ -394,6 +394,64 @@ describe("judge", () => {
     expect(judge(echoed, outcomes).excusedBy).toEqual(["U5 workerd-decodes-header-bytes-as-utf8"])
     expect(judge(echoed, outcomes, new Set(["U5"])).violations[0]?.kind).toBe("difference")
   })
+
+  test("two single-lane quirks in one case wait together, only where the other lanes agree", () => {
+    const both = caseOf(
+      get("/whoami", [
+        ["Host", "127.0.0.1"],
+        ["x-caller", ""],
+        ["x-caller", "café"],
+      ]),
+    )
+    const joined = response(200, '{"caller":", cafÃ©"}')
+    const threeWays = new Map<LaneName, Outcome>([
+      ["bun-serve", joined],
+      ["node", joined],
+      ["deno", response(200, '{"caller":"cafÃ©"}')],
+      ["workerd", response(200, '{"caller":", café"}')],
+    ])
+    expect(judge(both, threeWays)).toEqual({
+      violations: [],
+      excusedBy: ["U5 workerd-decodes-header-bytes-as-utf8", "U6 repeated-header-empty-member"],
+    })
+    const apart = new Map<LaneName, Outcome>([...threeWays, ["node", response(400, "{}")]])
+    expect(judge(both, apart).violations[0]?.kind).toBe("difference")
+    for (const exposed of ["U5", "U6"]) {
+      expect(judge(both, threeWays, new Set([exposed])).violations[0]?.kind).toBe("difference")
+    }
+    // One quirk's request does not excuse the other lane.
+    const onlyEmpty = caseOf(
+      get("/whoami", [
+        ["Host", "127.0.0.1"],
+        ["x-caller", ""],
+        ["x-caller", "cafe"],
+      ]),
+    )
+    expect(judge(onlyEmpty, threeWays).violations[0]?.kind).toBe("difference")
+  })
+
+  test("a workerd wait on a short body waits on U4 as a hang and as a difference", () => {
+    const short = caseOf(get("/pages/form"), "pageForm", ["body shorter than its framing"])
+    const page = response(200, "null")
+    const waited = new Map<LaneName, Outcome>([
+      ["bun-serve", page],
+      ["node", page],
+      ["workerd", { kind: "timeout", received: 0 }],
+    ])
+    expect(judge(short, waited)).toEqual({
+      violations: [],
+      excusedBy: ["U4 workerd-waits-after-early-eof"],
+    })
+    const apart = new Map<LaneName, Outcome>([...waited, ["node", response(200, "other")]])
+    expect(judge(short, apart).violations.map((violation) => violation.kind)).toEqual([
+      "difference",
+    ])
+    expect(
+      judge(caseOf(get("/pages/form"), "pageForm"), waited).violations.map(
+        (violation) => violation.kind,
+      ),
+    ).toEqual(["hang", "difference"])
+  })
 })
 
 test("known stderr entries are matched as whole entries, with what follows them", () => {
