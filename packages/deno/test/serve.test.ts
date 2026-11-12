@@ -808,6 +808,25 @@ Deno.test("a mounted app routes a request no Request can be rebuilt from on the 
   }
 })
 
+// An onRequest hook that hands back the request it was given changes nothing, so the mounted app
+// still routes the target its parent resolved.
+Deno.test("a mounted app's onRequest hook returning its own request keeps the target its parent resolved", async () => {
+  const child = server()
+    .onRequest((req) => req)
+    .get("/pages/item", () => ({ ok: true }))
+  const app = server({ normalizeTarget: true }).mount({ path: "/pages", app: child })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const statuses: number[] = []
+    for (const target of ["/pages/item", "/x/../pages/item", "/x/../pages/none"]) {
+      statuses.push((await rawExchange(running.port, "TRACE", target)).status)
+    }
+    assertEquals(statuses, [405, 405, 404])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 const named: StandardSchemaV1<unknown, { name: string }> = {
   "~standard": {
     version: 1,

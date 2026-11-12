@@ -4538,8 +4538,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         )
       }
       if (outcome instanceof Request) {
-        if (outcome !== seen) recordRequestReplacement(outcome, seen)
-        current = outcome
+        if (outcome !== seen) {
+          recordRequestReplacement(outcome, seen)
+          current = outcome
+        }
         if (outcome !== originalRequest) this.responseRequests.set(originalRequest, outcome)
         continue
       }
@@ -4576,8 +4578,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     let index = nextIndex
     for (;;) {
       if (early instanceof Request) {
-        if (early !== seen) recordRequestReplacement(early, seen)
-        current = early
+        if (early !== seen) {
+          recordRequestReplacement(early, seen)
+          current = early
+        }
         if (early !== originalRequest) this.responseRequests.set(originalRequest, early)
       } else if (early !== undefined) {
         return earlyAnswer(early, wrapResponse)

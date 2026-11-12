@@ -430,6 +430,34 @@ describe("judge", () => {
     expect(judge(onlyEmpty, threeWays).violations[0]?.kind).toBe("difference")
   })
 
+  test("a composite excuse leaves an exposed finding's lane reported unless that lane answers as the rest do", () => {
+    const echoed = caseOf(
+      get("/whoami", [
+        ["Host", "127.0.0.1"],
+        ["x-caller", ""],
+        ["x-caller", "café "],
+      ]),
+    )
+    const joined = response(200, '{"caller":", cafÃ© "}')
+    const threeWays = new Map<LaneName, Outcome>([
+      ["bun-serve", joined],
+      ["node", joined],
+      ["deno", response(200, '{"caller":"cafÃ© "}')],
+      ["workerd", response(200, '{"caller":", café "}')],
+    ])
+    expect(judge(echoed, threeWays).violations).toEqual([])
+    const reported = judge(echoed, threeWays, new Set(["U5"]))
+    expect(reported.violations[0]?.kind).toBe("difference")
+    expect(reported.excusedBy).not.toContain("U6 repeated-header-empty-member")
+
+    // Deno alone differs and workerd answers as Bun and Node do: U6's own excuse still holds.
+    const denoOnly = new Map<LaneName, Outcome>([...threeWays, ["workerd", joined]])
+    expect(judge(echoed, denoOnly, new Set(["U5"]))).toEqual({
+      violations: [],
+      excusedBy: ["U6 repeated-header-empty-member"],
+    })
+  })
+
   test("a workerd wait on a short body waits on U4 as a hang and as a difference", () => {
     const short = caseOf(get("/pages/form"), "pageForm", ["body shorter than its framing"])
     const page = response(200, "null")

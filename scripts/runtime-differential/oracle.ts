@@ -649,6 +649,20 @@ export function judge(
     )
     const lanes = [...new Set(quirks.map((quirk) => quirk.lane))]
     if (lanes.length < 2 || !othersAgree(compared, ...lanes)) return true
+    // A lane whose own quirk is exposed was asked to be reported: it may differ here only if it answers
+    // as the lanes no quirk moves do, so another quirk on the same lane cannot excuse what it adds.
+    const rest = [...compared].find(([name]) => !lanes.includes(name))
+    const agreed = rest === undefined ? undefined : canonical(rest[1])
+    for (const candidate of OPEN_FINDINGS) {
+      if (
+        candidate.quirk === undefined ||
+        !isExposed(candidate.id, exposed) ||
+        !candidate.quirk.triggeredBy(testCase)
+      )
+        continue
+      const outcome = compared.get(candidate.quirk.lane)
+      if (outcome !== undefined && canonical(outcome) !== agreed) return true
+    }
     for (const quirk of quirks) excusedBy.add(quirk.id)
     return false
   })
