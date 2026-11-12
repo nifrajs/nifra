@@ -234,9 +234,6 @@
     "packages/agent-protocol": {
       "name": "@nifrajs/agent-protocol",
       "version": "5.13.0",
-      "dependencies": {
-        "@nifrajs/utils": "workspace:*",
-      },
     },
     "packages/agent-review": {
       "name": "@nifrajs/agent-review",
@@ -392,9 +389,6 @@
     "packages/core": {
       "name": "@nifrajs/core",
       "version": "5.13.0",
-      "dependencies": {
-        "@nifrajs/utils": "workspace:*",
-      },
       "devDependencies": {
         "@nifrajs/test-utils": "workspace:*",
       },
@@ -506,9 +500,6 @@
     "packages/i18n": {
       "name": "@nifrajs/i18n",
       "version": "5.13.0",
-      "dependencies": {
-        "@nifrajs/utils": "workspace:*",
-      },
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -524,9 +515,6 @@
     "packages/image": {
       "name": "@nifrajs/image",
       "version": "5.13.0",
-      "dependencies": {
-        "@nifrajs/utils": "workspace:*",
-      },
       "devDependencies": {
         "sharp": "0.35.5",
       },
@@ -675,7 +663,6 @@
       "name": "@nifrajs/schema",
       "version": "5.13.0",
       "dependencies": {
-        "@nifrajs/utils": "workspace:*",
         "@sinclair/typebox": "^0.34.49",
       },
       "devDependencies": {
@@ -741,7 +728,7 @@
     },
     "packages/utils": {
       "name": "@nifrajs/utils",
-      "version": "5.8.0",
+      "version": "5.13.0",
     },
     "packages/web": {
       "name": "@nifrajs/web",

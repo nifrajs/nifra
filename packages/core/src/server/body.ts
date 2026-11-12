@@ -462,8 +462,7 @@ function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBod
   // The reader methods live on the prototype as writable data properties, so a plain instance
   // assignment shadows them - materially cheaper than defineProperty on this per-read path. Only
   // `body` (a prototype accessor) needs defineProperty below.
-  const rawRequest: unknown = request
-  const shadowed = rawRequest as Record<string, unknown> & {
+  const shadowed = request as unknown as Record<string, unknown> & {
     [RAW_BODY_READERS]?: RawBodyReaders
   }
   shadowed[RAW_BODY_READERS] = raw

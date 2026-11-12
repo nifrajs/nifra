@@ -19146,13 +19146,6 @@
     "doc": "/** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */"
   },
   {
-    "name": "canonicalJson",
-    "kind": "function",
-    "package": "@nifrajs/utils",
-    "signature": "export declare function canonicalJson(value: unknown): string;",
-    "doc": "/** The canonical JSON text of `value`. Throws a `TypeError` on a value JSON cannot carry. */"
-  },
-  {
     "name": "canonicalManifest",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -25700,15 +25693,15 @@
     "name": "sha256Hex",
     "kind": "function",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare function sha256Hex(input: string | Uint8Array): Promise<string>;",
-    "doc": "/** SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. */"
+    "signature": "export declare function sha256Hex(bytes: Uint8Array): Promise<string>;",
+    "doc": "/** SHA-256 of `bytes` as lowercase hex. Collision-resistant so a digest cannot be forged from content. */"
   },
   {
     "name": "sha256Hex",
     "kind": "function",
     "package": "@nifrajs/utils",
     "signature": "export declare function sha256Hex(input: string | Uint8Array): Promise<string>;",
-    "doc": "/** SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. */"
+    "doc": "/** SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. Collision-resistant so a digest cannot be forged from content. */"
   },
   {
     "name": "sha256HexOf",

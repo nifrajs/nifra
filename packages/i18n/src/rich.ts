@@ -99,8 +99,7 @@ function source<R>(text: string, stack: Frame<R>[], tags: RichTags<R>): void {
     pushText(top(stack).chunks, text.slice(start, lt))
     start = end
     from = end
-    const matchTuple: unknown = match
-    const [marker, close, name, self] = matchTuple as [string, string, string, string]
+    const [marker, close, name, self] = match as unknown as [string, string, string, string]
     if (close === "/") {
       const frame = top(stack)
       if (self === "" && stack.length > 1 && frame.name === name) {

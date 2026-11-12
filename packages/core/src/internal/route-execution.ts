@@ -24,13 +24,14 @@ import type { Platform, RouteSchema } from "../server/context.ts"
 import type { ResolvedIdempotency } from "../server/idempotency-lane.ts"
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "../server/ledger-lane.ts"
 import type { ProtoPoisoning } from "../server/proto-guard.ts"
+import type { Registry } from "../server/registry.ts"
 import { RequestContext } from "../server/request-context.ts"
 import type {
   ResponseContractDefinition,
   ResponseContractRuntime,
 } from "../server/response-contract-lane.ts"
 import type { HandlerResult, ResponseResult } from "../server/runtime-core.ts"
-import type { CtxSet, MaybePromise, RawContext, RequestSource } from "../server/server.ts"
+import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
 import type { StaticResponseDefinition } from "../server/static-response.ts"
 import type { RouteProgram } from "./route-program.ts"
 
@@ -45,8 +46,8 @@ export type RawAfterHandle = (result: unknown, ctx: RawContext) => MaybePromise<
 export type RawErrorHandler = (error: unknown, ctx: RawContext) => MaybePromise<unknown>
 export type RawAround = <T>(ctx: RawContext, next: () => MaybePromise<T>) => MaybePromise<T>
 
-export type RouteExecutionRunner = <T>(
-  runtime: object,
+export type RouteExecutionRunner = <T, R extends Registry, Ctx>(
+  runtime: Server<R, Ctx>,
   entry: RouteEntry,
   source: RequestSource,
   params: Record<string, string>,
@@ -59,8 +60,8 @@ export type RouteExecutionRunner = <T>(
   wrapResponse: (response: Response | ResponseResult) => T,
 ) => MaybePromise<T>
 
-export type ContextRouteRunner = <T>(
-  runtime: object,
+export type ContextRouteRunner = <T, R extends Registry, Ctx>(
+  runtime: Server<R, Ctx>,
   entry: RouteEntry,
   source: RequestSource,
   ctx: RawContext,
@@ -158,7 +159,7 @@ export function compileRouteExecutionPlan(options: {
       finalize,
       wrapResponse,
     ) =>
-      (runtime as RouteExecutionRuntime).runContextlessBare(
+      (runtime as unknown as RouteExecutionRuntime).runContextlessBare(
         entry,
         source,
         params,
@@ -176,24 +177,41 @@ export function compileRouteExecutionPlan(options: {
   switch (lane) {
     case "bare":
       inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
-        (runtime as RouteExecutionRuntime).runBare(entry, ctx, finalize, wrapResponse)
+        (runtime as unknown as RouteExecutionRuntime).runBare(entry, ctx, finalize, wrapResponse)
       break
     case "body":
       inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-        (runtime as RouteExecutionRuntime).runBodyOnly(entry, source, ctx, finalize, wrapResponse)
+        (runtime as unknown as RouteExecutionRuntime).runBodyOnly(
+          entry,
+          source,
+          ctx,
+          finalize,
+          wrapResponse,
+        )
       break
     case "query":
       inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
-        (runtime as RouteExecutionRuntime).runQueryOnly(entry, ctx, finalize, wrapResponse)
+        (runtime as unknown as RouteExecutionRuntime).runQueryOnly(
+          entry,
+          ctx,
+          finalize,
+          wrapResponse,
+        )
       break
     default:
       inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-        (runtime as RouteExecutionRuntime).runProgram(entry, source, ctx, finalize, wrapResponse)
+        (runtime as unknown as RouteExecutionRuntime).runProgram(
+          entry,
+          source,
+          ctx,
+          finalize,
+          wrapResponse,
+        )
   }
 
   const execute: ContextRouteRunner = hasAround
     ? (runtime, entry, source, ctx, finalize, wrapResponse) =>
-        (runtime as RouteExecutionRuntime).runWithAround(
+        (runtime as unknown as RouteExecutionRuntime).runWithAround(
           entry,
           ctx,
           () => inner(runtime, entry, source, ctx, finalize, wrapResponse),
@@ -215,7 +233,7 @@ export function compileRouteExecutionPlan(options: {
     finalize,
     wrapResponse,
   ) => {
-    const server = runtime as RouteExecutionRuntime
+    const server = runtime as unknown as RouteExecutionRuntime
     const maxBodyBytes = entry.bodyLimit ?? UNLIMITED_BODY_BYTES
     const ctx = nativeContext
       ? RequestContext.native(source, params, search, maxBodyBytes, platform, server.protoPoisoning)

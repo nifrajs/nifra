@@ -1141,9 +1141,8 @@ export function toOpenAPIFromEvidence(
   evidence: ProjectEvidenceSnapshot,
   options: Omit<ToOpenAPIOptions, "evidence"> = {},
 ): OpenAPIDocument {
-  const app: unknown = {
+  const app = {
     routes: () => reflectedRoutesFromEvidence(evidence),
-  }
-  // biome-ignore lint/plugin/noWidenThenAssert: toOpenAPI reads an app only through routes() (see isApp), which this shim supplies.
-  return toOpenAPI(app as Server, { ...options, evidence })
+  } as unknown as Server
+  return toOpenAPI(app, { ...options, evidence })
 }

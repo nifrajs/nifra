@@ -401,10 +401,9 @@ export async function computeEffectDigest(
         `effect ledger: digest key must be at least ${MIN_DIGEST_KEY_BYTES} bytes`,
       )
     }
-    const rawKey: unknown = key
     cryptoKey = await crypto.subtle.importKey(
       "raw",
-      rawKey as ArrayBuffer,
+      key as unknown as ArrayBuffer,
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign"],
@@ -428,8 +427,9 @@ export async function computeEffectDigest(
     }
     cryptoKey = key
   }
-  const rawPayload: unknown = payload
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, rawPayload as ArrayBuffer))
+  const mac = new Uint8Array(
+    await crypto.subtle.sign("HMAC", cryptoKey, payload as unknown as ArrayBuffer),
+  )
   return bytesToHex(mac)
 }
 

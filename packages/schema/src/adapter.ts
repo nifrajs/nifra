@@ -153,11 +153,9 @@ function flatCoercionPlan(schema: TSchema): CoercionPlan | null {
 }
 
 // TypeBox's IsStringNumeric: global isNaN (string-coercing) + parseFloat guard, verbatim.
-const isStringNumeric = (v: string): boolean => {
-  const input: unknown = v
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/suspicious/noGlobalIsNan: TypeBox relies on JavaScript's string coercion at this boundary.
-  return !isNaN(input as number) && !isNaN(parseFloat(v))
-}
+const isStringNumeric = (v: string): boolean =>
+  // biome-ignore lint/suspicious/noGlobalIsNan: mirrors TypeBox's own coercing `isNaN` check exactly.
+  !isNaN(v as unknown as number) && !isNaN(parseFloat(v))
 
 const isValueTrue = (v: unknown): boolean =>
   v === true ||
@@ -452,7 +450,6 @@ export function fromTypeBox<T extends TSchema>(
     if (Value.Check(schema, input)) return { value: output as Static<T> }
     return { issues: firstIssues(Value.Errors(schema, input)) }
   }
-  const standardTypes: unknown = undefined
   const result: NifraSchema<T> = {
     "~standard": {
       version: 1,
@@ -461,7 +458,7 @@ export function fromTypeBox<T extends TSchema>(
       validate: declaresDate(schema) ? decodingAfter(schema, checked) : checked,
       // Phantom: `types` carries no runtime value; this cast supplies the
       // compile-time `Static<T>` that nifra's `InferOutput` reads to type `c.body`.
-      types: standardTypes as StandardTypes<Static<T>, Static<T>>,
+      types: undefined as unknown as StandardTypes<Static<T>, Static<T>>,
     },
     jsonSchema: schema,
   }

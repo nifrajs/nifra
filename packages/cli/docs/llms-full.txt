@@ -22549,7 +22549,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/utils
 
-`bytesToHex`, `canonicalJson`, `concatBytes`, `escapeRegExp`, `isRecord`, `sha256Hex`
+`bytesToHex`, `concatBytes`, `escapeRegExp`, `isRecord`, `sha256Hex`
 
 ## @nifrajs/web
 

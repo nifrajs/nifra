@@ -394,9 +394,7 @@ const DeferringResponse = /* @__PURE__ */ (() => {
     /** A deferred response over an already-built direct-write view - the seam core's `c.json`/`c.text`
      * register (see below), skipping the `deferredBodyView` walk the raw `new Response` patch runs. */
     static fromView(view: DeferredBodyView): Response {
-      const created = new DeferringResponse(undefined, undefined, view)
-      const deferred: unknown = created
-      return deferred as Response
+      return new DeferringResponse(undefined, undefined, view) as unknown as Response
     }
 
     get status(): number {
@@ -470,8 +468,7 @@ const DEFERRED_RESPONDER_KEY = Symbol.for("nifra.deferred.responder")
  */
 function installFastResponse(): void {
   if (globalThis.Response === (DeferringResponse as unknown)) return
-  const deferredResponse: unknown = DeferringResponse
-  globalThis.Response = deferredResponse as typeof Response
+  globalThis.Response = DeferringResponse as unknown as typeof Response
 }
 
 /**
@@ -2310,9 +2307,8 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
         const handed = this.bodyValue
         if (handed != null) {
           const locked = handed.locked
-          const webStream: unknown = handed
-          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: isDisturbed reads any Web stream at runtime; only the DOM and node:stream/web typings fail to overlap
-          const disturbed = Readable.isDisturbed(webStream as NodeWebReadableStream)
+          // biome-ignore lint/plugin/noChainedTypeAssertions lint/plugin/requireSafetyCommentForTypeAssertion: isDisturbed reads any Web stream at runtime; only the DOM and node:stream/web typings fail to overlap
+          const disturbed = Readable.isDisturbed(handed as unknown as NodeWebReadableStream)
           // undici refuses a body stream that was already read or locked, which `body` has handed
           // out before any member forced this request. Seed it with a stand-in in the same state so
           // `bodyUsed`, `signal`, and the rest answer as they would on a native request.

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/utils",
-  "version": "5.8.0",
+  "version": "5.13.0",
   "license": "MIT",
   "description": "Runtime-neutral utility functions shared across Nifra packages.",
   "type": "module",
@@ -26,11 +26,6 @@
       "bun": "./src/hash.ts",
       "types": "./dist/hash.d.ts",
       "default": "./dist/hash.js"
-    },
-    "./canonical-json": {
-      "bun": "./src/canonical-json.ts",
-      "types": "./dist/canonical-json.d.ts",
-      "default": "./dist/canonical-json.js"
     },
     "./bytes": {
       "bun": "./src/bytes.ts",

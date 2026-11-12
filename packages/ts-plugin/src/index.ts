@@ -294,8 +294,7 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
       // Plain ASSIGNMENT (not Object.defineProperty) so each property stays writable - the override
       // below reassigns one, which a non-writable property would reject at runtime.
       const proxy = Object.create(null) as ts.LanguageService
-      const unknownProxy: unknown = proxy
-      const writable = unknownProxy as Record<string, unknown>
+      const writable = proxy as unknown as Record<string, unknown>
       for (const key of Object.keys(ls) as Array<keyof ts.LanguageService>) {
         const member = ls[key]
         writable[key] =

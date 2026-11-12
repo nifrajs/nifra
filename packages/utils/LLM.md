@@ -10,12 +10,11 @@ Runtime-neutral utility functions shared across Nifra packages.
 
 ## Public entrypoints
 
-`@nifrajs/utils` · `@nifrajs/utils/bytes` · `@nifrajs/utils/canonical-json` · `@nifrajs/utils/escape-regexp` · `@nifrajs/utils/hash` · `@nifrajs/utils/record`
+`@nifrajs/utils` · `@nifrajs/utils/bytes` · `@nifrajs/utils/escape-regexp` · `@nifrajs/utils/hash` · `@nifrajs/utils/record`
 
 ## Key exports
 
 - **bytesToHex** _(function)_ - `bytesToHex: (bytes: Uint8Array) => string` · from `@nifrajs/utils`
-- **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string` · from `@nifrajs/utils`
 - **concatBytes** _(function)_ - `concatBytes: (chunks: readonly Uint8Array[], total: number) => Uint8Array` · from `@nifrajs/utils`
 - **escapeRegExp** _(function)_ - `escapeRegExp: (value: string) => string` · from `@nifrajs/utils`
 - **isRecord** _(function)_ - `isRecord: (value: unknown) => value is Record<string, unknown>` · from `@nifrajs/utils`

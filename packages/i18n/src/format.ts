@@ -512,18 +512,14 @@ export function createFormatter<M extends object = RegisteredMessages>(
   const map = configured === undefined ? cached.plain : cached.configured
   const key = configured ?? locale
   const hit = map.get(key)
-  if (hit !== undefined) {
-    const unknownHit: unknown = hit
-    return unknownHit as Formatter<M>
-  }
+  if (hit !== undefined) return hit as unknown as Formatter<M>
   const formatter = buildFormatter(
     locale,
     messages,
     configured === undefined ? undefined : catalogOptions,
   )
   remember(map, key, formatter, MAX_FORMATTERS)
-  const unknownFormatter: unknown = formatter
-  return unknownFormatter as Formatter<M>
+  return formatter as unknown as Formatter<M>
 }
 
 // Formatters for one-off messages, which have no catalog of their own: one per locale, shared.

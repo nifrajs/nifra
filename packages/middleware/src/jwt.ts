@@ -197,8 +197,7 @@ async function importKey(
     ])
   }
   if (!validateJwkForAlg(key, alg, kid)) throw jwtError("JWK is not usable for this token")
-  const unknownImportKey: unknown = crypto.subtle.importKey
-  const importJwk = unknownImportKey as (
+  const importJwk = crypto.subtle.importKey as unknown as (
     format: "jwk",
     keyData: JwkKey,
     algorithm: unknown,

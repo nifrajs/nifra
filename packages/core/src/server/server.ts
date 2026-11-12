@@ -3303,9 +3303,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     scope.routePrefix = fullPrefix
     scope.inheritedStatics = { ...this.inheritedStatics, ...this.staticResponseHeaders?.record }
     for (const key of GROUP_CHAIN) (scope[key] as unknown[]).push(...this[key])
-    const dynamicScope: unknown = scope
-    const mutableScope = dynamicScope as Record<string, unknown>
-    for (const key of SERVER_RUNTIMES) mutableScope[key] = this[key]
+    for (const key of SERVER_RUNTIMES)
+      (scope as unknown as Record<string, unknown>)[key] = this[key]
     Object.assign(scope.decorations, this.decorations)
     // A plugin already applied here is already in effect for the group (its chain was copied above
     // and its request hooks are app-wide), so re-applying it would run it twice per request. The

@@ -82,14 +82,13 @@ const matches = (mime: string, pattern: string): boolean =>
 
 function custom<T extends TSchema>(jsonSchema: T, validate: Validate): NifraSchema<T> {
   markAnswerStep(validate, jsonSchema)
-  const standardTypes: unknown = undefined
   return {
     "~standard": {
       version: 1,
       vendor: "nifra",
       validate: validate as NifraSchema<T>["~standard"]["validate"],
       // Phantom, as in `fromTypeBox`: read by `InferOutput` at compile time only.
-      types: standardTypes as StandardTypes<Static<T>, Static<T>>,
+      types: undefined as unknown as StandardTypes<Static<T>, Static<T>>,
     },
     jsonSchema,
   }

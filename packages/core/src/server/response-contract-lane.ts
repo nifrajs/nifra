@@ -880,8 +880,7 @@ export function responseContract(
   }
   const apply = <S extends AnyServer>(app: S): S => {
     // A server also holds the route catalog and the logger ContractHost reads.
-    const hostInput: unknown = app
-    const host = hostInput as ResponseContractInstallable & ContractHost
+    const host = app as unknown as ResponseContractInstallable & ContractHost
     host[INSTALL_RESPONSE_CONTRACT](runtime)
     if (!hosts.includes(host)) hosts.push(host)
     return app
