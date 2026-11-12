@@ -3,6 +3,10 @@ import { describe, expect, test } from "bun:test"
 import { durableApprovalProtocol } from "../src/internal/durable-approval-protocol.ts"
 import type { ApprovalRecord, ApprovalState } from "../src/internal/durable-types.ts"
 
+/** Input the types forbid, handed to the runtime on purpose to see what it refuses. */
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the cast only widens a test value to the parameter under test; nothing reads it as `T`.
+const wrong = (value: unknown): never => value as never
+
 const NOW = 1_000
 
 const record = (patch: Partial<ApprovalRecord> = {}): ApprovalRecord => ({
@@ -170,7 +174,7 @@ describe("consume", () => {
   })
 
   test("a state the protocol does not know is refused as a token failure", () => {
-    const unknown = record({ state: "revoked" as unknown as ApprovalState })
+    const unknown = record({ state: wrong("revoked") })
     expect(durableApprovalProtocol.consume(unknown, consumption())).toEqual({
       result: { state: "token" },
     })

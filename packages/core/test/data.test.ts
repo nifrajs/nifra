@@ -10,6 +10,10 @@ import {
   snapshotDataContract,
 } from "../src/data.ts"
 
+/** Input the types forbid, handed to the runtime on purpose to see what it refuses. */
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the cast only widens a test value to the parameter under test; nothing reads it as `T`.
+const wrong = (value: unknown): never => value as never
+
 describe("typed data seam", () => {
   test("describes token-only operations and detects contract drift", () => {
     const declared = defineDataContract({
@@ -163,23 +167,23 @@ describe("what the data seam refuses", () => {
     version: "orders.v1",
     operations: { list: { access: "read" } },
   })
-  const adapter: TypedDataPort<typeof contract> = { execute: async () => undefined as never }
+  const adapter: TypedDataPort<typeof contract> = { execute: async () => wrong(undefined) }
   const beacon = () => {}
 
   test("a port needs a contract, an adapter that executes, and an object to bind", () => {
     for (const bad of [null, undefined, "contract", {}]) {
-      expect(() => createDataPort(bad as never, adapter, { beacon })).toThrow(
+      expect(() => createDataPort(wrong(bad), adapter, { beacon })).toThrow(
         new TypeError("data: contract must be a defineDataContract result"),
       )
     }
     for (const bad of [null, undefined, "adapter", {}, { execute: "run" }]) {
-      expect(() => createDataPort(contract, bad as never, { beacon })).toThrow(
+      expect(() => createDataPort(contract, wrong(bad), { beacon })).toThrow(
         new TypeError("data: adapter must implement execute(request)"),
       )
     }
     const port = createDataPort(contract, adapter, { beacon })
     for (const bad of [null, undefined, "context", 7]) {
-      expect(() => port.for(bad as never)).toThrow(new TypeError("data: context must be an object"))
+      expect(() => port.for(wrong(bad))).toThrow(new TypeError("data: context must be an object"))
     }
   })
 
@@ -188,7 +192,7 @@ describe("what the data seam refuses", () => {
     const port = createDataPort(contract, {
       execute: async () => {
         executions++
-        return undefined as never
+        return wrong(undefined)
       },
     })
     expect(() => port.for({})).toThrow("needs a beacon")
@@ -198,12 +202,12 @@ describe("what the data seam refuses", () => {
   test("a contract needs a bounded version, an operations object and read or write access", () => {
     const operations = { list: { access: "read" } } as const
     for (const version of ["", "x".repeat(129), "bad\nversion", 1, undefined]) {
-      expect(() => defineDataContract({ version: version as never, operations })).toThrow(
+      expect(() => defineDataContract({ version: wrong(version), operations })).toThrow(
         new TypeError("data: version must be a bounded token"),
       )
     }
     for (const bad of [null, undefined, "list"]) {
-      expect(() => defineDataContract({ version: "v1", operations: bad as never })).toThrow(
+      expect(() => defineDataContract({ version: "v1", operations: wrong(bad) })).toThrow(
         new TypeError("data: operations must be an object"),
       )
     }
@@ -213,9 +217,9 @@ describe("what the data seam refuses", () => {
       ).toThrow(new TypeError(`data: invalid operation name ${name}`))
     }
     for (const bad of [null, undefined, "read", {}, { access: "admin" }, { access: undefined }]) {
-      expect(() =>
-        defineDataContract({ version: "v1", operations: { list: bad as never } }),
-      ).toThrow(new TypeError("data: list must declare read or write access"))
+      expect(() => defineDataContract({ version: "v1", operations: { list: wrong(bad) } })).toThrow(
+        new TypeError("data: list must declare read or write access"),
+      )
     }
     expect(defineDataContract({ version: "x".repeat(128), operations }).version).toHaveLength(128)
     expect(
@@ -259,9 +263,9 @@ describe("what the data seam refuses", () => {
     const refusal = (label: string) =>
       new TypeError(`data: ${label} must be a bounded opaque token`)
     for (const bad of ["", "x".repeat(257), "bad\u0000token", 7, undefined, null]) {
-      expect(() => rlsScope(bad as never)).toThrow(refusal("scope token"))
+      expect(() => rlsScope(wrong(bad))).toThrow(refusal("scope token"))
       if (bad !== undefined) {
-        expect(() => rlsScope("ok", bad as never)).toThrow(refusal("scope digest"))
+        expect(() => rlsScope("ok", wrong(bad))).toThrow(refusal("scope digest"))
       }
     }
     expect(rlsScope("x".repeat(256), "y".repeat(256))).toEqual({
@@ -274,20 +278,20 @@ describe("what the data seam refuses", () => {
 
   test("an observed contract is read through the same snapshot rules as a declared one", () => {
     const declared = defineDataContract({ version: "v1", operations: { list: { access: "read" } } })
-    const observed = {
+    const observed = wrong({
       version: "v1",
       operations: { list: { access: "read" }, odd: { access: "admin" } },
-    } as never
+    })
     expect(diffDataContract(declared, observed)).toEqual([])
     const plain = { version: "v1", operations: { list: { access: "read" } } } as const
     expect(diffDataContract(declared, plain)).toEqual([])
   })
 
   test("a snapshot leaves out an operation whose access is not read or write", () => {
-    const loose = {
+    const loose = wrong({
       version: "orders.v1",
       operations: { list: { access: "read" }, odd: { access: "admin" } },
-    } as never
+    })
     expect(snapshotDataContract(loose)).toEqual({
       version: "orders.v1",
       operations: { list: { access: "read" } },

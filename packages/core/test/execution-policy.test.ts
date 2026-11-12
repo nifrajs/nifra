@@ -2,6 +2,10 @@
 import { describe, expect, test } from "bun:test"
 import { defineExecutionPolicy, type ExecutionPolicy } from "../src/execution-policy.ts"
 
+/** Input the types forbid, handed to the runtime on purpose to see what it refuses. */
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the cast only widens a test value to the parameter under test; nothing reads it as `T`.
+const wrong = (value: unknown): never => value as never
+
 const valid: ExecutionPolicy = {
   filesystem: "cwd",
   network: "deny",
@@ -9,8 +13,7 @@ const valid: ExecutionPolicy = {
   capabilityCeiling: ["files.read", "net.fetch"],
 }
 
-const withField = (patch: Record<string, unknown>) =>
-  ({ ...valid, ...patch }) as unknown as ExecutionPolicy
+const withField = (patch: Record<string, unknown>) => wrong({ ...valid, ...patch })
 
 describe("defineExecutionPolicy", () => {
   test("returns a frozen copy and drops duplicate capabilities, keeping their order", () => {
@@ -38,7 +41,7 @@ describe("defineExecutionPolicy", () => {
 
   test("refuses anything that is not an object", () => {
     for (const value of [null, undefined, "cwd", 1]) {
-      expect(() => defineExecutionPolicy(value as unknown as ExecutionPolicy)).toThrow(
+      expect(() => defineExecutionPolicy(wrong(value))).toThrow(
         new TypeError("execution policy: policy must be an object"),
       )
     }
