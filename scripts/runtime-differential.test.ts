@@ -392,6 +392,10 @@ describe("judge", () => {
     })
     const split = new Map<LaneName, Outcome>([...read, ["node", response(404, "{}")]])
     expect(judge(backslash, split).violations[0]?.kind).toBe("difference")
+    // A dot segment only in the query is not workerd's quirk either.
+    expect(judge(caseOf(get("/dav/a\\b?next=/../x"), "dav"), read).violations[0]?.kind).toBe(
+      "difference",
+    )
     // A backslash with no dot segment to resolve is not workerd's quirk.
     expect(judge(caseOf(get("/dav/a\\b"), "dav"), read).violations[0]?.kind).toBe("difference")
   })
@@ -430,14 +434,23 @@ describe("judge", () => {
         .violations[0]?.kind,
     ).toBe("difference")
     // The same split with the Host the target names is nobody's quirk.
-    const same = {
+    const withHost = (host: string, target = absolute.target): WireRequest => ({
       ...absolute,
+      target,
       headers: [
-        ["Host", "127.0.0.1"],
+        ["Host", host],
         ["origin", "http://127.0.0.1"],
-      ] as [string, string][],
-    }
-    expect(judge(caseOf(same, "pageForm"), read).violations[0]?.kind).toBe("difference")
+      ],
+    })
+    expect(judge(caseOf(withHost("127.0.0.1"), "pageForm"), read).violations[0]?.kind).toBe(
+      "difference",
+    )
+    // An explicit default port names the same authority, so the split is nobody's quirk either.
+    const explicit = withHost("127.0.0.1:80", "http://127.0.0.1:80/pages/form")
+    expect(judge(caseOf(explicit, "pageForm"), read).violations[0]?.kind).toBe("difference")
+    expect(judge(caseOf(withHost("127.0.0.1:80"), "pageForm"), read).violations[0]?.kind).toBe(
+      "difference",
+    )
   })
 
   test("an exposed open finding is reported instead of excused", () => {

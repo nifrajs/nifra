@@ -237,7 +237,13 @@ function hostOutranksTarget(testCase: Case, outcomes: Outcomes): boolean {
   const { target, headers } = testCase.request
   if (!/^https?:\/\//i.test(target) || !URL.canParse(target)) return false
   const host = headers.find(([name]) => name.toLowerCase() === "host")?.[1]
-  if (host === undefined || new URL(target).host === host.toLowerCase()) return false
+  if (host === undefined) return false
+  const named = new URL(target)
+  // Both through the target's scheme, which drops a default port the way a URL parser does.
+  const asHost = URL.canParse(`${named.protocol}//${host}`)
+    ? new URL(`${named.protocol}//${host}`).host
+    : host.toLowerCase()
+  if (named.host === asHost) return false
   const side = (...lanes: LaneName[]) =>
     new Set(
       [...outcomes]
@@ -251,9 +257,11 @@ function hostOutranksTarget(testCase: Case, outcomes: Outcomes): boolean {
   return workerd === undefined || byHost.has(canonical(workerd)) || byTarget.has(canonical(workerd))
 }
 
-/** A raw `.` or `..` segment that only shows once a backslash is read as `/`. */
-const backslashDots = (target: string) =>
-  target.includes("\\") && /\/\.{1,2}(?:[/?#]|$)/.test(target.replaceAll("\\", "/"))
+/** A raw `.` or `..` segment in the path that only shows once a backslash is read as `/`. */
+const backslashDots = (target: string) => {
+  const path = target.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/\\?#]*/i, "").split(/[?#]/, 1)[0] ?? ""
+  return path.includes("\\") && /\/\.{1,2}(?:\/|$)/.test(path.replaceAll("\\", "/"))
+}
 
 const statusOf = (outcomes: Outcomes, lane: LaneName) => {
   const outcome = outcomes.get(lane)
