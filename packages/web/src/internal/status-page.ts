@@ -5,7 +5,7 @@
 
 /** Derived from the `Headers` constructor rather than the DOM lib's `HeadersInit`: `@nifrajs/web`
  * is consumed from DOM-free programs (the root tsconfig runs `types: ["bun"]`), and naming the DOM
- * type here would break their build. Same workaround as `SSEInit.headers` in core. */
+ * type here would break their build. It matches the constructor-derived `SSEInit.headers` shape in core. */
 export type HeadersLike = ConstructorParameters<typeof Headers>[0]
 
 /**
