@@ -158,6 +158,7 @@ export const DOCUMENTED_EQUIVALENCES: readonly Equivalence[] = [
 export const OPEN_EQUIVALENCES: readonly Equivalence[] = []
 
 const PARSER_REFUSAL = "refused by its own parser"
+const AUTHORITY_CONFLICT = "absolute-form authority differs from Host"
 
 /** An open entry named in `exposed`, by its whole id or its leading code (`U16`), excuses nothing. */
 export const isExposed = (id: string, exposed: ReadonlySet<string>) =>
@@ -200,6 +201,10 @@ export function excluded(
     for (const [lane, outcome] of outcomes)
       if (isRefusal(outcome) && !out.has(lane)) out.set(lane, PARSER_REFUSAL)
   }
+  if (absoluteFormHostConflict(testCase.request)) {
+    for (const [lane, outcome] of outcomes)
+      if (isRefusal(outcome) && !out.has(lane)) out.set(lane, AUTHORITY_CONFLICT)
+  }
   return out
 }
 
@@ -227,6 +232,21 @@ const repeatsEmptyMember = (testCase: Case) => {
 
 const hasTrailingSpace = (testCase: Case) =>
   testCase.request.headers.some(([, value]) => value !== value.trimEnd())
+
+/** An absolute-form proxy target and Host name different authorities; transports do not make one
+ * stable Request URL for this ambiguous input, so differing client refusals are not compared. */
+const absoluteFormHostConflict = (request: Case["request"]): boolean => {
+  const hosts = request.headers.filter(([name]) => name.toLowerCase() === "host")
+  if (hosts.length !== 1 || !/^[a-z][a-z\d+.-]*:\/\/[^/?#]+/i.test(request.target)) return false
+  try {
+    return (
+      new URL(request.target).host.toLowerCase() !==
+      new URL(`http://${hosts[0]?.[1]}`).host.toLowerCase()
+    )
+  } catch {
+    return false
+  }
+}
 
 const statusOf = (outcomes: Outcomes, lane: LaneName) => {
   const outcome = outcomes.get(lane)
@@ -373,6 +393,19 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
     matches: (violation, testCase, outcomes) =>
       violation.kind === "difference" &&
       /%2e/i.test(testCase.request.target) &&
+      needsResolving(testCase.request.target) &&
+      othersAgree(outcomes, "workerd"),
+  },
+  {
+    id: "U19 workerd-normalizes-raw-backslashes",
+    why:
+      "The local workerd HTTP front turns a raw backslash into a path separator and resolves the dot " +
+      "segments before the Worker receives the Request. Nifra cannot recover the original target or " +
+      "apply its single normalization pass after that front rewrite; the other lanes agree on the " +
+      "path Nifra receives. This is the same ingress limitation as the documented workerd URL quirks.",
+    matches: (violation, testCase, outcomes) =>
+      violation.kind === "difference" &&
+      testCase.request.target.includes("\\") &&
       needsResolving(testCase.request.target) &&
       othersAgree(outcomes, "workerd"),
   },
@@ -584,6 +617,7 @@ export function judge(
   const excusedBy = new Set<string>()
   const skip = excluded(testCase, outcomes, exposed)
   if ([...skip.values()].includes(PARSER_REFUSAL)) excusedBy.add("parser-refusal")
+  if ([...skip.values()].includes(AUTHORITY_CONFLICT)) excusedBy.add(AUTHORITY_CONFLICT)
   if ([...skip.values()].includes(FRONT_ANSWER)) excusedBy.add(FRONT_ANSWER)
   const violations = ownViolations(
     testCase,

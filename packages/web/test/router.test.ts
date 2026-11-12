@@ -1585,6 +1585,40 @@ describe("createClientRouter", () => {
       })
     })
 
+    test("an action redirect after an epoch rotation marks its landing page current", async () => {
+      await withEpoch(async (rotate) => {
+        const state = { whoami: "alice", version: 0 }
+        let fetches = 0
+        const r = createClientRouter({
+          patterns,
+          initial,
+          fetchData: async (_p, m) => {
+            fetches++
+            return { id: m.params.id, ...state }
+          },
+        })
+        await r.navigate("/users/7")
+        const realFetch = globalThis.fetch
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a fetch stub; the router only posts the action through it here.
+        globalThis.fetch = (async (_url: string, _init?: RequestInit) => {
+          await rotate("two")
+          state.whoami = "bob"
+          return new Response(null, {
+            status: 204,
+            headers: { "x-nifra-redirect": "/users/9" },
+          })
+        }) as typeof fetch
+        try {
+          await r.submit("/login", new URLSearchParams())
+          r.snapshot()
+          await settled()
+        } finally {
+          globalThis.fetch = realFetch
+        }
+        expect([r.snapshot().data, fetches]).toEqual([as("bob", "9"), 2])
+      })
+    })
+
     test("a new identity epoch reloads the page on screen once, after the read that sees it", async () => {
       await withEpoch(async (rotate) => {
         const state = { whoami: "alice", version: 0 }

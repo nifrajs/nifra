@@ -5,6 +5,7 @@ import { keepAliveTable, slotDepths } from "../src/internal/keep-alive-table.ts"
 import {
   checkSlotCss,
   createSlotParking,
+  KEEP_ALIVE_MAX_AGE_MS,
   KEPT_PAGES_GLOBAL,
   type KeepAliveClientOptions,
   type KeepAliveDropReason,
@@ -590,6 +591,10 @@ describe("keepAliveClient", () => {
     } finally {
       clock.mockRestore()
     }
+  })
+
+  test("the default hidden-page maxAge is ten minutes", () => {
+    expect(KEEP_ALIVE_MAX_AGE_MS).toBe(600_000)
   })
 
   test("revalidate: false shows the kept data without a request, until a submit marks it stale", async () => {
@@ -1407,6 +1412,63 @@ describe("keepAliveClient over the client router", () => {
     await router.navigate("/list")
     expect(router.snapshot().data).toEqual({ wrapped: "raw 3" })
     expect(calls).toEqual(["/list", "/about", "/list"])
+  })
+
+  test("a reloaded client-loader page records its latest server source for fallback", async () => {
+    let listLoads = 0
+    let online = true
+    const routeHooks: Record<string, ClientRouteHooks> = {
+      list: {
+        keepAlive: true,
+        clientLoader: async ({ serverLoader }) => ({ wrapped: await serverLoader() }),
+      },
+    }
+    const keep = keepAliveClient({
+      table: { routes: ["list"], layouts: [] },
+      routeHooks,
+      matchChains: { list: chain("list"), about: chain("about") },
+      fetchData: async (path) => {
+        if (path === "/list") {
+          const current = ++listLoads
+          if (!online) throw new Error("offline")
+          return { v: 1, data: `server-${current}` }
+        }
+        return { v: 1, data: "about" }
+      },
+    })
+    const router = keep.attach(
+      createClientRouter({
+        patterns: [
+          { routeId: "list", pattern: "/list" },
+          { routeId: "about", pattern: "/about" },
+        ],
+        initial: {
+          routeId: "about",
+          params: {},
+          path: "/about",
+          data: "about",
+          pending: false,
+        },
+        fetchData: keep.fetchData,
+        routeHooks,
+      }),
+    )
+
+    fakeHistory.push()
+    await router.navigate("/list")
+    fakeHistory.push()
+    await router.navigate("/about")
+    fakeHistory.go(-1)
+    await router.navigate("/list")
+    expect(router.snapshot().data).toEqual({ wrapped: "server-2" })
+
+    fakeHistory.push()
+    await router.navigate("/about")
+    online = false
+    fakeHistory.go(-1)
+    await router.navigate("/list")
+    expect(router.snapshot().data).toEqual({ wrapped: "server-2" })
+    expect(listLoads).toBe(3)
   })
 })
 
