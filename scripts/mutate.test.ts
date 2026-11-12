@@ -13,7 +13,9 @@ import { tmpdir } from "node:os"
 import { dirname, join, relative, sep } from "node:path"
 import {
   buildImportGraph,
+  CONFIRMATIONS,
   classify,
+  confirmed,
   equivalentEntry,
   type FileReport,
   formatSummary,
@@ -34,6 +36,7 @@ import {
   runTests,
   selectTests,
   targetTests,
+  type Verdict,
 } from "./mutate.ts"
 
 const SCRIPT = join(import.meta.dir, "mutate.ts")
@@ -562,6 +565,36 @@ describe("parseJunit and classify", () => {
     expect(classify({ ...baseline, errors: 1 }, run(green, { errors: 1 }), false).status).toBe(
       "survived",
     )
+  })
+})
+
+describe("a kill of a listed survivor", () => {
+  const verdict = (status: Verdict["status"]): Verdict => ({ status, killedBy: [], ms: 1 })
+  const sequence = (...statuses: Verdict["status"][]) => {
+    let calls = 0
+    return {
+      again: async () => verdict(statuses[calls++] ?? "survived"),
+      calls: () => calls,
+    }
+  }
+
+  test("stands only when every repeat detects it too", async () => {
+    const run = sequence("killed", "timeout")
+    expect(await confirmed(verdict("killed"), run.again)).toEqual(verdict("killed"))
+    expect(run.calls()).toBe(CONFIRMATIONS)
+  })
+
+  test("is a survivor again as soon as one repeat survives, and stops repeating", async () => {
+    const run = sequence("killed", "survived", "killed")
+    expect((await confirmed(verdict("error"), run.again)).status).toBe("survived")
+    expect(run.calls()).toBe(2)
+  })
+
+  test("a survivor or a mutant left unrun is not repeated", async () => {
+    const run = sequence("killed")
+    expect((await confirmed(verdict("survived"), run.again)).status).toBe("survived")
+    expect((await confirmed(verdict("not-run"), run.again)).status).toBe("not-run")
+    expect(run.calls()).toBe(0)
   })
 })
 

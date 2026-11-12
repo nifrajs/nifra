@@ -6943,13 +6943,6 @@
       "from": "&&"
     },
     {
-      "op": "binary *->/",
-      "fn": "<module>",
-      "code": "export const KEEP_ALIVE_MAX_AGE_MS = 10 * 60 * 1000",
-      "from": "*",
-      "nth": 1
-    },
-    {
       "op": "binary +->-",
       "fn": "splitSelectors",
       "code": "start = i + 1",
@@ -7919,12 +7912,6 @@
       "fn": "endRestore",
       "code": "reloading = undefined",
       "from": "reloading = undefined"
-    },
-    {
-      "op": "delete statement",
-      "fn": "fetchData",
-      "code": "if (ownsLoader(match.routeId)) noteSource(path, payload)",
-      "from": "noteSource(path, payload)"
     },
     {
       "op": "delete statement",
@@ -10813,12 +10800,6 @@
       "fn": "submit",
       "code": "navAbort?.abort()",
       "from": "navAbort?.abort()"
-    },
-    {
-      "op": "delete statement",
-      "fn": "submit",
-      "code": "shownFor = reads",
-      "from": "shownFor = reads"
     },
     {
       "op": "delete statement",
