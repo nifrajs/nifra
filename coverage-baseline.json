@@ -408,8 +408,7 @@
     "lines": 98.1981981981982
   },
   "packages/core/src/data.ts": {
-    "functions": 100,
-    "lines": 83.62068965517241
+    "lines": 100
   },
   "packages/core/src/diff.ts": {
     "functions": 100,
@@ -460,8 +459,7 @@
     "lines": 96.75
   },
   "packages/core/src/execution-policy.ts": {
-    "functions": 100,
-    "lines": 78.26086956521739
+    "lines": 100
   },
   "packages/core/src/file-type.ts": {
     "functions": 100,
@@ -492,8 +490,7 @@
     "lines": 100
   },
   "packages/core/src/internal/durable-approval-protocol.ts": {
-    "functions": 100,
-    "lines": 76.66666666666667
+    "lines": 100
   },
   "packages/core/src/internal/durable-effect-protocol.ts": {
     "functions": 100,

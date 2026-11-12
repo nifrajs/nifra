@@ -157,3 +157,140 @@ describe("typed data seam", () => {
     expect(executions).toBe(0)
   })
 })
+
+describe("what the data seam refuses", () => {
+  const contract = defineDataContract({
+    version: "orders.v1",
+    operations: { list: { access: "read" } },
+  })
+  const adapter: TypedDataPort<typeof contract> = { execute: async () => undefined as never }
+  const beacon = () => {}
+
+  test("a port needs a contract, an adapter that executes, and an object to bind", () => {
+    for (const bad of [null, undefined, "contract", {}]) {
+      expect(() => createDataPort(bad as never, adapter, { beacon })).toThrow(
+        new TypeError("data: contract must be a defineDataContract result"),
+      )
+    }
+    for (const bad of [null, undefined, "adapter", {}, { execute: "run" }]) {
+      expect(() => createDataPort(contract, bad as never, { beacon })).toThrow(
+        new TypeError("data: adapter must implement execute(request)"),
+      )
+    }
+    const port = createDataPort(contract, adapter, { beacon })
+    for (const bad of [null, undefined, "context", 7]) {
+      expect(() => port.for(bad as never)).toThrow(new TypeError("data: context must be an object"))
+    }
+  })
+
+  test("binding without a beacon fails at for(), before any operation can run", () => {
+    let executions = 0
+    const port = createDataPort(contract, {
+      execute: async () => {
+        executions++
+        return undefined as never
+      },
+    })
+    expect(() => port.for({})).toThrow("needs a beacon")
+    expect(executions).toBe(0)
+  })
+
+  test("a contract needs a bounded version, an operations object and read or write access", () => {
+    const operations = { list: { access: "read" } } as const
+    for (const version of ["", "x".repeat(129), "bad\nversion", 1, undefined]) {
+      expect(() => defineDataContract({ version: version as never, operations })).toThrow(
+        new TypeError("data: version must be a bounded token"),
+      )
+    }
+    for (const bad of [null, undefined, "list"]) {
+      expect(() => defineDataContract({ version: "v1", operations: bad as never })).toThrow(
+        new TypeError("data: operations must be an object"),
+      )
+    }
+    for (const name of ["1list", "has space", "", "a".repeat(129), "list/all"]) {
+      expect(() =>
+        defineDataContract({ version: "v1", operations: { [name]: { access: "read" } } }),
+      ).toThrow(new TypeError(`data: invalid operation name ${name}`))
+    }
+    for (const bad of [null, undefined, "read", {}, { access: "admin" }, { access: undefined }]) {
+      expect(() =>
+        defineDataContract({ version: "v1", operations: { list: bad as never } }),
+      ).toThrow(new TypeError("data: list must declare read or write access"))
+    }
+    expect(defineDataContract({ version: "x".repeat(128), operations }).version).toHaveLength(128)
+    expect(
+      Object.keys(
+        defineDataContract({ version: "v1", operations: { "A1._x-y": { access: "write" } } })
+          .operations,
+      ),
+    ).toEqual(["A1._x-y"])
+  })
+
+  test("drift names a changed version and a changed access, in that order, then added operations", () => {
+    const declared = defineDataContract({
+      version: "orders.v1",
+      operations: { list: { access: "read" }, save: { access: "write" }, gone: { access: "read" } },
+    })
+    const observed = {
+      version: "orders.v2",
+      operations: {
+        list: { access: "write" },
+        save: { access: "write" },
+        extra: { access: "read" },
+      },
+    } as const
+    expect(diffDataContract(declared, observed)).toEqual([
+      { kind: "version", declaredVersion: "orders.v1", observedVersion: "orders.v2" },
+      {
+        kind: "access-changed",
+        operation: "list",
+        declaredAccess: "read",
+        observedAccess: "write",
+      },
+      { kind: "removed", operation: "gone" },
+      { kind: "added", operation: "extra" },
+    ])
+    expect(Object.isFrozen(diffDataContract(declared, observed))).toBe(true)
+    expect(diffDataContract(declared, snapshotDataContract(declared))).toEqual([])
+    expect(diffDataContract(declared, declared)).toEqual([])
+  })
+
+  test("scope tokens and digests are bounded, non-empty strings without control characters", () => {
+    const refusal = (label: string) =>
+      new TypeError(`data: ${label} must be a bounded opaque token`)
+    for (const bad of ["", "x".repeat(257), "bad\u0000token", 7, undefined, null]) {
+      expect(() => rlsScope(bad as never)).toThrow(refusal("scope token"))
+      if (bad !== undefined) {
+        expect(() => rlsScope("ok", bad as never)).toThrow(refusal("scope digest"))
+      }
+    }
+    expect(rlsScope("x".repeat(256), "y".repeat(256))).toEqual({
+      token: "x".repeat(256),
+      digest: "y".repeat(256),
+    })
+    expect(rlsScope("t")).toEqual({ token: "t" })
+    expect(Object.isFrozen(rlsScope("t"))).toBe(true)
+  })
+
+  test("an observed contract is read through the same snapshot rules as a declared one", () => {
+    const declared = defineDataContract({ version: "v1", operations: { list: { access: "read" } } })
+    const observed = {
+      version: "v1",
+      operations: { list: { access: "read" }, odd: { access: "admin" } },
+    } as never
+    expect(diffDataContract(declared, observed)).toEqual([])
+    const plain = { version: "v1", operations: { list: { access: "read" } } } as const
+    expect(diffDataContract(declared, plain)).toEqual([])
+  })
+
+  test("a snapshot leaves out an operation whose access is not read or write", () => {
+    const loose = {
+      version: "orders.v1",
+      operations: { list: { access: "read" }, odd: { access: "admin" } },
+    } as never
+    expect(snapshotDataContract(loose)).toEqual({
+      version: "orders.v1",
+      operations: { list: { access: "read" } },
+    })
+  })
+})
