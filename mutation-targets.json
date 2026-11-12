@@ -114,7 +114,8 @@
     "tests": [
       "packages/core/test/body-parser.test.ts",
       "packages/middleware/test/body-limit.test.ts",
-      "packages/core/test/proto-poisoning.test.ts"
+      "packages/core/test/proto-poisoning.test.ts",
+      "packages/core/test/form-origin.test.ts"
     ]
   },
   "web-server-boundary": {
