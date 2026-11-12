@@ -12,7 +12,7 @@ nifra is a Bun-native, contract-first, framework-agnostic full-stack TypeScript 
 - **Secure by default.** Body-size cap, `requestTimeoutMs` + `c.signal`, graceful shutdown, redacting logger, same-origin `redirect()`, constant-time secret comparison, fail-closed middleware.
 - **Money** in integer minor units; **time** parsed to absolute UTC at the boundary.
 - Throwing a `Response` anywhere in the lifecycle is control flow (returned as-is), not an error.
-Optional server components (all five adapters): React, Preact, Vue, Svelte and Solid share owner-GET admission, closed input/public-props schemas and private/no-store output. React uses native RSC/Flight. Use *.component.server.ts(x), defineServerComponent, an explicit componentPipeline named config export, native outlets and bindComponentRouter. Await invalidateComponentScope on identity/tenant/permission changes. Component GETs cannot acquire domain write privileges; use validated serverFn/actions for mutations. Native use-server actions are unsupported. Pin the certified compiler tuple documented in /docs/server-components.
+Optional server components (all five adapters): React, Preact, Vue, Svelte and Solid share owner-GET admission, closed input/public-props schemas and private/no-store output. React uses native RSC/Flight; Vue, Svelte, Preact and the current Solid 1.x adapter use explicitly registered islands in validated server-rendered ranges. Solid 2's experimental frames protocol is not currently targeted. Use *.component.server.ts(x), defineServerComponent, an explicit componentPipeline named config export, native outlets and bindComponentRouter. Await invalidateComponentScope on identity/tenant/permission changes. Component GETs cannot acquire domain write privileges; use validated serverFn/actions for mutations. Native use-server actions are unsupported. Pin the certified compiler tuple documented in /docs/server-components.
 
 ---
 
@@ -239,11 +239,16 @@ implementation, secrets and database handles off the browser and use the same va
 mutation API across the supported UI libraries.
 
 The optional server-components pipeline adds
-server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
-Solid and Preact use their native islands in validated server-rendered ranges. All five
-adapters pass the same certification, and a partially prerendered page can show a server
-component in a hole. Server functions remain the mutation API; native React
-`"use server"` actions are unsupported.
+server-only views and state-preserving refresh, but the render protocol depends on the UI
+library. React uses native RSC/Flight. In Nifra's current certified adapters, Vue, Svelte,
+Solid 1.x and Preact use an owned server-rendered range with schema-checked JSON props and
+explicitly registered client islands as separate native roots; they do not emulate Flight.
+Nested ranges, slots and data crossing those roots are explicit. Solid 2 has its own
+experimental server-component frames protocol, but Nifra's current Solid tuple does not
+target it. The shared certification covers admission, ownership, prop validation, limits and
+safe hydration - it does not mean identical React component semantics.
+A partially prerendered page can show a server component in a hole. Server functions remain
+the mutation API; native React `"use server"` actions are unsupported.
 
 ### Caching and fresh data
 
@@ -2194,7 +2199,220 @@ public registration API rather than as a bespoke dispatcher.
 
 ## Nifra - Server components
 
-> Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte, Solid and Preact hydration.
+> Server-only views with closed schemas and owner-route authorization: native React RSC/Flight, or explicit server-rendered ranges and client islands for Vue, Svelte, Solid 1.x and Preact.
+
+Compose server-only views and refresh their content while keeping native client state. React uses native RSC and Flight. Nifra's current certified Vue, Svelte, Solid 1.x and Preact adapters use schema-guarded server-rendered ranges with explicitly registered client islands, not a Flight-equivalent protocol.
+
+This additive feature shipped in 5.0.0. All five adapters pass the same admission, ownership, limits and hydration-safety certification; that shared certification does not make their component semantics identical. Ordinary SSR, loaders, islands and server functions keep their existing APIs.
+
+### Execution and public props
+
+A `*.component.server.ts` or `*.component.server.tsx` module declares a closed input schema, closed public-props schema, authorization, a read operation and a view. The compiler replaces browser imports with an opaque typed handle. The server implementation and its imports stay in the server build.
+
+```ts
+// Product.component.server.ts - native Vue/Svelte/Solid view.
+import { t } from "@nifrajs/schema"
+import { defineServerComponent, type ServerComponentContext } from "@nifrajs/web/server-components"
+import { nativeServerView } from "@nifrajs/web/server-components/islands"
+
+// Replace these declarations with your native view and scoped read service.
+declare const ProductView: unknown
+declare function readProduct(ctx: ServerComponentContext, id: string): Promise<{ title: string; internal: string }>
+
+export const Product = defineServerComponent({
+  input: t.object({ id: t.string({ minLength: 1 }) }),
+  props: t.object({ title: t.string() }),
+  authorize(ctx, input) {
+    if (ctx.params.id !== input.id) throw new Response(null, { status: 403 })
+  },
+  load: (ctx, input) => readProduct(ctx, input.id),
+  view: () => nativeServerView(ProductView),
+})
+```
+
+The input is validated before component authorization and loading. The load result is projected through the props schema, so undeclared fields such as `internal` never reach the view or browser. The view receives `{ props, children }`. Public values are bounded JSON: finite numbers, strings, booleans, null, arrays and plain objects. Functions, framework contexts, requests, bindings, class instances and executable closures cannot cross this seam.
+
+Keep ownership checks in the scoped read service too. Every definition requires an authorization callback. Use `inheritOwnerAuthorization` only when the owning route already enforces the full resource authorization; it records an intentional choice to reuse that admission.
+
+### Why non-React adapters use ranges
+
+RSC is a React wire-format and runtime contract, not a generic SSR feature that every UI library can share. For the current Vue, Svelte, Solid 1.x and Preact adapters, the portable unit is an owned server-rendered HTML range: Nifra calls that framework's own SSR renderer for the range, places registered client islands behind owned markers, and sends bounded JSON props plus validated slot and nested-range HTML. The browser's matching native adapter then creates independent roots for those islands and updates their props or remounts them according to their stable reference and key. The server-rendered range itself is not interactive.
+
+This is intentionally narrower than React RSC/Flight: non-React adapters do not have a Flight payload, server references, serialized closures, or automatic React-style server/client tree composition. Named slots and nested server ranges must be registered explicitly, and a separate native root does not inherit outer page context; pass the needed public data explicitly. Domain writes still go through a validated server function or route action, followed by a component refresh. Native `"use server"` actions are not part of Nifra's component contract.
+
+Solid has a separate path here. Solid 2.0 RC exposes experimental reactive server components behind `serverFunctions: { components: true }`; its server functions return streamed Solid HTML that the Solid client applies in place through Solid's frames runtime. Nifra does not currently target that Solid 2 frames protocol: the certified tuple below is Solid 1.x with `vite-plugin-solid`, so the Nifra Solid adapter intentionally uses ordinary Solid SSR and hydration inside the shared range/island contract. Adding Solid 2 frames would require a separate renderer, the `installServerComponents()` client setup and a new version tuple; it would not turn the result into React Flight.
+
+### Register the owning page
+
+```ts
+// doc-check: skip - complete application entries are in examples/server-components.
+import { createWebApp } from "@nifrajs/web"
+import { componentBuild } from "@nifrajs/web/server-components/build-info"
+import { createServerComponents, serverComponentInstance } from "@nifrajs/web/server-components"
+import { vueServerComponents } from "@nifrajs/web-vue/server-components"
+import { Product } from "./Product.component.server"
+declare const deploymentId: string // stable and unique for this deployed environment
+
+const components = createServerComponents({
+  build: componentBuild,
+  deployment: deploymentId,
+  adapter: vueServerComponents(),
+  owners: {
+    product: { // exact manifest route id, not a URL pattern
+      components: [Product],
+      scope: "anonymous", // personalized pages supply a public auth-scope token
+      cache: {
+        scope: "public",
+        requestIndependent: true,
+        revalidate: 300,
+        tags: ["catalog"],
+      },
+      instances: (ctx) => [serverComponentInstance(Product, "product", { id: ctx.params.id })],
+    },
+  },
+})
+
+export function createApp(clientEntry: string, assets: { styles?: readonly string[] }) {
+  return createWebApp({ adapter, manifest, clientEntry, styles: assets.styles, serverComponents: components })
+}
+```
+
+The owner lists the components and instances that may execute. A browser cannot invent a new instance or change its input. Initial HTML and hydration state reuse one execution. A refresh sends a bounded `x-nifra-component` selection to the actual owning page URL using same-origin GET.
+
+Hooks, filesystem middleware, gate layouts, ordinary layouts and the page loader run before component work on both initial requests and refreshes. Ordinary layout and page loaders retain their parallel execution; use `gate: true` when a layout must block the page loader. Component execution preserves the admitted request's environment, API, response controls, cancellation, budgets and effect accounting.
+
+Owners declare allowed capabilities and definitions may narrow that set. Domain writes are rejected in this GET path. Mutate through a validated server function or route action, then refresh after success. Native React `"use server"` actions and serialized closures are unsupported.
+
+A partially prerendered page can instead show a component in a hole, rendered for each visitor after the shared shell; its route lists the component under `holes` rather than `owners`. See partial prerendering.
+
+### Native views and client islands
+
+React definitions return JSX in a compiler-generated RSC entry. `createReactComponentRenderer` resolves an allowlisted definition, guards its public props, and renders it with the plugin's React server renderer into a sanitized Flight stream. `reactServerComponents` consumes that stream, produces the initial HTML with React's server renderer, and carries the bounded Flight payload for hydration. The browser decodes the payload with React Flight and hydrates or creates a real React root; refreshes publish the next React tree into that root, preserving React state. One selected React component can additionally negotiate progressive Flight during an owner refresh; other cases use the bounded buffered response. Imported `"use client"` exports require a companion `*.props.ts` with a matching closed schema for every export. The compiler guards element creation and cloning before a client prop handoff.
+
+Nifra's React path is still an opt-in owner/component pipeline, not a claim that every Nifra route becomes a Next.js App Router tree. Component inputs and public props are closed, bounded JSON; server references, serialized closures, arbitrary framework context and native React `"use server"` actions do not cross this public seam. Mutations use Nifra server functions or route actions, and progressive Flight is limited to one selected component with no mounted Nifra descendants. Multiple records, descendants, unsupported negotiation and all non-React adapters use the bounded buffered component response.
+
+Vue, Svelte, Solid 1.x and Preact definitions return `nativeServerView(View, islands, ranges)`. Their native view receives public `props` plus named island and nested-range markup. Use `vueServerComponents()`, `svelteServerComponents()` or `solidServerComponents()` or `preactServerComponents()` with the matching client adapter.
+
+Preact uses `preactServerComponents()` from `@nifrajs/web-preact/server-components`, `preactComponentClient({ islands })` from its `/client` subpath, and a typed `ServerComponent` from its `/outlet` subpath. Pass the controller or client adapter to the outlet and hydrate with Preact. Use `@preact/preset-vite` for JSX and development updates. Preact uses native Preact roots; `preact/compat` does not supply React Flight.
+
+```ts
+// Counter.island.ts - compiler assigns an opaque reference.
+import { t } from "@nifrajs/schema"
+import { defineClientIsland, clientIsland } from "@nifrajs/web/server-components/islands"
+declare function Counter(props: { title: string }): null
+
+export const counter = defineClientIsland({
+  props: t.object({ title: t.string() }), component: Counter, slots: ["summary"],
+})
+// Inside a server view, pass this named island to nativeServerView(...).
+export const instance = clientIsland(counter, "counter", { title: "Public title" }, {
+  summary: "<p>Server-owned summary</p>",
+})
+```
+
+A stable island reference, key and parent keep the native root, state, DOM node, focus and text selection. Changed keys remount. Removal awaits disposal; reappearance mounts a fresh root. Named slots contain validated server-owned HTML. Nested ranges must refer to registered children of that parent. Use `serverComponentIdentity` when registering a child's parent and `serverComponentChild` when selecting a child's render.
+
+Each component range has its own native root. Native context belongs to that root and its descendants; outer page context is not implicitly shared across independent roots. Pass explicit public data when a separate root needs it. Managed portals must use `componentPortalTarget` from `@nifrajs/web/server-components/portal`; targets outside the owned range are rejected and cleanup is awaited.
+
+Outlets are available from each adapter's `/server-components/outlet` export. React, Solid and Preact export `ServerComponent`; Svelte exports a native generic component as default. Vue also offers a specialized outlet for render functions and templates:
+
+```ts
+// doc-check: skip - component fragment; Product is a compiler-generated client handle.
+import { h } from "vue"
+import { createServerComponentOutlet } from "@nifrajs/web-vue/server-components/outlet"
+import { Product } from "./Product.component.server"
+const ProductOutlet = createServerComponentOutlet(Product)
+// Specialization keeps h() and SFC template inputs tied to Product's schema.
+h(ProductOutlet, { state, instanceKey: "product", input: { id }, controller, clientAdapter })
+```
+
+### Client entry, navigation and mutations
+
+```ts
+// doc-check: skip - integrate with the native client entry, not a second page root.
+import { ComponentController, bindComponentRouter, invalidateComponentScope,
+  parseComponentState, refreshAfterComponentMutation } from "@nifrajs/web/server-components/client"
+import { vueComponentClient } from "@nifrajs/web-vue/server-components/client"
+import { counter } from "./Counter.island"
+
+const state = parseComponentState(hydrationState)
+const clientAdapter = vueComponentClient({ islands: [counter] })
+const controller = new ComponentController({ state, adapter: clientAdapter })
+// Pass state, controller and clientAdapter to the page's native outlet.
+const stop = bindComponentRouter(router)
+await refreshAfterComponentMutation(save({ text }), controller, [state.records[0].instance])
+await invalidateComponentScope() // await this on logout or permission/tenant changes
+// On application disposal: stop(); await controller.dispose()
+```
+
+Use `props.serverComponents` from the server render to initialize the outlet and controller. Hydrate with the adapter's native API. Install `bindComponentRouter` for navigation, retained layouts, history and action revalidation, and dispose its subscription with the application. Mutation helpers refresh only an `ok: true` result; failures keep the current content.
+
+Auth-scope tokens are public identifiers, never cookies or credentials. Personalized owners must change their scope when identity, tenant or permissions change. Await `invalidateComponentScope()` before displaying another subject's content. Invalidation clears private records and native roots; subsequent authorized navigation can restore structural outlets. Denied refreshes also clear the scope.
+
+Route epochs, auth epochs, generations and build IDs prevent obsolete fetches, imports or native preparation from committing. A failed update disposes the affected range and reports a typed error. There is no automatic 4xx retry. Version mismatch permits at most one controlled document reload for that build.
+
+### Build and development
+
+```ts
+// doc-check: skip - Vue compiler is an app dependency; the isolated tarball consumer compiles this config with the pinned plugin.
+// nifra.config.ts - named exports; no default config object.
+import vue from "@vitejs/plugin-vue"
+import { vueAdapter } from "@nifrajs/web-vue"
+export const adapter = vueAdapter
+export const clientModule = "@nifrajs/web-vue/client"
+export const vitePlugins = [vue()]
+export const componentPipeline = {
+  adapter: "vue" as const,
+  entries: { client: "entry.client.ts", ssr: "entry.backend.ts" },
+}
+// entry.backend.ts exports createApp(clientEntry, assets).
+// React also requires entries.rsc and an RSC renderer registry.
+```
+
+`nifra dev` and `nifra build --target node` select the coordinated Vite pipeline when `componentPipeline` is exported. Other targets are `bun`, `deno`, `cloudflare` and `vercel`. Bun remains a supported runtime. The programmatic APIs are `buildServerComponents` and `devServerComponents` from `@nifrajs/web/server-components/build`.
+
+The pipeline has complete application client/SSR entries; React adds an RSC entry. It generates target serving code, an integrity manifest and one generation across server and client assets. It rejects an ordinary backend import into client code, unregistered client props, unsupported target builtins, foreign references and mixed build generations. Source edits restart all development environments together. `nifra check --json` validates source receipts without executing configuration.
+
+Keep the certified compiler tuple pinned in the application lockfile. React's framework-facing RSC APIs require exact alignment even when ordinary React SSR allows a broader peer range. The pipeline reads component modules with the TypeScript compiler API, which TypeScript 7 does not ship: on TypeScript 7 the build stops with `NIFRA_TS_UNSUPPORTED`, and `nifra check` reports the same code and checks each component module as an ordinary backend import.
+
+DependencyCertified tuple{TUPLE.map(([name, version]) => {name}{version})}
+
+The runtime matrix covers Bun 1.3.14 and 1.4.4, Node 22.23.3 and 26.12.0, Deno 2.0.0 and 2.9.7, Cloudflare Workers and Pages under workerd compatibility date 2026-09-18, and Vercel's Node 22 entry. Browser certification uses Playwright 1.63.0 with Chromium 153.0.8010.12, Firefox 155.0 and WebKit 26.6. Vanilla retains ordinary SSR; its server-component opt-in is rejected.
+
+### Streaming, caching and CSP
+
+Progressive Flight currently applies to React owner refreshes for one selected component with no mounted Nifra descendants. Multiple components, descendants, other adapters, or refreshes without Flight negotiation use the bounded buffered response. This does not stream the initial owner HTML.
+
+Enabling server components does not make every route private. Owner and hole-hosting routes and component transport responses remain `private, no-store` by default; non-owner routes keep their ordinary SSR and ISR behavior.
+
+For a cacheable owner route, any request-header method called through `ctx.request.headers` or `ctx.req.headers` by route middleware, a layout or page loader, component authorization/loading, or app hooks registered through `createWebApp({ use })` disables shared storage for that response. A request replacement Nifra cannot inspect also disables storage. Nifra has no request-header variation key. `requestIndependent` remains the application's assertion for dependencies Nifra cannot observe, including database, environment, global, external-service, and hooks attached after app creation.
+
+Initial owner-route HTML still waits for its complete state. Owner refreshes negotiate `application/vnd.nifra.component-flight-v1` only for one selected React record with no currently mounted Nifra descendants. The server sends a bounded metadata frame followed by sanitized Flight rows as they become ready. The client checks the closed metadata shape, route owner, build, identity scope and navigation epochs before handing the stream to React; each frame is checked for size, order, count and completion before its bytes reach Flight. React commits the record root and ready Suspense fallbacks while later Flight segments remain in flight, then reveals each boundary as its segment resolves. Refreshes with multiple Nifra records or currently mounted Nifra descendants, unsupported adapters or no Flight negotiation use the bounded buffered response. This refresh protocol stays separate from PPR and does not make refresh output cacheable.
+
+An owner route is eligible for shared ISR only when its owner declares `cache: { scope: "public", requestIndependent: true, revalidate, tags }`. That contract covers the complete route, layouts and loaders, owner callbacks, component authorization and loading, and rendered output. Runtime also requires a static anonymous owner scope, a deployment identity, and no owner capabilities. Never opt in output derived from a user, credential, authorization decision or secret. Cache identity includes the canonical URL, deployment, build, adapter and route. Requests with credentials or accepted authentication state, data or swap mode, component refreshes, non-GET methods, errors, `Set-Cookie` or unsupported `Vary` bypass storage. Responses leaving Nifra remain `private, no-store`; only the configured Nifra ISR store keeps an approved document. To purge an owner route by path, pass the same app instance to `revalidateEndpoint({ app, store, secret })` so the purge uses the same deployment/build/route partition. Tag purges affect entries carrying the declared tag. Without the ISR wrapper, owner caching is disabled.
+
+PPR holes keep their separate caching lifecycle. A nonce must be fresh per response; pass it through `createWebApp`. Strict CSP and Chromium Trusted Types are covered by the browser suite. If your policy requires Trusted Types, install `installComponentTrustedTypesPolicy()` from `@nifrajs/web/server-components/trusted-html` before hydration and allow the native framework's policy where required.
+
+HTML, URLs, styles, slots and portal targets are validated before insertion. React-owned bootstrap scripts require the expected nonce; raw executable HTML and foreign script/assets are rejected. Per-input, per-stream, per-document, depth, concurrency, queue and deadline limits fail closed. Cancellation propagates to reads and native work; an uncooperative promise retains its admission slot until it settles.
+
+Forms work without JavaScript. Successful actions reauthorize the owner GET exactly once. Parent-domain cookie changes, and Secure cookies on a request the app sees as `http:` (a TLS terminator in front), return 303 to the same path so the browser applies its cookie policy before the GET, preserving the action headers and cookies.
+
+### Examples, verification and rollback
+
+The repository contains runnable React, Vue, Svelte, Solid and Preact examples under `examples/server-components/`. They exercise native islands, nested ranges, slots, portals, actions and navigation. Their data, scope tokens and fixed nonce are certification fixtures; replace them with scoped application services, auth integration and fresh nonces before deployment.
+
+```bash
+bun examples/server-components/react/run.ts
+bun examples/server-components/vue/run.ts
+bun examples/server-components/svelte/run.ts
+bun examples/server-components/solid/run.ts
+# Add build to emit a Bun production application.
+bun run check:server-components
+bun run check:server-components:consumers
+bun run check:server-components:performance
+```
+
+Deploy the complete server build, integrity manifest and immutable assets together. Keep old hashed assets for the deployment overlap window. Roll back by redeploying the previous complete build. Disabling components requires rebuilding the application with an ordinary SSR fallback; component source cannot be dropped unchanged into an older runtime.
 
 ## Nifra - Optimistic UI & fetchers
 
@@ -11352,8 +11570,11 @@ file that reaches it.
 The optional server-components pipeline supports
 React, Preact, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
 in `*.component.server.ts(x)`, register owner instances and export a named
-`componentPipeline` configuration. React uses native RSC/Flight; the other four
-hydrate native islands in validated server ranges. Refresh repeats owner GET admission;
+`componentPipeline` configuration. React uses native RSC/Flight; Vue, Svelte,
+Preact and Nifra's current Solid 1.x adapter use schema-checked server-rendered ranges and
+explicitly registered native islands, not a Flight-equivalent protocol. Solid 2 has a
+separate experimental server-component frames protocol that Nifra does not currently target.
+Refresh repeats owner GET admission;
 HTML/data/refresh are private/no-store. Writes use server functions or actions. Bind the
 router and await auth-scope invalidation on identity, tenant or permission changes.
 
@@ -21884,12 +22105,13 @@ One package, the same on React, Preact, Vue, Solid and Svelte (pick the renderer
 - [Keep-alive](https://nifra.dev/docs/keep-alive) pages, a query cache, optimistic fetchers, and
   [islands](https://nifra.dev/docs/islands) (`@nifrajs/web/islands`) for pages with no framework runtime.
 - Optional [server components](https://nifra.dev/docs/server-components) on all five adapters:
-  React uses native RSC/Flight, the others their own islands in validated server-rendered ranges.
-  Definitions take closed input and public-props schemas and authorization; a refresh runs the
-  owner page's GET with its admission, capabilities, budgets and cancellation. Use the
-  `/server-components`, `/server-components/client`, `/server-components/islands` and
-  `/server-components/build` exports with a `componentPipeline` config export; the repository has a
-  runnable example per adapter.
+  React uses native RSC/Flight. Vue, Svelte, Preact and the current Solid 1.x adapter use
+  explicitly registered islands in validated server-rendered ranges; Solid 2's experimental
+  frames protocol is not currently targeted. Definitions take closed input and public-props
+  schemas and authorization; a refresh runs the owner page's GET with its admission, capabilities,
+  budgets and cancellation. Use the `/server-components`, `/server-components/client`,
+  `/server-components/islands` and `/server-components/build` exports with a `componentPipeline`
+  config export; the repository has a runnable example per adapter.
 
 ## Guarding pages
 

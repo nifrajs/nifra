@@ -111,11 +111,16 @@ export default function Comparison() {
       </p>
       <p>
         The optional <a href={href({ to: "/docs/server-components" })}>server-components pipeline</a> adds
-        server-only views and state-preserving refresh. React uses native RSC/Flight; Vue, Svelte,
-        Solid and Preact use their native islands in validated server-rendered ranges. All five
-        adapters pass the same certification, and a partially prerendered page can show a server
-        component in a hole. Server functions remain the mutation API; native React{" "}
-        <code>"use server"</code> actions are unsupported.
+        server-only views and state-preserving refresh, but the render protocol depends on the UI
+        library. React uses native RSC/Flight. In Nifra's current certified adapters, Vue, Svelte,
+        Solid 1.x and Preact use an owned server-rendered range with schema-checked JSON props and
+        explicitly registered client islands as separate native roots; they do not emulate Flight.
+        Nested ranges, slots and data crossing those roots are explicit. Solid 2 has its own
+        experimental server-component frames protocol, but Nifra's current Solid tuple does not
+        target it. The shared certification covers admission, ownership, prop validation, limits and
+        safe hydration - it does not mean identical React component semantics.
+        A partially prerendered page can show a server component in a hole. Server functions remain
+        the mutation API; native React <code>"use server"</code> actions are unsupported.
       </p>
 
       <h2>Caching and fresh data</h2>

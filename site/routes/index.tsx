@@ -290,7 +290,7 @@ const VERSUS = [
   {
     slug: "nextjs",
     name: "Next.js",
-    body: `${REACT_MULTIPLIER?.mult ?? ""} the dynamic SSR throughput on the same machine, and five UI frameworks instead of one. Building around React Server Components? Pick Next.js.`,
+    body: `${REACT_MULTIPLIER?.mult ?? ""} the dynamic SSR throughput on the same machine, and five UI frameworks instead of one. Need App Router's default RSC or React "use server" actions? Next.js is the direct fit; Nifra supports native RSC/Flight for React as an opt-in.`,
   },
   {
     slug: "fastify",
