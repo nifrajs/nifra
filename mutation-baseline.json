@@ -2037,12 +2037,6 @@
       "from": "-"
     },
     {
-      "op": "binary /->*",
-      "fn": "base64DecodedLength",
-      "code": "return (value.length / 4) * 3 - padding",
-      "from": "/"
-    },
-    {
       "op": "binary <-><=",
       "fn": "base64ToBytes",
       "code": "for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)",
@@ -2106,12 +2100,6 @@
       "op": "binary >->>=",
       "fn": "boundedResponseBytes",
       "code": "if (contentLength !== null && /^\\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {",
-      "from": ">"
-    },
-    {
-      "op": "binary >->>=",
-      "fn": "boundedResponseBytes",
-      "code": "if (total > maxBytes) {",
       "from": ">"
     },
     {
@@ -2706,24 +2694,6 @@
     },
     {
       "op": "binary ===->!==",
-      "fn": "formOriginAllowed",
-      "code": "? formOrigins(origin) === true",
-      "from": "==="
-    },
-    {
-      "op": "binary ===->!==",
-      "fn": "isFormMediaType",
-      "code": "essence === \"multipart/form-data\" ||",
-      "from": "==="
-    },
-    {
-      "op": "binary ===->!==",
-      "fn": "isFormMediaType",
-      "code": "essence === \"text/plain\"",
-      "from": "==="
-    },
-    {
-      "op": "binary ===->!==",
       "fn": "readBoundedJsonSource",
       "code": "() => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),",
       "from": "===",
@@ -2754,18 +2724,6 @@
       "code": "if (bytes.byteLength > length || bytes.byteLength > maxBytes) {",
       "from": ">",
       "nth": 1
-    },
-    {
-      "op": "binary ||->&&",
-      "fn": "isFormMediaType",
-      "code": "essence === \"multipart/form-data\" ||",
-      "from": "||"
-    },
-    {
-      "op": "condition->false",
-      "fn": "formOriginAllowed",
-      "code": "return typeof formOrigins === \"function\"",
-      "from": "typeof formOrigins === \"function\""
     },
     {
       "op": "condition->false",
@@ -2825,12 +2783,6 @@
     },
     {
       "op": "condition->true",
-      "fn": "isFormMediaType",
-      "code": "const essence = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()",
-      "from": "semi === -1"
-    },
-    {
-      "op": "condition->true",
       "fn": "readBoundedJsonSource",
       "code": "() => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),",
       "from": "onResult === undefined"
@@ -2859,18 +2811,6 @@
       "fn": "readBoundedJsonSource",
       "code": "const refuseFailedRead = body !== null && !body.locked && hasTrustedBodyFraming(req)",
       "from": "!body.locked"
-    },
-    {
-      "op": "flip boolean",
-      "fn": "formOriginAllowed",
-      "code": "? formOrigins(origin) === true",
-      "from": "true"
-    },
-    {
-      "op": "return undefined",
-      "fn": "formOriginAllowed",
-      "code": "if (formOrigins === undefined) return false",
-      "from": "return false"
     },
     {
       "op": "return undefined",
@@ -4566,13 +4506,6 @@
     },
     {
       "op": "flip boolean",
-      "fn": "lexPostgres",
-      "code": "tokens.push({ kind: \"punct\", value: char, bare: false, offset: i })",
-      "from": "false",
-      "nth": 1
-    },
-    {
-      "op": "flip boolean",
       "fn": "tableAliasLists",
       "code": "let itemStart = false",
       "from": "false"
@@ -5963,6 +5896,12 @@
       "nth": 1
     },
     {
+      "op": "binary <=-><",
+      "fn": "parseSetCookies",
+      "code": "if (at <= 0) continue",
+      "from": "<="
+    },
+    {
       "op": "binary ||->&&",
       "fn": "identityEpochHook",
       "code": "epochCookie(renewed.secure || servedOverHttps(request, sent), randomEpoch(), lifetime),",
@@ -6003,20 +5942,6 @@
       "fn": "parseSetCookies",
       "code": "else if (key === \"secure\") secure = true",
       "from": "key === \"secure\""
-    }
-  ],
-  "packages/web/src/internal/live-queries.ts": [
-    {
-      "op": "condition->false",
-      "fn": "track",
-      "code": "if (queries.has(query)) return",
-      "from": "queries.has(query)"
-    },
-    {
-      "op": "delete statement",
-      "fn": "watchLiveQueries",
-      "code": "watchers.delete(watcher)",
-      "from": "watchers.delete(watcher)"
     }
   ],
   "packages/web/src/internal/query-seam.ts": [
@@ -6941,12 +6866,6 @@
     {
       "op": "binary &&->||",
       "fn": "attach",
-      "code": "!next.pending &&",
-      "from": "&&"
-    },
-    {
-      "op": "binary &&->||",
-      "fn": "attach",
       "code": "if (\"persisted\" in event && event.persisted === true) dropKept(\"pagehide\")",
       "from": "&&"
     },
@@ -7020,19 +6939,7 @@
     {
       "op": "binary &&->||",
       "fn": "settle",
-      "code": "entry.instance !== active.instance &&",
-      "from": "&&"
-    },
-    {
-      "op": "binary &&->||",
-      "fn": "settle",
       "code": "entry.instance !== undefined &&",
-      "from": "&&"
-    },
-    {
-      "op": "binary &&->||",
-      "fn": "settle",
-      "code": "if (entry.index > active.index && entry.instance === undefined) {",
       "from": "&&"
     },
     {
@@ -7117,12 +7024,6 @@
     },
     {
       "op": "binary ===->!==",
-      "fn": "rememberView",
-      "code": "const focused = typeof document === \"undefined\" ? null : document.activeElement",
-      "from": "==="
-    },
-    {
-      "op": "binary ===->!==",
       "fn": "restore",
       "code": "if (restoring === mine) endRestore()",
       "from": "==="
@@ -7131,12 +7032,6 @@
       "op": "binary ===->!==",
       "fn": "reuse",
       "code": "if (a === b) return old",
-      "from": "==="
-    },
-    {
-      "op": "binary ===->!==",
-      "fn": "stampEntry",
-      "code": "typeof state === \"object\" &&",
       "from": "==="
     },
     {
@@ -7161,12 +7056,6 @@
       "op": "binary >->>=",
       "fn": "refresh",
       "code": "if (stuck.length > 0) {",
-      "from": ">"
-    },
-    {
-      "op": "binary >->>=",
-      "fn": "settle",
-      "code": "if (entry.index > active.index && entry.instance === undefined) {",
       "from": ">"
     },
     {
@@ -7390,12 +7279,6 @@
     },
     {
       "op": "condition->false",
-      "fn": "fetchData",
-      "code": "if (ownsLoader(match.routeId)) noteSource(path, payload)",
-      "from": "ownsLoader(match.routeId)"
-    },
-    {
-      "op": "condition->false",
       "fn": "fillsOnto",
       "code": "if (!isRouteDataEnvelope(payload) || payload.status !== undefined) return envelope",
       "from": "!isRouteDataEnvelope(payload) || payload.status !== undefined"
@@ -7429,6 +7312,12 @@
       "fn": "navigate",
       "code": "instance === undefined || instance === active.instance ? undefined : records.get(instance)",
       "from": "instance === undefined || instance === active.instance"
+    },
+    {
+      "op": "condition->false",
+      "fn": "noteKeptView",
+      "code": "if (elements === undefined) keptViews.delete(key)",
+      "from": "elements === undefined"
     },
     {
       "op": "condition->false",
@@ -7865,12 +7754,6 @@
     {
       "op": "condition->true",
       "fn": "settle",
-      "code": "entry.index !== active.index &&",
-      "from": "entry.index !== active.index && entry.instance !== undefined && entry.instance !== active.instance && !records.has(entry"
-    },
-    {
-      "op": "condition->true",
-      "fn": "settle",
       "code": "epoch: same ? active.epoch : loadedEpoch,",
       "from": "same"
     },
@@ -8030,6 +7913,12 @@
       "fn": "dropKept",
       "code": "leaving = false",
       "from": "leaving = false"
+    },
+    {
+      "op": "delete statement",
+      "fn": "endRestore",
+      "code": "reloading = undefined",
+      "from": "reloading = undefined"
     },
     {
       "op": "delete statement",
@@ -9363,6 +9252,12 @@
     },
     {
       "op": "binary ??->&&",
+      "fn": "hydrate",
+      "code": "cache.get(h)?.fn ??",
+      "from": "??"
+    },
+    {
+      "op": "binary ??->&&",
       "fn": "isStale",
       "code": "invalidated || now() - state.updatedAt >= (opts.staleTime ?? defaultStaleTime)",
       "from": "??"
@@ -9371,6 +9266,12 @@
       "op": "binary ??->&&",
       "fn": "prefetchQuery",
       "code": "opts?.staleTime ?? defaultStaleTime,",
+      "from": "??"
+    },
+    {
+      "op": "binary ??->&&",
+      "fn": "setQueryData",
+      "code": "existing?.fn ??",
       "from": "??"
     },
     {
@@ -9426,12 +9327,6 @@
       "fn": "prevParam",
       "code": "if (opts.getPreviousPageParam === undefined || data.pages.length === 0) return undefined",
       "from": "opts.getPreviousPageParam === undefined || data.pages.length === 0"
-    },
-    {
-      "op": "condition->false",
-      "fn": "runPaged",
-      "code": "if (forChange) reloading--",
-      "from": "forChange"
     },
     {
       "op": "condition->false",
@@ -9784,12 +9679,6 @@
     },
     {
       "op": "flip boolean",
-      "fn": "prefetchQuery",
-      "code": ").run(false)",
-      "from": "false"
-    },
-    {
-      "op": "flip boolean",
       "fn": "refetch",
       "code": "return reload(false)",
       "from": "false"
@@ -9981,7 +9870,7 @@
     {
       "op": "binary ===->!==",
       "fn": "createClientRouter",
-      "code": "if (fetchData === fetchRouteData) prerenderedOf()",
+      "code": "if (options.fetchData === undefined) prerenderedOf()",
       "from": "==="
     },
     {
@@ -10039,6 +9928,19 @@
       "fn": "interceptionFor",
       "code": "pattern.length > 2048 ||",
       "from": ">"
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "navigate",
+      "code": "if (Object.keys(targets).length > 0 || Object.keys(currentTargets).length > 0) {",
+      "from": ">"
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "navigate",
+      "code": "if (Object.keys(targets).length > 0 || Object.keys(currentTargets).length > 0) {",
+      "from": ">",
+      "nth": 1
     },
     {
       "op": "binary >->>=",
@@ -10127,8 +10029,14 @@
     {
       "op": "condition->false",
       "fn": "createClientRouter",
-      "code": "if (fetchData === fetchRouteData) prerenderedOf()",
-      "from": "fetchData === fetchRouteData"
+      "code": "(send === undefined",
+      "from": "send === undefined"
+    },
+    {
+      "op": "condition->false",
+      "fn": "createClientRouter",
+      "code": "if (options.fetchData === undefined) prerenderedOf()",
+      "from": "options.fetchData === undefined"
     },
     {
       "op": "condition->false",
@@ -10428,8 +10336,8 @@
     {
       "op": "condition->true",
       "fn": "createClientRouter",
-      "code": "if (fetchData === fetchRouteData) prerenderedOf()",
-      "from": "fetchData === fetchRouteData"
+      "code": "if (options.fetchData === undefined) prerenderedOf()",
+      "from": "options.fetchData === undefined"
     },
     {
       "op": "condition->true",
@@ -10472,6 +10380,12 @@
       "fn": "markStale",
       "code": "...(entry.boundaries !== undefined ? { boundaries: entry.boundaries } : {}),",
       "from": "entry.boundaries !== undefined"
+    },
+    {
+      "op": "condition->true",
+      "fn": "navigate",
+      "code": "if (Object.keys(targets).length > 0 || Object.keys(currentTargets).length > 0) {",
+      "from": "Object.keys(targets).length > 0 || Object.keys(currentTargets).length > 0"
     },
     {
       "op": "condition->true",
@@ -10610,7 +10524,7 @@
     {
       "op": "delete statement",
       "fn": "createClientRouter",
-      "code": "if (fetchData === fetchRouteData) prerenderedOf()",
+      "code": "if (options.fetchData === undefined) prerenderedOf()",
       "from": "prerenderedOf()"
     },
     {
@@ -10960,12 +10874,6 @@
       "fn": "submit",
       "code": "false,",
       "from": "false"
-    },
-    {
-      "op": "return undefined",
-      "fn": "createMatcher",
-      "code": "if (clean.charCodeAt(0) !== 47 /* / */) return null",
-      "from": "return null"
     },
     {
       "op": "return undefined",

@@ -250,6 +250,29 @@
       "reason": "realpath of the filesystem root never throws, so the root is never reached here."
     }
   ],
+  "packages/core/src/server/body-lane.ts": [
+    {
+      "op": "return undefined",
+      "fn": "formOriginAllowed",
+      "code": "if (formOrigins === undefined) return false",
+      "from": "return false",
+      "reason": "Its only caller negates the result (`!formOriginAllowed(...)`), so `undefined` and `false` refuse the same way."
+    },
+    {
+      "op": "return undefined",
+      "fn": "crossSiteFormRefused",
+      "code": "if (origin === null || headerOf(source, \"sec-fetch-site\") === \"same-origin\") return false",
+      "from": "return false",
+      "reason": "Every caller branches on the result (`if (crossSiteFormRefused(...))`), so `undefined` and `false` pass the request the same way."
+    },
+    {
+      "op": "condition->true",
+      "fn": "crossSiteFormRefused",
+      "code": "const authorization = type === \"\" ? headerOf(source, \"authorization\") : null",
+      "from": "type === \"\"",
+      "reason": "`authorization` is read only inside the `type === \"\"` branch below, so reading it for a typed request changes nothing."
+    }
+  ],
   "packages/core/src/server/response-contract-lane.ts": [
     {
       "op": "condition->true",

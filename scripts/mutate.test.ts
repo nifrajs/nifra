@@ -19,6 +19,7 @@ import {
   formatSummary,
   gateFailures,
   generateMutants,
+  groupRssKb,
   importsOf,
   loadBaseline,
   loadEquivalents,
@@ -30,6 +31,7 @@ import {
   onLines,
   parseChangedLines,
   parseJunit,
+  runTests,
   selectTests,
   targetTests,
 } from "./mutate.ts"
@@ -560,6 +562,53 @@ describe("parseJunit and classify", () => {
     expect(classify({ ...baseline, errors: 1 }, run(green, { errors: 1 }), false).status).toBe(
       "survived",
     )
+  })
+})
+
+describe("a run that outgrows its memory", () => {
+  test("sums the resident size of one process group only", () => {
+    const ps = " 100  2048\n 100   512\n 200  9999\n\n  7 1\n"
+    expect(groupRssKb(ps, 100)).toBe(2560)
+    expect(groupRssKb(ps, 7)).toBe(1)
+    expect(groupRssKb(ps, 999)).toBe(0)
+    expect(groupRssKb("", 100)).toBe(0)
+  })
+
+  test("is ended as a timeout while it grows, and a run that stays small is left alone", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "mutate-memory-")))
+    try {
+      writeFileSync(
+        join(dir, "grow.test.ts"),
+        'import { test } from "bun:test"\n' +
+          'test("grows", () => { const held: object[] = []; for (;;) held.push({ a: held.length }) })\n',
+      )
+      writeFileSync(
+        join(dir, "small.test.ts"),
+        'import { expect, test } from "bun:test"\ntest("small", () => { expect(1).toBe(1) })\n',
+      )
+      const grown = await runTests(
+        dir,
+        ["grow.test.ts"],
+        join(dir, "grow.xml"),
+        60_000,
+        false,
+        400_000,
+      )
+      expect(grown.timedOut).toBe(true)
+      expect(grown.ms).toBeLessThan(30_000)
+      const small = await runTests(
+        dir,
+        ["small.test.ts"],
+        join(dir, "small.xml"),
+        60_000,
+        false,
+        400_000,
+      )
+      expect(small.timedOut).toBe(false)
+      expect(small.exitCode).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
