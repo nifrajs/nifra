@@ -84,6 +84,14 @@ export const retainedIndices = (header: string | null): ReadonlySet<number> => {
   return out
 }
 
+const sameParams = (
+  a: Readonly<Record<string, string>>,
+  b: Readonly<Record<string, string>>,
+): boolean => {
+  const names = Object.keys(a)
+  return names.length === Object.keys(b).length && names.every((name) => a[name] === b[name])
+}
+
 /** A query change re-runs layout loaders by default: any can read it, and none declares keys. */
 export const keepsLayoutData = (
   route: RouteEntry,
@@ -95,13 +103,17 @@ export const keepsLayoutData = (
   if (!retain.requested.has(index)) return false
   const previous = retain.from
   if (route.layoutIds[index] !== previous.layoutIds[index]) return false
-  const owned = route.layoutParams?.[index] ?? []
-  const previouslyOwned = previous.layoutParams?.[index] ?? []
-  const defaultShouldRevalidate =
-    retain.fromUrl.search !== retain.toUrl.search ||
-    owned.length !== previouslyOwned.length ||
-    owned.some((name, i) => name !== previouslyOwned[i]) ||
-    owned.some((name) => params[name] !== retain.fromParams[name])
+  const owned = route.layoutParams?.[index]
+  const previouslyOwned = previous.layoutParams?.[index]
+  // A manifest that does not say which params a layout owns hands its loader all of them, so any
+  // change in them is a change the layout can see.
+  const paramsChanged =
+    owned === undefined || previouslyOwned === undefined
+      ? !sameParams(params, retain.fromParams)
+      : owned.length !== previouslyOwned.length ||
+        owned.some((name, i) => name !== previouslyOwned[i]) ||
+        owned.some((name) => params[name] !== retain.fromParams[name])
+  const defaultShouldRevalidate = retain.fromUrl.search !== retain.toUrl.search || paramsChanged
   const decide = layout.shouldRevalidate
   if (typeof decide !== "function") return !defaultShouldRevalidate
   // Copies, so a hook that mutates its arguments cannot reach the request's params or the next

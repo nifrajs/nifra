@@ -119,16 +119,16 @@ export function createStatusRenderer<Env = unknown>(
       })
     }
     if (chain !== undefined) {
-      const resolved = resolveChainAndHead(
-        chain.modules,
-        chain.layoutData,
-        errorModule,
-        statusMetaArgs(req, data, nonce),
-      )
       try {
+        const resolved = resolveChainAndHead(
+          chain.modules,
+          chain.layoutData,
+          errorModule,
+          statusMetaArgs(req, data, nonce),
+        )
         return await render(resolved.chain, { head: resolved.head, chain })
       } catch {
-        // A layout that fails to render leaves the error page alone, never a second error.
+        // A layout whose meta or render fails leaves the error page alone, never a second error.
         return render([errorModule.default])
       }
     }
@@ -209,12 +209,15 @@ export function createStatusRenderer<Env = unknown>(
     const modules = chain?.modules ?? []
     const layoutIds = chain === undefined ? [] : rootLayoutIds
     const layoutData = chain?.layoutData
-    const { chain: components, head } = resolveChainAndHead(
-      modules,
-      layoutData,
-      loaded,
-      statusMetaArgs(req, null, nonce),
-    )
+    let resolved: ReturnType<typeof resolveChainAndHead>
+    try {
+      resolved = resolveChainAndHead(modules, layoutData, loaded, statusMetaArgs(req, null, nonce))
+    } catch (err) {
+      // A layout whose meta throws leaves the status page alone, never a second error.
+      if (chain === undefined) throw err
+      return renderTerminalStatus(status, req, extraHeaders, nonce)
+    }
+    const { chain: components, head } = resolved
     let headers = extraHeaders
     if (layoutData !== undefined) {
       // The page now shows what a layout loaded for this visitor.

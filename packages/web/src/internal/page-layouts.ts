@@ -23,6 +23,8 @@ import {
 import { MIDDLEWARE_SCOPE, type PageResponseControls } from "./response-controls.ts"
 import { isStatusSignal, notFound } from "./status-page.ts"
 
+const ignore = (): void => {}
+
 export function createLayoutRunner<Env = unknown>(base: ExecutionBase<Env>) {
   const { manifest, cacheModules, loadModule, i18n, localeGuarded, matchManifestRoute, routeById } =
     base
@@ -94,73 +96,81 @@ export function createLayoutRunner<Env = unknown>(base: ExecutionBase<Env>) {
     const results: unknown[] = new Array(modules.length).fill(null)
     const retained: number[] = []
     const pending: Array<Promise<void>> = []
-    for (let i = 0; i < modules.length; i++) {
-      const layout = modules[i] as LoadedLayoutModules[number]
-      const loader = layout.loader
-      if (loader === undefined) continue
-      if (retain !== undefined && layout.gate !== true) {
-        let keep: boolean
-        try {
-          keep = keepsLayoutData(route, i, layout, ctx.params, retain)
-        } catch (err) {
-          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
-          throw tagLayoutError(err, route.layoutIds[i] as string)
+    try {
+      for (let i = 0; i < modules.length; i++) {
+        const layout = modules[i] as LoadedLayoutModules[number]
+        const loader = layout.loader
+        if (loader === undefined) continue
+        if (retain !== undefined && layout.gate !== true) {
+          let keep: boolean
+          try {
+            keep = keepsLayoutData(route, i, layout, ctx.params, retain)
+          } catch (err) {
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The loaded layout array is derived from these same manifest IDs in the same order.
+            throw tagLayoutError(err, route.layoutIds[i] as string)
+          }
+          if (keep) {
+            retained.push(i)
+            continue
+          }
         }
-        if (keep) {
-          retained.push(i)
+        const scoped = forkLoaderContext(ctx, {
+          params: scopeParams(ctx.params, route.layoutParams?.[i]),
+          set: controls.scope(i),
+        })
+        const layoutId = route.layoutIds[i] as string
+        if (modules[i]?.gate === true) {
+          results[i] =
+            gated !== undefined
+              ? gated.gates[i]
+              : await runGate(
+                  route,
+                  i,
+                  live === undefined
+                    ? loader
+                    : (gateCtx) => runLiveLoader(live, `L:${layoutId}`, loader, gateCtx),
+                  scoped,
+                )
           continue
         }
+        const index = i
+        try {
+          const value =
+            live === undefined
+              ? loader(scoped)
+              : runLiveLoader(live, `L:${layoutId}`, loader, scoped)
+          // Scalars settle synchronously. Objects keep await's intrinsic promise/thenable
+          // assimilation: property-presence and prototype probes are unsafe for proxies.
+          if (value !== null && (typeof value === "object" || typeof value === "function")) {
+            pending.push(
+              (async () => {
+                let settled: unknown
+                try {
+                  settled = await value
+                } catch (err) {
+                  if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, err)
+                  throw tagLayoutError(err, layoutId)
+                }
+                // A returned redirect or Response refuses exactly as a thrown one: kept as layout data,
+                // it would ship beside the page loader's data.
+                if (isControlFlow(settled)) {
+                  if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, settled)
+                  throw tagLayoutError(settled, layoutId)
+                }
+                results[index] = settled
+              })(),
+            )
+          } else results[index] = value
+        } catch (err) {
+          if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, err)
+          // Preserve a synchronous throw as a pending layout failure, just like the async lane.
+          pending.push(Promise.reject(tagLayoutError(err, layoutId)))
+        }
       }
-      const scoped = forkLoaderContext(ctx, {
-        params: scopeParams(ctx.params, route.layoutParams?.[i]),
-        set: controls.scope(i),
-      })
-      const layoutId = route.layoutIds[i] as string
-      if (modules[i]?.gate === true) {
-        results[i] =
-          gated !== undefined
-            ? gated.gates[i]
-            : await runGate(
-                route,
-                i,
-                live === undefined
-                  ? loader
-                  : (gateCtx) => runLiveLoader(live, `L:${layoutId}`, loader, gateCtx),
-                scoped,
-              )
-        continue
-      }
-      const index = i
-      try {
-        const value =
-          live === undefined ? loader(scoped) : runLiveLoader(live, `L:${layoutId}`, loader, scoped)
-        // Scalars settle synchronously. Objects keep await's intrinsic promise/thenable
-        // assimilation: property-presence and prototype probes are unsafe for proxies.
-        if (value !== null && (typeof value === "object" || typeof value === "function")) {
-          pending.push(
-            (async () => {
-              let settled: unknown
-              try {
-                settled = await value
-              } catch (err) {
-                if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, err)
-                throw tagLayoutError(err, layoutId)
-              }
-              // A returned redirect or Response refuses exactly as a thrown one: kept as layout data,
-              // it would ship beside the page loader's data.
-              if (isControlFlow(settled)) {
-                if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, settled)
-                throw tagLayoutError(settled, layoutId)
-              }
-              results[index] = settled
-            })(),
-          )
-        } else results[index] = value
-      } catch (err) {
-        if (warnsUngatedRefusal) warnUngatedRefusal(layoutId, err)
-        // Preserve a synchronous throw as a pending layout failure, just like the async lane.
-        pending.push(Promise.reject(tagLayoutError(err, layoutId)))
-      }
+    } catch (err) {
+      // The chain is abandoned: a loader it already started must not fail unobserved.
+      for (const promise of pending) promise.catch(ignore)
+      throw err
     }
     return {
       modules,
