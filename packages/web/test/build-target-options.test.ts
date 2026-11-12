@@ -33,6 +33,14 @@ test("generateServerEntry without optionImports emits no option import", () => {
   expect(source).not.toContain("mounts")
 })
 
+test("generated deploy entries explicitly cache immutable route modules", () => {
+  for (const target of ["bun", "node", "deno", "cloudflare", "vercel"] as const) {
+    expect(generateServerEntry({ target, adapterImport: "/app/backend/framework.ts" })).toContain(
+      "  cacheRouteModules: true,\n",
+    )
+  }
+})
+
 const WORKSPACE_TMP_BASE = `${import.meta.dir}/.tmp-build-options-`
 let projectRoot: string
 

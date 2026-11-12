@@ -1,5 +1,29 @@
 # @nifrajs/otel
 
+## 5.13.0
+
+No changes in this release.
+
+## 5.12.1
+
+No changes in this release.
+
+## 5.12.0
+
+No changes in this release.
+
+## 5.11.0
+
+No changes in this release.
+
+## 5.10.0
+
+No changes in this release.
+
+## 5.9.0
+
+No changes in this release.
+
 ## 5.8.0
 
 No changes in this release.

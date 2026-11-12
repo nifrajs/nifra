@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { CodeBlock } from "../../shared/highlight"
 import { postMeta } from "../../shared/meta"
 
@@ -126,8 +127,8 @@ export default function OptimizationsWeRejected() {
         alone, because on the page they look like plain improvements.
       </p>
       <p>
-        The benchmark method and current tables are on the <a href="/benchmarks">benchmarks page</a>
-        .
+        The benchmark method and current tables are on the{" "}
+        <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
       </p>
     </article>
   )

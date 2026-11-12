@@ -5,6 +5,7 @@ import {
   type Manifest,
   notFound,
   type RenderAdapter,
+  rawHref,
   redirect,
   statusPage,
 } from "../src/index.ts"
@@ -145,7 +146,7 @@ test("every pre-existing throw keeps its exact behaviour", async () => {
   const red = createWebApp({
     adapter: stub,
     manifest: manifestWith(() => {
-      throw redirect("/login")
+      throw redirect(rawHref("/login"))
     }),
     clientEntry: "/c.js",
   })

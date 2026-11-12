@@ -81,13 +81,14 @@ import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
   assertByteLimit,
   clientBodyErrorCode,
+  DEFAULT_MAX_BODY_BYTES,
   hasTrustedBodyFraming,
   markTransportCap,
   markTrustedBodyFraming,
   type RawBodyReaders,
   UNLIMITED_BODY_BYTES,
 } from "./body.ts"
-import type { FormOrigins } from "./body-lane.ts"
+import { crossSiteFormRefused, type FormOrigins, guardsBodylessForm } from "./body-lane.ts"
 import {
   type ClientIpTrust,
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
@@ -100,7 +101,7 @@ import {
   headerKeysAllLowercase,
   markLowercaseHeaderKeys,
 } from "./header-case.ts"
-import { declaredHeaders, headerObjectOf } from "./headers.ts"
+import { declaredHeaderNames, declaredHeaders, headerObjectOf } from "./headers.ts"
 import {
   isRoutableMethod,
   jsonError,
@@ -167,6 +168,7 @@ import {
   type StatusResponse,
 } from "./runtime-core.ts"
 import { normalizeStaticResponseHeaders, type StaticResponseHeaders } from "./static-headers.ts"
+import { createStaticResponse, staticResponseDefinition } from "./static-response.ts"
 import { withTextSlots } from "./text-slots.ts"
 import { plainValidationError } from "./validation.ts"
 
@@ -249,7 +251,7 @@ import type {
 } from "./server-types.ts"
 import type { SSEInit, TypedSSEStream } from "./sse.ts"
 import type { SseRuntime } from "./sse-hook.ts"
-import type { TopicRegistry, WebSocketHandler, WebSocketUpgradeOutcome } from "./websocket.ts"
+import type { TopicAdapter, WebSocketHandler, WebSocketUpgradeOutcome } from "./websocket.ts"
 import type { BunWsData } from "./ws-bun.ts"
 import type { WsRuntime } from "./ws-hook.ts"
 
@@ -259,6 +261,7 @@ export type MaybePromise<T> = T | Promise<T>
 // ordinary registered routes on its native table and send unmatched OPTIONS requests through the
 // normal fetch fallback where the hook still runs.
 const BUN_NATIVE_REQUEST_SAFE = Symbol.for("@nifrajs/core/bun-native-request-safe")
+const TRUSTED_ORIGINS = Symbol.for("nifra.trustedOrigins")
 
 /**
  * Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass
@@ -452,7 +455,8 @@ class BunPeerPlatform implements PeerPlatform {
 }
 
 type BunNativeHandler = (request: Request, server: BunPeerServer) => MaybePromise<Response>
-type BunNativeMethodTable = Partial<Record<Method, BunNativeHandler>>
+type BunNativeRouteValue = BunNativeHandler | Response
+type BunNativeMethodTable = Partial<Record<Method, BunNativeRouteValue>>
 // Bun's route table has a slot for each of these; a QUERY entry is ignored and the request falls
 // through to the table's fetch, so QUERY routes stay on the portable dispatcher.
 const BUN_TABLE_METHODS: readonly Method[] = METHODS.filter((method) => method !== "QUERY")
@@ -648,7 +652,6 @@ export {
 } from "./plugin.ts"
 export type { IdentityPlugin }
 
-const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const BODY_RESPONSE = (response: Response | ResponseResult): Response | ResponseResult => response
 const BODY_ERROR = (error: unknown): Promise<never> => Promise.reject(error)
 const DEFAULT_DRAIN_MS = 10_000
@@ -689,6 +692,17 @@ const UNROUTED_CHAR = /[^!$%&'()*+,\-./0-9:;=?@A-Z[\]_a-z|~]/
 const unroutedParam = (value: string | undefined): boolean =>
   value !== undefined && (value === "." || value === ".." || UNROUTED_CHAR.test(value))
 
+/** Native query-schema routes can pass this search substring into RequestContext directly instead of
+ * building both pathname and search with the portable URL helper. Keep fragment handling identical
+ * to `urlPartsOf`; in-process Requests can retain a fragment even though network request targets do not. */
+function searchOfNativeRequest(url: string): string {
+  const question = url.indexOf("?")
+  const fragment = url.indexOf("#")
+  return question < 0 || (fragment >= 0 && question > fragment)
+    ? ""
+    : url.slice(question, fragment < 0 ? undefined : fragment)
+}
+
 function hasUnroutedParam(params: Record<string, string>): boolean {
   for (const key in params) {
     if (unroutedParam(params[key])) return true
@@ -697,8 +711,8 @@ function hasUnroutedParam(params: Record<string, string>): boolean {
 }
 
 /**
- * Deno is the runtime that hands an app a `Request` whose `url` is the target as the client sent it;
- * Bun, workerd and every `new Request()` parse it first. Only there does `fetch` read the URL up front.
+ * Deno's server builds `Request.url` from the Host and target as received, without normalizing the
+ * target first. Bun, workerd, and `new Request()` parse it before core sees it.
  */
 const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 
@@ -753,6 +767,14 @@ function resolvedSource(req: Request, url: string): RequestSource {
   return source
 }
 
+/**
+ * The target each request {@link resolvedSource} routes was resolved to; made by the first one. A mount
+ * is handed that request itself, so the app it reaches routes this target, as it routes the rebuilt
+ * copy of any other request: left to `req.url`, a mounted app without `normalizeTarget` matched the
+ * dot segments raw.
+ */
+let resolvedTargets: WeakMap<Request, string> | undefined
+
 // A Host as RFC 9110 allows it: a reg-name or an IP literal, then an optional port. Deno builds
 // `Request.url` by appending the target to the Host as received, so `Host: x/admin#` turned a
 // request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
@@ -779,24 +801,35 @@ const invalidHost = (host: string): boolean => {
  * Host (400), a URL replaces the target, `false` keeps it. Deno hands the target over as sent, so
  * its dot segments are resolved; so does Bun when HTTP/1.0 leaves the Host out, and its route table
  * matched `/files/..` raw. Such a request is served as `localhost`, as Node and Deno serve it.
- * `headerOf`, not `req.headers`: on Deno that reads the Host alone instead of building every
- * header. On Bun only a target that needs resolving is checked unless `validateHost` is set.
+ * `headerOf`, not `req.headers`: on Deno it reads Host only when `validateHost` is set, and dot
+ * segments are resolved only when `normalizeTarget` is. On Bun only a target that needs resolving
+ * is checked unless `validateHost` is set.
  */
-const requestTarget = (req: Request, validateHost: boolean): string | boolean => {
-  if (!rawRequestTargets && !(unparsedBunTargets && (validateHost || needsResolving(req.url))))
-    return false
+const requestTarget = (
+  req: Request,
+  validateHost: boolean,
+  normalizeTarget: boolean,
+): string | boolean => {
+  if (rawRequestTargets) {
+    const host = validateHost ? headerOf(req, "host") : null
+    if (host !== null && invalidHost(host)) return true
+    if (!normalizeTarget || !needsResolving(req.url)) return false
+    // Deno can preserve an unparseable absolute URL when Host is malformed. Do not route its
+    // unresolved dot segments through the raw-target fallback.
+    if (!URL.canParse(req.url, "http://localhost")) return true
+    return resolveDotSegments(req.url)
+  }
+  if (!(unparsedBunTargets && (validateHost || needsResolving(req.url)))) return false
   const host = headerOf(req, "host")
   if (host !== null && invalidHost(host)) {
-    if (rawRequestTargets) return true
     // Bun served it anyway: it could not read the Host, so it left the target unparsed, or it
     // built the URL on it - sent twice (joined with ", ", the URL on the first; RFC 9112 section
-    // 3.2 answers 400), percent-encoded (`%61.example` routed as `a.example`), or with a
-    // sub-delimiter (`a!b`). A request built in process keeps the URL its caller built, unless Bun
+    // 3.2 answers 400), percent-encoded (%61.example routed as a.example), or with a
+    // sub-delimiter (a!b). A request built in process keeps the URL its caller built, unless Bun
     // would have built it so.
     const routed = URL.parse(req.url)?.host
     return routed === undefined || URL.parse(`//${host.split(", ")[0]}`, req.url)?.host === routed
   }
-  if (rawRequestTargets) return needsResolving(req.url) && resolveDotSegments(req.url)
   // A request built in process carries an absolute URL whatever its headers say.
   return (
     host === null &&
@@ -873,6 +906,98 @@ interface FusedHooks {
   readonly afters: readonly RawAfterHandle[]
   readonly errors: readonly RawErrorHandler[]
   readonly decorations: Record<PropertyKey, unknown> | undefined
+}
+
+interface FusedValidationStage {
+  readonly schema: StandardSchemaV1
+  readonly kind: "headers" | "cookies" | "params" | "query"
+  readonly headerNames?: readonly string[] | undefined
+}
+
+type FusedValidationFields = {
+  headers: unknown
+  cookies: unknown
+  params: unknown
+  query: unknown
+}
+
+/** Compile the non-body validation stages in the same order as the route program. The selected
+ * fused lane runs this only for routes whose recovery behavior is the ordinary 422 response. */
+function compileFusedValidationStages(
+  schema: RouteSchema | undefined,
+): readonly FusedValidationStage[] {
+  if (schema === undefined) return []
+  const stages: FusedValidationStage[] = []
+  if (schema.headers !== undefined) {
+    stages.push({
+      schema: schema.headers,
+      kind: "headers",
+      headerNames: declaredHeaderNames(schema.headers),
+    })
+  }
+  if (schema.cookies !== undefined) {
+    stages.push({ schema: schema.cookies, kind: "cookies" })
+  }
+  if (schema.params !== undefined) {
+    stages.push({ schema: schema.params, kind: "params" })
+  }
+  if (schema.query !== undefined) {
+    stages.push({ schema: schema.query, kind: "query" })
+  }
+  return stages
+}
+
+/** Run a registration-compiled input sequence without allocating a lifecycle-program continuation
+ * for each synchronous schema. Only an asynchronous validator creates a Promise continuation. */
+function runFusedValidationStages<T>(
+  stages: readonly FusedValidationStage[],
+  source: RequestSource,
+  ctx: RawContext,
+  wrapResponse: Wrap<T>,
+  onError: (error: unknown) => MaybePromise<T>,
+  next: () => MaybePromise<T>,
+  startIndex = 0,
+): MaybePromise<T> {
+  if (stages.length === 0) return next()
+  const validationContext: FusedValidationFields = ctx
+  for (let index = startIndex; index < stages.length; index++) {
+    const stage = stages[index]!
+    let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+    try {
+      const input =
+        stage.kind === "headers"
+          ? stage.headerNames === undefined
+            ? headerObjectOf(source.headers)
+            : declaredHeaders(source.headers, stage.headerNames)
+          : stage.kind === "cookies"
+            ? ctx.cookies
+            : stage.kind === "params"
+              ? ctx.params
+              : queryObjectOf(ctx[CONTEXT_SEARCH])
+      validation = stage.schema["~standard"].validate(input)
+    } catch (error) {
+      return onError(error)
+    }
+    if (validation instanceof Promise) {
+      return validation.then((result) => {
+        if (result.issues !== undefined) return wrapResponse(plainValidationError(result.issues))
+        try {
+          validationContext[stage.kind] = result.value
+        } catch (error) {
+          return onError(error)
+        }
+        return runFusedValidationStages(stages, source, ctx, wrapResponse, onError, next, index + 1)
+      }, onError)
+    }
+    if (validation.issues !== undefined)
+      return wrapResponse(plainValidationError(validation.issues))
+    try {
+      validationContext[stage.kind] = validation.value
+    } catch (error) {
+      return onError(error)
+    }
+  }
+  return next()
 }
 
 /** What a fused lifecycle route runs for its hook shape on the Web lane: the first derive, or the
@@ -1369,26 +1494,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private wsMountsCheckedAt = -1
   /** Whether an app mounted here takes WebSocket upgrades, as of `wsMountsCheckedAt`. */
   private wsMountsLive = false
-  /** In-process pub/sub backing `ws.subscribe(topic)` + `app.publish(topic, data)` (single-instance).
-   * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime - `undefined` until then, so a
-   * no-WebSocket app never constructs (or bundles) it. */
-  private topics: TopicRegistry | undefined
+  /** Configured topic adapter, or the in-process default created by the first `app.ws()` route. */
+  private topics: TopicAdapter | undefined
   /** True once any `app.ws()` route sets `validateSend: true` - the one case where a broadcast frame
-   * is validated (and possibly dropped) per socket, so `app.publish` must stay on the JS registry loop
+   * is validated (and possibly dropped) per socket, so `app.publish` must stay on the JS adapter loop
    * rather than delegate to Bun's native `server.publish`. */
   private wsHasValidatedSend = false
   /** Bun's native topic broadcast, bound by `listen()` in native-pubsub mode; `app.publish` uses it
-   * instead of the JS registry. `undefined` off Bun, before `listen()`, with a validated-send route,
-   * or when a mounted app takes upgrades. */
+   * instead of the JS registry. `undefined` off Bun, before `listen()`, with a custom topic adapter,
+   * a validated-send route, or when a mounted app takes upgrades. */
   private nativePublish:
     | ((topic: string, data: string | ArrayBufferView | ArrayBuffer) => void)
     | undefined
   private readonly maxBodyBytes: number
   private readonly protoPoisoning: "reject" | "strip" | "ignore"
-  private readonly formOrigins: FormOrigins | undefined
+  private formOrigins: FormOrigins | undefined
   /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
   private readonly trustBodyFraming: boolean
   private readonly validateHost: boolean
+  private readonly normalizeTarget: boolean
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
   private readonly wsUpgradeTimeoutMs: number
@@ -1434,6 +1558,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
   private bunServer: RunningServer | undefined
+  // The shutdown `stop()` last began, so a handle disposed mid-shutdown waits for it rather than for nothing.
+  private stopRun: Promise<void> | undefined
   // Bun's `pendingRequests` leaves out upgraded sockets, so `stop()` closes these itself.
   private bunSockets: Set<{ close(code?: number): void }> | undefined
   private signalHandler: (() => void) | undefined
@@ -1527,13 +1653,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
     this.wsRoutes = []
-    this.topics = undefined
+    this.topics = options.topicAdapter
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
     this.protoPoisoning = options.protoPoisoning ?? "reject"
     this.formOrigins = options.formOrigins
     this.trustBodyFraming = options.trustBodyFraming ?? false
     this.validateHost = options.validateHost ?? false
+    this.normalizeTarget = options.normalizeTarget ?? false
     const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
     assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
     this.maxBodyBytes = maxBodyBytes
@@ -2216,6 +2343,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       this[INSTALL_RESPONSE_OBSERVER](responseObserver as ResponseObserverRuntime)
     }
+    // `cors()` and `csrf()` name the origins they trust; a form post from one of them is the app's own
+    // frontend, so it joins `formOrigins` rather than being listed twice.
+    const trusted: unknown = Reflect.get(arg, TRUSTED_ORIGINS)
+    if (typeof trusted === "function") {
+      const listed = this.formOrigins
+      this.formOrigins = (origin) =>
+        (typeof listed === "function" ? listed(origin) : listed?.includes(origin)) === true ||
+        trusted(origin) === true
+    }
     if (arg.onRequest !== undefined) {
       this.assertConfigurable("onRequest()")
       this.onRequestHooks.push(arg.onRequest as RawOnRequest)
@@ -2593,7 +2729,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     // A validated-send route makes broadcast bytes route-dependent (drop-on-invalid per socket), so the
-    // whole app forgoes native pub/sub and keeps the JS registry loop that runs each send through the sender.
+    // whole app forgoes native pub/sub and keeps the JS adapter loop that runs each send through the sender.
     if (handler.validateSend === true) this.wsHasValidatedSend = true
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
@@ -2623,18 +2759,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   /**
    * Broadcast `data` to every WebSocket connection subscribed to `topic` (via `ws.subscribe(topic)`).
-   * In-process and **single-instance** (see {@link TopicRegistry}) - a multi-instance deploy must bridge
-   * an external fan-out (Redis, a Durable Object) to this. A no-op when nobody is subscribed.
+   * Uses the configured {@link ServerOptions.topicAdapter}, or the in-process topic registry by
+   * default. Await the result when a custom adapter publishes asynchronously.
    */
-  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void {
+  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void | Promise<void> {
     // Native-pubsub mode (Bun, no validated-send route): one native broadcast to every subscriber, no
-    // per-connection JS loop. Bound only after `listen()`; before that (or off Bun) the registry runs.
+    // per-connection JS loop. Bound only after `listen()`; before that (or off Bun) the adapter runs.
     if (this.nativePublish !== undefined) {
       this.nativePublish(topic, data)
       return
     }
-    // No `app.ws()` yet ⇒ no registry and necessarily no subscribers - a publish is a no-op anyway.
-    this.topics?.publish(topic, data)
+    // With no custom adapter and no `app.ws()` route, no registry exists and this is a no-op.
+    return this.topics?.publish(topic, data)
   }
 
   private route(
@@ -2716,6 +2852,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): CatalogRoute {
+    const staticResponse = staticResponseDefinition(handler)
+    // A handler carrying this marker checks the Origin itself (web page actions), so the default stays out.
+    const ownsFormOrigin = Reflect.get(handler, Symbol.for("nifra.route.ownsFormOrigin")) === true
     schema = withTextSlots(schema)
     // Route provenance for the CLI's capability walk, which sets NIFRA_ROUTE_SITES while it loads the
     // app: the module that registered the route, read where a static scan cannot see the path.
@@ -2777,9 +2916,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       handler = this.idempotencyRuntime.wrapHandler(handler)
     }
     const { bare, fusedQuery, fusedBody } = lanes
-    // `selectRouteLanes` admits the fused hook lanes only for derive, before and after hooks, so the
-    // three arrays below are the route's whole lifecycle.
-    const fusedLifecycle = lanes.fusedLane === "hooks" || lanes.fusedLane === "body-hooks"
+    // Composite-input routes and hook-only routes share the lifecycle builders; simple shapes use
+    // their narrower runners.
+    const fusedLifecycle =
+      lanes.fusedLane === "hooks" ||
+      lanes.fusedLane === "inputs" ||
+      (lanes.fusedLane === "query" && schema?.params !== undefined)
     // The fused chains keep the arrays they are built from, and `beforeHandle()` inserts into the live
     // ones ahead of `beforeHandler()` guards, so the entry and the fused chains share one snapshot of
     // this route's.
@@ -2803,16 +2945,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ? this.buildFusedBodyRunner(
           handler as InternalHandler,
           schema?.body as StandardSchemaV1,
+          schema?.params,
           hasDecorations ? routeDecorations : undefined,
           bodyLimit ?? UNLIMITED_BODY_BYTES,
         )
       : fusedHooks !== undefined
-        ? this.buildFusedLifecycleRunner(
-            fusedHooks,
-            schema?.query,
-            schema?.body as StandardSchemaV1 | undefined,
-            bodyLimit ?? UNLIMITED_BODY_BYTES,
-          )
+        ? this.buildFusedLifecycleRunner(fusedHooks, schema, bodyLimit ?? UNLIMITED_BODY_BYTES)
         : undefined
     const fusedWeb =
       bare && this.aroundHooks.length === 0
@@ -2826,18 +2964,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           ? this.buildFusedQueryWeb(
               handler as InternalHandler,
               hasDecorations ? routeDecorations : undefined,
-              schema?.query as StandardSchemaV1,
+              schema?.query,
+              schema?.params,
               bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
             : fusedHooks !== undefined
-              ? this.buildFusedLifecycleWeb(
-                  fusedHooks,
-                  schema?.query,
-                  schema?.body as StandardSchemaV1 | undefined,
-                  bodyLimit ?? UNLIMITED_BODY_BYTES,
-                )
+              ? this.buildFusedLifecycleWeb(fusedHooks, schema, bodyLimit ?? UNLIMITED_BODY_BYTES)
               : undefined
     const program = compileRouteProgram({
       schema,
@@ -2866,6 +3000,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     })
     const registeredEntry: RouteEntry = {
       handler: handler as InternalHandler,
+      staticResponse,
       schema,
       bodyLimit,
       idempotent,
@@ -2879,6 +3014,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       afterHandle: aftersSnapshot,
       onError: onErrorSnapshot,
       lifecycleHookLane: lanes.lifecycleHookLane,
+      formOriginGuard: !ownsFormOrigin && guardsBodylessForm(method, schema?.body !== undefined),
       around: [...this.aroundHooks],
       execution,
       program,
@@ -3333,7 +3469,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const lane = entry.execution.fusedLane
     // Type-erase the lane so each `===` branch sees the full union, not the narrowed remainder.
     const laneName: string | undefined = lane
-    const lifecycle = laneName === "hooks" || laneName === "body-hooks"
+    const lifecycle =
+      laneName === "hooks" ||
+      laneName === "inputs" ||
+      (laneName === "query" && entry.schema?.params !== undefined)
     const hooks: FusedHooks | undefined = lifecycle
       ? {
           handler: entry.handler,
@@ -3349,14 +3488,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         ? this.buildFusedBodyRunner(
             entry.handler,
             entry.schema?.body as StandardSchemaV1,
+            entry.schema?.params,
             entry.hasDecorations ? entry.decorations : undefined,
             entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
         : hooks !== undefined
           ? this.buildFusedLifecycleRunner(
               hooks,
-              entry.schema?.query,
-              entry.schema?.body as StandardSchemaV1 | undefined,
+              entry.schema,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : undefined
@@ -3367,14 +3506,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           ? this.buildFusedQueryWeb(
               entry.handler,
               entry.hasDecorations ? entry.decorations : undefined,
-              entry.schema?.query as StandardSchemaV1,
+              entry.schema?.query,
+              entry.schema?.params,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : hooks !== undefined
             ? this.buildFusedLifecycleWeb(
                 hooks,
-                entry.schema?.query,
-                entry.schema?.body as StandardSchemaV1 | undefined,
+                entry.schema,
                 entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
               )
             : this.buildFusedWeb(
@@ -3417,12 +3556,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
     // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
     // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
-    const target = requestTarget(req, this.validateHost)
+    const target = requestTarget(req, this.validateHost, this.normalizeTarget)
     if (target === true) return jsonError(400, "invalid_host")
     if (target !== false) {
       const rebuilt = withResolvedTarget(req, target)
-      if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, target), platform)
+      if (rebuilt === undefined) {
+        if (rawRequestTargets) {
+          resolvedTargets ??= new WeakMap()
+          resolvedTargets.set(req, target)
+        }
+        return this.fetchSource(resolvedSource(req, target), platform)
+      }
       req = rebuilt
+    } else if (resolvedTargets !== undefined) {
+      const inherited = resolvedTargets.get(req)
+      if (inherited !== undefined) {
+        return this.fetchSource(resolvedSource(req, inherited), platform)
+      }
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
@@ -3964,7 +4114,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The adapter answers a pass by handing this same object to `fetch`.
     const received = req
     // The handshake routes the path `fetch` would: Host checked, dot segments resolved (see `fetch`).
-    const target = requestTarget(req, this.validateHost)
+    const target = requestTarget(req, this.validateHost, this.normalizeTarget)
     if (target === true) {
       return { kind: "reject", response: this.wrapWebResponse(jsonError(400, "invalid_host")) }
     }
@@ -4006,8 +4156,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
       if (params === null) return refuse(jsonError(400, "malformed_path"))
       const { handler, chain } = match.payload
-      // Non-null: a socket route ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
-      const pubsub = this.topics as TopicRegistry
+      // Non-null: a socket route ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + adapter.
+      const pubsub = this.topics as TopicAdapter
       const runtime = this.wsRuntime as WsRuntime
       // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
       // Origin with 403. Browsers don't CORS-protect WS handshakes but do send cookies, so this
@@ -4390,8 +4540,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         )
       }
       if (outcome instanceof Request) {
-        if (outcome !== seen) recordRequestReplacement(outcome, seen)
-        current = outcome
+        if (outcome !== seen) {
+          recordRequestReplacement(outcome, seen)
+          current = outcome
+        }
         if (outcome !== originalRequest) this.responseRequests.set(originalRequest, outcome)
         continue
       }
@@ -4428,8 +4580,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     let index = nextIndex
     for (;;) {
       if (early instanceof Request) {
-        if (early !== seen) recordRequestReplacement(early, seen)
-        current = early
+        if (early !== seen) {
+          recordRequestReplacement(early, seen)
+          current = early
+        }
         if (early !== originalRequest) this.responseRequests.set(originalRequest, early)
       } else if (early !== undefined) {
         return earlyAnswer(early, wrapResponse)
@@ -4704,6 +4858,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
+    if (entry.formOriginGuard && crossSiteFormRefused(source, this.formOrigins)) {
+      return wrapResponse(plainError(403, "forbidden_origin"))
+    }
     // The route's transport byte cap: one property write here; the capped shadowing of direct
     // `c.req` body readers happens lazily at `c.req` access (`applyTransportCap`), so a route that
     // never direct-reads pays nothing. Framework readers bypass the shadow (`rawBodySourceOf`) and
@@ -5168,12 +5325,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
   }
 
-  /** Compile the eligible body-only route's parser → validator → handler continuation once. The
+  /** Compile the eligible body route's params → parser → validator → handler continuation once. The
    * bounded parser remains shared with the generic lane; only the route-invariant entry lookups and
    * lifecycle dispatch disappear from the common synchronous-validator/synchronous-handler case. */
   private buildFusedBodyRunner(
     handler: InternalHandler,
     bodySchema: StandardSchemaV1,
+    paramsSchema: StandardSchemaV1 | undefined,
     decorations: Record<PropertyKey, unknown> | undefined,
     maxBodyBytes: number,
   ): FusedBodyRunner {
@@ -5257,6 +5415,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
 
+    const readBody = <T>(
+      source: RequestSource,
+      ctx: RawContext,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
+    ): Promise<T> =>
+      readBodyFramed(
+        source,
+        maxBodyBytes,
+        this.protoPoisoning,
+        (parsed) => runParsed(parsed, ctx, finalize, wrapResponse),
+        wrapResponse,
+        (err) => logError(err, ctx, finalize, wrapResponse),
+        bodySchema,
+        this.formOrigins,
+      )
+
     return <T>(
       source: RequestSource,
       params: Record<string, string>,
@@ -5280,18 +5455,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             maxBodyBytes,
             this.protoPoisoning,
           )
-      const finish = (value: unknown): MaybePromise<T> =>
-        runParsed(value, ctx, finalize, wrapResponse)
-      return readBodyFramed(
-        source,
-        maxBodyBytes,
-        this.protoPoisoning,
-        finish,
-        wrapResponse,
-        (err) => logError(err, ctx, finalize, wrapResponse),
-        bodySchema,
-        this.formOrigins,
-      )
+      if (paramsSchema === undefined) return readBody(source, ctx, finalize, wrapResponse)
+      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+      try {
+        validation = paramsSchema["~standard"].validate(ctx.params)
+      } catch (err) {
+        return logError(err, ctx, finalize, wrapResponse)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return wrapResponse(plainValidationError(settled.issues))
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route's params schema defines this validated output; RawContext erases its route-specific type.
+            ctx.params = settled.value as Record<string, string>
+            return readBody(source, ctx, finalize, wrapResponse)
+          },
+          (err) => logError(err, ctx, finalize, wrapResponse),
+        )
+      }
+      if (validation.issues !== undefined)
+        return wrapResponse(plainValidationError(validation.issues))
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route's params schema defines this validated output; RawContext erases its route-specific type.
+      ctx.params = validation.value as Record<string, string>
+      return readBody(source, ctx, finalize, wrapResponse)
     }
   }
 
@@ -5319,17 +5506,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ) as MaybePromise<Response>
   }
 
-  /** The fused Web lane for a route whose only lifecycle step is a query schema: parse + validate +
-   * handler + respond in one closure, no lifecycle promise when the validator and handler are sync.
-   * Eligibility is decided at registration (see `fusedQuery` in {@link register}); the semantics here
-   * are exactly `runQueryOnly`'s for that eligible shape - invalid input returns
-   * `validationError(issues)` (recovery hooks disqualify the route from this lane), a thrown
-   * `Response` passes through, anything else logs and returns a flat 500, and an async validator
-   * falls to a then-chain with the same steps. */
+  /** The fused Web lane for routes with path params and/or a query schema: validate + handler + respond
+   * in one closure, with no lifecycle promise when the validators and handler are sync. */
   private buildFusedQueryWeb(
     handler: InternalHandler,
     decorations: Record<PropertyKey, unknown> | undefined,
-    querySchema: StandardSchemaV1,
+    querySchema: StandardSchemaV1 | undefined,
+    paramsSchema: StandardSchemaV1 | undefined,
     maxBodyBytes: number,
   ): FusedWebRunner {
     // Same thrown-value contract as the generic lane (`bare-error-lane.ts` via `bareError`); the fused
@@ -5343,7 +5526,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         this.wrapWebResponse,
       )
     const runHandler = (ctx: RawContext, value: unknown): MaybePromise<Response> => {
-      ctx.query = value
+      if (querySchema !== undefined) ctx.query = value
       let result: unknown
       try {
         result = handler(ctx)
@@ -5358,20 +5541,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       return this.respondFused(result, ctx, this.onResponseHooks.length === 0)
     }
-    return (source, params, search, signal, budget, platform, nativeContext) => {
-      const ctx = nativeContext
-        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
-        : new RequestContext(
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            maxBodyBytes,
-            this.protoPoisoning,
-          )
-      if (decorations !== undefined) Object.assign(ctx, decorations)
+    const runQuery = (ctx: RawContext): MaybePromise<Response> => {
+      if (querySchema === undefined) return runHandler(ctx, undefined)
       let validation: MaybePromise<StandardResult<unknown>>
       try {
         validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
@@ -5390,6 +5561,45 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return this.wrapWebResponse(plainValidationError(validation.issues))
       return runHandler(ctx, validation.value)
+    }
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+      if (decorations !== undefined) Object.assign(ctx, decorations)
+      if (paramsSchema === undefined) return runQuery(ctx)
+      let validation: MaybePromise<StandardResult<unknown>>
+      try {
+        validation = paramsSchema["~standard"].validate(ctx.params)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return this.wrapWebResponse(plainValidationError(settled.issues))
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route's params schema defines this validated output; RawContext erases its route-specific type.
+            ctx.params = settled.value as Record<string, string>
+            return runQuery(ctx)
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (validation.issues !== undefined)
+        return this.wrapWebResponse(plainValidationError(validation.issues))
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the route's params schema defines this validated output; RawContext erases its route-specific type.
+      ctx.params = validation.value as Record<string, string>
+      return runQuery(ctx)
     }
   }
 
@@ -5614,13 +5824,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /**
    * Compile a fused lifecycle route's entry closure: parse (body) → validate → the shared stage chain
    * of its hook shape (derive → before → handler → after → respond, see {@link fusedWebStages}) in a
-   * single frame, where the generic program walks staged hook loops. `selectRouteLanes` admits only
-   * derive, before and after hooks - no params or headers schema, onError, around, decorations,
-   * response contract or recovery hook, and never a query schema beside a body schema - so the behavior
-   * is the compiled program's: the same stage order, the same thrown-value contract (`Response` is
-   * control flow, anything else logs and 500s), the same `c.set` semantics and `fusedRespond` render.
-   * The route's own closure holds only its `FusedHooks` and schemas and takes the request's context as
-   * an argument, so a request allocates no step closures.
+   * single frame, where the generic program walks staged hook loops. `selectRouteLanes` admits ordinary
+   * validation stages and derive/before/after/error hooks, while excluding auth-first ordering, custom
+   * validation recovery, outer wrappers and response contracts. The shared input sequence preserves
+   * the program's validation order around body parsing; the hook chain preserves thrown-value, `c.set`
+   * and response-rendering semantics. The route's closure holds its `FusedHooks` and schemas, so a
+   * request allocates no step closures.
    */
   /**
    * Keep the common one-derive/one-before shape bound to its hooks. Inline its synchronous path to
@@ -5770,12 +5979,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   private buildFusedLifecycleWeb(
     route: FusedHooks,
-    querySchema: StandardSchemaV1 | undefined,
-    bodySchema: StandardSchemaV1 | undefined,
+    schema: RouteSchema | undefined,
     maxBodyBytes: number,
   ): FusedWebRunner {
+    const validationStages = compileFusedValidationStages(schema)
+    const bodySchema = schema?.body
     if (
-      querySchema === undefined &&
+      validationStages.length === 0 &&
       bodySchema === undefined &&
       route.errors.length === 0 &&
       route.decorations === undefined &&
@@ -5799,30 +6009,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.fusedWebStages(d, b, a),
     )
     const decorations = route.decorations
-    if (bodySchema !== undefined) {
-      const onParsed = (parsed: unknown, ctx: RawContext): MaybePromise<Response> => {
-        let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
-        try {
-          validation = bodySchema["~standard"].validate(parsed)
-        } catch (err) {
-          return this.fusedWebRouteFail(err, ctx, route)
-        }
-        if (validation instanceof Promise) {
-          return validation.then(
-            (settled) => {
-              if (settled.issues !== undefined)
-                return this.wrapWebResponse(plainValidationError(settled.issues))
-              ctx.body = settled.value
-              return runDerive(ctx, route, 0)
-            },
-            (err) => this.fusedWebRouteFail(err, ctx, route),
-          )
-        }
-        if (validation.issues !== undefined)
-          return this.wrapWebResponse(plainValidationError(validation.issues))
-        ctx.body = validation.value
-        return runDerive(ctx, route, 0)
-      }
+    if (bodySchema === undefined) {
       return (source, params, search, signal, budget, platform, nativeContext) => {
         const ctx = nativeContext
           ? RequestContext.native(
@@ -5844,18 +6031,70 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               this.protoPoisoning,
             )
         if (decorations !== undefined) Object.assign(ctx, decorations)
-        return readBodyFramed(
+        if (validationStages.length === 0) return runDerive(ctx, route, 0)
+        return runFusedValidationStages(
+          validationStages,
           source,
-          maxBodyBytes,
-          this.protoPoisoning,
-          (parsed) => onParsed(parsed, ctx),
+          ctx,
           this.wrapWebResponse,
           (err) => this.fusedWebRouteFail(err, ctx, route),
-          bodySchema,
-          this.formOrigins,
-        ) as MaybePromise<Response>
+          () => runDerive(ctx, route, 0),
+        )
       }
     }
+    const queryIndex =
+      schema?.query === undefined ? validationStages.length : validationStages.length - 1
+    const beforeBodyStages = validationStages.slice(0, queryIndex)
+    const afterBodyStages = validationStages.slice(queryIndex)
+    const runAfterBody = (source: RequestSource, ctx: RawContext): MaybePromise<Response> =>
+      afterBodyStages.length === 0
+        ? runDerive(ctx, route, 0)
+        : runFusedValidationStages(
+            afterBodyStages,
+            source,
+            ctx,
+            this.wrapWebResponse,
+            (err) => this.fusedWebRouteFail(err, ctx, route),
+            () => runDerive(ctx, route, 0),
+          )
+    const onParsed = (
+      parsed: unknown,
+      source: RequestSource,
+      ctx: RawContext,
+    ): MaybePromise<Response> => {
+      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+      try {
+        validation = bodySchema["~standard"].validate(parsed)
+      } catch (err) {
+        return this.fusedWebRouteFail(err, ctx, route)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return this.wrapWebResponse(plainValidationError(settled.issues))
+            ctx.body = settled.value
+            return runAfterBody(source, ctx)
+          },
+          (err) => this.fusedWebRouteFail(err, ctx, route),
+        )
+      }
+      if (validation.issues !== undefined)
+        return this.wrapWebResponse(plainValidationError(validation.issues))
+      ctx.body = validation.value
+      return runAfterBody(source, ctx)
+    }
+    const readBody = (source: RequestSource, ctx: RawContext): Promise<Response> =>
+      readBodyFramed(
+        source,
+        maxBodyBytes,
+        this.protoPoisoning,
+        (parsed) => onParsed(parsed, source, ctx),
+        this.wrapWebResponse,
+        (err) => this.fusedWebRouteFail(err, ctx, route),
+        bodySchema,
+        this.formOrigins,
+      )
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
         ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
@@ -5870,28 +6109,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             this.protoPoisoning,
           )
       if (decorations !== undefined) Object.assign(ctx, decorations)
-      if (querySchema === undefined) return runDerive(ctx, route, 0)
-      let validation: MaybePromise<StandardResult<unknown>>
-      try {
-        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
-      } catch (err) {
-        return this.fusedWebRouteFail(err, ctx, route)
-      }
-      if (validation instanceof Promise) {
-        return validation.then(
-          (settled) => {
-            if (settled.issues !== undefined)
-              return this.wrapWebResponse(plainValidationError(settled.issues))
-            ctx.query = settled.value
-            return runDerive(ctx, route, 0)
-          },
-          (err) => this.fusedWebRouteFail(err, ctx, route),
-        )
-      }
-      if (validation.issues !== undefined)
-        return this.wrapWebResponse(plainValidationError(validation.issues))
-      ctx.query = validation.value
-      return runDerive(ctx, route, 0)
+      if (beforeBodyStages.length === 0) return readBody(source, ctx)
+      return runFusedValidationStages(
+        beforeBodyStages,
+        source,
+        ctx,
+        this.wrapWebResponse,
+        (err) => this.fusedWebRouteFail(err, ctx, route),
+        () => readBody(source, ctx),
+      )
     }
   }
 
@@ -6143,44 +6369,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private buildFusedLifecycleRunner(
     route: FusedHooks,
-    querySchema: StandardSchemaV1 | undefined,
-    bodySchema: StandardSchemaV1 | undefined,
+    schema: RouteSchema | undefined,
     maxBodyBytes: number,
   ): FusedBodyRunner {
+    const validationStages = compileFusedValidationStages(schema)
+    const bodySchema = schema?.body
     const runDerive = sharedStages(NODE_STAGES, this, route, (d, b, a) =>
       this.fusedNodeStages(d, b, a),
     )
     const decorations = route.decorations
 
-    if (bodySchema !== undefined) {
-      const onParsed = <T>(
-        parsed: unknown,
-        ctx: RawContext,
-        finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-        wrapResponse: (response: Response | ResponseResult) => T,
-      ): MaybePromise<T> => {
-        let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
-        try {
-          validation = bodySchema["~standard"].validate(parsed)
-        } catch (err) {
-          return this.fusedFail(err, ctx, route, finalize, wrapResponse)
-        }
-        if (validation instanceof Promise) {
-          return validation.then(
-            (settled) => {
-              if (settled.issues !== undefined)
-                return wrapResponse(plainValidationError(settled.issues))
-              ctx.body = settled.value
-              return runDerive(ctx, route, finalize, wrapResponse, 0)
-            },
-            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
-          )
-        }
-        if (validation.issues !== undefined)
-          return wrapResponse(plainValidationError(validation.issues))
-        ctx.body = validation.value
-        return runDerive(ctx, route, finalize, wrapResponse, 0)
-      }
+    if (bodySchema === undefined) {
       return <T>(
         source: RequestSource,
         params: Record<string, string>,
@@ -6212,41 +6411,84 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               this.protoPoisoning,
             )
         if (decorations !== undefined) Object.assign(ctx, decorations)
-        return readBodyFramed(
+        if (validationStages.length === 0) return runDerive(ctx, route, finalize, wrapResponse, 0)
+        return runFusedValidationStages(
+          validationStages,
           source,
-          maxBodyBytes,
-          this.protoPoisoning,
-          (parsed) => onParsed(parsed, ctx, finalize, wrapResponse),
+          ctx,
           wrapResponse,
           (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
-          bodySchema,
-          this.formOrigins,
+          () => runDerive(ctx, route, finalize, wrapResponse, 0),
         )
       }
     }
 
-    const runValidated = <T>(
-      validation: StandardResult<unknown> | Promise<StandardResult<unknown>>,
+    const queryIndex =
+      schema?.query === undefined ? validationStages.length : validationStages.length - 1
+    const beforeBodyStages = validationStages.slice(0, queryIndex)
+    const afterBodyStages = validationStages.slice(queryIndex)
+    const runAfterBody = <T>(
+      source: RequestSource,
+      ctx: RawContext,
+      finalize: Finalize<T>,
+      wrapResponse: Wrap<T>,
+    ): MaybePromise<T> =>
+      afterBodyStages.length === 0
+        ? runDerive(ctx, route, finalize, wrapResponse, 0)
+        : runFusedValidationStages(
+            afterBodyStages,
+            source,
+            ctx,
+            wrapResponse,
+            (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+            () => runDerive(ctx, route, finalize, wrapResponse, 0),
+          )
+
+    const onParsed = <T>(
+      parsed: unknown,
+      source: RequestSource,
       ctx: RawContext,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
       wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
+      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+      try {
+        validation = bodySchema["~standard"].validate(parsed)
+      } catch (err) {
+        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
+      }
       if (validation instanceof Promise) {
         return validation.then(
           (settled) => {
             if (settled.issues !== undefined)
               return wrapResponse(plainValidationError(settled.issues))
-            ctx.query = settled.value
-            return runDerive(ctx, route, finalize, wrapResponse, 0)
+            ctx.body = settled.value
+            return runAfterBody(source, ctx, finalize, wrapResponse)
           },
           (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
         )
       }
       if (validation.issues !== undefined)
         return wrapResponse(plainValidationError(validation.issues))
-      ctx.query = validation.value
-      return runDerive(ctx, route, finalize, wrapResponse, 0)
+      ctx.body = validation.value
+      return runAfterBody(source, ctx, finalize, wrapResponse)
     }
+    const readBody = <T>(
+      source: RequestSource,
+      ctx: RawContext,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
+    ): Promise<T> =>
+      readBodyFramed(
+        source,
+        maxBodyBytes,
+        this.protoPoisoning,
+        (parsed) => onParsed(parsed, source, ctx, finalize, wrapResponse),
+        wrapResponse,
+        (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+        bodySchema,
+        this.formOrigins,
+      )
 
     return <T>(
       source: RequestSource,
@@ -6272,14 +6514,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             this.protoPoisoning,
           )
       if (decorations !== undefined) Object.assign(ctx, decorations)
-      if (querySchema === undefined) return runDerive(ctx, route, finalize, wrapResponse, 0)
-      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
-      try {
-        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
-      } catch (err) {
-        return this.fusedFail(err, ctx, route, finalize, wrapResponse)
-      }
-      return runValidated(validation, ctx, finalize, wrapResponse)
+      if (beforeBodyStages.length === 0) return readBody(source, ctx, finalize, wrapResponse)
+      return runFusedValidationStages(
+        beforeBodyStages,
+        source,
+        ctx,
+        wrapResponse,
+        (err) => this.fusedFail(err, ctx, route, finalize, wrapResponse),
+        () => readBody(source, ctx, finalize, wrapResponse),
+      )
     }
   }
 
@@ -7135,8 +7378,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): BunNativeHandler {
     // This callback is reached only from Bun's compiled native route table. Bun has already parsed
     // the HTTP framing, so the JSON lane may retain its native fused `json()` parse without weakening
-    // the portable/adapted source contract (those sources are never marked).
-    const markFramed = (request: Request): void => markTrustedBodyFraming(request)
+    // the portable/adapted source contract (those sources are never marked). Bun hands a GET or
+    // HEAD slot no body, so it skips the symbol write on every request.
+    const markFramed =
+      method === "GET" || method === "HEAD" ? (): void => undefined : markTrustedBodyFraming
     // The direct native lanes bypass `runMatched`, so the route's transport byte cap must be
     // marked here too - otherwise a Bun `listen()` fused route would leave direct `c.req` body
     // reads uncapped. The fallback branches go through `fetchMatched` -> `runMatched`, which marks.
@@ -7144,10 +7389,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       entry.schema?.body === undefined || entry.program.authBeforeValidation
         ? entry.bodyLimit
         : undefined
+    const hasQuerySchema = entry.schema?.query !== undefined
     // The complete plan already preserves general validation, hooks, recovery, around, and ledgers.
     // When native admission is safe, use it directly even if the route has no closed-shape fusion.
     // Idempotency still needs runMatched's request preparation and is excluded from the table.
-    const inner: FusedWebRunner | undefined =
+    const unguarded: FusedWebRunner | undefined =
       fused ??
       (signal && budget
         ? (source, params, search, activeSignal, activeBudget, platform, nativeContext) =>
@@ -7165,6 +7411,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
               this.wrapWebResponse,
             )
         : undefined)
+    const inner: FusedWebRunner | undefined =
+      unguarded === undefined || !entry.formOriginGuard
+        ? unguarded
+        : (source, params, search, fusedSignal, fusedBudget, platform, nativeContext) =>
+            crossSiteFormRefused(source, this.formOrigins)
+              ? this.wrapWebResponse(plainError(403, "forbidden_origin"))
+              : unguarded(source, params, search, fusedSignal, fusedBudget, platform, nativeContext)
     // The cap is never marked on a GET or HEAD, the only methods a GET or HEAD slot is handed, so those
     // slots skip the wrapper and its read of the method on every request.
     const capped: FusedWebRunner | undefined =
@@ -7186,7 +7439,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ): MaybePromise<Response> => {
       let outcome: MaybePromise<Response>
       try {
-        outcome = capped!(request, params, undefined, signal!, budget!, peer, true)
+        outcome = capped!(
+          request,
+          params,
+          hasQuerySchema ? searchOfNativeRequest(request.url) : undefined,
+          signal!,
+          budget!,
+          peer,
+          true,
+        )
       } catch (err) {
         // A synchronous render throw, as in runMatchedLanes.
         outcome = this.contextlessBareError(
@@ -7287,6 +7548,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     fallback: BunNativeHandler,
     peer: PeerPlatform,
     platformFor?: (request: Request, server: BunPeerServer) => Platform<EnvOf<Ctx>>,
+    allowStaticResponses = true,
   ): BunNativeRoutes | undefined {
     const hooked = this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe
     if (
@@ -7307,6 +7569,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // The capacity gate must wrap every request; the fused lane bypasses fetchMatched, so enabling
       // admission drops fusion (native matching stays) and routes through the gated matched lane.
       this.capacityGate === undefined
+    // A response value skips every request callback, so every policy that could inspect it must be absent.
+    const mayUseStaticResponse =
+      allowStaticResponses &&
+      !this.validateHost &&
+      !this.normalizeTarget &&
+      this.requestTimeoutMs === 0 &&
+      !this.acceptInboundDeadlines &&
+      this.capacityGate === undefined &&
+      this.onRequestHooks.length === 0 &&
+      this.onResponseHooks.length === 0 &&
+      this.onResponseFinalizedHooks.length === 0 &&
+      this.staticResponseHeaders === undefined &&
+      this.responseBodyTag === undefined
     const unboundedSignal = mayUseFusedNative ? getNeverAbortSignal() : undefined
     const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
     let count = 0
@@ -7372,7 +7647,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       return routes[key]
     }
     for (let i = 0; i < all.length; i++) {
-      const { method, path, pattern, entry } = all[i]!
+      const route = all[i]!
+      const { method, path, pattern, entry } = route
       const run = lead[i]
       // The route is served from the table unless its path cannot be there, Bun's table has no slot
       // for its method, or a path outside the table outranks it: Bun would hand this route a request
@@ -7387,6 +7663,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         under.get(run)?.some((other) => outranks(other, pattern.segments)) ||
         (method === "GET" && sockets.some((socket) => mayShareRequest(socket, pattern.segments)))
       ) {
+        continue
+      }
+      const staticResponse = entry.staticResponse
+      if (
+        mayUseStaticResponse &&
+        staticResponse !== undefined &&
+        (method === "GET" || method === "HEAD" || method === "POST") &&
+        // Bun 1.3 can misframe null-body status codes in its native static table.
+        staticResponse.status !== 204 &&
+        staticResponse.status !== 205 &&
+        staticResponse.status !== 304 &&
+        pattern.paramNames.length === 0 &&
+        entry.schema === undefined &&
+        entry.idempotent === undefined &&
+        entry.ledgered === undefined &&
+        entry.responseContract === undefined &&
+        entry.derives.length === 0 &&
+        entry.authStages.length === 0 &&
+        !entry.hasDecorations &&
+        entry.beforeHandle.length === 0 &&
+        entry.afterHandle.length === 0 &&
+        entry.onError.length === 0 &&
+        entry.around.length === 0 &&
+        route.assurance.length === 0 &&
+        (route.descriptor.capabilities?.length ?? 0) === 0
+      ) {
+        tableAt(path, pattern.segments)[method as Method] = createStaticResponse(staticResponse)
+        count += 1
         continue
       }
       const paramNames = pattern.paramNames
@@ -7407,7 +7711,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // back, and reading the Host on every request measured about 6% of a bare route.
       tableAt(path, pattern.segments)[method as Method] = this.validateHost
         ? (request, server) =>
-            requestTarget(request, true) ? fallback(request, server) : handler(request, server)
+            requestTarget(request, true, this.normalizeTarget)
+              ? fallback(request, server)
+              : handler(request, server)
         : handler
       count += 1
       if (paramNames.length > 0) {
@@ -7504,8 +7810,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // matched route's handler, set by `server.upgrade`.
     // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime - non-null
     // because a socket route means ws() ran, and ws() requires the runtime at registration.
-    // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
-    // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
+    // Native pub/sub when the app has WS routes, no custom adapter, and none validate outbound
+    // frames: `ws.subscribe` and `app.publish` go through Bun's own (uWebSockets) broadcast.
     // A mounted app counts only while it has a WebSocket route (see `[GET_WS_RUNTIME]`), so composing
     // one without any needs no runtime here.
     const wsRuntime = this[GET_WS_RUNTIME]()
@@ -7516,11 +7822,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       )
     }
     // Native pub/sub is safe only when every upgrade belongs to this app. A mounted child that takes
-    // upgrades owns a different TopicRegistry, so force the per-connection JS dispatcher and carry
-    // that registry in the upgrade outcome instead of accidentally broadcasting child sockets through
+    // upgrades owns a different topic adapter, so force the per-connection JS dispatcher and carry
+    // that adapter in the upgrade outcome instead of accidentally broadcasting child sockets through
     // the parent.
     const nativePubsub =
-      this.wsRoutes.length > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
+      this.wsRoutes.length > 0 &&
+      this.options.topicAdapter === undefined &&
+      !this.mountsTakeUpgrades() &&
+      !this.wsHasValidatedSend
     const wsHandlers = wsRuntime?.bunHandlers(
       this.topics ?? wsRuntime.createTopics(),
       nativePubsub,
@@ -7584,6 +7893,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       (request, server) =>
         // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `fallback` hands `fetch` the same platform, which holds no environment.
         new BunPeerPlatform(server, request, setIdleTimeout) as Platform<EnvOf<Ctx>>,
+      options?.static === undefined,
     )
     const first = options?.static
     const before = <S, A>(
@@ -7604,46 +7914,46 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         const methods = nativeRoutes[path]!
         for (const method of BUN_TABLE_METHODS) {
           const handler = methods[method]
-          if (handler !== undefined) methods[method] = before(handler)
+          if (typeof handler === "function") methods[method] = before(handler)
         }
       }
     }
     const sockets = new Set<{ close(code?: number): void }>()
     this.bunSockets = sockets
-    const running = (
-      wsHandlers === undefined
-        ? Bun.serve({
-            ...listening,
-            ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-            fetch: before(fallback),
-          })
-        : Bun.serve<BunWsData>({
-            ...listening,
-            ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-            fetch: before((req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout)),
-            // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
-            // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
-            // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.
-            websocket: {
-              // Cap inbound frames so a huge message can't be buffered/JSON-parsed into memory; the runtime
-              // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes). One
-              // limit per listener: the largest cap among this app and the apps mounted on it.
-              maxPayloadLength: wsHandlers.maxPayloadLength,
-              open: (ws) => {
-                sockets.add(ws)
-                wsHandlers.open(ws)
-                // An upgrade accepted while `stop()` drains gets the close the earlier sockets got.
-                if (this.bunServer !== running) ws.close(1001)
-              },
-              message: (ws, message) => wsHandlers.message(ws, message),
-              close: (ws, code, reason) => {
-                sockets.delete(ws)
-                wsHandlers.close(ws, code, reason)
-              },
+    const running = (wsHandlers === undefined
+      ? Bun.serve({
+          ...listening,
+          ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
+          fetch: before(fallback),
+        })
+      : Bun.serve<BunWsData>({
+          ...listening,
+          ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
+          fetch: before((req, server) => this.bunFetchWithWebSocket(req, server, setIdleTimeout)),
+          // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
+          // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
+          // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.
+          websocket: {
+            // Cap inbound frames so a huge message can't be buffered/JSON-parsed into memory; the runtime
+            // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes). One
+            // limit per listener: the largest cap among this app and the apps mounted on it.
+            maxPayloadLength: wsHandlers.maxPayloadLength,
+            open: (ws) => {
+              sockets.add(ws)
+              wsHandlers.open(ws)
+              // An upgrade accepted while `stop()` drains gets the close the earlier sockets got.
+              if (this.bunServer !== running) ws.close(1001)
             },
-          })
-    ) as RunningServer
+            message: (ws, message) => wsHandlers.message(ws, message),
+            close: (ws, code, reason) => {
+              sockets.delete(ws)
+              wsHandlers.close(ws, code, reason)
+            },
+          },
+        })) as unknown as RunningServer
     this.bunServer = running
+    running[Symbol.asyncDispose] = () =>
+      this.bunServer === running ? this.stop() : (this.stopRun ?? Promise.resolve())
     // Bind `app.publish` to Bun's native broadcast now that the server handle exists. Guarded on the
     // method's presence so a runtime whose handle lacks it simply keeps the registry path. Cleared
     // first: a mounted app may have gained a WebSocket route since an earlier `listen()`.
@@ -7672,7 +7982,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * hooks after the drain. Open WebSockets get a 1001 close when the drain starts and the same
    * window to finish it; a socket opened after `stop()` began is closed at once.
    */
-  async stop({ drainMs = DEFAULT_DRAIN_MS, delayMs = 0 }: StopOptions = {}): Promise<void> {
+  stop(options: StopOptions = {}): Promise<void> {
+    const owns = this.bunServer !== undefined
+    const run = this.stopListener(options)
+    if (owns) this.stopRun = run
+    return run
+  }
+
+  private async stopListener({
+    drainMs = DEFAULT_DRAIN_MS,
+    delayMs = 0,
+  }: StopOptions): Promise<void> {
     const onSignal = this.signalHandler
     if (onSignal !== undefined) {
       this.signalHandler = undefined

@@ -46,9 +46,16 @@ export interface Flags {
   /** `--out <dir>`; without it `dist`, or `.vercel/output` for a Vercel build. */
   readonly out: string | undefined
   readonly poll: boolean
-  /** `nifra build --target <t>`: emit a full deploy dir for this target. Without it, the `target` that
-   * `nifra.config.ts` exports, else `bun`. */
+  /** `nifra build --target <t>`: emit a full deploy dir for this target. Without it, use `target` from
+   * `nifra.config.ts`, else `bun`; a configured adapter must be selected by its id. */
   readonly target: string | undefined
+  /** `nifra build|dev --transport <module>`: the module whose default export is the `fetch` the client
+   * reaches its server through, for this run only. It overrides `transport` from the framework config,
+   * so one app can ship a web build and a native-shell build. */
+  readonly transport: string | undefined
+  /** `nifra build --target static --prerender <paths>`: comma-separated page paths to prerender for this
+   * build whether or not their route exports `prerender`. */
+  readonly prerender: string | undefined
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
   /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is
@@ -151,14 +158,20 @@ Usage:
   nifra db role                          Print the SQL for a read-only Postgres role. Runs nothing.
   nifra db audit [--limit <n>]           What nifra db ran (.nifra/db-audit.jsonl), never the rows.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
+                [--transport <module>]     Reach the server through this module's fetch (a native shell).
+                [--prerender <paths>]      With --target static: also prerender these pages (comma-separated,
+                                         such as /,/about) whether or not their route exports prerender.
                 [--target <t>]             Target a FULL deploy dir for <t>:
-                                         bun | node | deno | cloudflare | vercel | static. Packages
+                                         bun | node | deno | cloudflare | vercel | static, or an installed
+                                         public adapter selected by deploymentAdapter in nifra.config.ts. Packages
                                          buildClient + buildServer (+ prerender for static, bun and
                                          node, whose server answers those pages from file) so an app
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
                                          backend/framework.ts (adapter) + backend/app.ts + routes/.
                                          --report prints a per-chunk size + gzip table (biggest first).
+                                         Vercel defaults to Edge; export vercelRuntime = "node" from
+                                         nifra.config.ts for ordinary Node.js 22 serverless SSR.
                 [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
                                          (faster, Bun-native) unless your ONLY transforms are
                                          \`vitePlugins\`, which the Bun build cannot run - then Vite,
@@ -215,10 +228,15 @@ Usage:
                                          nifra_explain (structured errors), nifra_inspect (request
                                          traces), nifra_learn (guided build path).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs, nifra_example,
-                                         nifra_types, nifra_learn, nifra_frontend, nifra_gallery) -
+                                         nifra_types, nifra_learn, nifra_frontend, nifra_runtime, nifra_gallery) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra learn   [<step>]                 Print the guided build-an-app path (the human view of nifra_learn):
                                          no arg for the step index, a number for one step's goal/do/verify.
+  nifra frontend [<adapter>] [<symptom>] [--json]
+                                         Print the frontend gotcha catalog (the human view of nifra_frontend).
+  nifra runtime  [<runtime>] [<symptom>] [--json]
+                                         Print where Bun, Node, Deno and Workers differ (the human view of
+                                         nifra_runtime): cause, fix and how to verify, with measured versions.
   nifra check   [--json] [--sarif] [--lints-only]
                                          Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          backend code in browser code). Run as "done"; --json for agents;
@@ -233,9 +251,6 @@ Usage:
   nifra sync-manifest                    Regenerate a committed web server-manifest.ts from routes/ WITHOUT
                                          a full build - clears server-manifest drift after a route add/rename
                                          (a new hydrating component still needs a full build).
-  nifra sync-routes                      Regenerate nifra-routes.d.ts from routes/ so navigate({ to, search })
-                                         is typed against each static route's searchSchema (a stale shape is a
-                                         tsc error). Include the file in your tsconfig. Pure file write.
   nifra snapshot [--out <file>]          Write the backend's API contract (routes + schemas) as plain
                                          JSON - the baseline for \`nifra diff\`. Default api-snapshot.json.
   nifra diff    [<baseline>] [--json]    Breaking-change gate: re-snapshot the contract and compare
@@ -286,7 +301,9 @@ Usage:
                 [--write] [--no-verify]  installed version and it, oldest first: move removed packages,
                 [--list] [--json]        apply exact imports, pin every matching dependency (keeping
                 [--exact]                ^/~, or exact with --exact; a peer range only when it
-                                         excludes the target), then verify with nifra check.
+                [--from <version>]       excludes the target), then verify with nifra check. --from
+                                         names the installed version when the pins no longer do,
+                                         such as after bumping them by hand.
                 [--allow-downgrade]      Dry-run by default; --write applies, then verifies (--no-verify
                 [--allow-linked-skew]    to skip) and prints how hook scope changed (--no-hooks to skip)
                 [--no-hooks]             once the target is installed, else prints the install command
@@ -305,14 +322,15 @@ Usage:
                                          (--zones keeps them in place and lists them in package.json
                                          "nifra.zones"). Dry-run by default; --write applies.
   nifra scaffold hole <route> <name> [--shared] [--interactive] [--timeout <ms>] [--server] [--json]
-                                         Experimental: add a partially prerendered hole to a route whose
+                                         Add a partially prerendered hole to a route whose
                                          backend half exports shellLoader - its definition and <Hole> in
                                          the page, its loader and output schema in the backend half. A
                                          Vue or Svelte page gets the code to paste; --server writes a
                                          React server component for the hole.
   nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
                                          params, the data its output schemas let through, and api typed
-                                         by backend/app.ts. dev, build and check refresh them too;
+                                         by backend/app.ts, plus routes.d.ts, the table href() checks
+                                         links against. dev, build and check refresh them too;
                                          --check fails when one is stale.
   nifra schemas [--write] [--check] [--json]
                                          Draft loaderOutput/actionOutput from each loader's and
@@ -323,7 +341,8 @@ Usage:
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
-                                         detected from build/deploy scripts, wrangler.toml, or vercel config;
+                                         detected from build/deploy scripts, wrangler.toml, vercel config,
+                                         or installed adapter metadata (base runtime only);
                                          --ci (or any --target) exits nonzero when a used feature is
                                          unsupported on the target; --strict also fails on caveats.
   nifra i18n check [entry]               Check i18n catalogs: coverage, missing + unused keys, ICU syntax,
@@ -349,7 +368,7 @@ set in the process environment is never overwritten by a file.
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "5.8.0"
+const CLI_VERSION = "5.13.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
@@ -486,11 +505,13 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
             "launches; refusing to serve without the client-boundary plugins.",
         )
       }
+      const { publicEnvDefines } = await import("@nifrajs/web/build")
       const { bunfigPath, launchToken } = await writeBunDevConfig(
         app.cwd,
         app.configPath,
         app.framework.define,
         app.framework.publicEnvPrefix,
+        publicEnvDefines(app.framework.publicEnvPrefix ?? "PUBLIC_", process.env),
       )
       // Bun 1.4 on Windows may discard the script-relative portion of argv when `--config` is
       // present. Keep a second, authenticated copy of the user vector in the child's environment so
@@ -617,6 +638,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       indicator: showsIndicator(flags, fw),
       allowedHosts: fw.dev?.allowedHosts ?? [],
       live: fw.live?.clientEntry,
+      ...transportOption(flags, fw, app.cwd),
       createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
@@ -675,6 +697,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     ...(flags.allowDuplicateIdentity ? { allowDuplicateIdentity: true } : {}),
     indicator: showsIndicator(flags, fw),
     live: fw.live?.clientEntry,
+    ...transportOption(flags, fw, cwd),
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
@@ -820,21 +843,69 @@ async function assertFreshWorkspaceDists(cwd: string): Promise<void> {
   )
 }
 
+/** Build the requested runtime and transactionally add files from a selected deployment adapter. */
 async function buildForTarget(
   app: LoadedApp,
   flag: string | undefined,
   flags: Flags,
 ): Promise<void> {
-  const { parseBuildTarget, renderSizeReport } = await import("@nifrajs/web/build")
-  const target = parseBuildTarget(
-    flag ?? app.framework.target ?? "bun",
-    flag === undefined ? "target in nifra.config.ts" : "--target",
-  )
+  const {
+    buildWithDeploymentAdapter,
+    isBuildTarget,
+    parseBuildTarget,
+    renderSizeReport,
+    validateVercelRuntime,
+  } = await import("@nifrajs/web/build")
+  const { framework: fw } = app
+  const configuredAdapter = fw.deploymentAdapter
+  const adapter = configuredAdapter?.adapter
+  if (adapter !== undefined && flag === undefined && fw.target === undefined) {
+    throw new Error(
+      `[nifra] deploymentAdapter "${adapter.id}" is configured; set target = "${adapter.id}" or pass --target ${adapter.id} to select it`,
+    )
+  }
+  const requestedTarget = flag ?? fw.target ?? "bun"
+  const adapterSelected = adapter !== undefined && requestedTarget === adapter.id
+  if (!isBuildTarget(requestedTarget) && !adapterSelected) {
+    if (adapter === undefined) {
+      try {
+        parseBuildTarget(
+          requestedTarget,
+          flag === undefined ? "target in nifra.config.ts" : "--target",
+        )
+      } catch (error) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} (no deploymentAdapter is configured in nifra.config.ts)`,
+        )
+      }
+    }
+    throw new Error(
+      `[nifra] target "${requestedTarget}" does not match the configured deployment adapter "${adapter?.id}"`,
+    )
+  }
+  const target = adapterSelected
+    ? adapter.baseTarget
+    : parseBuildTarget(
+        requestedTarget,
+        flag === undefined ? "target in nifra.config.ts" : "--target",
+      )
+  if (adapterSelected && app.configPath === adapterFile(app.cwd)) {
+    throw new Error(
+      "[nifra] deploymentAdapter is build-time config, but this file is also the generated server's runtime import. " +
+        "Add backend/framework.ts for adapter and clientModule, keep deploymentAdapter in nifra.config.ts, and re-export the runtime fields there.",
+    )
+  }
   if (flags.vite && flags.bun) {
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
-  const { framework: fw } = app
+  validateVercelRuntime(target, fw.vercelRuntime)
   if (fw.componentPipeline !== undefined) {
+    const componentPipeline = fw.componentPipeline
+    // The component pipeline already owns its Vercel Node handler; this selector is ordinary SSR only.
+    if (fw.vercelRuntime !== undefined)
+      throw new Error(
+        "[nifra/components] vercelRuntime selects ordinary SSR only; omit it for the component pipeline",
+      )
     if (flags.bun)
       throw new Error(
         "[nifra/components] Components require the Vite 8 pipeline; Bun remains a server runtime",
@@ -855,16 +926,46 @@ async function buildForTarget(
       target === "vercel" && flags.out === undefined
         ? resolve(app.cwd, ".vercel/output")
         : app.outDir
-    const result = await buildServerComponents({
-      ...fw.componentPipeline,
-      target,
-      root: app.cwd,
-      outDir,
-      plugins: asComponentPlugins(app.resolvedPlugins.vitePlugins),
-    })
-    await assertFreshWorkspaceDists(app.cwd)
+    const buildComponents = (output: string) =>
+      buildServerComponents({
+        ...componentPipeline,
+        target,
+        root: app.cwd,
+        outDir: output,
+        plugins: asComponentPlugins(app.resolvedPlugins.vitePlugins),
+      })
+    let result: Awaited<ReturnType<typeof buildComponents>>
+    let adapterRun: string | undefined
+    if (adapterSelected && adapter !== undefined) {
+      const packaged = await buildWithDeploymentAdapter({
+        adapter,
+        appRoot: app.cwd,
+        outDir,
+        options: configuredAdapter?.options,
+        secretExemptions: fw.secretExemptions,
+        componentPipeline: true,
+        protectedPaths: [
+          app.routesDir,
+          resolve(app.cwd, BACKEND_APP_FILE),
+          adapterFile(app.cwd),
+          ...(fw.publicDir === false ? [] : [resolve(fw.publicDir ?? resolve(app.cwd, "public"))]),
+        ],
+        build: async (stagingOutDir) => {
+          const built = await buildComponents(stagingOutDir)
+          await assertFreshWorkspaceDists(app.cwd)
+          return built
+        },
+      })
+      result = packaged.result
+      adapterRun = packaged.run
+    } else {
+      result = await buildComponents(outDir)
+      await assertFreshWorkspaceDists(app.cwd)
+    }
     console.log(
-      `[nifra/components] Built ${fw.componentPipeline.adapter} for ${target} (${result.build}) in ${outDir}`,
+      adapterRun === undefined
+        ? `[nifra/components] Built ${fw.componentPipeline.adapter} for ${target} (${result.build}) in ${outDir}`
+        : `[nifra/components] Built ${componentPipeline.adapter} for ${adapter!.id} (base ${target}, ${result.build}) in ${outDir}\n  from output directory: ${adapterRun}`,
     )
     return
   }
@@ -931,10 +1032,10 @@ async function buildForTarget(
         clientPlugins: asBunPlugins(app.resolvedPlugins.clientPlugins),
         serverPlugins: asBunPlugins(app.resolvedPlugins.serverPlugins),
       }
-  const result = await buildTarget(target, {
+  const workDir = resolve(cwd, ".nifra-build")
+  const buildOptions = {
     routesDir,
-    outDir,
-    workDir: resolve(cwd, ".nifra-build"),
+    workDir,
     clientModule: fw.clientModule,
     adapterImport: frameworkFile,
     ...(fw.use ? { useImport: frameworkFile } : {}),
@@ -949,21 +1050,55 @@ async function buildForTarget(
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
+    ...(fw.vercelRuntime !== undefined ? { vercelRuntime: fw.vercelRuntime } : {}),
     ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
     live: fw.live?.clientEntry,
+    ...transportOption(flags, fw, cwd),
+    prerenderPaths: prerenderPaths(flags, target),
     // Prerendering drives a built app: the static target is made of its pages, and a bun or node server
     // answers its prerendered pages from their file. Not under Vite, whose server bundle may rely on
     // transforms the prerender pass (Bun's runtime) does not apply: those pages keep rendering on demand.
     ...(target === "static" || (!useVite && (target === "bun" || target === "node"))
       ? { prerenderApp: await buildPrerenderApp(app) }
       : {}),
-  })
+  }
+  let result: Awaited<ReturnType<typeof buildTarget>>
+  let adapterRun: string | undefined
+  if (adapterSelected && adapter !== undefined) {
+    const packaged = await buildWithDeploymentAdapter({
+      adapter,
+      appRoot: cwd,
+      outDir,
+      options: configuredAdapter?.options,
+      secretExemptions: fw.secretExemptions,
+      protectedPaths: [
+        routesDir,
+        workDir,
+        frameworkFile,
+        backendFile,
+        ...(fw.publicDir === false ? [] : [resolve(fw.publicDir ?? resolve(cwd, "public"))]),
+      ],
+      build: async (stagingOutDir) => {
+        const built = await buildTarget(target, { ...buildOptions, outDir: stagingOutDir })
+        await assertFreshWorkspaceDists(cwd)
+        return built
+      },
+    })
+    result = packaged.result
+    adapterRun = packaged.run
+  } else {
+    result = await buildTarget(target, { ...buildOptions, outDir })
+    await assertFreshWorkspaceDists(cwd)
+  }
   // A production build must not certify itself green while a workspace-linked dependency ships a dist
   // artifact older than (or absent next to) its source: the `bun`->src condition let this compile read
   // live source, but the deployed app and every node consumer read `dist/`. Gate here, after the compile
   // proved the source is buildable, so the failure names the package to rebuild rather than a bundle error.
-  await assertFreshWorkspaceDists(cwd)
-  console.log(`nifra build (${target}, ${decision.pipeline}) → ${result.run}`)
+  console.log(
+    adapterRun === undefined
+      ? `nifra build (${target}, ${decision.pipeline}) → ${result.run}`
+      : `nifra build (${adapter!.id}, base ${target}, ${decision.pipeline}) → ${outDir}\n  from output directory: ${adapterRun}`,
+  )
   // The pipeline is stated on every build, not only the surprising ones - an auto-selected Vite build
   // must never look like the default, and a default Bun build must not leave the question open either.
   console.log(`  ${describePipeline(decision)}`)
@@ -1025,12 +1160,15 @@ async function start(app: LoadedApp, flags: Flags): Promise<void> {
   await import(serverFile)
 }
 
-const VALUE_FLAGS: Readonly<Record<string, "port" | "out" | "target">> = {
-  "--port": "port",
-  "-p": "port",
-  "--out": "out",
-  "--target": "target",
-}
+const VALUE_FLAGS: Readonly<Record<string, "port" | "out" | "target" | "transport" | "prerender">> =
+  {
+    "--port": "port",
+    "-p": "port",
+    "--out": "out",
+    "--target": "target",
+    "--transport": "transport",
+    "--prerender": "prerender",
+  }
 
 type SwitchField = "poll" | "report" | "vite" | "bun" | "allowDuplicateIdentity" | "noIndicator"
 
@@ -1043,6 +1181,30 @@ const SWITCH_FLAGS: Readonly<Record<string, SwitchField>> = {
   "--no-indicator": "noIndicator",
 }
 
+/** The `transport` build option: `--transport` for this run, else the framework config's. */
+function transportOption(
+  flags: Pick<Flags, "transport">,
+  fw: { readonly transport?: string },
+  cwd: string,
+): { transport?: string } {
+  const module = flags.transport ?? fw.transport
+  return module === undefined ? {} : { transport: resolve(cwd, module) }
+}
+
+/** `--prerender /,/about` as page paths, which only a static build can honour. */
+function prerenderPaths(flags: Pick<Flags, "prerender">, target: string): string[] | undefined {
+  if (flags.prerender === undefined) return undefined
+  if (target !== "static") {
+    throw new Error(
+      `[nifra] --prerender applies to \`--target static\` (this build is ${target}): other targets prerender the routes that export \`prerender\``,
+    )
+  }
+  return flags.prerender
+    .split(",")
+    .map((path) => path.trim())
+    .filter((path) => path !== "")
+}
+
 /** The flags of `nifra dev`, `build` and `start`, as `--flag value` or `--flag=value`. Anything else is
  * refused: an ignored `--target=vercel` would build the default target and exit 0. */
 export function parseFlags(args: readonly string[]): Flags {
@@ -1052,6 +1214,8 @@ export function parseFlags(args: readonly string[]): Flags {
   let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
   let out: string | undefined
   let target: string | undefined
+  let transport: string | undefined
+  let prerender: string | undefined
   const switches: Record<SwitchField, boolean> = {
     poll: Bun.env.CHOKIDAR_USEPOLLING === "1",
     report: false,
@@ -1071,6 +1235,8 @@ export function parseFlags(args: readonly string[]): Flags {
         throw new Error(`[nifra] ${name} needs a value`)
       if (valueField === "port") port = Number(value)
       else if (valueField === "out") out = value
+      else if (valueField === "transport") transport = value
+      else if (valueField === "prerender") prerender = value
       else target = value
       continue
     }
@@ -1091,7 +1257,7 @@ export function parseFlags(args: readonly string[]): Flags {
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, target, ...switches }
+  return { port, out, target, transport, prerender, ...switches }
 }
 
 /**
@@ -1145,7 +1311,6 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "openapi",
   "routes",
   "sync-manifest",
-  "sync-routes",
 ])
 
 const HELD_OPEN_GRACE_MS = 2_000
@@ -1307,6 +1472,22 @@ async function main(): Promise<void> {
     )
     return
   }
+  // `runtime` prints the Bun/Node/Deno/Workers differences catalog (the human head of `nifra_runtime`).
+  // Project-independent and static. `nifra runtime` for the index, `nifra runtime deno "path guard"` to
+  // filter by runtime and/or symptom (either arg may be omitted; a runtime is recognized by name).
+  if (command === "runtime") {
+    const { selectRuntimeDifferences, renderRuntimeResult, parseRuntime } = await import(
+      "./runtime-differences.ts"
+    )
+    const input = frontendCommandInput(argv.slice(1), parseRuntime)
+    const query = { runtime: input.adapter, symptom: input.symptom }
+    console.log(
+      input.json
+        ? JSON.stringify(selectRuntimeDifferences(query), null, 2)
+        : renderRuntimeResult(query),
+    )
+    return
+  }
   // `nifra db <sub>` is the catalog's `db-<sub>` command, projected to MCP as `nifra_db_<sub>`.
   const dbSub =
     command === "db" && argv[1] !== undefined && !argv[1].startsWith("-") ? argv[1] : undefined
@@ -1422,19 +1603,14 @@ async function main(): Promise<void> {
   // recipe, then verified with `nifra check`. Dispatch before the eager `loadApp` - it must run on any
   // repo (API-only, not built, or mid-upgrade with edits that don't yet typecheck under dry-run).
   if (command === "upgrade") {
-    const { runUpgrade } = await import("./upgrade.ts")
-    const version = argv.slice(1).find((arg) => !arg.startsWith("-"))
+    if (argv.includes("--help") || argv.includes("-h")) {
+      console.log(HELP)
+      return
+    }
+    const { parseUpgradeArgs, runUpgrade } = await import("./upgrade.ts")
     try {
       const ok = await runUpgrade(process.cwd(), {
-        ...(version !== undefined ? { version } : {}),
-        write: argv.includes("--write"),
-        json: argv.includes("--json"),
-        list: argv.includes("--list"),
-        verify: !argv.includes("--no-verify"),
-        hooks: !argv.includes("--no-hooks"),
-        allowDowngrade: argv.includes("--allow-downgrade"),
-        allowLinkedSkew: argv.includes("--allow-linked-skew"),
-        exact: argv.includes("--exact"),
+        ...parseUpgradeArgs(argv.slice(1)),
         cliVersion: CLI_VERSION,
       })
       if (!ok) process.exitCode = 1

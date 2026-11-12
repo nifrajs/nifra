@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/types-first",
@@ -134,7 +135,7 @@ export default function TypesFirst() {
         implementation into the client.
       </p>
       <p>
-        See <a href="/docs/contract">Framework contract</a> for the decoupled form and its scaling
+        See <a href={href({ to: "/docs/contract" })}>Framework contract</a> for the decoupled form and its scaling
         guidance.
       </p>
       <p id="stub-entry">
@@ -179,7 +180,7 @@ export default function TypesFirst() {
         <li>
           Validation only covers what you put in a schema. A raw-body, file-upload, or
           bring-your-own-validation route reads the body directly - cap and validate those yourself
-          (see <a href="/docs/security">Security</a>'s <code>c.boundedBody</code>).
+          (see <a href={href({ to: "/docs/security" })}>Security</a>'s <code>c.boundedBody</code>).
         </li>
         <li>
           The typed client infers from the server <em>type</em>, so it needs an{" "}

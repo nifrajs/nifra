@@ -13,7 +13,6 @@
  */
 import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { Middleware, NodeRequestContext } from "@nifrajs/core/server"
-import { requestPattern } from "./internal/route-path.ts"
 
 /** The files a build emitted, by request path: the generated server manifest's `buildAssets`. */
 export interface BuildAssetSet {
@@ -95,7 +94,7 @@ function compilePatterns(
         `[nifra/web] hostPolicy: ${label} entries are route patterns starting with "/", got ${JSON.stringify(pattern)}`,
       )
     }
-    router.add("GET", requestPattern(pattern), true)
+    router.add("GET", pattern, true)
   }
   return (pathname) => router.find("GET", pathname).found
 }

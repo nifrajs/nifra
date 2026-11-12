@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/data",
@@ -110,9 +111,9 @@ export default function Data() {
         field that is any JSON value, passed through whole - a tool-call payload or a settings blob
         the page does not pick apart. A loader without a schema is flagged by{" "}
         <code>nifra check</code>. See{" "}
-        <a href="/docs/structure">Project structure</a> for the route pair. A loader that names the
+        <a href={href({ to: "/docs/structure" })}>Project structure</a> for the route pair. A loader that names the
         data it read with <code>live(...keys)</code> reloads on its own when that data changes - see{" "}
-        <a href="/docs/live">Live refresh</a>.
+        <a href={href({ to: "/docs/live" })}>Live refresh</a>.
       </p>
       <CodeBlock code={LOADER} lang="ts" />
       <CodeBlock code={PAGE} />
@@ -164,7 +165,7 @@ export default function Data() {
       </p>
       <p>
         A reload of the page on screen (an action's revalidation, <code>invalidate()</code>, a{" "}
-        <a href="/docs/live">live refresh</a>, a fetcher loading its path again) keeps every part of <code>data</code> and the
+        <a href={href({ to: "/docs/live" })}>live refresh</a>, a fetcher loading its path again) keeps every part of <code>data</code> and the
         layouts' data that it did not change as the same object, with one bound: an array none of
         whose first 32 elements is unchanged is replaced whole, so a reload that changed every row
         stops comparing early. A row kept this way keeps its DOM and component state: a Solid{" "}
@@ -205,7 +206,7 @@ export default function Data() {
         <code>gate</code> refuses a request with a redirect, a <code>Response</code>, or a 401 or 403,
         and <code>nifra check</code> reports one whose loader refuses in its own body (NF-C042). A{" "}
         <code>_layout.backend.ts</code> that exports <code>middleware</code> guards a directory, with
-        or without a layout component - see <a href="/docs/routing#middleware">Route middleware</a>.
+        or without a layout component - see <a href={href({ to: "/docs/routing", hash: "middleware" })}>Route middleware</a>.
       </p>
       <p>
         A layout's <code>shouldRevalidate</code> overrides that default. It runs on the server and
@@ -233,8 +234,8 @@ export default function Data() {
 
       <p>
         For optimistic UI, concurrent fetchers, and a keyed query cache, the same primitives compose
-        on all five adapters: see <a href="/docs/mutations">fetchers</a> and{" "}
-        <a href="/docs/query">the query cache</a>.
+        on all five adapters: see <a href={href({ to: "/docs/mutations" })}>fetchers</a> and{" "}
+        <a href={href({ to: "/docs/query" })}>the query cache</a>.
       </p>
     </div>
   )

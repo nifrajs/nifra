@@ -1,15 +1,17 @@
 /**
  * Wraps `changeset version` and re-syncs the version refs `changeset version` itself leaves untouched:
- *   - the two hardcoded CLI version constants - cli.ts reads no package.json at runtime, mcp-http.ts runs
- *     on the edge with no fs, so both hardcode the version; and
+ *   - hardcoded CLI/core version constants - cli.ts reads no package.json at runtime, mcp-http.ts runs
+ *     on the edge with no fs, and core serves multiple runtimes, so they cannot derive the version;
+ *   - public docs and the issue template's current-version examples, which should follow each release;
  *   - the create-nifra templates' `@nifrajs/*` / `nifra` dep pins + the `--auth` injected
  *     `@nifrajs/better-auth` range. These are plain template/source files (not workspace deps), so
  *     changeset skips them, and a missed bump ships templates that install the PREVIOUS release - the
  *     1.0.0 cut shipped stale beta pins exactly this way.
  *
- * `check:publish` re-asserts every one of these matches, so a forgotten bump fails the publish gate
- * instead of shipping silently. (agent-files' MCP_CLI_VERSION is DERIVED from create-nifra's own version,
- * so it needs no rewrite here.) This keeps the "Version Packages" PR correct automatically.
+ * `release:check` re-asserts the public docs/issue-template matches and `check:publish` checks the
+ * published package/template pins, so a forgotten bump fails its release gate instead of shipping
+ * silently. (agent-files' MCP_CLI_VERSION is DERIVED from create-nifra's own version, so it needs no
+ * rewrite here.) This keeps the "Version Packages" PR correct automatically.
  */
 import { execSync } from "node:child_process"
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -33,6 +35,12 @@ const constants: Array<{ file: string; re: RegExp }> = [
   { file: "packages/cli/src/mcp-http.ts", re: /(const VERSION\s*=\s*)"[^"]+"/ },
   { file: "packages/core/src/index.ts", re: /(export const VERSION\s*=\s*)"[^"]+"/ },
   { file: "packages/core/src/server/core-copies.ts", re: /(const COPY_VERSION\s*=\s*)"[^"]+"/ },
+  { file: "site/routes/docs/cli.tsx", re: /(const NIFRA_VERSION\s*=\s*)"[^"]+"/ },
+  { file: "site/routes/docs/migrate-5.tsx", re: /(const NIFRA_VERSION\s*=\s*)"[^"]+"/ },
+  {
+    file: ".github/ISSUE_TEMPLATE/bug_report.yml",
+    re: /(id: version\s+attributes:[\s\S]*?placeholder:\s*)"\d+\.\d+\.\d+"/,
+  },
 ]
 
 for (const { file, re } of constants) {

@@ -17,7 +17,7 @@ import type {
   ResponseHeadersHook,
 } from "./node-outcome-hook.ts"
 import type { MaybePromise, OnRequestResult } from "./server.ts"
-import type { WebSocketUpgradeOutcome } from "./websocket.ts"
+import type { TopicAdapter, WebSocketUpgradeOutcome } from "./websocket.ts"
 
 /**
  * The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls
@@ -64,11 +64,19 @@ export interface ServerOptions {
    */
   readonly protoPoisoning?: "reject" | "strip" | "ignore"
   /**
-   * Other sites whose HTML forms may post to a body-schema route: exact origins, or a function that
-   * receives the `Origin`. A urlencoded, multipart or `text/plain` body is one a form on any site can
-   * send with the visitor's cookies and no preflight, so one whose `Origin` names another site is
-   * refused with `403` before it is read. Same-origin posts and requests without an `Origin`, such
-   * as server-to-server calls, pass. JSON is not affected: a browser preflights it, so CORS decides.
+   * Other sites whose HTML forms may post to a route: exact origins, or a function that receives the
+   * `Origin`. A urlencoded, multipart or `text/plain` body is one a form on any site can send with the
+   * visitor's cookies and no preflight, so one whose `Origin` names another site is refused with `403`
+   * before it is read. A route without a body schema refuses the same sites' unsafe requests that carry
+   * no content type too, which `fetch` with `no-cors` sends; one with a script-set `Authorization` header
+   * passes, since a browser preflights it, but `Basic`, `Digest`, `Negotiate` and `NTLM` do not, because
+   * a browser re-sends those from its auth cache without one. Same-origin posts and requests without an `Origin`, such as
+   * server-to-server calls, pass. JSON is not affected: a browser preflights it, so CORS decides.
+   * The origins a `cors()` list or predicate and a `csrf({ origins })` list name are trusted as well,
+   * so a frontend those already allow needs no second list here; `cors()` with `"*"` adds none. That
+   * trust is for form posts to this server's own routes only: a mounted or grouped server keeps its own
+   * policy, so a parent that must accept the same sites sets them in its own `formOrigins`, and a web
+   * page action checks the origin against the backend's `allowedOrigins`, not this list.
    */
   readonly formOrigins?: ReadonlyArray<string> | ((origin: string) => boolean)
   /**
@@ -90,17 +98,32 @@ export interface ServerOptions {
    */
   readonly trustBodyFraming?: boolean
   /**
-   * Answer `400 invalid_host` on Bun to every Host that Node and Deno refuse: one sent twice, one
-   * no URL can be built on (a space, a byte past ASCII, a port past 65535, an IPv6 literal no parser
-   * takes), a percent-encoded or sub-delimiter one, and serve an HTTP/1.0 request with no Host as
-   * `localhost`. Bun serves those requests itself, building `c.req.url` on the first Host or leaving
-   * it relative, so `new URL(c.req.url)` can throw in a handler.
+   * Answer `400 invalid_host` for Hosts the request target cannot safely be built on: one sent
+   * twice, one with a space or byte past ASCII, a port past 65535, an IPv6 literal no URL parser
+   * takes, a percent-encoded or sub-delimiter Host, or an authority that can change Deno's route.
+   * Bun may leave `c.req.url` relative or build it on the first Host, so `new URL(c.req.url)` can
+   * throw in a handler.
    *
-   * Disabled by default: the check reads the Host on every request, which measured about 6% of a bare
-   * route on Bun. Left off, a target with `.` or `..` segments is still checked, so a dot segment is
-   * never routed raw. Node and Deno refuse these Hosts either way; the option changes nothing there.
+   * Disabled by default: checking Host on every request measured about 6% of a bare route on Bun.
+   * Deno builds `Request.url` from Host; without this check, a malformed Host can change the routed
+   * path. Enable it when Deno receives requests with an untrusted Host header.
    */
   readonly validateHost?: boolean
+  /**
+   * Route a Deno request on the path a WHATWG parser would give it. Bun and workerd deliver a parsed
+   * URL, so `/public/../admin` reaches the app as `/admin`; Deno hands over the target as sent. Off,
+   * Deno routes the text received, as most frameworks do: a guard on `/admin` does not see
+   * `/public/../admin`, and a proxy that normalizes paths before forwarding disagrees with the app
+   * about which route a request is for. On, dot segments (`.`, `..`, `%2e`), backslashes and the
+   * characters a parser percent-encodes are resolved before routing, so every runtime routes the
+   * same path.
+   *
+   * Disabled by default: the check reads and scans the whole URL of every request, measured at about
+   * 3% of a bare route on Deno. Enable it when path guards, or a path-normalizing proxy, sit in
+   * front of or inside the app. Bun already delivers parsed targets and is unaffected; `@nifrajs/node`
+   * has the same option on `serve()`.
+   */
+  readonly normalizeTarget?: boolean
   /**
    * Max inbound WebSocket message size (bytes). A larger message never reaches the handler and the
    * socket closes with `1009`; when Bun's own frame limit refuses it, Bun up to 1.4.3 drops the
@@ -111,6 +134,12 @@ export interface ServerOptions {
    * the whole message.
    */
   readonly wsMaxPayloadBytes?: number
+  /**
+   * Topic membership and broadcast implementation for WebSocket routes. By default, Nifra uses an
+   * in-process `TopicRegistry`; pass an adapter to bridge subscriptions and publishes to a shared
+   * fan-out service. `app.publish()` returns a promise when the adapter publishes asynchronously.
+   */
+  readonly topicAdapter?: TopicAdapter
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number
   /** WebSocket upgrade admission/guard timeout (ms). Default 10_000; set to 0 only for a deliberate unbounded guard. */
@@ -375,6 +404,8 @@ export interface RunningServer {
   readonly hostname: string
   readonly pendingRequests: number
   stop(closeActiveConnections?: boolean): void
+  /** `await using server = app.listen(3000)`: the app's graceful `stop()` with default options, not Bun's raw one. Waits for a shutdown already under way. */
+  [Symbol.asyncDispose](): Promise<void>
   /** Bun's native topic broadcast, present on the Bun `Server` handle. `app.publish` delegates to it
    * in native-pubsub mode; absent on other runtimes' running-server views. */
   publish?(topic: string, data: string | ArrayBufferView | ArrayBuffer): number

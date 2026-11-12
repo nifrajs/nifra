@@ -1,12 +1,16 @@
+import { href, rawHref } from "@nifrajs/web-react/router"
 import type { CSSProperties } from "react"
 import {
   BUNDLE,
+  type CaptureMachine,
   formatRps,
   HERO_SSR,
+  HTTP_WORKLOADS_CAPTURED,
   httpWorkloadRow,
   httpWorkloadRps,
   MULTIPLIERS,
   PROOF,
+  SSR_CAPTURED,
 } from "../shared/data/benchmarks"
 import { CodeBlock } from "../shared/highlight"
 import { pageMeta, softwareApplication } from "../shared/meta"
@@ -25,7 +29,7 @@ export const meta = pageMeta(
         "@type": "Organization",
         name: "Nifra",
         url: "https://nifra.dev",
-        logo: "https://nifra.dev/assets/og.jpg",
+        logo: "https://nifra.dev/assets/logo-mark.png",
         sameAs: ["https://github.com/nifrajs/nifra", "https://www.npmjs.com/org/nifrajs"],
         contactPoint: {
           "@type": "ContactPoint",
@@ -195,7 +199,9 @@ const REPLACE_GROUPS: ReadonlyArray<{
 ]
 
 // One row per category for the strip under the hero; the full table is the ecosystem section.
-const REPLACE_TOP = REPLACE_GROUPS.flatMap((group) => group.rows.slice(0, 1))
+const REPLACE_TOP = REPLACE_GROUPS.flatMap((group) =>
+  group.rows.slice(0, 1).map(([old, pkg]) => ({ category: group.title, old, pkg })),
+)
 const REPLACE_TOTAL = REPLACE_GROUPS.reduce((total, group) => total + group.rows.length, 0)
 
 // The proof strip reads its two measured numbers from the benchmark dataset, so a re-run moves them.
@@ -252,6 +258,14 @@ const SSR_BARS = rankBars(
     you: row.you === true,
   })),
 )
+const HOME_SSR_MACHINE = SSR_CAPTURED.machines?.node ?? SSR_CAPTURED.machine
+const HOME_HTTP_MACHINE = HTTP_WORKLOADS_CAPTURED.machines?.node ?? HTTP_WORKLOADS_CAPTURED.machine
+
+function machineLabel(machine: CaptureMachine | undefined): string {
+  return machine === undefined
+    ? "machine not recorded"
+    : `${machine.runner}, ${machine.cpu} (${machine.vcpus} vCPUs)`
+}
 
 const NODE_API_FRAMEWORKS = ["Nifra", "Fastify", "Elysia", "Express", "Hono"] as const
 const NODE_API_BARS = rankBars(
@@ -698,10 +712,10 @@ export default function Home() {
             <InstallWidget command="bun create nifra my-app" label="Copy the install command" />
           </div>
           <div className="home-actions">
-            <a className="button primary" href="/docs">
+            <a className="button primary" href={href({ to: "/docs" })}>
               Read the docs
             </a>
-            <a className="button ghost" href="/play">
+            <a className="button ghost" href={href({ to: "/play" })}>
               Open the playground
             </a>
           </div>
@@ -710,36 +724,54 @@ export default function Home() {
         <HeroDemo />
       </section>
 
-      <ul className="home-proof" aria-label="Measured results">
-        {PROOF_STATS.map((item) => (
-          <li key={item.label}>
-            <strong>{item.value}</strong>
-            <span>{item.label}</span>
-          </li>
-        ))}
-      </ul>
-      <p className="home-proof-note">
-        <a href="/benchmarks">How these were measured</a>
-      </p>
-
-      <section id="sec-replaces" className="home-swap" aria-labelledby="sec-replaces-title">
-        <h2 id="sec-replaces-title" className="home-swap-title">
-          One framework in place of a stack you wire together.
-        </h2>
-        <ul className="home-swap-list">
-          {REPLACE_TOP.map(([old, pkg]) => (
-            <li key={old}>
-              <span className="replace-old">{old}</span>
-              <span className="replace-arrow" aria-hidden="true">
-                →
-              </span>
-              <code className="replace-pkg">{pkg}</code>
+      <section className="home-proof-section" aria-label="Measured results and framework facts">
+        <div className="home-proof-head">
+          <p className="home-proof-eyebrow">Proof, in numbers</p>
+          <a href={href({ to: "/benchmarks" })}>
+            Benchmark method <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <ul className="home-proof">
+          {PROOF_STATS.map((item, index) => (
+            <li key={item.label} className={index === 0 ? "is-featured" : undefined}>
+              <strong>{item.value}</strong>
+              <span>{item.label}</span>
             </li>
           ))}
         </ul>
-        <a className="home-link" href="#sec-ecosystem">
-          All {REPLACE_TOTAL} replacements
-        </a>
+      </section>
+
+      <section id="sec-replaces" className="home-swap" aria-labelledby="sec-replaces-title">
+        <div className="home-swap-copy">
+          <p className="kicker">One typed stack</p>
+          <h2 id="sec-replaces-title">One framework in place of a stack you wire together.</h2>
+          <p>
+            Keep the pieces your app needs. Nifra&apos;s optional packages cover the glue between
+            your API, UI, jobs, files, and tests.
+          </p>
+          <a className="home-link" href="#sec-ecosystem">
+            Browse all {REPLACE_TOTAL} replacements <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <ol className="home-swap-list" aria-label="Examples of stack replacements">
+          {REPLACE_TOP.map(({ category, old, pkg }, index) => (
+            <li key={category}>
+              <span className="replace-index" aria-hidden="true">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <div className="replace-body">
+                <span className="replace-category">{category}</span>
+                <div className="replace-flow">
+                  <span className="replace-old">{old}</span>
+                  <span className="replace-arrow" aria-hidden="true">
+                    →
+                  </span>
+                  <code className="replace-pkg">{pkg}</code>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
       </section>
 
       <section id="sec-agent" className="home-band">
@@ -752,12 +784,12 @@ export default function Home() {
             gates your CI runs.
           </p>
           <InstallWidget
-            command="claude mcp add nifra -- bunx nifra mcp"
+            command="claude mcp add nifra -- bunx @nifrajs/cli mcp"
             label="Copy the MCP setup command"
           />
           <div className="home-band-links">
-            <a href="/docs/agents">Agent guide</a>
-            <a href="/docs/webmcp">WebMCP</a>
+            <a href={href({ to: "/docs/agents" })}>Agent guide</a>
+            <a href={href({ to: "/docs/webmcp" })}>WebMCP</a>
           </div>
         </div>
         <ol className="home-tools">
@@ -842,7 +874,7 @@ export default function Home() {
         <div className="home-play">
           <iframe src="/play?embed=1" title="Nifra playground" loading="lazy" />
         </div>
-        <a className="home-link" href="/play">
+        <a className="home-link" href={href({ to: "/play" })}>
           Open the full playground
         </a>
       </section>
@@ -869,13 +901,28 @@ export default function Home() {
           />
         </div>
         <p className="home-bars-note">
-          Node is shown for the API chart. The Bun and Deno tables, including the rows where Nifra
-          is not first, are on the <a href="/benchmarks">benchmarks page</a>.
+          SSR source:{" "}
+          {SSR_CAPTURED.sourceUrl === undefined ? (
+            (SSR_CAPTURED.source ?? "SSR benchmark capture")
+          ) : (
+            <a href={SSR_CAPTURED.sourceUrl}>{SSR_CAPTURED.source ?? "SSR accuracy CI run"}</a>
+          )}
+          . The SSR chart used {machineLabel(HOME_SSR_MACHINE)}. HTTP source:{" "}
+          {HTTP_WORKLOADS_CAPTURED.sourceUrl === undefined ? (
+            (HTTP_WORKLOADS_CAPTURED.source ?? "HTTP benchmark capture")
+          ) : (
+            <a href={HTTP_WORKLOADS_CAPTURED.sourceUrl}>
+              {HTTP_WORKLOADS_CAPTURED.source ?? "HTTP accuracy CI run"}
+            </a>
+          )}
+          . The Node API chart used {machineLabel(HOME_HTTP_MACHINE)}. Node is shown for the API
+          chart. The Bun and Deno tables, including the rows where Nifra is not first, are on the{" "}
+          <a href={href({ to: "/benchmarks" })}>benchmarks page</a>.
         </p>
         <ul className="home-vs" aria-label="Nifra compared with other frameworks">
           {VERSUS.map((item) => (
             <li key={item.slug}>
-              <a href={`/compare/${item.slug}`}>
+              <a href={rawHref(`/compare/${item.slug}`)}>
                 <strong>Nifra vs {item.name}</strong>
                 <p>{item.body}</p>
                 <span className="home-vs-go">
@@ -890,7 +937,7 @@ export default function Home() {
       <section id="sec-runtime" className="home-section home-split">
         <div className="home-copy">
           <p className="kicker">06 · Portable</p>
-          <h2>One app. Five UI frameworks, four runtime families.</h2>
+          <h2>One app. Five UI frameworks, five runtimes.</h2>
           <p>
             The adapter is one line. Loaders, actions, streaming, and islands stay the same across
             React, Solid, Vue, Preact, and Svelte, and the same app runs on Bun, Node, Deno, and the
@@ -907,7 +954,7 @@ export default function Home() {
               </li>
             ))}
           </ul>
-          <a className="home-link" href="/frameworks">
+          <a className="home-link" href={href({ to: "/frameworks" })}>
             See the five-framework demo
           </a>
         </div>
@@ -939,7 +986,7 @@ export default function Home() {
             </div>
           ))}
         </div>
-        <a className="home-link" href="/docs/integrations">
+        <a className="home-link" href={href({ to: "/docs/integrations" })}>
           Browse every package
         </a>
       </section>
@@ -952,7 +999,7 @@ export default function Home() {
           </p>
           <div className="home-actions">
             <InstallWidget command="bun create nifra my-app" label="Copy the install command" />
-            <a className="button primary" href="/docs">
+            <a className="button primary" href={href({ to: "/docs" })}>
               Read the docs
             </a>
           </div>

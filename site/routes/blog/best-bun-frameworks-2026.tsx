@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { formatPercent, httpWorkloadRps, percentOf } from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
 
@@ -78,8 +79,9 @@ export default function BestBunFrameworks() {
       <p>
         Throughput numbers are from our published two-workload matrix (oha, identical route
         semantics per framework, every row naming the version it measured) - the{" "}
-        <a href="/benchmarks">benchmarks page</a> carries every row and the harness is in the repo.
-        Treat single-digit margins as ties; the structural differences below matter more.
+        <a href={href({ to: "/benchmarks" })}>benchmarks page</a> carries every row and the harness
+        is in the repo. Treat single-digit margins as ties; the structural differences below matter
+        more.
       </p>
 
       <h2>Elysia - the Bun-first backend standard</h2>
@@ -106,11 +108,11 @@ export default function BestBunFrameworks() {
         <code>client&lt;typeof app&gt;()</code> infers every path, param, body, and response from
         the server type - zero codegen - and the same contract extends through SSR loaders, pages,
         and server functions for React, Vue, Svelte, Solid, or Preact. The docs, examples, and exact
-        API types ship as a <a href="/blog/docs-as-mcp">live MCP server</a> so AI assistants write
-        against the current release, and <code>nifra check</code>/<code>assure</code> return
-        structured output agents act on. Same app runs on Node, Deno, and edge workers unchanged.
-        The honest caveat: it is the youngest of the three, and its first-party batteries (jobs,
-        cache, storage, auth) trade ecosystem breadth for coherence.
+        API types ship as a <a href={href({ to: "/blog/docs-as-mcp" })}>live MCP server</a> so AI
+        assistants write against the current release, and <code>nifra check</code>/
+        <code>assure</code> return structured output agents act on. Same app runs on Node, Deno, and
+        edge workers unchanged. The honest caveat: it is the youngest of the three, and its
+        first-party batteries (jobs, cache, storage, auth) trade ecosystem breadth for coherence.
       </p>
 
       <h2>How to decide in one minute</h2>
@@ -127,9 +129,9 @@ export default function BestBunFrameworks() {
         </li>
       </ul>
       <p>
-        Deeper head-to-heads: <a href="/compare/elysia">Nifra vs Elysia</a> ·{" "}
-        <a href="/compare/hono">Nifra vs Hono</a> · full tables on{" "}
-        <a href="/benchmarks">benchmarks</a>.
+        Deeper head-to-heads: <a href={href({ to: "/compare/elysia" })}>Nifra vs Elysia</a> ·{" "}
+        <a href={href({ to: "/compare/hono" })}>Nifra vs Hono</a> · full tables on{" "}
+        <a href={href({ to: "/benchmarks" })}>benchmarks</a>.
       </p>
     </article>
   )

@@ -47,7 +47,7 @@ const longest = (scopes: readonly number[]): number =>
  * ```
  */
 export function withIdleTimeout<T>(
-  c: Context,
+  c: Pick<Context, "signal">,
   seconds: number,
   work: () => MaybePromise<T>,
 ): MaybePromise<T> {
@@ -55,9 +55,7 @@ export function withIdleTimeout<T>(
     throw new RangeError("withIdleTimeout: seconds must be an integer from 0 to 255")
   }
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only RequestContext defines this key, with this signature; any other context leaves it undefined.
-  const control = (c as Context & { [CONTEXT_IDLE_TIMEOUT]?: IdleTimeoutControl })[
-    CONTEXT_IDLE_TIMEOUT
-  ]
+  const control = (c as { [CONTEXT_IDLE_TIMEOUT]?: IdleTimeoutControl })[CONTEXT_IDLE_TIMEOUT]
   const signal = c.signal
   if (control === undefined || signal.aborted) return work()
   const set = (value: number | undefined): void => {

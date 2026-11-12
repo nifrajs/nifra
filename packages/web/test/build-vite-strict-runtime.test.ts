@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import * as TS from "typescript"
 
 /**
  * A Vite build must survive a runtime whose `Error.captureStackTrace` is stricter than V8's.
@@ -175,12 +176,38 @@ test("nothing imports vite except the shared, guarded importer", async () => {
     const portableRel = rel.replaceAll("\\", "/")
     if (portableRel === "internal/vite-import.ts") continue
     const text = await Bun.file(join(srcDir, rel)).text()
-    // Strip line comments so the prose warning next to the dev server's call does not self-report.
+    const source = TS.createSourceFile(rel, text, TS.ScriptTarget.Latest, true, TS.ScriptKind.TS)
+    const staticRuntimeImport = source.statements.some((statement) => {
+      if (
+        !TS.isImportDeclaration(statement) ||
+        !TS.isStringLiteral(statement.moduleSpecifier) ||
+        statement.moduleSpecifier.text !== "vite"
+      )
+        return false
+      const clause = statement.importClause
+      if (clause === undefined) return true
+      if (clause.isTypeOnly) return false
+      if (clause.name !== undefined) return true
+      const bindings = clause.namedBindings
+      if (bindings === undefined || TS.isNamespaceImport(bindings)) return bindings !== undefined
+      return bindings.elements.some((element) => !element.isTypeOnly)
+    })
     const code = text.replaceAll(/^[\t ]*\/\/.*$/gm, "")
-    if (/\bimport\(\s*["']vite["']\s*\)/.test(code)) offenders.push(portableRel)
+    if (staticRuntimeImport || /\bimport\(\s*["']vite["']\s*\)/.test(code))
+      offenders.push(portableRel)
   }
   expect(offenders).toEqual([])
 })
+
+test("server-components modules load before the guarded Vite import", async () => {
+  const imported = await runUnderStrictRuntime(
+    `await import(${JSON.stringify(join(import.meta.dir, "..", "src", "server-components", "build.ts"))})
+     console.log("COMPONENTS_IMPORTED")`,
+    NARROW_PRELUDE,
+  )
+  expect(imported.output).toContain("COMPONENTS_IMPORTED")
+  expect(imported.code).toBe(0)
+}, 120_000)
 
 test("the shared importer survives the narrow runtime", async () => {
   const imported = await runUnderStrictRuntime(

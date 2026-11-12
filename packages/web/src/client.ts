@@ -36,6 +36,7 @@ export function currentDocumentNonce(): string | undefined {
   return script.getAttribute("nonce") ?? undefined
 }
 
+export { href, rawHref } from "./href.ts"
 export { identityChanged } from "./identity.ts"
 /**
  * Everything the generated client entry needs, re-exported here so that entry imports ONE module and
@@ -45,6 +46,24 @@ export { identityChanged } from "./identity.ts"
  * before hydrating. The fix is for the entry not to name the server module in the first place.
  */
 export { mergeHeads, resolveChainMeta, resolveMeta } from "./internal/head-merge.ts"
+export type {
+  LoadedRouteSlot,
+  RouteSlotRuntime,
+  RouteSlotSnapshot,
+  RouteSlotStatus,
+} from "./internal/route-slot-runtime.ts"
+export {
+  getRouteSlotRuntime,
+  getRouteSlotStore,
+  loadRouteSlot,
+  onRouteSlotIdentityChange,
+  RouteSlotLoadError,
+  RouteSlotStore,
+  routeSlotSyncKey,
+  routeSlotTargetFromPath,
+  setRouteSlotRuntime,
+  syncRouteSlotStore,
+} from "./internal/route-slot-runtime.ts"
 // For route helpers shared by a loader and a component, which the browser loads too: imported from the
 // root, they put its `node:crypto` import into Vite dev's browser deps on every page.
 export { gone, notFound, statusPage } from "./internal/status-page.ts"
@@ -53,19 +72,27 @@ export {
   getBrowserNavigate,
   IDLE_BLOCKER,
   registerBlocker,
-  resolveNavigate,
 } from "./navigation.ts"
-export { createMutation, createQueryClient } from "./query.ts"
+export { createMutation, createQueryClient, MutationCancelledError } from "./query.ts"
 export { localeOfProps } from "./render-seam.ts"
-export { createClientRouter, createMatcher } from "./router.ts"
+export {
+  hasRouteSlotsSearch,
+  parseRouteSlots,
+  ROUTE_SLOT_QUERY_PREFIX,
+  RouteSlotStateError,
+  setRouteSlot,
+  stripRouteSlots,
+  withRouteSlots,
+} from "./route-slots.ts"
+export { createClientRouter, createMatcher, type RouterFetch } from "./router.ts"
 // Same reason, for the ADAPTER packages (`@nifrajs/web-react` and friends). Every one of them reaches
 // for these from the root - `searchOfChain` in its `/client` entry, the navigation and query values in
 // its router/query modules - and every one of those modules is in the browser graph. They are defined
 // in DOM-safe modules already; the only thing wrong was the specifier they were imported through.
 export { searchOf, searchOfChain } from "./search.ts"
-// Types are deliberately NOT re-exported here. `RouteSearch` is augmented by generated code through
+// Types are deliberately NOT re-exported here. `RouteTable` is augmented by generated code through
 // `declare module "@nifrajs/web"`, and an interface augmentation lands on the module it names - so a
-// type taken from this path would be the un-augmented one and typed `navigate({ to, search })` would
+// type taken from this path would be the un-augmented one and typed `href({ to, search })` would
 // silently go loose. Adapters keep sourcing types from the root; what they must avoid is the
 // `export type { X } from "@nifrajs/web"` FORM, which leaves a bare `import "@nifrajs/web"` behind for
 // its side effects. `import type` + a local `export type` erases completely.
@@ -531,6 +558,8 @@ export function installHistory(
   const inAppHref = (target: EventTarget | null): string | null => {
     const anchor = target instanceof Element ? target.closest("a") : null
     if (anchor === null) return null
+    // No href attribute, no link: `anchor.href` reads "" and would resolve to the page on screen.
+    if (!anchor.hasAttribute("href")) return null
     if (anchor.target !== "" && anchor.target !== "_self") return null
     if (anchor.hasAttribute("download")) return null
     if (anchor.getAttribute("rel")?.split(/\s+/).includes("external")) return null

@@ -49,6 +49,7 @@ const BOUNDED: Readonly<Record<string, Entry>> = {
     count: 2,
     reason: "a numeric literal or an import clause from the project's source",
   },
+  "packages/cli/src/rules/internal-links.ts": { count: 1, reason: PROJECT_SOURCE },
   "packages/cli/src/rules/legacy.ts": {
     count: 1,
     reason: "one line of tsc's output for the project",

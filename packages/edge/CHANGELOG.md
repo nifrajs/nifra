@@ -1,5 +1,33 @@
 # @nifrajs/edge
 
+## 5.13.0
+
+### Patch Changes
+
+- b427443: `@nifrajs/edge` now refuses a cross-site HTML form post to a `POST`, `PUT`, `PATCH` or `DELETE` route that has no body schema, with `403 forbidden_origin` before the handler runs, as it already did for a body-schema route and as `@nifrajs/core`'s `server()` does. `formOrigins` admits the same origins. `@nifrajs/core/edge-kit` exports `crossSiteFormRefused` for it.
+
+## 5.12.1
+
+No changes in this release.
+
+## 5.12.0
+
+### Patch Changes
+
+- 91cc290: Export the shared default request-body cap from core's edge kit and use it in both servers.
+
+## 5.11.0
+
+No changes in this release.
+
+## 5.10.0
+
+No changes in this release.
+
+## 5.9.0
+
+No changes in this release.
+
 ## 5.8.0
 
 No changes in this release.

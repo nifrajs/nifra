@@ -1,5 +1,31 @@
 # @nifrajs/content
 
+## 5.13.0
+
+### Patch Changes
+
+- efc9ce4: Correct the filesystem collection comment so it names `bakeCollection` and `fromBaked` as the edge snapshot.
+
+## 5.12.1
+
+No changes in this release.
+
+## 5.12.0
+
+No changes in this release.
+
+## 5.11.0
+
+No changes in this release.
+
+## 5.10.0
+
+No changes in this release.
+
+## 5.9.0
+
+No changes in this release.
+
 ## 5.8.0
 
 No changes in this release.

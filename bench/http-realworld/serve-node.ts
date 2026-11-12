@@ -5,14 +5,13 @@
  *
  * The `*-body` variants add ONE body-observing middleware (an `x-body-hash` header over the final
  * serialized body) via each framework's own idiomatic mechanism - Fastify's `onSend` payload hook,
- * Elysia's `mapResponse`, Express's `res.json` wrap, Hono's drain-and-rebuild middleware shape, and
+ * Elysia's `mapResponse`, Express's `res.json` wrap, Hono's buffer-and-rewrap middleware shape, and
  * inline for the raw ceiling. The nifra counterpart lives in serve-node-nifra.ts (`body` arg).
  *
  *   node bench/http-realworld/serve-node.ts <fastify|hono|express|elysia|node-raw|*-body> <port>
  */
-import type { IncomingMessage, ServerResponse } from "node:http"
+import type { ServerResponse } from "node:http"
 import { createServer } from "node:http"
-import { Readable } from "node:stream"
 
 const framework = process.argv[2]
 const port = Number(process.argv[3])
@@ -26,9 +25,13 @@ if (!Number.isInteger(port)) {
 // djb2 over the serialized body - the body-observing middleware's "work" in the body-hash workload.
 // Deliberately cheap: the workload prices each framework's body-middleware TIER (how the bytes reach
 // the hook), not the hash itself.
-function hash(s: string): string {
+function hash(body: string | Uint8Array): string {
   let h = 5381
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  if (typeof body === "string") {
+    for (let i = 0; i < body.length; i++) h = ((h << 5) + h + body.charCodeAt(i)) | 0
+  } else {
+    for (let i = 0; i < body.length; i++) h = ((h << 5) + h + body[i]!) | 0
+  }
   return (h >>> 0).toString(16)
 }
 
@@ -97,7 +100,8 @@ function sendJson(
 
 if (framework === "fastify") {
   const { default: Fastify } = await import("fastify")
-  const app = Fastify()
+  // Match the other targets' strict numeric body validation; Fastify otherwise coerces JSON values.
+  const app = Fastify({ ajv: { customOptions: { coerceTypes: false } } })
   app.addHook("onSend", (req, reply, payload, done) => {
     for (const [k, v] of SEC_ENTRIES) reply.header(k, v)
     reply.header("x-request-id", req.headers["x-request-id"] ?? crypto.randomUUID())
@@ -157,7 +161,8 @@ if (framework === "fastify") {
 } else if (framework === "fastify-body") {
   // Fastify's body-observing tier: onSend receives the serialized payload string.
   const { default: Fastify } = await import("fastify")
-  const app = Fastify()
+  // Keep validation behavior identical to the ordinary Fastify target.
+  const app = Fastify({ ajv: { customOptions: { coerceTypes: false } } })
   app.addHook("onSend", (req, reply, payload, done) => {
     for (const [k, v] of SEC_ENTRIES) reply.header(k, v)
     reply.header("x-request-id", req.headers["x-request-id"] ?? crypto.randomUUID())
@@ -218,13 +223,16 @@ if (framework === "fastify") {
 } else if (framework === "hono") {
   const { Hono } = await import("hono")
   const { getCookie } = await import("hono/cookie")
-  const { cors } = await import("hono/cors")
-  const { secureHeaders } = await import("hono/secure-headers")
   const { validator } = await import("hono/validator")
+  const { serve } = await import("@hono/node-server")
   const app = new Hono<{ Variables: { userId: string; theme: string } }>()
-  app.use("*", secureHeaders())
-  app.use("*", cors({ origin: "https://app.example.com", credentials: true }))
   app.use("*", async (c, next) => {
+    c.header("x-content-type-options", "nosniff")
+    c.header("x-frame-options", "DENY")
+    c.header("referrer-policy", "no-referrer")
+    c.header("vary", "Origin")
+    c.header("access-control-allow-origin", "https://app.example.com")
+    c.header("access-control-allow-credentials", "true")
     c.header("x-request-id", c.req.header("x-request-id") ?? crypto.randomUUID())
     const auth = c.req.header("authorization")
     if (auth === undefined || !auth.startsWith("Bearer ") || auth.length < 24) {
@@ -260,32 +268,35 @@ if (framework === "fastify") {
       return c.json({ ok: true, id: "ord_new", sku, qty, by: c.get("userId") })
     },
   )
-  createServer((req, res) => {
-    const response = app.fetch(toWebRequest(req))
-    void Promise.resolve(response).then(
-      (settled) => writeWebResponse(settled, res),
-      () => sendJson(res, 500, { error: "internal" }),
-    )
-  }).listen(port)
+  serve({ fetch: app.fetch, port })
 } else if (framework === "hono-body") {
   const { Hono } = await import("hono")
   const { getCookie } = await import("hono/cookie")
-  const { cors } = await import("hono/cors")
-  const { secureHeaders } = await import("hono/secure-headers")
   const { validator } = await import("hono/validator")
+  const { serve } = await import("@hono/node-server")
   const app = new Hono<{ Variables: { userId: string; theme: string } }>()
-  // Hono's body-observing idiom (its etag middleware's shape): run after the handler, drain the
-  // built Response, rebuild it with the annotation. Registered first so it wraps outermost.
+  // Hono's body-observing idiom: buffer the final Response, hash its text, and rewrap the same
+  // bytes with the annotation. Registered first so it wraps outermost.
   app.use("*", async (c, next) => {
     await next()
-    const body = await c.res.text()
-    const annotated = new Response(body, { status: c.res.status, headers: c.res.headers })
-    annotated.headers.set("x-body-hash", hash(body))
+    const response = c.res
+    const body = new Uint8Array(await response.arrayBuffer())
+    const bodyHash = hash(body)
+    const annotated = new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    })
+    annotated.headers.set("x-body-hash", bodyHash)
     c.res = annotated
   })
-  app.use("*", secureHeaders())
-  app.use("*", cors({ origin: "https://app.example.com", credentials: true }))
   app.use("*", async (c, next) => {
+    c.header("x-content-type-options", "nosniff")
+    c.header("x-frame-options", "DENY")
+    c.header("referrer-policy", "no-referrer")
+    c.header("vary", "Origin")
+    c.header("access-control-allow-origin", "https://app.example.com")
+    c.header("access-control-allow-credentials", "true")
     c.header("x-request-id", c.req.header("x-request-id") ?? crypto.randomUUID())
     const auth = c.req.header("authorization")
     if (auth === undefined || !auth.startsWith("Bearer ") || auth.length < 24) {
@@ -321,13 +332,7 @@ if (framework === "fastify") {
       return c.json({ ok: true, id: "ord_new", sku, qty, by: c.get("userId") })
     },
   )
-  createServer((req, res) => {
-    const response = app.fetch(toWebRequest(req))
-    void Promise.resolve(response).then(
-      (settled) => writeWebResponse(settled, res),
-      () => sendJson(res, 500, { error: "internal" }),
-    )
-  }).listen(port)
+  serve({ fetch: app.fetch, port })
 } else if (framework === "express") {
   const { default: express } = await import("express")
   const app = express()
@@ -628,41 +633,4 @@ if (framework === "fastify") {
   server.listen(port)
 } else {
   throw new Error(`unknown framework: ${framework ?? "(none)"}`)
-}
-
-function toWebRequest(req: IncomingMessage): Request {
-  const host = req.headers.host ?? "localhost"
-  const url = `http://${host}${req.url ?? "/"}`
-  const method = req.method ?? "GET"
-  const headers = new Headers()
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined) continue
-    headers.set(key, Array.isArray(value) ? value.join(", ") : value)
-  }
-  const init: RequestInit & { duplex?: "half" } = { method, headers }
-  if (method !== "GET" && method !== "HEAD") {
-    // Node's Web-stream declaration is distinct from the DOM BodyInit declaration used by Request.
-    init.body = Readable.toWeb(req) as unknown as BodyInit
-    init.duplex = "half"
-  }
-  return new Request(url, init)
-}
-
-async function writeWebResponse(response: Response, res: ServerResponse): Promise<void> {
-  const headers: Record<string, string | string[]> = {}
-  response.headers.forEach((value, key) => {
-    headers[key] = value
-  })
-  const setCookies = response.headers.getSetCookie?.()
-  if (setCookies !== undefined && setCookies.length > 0) headers["set-cookie"] = setCookies
-  res.writeHead(response.status, headers)
-  if (response.body !== null) {
-    const reader = response.body.getReader()
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      res.write(value)
-    }
-  }
-  res.end()
 }

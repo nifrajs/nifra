@@ -1,5 +1,141 @@
 # @nifrajs/ts-plugin
 
+## 5.13.0
+
+### Patch Changes
+
+- Updated dependencies [591f74e]
+- Updated dependencies [b427443]
+- Updated dependencies [3b39e39]
+- Updated dependencies [16023e9]
+- Updated dependencies [9c47fad]
+- Updated dependencies [d75437b]
+- Updated dependencies [9c8a464]
+- Updated dependencies [72fe9ce]
+- Updated dependencies [8bba4fa]
+- Updated dependencies [820a05a]
+- Updated dependencies [497449f]
+  - @nifrajs/core@5.13.0
+  - @nifrajs/web@5.13.0
+
+## 5.12.1
+
+### Patch Changes
+
+- Updated dependencies [eae0213]
+  - @nifrajs/core@5.12.1
+  - @nifrajs/web@5.12.1
+
+## 5.12.0
+
+### Patch Changes
+
+- Updated dependencies [d274304]
+- Updated dependencies [3a42e07]
+- Updated dependencies [91cc290]
+- Updated dependencies [28bdd6c]
+- Updated dependencies [878bb89]
+- Updated dependencies [c4bd5b2]
+  - @nifrajs/core@5.12.0
+  - @nifrajs/web@5.12.0
+
+## 5.11.0
+
+### Patch Changes
+
+- Updated dependencies [3c8024d]
+- Updated dependencies [d76f9d7]
+- Updated dependencies [9a0f0a0]
+- Updated dependencies [bc40a1d]
+- Updated dependencies [97a55bf]
+- Updated dependencies [abf5a0b]
+  - @nifrajs/web@5.11.0
+  - @nifrajs/core@5.11.0
+
+## 5.10.0
+
+### Patch Changes
+
+- 16696fb: The README names `href({ to })` and `rawHref()` as the links go-to-definition follows, and a route-table pattern such as `"/users/:id"` resolves to its file.
+- Updated dependencies [535c4e5]
+- Updated dependencies [87e7fd9]
+- Updated dependencies [611a3be]
+- Updated dependencies [7f32bb2]
+- Updated dependencies [0aa10d0]
+- Updated dependencies [ab69ee6]
+- Updated dependencies [548bade]
+- Updated dependencies [d2066e0]
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [e465ed5]
+- Updated dependencies [683c3d6]
+- Updated dependencies [824a75e]
+- Updated dependencies [d2066e0]
+- Updated dependencies [5845e1c]
+- Updated dependencies [5d1be78]
+- Updated dependencies [1faf86c]
+- Updated dependencies [950996b]
+  - @nifrajs/web@5.10.0
+  - @nifrajs/core@5.10.0
+
+## 5.9.0
+
+### Patch Changes
+
+- Updated dependencies [2ffa7c1]
+- Updated dependencies [100a0aa]
+- Updated dependencies [71dea89]
+- Updated dependencies [9c20e05]
+- Updated dependencies [9942748]
+- Updated dependencies [8cdb138]
+- Updated dependencies [be1c677]
+- Updated dependencies [f399e06]
+- Updated dependencies [93e7078]
+- Updated dependencies [2c2f58b]
+- Updated dependencies [123409c]
+- Updated dependencies [7ee17d0]
+- Updated dependencies [68d9f31]
+- Updated dependencies [fa7d102]
+- Updated dependencies [ddeb735]
+- Updated dependencies [a3fb195]
+- Updated dependencies [47a864f]
+- Updated dependencies [9942748]
+- Updated dependencies [ffcf41a]
+- Updated dependencies [7a15327]
+- Updated dependencies [866c8ec]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [a29d1cc]
+- Updated dependencies [9942748]
+- Updated dependencies [77b98ea]
+- Updated dependencies [a3caf9b]
+- Updated dependencies [a0fe5bf]
+- Updated dependencies [7ba5c9b]
+- Updated dependencies [0445564]
+- Updated dependencies [180bf9d]
+- Updated dependencies [ff9bc11]
+- Updated dependencies [8094874]
+- Updated dependencies [a7b89ee]
+- Updated dependencies [34b780e]
+- Updated dependencies [111c3be]
+- Updated dependencies [5bd225e]
+- Updated dependencies [d6e6617]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [159ae97]
+- Updated dependencies [6ba9740]
+- Updated dependencies [5f4416a]
+- Updated dependencies [bc05ec5]
+- Updated dependencies [d3c050e]
+- Updated dependencies [c4ed3e9]
+- Updated dependencies [9942748]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [3299474]
+- Updated dependencies [543d00a]
+- Updated dependencies [020eb7b]
+- Updated dependencies [9942748]
+- Updated dependencies [9785cd4]
+  - @nifrajs/web@5.9.0
+  - @nifrajs/core@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

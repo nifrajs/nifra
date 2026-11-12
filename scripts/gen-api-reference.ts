@@ -4,7 +4,8 @@
  * kind, signature, and doc summary) extracted from source with the TypeScript compiler API, so it can
  * NEVER drift from the code. This is the symbol-level counterpart to two other generated surfaces:
  * the HTTP route reference (Scalar, from `toOpenAPI(app)`) and `llms-full.txt` (which lists export
- * names). Here we add the actual signatures + doc comments.
+ * names). Packages that ship non-TypeScript bundles without public source exports, such as
+ * `@nifrajs/skills`, are intentionally omitted. Here we add the actual signatures + doc comments.
  *
  * Run: `bun run gen:api` (also run by `site:build`; served at `/api-reference.md`). `generateApiReference`
  * is exported + guarded by `import.meta.main`, so a test can import it without writing the file.
@@ -195,7 +196,7 @@ export function generateApiReference(): string {
 
   const sections: string[] = [
     "# nifra API reference (generated)",
-    "Every public export of every package and documented subpath - name, kind, signature, and doc summary - extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.",
+    "Every public export of every package and documented subpath - name, kind, signature, and doc summary - extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. Packages that ship non-TypeScript bundles without public source exports, such as `@nifrajs/skills`, are intentionally omitted. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.",
   ]
 
   for (const pkg of pkgs) {

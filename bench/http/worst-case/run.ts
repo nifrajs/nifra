@@ -1,10 +1,9 @@
 /**
- * WORST-CASE throughput matrix - nifra vs Elysia only, on Bun/Node/Deno - driven by
+ * WORST-CASE throughput matrix - Nifra vs Elysia on Bun/Node/Deno, plus Fastify on all three - driven by
  * `oha`. The app under test combines hooks +
- * multi-param route + validated query + JSON body validation + per-request dynamic
- * response headers. BENCH_GENERIC=1 adds a second before hook (and, for nifra, an error hook) to measure the GENERIC lane
- * against Elysia's AOT-compiled
- * handler - the shape most likely to show nifra behind. Harness mechanics mirror
+ * multi-param route with validated path params + validated query + JSON body validation + per-request
+ * dynamic response headers. BENCH_GENERIC=1 installs a Nifra validation-recovery hook to select its
+ * generic runner and adds another no-op before hook to each peer. Harness mechanics mirror
  * ../run.ts (isolated subprocess per server, warmup, median-of-N, ratios are the signal).
  *
  * Before any load run, each server is CORRECTNESS-PROBED (status, JSON fields, dynamic
@@ -67,18 +66,18 @@ const JSON_CT = { "content-type": "application/json", "x-req-id": "bench-1" } as
 
 const WORKLOADS: readonly Workload[] = [
   {
-    name: `GET worst (${GENERIC ? 3 : 2} hooks + 3 params + query + dyn headers)`,
+    name: `GET worst (${GENERIC ? "generic, " : "fused params, "}${GENERIC ? 3 : 2} hooks + 3 params + query + dyn headers)`,
     path: GET_PATH,
     requests: 100_000,
   },
   {
-    name: `POST worst ${kb(BODY_SMALL)} body`,
+    name: `POST worst ${GENERIC ? "generic, " : "fused params, "}${kb(BODY_SMALL)} body + params`,
     path: POST_PATH,
     requests: 30_000,
     post: { headers: JSON_CT, body: BODY_SMALL },
   },
   {
-    name: `POST worst ${kb(BODY_LARGE)} body`,
+    name: `POST worst ${GENERIC ? "generic, " : "fused params, "}${kb(BODY_LARGE)} body + params`,
     path: POST_PATH,
     requests: 10_000,
     post: { headers: JSON_CT, body: BODY_LARGE },
@@ -135,6 +134,10 @@ const SECTIONS: readonly Section[] = [
         framework: "elysia",
         spawn: (p) => ["bun", "bench/http/worst-case/serve.ts", "elysia", String(p)],
       },
+      {
+        framework: "fastify",
+        spawn: (p) => ["bun", "bench/http/worst-case/serve-node-fastify.ts", String(p)],
+      },
       ...(Bun.env.BENCH_BUN_BASELINE
         ? [
             {
@@ -183,19 +186,34 @@ const SECTIONS: readonly Section[] = [
   },
   {
     runtime: "deno",
-    targets: (["nifra", "elysia"] as const).map((framework) => ({
-      framework,
-      spawn: (p: number) => [
-        "deno",
-        "run",
-        "--allow-net",
-        "--allow-env",
-        "--no-check",
-        "bench/http/worst-case/serve-deno.ts",
+    targets: [
+      ...(["nifra", "elysia"] as const).map((framework) => ({
         framework,
-        String(p),
-      ],
-    })),
+        spawn: (p: number) => [
+          "deno",
+          "run",
+          "--allow-net",
+          "--allow-env",
+          "--no-check",
+          "bench/http/worst-case/serve-deno.ts",
+          framework,
+          String(p),
+        ],
+      })),
+      {
+        framework: "fastify",
+        spawn: (p: number) => [
+          "deno",
+          "run",
+          "--allow-net",
+          "--allow-env",
+          "--allow-read",
+          "--no-check",
+          "bench/http/worst-case/serve-node-fastify.ts",
+          String(p),
+        ],
+      },
+    ],
   },
 ]
 
@@ -350,6 +368,13 @@ async function probe(base: string, framework: string): Promise<void> {
   if (invalid.status < 400)
     throw new Error(`${framework}: invalid-body probe expected 4xx, got ${invalid.status}`)
   await invalid.text()
+  const invalidParams = await fetch(
+    `${base}/orgs/acme/projects/apollo/tasks/not-a-number?verbose=1&trace=abc123`,
+    { headers: { "x-req-id": "bench-1" } },
+  )
+  if (invalidParams.status < 400)
+    throw new Error(`${framework}: invalid-params probe expected 4xx, got ${invalidParams.status}`)
+  await invalidParams.text()
   if (framework.endsWith("/nifra-unguarded")) {
     const poison = await fetch(`${base}${POST_PATH}`, {
       method: "POST",
@@ -471,7 +496,7 @@ function pad(s: string, n: number): string {
 }
 
 console.log(
-  `\nWORST-CASE ${GENERIC ? "generic" : "closed-shape"} lane - oha, paired A/B, median-of-${RUNS} count-bounded runs @ ${CONNECTIONS} conns  ` +
+  `\nWORST-CASE ${GENERIC ? "generic" : "fused params"} lane - oha, paired A/B, median-of-${RUNS} count-bounded runs @ ${CONNECTIONS} conns  ` +
     `(Bun ${Bun.version})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
 )
 

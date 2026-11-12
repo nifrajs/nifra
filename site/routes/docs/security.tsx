@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/security",
@@ -50,15 +51,12 @@ const BOUNDED = `import { server } from "@nifrajs/core/server"
 
 const app = server()
 
-// A schema route is ALREADY bounded - the validated read enforces \`maxBodyBytes\`.
-// But a raw-body / file / BYO-validation route reads the body directly, which
-// \`maxBodyBytes\` does not cover. \`c.boundedBody\` caps that read:
-app.post("/import", async (c) => {
-  const bytes = await c.boundedBody(5 * 1024 * 1024) // cap THIS route at 5 MiB
-  // Over-cap throws a flat 413; a malformed Content-Length a 400 - as control-flow
-  // Responses (caught by the lifecycle like \`throw redirect()\`), so a handler can't
-  // accidentally ignore the cap. The over-cap length is rejected BEFORE buffering;
-  // a chunked / length-less body is aborted mid-stream once it crosses the cap.
+// Every route is bounded, including raw-body / file / BYO-validation routes that
+// read c.req directly. Raise the route cap when this endpoint needs more than the default:
+app.post("/import", { bodyLimit: 5 * 1024 * 1024 }, async (c) => {
+  const bytes = await c.req.arrayBuffer() // the direct read is capped at 5 MiB
+  // An over-cap Content-Length is rejected BEFORE buffering; chunked bodies are
+  // aborted mid-stream. Both answer a flat 413 through the request lifecycle.
   return { received: bytes.byteLength } // a returned object is serialized as JSON 200
 })
 
@@ -170,27 +168,31 @@ app.post(
 const UPLOADS = `// doc-check: skip - fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
 import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
 
-app.post("/avatar", async (c) => {
-  const form = await c.req.formData()
-  const file = form.get("file")
-  if (!(file instanceof Blob)) { c.set.status = 400; return { ok: false, error: "no_file" } }
+app.post(
+  "/avatar",
+  { bodyLimit: 2_100_000 }, // request cap includes multipart framing around a 2 MB file
+  async (c) => {
+    const form = await c.req.formData()
+    const file = form.get("file")
+    if (!(file instanceof Blob)) { c.set.status = 400; return { ok: false, error: "no_file" } }
 
-  // Size cap + REAL type by magic bytes - a .exe renamed .png (or a spoofed
-  // Content-Type) is caught, because the bytes win. An oversized Blob is rejected
-  // by its .size BEFORE it's buffered into memory.
-  const result = await validateUpload(file, {
-    maxBytes: 2_000_000,
-    accept: ["image/png", "image/jpeg"], // exact, or "image/*"
-  })
-  if (!result.ok) { c.set.status = 400; return { ok: false, error: result.reason } }
-  //  reason: "too_large" | "empty" | "unrecognized" | "type_not_allowed"
+    // Size cap + REAL type by magic bytes - a .exe renamed .png (or a spoofed
+    // Content-Type) is caught, because the bytes win. An oversized Blob is rejected
+    // by its .size BEFORE it's buffered into memory.
+    const result = await validateUpload(file, {
+      maxBytes: 2_000_000,
+      accept: ["image/png", "image/jpeg"], // exact, or "image/*"
+    })
+    if (!result.ok) { c.set.status = 400; return { ok: false, error: result.reason } }
+    //  reason: "too_large" | "empty" | "unrecognized" | "type_not_allowed"
 
-  await save(result.bytes, \`\${id}.\${result.ext}\`) // result.mime / .ext are trustworthy
+    await save(result.bytes, \`\${id}.\${result.ext}\`) // result.mime / .ext are trustworthy
 
-  // Hand back a short-TTL, tamper-evident URL (HMAC over path + expiry):
-  const url = await signDownloadUrl(\`/files/\${id}\`, env.FILE_SECRET, { expiresInSeconds: 300 })
-  return { ok: true, url } // a returned object is serialized as JSON 200
-})`
+    // Hand back a short-TTL, tamper-evident URL (HMAC over path + expiry):
+    const url = await signDownloadUrl(\`/files/\${id}\`, env.FILE_SECRET, { expiresInSeconds: 300 })
+    return { ok: true, url } // a returned object is serialized as JSON 200
+  },
+)`
 
 const STRIP = `// doc-check: skip - fragment: continues the upload handler above (\`result.bytes\`).
 import { stripImageMetadata } from "@nifrajs/uploads"
@@ -253,7 +255,8 @@ const app = server()
   // X-Forwarded-For is never believed.
   .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"] }))
   // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a
-  // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)
+  // length-less body. This is the cheap pre-filter; the route's cap on direct and
+  // framework reads is the read-time guard.
   .use(bodyLimit({ maxBytes: 1_000_000 }))`
 
 const ASSURANCE = `// doc-check: skip - configuration file imports your application backend.
@@ -371,6 +374,23 @@ const app = server({
 //   → { ...,"message":"auth failed for [REDACTED] with [REDACTED]" }
 // Add your own: { valuePatterns: [...commonSecretPatterns, /\\bord_[a-z0-9]+/g] }`
 
+const SECRET_EXEMPTIONS = `// nifra.config.ts
+// doc-check: skip - exemptions name your own findings; there is nothing to run
+export const secretExemptions = [
+  {
+    rule: "key-format",
+    file: "routes/docs.tsx",
+    reason: "the sample literally spells an AWS access key id",
+  },
+  // A file exemption covers this rule throughout the named file. An env exemption covers every
+  // finding from that variable anywhere in scanned output; use it only when that is intended.
+  {
+    rule: "private-env-value",
+    env: "SIGNING_SALT",
+    reason: "this value is intentionally published wherever it appears; it shapes a public nonce",
+  },
+]`
+
 export default function Security() {
   return (
     <div className="prose">
@@ -380,7 +400,7 @@ export default function Security() {
         validation, constant-time webhook verification, and idempotent retries - ship as first-party
         primitives. All are <b>edge-safe</b> (WebCrypto, no <code>node:crypto</code>) and run unchanged
         on Bun, Node, Deno, and Workers. For how these defaults stack up against Hono, Fastify,
-        Express, and Elysia, see <a href="/docs/security-comparison">security posture, compared</a>.
+        Express, and Elysia, see <a href={href({ to: "/docs/security-comparison" })}>security posture, compared</a>.
       </p>
 
       <h2 id="response-contract">Responses that cannot leak more than they declare</h2>
@@ -440,7 +460,7 @@ export default function Security() {
       <p>
         A <code>merge()</code>d server&rsquo;s routes are covered by a contract the parent installed
         before the merge, as long as the route declares a response and its own server installed none.
-        See <a href="/docs/plugins#parent-use">what a parent&rsquo;s use() covers</a>.
+        See <a href={href({ to: "/docs/plugins", hash: "parent-use" })}>what a parent&rsquo;s use() covers</a>.
       </p>
       <p>
         The check itself is essentially free: with a compiled validator it measures in the
@@ -453,18 +473,21 @@ export default function Security() {
 
       <h2>Bounded request bodies</h2>
       <p>
-        Nifra caps the body of any <b>schema-validated</b> route at <code>maxBodyBytes</code> - an over-cap{" "}
-        <code>Content-Length</code> is rejected before buffering, and a chunked body is aborted mid-stream.
-        But a route that reads the body <i>directly</i> (raw bodies, file uploads, your own validation)
-        bypasses that read path. <code>c.boundedBody(maxBytes?)</code> and{" "}
-        <code>c.boundedJson&lt;T&gt;(maxBytes?)</code> extend the <b>same</b> cap to those routes.
+        Every HTTP route has a body limit, defaulting to <code>maxBodyBytes</code> (1,000,000 bytes).{" "}
+        Nifra enforces it when the body is read, including direct <code>c.req</code>/<code>c.request</code> reads
+        such as <code>json()</code>, <code>arrayBuffer()</code>, <code>text()</code>, and the raw stream. A route
+        can explicitly opt out with <code>bodyLimit: &quot;unlimited&quot;</code>. Framework helpers, including{" "}
+        <code>verifyWebhook</code> and <code>c.boundedBody(maxBytes?)</code>, read through their own bounded-reader
+        paths. <code>verifyWebhook</code> defaults to 1 MiB, and an explicit <code>c.boundedBody(maxBytes)</code>
+        value can exceed the route&rsquo;s <code>bodyLimit</code>. Set helper limits explicitly when the route-wide
+        cap must apply to those reads. <code>c.boundedJson&lt;T&gt;(maxBytes?)</code> reads under that cap and parses JSON.
       </p>
       <CodeBlock code={BOUNDED} />
       <p>
-        Over-cap throws a flat <code>413</code>, a malformed <code>Content-Length</code> a <code>400</code>,
-        bad JSON a <code>400</code> - thrown as control-flow <code>Response</code>s the lifecycle catches,
-        so the cap can't be silently skipped. Pass a larger <code>maxBytes</code> for an upload route, a
-        smaller one to tighten an endpoint.
+        An over-cap read is rejected with a flat <code>413</code>; a malformed{" "}
+        <code>Content-Length</code> gets a <code>400</code>. <code>c.boundedJson</code> also returns{" "}
+        <code>400</code> for malformed or rejected JSON. Set a larger finite route{" "}
+        <code>bodyLimit</code> for an upload, or a smaller <code>maxBytes</code> to tighten an individual read.
       </p>
       <p>
         The cap is enforced on the bytes actually <b>delivered</b>, never on the number the caller wrote in{" "}
@@ -490,12 +513,17 @@ export default function Security() {
 
       <h2>Prototype-poisoning defense</h2>
       <p>
-        Every JSON body nifra parses - the schema-validated route and <code>c.boundedJson</code>
-        alike - is screened for the prototype-pollution shape: an own <code>__proto__</code> key, or
-        a <code>constructor</code> whose value carries a <code>prototype</code>. <code>JSON.parse</code>
+        The schema body reader and <code>c.boundedJson</code> screen parsed JSON for the prototype-pollution
+        shape: an own <code>__proto__</code> key, or a <code>constructor</code> whose value carries a{" "}
+        <code>prototype</code>. <code>JSON.parse</code>
         creates these as ordinary data properties, and the damage lands later, when innocent code does{" "}
         <code>{"{ ...body }"}</code>, <code>Object.assign(target, body)</code>, or a deep merge and
-        walks that key onto a real prototype. The screen is on by default.
+        walks that key onto a real prototype. This screen is on by default for those guarded readers.
+      </p>
+      <p>
+        Direct <code>c.req.json()</code> reads are still subject to the body-size cap, but do not apply the{" "}
+        <code>protoPoisoning</code> policy. Treat their parsed object keys as untrusted before merging; use{" "}
+        <code>c.boundedJson</code> when you want Nifra to apply that policy.
       </p>
       <CodeBlock code={PROTO} lang="ts" />
       <p>
@@ -584,11 +612,20 @@ export default function Security() {
         <li>
           <b>A form post is a simple cross-origin request.</b> A browser sends{" "}
           <code>multipart/form-data</code>, urlencoded and <code>text/plain</code> with cookies and no
-          preflight. A body-schema route refuses one whose <code>Origin</code> is another site&rsquo;s
-          with <code>403</code> before reading it; list a site that must post forms to the app in the
-          server&rsquo;s <code>formOrigins</code>. A request without an <code>Origin</code> passes, so
-          a cookie-authenticated upload route still needs <code>csrf()</code> like any other state
-          change.
+          preflight. Core refuses one whose <code>Origin</code> is another site&rsquo;s with{" "}
+          <code>403</code> on a body-schema route before reading it, and on any other{" "}
+          <code>POST</code>, <code>PUT</code>, <code>PATCH</code> or <code>DELETE</code> route before
+          the handler runs. A route without a body schema refuses a request with no content type from
+          such a site too, unless it carries an <code>Authorization</code> header a script set (a
+          browser re-sends <code>Basic</code>, <code>Digest</code>, <code>Negotiate</code> and{" "}
+          <code>NTLM</code> credentials from its own cache, so those do not count). List a site that
+          must post to the app in the server&rsquo;s <code>formOrigins</code>; the origins{" "}
+          <code>cors()</code> and <code>csrf({"{ origins }"})</code> name are trusted without a second
+          list, for that server&rsquo;s own routes only: a mounted server keeps its own policy, a
+          parent must list the same sites itself, and a web page action checks the backend&rsquo;s{" "}
+          <code>allowedOrigins</code> instead. Audit those origins: one named there may post a form
+          whatever methods or credentials the CORS policy allows. A request without an <code>Origin</code> passes, so a cookie-authenticated upload
+          route still needs <code>csrf()</code> like any other state change.
         </li>
         <li>
           <b>The form is held in memory.</b> Budget roughly twice <code>bodyLimit</code> per request in
@@ -671,8 +708,9 @@ export default function Security() {
       </p>
       <CodeBlock code={UPLOADS} />
       <p>
-        Pair it with <code>c.boundedBody</code> to also bound the <i>read</i>: cap the read, then validate
-        the buffered bytes. The detection alone is <code>detectFileType(bytes)</code> from{" "}
+        Direct request reads already follow the route&rsquo;s body limit. Use <code>c.boundedBody</code> to
+        set an explicit cap for the bytes you pass to <code>validateUpload</code>. The detection alone is{" "}
+        <code>detectFileType(bytes)</code> from{" "}
         <code>@nifrajs/core/file-type</code> (returns <code>{`{ mime, ext }`}</code> or <code>null</code>),
         covering common image / A-V / archive types.
       </p>
@@ -680,7 +718,7 @@ export default function Security() {
         <code>signDownloadUrl</code> / <code>verifyDownloadUrl</code> mint short-TTL, tamper-evident
         download links (HMAC-SHA256 over the path + expiry, constant-time verify). And{" "}
         <code>stripImageMetadata</code> drops EXIF/GPS by re-encoding the image - through any{" "}
-        <a href="/docs/images">@nifrajs/image</a> backend, with no dependency on it:
+        <a href={href({ to: "/docs/images" })}>@nifrajs/image</a> backend, with no dependency on it:
       </p>
       <CodeBlock code={STRIP} />
 
@@ -786,8 +824,8 @@ export default function Security() {
         </li>
         <li>
           <code>bodyLimit</code> - a cheap <code>Content-Length</code> pre-filter that rejects oversized
-          bodies before routing (fails closed with <code>411</code> on a length-less body). The read-time
-          guard above (<code>c.boundedBody</code> / schema cap) remains the source of truth.
+          bodies before routing (fails closed with <code>411</code> on a length-less body). The route&rsquo;s
+          read-time body limit applies to direct reads, schema validation, and bounded readers.
         </li>
       </ul>
 
@@ -816,7 +854,7 @@ export default function Security() {
         <code>csp</code> from <code>createCspPolicy</code>: it allows the framework&apos;s constant
         scripts by hash and adds a nonce only to a page that needs one, so every other page sends the
         same header and stays cacheable under <code>withISR</code> or a CDN. See{" "}
-        <a href="/docs/contract#strict-csp">A strict CSP that still caches</a>.
+        <a href={href({ to: "/docs/contract", hash: "strict-csp" })}>A strict CSP that still caches</a>.
       </p>
 
       <h2>Route assurance - prove every route is guarded</h2>
@@ -880,9 +918,9 @@ export default function Security() {
         <code>__Host-</code>/<code>__Secure-</code> cookie-prefix enforcement (a cookie whose
         attributes violate its prefix contract fails at serialization rather than being silently
         dropped by the browser), signed-cookie sessions + CSRF + route guards
-        (<a href="/docs/auth">@nifrajs/auth</a>), bearer/apiKey auth + a shared-store rate
-        limiter (<a href="/docs/plugins">@nifrajs/middleware</a>), and a hardened image-resize endpoint
-        (<a href="/docs/images">@nifrajs/image/server</a>).
+        (<a href={href({ to: "/docs/auth" })}>@nifrajs/auth</a>), bearer/apiKey auth + a shared-store rate
+        limiter (<a href={href({ to: "/docs/plugins" })}>@nifrajs/middleware</a>), and a hardened image-resize endpoint
+        (<a href={href({ to: "/docs/images" })}>@nifrajs/image/server</a>).
       </p>
 
       <h2>Redacting logs</h2>
@@ -894,6 +932,78 @@ export default function Security() {
         bearer tokens, JWTs, emails, and a few well-known key formats, or supply your own:
       </p>
       <CodeBlock code={LOGGING} />
+
+      <h2>Credentials that reach the browser - NF-C032</h2>
+      <p>
+        The zone rules keep <code>backend/</code> halves and server-only imports out of the browser
+        bundle; the credential scan is the net under them - for a credential typed straight into
+        browser code, one a dependency carries, and a server-only environment value that reached the
+        output some other way (a <code>define</code>, a prerendered page, a copied{" "}
+        <code>public/</code> file). <code>nifra check</code> (NF-C032, an error) scans each app&apos;s
+        browser-zone modules and every file in <code>public/</code>; the build runs the same net on
+        what it publishes - every emitted file with its inline source maps decoded, every{" "}
+        <code>public/</code> copy, every prerendered page - and matches the values of the build
+        environment&apos;s non-public variables there, raw and URL-, base64-, JSON- and
+        HTML-encoded. A <code>PUBLIC_</code>-prefixed variable is public by declaration.
+      </p>
+      <p>Five rules:</p>
+      <ul>
+        <li>
+          <b>Known token formats</b> - AWS access keys, Stripe secret keys and webhook secrets,
+          GitHub, Slack (tokens and webhook URLs), OpenAI, Anthropic, SendGrid, Twilio, Mailgun, npm,
+          and a Supabase service-role JWT.
+        </li>
+        <li>
+          <b>PEM private keys</b> - a block with a body present, not a parser&apos;s bare{" "}
+          <code>-----BEGIN PRIVATE KEY-----</code> constant.
+        </li>
+        <li>
+          <b>URLs with a password</b> - <code>{"postgres://user:password@host"}</code>, unless the
+          password is a placeholder.
+        </li>
+        <li>
+          <b>Assigned secrets</b> - a random literal given to a secret-like name, in first-party
+          source only: <code>{`apiKey: "..."`}</code>, a quoted header name including its hyphens (
+          <code>{`"x-api-key": "..."`}</code>), a header set by call (
+          <code>{`headers.set("x-api-key", ...)`}</code>), a pair in{" "}
+          <code>new Headers([...])</code>, and <code>Authorization</code> read into its{" "}
+          <code>Bearer</code> token or <code>Basic</code> credentials.
+        </li>
+        <li>
+          <b>Private env values</b> - the value of a build variable whose name says secret (
+          <code>TOKEN</code>, <code>API_KEY</code>, <code>DATABASE_URL</code>, …) or that looks
+          random, in any encoding above. A defined set of recognized ambient shell, OS and CI names
+          is skipped unless the name itself looks secret-like. Other names are scanned when they
+          look secret-like, contain a credential URL, or hold a random-looking value.
+        </li>
+      </ul>
+      <p>
+        Deliberate skips: keys public by design (Stripe <code>pk_</code>, Google <code>AIza</code>,
+        reCAPTCHA <code>6L</code>, <code>G-</code> and <code>UA-</code> ids), placeholders (
+        <code>changeme</code>, <code>&lt;your-key-here&gt;</code>, a whole-value stand-in such as{" "}
+        <code>your_signing_secret</code> or an interpolated shell value), low-entropy and word-shaped
+        values, and labels inside a message catalog (<code>{`password: "Lykilorð"`}</code>). A
+        finding never prints the value: the rule, the location, and a preview of the first few
+        characters plus the length. When a match sits in a content-hashed output file, the build
+        names the module it came from.
+      </p>
+      <p>
+        A reviewed false positive can be exempted in <code>nifra.config.ts</code>. A <code>file</code>{" "}
+        exemption suppresses that rule throughout the named file, so the same credential in another
+        file still fails. For <code>private-env-value</code>, an <code>env</code> exemption suppresses
+        every finding from that variable anywhere in scanned output; use it only when publishing that
+        value everywhere it appears is intended. Every exemption needs its rule and reason, or the
+        build refuses:
+      </p>
+      <CodeBlock code={SECRET_EXEMPTIONS} />
+      <p>
+        The net is a heuristic, not a guarantee. A credential spelled inside a longer string - a
+        URL&apos;s query (<code>{"https://api.example.com/v1?key=..."}</code>) or a cookie header&apos;s
+        value - is seen by the known-format rules alone, and a random value given to a name the scan
+        does not judge secret-like is not the <code>assigned-secret</code> rule&apos;s target. Keep
+        credentials in a route&apos;s backend half or under <code>backend/</code>, and rotate any
+        that were ever committed.
+      </p>
     </div>
   )
 }

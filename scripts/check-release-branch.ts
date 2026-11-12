@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process"
 import { readdirSync, readFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
+import { checkPublicReleaseFreshness } from "./check-public-release-freshness.ts"
 
 import {
   changedPublicPackageVersions,
@@ -59,6 +60,13 @@ if (!isMergeCheck) {
   const branch = process.env.GITHUB_HEAD_REF?.trim() || git(["branch", "--show-current"])
   if (!isReleaseBranch(branch))
     throw new Error("release:check must run on a branch named release/<name>")
+}
+
+const freshnessFailures = checkPublicReleaseFreshness()
+if (freshnessFailures.length > 0) {
+  throw new Error(
+    `release:check found stale public release data:\n${freshnessFailures.map((failure) => `- ${failure}`).join("\n")}\nRun \`bun run bench:site:update\` after \`bun run release:prepare\`.`,
+  )
 }
 
 const changedPaths = git(["diff", "--name-only", "-z", `${base}...${head}`])

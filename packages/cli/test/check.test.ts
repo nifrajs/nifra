@@ -3325,6 +3325,16 @@ describe("scanInterpolatedSql", () => {
     expect(scan('db.query("SELECT * FROM users WHERE id = ?")')).toBe(0)
   })
 
+  test("member names are not variable self-references in non-SQL client calls", () => {
+    expect(
+      scan("const record = registered.record(unchecked); client.prepare(record, valid, host)"),
+    ).toBe(0)
+    expect(scan('const record = registered["record"](unchecked); client.prepare(record)')).toBe(0)
+    expect(scan("const record = { record: unchecked }; client.prepare(record)")).toBe(0)
+    expect(scan("const record = registry.record + suffix; client.prepare(record)")).toBe(1)
+    expect(scan('let q = "SELECT * FROM t"; q = q + suffix; db.prepare(q)')).toBe(1)
+  })
+
   test("a hoisted concatenation is scanned inline - extracting a variable does not launder it", () => {
     // Was silent before argument-identifier resolution: the call site `db.query(q)` said nothing, so the
     // finding could be hidden just by lifting the concatenation to `const q = …`. The scan now resolves

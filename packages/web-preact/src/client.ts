@@ -1,4 +1,5 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { setRouteSlotRuntime } from "@nifrajs/web/client"
 import { routeProps } from "@nifrajs/web/internal/route-props-runtime"
 /**
  * @nifrajs/web-preact/client - Preact client runtime. `hydrate` hydrates a single SSR'd route;
@@ -93,6 +94,7 @@ function Level({ depth, ...overrides }: { readonly depth: number }): ComponentCh
  */
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, matchChains, container } = options
+  setRouteSlotRuntime({ router, routes, searchSchemas, matchChains })
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Router: FunctionComponent = () => {
     const state = useSyncExternalStore(router.subscribe, router.snapshot)

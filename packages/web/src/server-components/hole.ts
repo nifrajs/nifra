@@ -1,5 +1,5 @@
 /**
- * Experimental: a partially prerendered hole whose content is a server component. The hole's loader
+ * A partially prerendered hole whose content is a server component. The hole's loader
  * returns the component's input; the server runs the component for each visitor and sends its HTML,
  * and the browser mounts only the client islands inside it. Under the coordinated compiler a browser
  * import of a `*.component.server` module is an opaque handle, so the component never ships.

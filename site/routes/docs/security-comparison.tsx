@@ -1,4 +1,5 @@
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/security-comparison",
@@ -14,7 +15,7 @@ export default function SecurityComparison() {
         Which hardening each framework actually ships. A dimension-by-dimension read of Nifra&rsquo;s
         security defaults against the <b>current releases</b> of Hono, Fastify, Express, and Elysia -
         what is on by default, what is opt-in, and what is left to a third-party package. For how each
-        Nifra primitive works, see <a href="/docs/security">Security &amp; hardening</a>.
+        Nifra primitive works, see <a href={href({ to: "/docs/security" })}>Security &amp; hardening</a>.
       </p>
 
       <h2>The honest verdict</h2>
@@ -49,7 +50,7 @@ export default function SecurityComparison() {
         <code>core</code>, <code>middleware</code>, <code>auth</code>, <code>node</code>,{" "}
         <code>web</code>, <code>uploads</code>, and <code>cli</code> - defaults and failure modes, not
         marketing claims. Competitor side: current official documentation for defaults, verified as of
-        August 2026 against Hono 4.12.x, Fastify 5.x, Express 5.1 / 4.21.x, and Elysia 1.4.x. The
+        November 2026 against the published packages of Hono 4.13.17, Fastify 5.12.8, Express 5.3.0 / 4.22.3, and Elysia 1.4.31 (the Elysia 2.0 release candidate is not covered). The
         comparison unit is what a developer gets <b>by default</b> and what the framework makes{" "}
         <b>impossible to get wrong</b>, not what a maximally careful expert could configure - because
         most real-world security incidents are misconfiguration-by-default.
@@ -167,8 +168,8 @@ export default function SecurityComparison() {
             </tr>
             <tr>
               <td>CSRF</td>
-              <td>B two layers (origin + signed double-submit)</td>
-              <td>b (origin heuristic)</td>
+              <td>B core refuses cross-site form posts on every unsafe route; <code>csrf()</code> adds a signed double-submit</td>
+              <td>b (Origin / Sec-Fetch-Site on form content types)</td>
               <td>O token-based</td>
               <td>3 (csurf deprecated)</td>
               <td>-</td>
@@ -315,9 +316,9 @@ export default function SecurityComparison() {
               <td>Supply chain (runtime deps in core)</td>
               <td>0</td>
               <td>0</td>
-              <td>~dozen</td>
-              <td>many</td>
-              <td>few</td>
+              <td>15</td>
+              <td>28</td>
+              <td>4</td>
               <td>par with Hono</td>
             </tr>
             <tr>
@@ -333,7 +334,7 @@ export default function SecurityComparison() {
             </tr>
             <tr>
               <td>Security lint (fail-open, non-constant-time, PII logs)</td>
-              <td>B (NF-S001..007)</td>
+              <td>B (NF-S001..009)</td>
               <td>-</td>
               <td>-</td>
               <td>-</td>
@@ -391,9 +392,10 @@ export default function SecurityComparison() {
         meets <code>origin: &quot;*&quot;</code>, never reflects an origin by default with credentials,
         and lands headers on error responses too - it is <b>the only one of the five where the
         dangerous configuration is a construction-time error</b>. The other four leave
-        reflect-with-credentials configurable. CSRF is two independent layers (Origin/Referer check
-        plus a signed double-submit token, timing-safe); Hono&rsquo;s CSRF is an Origin /
-        Sec-Fetch-Site heuristic, Fastify&rsquo;s official token package is comparable, Express&rsquo;s
+        reflect-with-credentials configurable. Core refuses a cross-site HTML form post to every
+        unsafe route before the handler runs, and <code>csrf()</code> adds an Origin/Referer check
+        plus a signed double-submit token, timing-safe; Hono&rsquo;s CSRF is an Origin /
+        Sec-Fetch-Site check on form content types, Fastify&rsquo;s official token package is comparable, Express&rsquo;s
         csurf is deprecated, and Elysia ships none in-tree. Uncaught errors become a flat 500
         unconditionally - not env-gated - so no configuration leaks a stack to the wire; Express&rsquo;s
         dev handler printing stacks when <code>NODE_ENV</code> is unset is the perennial
@@ -448,7 +450,7 @@ export default function SecurityComparison() {
           <b>Route assurance evidence.</b> Middleware publishes machine-checkable per-route claims
           (<code>AUTHENTICATED</code>, <code>BODY_BOUNDED</code>, <code>CSRF</code>,{" "}
           <code>RATE_LIMITED</code>, <code>IP_RESTRICTED</code>, <code>SECURITY_HEADERS</code>,{" "}
-          <code>IDEMPOTENCY_KEY</code>), and <code>nifra assure</code> fails CI when a policy is unmet.
+          <code>IDEMPOTENCY_KEY</code>, <code>DURABLE_COMMAND</code>, <code>RESPONSE_CONTRACT</code>), and <code>nifra assure</code> fails CI when a policy is unmet.
           Evidence is honest: an escape hatch suppresses its own claim.
         </li>
         <li>
@@ -476,8 +478,8 @@ export default function SecurityComparison() {
         narrower and honest: it makes the dangerous configurations <i>unrepresentable</i>, ships the
         hardening primitives first-party, and lets <code>nifra assure</code> prove in CI that every
         route is guarded. For the full capability and throughput comparison, see{" "}
-        <a href="/docs/comparison">vs other frameworks</a> and the{" "}
-        <a href="/compare">per-framework pages</a>.
+        <a href={href({ to: "/docs/comparison" })}>vs other frameworks</a> and the{" "}
+        <a href={href({ to: "/compare" })}>per-framework pages</a>.
       </p>
     </div>
   )

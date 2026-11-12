@@ -228,11 +228,17 @@ describe("cross-origin form posts cannot reach a server function", () => {
     // JSON requirement is only load-bearing for urlencoded. With no input schema there is no body
     // reader at all, and this guard is the only thing standing between a cross-origin form and the
     // function. That asymmetry is why the check lives in the wrapper and not in the schema.
-    const res = await post("ping", "anything=goes", {
+    // Core refuses a cross-site form to a route with no body schema before the wrapper runs.
+    const cross = await post("ping", "anything=goes", {
       "content-type": "application/x-www-form-urlencoded",
       origin: "https://evil.test",
     })
-    expect(res.status).toBe(415)
+    expect(cross.status).toBe(403)
+    // The wrapper's own media-type check still stands for a form that core lets through.
+    const own = await post("ping", "anything=goes", {
+      "content-type": "application/x-www-form-urlencoded",
+    })
+    expect(own.status).toBe(415)
   })
 
   test("a text/plain type whose parameter spells application/json is refused", async () => {

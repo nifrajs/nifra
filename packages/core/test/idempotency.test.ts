@@ -5,6 +5,7 @@ import {
   canonicalizeIdempotencyBody,
   computeIdempotencyFingerprint,
   createMemoryIdempotencyStore,
+  DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES,
   DEFAULT_IDEMPOTENCY_PENDING_TTL_MS,
   IDEMPOTENT_REPLAY_HEADER,
   type IdempotencyBeginInput,
@@ -511,12 +512,37 @@ describe("idempotency primitives", () => {
     expect(new Uint8Array(await replayed.arrayBuffer())).toEqual(bytes)
   })
 
+  test("standalone serialization applies a bounded default and cancels oversized bodies", async () => {
+    let cancelled = false
+    const original = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true
+        },
+      }),
+      { headers: { "content-length": String(DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1) } },
+    )
+    await expect(serializeResponse(original)).rejects.toMatchObject({
+      maxBytes: DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES,
+    })
+    expect(cancelled).toBe(true)
+  })
+
   test("oversized streamed serialization cancels both tee branches promptly", async () => {
     const encoder = new TextEncoder()
+    let cancelled = 0
+    let resolveCancelled!: () => void
+    const sourceCancelled = new Promise<void>((resolve) => {
+      resolveCancelled = resolve
+    })
     const original = new Response(
       new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(encoder.encode("1234"))
+        },
+        cancel() {
+          cancelled++
+          resolveCancelled()
         },
       }),
     )
@@ -528,6 +554,57 @@ describe("idempotency primitives", () => {
         }),
       ]),
     ).rejects.toThrow(/response exceeds/i)
+    await Promise.race([sourceCancelled, Bun.sleep(250)])
+    expect(cancelled).toBe(1)
+  })
+
+  test("response bounds reject invalid values and allow an exact-size body", async () => {
+    await expect(serializeResponse(new Response(null), { maxBytes: Number.NaN })).rejects.toThrow(
+      /non-negative integer/,
+    )
+    await expect(serializeResponse(new Response(null), { maxBytes: -1 })).rejects.toThrow(
+      /non-negative integer/,
+    )
+    await expect(serializeResponse(new Response(null), { maxBytes: 0 })).resolves.toMatchObject({
+      body: "",
+    })
+    const stored = await serializeResponse(new Response(new Uint8Array([1, 2])), { maxBytes: 2 })
+    expect(stored.body).toBe("AQI=")
+
+    expect(() =>
+      responseFromStored({ status: 200, headers: [], body: "AQID" }, { maxBytes: Number.NaN }),
+    ).toThrow(/non-negative safe integer/)
+    expect(() =>
+      responseFromStored({ status: 200, headers: [], body: "" }, { maxBytes: 0 }),
+    ).not.toThrow()
+    expect(() =>
+      responseFromStored({ status: 200, headers: [], body: "AQID" }, { maxBytes: 3 }),
+    ).not.toThrow()
+  })
+
+  test("stream cancellation failures are contained after an oversized read", async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on("unhandledRejection", onUnhandled)
+    try {
+      const original = new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2]))
+          },
+          cancel() {
+            return Promise.reject(new Error("producer already closed"))
+          },
+        }),
+      )
+      await expect(serializeResponse(original, { maxBytes: 1 })).rejects.toThrow(
+        /response exceeds/i,
+      )
+      await Bun.sleep(0)
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
   })
 
   test("a response refused by its content-length alone has its body cancelled", async () => {
@@ -547,6 +624,21 @@ describe("idempotency primitives", () => {
     expect(cancelled).toBe(true)
   })
 
+  test("a bodyless response ignores the declared GET representation length", async () => {
+    const stored = await serializeResponse(
+      new Response(null, {
+        status: 304,
+        headers: { "content-length": String(DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1) },
+      }),
+      { maxBytes: 1 },
+    )
+    expect(stored).toEqual({
+      status: 304,
+      headers: [["content-length", String(DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1)]],
+      body: "",
+    })
+  })
+
   test("a refused response whose cancel fails still reports the size error", async () => {
     const original = new Response(
       new ReadableStream<Uint8Array>({
@@ -563,6 +655,13 @@ describe("idempotency primitives", () => {
     expect(() =>
       responseFromStored({ status: 200, headers: [], body: "AQID" }, { maxBytes: 2 }),
     ).toThrow(/response exceeds/i)
+  })
+
+  test("replay applies the bounded default before decoding oversized store data", () => {
+    const encoded = "A".repeat(Math.ceil((DEFAULT_IDEMPOTENCY_MAX_RESPONSE_BYTES + 1) / 3) * 4)
+    expect(() => responseFromStored({ status: 200, headers: [], body: encoded })).toThrow(
+      /response exceeds/i,
+    )
   })
 
   test("legacy stored records cannot replay session or hop-by-hop headers", () => {

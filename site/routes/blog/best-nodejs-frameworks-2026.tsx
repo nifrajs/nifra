@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { formatRatio, formatRps, httpWorkloadRps } from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
 
@@ -76,7 +77,7 @@ export default function BestNodeFrameworks() {
         on GET and {httpValue("Node", "Nifra", "postUsers")} vs{" "}
         {httpValue("Node", "Fastify", "postUsers")} req/s on validated POST. Express trails in this
         same matrix; nobody migrates off it for speed alone. Full tables:{" "}
-        <a href="/benchmarks">benchmarks</a>.
+        <a href={href({ to: "/benchmarks" })}>benchmarks</a>.
       </p>
 
       <h2>Express - the default that refuses to die</h2>
@@ -116,16 +117,16 @@ export default function BestNodeFrameworks() {
         full-stack framework where <code>client&lt;typeof app&gt;()</code> infers the entire API
         contract with zero codegen, SSR serves React/Vue/Svelte/Solid/Preact, validation is the
         default at every boundary, and the docs/types ship as a{" "}
-        <a href="/blog/docs-as-mcp">live MCP server</a> for AI coding agents. And because runtimes
-        are adapters, the same app moves to Bun for about{" "}
+        <a href={href({ to: "/blog/docs-as-mcp" })}>live MCP server</a> for AI coding agents. And
+        because runtimes are adapters, the same app moves to Bun for about{" "}
         {formatRatio(
           httpWorkloadRps("Bun", "Nifra", "getUsers"),
           httpWorkloadRps("Node", "Nifra", "getUsers"),
         )}{" "}
         as many GET /users/:id requests per second as Node in this benchmark run -{" "}
-        <a href="/blog/bun-vs-node">measured, same code</a> - or to Deno and edge workers. Honest
-        caveat: youngest ecosystem on this page; first-party batteries instead of a decade of
-        third-party plugins.
+        <a href={href({ to: "/blog/bun-vs-node" })}>measured, same code</a> - or to Deno and edge
+        workers. Honest caveat: youngest ecosystem on this page; first-party batteries instead of a
+        decade of third-party plugins.
       </p>
 
       <h2>Pick in one minute</h2>
@@ -148,8 +149,8 @@ export default function BestNodeFrameworks() {
         </li>
       </ul>
       <p>
-        Head-to-head: <a href="/compare/fastify">Nifra vs Fastify</a> ·{" "}
-        <a href="/compare/hono">Nifra vs Hono</a>.
+        Head-to-head: <a href={href({ to: "/compare/fastify" })}>Nifra vs Fastify</a> ·{" "}
+        <a href={href({ to: "/compare/hono" })}>Nifra vs Hono</a>.
       </p>
     </article>
   )

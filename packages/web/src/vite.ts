@@ -179,6 +179,8 @@ export interface ViteDevServerOptions {
   readonly indicator?: boolean
   /** The app runs `createWebApp({ live })`: the same option as the build's (`BuildClientOptions.live`). */
   readonly live?: LiveClientEntry | undefined
+  /** The router's server `fetch` module: the same option as the build's (`BuildClientOptions.transport`). */
+  readonly transport?: string | undefined
 }
 
 export interface ViteDevServer {
@@ -424,6 +426,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // Codegen the client entry with Vite-servable, root-relative specifiers (e.g. `/routes/index.tsx`).
   const toUrl = (file: string): string =>
     `/${relative(root, join(routesDir, file)).replaceAll("\\", "/")}`
+  const toRootUrl = (path: string): string => `/${relative(root, path).replaceAll("\\", "/")}`
   const writeClientEntry = (): void => {
     const manifest = discoverRoutes(routesDir)
     writeFileSync(
@@ -432,6 +435,8 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
         clientModule: options.clientModule,
         resolve: toUrl,
         live: options.live,
+        transport:
+          options.transport === undefined ? undefined : toRootUrl(resolvePath(options.transport)),
       }),
     )
   }

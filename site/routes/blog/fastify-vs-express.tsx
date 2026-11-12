@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import {
   formatRatio,
   formatRps,
@@ -22,8 +23,8 @@ export default function FastifyVsExpress() {
       <h1>Fastify vs Express in 2026</h1>
       <p>
         <em>
-          Updated 2026-08-04 · Disclosure: we build <a href="/">Nifra</a>, a third option measured
-          in the same runs. The Fastify-vs-Express verdict below stands on its own.
+          Updated 2026-08-04 · Disclosure: we build <a href={href({ to: "/" })}>Nifra</a>, a third
+          option measured in the same runs. The Fastify-vs-Express verdict below stands on its own.
         </em>
       </p>
 
@@ -59,7 +60,7 @@ export default function FastifyVsExpress() {
       <p>
         (oha @ 50 conns, Node {HTTP_WORKLOADS_CAPTURED.node}, identical route semantics; Express
         validates with its usual middleware, Fastify with compiled JSON Schema. Full methodology +
-        every framework we measure: <a href="/benchmarks">benchmarks</a>.)
+        every framework we measure: <a href={href({ to: "/benchmarks" })}>benchmarks</a>.)
       </p>
 
       <h2>Beyond speed</h2>
@@ -97,15 +98,15 @@ export default function FastifyVsExpress() {
         crosses that boundary saves more engineering time than any req/s number: Nifra infers the
         entire client from the server's TypeScript type (zero codegen), serves SSR for five UI
         frameworks, validates by default, and in the same benchmark runs level-to-ahead of Fastify
-        on Node (<a href="/compare/fastify">the honest head-to-head</a>) while the same app delivers
-        about{" "}
+        on Node (<a href={href({ to: "/compare/fastify" })}>the honest head-to-head</a>) while the
+        same app delivers about{" "}
         {formatRatio(
           httpWorkloadRps("Bun", "Nifra", "getUsers"),
           httpWorkloadRps("Node", "Nifra", "getUsers"),
         )}{" "}
         as many GET /users/:id requests per second on Bun as Node (
-        <a href="/blog/bun-vs-node">measured on the same code</a>). Different category, same speed
-        class - worth knowing it exists before defaulting.
+        <a href={href({ to: "/blog/bun-vs-node" })}>measured on the same code</a>). Different
+        category, same speed class - worth knowing it exists before defaulting.
       </p>
     </article>
   )

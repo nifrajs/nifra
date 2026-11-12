@@ -9,7 +9,7 @@
  *   // a route you've protected (e.g. checked ?token= against a secret):
  *   app.get("/api/draft", async (c) => {
  *     await enableDraft(c, env.DRAFT_SECRET)
- *     return redirect("/")
+ *     return redirect(rawHref("/"))
  *   })
  *
  *   // wire the same secret so the framework can verify the cookie:

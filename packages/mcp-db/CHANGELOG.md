@@ -1,5 +1,51 @@
 # @nifrajs/mcp-db
 
+## 5.13.0
+
+### Patch Changes
+
+- @nifrajs/mcp@5.13.0
+
+## 5.12.1
+
+### Patch Changes
+
+- @nifrajs/mcp@5.12.1
+
+## 5.12.0
+
+### Patch Changes
+
+- @nifrajs/mcp@5.12.0
+
+## 5.11.0
+
+### Patch Changes
+
+- @nifrajs/mcp@5.11.0
+
+## 5.10.0
+
+### Patch Changes
+
+- d2066e0: Restore the repository check gate without weakening global rules. Distinguish property names from variable self-references in SQL assembly scanning, retain detection of real interpolation and concatenation, and document reviewed comparisons of public labels/object identities and escaped table identifiers. Correct fixture dependency declarations and backend zoning while preserving intentionally unsafe PPR shell tests.
+- @nifrajs/mcp@5.10.0
+
+## 5.9.0
+
+### Minor Changes
+
+- e19b8ad: `@nifrajs/mcp-db/postgres` checks the connected role's own privileges before every query and explain: a role that may read a masked column, an excluded table or one inheriting from it, or a view or materialized view that reads any of them or reaches outside `schemas`, is refused with the new code `NIFRA_DB_ROLE_GRANTS`. The database then refuses those reads itself, including through a function body or the rows a materialized view stores. `postgresRoleSql` takes `redaction` and writes the matching grants: a `REVOKE` for each excluded table, its partitions and children, and each view or materialized view over hidden data, and a column-level `GRANT` of the other columns of a table with a masked column. A query that names a column the role may not read is refused with `NIFRA_DB_COLUMN_REFUSED`, which names the columns it may read. `readPostgresSchema` lists a table the role may read some columns of. The gate also refuses a role that may execute a SECURITY DEFINER function, or an aggregate over one, unless `allowFunctions` names it, since such a function reads with its owner's rights through an operator, a cast, a view or another function. Either refusal names each grantee the role holds the privilege through: PUBLIC, the role itself, or a role whose privileges it has. `postgresRoleSql` takes `allowFunctions` and writes the `REVOKE EXECUTE` each function needs from each such grantee, and the `REVOKE SELECT` for a table or column grant that would still expose hidden data; a grant to the role itself is revoked by a statement, the rest are listed as comments since they reach other roles.
+  
+  Functions go through an allowlist read from `pg_proc`, for every function the statement names and every one its plan calls, each overload a name can resolve to: a built-in or extension function must be immutable or stable and parallel safe (plus a few value-only ones such as `random()`), one the database defines must be immutable or stable, and none may be SECURITY DEFINER. The option `allowFunctions` (`name` or `schema.name`) accepts a function past it. `lintPostgresStatement` refuses statement shapes only; function refusals come from the allowlist once connected.
+  
+  `nifra db` reads `devDatabase.allowFunctions`, and `nifra db role` writes the grants for the declaration's masking.
+
+### Patch Changes
+
+- Updated dependencies [7ee17d0]
+  - @nifrajs/mcp@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

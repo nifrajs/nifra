@@ -439,6 +439,31 @@ describe("remote source SSRF guards", () => {
     expect((await mk(streamed)(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"))).status).toBe(413)
   })
 
+  test("a remote body without a stream reader fails closed before materialization", async () => {
+    let arrayBufferReads = 0
+    const fetchImpl = Object.assign(
+      async () => {
+        const response = new Response(null)
+        response.arrayBuffer = async () => {
+          arrayBufferReads++
+          return new Uint8Array(100).buffer
+        }
+        return response
+      },
+      { preconnect: () => {} },
+    )
+    const h = createImageHandler({
+      backend: makeStub().backend,
+      allowedOrigins: ["https://cdn.example"],
+      maxSourceBytes: 10,
+      fetch: fetchImpl,
+    })
+
+    const response = await h(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"))
+    expect(response.status).toBe(413)
+    expect(arrayBufferReads).toBe(0)
+  })
+
   test("client cancellation aborts an active source fetch and skips the codec", async () => {
     let fetchSignal: AbortSignal | undefined
     const waiting = ((_url: Parameters<typeof fetch>[0], init?: RequestInit) => {

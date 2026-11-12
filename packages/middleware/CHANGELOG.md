@@ -1,5 +1,70 @@
 # @nifrajs/middleware
 
+## 5.13.0
+
+### Minor Changes
+
+- 9c8a464: The origins a `cors()` list or predicate and a `csrf({ origins })` list name are now trusted for form posts, so a frontend those already allow no longer needs a second copy in `formOrigins`. `cors()` with `"*"`, the default, adds none, and the server's own `formOrigins` list is kept.
+  
+  A route without a body schema now also refuses an unsafe request that has no content type, which `fetch` with `no-cors` sends, when its `Origin` names a site that neither `formOrigins`, `cors()` nor `csrf({ origins })` trusts. A request that carries a script-set `Authorization` header passes, since a browser preflights it; `Basic`, `Digest`, `Negotiate` and `NTLM` do not count, because a browser re-sends those from its auth cache with no preflight. An app that handles CORS outside nifra, such as a reverse proxy adding the headers, and takes bodyless cross-origin `POST`, `PUT`, `PATCH` or `DELETE` calls from a frontend without `Authorization` needs that frontend's origin in `formOrigins`.
+  
+  Audit the origins you give `cors()` and `csrf({ origins })`: a named origin may now also post a form to this server's routes, whatever methods or credentials that CORS policy allows. The trust covers the server that installs the middleware; a parent that merges or groups it keeps its own `formOrigins`, and a web page action still checks the backend's `allowedOrigins`.
+
+### Patch Changes
+
+- @nifrajs/schema@5.13.0
+
+## 5.12.1
+
+### Patch Changes
+
+- @nifrajs/schema@5.12.1
+
+## 5.12.0
+
+### Patch Changes
+
+- Updated dependencies [1834f5a]
+- Updated dependencies [2383330]
+- Updated dependencies [c4bd5b2]
+  - @nifrajs/schema@5.12.0
+
+## 5.11.0
+
+### Patch Changes
+
+- dae70f8: Require configured rate-limit headers to contain one valid IP address, canonicalize valid IP buckets, and use explicit trusted fallbacks or fail closed for invalid values.
+- @nifrajs/schema@5.11.0
+
+## 5.10.0
+
+### Patch Changes
+
+- @nifrajs/schema@5.10.0
+
+## 5.9.0
+
+### Minor Changes
+
+- ee83f66: A `rateLimitTiers` tier's `prefix` can be a list, and every prefix in it charges the tier's one bucket, so `{ prefix: ["/api/exports", "/api/reports/download"], max: 30 }` allows 30 a window across both paths. The tier with the longest matching prefix across every tier's list is still the one charged, and a prefix listed twice, in one tier or in two, is refused when the limiter is built. A tier's new `name` sets its bucket's store scope (`tier:<name>:`); it defaults to the first prefix, so a tier named or listing its old prefix first keeps its live counters when the list changes. Two tiers with one name are refused. Rate-limit route evidence covers the routes under every listed prefix.
+  
+  `rateLimit` and `rateLimitTiers` now return a `RateLimiter`, a middleware with `keyOf(request, platform?)`: it resolves to the store key the request would be charged to, running a custom or async key and its client-IP fallback as a request would, or `undefined` when the request would be skipped, unclaimed with no floor, or unkeyable. It counts nothing.
+
+### Patch Changes
+
+- 0445564: Trailing trims, base64 padding strips and a few parsers run in time linear in their input. `parseByteRange` reads the range set after `bytes=` without its two quantifiers trading spaces, the srcset reader in server components, the keep-alive `:has(> ...)` check, the OpenAPI `$defs` reference reader and the build secret scan's credential-URL check no longer backtrack over a long run of one character, and a trailing run of slashes, dashes, commas, semicolons, underscores, newlines or `=` padding is stripped without retrying the run at every position.
+- 6ba9740: `requestLocal<T>()` from `@nifrajs/core/server` is a per-request slot with `get`, `set`, `has` and `delete` whose value follows the request through the copies nifra makes of it: a `mount()` that strips its prefix, a mount's WebSocket pass reused for HTTP, a request target nifra resolves, the transport-codec and idempotency lanes, `methodOverride()`, a rewriting `trimTrailingSlash()` or `appendTrailingSlash()`, a live load, and the owner page's re-render after a progressive action. Every copy shares one scope: a value set before a mount is read in the child, and one the child sets is read through the parent's request. `carryRequestLocals(from, to)` joins a request a wrapper or an `onRequest` hook rebuilt to the same scope; a copy made without it starts empty. Values are held weakly and never cross requests. Make slots at startup: copies are linked only once a first slot exists, so a request copied before then starts empty.
+- 5bc60b7: `@nifrajs/core` exports `varyOn(value, names)` from its root and `/server`: the `Vary` value that names each of `names` once, matched without regard to case, with `Vary: *` returned unchanged. The i18n `localeDetector()` and the middleware `language()` plugin set their `Vary` with it.
+  
+  `@nifrajs/agent` exports `parseAgentResume(raw)`, which reads a turn's `resume` (`{ continuation, approval? }`) from an untrusted value and returns `undefined` for anything else. The agent mount, A2A and AG-UI transports all parse a resume with it, so a continuation is accepted on the same terms whichever protocol carries it.
+  
+  `etag()` and `prettyJson()` release the upstream body's reader lock once a replayed body ends, fails, or is cancelled, as `cache()` already did.
+- Updated dependencies [123409c]
+- Updated dependencies [0445564]
+- Updated dependencies [2383330]
+- Updated dependencies [5f4416a]
+  - @nifrajs/schema@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

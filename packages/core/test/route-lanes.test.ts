@@ -112,7 +112,11 @@ describe("selectRouteLanes", () => {
       lifecycleHookLane: "hooks",
     })
     expect(hooksAfterChain.lifecycleHookLane).toBe("hooks")
-    expect(bodyQuery).toMatchObject({ lane: "lifecycle", lifecycleLane: "body-query" })
+    expect(bodyQuery).toMatchObject({
+      lane: "lifecycle",
+      lifecycleLane: "body-query",
+      fusedLane: "inputs",
+    })
     expect(around).toMatchObject({ lane: "bare", fusedLane: undefined })
   })
 
@@ -152,11 +156,14 @@ describe("selectRouteLanes", () => {
         fusedLane: "hooks",
       })
       expect(selectRouteLanes({ ...base, ...hooks, schema: body, onError: 2 })).toMatchObject({
-        fusedLane: "body-hooks",
+        fusedLane: "inputs",
       })
     }
-    // Error hooks alone, with no derive, before or after hook, have no lifecycle to fuse.
-    expect(selectRouteLanes({ ...base, onError: 1 }).fusedLane).toBeUndefined()
+    expect(selectRouteLanes({ ...base, onError: 1 })).toMatchObject({
+      lane: "lifecycle",
+      lifecycleHookLane: "hooks",
+      fusedLane: "hooks",
+    })
   })
 
   test("keeps the generic program for a decoration the context cannot take", () => {
@@ -175,17 +182,17 @@ describe("selectRouteLanes", () => {
     ).toBeUndefined()
   })
 
-  test("fuses body lifecycle routes only when the complete shape is eligible", () => {
+  test("fuses body lifecycle routes through the shared inputs lane", () => {
     const body = { body: t.object({ name: t.string() }) }
     expect(selectRouteLanes({ ...base, schema: body, derives: 1, beforeHandle: 1 })).toMatchObject({
       lane: "lifecycle",
-      fusedLane: "body-hooks",
+      fusedLane: "inputs",
     })
     expect(
       selectRouteLanes({ ...base, schema: body, derives: 1, beforeHandle: 1, afterHandle: 1 }),
     ).toMatchObject({
       lane: "lifecycle",
-      fusedLane: "body-hooks",
+      fusedLane: "inputs",
     })
     for (const hooks of [
       { derives: 1 },
@@ -195,7 +202,7 @@ describe("selectRouteLanes", () => {
     ]) {
       expect(selectRouteLanes({ ...base, schema: body, ...hooks })).toMatchObject({
         lane: "lifecycle",
-        fusedLane: "body-hooks",
+        fusedLane: "inputs",
       })
     }
   })
@@ -221,7 +228,7 @@ describe("selectRouteLanes", () => {
     for (const lanes of cases) expect(lanes.fusedLane).toBeUndefined()
   })
 
-  test("keeps every cookie-schema route on the stage runner", () => {
+  test("composes cookie schemas through the shared inputs lane", () => {
     const cookies = t.cookies({ session: t.string() })
     const shapes = [
       selectRouteLanes({ ...base, schema: { cookies } }),
@@ -244,7 +251,7 @@ describe("selectRouteLanes", () => {
         lane: "lifecycle",
         lifecycleLane: undefined,
         lifecycleHookLane: undefined,
-        fusedLane: undefined,
+        fusedLane: "inputs",
       })
     }
   })

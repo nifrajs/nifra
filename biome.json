@@ -46,6 +46,7 @@
     "includes": [
       "**",
       "!**/node_modules",
+      "!audit-reports",
       "!**/.claude",
       "!.planning",
       "!.nifra-components-fixtures",

@@ -1,3 +1,9 @@
+export type HttpMemoryRuntime = "node" | "bun" | "deno"
+export type HttpMemoryProtocol =
+  | "fresh-native-node-v1"
+  | "fresh-native-bun-v1"
+  | "fresh-native-deno-v1"
+
 export interface HttpMemoryRow {
   readonly name: string
   readonly version: string
@@ -12,13 +18,18 @@ export interface HttpMemoryRow {
 }
 
 export interface HttpMemoryCapture {
-  readonly date: string
+  readonly runtime: HttpMemoryRuntime
+  readonly runtimeVersion: string
+  /** Node version running the capture harness. */
   readonly node: string
+  readonly date: string
   readonly platform: string
   readonly cpu: string
   readonly revision: string
   readonly workspaceArtifactSHA256: string
-  readonly protocol: "fresh-native-node-v1"
+  /** Actions run that published this capture, when available. */
+  readonly sourceUrl?: string
+  readonly protocol: HttpMemoryProtocol
   readonly rounds: number
   readonly requestsPerPhase: number
   readonly connections: number

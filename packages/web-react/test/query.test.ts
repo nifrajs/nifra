@@ -124,6 +124,25 @@ test("useMutation: idle on render, mutateAsync runs the fn + resolves; mutate sw
   await expect(bad?.mutateAsync()).rejects.toThrow("nope")
 })
 
+test("useMutation exposes cancel and aborts pending work", async () => {
+  let mutation: ReturnType<typeof useMutation<number, void>> | undefined
+  let signal: AbortSignal | undefined
+  const Probe = () => {
+    mutation = useMutation<number, void>(async (_variables, context) => {
+      signal = context.signal
+      return new Promise<number>(() => {})
+    })
+    return null
+  }
+  render(createElement(Probe), () => mutation)
+  if (mutation === undefined) throw new Error("mutation hook did not render")
+
+  const pending = mutation.mutateAsync()
+  mutation.cancel()
+  await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+  expect(signal?.aborted).toBe(true)
+})
+
 test("without a provider on the client, useQueryClient lazily creates one shared singleton", () => {
   // Simulate a browser (the singleton is `typeof window` guarded). Restore after so the SSR tests keep
   // seeing no window.

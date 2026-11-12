@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/edge",
@@ -19,6 +20,21 @@ const app = server<Env>()
 
 export default { fetch: (req: Request, env: Env, ctx: ExecutionContext) =>
   app.fetch(req, { env, waitUntil: ctx.waitUntil.bind(ctx) }) }`
+
+const WORKERS_ENV = `import { defineEnv, env as schemaEnv } from "@nifrajs/env"
+
+// Select string bindings when the Workers env also contains KV/D1 objects.
+type StringBindings = Record<string, string | undefined>
+
+export default {
+  fetch(_request: Request, bindings: StringBindings) {
+    const config = defineEnv(
+      { API_URL: schemaEnv.url(), API_TOKEN: schemaEnv.string() },
+      { source: bindings },
+    )
+    return new Response(config.API_URL)
+  },
+}`
 
 const WAIT = `// c.waitUntil keeps background work alive past the response (analytics, cache writes).
 app.post("/event", (c) => {
@@ -56,10 +72,18 @@ export default function Edge() {
       </p>
       <CodeBlock code={ENV} />
       <p>
+        For environment variables represented as strings, <code>@nifrajs/env</code> can validate the
+        Workers binding object with <code>defineEnv(shape, {"{ source: bindings }"})</code>. If the
+        platform env also contains KV, D1, or Durable Object bindings, select only the string keys
+        into the source object; keep the full binding type on <code>server&lt;Env&gt;()</code> for{" "}
+        <code>c.env</code>.
+      </p>
+      <CodeBlock code={WORKERS_ENV} lang="ts" />
+      <p>
         Export through <code>toFetchHandler</code> rather than handing the app out directly. Besides{" "}
         <code>env</code> and <code>ctx.waitUntil</code>, it tells nifra the request came from the
         platform's own HTTP parser, which lets the{" "}
-        <a href="/docs/security">bounded-body cap</a> trust the declared{" "}
+        <a href={href({ to: "/docs/security" })}>bounded-body cap</a> trust the declared{" "}
         <code>Content-Length</code> as a real transport frame instead of re-counting every JSON body.
         A bare <code>export default app</code> has no such signal and pays the extra pass unless you
         set <code>server({"{ trustBodyFraming: true }"})</code>.

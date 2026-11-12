@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { createWebApp, type Manifest, redirect } from "@nifrajs/web"
+import { createWebApp, type Manifest, rawHref, redirect } from "@nifrajs/web"
 import {
   CHROME_LAUNCH_TIMEOUT_MS,
   type ChromePage,
@@ -89,7 +89,7 @@ const manifest = (): Manifest => ({
         },
         action: async () => {
           cart++
-          return redirect("/hotels")
+          return redirect(rawHref("/hotels"))
         },
       }),
     },
@@ -121,7 +121,10 @@ const manifest = (): Manifest => ({
       pattern: "/old",
       layoutIds: [],
       file: "old.ts",
-      load: async () => ({ default: () => html``, loader: () => redirect("/hotels?q=Savoy") }),
+      load: async () => ({
+        default: () => html``,
+        loader: () => redirect(rawHref("/hotels?q=Savoy")),
+      }),
     },
   ],
   layouts: { _layout: { file: "_layout.ts", load: async () => ({ default: Layout }) } },

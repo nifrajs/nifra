@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs",
@@ -75,7 +76,7 @@ bun install
 bun run dev`}</code>
       </pre>
       <p>
-        See the <a href="/docs/cli">CLI guide</a> for other templates, UI frameworks, and deploy
+        See the <a href={href({ to: "/docs/cli" })}>CLI guide</a> for other templates, UI frameworks, and deploy
         targets.
       </p>
 
@@ -84,8 +85,8 @@ bun run dev`}</code>
         A coding agent can inspect the live project, change it, run real requests, and prove the result.
         A user-facing agent can discover explicit page tools, stream progress into the UI, predict a
         state change, and reconcile it with the server. Both use the same typed capabilities and
-        verification boundary. Start with the <a href="/docs/agents">agent layer</a> or the{" "}
-        <a href="/docs/webmcp">WebMCP &amp; predictive UI guide</a> when you are ready to add them.
+        verification boundary. Start with the <a href={href({ to: "/docs/agents" })}>agent layer</a> or the{" "}
+        <a href={href({ to: "/docs/webmcp" })}>WebMCP &amp; predictive UI guide</a> when you are ready to add them.
       </p>
 
       <h2>A backend-only alternative</h2>
@@ -122,12 +123,12 @@ bun run dev`}</code>
         <code>.backend.ts</code> half whose loader calls your backend in-process during SSR and
         whose <code>actions</code> handle mutations. Only what the loader's output schema declares
         reaches the browser. Add streaming, <code>defer()</code>, optimistic UI, and a keyed query
-        cache as you grow, then <a href="/docs/live">live refresh</a>,{" "}
-        <a href="/docs/keep-alive">keep-alive</a> pages,{" "}
-        <a href="/docs/server-components">server components</a> and{" "}
-        <a href="/docs/partial-prerendering">partial prerendering</a> where a page needs them. The
+        cache as you grow, then <a href={href({ to: "/docs/live" })}>live refresh</a>,{" "}
+        <a href={href({ to: "/docs/keep-alive" })}>keep-alive</a> pages,{" "}
+        <a href={href({ to: "/docs/server-components" })}>server components</a> and{" "}
+        <a href={href({ to: "/docs/partial-prerendering" })}>partial prerendering</a> where a page needs them. The
         data model is framework-agnostic, so the renderer stays replaceable. See{" "}
-        <a href="/docs/structure">Project structure</a> for where code lives.
+        <a href={href({ to: "/docs/structure" })}>Project structure</a> for where code lives.
       </p>
       <CodeBlock code={LOADER} lang="ts" />
       <CodeBlock code={PAGE} />
@@ -147,12 +148,12 @@ bun run dev`}</code>
         <li>
           <b>Vercel Edge, AWS Lambda, or a static host</b> - <code>nifra build --target vercel</code>,{" "}
           <code>@nifrajs/aws-lambda</code>, or <code>nifra build --target static</code> for a
-          prerendered site. See <a href="/docs/deployment">Deployment</a>.
+          prerendered site. See <a href={href({ to: "/docs/deployment" })}>Deployment</a>.
         </li>
       </ul>
 
       <p className="lead" style={{ marginTop: 32 }}>
-        See the <a href="/benchmarks">benchmarks</a> for how it performs.
+        See the <a href={href({ to: "/benchmarks" })}>benchmarks</a> for how it performs.
       </p>
     </div>
   )

@@ -9,6 +9,7 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/browser"
 import { createElement, type ReactNode, useLayoutEffect, useSyncExternalStore } from "react"
 import { flushSync } from "react-dom"
 import { createRoot, hydrateRoot } from "react-dom/client"
+import { updateProgressiveFlight } from "./progressive-update.ts"
 
 // Flight's framework-facing lazy ABI is pinned with React/Flight in the compatibility gate.
 async function prepareTree(
@@ -171,6 +172,18 @@ export function reactComponentClient(): ComponentClientAdapter {
     update(root, _record, tree, current) {
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Only this adapter produces its prepared tree and native root; component records and public props are validated before native preparation.
       ;(root as FlightRoot).publish(tree as ReactNode, current)
+    },
+    async updateProgressive(root, flight, current, signal) {
+      return updateProgressiveFlight(
+        flight,
+        signal,
+        current,
+        (stream) => createFromReadableStream<ReactNode>(stream),
+        (tree, isCurrent) => {
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: This client stores roots created only by FlightRoot in its private per-instance map.
+          ;(root as FlightRoot).publish(tree, isCurrent)
+        },
+      )
     },
   }
 }

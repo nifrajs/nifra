@@ -408,8 +408,7 @@
     "lines": 98.1981981981982
   },
   "packages/core/src/data.ts": {
-    "functions": 100,
-    "lines": 83.62068965517241
+    "lines": 100
   },
   "packages/core/src/diff.ts": {
     "functions": 100,
@@ -460,8 +459,7 @@
     "lines": 96.75
   },
   "packages/core/src/execution-policy.ts": {
-    "functions": 100,
-    "lines": 78.26086956521739
+    "lines": 100
   },
   "packages/core/src/file-type.ts": {
     "functions": 100,
@@ -492,8 +490,7 @@
     "lines": 100
   },
   "packages/core/src/internal/durable-approval-protocol.ts": {
-    "functions": 100,
-    "lines": 76.66666666666667
+    "lines": 100
   },
   "packages/core/src/internal/durable-effect-protocol.ts": {
     "functions": 100,
@@ -934,6 +931,70 @@
   "packages/devtools/src/index.ts": {
     "functions": 100,
     "lines": 97.22222222222221
+  },
+  "packages/e2e/src/agent.ts": {
+    "functions": 100,
+    "lines": 99.66996699669967
+  },
+  "packages/e2e/src/cache.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/decision.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/engine.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/evidence.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/expect.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/fake.ts": {
+    "functions": 100,
+    "lines": 98.14814814814815
+  },
+  "packages/e2e/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/internal/record.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/locator.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/params.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/playwright.ts": {
+    "functions": 93.75,
+    "lines": 100
+  },
+  "packages/e2e/src/replay.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/route.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/session.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/e2e/src/snapshot.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/edge/src/index.ts": {
     "functions": 95.65217391304348,

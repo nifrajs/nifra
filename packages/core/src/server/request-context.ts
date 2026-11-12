@@ -5,7 +5,7 @@
  * sits below the server module in the graph.
  */
 import type { RequestBudget } from "../budget.ts"
-import { markResidentBody } from "../mount.ts"
+import { markResidentBody, residentBodiesRecorded } from "../mount.ts"
 import { applyTransportCap, readBoundedBytes } from "./body.ts"
 import { readBoundedJsonSource } from "./body-lane.ts"
 import type { Platform } from "./context.ts"
@@ -165,6 +165,8 @@ function responseTextContentType(): string {
 /** `c.text`'s own default, unchanged: the explicit one nifra has always declared when the caller
  * passes no headers of their own. */
 const TEXT_CONTENT_TYPE = "text/plain; charset=utf-8"
+const TEXT_RESPONSE_HEADERS = { "content-type": TEXT_CONTENT_TYPE }
+const TEXT_RESPONSE_INIT: ResponseInit = { headers: TEXT_RESPONSE_HEADERS }
 
 /** Where a serving adapter that shares one platform across requests leaves its socket-peer lookup.
  * `c.clientIp` calls it with the request when a handler reads the address, so a request whose
@@ -439,13 +441,15 @@ export class RequestContext implements RawContext {
       }
     }
     // Default to text/plain; if the caller passes their own headers, they own the content-type.
-    if (i?.headers !== undefined) return markResidentBody(residentText(new Response(body, i), body))
-    return markResidentBody(
-      residentText(
-        new Response(body, { ...i, headers: { "content-type": TEXT_CONTENT_TYPE } }),
-        body,
-      ),
-    )
+    const response =
+      i?.headers !== undefined
+        ? new Response(body, i)
+        : new Response(
+            body,
+            i === undefined ? TEXT_RESPONSE_INIT : { ...i, headers: TEXT_RESPONSE_HEADERS },
+          )
+    const resident = residentText(response, body)
+    return residentBodiesRecorded ? markResidentBody(resident) : resident
   }
 
   get query(): unknown {

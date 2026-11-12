@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { pageMeta } from "../shared/meta"
 
 export const meta = pageMeta(
@@ -47,7 +48,8 @@ export default function Terms() {
       <h2>Changes and contact</h2>
       <p>
         We may update these terms when the service changes. Questions and notices can be sent
-        through the <a href="/contact">Nifra contact page</a> or the public GitHub repository.
+        through the <a href={href({ to: "/contact" })}>Nifra contact page</a> or the public GitHub
+        repository.
       </p>
     </article>
   )

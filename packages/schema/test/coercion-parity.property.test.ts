@@ -4,13 +4,15 @@
  * behave EXACTLY like TypeBox's own `Value.Convert` - same output value, same accept/reject verdict,
  * same in-place mutation. The generators deliberately feed the conversion quirks the plan mirrors:
  * numeric strings, "0x10", "1"/"true"/"false"/"-0", whitespace-padded numbers, non-object inputs,
- * arrays, nested junk, prototype-key names.
+ * arrays, nested junk, prototype-key names. A schema naming an `Object.prototype` member converts an
+ * own view of its input (see inherited.ts), so `Value.Convert` is given that same view.
  */
 import { describe, expect, test } from "bun:test"
 import { Type } from "@sinclair/typebox"
 import { Value } from "@sinclair/typebox/value"
 import fc from "fast-check"
 import { fromTypeBox } from "../src/adapter.ts"
+import { namesInheritedMember, ownView } from "../src/inherited.ts"
 
 const scalarKinds = ["string", "number", "integer", "boolean"] as const
 type ScalarName = (typeof scalarKinds)[number]
@@ -103,7 +105,10 @@ describe("flat coercion plan vs Value.Convert parity", () => {
           const nifra = fromTypeBox(schema, { coerce: true })
           const planResult = nifra["~standard"].validate(forPlan)
 
-          const converted = Value.Convert(schema, forConvert)
+          const converted = Value.Convert(
+            schema,
+            namesInheritedMember(schema) ? ownView(forConvert) : forConvert,
+          )
           const convertOk = Value.Check(schema, converted)
 
           if ("value" in planResult) {
@@ -169,5 +174,39 @@ describe("flat coercion plan vs Value.Convert parity", () => {
     expect("value" in ok && ok.value).toEqual({ v: 5 })
     const lit = nifra["~standard"].validate({ v: "all" })
     expect("value" in lit && lit.value).toEqual({ v: "all" })
+  })
+
+  test("flat literal and scalar-array plans match TypeBox conversion", () => {
+    const schema = Type.Object({
+      name: Type.Union([Type.Literal("red"), Type.Literal("blue")]),
+      count: Type.Union([Type.Literal(1), Type.Literal(2)]),
+      flags: Type.Array(Type.Boolean()),
+      levels: Type.Array(Type.Integer()),
+    })
+    const nifra = fromTypeBox(schema, { coerce: true })
+
+    for (const input of [
+      { name: "red", count: "2", flags: ["true", "0"], levels: ["3", "4"] },
+      { name: "blue", count: 1, flags: "false", levels: "5" },
+    ]) {
+      const expected = structuredClone(input)
+      const actual = structuredClone(input)
+      const converted = Value.Convert(schema, expected)
+      const result = nifra["~standard"].validate(actual)
+
+      expect("value" in result).toBe(Value.Check(schema, converted))
+      if ("value" in result) expect(JSON.stringify(result.value)).toBe(JSON.stringify(converted))
+      expect(actual).toEqual(expected)
+    }
+
+    expect(
+      "issues" in
+        nifra["~standard"].validate({
+          name: "green",
+          count: "2",
+          flags: [true],
+          levels: [5],
+        }),
+    ).toBe(true)
   })
 })

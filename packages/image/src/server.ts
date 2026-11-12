@@ -445,11 +445,11 @@ async function readLocal(
 async function readBoundedBytes(res: Response, limit: number): Promise<Uint8Array | null> {
   const declared = res.headers.get("content-length")
   if (declared !== null && /^\d+$/.test(declared) && Number(declared) > limit) return null
-  const reader = res.body?.getReader()
-  if (reader === undefined) {
-    const buf = new Uint8Array(await res.arrayBuffer())
-    return buf.byteLength > limit ? null : buf
-  }
+  const body = res.body
+  // A remote response without a readable body cannot be an image. Fail closed rather than
+  // materializing through the compatibility `arrayBuffer()` fallback this path used to have.
+  if (body === null) return null
+  const reader = body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
   try {

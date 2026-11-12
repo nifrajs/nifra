@@ -1,5 +1,6 @@
 import { docsMeta } from "../../shared/meta"
 import { CodeBlock } from "../../shared/highlight"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/database",
@@ -221,7 +222,7 @@ export default function Database() {
       <p className="caveat">
         The policy is the source of truth; <code>scoped()</code> just supplies the identity. Pair it with a{" "}
         UUIDv7 <code>user_id</code> and an index on it. Connect <code>c.session.userId</code> from{" "}
-        <a href="/docs/auth">@nifrajs/better-auth</a>.
+        <a href={href({ to: "/docs/auth" })}>@nifrajs/better-auth</a>.
       </p>
 
       <h2>Postgres (Raw Driver)</h2>
@@ -289,7 +290,7 @@ export default function Database() {
       </table>
       <p>
         On Cloudflare, bindings like D1 are <b>typed</b> through <code>c.env</code> - see{" "}
-        <a href="/docs/edge">Edge &amp; bindings</a>. For Workers MySQL/Postgres, Hyperdrive pools the
+        <a href={href({ to: "/docs/edge" })}>Edge &amp; bindings</a>. For Workers MySQL/Postgres, Hyperdrive pools the
         connection so a native driver works over the binding.
       </p>
 
@@ -297,7 +298,7 @@ export default function Database() {
         <b>Security:</b> always parameterize (<code>?</code> / driver placeholders or an ORM) - never
         string-build SQL from request input. Nifra validates the request body/params at the boundary
         (with <code>t</code> or any Standard Schema), so malformed input is rejected before your query
-        runs. See <a href="/docs/security">Security</a>.
+        runs. See <a href={href({ to: "/docs/security" })}>Security</a>.
       </div>
       <p>
         Complete runnable references - a typed CRUD API you can diff your own against:{" "}

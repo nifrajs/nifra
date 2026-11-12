@@ -12,10 +12,17 @@ import { parseNdjsonData } from "./deferred.ts"
 import { documentEpoch, IDENTITY_CHANNEL, onIdentityChange } from "./identity.ts"
 import { present } from "./internal/present.ts"
 import { parsePageData } from "./internal/revive-dates.ts"
-import { appUrl, requestPattern } from "./internal/route-path.ts"
+import { appUrl } from "./internal/route-path.ts"
 import { shareData } from "./internal/share-data.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import type { MatchChain } from "./render-seam.ts"
+import {
+  normalizeRouteSlotRegistry,
+  parseRouteSlots,
+  type RouteSlotRegistry,
+  stripRouteSlots,
+  validateRouteSlotTargets,
+} from "./route-slots.ts"
 import { isClientOnlySearchChange } from "./search.ts"
 
 /**
@@ -132,6 +139,17 @@ export interface RouteDataEnvelope {
   readonly live?: unknown
 }
 
+/** A route-data request that failed before it produced an envelope. */
+export class RouteDataFetchError extends Error {
+  constructor(
+    readonly status: number,
+    path: string,
+  ) {
+    super(`[nifra/web] navigation data fetch failed (${status}): ${path}`)
+    this.name = "RouteDataFetchError"
+  }
+}
+
 /** Recognise the envelope without mistaking a plain loader object that happens to have a `data` key. */
 export function isRouteDataEnvelope(value: unknown): value is RouteDataEnvelope {
   return (
@@ -238,7 +256,7 @@ export function createMatcher(
   for (const pattern of patterns) {
     // Pass the literal to the public router seam: package type resolution may point the two core
     // subpaths at different source/dist declarations, while registration-time compilation is cheap.
-    routeIndex.add("GET", requestPattern(pattern.pattern), pattern.routeId)
+    routeIndex.add("GET", pattern.pattern, pattern.routeId)
   }
   return (path) => {
     // Strip the query without allocating a `split("?")` array - matcher runs per match.
@@ -385,6 +403,12 @@ export interface ClientRouter {
   subscribeFetchers: (listener: () => void) => () => void
   /** Match a path against the manifest patterns (exposed for history/link wiring). */
   match: (path: string) => RouteMatch | null
+  /** Load a route's lazy component chain before an independently mounted route slot renders it. */
+  loadModule: (routeId: string, path?: string) => Promise<void>
+  /** Read and validate a route's slot registry after its module has loaded. */
+  routeSlotsFor: (routeId: string) => RouteSlotRegistry
+  /** Read the generated manifest identity for a route id. */
+  routePattern: (routeId: string) => string | undefined
 }
 
 export interface ClientRouterOptions {
@@ -392,6 +416,12 @@ export interface ClientRouterOptions {
   readonly initial: RouterState
   /** Override the loader-data fetch (tests inject a stub; defaults to a same-origin JSON GET). */
   readonly fetchData?: FetchRouteData
+  /**
+   * How the router reaches its server: the route-data GET, prefetches and action POSTs. Defaults to
+   * the global `fetch` against this document's own origin; an app served from a native shell passes
+   * {@link serverFetch}. Prerendered data files ship in the bundle and always load locally.
+   */
+  readonly fetch?: RouterFetch
   /** Ensure a route's code chunk is loaded before rendering (code-splitting). Awaited in parallel
    * with the loader data, so `pending` covers both. Omit when the bundle isn't split. `path` is the URL
    * the route is about to render, for code loaded per URL (a production build's copy chunks). */
@@ -525,7 +555,7 @@ export const routeDataOf = async (
   if (Number.isInteger(status) && status >= 400 && status <= 599) {
     return { v: 1, data: null, status } satisfies RouteDataEnvelope
   }
-  if (!res.ok) throw new Error(`[nifra/web] navigation data fetch failed (${res.status}): ${path}`)
+  if (!res.ok) throw new RouteDataFetchError(res.status, path)
   return readResponseData(res, signal, read)
 }
 
@@ -543,8 +573,16 @@ export const routeDataHeaders = (
   return headers
 }
 
+/** A `fetch` the router sends its server requests through. */
+export type RouterFetch = (input: string, init?: RequestInit) => Promise<Response>
+
+/** {@link FetchRouteData} that also takes the `fetch` the dynamic GET goes out through. */
+export type FetchRouteDataVia = (
+  ...args: [...Parameters<FetchRouteData>, send?: RouterFetch]
+) => ReturnType<FetchRouteData>
+
 /** The router's own transport, which a `fetchData` override may layer over. */
-export const fetchRouteData: FetchRouteData = async (
+export const fetchRouteData: FetchRouteDataVia = async (
   path,
   _match,
   signal,
@@ -552,6 +590,7 @@ export const fetchRouteData: FetchRouteData = async (
   purpose,
   hosts,
   read,
+  send = fetch,
 ) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
@@ -565,6 +604,7 @@ export const fetchRouteData: FetchRouteData = async (
   if (Array.isArray(prerendered) && (query === -1 || (hash !== -1 && hash < query))) {
     const pathname = hash === -1 ? path : path.slice(0, hash)
     if (prerenderedSetOf(prerendered).has(pathname)) {
+      // The global `fetch`, not `send`: the file is part of this bundle, not of the server.
       const staticRes = await fetch(appUrl(dataUrlFor(pathname)), { signal: signal ?? null })
       if (staticRes.ok) return readResponseData(staticRes, signal, read)
     }
@@ -572,7 +612,7 @@ export const fetchRouteData: FetchRouteData = async (
   const headers = routeDataHeaders(navigation, hosts)
   if (purpose === "prefetch") headers.set(PREFETCH_HEADER, "1")
   return routeDataOf(
-    await fetch(appUrl(path), { headers, signal: signal ?? null }),
+    await send(appUrl(path), { headers, signal: signal ?? null }),
     path,
     signal,
     read,
@@ -602,9 +642,19 @@ const isClientActionResult = (value: unknown): value is ClientActionResult =>
 
 export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const match = createMatcher(options.patterns)
-  const fetchData = options.fetchData ?? fetchRouteData
+  const patternsById = new Map(
+    options.patterns.map((pattern) => [pattern.routeId, pattern.pattern]),
+  )
+  const knownPatterns = new Set(options.patterns.map((pattern) => pattern.pattern))
+  const send = options.fetch
+  const fetchData: FetchRouteData =
+    options.fetchData ??
+    (send === undefined
+      ? fetchRouteData
+      : (path, match, signal, navigation, purpose, hosts, read) =>
+          fetchRouteData(path, match, signal, navigation, purpose, hosts, read, send))
   // Start a handed-over list's fetch now, so the first navigation rarely waits for it.
-  if (fetchData === fetchRouteData) prerenderedOf()
+  if (options.fetchData === undefined) prerenderedOf()
   // routeId → the route's client-only search keys. Read by reference (the generated entry keeps writing
   // to it as routes load), so a same-route nav always sees the current route's keys.
   const searchClientKeys = options.searchClientKeys ?? {}
@@ -677,6 +727,13 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // The path the page on screen was loaded from. While a boundary holds an intercepted target, `path`
   // is that target's URL, so anything that reloads or caches the page must read this instead.
   const pagePathOf = (current: RouterState): string => current.intercepted?.pagePath ?? current.path
+  // An intercept boundary holding nothing: what a page's own load names it.
+  const unresolvedBoundary = (boundary: BoundaryState): BoundaryState => ({
+    name: boundary.name,
+    mode: boundary.mode,
+    status: "unresolved",
+    ...(boundary.errorId === undefined ? {} : { errorId: boundary.errorId }),
+  })
   // `boundaries` with `name` holding a target's outcome. The URL names one target, so every other
   // intercept boundary goes back to unresolved. A target that answered with a status, or failed, is
   // an error state: its data never reaches the boundary.
@@ -690,12 +747,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       next[name] =
         typeof boundary.mode === "string" || name === descriptor.name
           ? boundary
-          : {
-              name: boundary.name,
-              mode: boundary.mode,
-              status: "unresolved",
-              ...(boundary.errorId === undefined ? {} : { errorId: boundary.errorId }),
-            }
+          : unresolvedBoundary(boundary)
     }
     const base = {
       name: descriptor.name,
@@ -731,6 +783,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     // What this path shows, when this is a reload of it: the same response text again is that, unparsed.
     shown?: LoadedRouteData,
   ): Promise<LoadedRouteData> => {
+    path = stripRouteSlots(path)
     const retainFrom = keepLayouts
       ? state.layoutData && { path: pagePathOf(state), layoutData: state.layoutData }
       : undefined
@@ -1345,7 +1398,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         fEmit()
         try {
-          const res = await fetch(appUrl(action), {
+          const res = await (send ?? fetch)(appUrl(action), {
             method: "POST",
             body,
             headers: { [DATA_HEADER]: "1" },
@@ -1445,6 +1498,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
 
   return {
     match,
+    loadModule: async (routeId, path) => {
+      await options.loadModule?.(routeId, path)
+    },
+    routeSlotsFor: (routeId) =>
+      normalizeRouteSlotRegistry(routeHooks[routeId]?.routeSlots, knownPatterns),
+    routePattern: (routeId) => patternsById.get(routeId),
     snapshot: () => {
       checkEpoch()
       return state
@@ -1459,6 +1518,27 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       checkEpoch()
       const matched = match(path)
       if (matched === null) return
+      const routeSlotTargets = parseRouteSlots(path)
+      if (Object.keys(routeSlotTargets).length > 0) {
+        const registry = normalizeRouteSlotRegistry(
+          routeHooks[matched.routeId]?.routeSlots,
+          knownPatterns,
+        )
+        validateRouteSlotTargets(routeSlotTargets, registry, (pathname) => {
+          const target = match(pathname)
+          const pattern = target === null ? undefined : patternsById.get(target.routeId)
+          return pattern === undefined ? null : { pattern }
+        })
+      }
+      if (path !== state.path && stripRouteSlots(path) === stripRouteSlots(state.path)) {
+        const targets = routeSlotTargets
+        const currentTargets = parseRouteSlots(state.path)
+        if (Object.keys(targets).length > 0 || Object.keys(currentTargets).length > 0) {
+          state = { ...state, path, pending: false, pendingPath: undefined }
+          emit()
+          return
+        }
+      }
       // The target an open boundary already shows (a `#fragment` entry inside it, a link to itself):
       // reloading it would rebuild the boundary and drop its action result. One in its error state
       // loads again, so a link can retry it.
@@ -1469,6 +1549,44 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         path === state.path
       ) {
         emit()
+        return
+      }
+      // Back out of a boundary to the page it covers. The page is still in `state` and every reload an
+      // open boundary runs keeps it fresh, so show it again: fetching it rebuilt its dynamic boundaries
+      // (a fallback, then the data) under a page that never left. One loaded for another visitor, or
+      // marked stale, loads as any navigation does.
+      const held = state.intercepted
+      if (
+        held !== undefined &&
+        path === held.pagePath &&
+        matched.routeId === state.routeId &&
+        shownFor === visitor &&
+        state.documentLoad === undefined &&
+        cache.get(path)?.status !== "stale"
+      ) {
+        const mine = ++generation
+        navAbort?.abort()
+        await present(() => {
+          if (mine !== generation) return
+          const { intercepted: _closed, ...page } = state
+          const boundary = state.boundaries?.[held.boundary]
+          state = {
+            ...page,
+            path,
+            ...(boundary === undefined
+              ? {}
+              : {
+                  boundaries: {
+                    ...state.boundaries,
+                    [held.boundary]: unresolvedBoundary(boundary),
+                  },
+                }),
+            pending: false,
+            pendingPath: undefined,
+          }
+          emit()
+        })
+        if (mine === generation) reloadIfStale()
         return
       }
       // Client-only search fast path: same route + same pathname, and every changed search key is
@@ -1614,7 +1732,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           state = { ...state, ...answered(state, prepared.optimisticData) }
           emit()
         }
-        const res = await fetch(appUrl(action), {
+        const res = await (send ?? fetch)(appUrl(action), {
           method: "POST",
           body: prepared.body,
           headers: { [DATA_HEADER]: "1" },
@@ -1779,6 +1897,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (
           loaded.serverComponents === undefined &&
           !holes &&
+          // nifra-expect NF-S002: token is an object identity marking the current prefetch generation, not a credential.
           inflight.get(path) === token &&
           epoch === documentEpoch()
         )
@@ -1786,6 +1905,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {
+        // nifra-expect NF-S002: token is an object identity marking the current prefetch generation, not a credential.
         if (inflight.get(path) === token) inflight.delete(path)
       }
     },

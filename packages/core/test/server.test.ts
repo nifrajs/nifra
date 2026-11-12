@@ -1,5 +1,24 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { server, silentLogger } from "../src/index.ts"
+
+type NativeHandler = (request: Request, server: object) => Response | Promise<Response>
+type NativeRoutes = Readonly<Record<string, Readonly<Record<string, Response | NativeHandler>>>>
+
+function nativeHandler(app: object, path: string, method: string): NativeHandler {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: this test reaches the private native route table that `listen()` builds from the server instance.
+  const build = app as {
+    buildBunNativeRoutes(
+      fallback: NativeHandler,
+      peer: object,
+      platformFor: (request: Request, server: object) => object,
+    ): NativeRoutes | undefined
+  }
+  const fallback: NativeHandler = () => new Response(null)
+  const route = build.buildBunNativeRoutes(fallback, {}, () => ({}))?.[path]?.[method]
+  if (typeof route !== "function") throw new Error(`missing native route ${method} ${path}`)
+  return route
+}
 
 function request(method: string, path: string, init?: RequestInit): Request {
   return new Request(`http://localhost${path}`, { method, ...init })
@@ -193,6 +212,21 @@ describe("Server - verbs and listen", () => {
     } finally {
       instance.stop()
     }
+  })
+
+  test("the native query-schema lane strips URL fragments before validation", async () => {
+    const app = server().get(
+      "/search",
+      { query: t.object({ q: t.string(), limit: t.string() }) },
+      (c) => ({ q: c.query.q, limit: c.query.limit }),
+    )
+    const handler = nativeHandler(app, "/search", "GET")
+
+    const valid = await handler(new Request("http://x/search?q=ada&limit=10#frag?limit=bad"), {})
+    expect(await valid.json()).toEqual({ q: "ada", limit: "10" })
+
+    const queryAfterFragment = await handler(new Request("http://x/search#frag?q=ada&limit=10"), {})
+    expect(queryAfterFragment.status).toBe(422)
   })
 
   test("the Bun-native lane answers HEAD with the GET route's status and headers", async () => {

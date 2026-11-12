@@ -60,7 +60,7 @@ export interface HoleProps<Data> {
 }
 
 /**
- * Experimental: one `dynamic` or `shared` boundary of a partially prerendered page.
+ * One `dynamic` or `shared` boundary of a partially prerendered page.
  *
  * In a shared shell the hole is an empty host React never fills or diffs: the PPR runtime puts the
  * server's HTML into it, and an interactive hole then hydrates as its own root from the frame's props.

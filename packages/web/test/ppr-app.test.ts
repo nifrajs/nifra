@@ -5,7 +5,7 @@ import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts
 import { type CachedResponse, type CacheStore, withISR } from "../src/isr.ts"
 import { checkShellCanaries, partialPrerendering } from "../src/ppr.ts"
 import { DATA_HEADER, HOLE_FILL_HEADER, KEEP_HOLES_HEADER, PREFETCH_HEADER } from "../src/router.ts"
-import { nextSlowAbort, probe, releaseHeld } from "./fixtures/ppr/app/lib/probe.ts"
+import { nextSlowAbort, probe, releaseHeld } from "./fixtures/ppr/app/lib/probe.backend.ts"
 import { DRAFT_SECRET, type PprApp, startPprApp } from "./fixtures/ppr/app/server.ts"
 
 let app: PprApp
@@ -554,9 +554,34 @@ describe("PPR app configuration", () => {
         manifest,
         clientEntry: "/c.js",
         nonce: () => "n",
-        experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+        ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
       }),
-    ).toThrow("experimental.ppr needs `csp: createCspPolicy(...)`, not `nonce`")
+    ).toThrow("ppr cannot use `nonce`")
+  })
+
+  test("the experimental key partial prerendering used to live under is refused, naming ppr", () => {
+    const manifest: Manifest = {
+      routes: [],
+      layouts: {},
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    }
+    const legacy = {
+      experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    }
+    expect(() =>
+      createWebApp({
+        adapter: {
+          renderToStream: () => new ReadableStream(),
+          hydrationHead: () => "",
+          renderFragment: () => "",
+        },
+        manifest,
+        clientEntry: "/c.js",
+        ...legacy,
+      }),
+    ).toThrow(
+      "`experimental.ppr` is now `ppr`: pass partialPrerendering() as createWebApp({ ppr })",
+    )
   })
 
   test("an origin with a path, a query or another scheme is refused at startup", () => {
@@ -569,7 +594,7 @@ describe("PPR app configuration", () => {
       "ftp://shop.example",
       "shop.example",
     ]) {
-      expect(() => start(origin)).toThrow("experimental.ppr.origin must be an http(s) origin")
+      expect(() => start(origin)).toThrow("ppr.origin must be an http(s) origin")
     }
     expect(() => start("http://127.0.0.1:3000")).not.toThrow()
   })
@@ -617,12 +642,10 @@ describe("PPR app configuration", () => {
         adapter,
         manifest,
         clientEntry: "/c.js",
-        experimental: {
-          ppr: partialPrerendering({
-            shellChecks: "unchecked-development",
-            options: { maxHolesPerRoute: 2 },
-          }),
-        },
+        ppr: partialPrerendering({
+          shellChecks: "unchecked-development",
+          options: { maxHolesPerRoute: 2 },
+        }),
       })
       const write = process.stderr.write
       let logged = ""
@@ -650,9 +673,10 @@ describe("PPR app configuration", () => {
     expect(await failureOf([{ name: "a", mode: "dynamic", render: () => "" }])).toContain(
       'boundary \\"a\\" of route \\"p\\" has no boundaryLoaders entry',
     )
-    expect(
-      await failureOf([{ name: "a", mode: { intercept: "/x" }, render: () => "", load: () => 1 }]),
-    ).toContain('an intercepting boundary \\"a\\"')
+    // An intercepting boundary is no hole: it is not counted against the limits, and it is not refused.
+    const modal = { name: "m", mode: { intercept: "/x" }, render: () => "" } as const
+    expect(await failureOf([modal])).toContain("0 dynamic or shared boundaries; it needs 1 to 2")
+    expect(await failureOf([hole("a"), hole("b"), modal])).toContain('hole \\"a\\" has no host')
     expect(await failureOf([hole("a")], { loader: () => ({}) })).toContain(
       'its layout \\"_layout\\" has a loader that is not a gate',
     )

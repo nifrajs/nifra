@@ -54,6 +54,7 @@ const GATES: Readonly<Record<string, Gate>> = {
   "check:changesets": { redPath: "scripts/check-changeset-coverage.test.ts" },
   "check:docs": { redPath: "scripts/check-doc-samples.test.ts" },
   "check:api": { redPath: "scripts/gen-api-reference.test.ts" },
+  "check:public-release-freshness": { redPath: "scripts/check-public-release-freshness.test.ts" },
   "check:cards": { redPath: "scripts/gen-llm-cards.test.ts" },
   "check:llms": { redPath: "scripts/llms-corpus-check.test.ts" },
   "check:node-outcome": {

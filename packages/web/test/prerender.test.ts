@@ -167,6 +167,32 @@ describe("prerenderRoutes", () => {
     })
   })
 
+  // The recorded path is what the prerendered-page lookup compares to a request's raw path, so it must
+  // be the spelling a browser sends for the same link; the file name is the decoded text.
+  test("a param holding sub-delimiters is recorded and written in the shared spelling", async () => {
+    const { app, urls } = fakeApp()
+    const result = await prerenderRoutes({
+      app,
+      routes: [
+        dynamicRoute("/p/:slug", async () => ({
+          paths: [
+            { params: { slug: "a+b,c;d=e@f[g]" } },
+            { params: { slug: ".." } },
+            { params: { slug: "" } },
+          ],
+        })),
+      ],
+      outDir: dir,
+    })
+    expect(result.prerendered.map((p) => p.path)).toEqual(["/p/a+b,c%3Bd=e@f%5Bg%5D"])
+    expect(urls).toEqual(["http://localhost/p/a+b,c%3Bd=e@f%5Bg%5D"])
+    expect(existsSync(join(dir, "p", "a+b,c;d=e@f[g]", "index.html"))).toBe(true)
+    expect(result.skipped.map((s) => s.reason)).toEqual([
+      expect.stringContaining("no path can carry: slug"),
+      expect.stringContaining("missing param(s): slug"),
+    ])
+  })
+
   test("skips a wildcard route", async () => {
     const { app } = fakeApp()
     const result = await prerenderRoutes({
@@ -304,11 +330,14 @@ describe("prerenderRoutes", () => {
     })
     expect(urls).toEqual([])
     expect(result.prerendered).toEqual([])
+    // `..` has no spelling a URL parser leaves alone, so it is refused when the path is filled and the
+    // entry names the route; the others are rendered paths whose file name is unsafe.
     expect(result.skipped.map((s) => s.path)).toEqual([
       "/blog/..%2F..%2Fescape%20hatch",
-      "/blog/%2E%2E",
+      "/blog/:slug",
       "/blog/a%5Cb",
     ])
+    expect(result.skipped[1]?.reason).toContain("no path can carry: slug")
     expect(existsSync(join(dir, "escape hatch/index.html"))).toBe(false)
     expect(existsSync(outDir)).toBe(false)
   })
@@ -351,6 +380,64 @@ describe("prerenderRoutes", () => {
     })
     expect(result.fallbacks).toEqual({ "/p/:id": "404" })
     expect(result.prerendered[0]?.file).toBe("p/x/index.html")
+  })
+})
+
+describe("prerenderRoutes include", () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "nifra-prerender-include-"))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("a named static route is prerendered without exporting prerender, the others are not", async () => {
+    const { app } = fakeApp()
+    const result = await prerenderRoutes({
+      app,
+      routes: [route("/"), route("/about"), route("/pricing", true)],
+      outDir: dir,
+      include: ["/"],
+    })
+    expect(result.prerendered.map((p) => p.path).sort()).toEqual(["/", "/pricing"])
+    expect(existsSync(join(dir, "index.html"))).toBe(true)
+    expect(existsSync(join(dir, "about/index.html"))).toBe(false)
+    expect(result.skipped.map((s) => s.path)).toEqual(["/about"])
+  })
+
+  test("a path is read as a route pattern whatever its slashes", async () => {
+    const { app } = fakeApp()
+    const result = await prerenderRoutes({
+      app,
+      routes: [route("/about"), route("/team/people")],
+      outDir: dir,
+      include: ["about/", "/team/people/"],
+    })
+    expect(result.prerendered.map((p) => p.path).sort()).toEqual(["/about", "/team/people"])
+  })
+
+  test("a path that is no static route throws, so a typo cannot ship a site without its page", async () => {
+    const { app } = fakeApp()
+    const run = (include: string[]) =>
+      prerenderRoutes({
+        app,
+        routes: [route("/"), dynamicRoute("/posts/:id", async () => ({ paths: [] }))],
+        outDir: dir,
+        include,
+      })
+    await expect(run(["/abuot"])).rejects.toThrow("no static page route at /abuot")
+    await expect(run(["/posts/:id"])).rejects.toThrow("no static page route at /posts/:id")
+    await expect(run(["/", "/nope", "/also-nope"])).rejects.toThrow("/nope, /also-nope")
+    // Refused before the first page is rendered, so nothing is left in the output directory.
+    expect(existsSync(join(dir, "index.html"))).toBe(false)
+  })
+
+  test("without include a route that does not opt in is still skipped", async () => {
+    const { app } = fakeApp()
+    const result = await prerenderRoutes({ app, routes: [route("/")], outDir: dir })
+    expect(result.prerendered).toEqual([])
+    expect(result.skipped).toHaveLength(1)
   })
 })
 

@@ -5,6 +5,7 @@ import { test } from "node:test"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { serve } from "@nifrajs/node"
+import { WebSocket } from "ws"
 import {
   closeArgsAnswers,
   closeArgsRoute,
@@ -39,6 +40,47 @@ test("close is given the server's own close, and 1009 for a message over ws's ca
   try {
     assert.deepEqual(await closeReports(running.port, next), [...SERVER_CLOSE_REPORTS])
   } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("a topic cleanup failure is reported without skipping the close callback", async () => {
+  const cleanupError = new Error("cleanup failed")
+  const errors: unknown[] = []
+  let closeResolve!: () => void
+  const closed = new Promise<void>((resolve) => {
+    closeResolve = resolve
+  })
+  const topicAdapter = {
+    subscribe: () => {},
+    unsubscribe: () => {},
+    unsubscribeAll: () => {
+      throw cleanupError
+    },
+    publish: () => {},
+  }
+  const app = server({ topicAdapter })
+    .use(websocket())
+    .ws("/cleanup", {
+      open: (ws) => ws.subscribe("room"),
+      error: (_ws, error) => {
+        errors.push(error)
+      },
+      close: () => closeResolve(),
+    })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  const socket = new WebSocket(`ws://127.0.0.1:${running.port}/cleanup`)
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", resolve)
+      socket.once("error", reject)
+    })
+    const clientClosed = new Promise<void>((resolve) => socket.once("close", () => resolve()))
+    socket.close()
+    await Promise.all([closed, clientClosed])
+    assert.deepEqual(errors, [cleanupError])
+  } finally {
+    socket.terminate()
     await running.stop({ drainMs: 50 })
   }
 })

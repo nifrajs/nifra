@@ -9,6 +9,7 @@ import {
   type LoaderContext,
   type RenderAdapter,
   type RouteModule,
+  rawHref,
   redirect,
   statusPage,
 } from "../src/index.ts"
@@ -180,7 +181,7 @@ describe("a root status page", () => {
         site({
           "_layout.tsx": {
             loader: () => ({ site: "root" }),
-            middleware: () => redirect("/login"),
+            middleware: () => redirect(rawHref("/login")),
           },
         }),
       ),
@@ -197,7 +198,7 @@ describe("a root status page", () => {
           "_layout.tsx": {
             gate: true,
             loader: () => {
-              throw redirect("/login")
+              throw redirect(rawHref("/login"))
             },
           },
         }),

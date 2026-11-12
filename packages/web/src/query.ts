@@ -11,7 +11,7 @@
  * + navigation use the path cache; component-level interactive data (search, infinite scroll, polling)
  * uses this arbitrary-keyed query cache. The two coexist.
  */
-import { documentEpoch } from "./identity.ts"
+import { documentEpoch, onIdentityChange } from "./identity.ts"
 import { adoptClient, type LiveQuery, querySeam } from "./internal/query-seam.ts"
 
 /** A query's lifecycle status. `pending` = no data yet; `success`/`error` once it has settled once. */
@@ -62,6 +62,21 @@ export interface QueryClientOptions {
   readonly gcTime?: number
   /** Hard cap on cached entries - LRU-evict the oldest *unsubscribed* entry past it (default 1000). */
   readonly max?: number
+}
+
+/** Metadata passed to a dehydration filter before query data is sent to the browser. */
+export interface DehydratedQueryInfo {
+  readonly kind: "query" | "infinite"
+  readonly key: unknown
+  readonly data: unknown
+  readonly updatedAt: number
+}
+
+/** Select which successful query values may cross the SSR-to-browser boundary. */
+export interface DehydrateOptions {
+  /** Every dehydrated value is serialized into the page and readable by the visitor, so a query is
+   * included only when this returns `true`. Without it `dehydrate` sends nothing. */
+  readonly shouldDehydrateQuery?: (query: DehydratedQueryInfo) => boolean
 }
 
 /** An infinite (paged) query's accumulated data: the fetched `pages` in order + the `pageParam` each
@@ -150,8 +165,9 @@ export interface QueryClient {
   /** Fetch + cache a query's data WITHOUT subscribing (SSR prefetch, hover warm). Resolves when cached;
    * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */
   prefetchQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => Promise<void>
-  /** Serialize every successful query to a transferable snapshot (server → client SSR bridge). */
-  dehydrate: () => DehydratedState
+  /** Serialize the successful queries that `options.shouldDehydrateQuery` selects to a transferable
+   * snapshot (server → client SSR bridge). Deny by default: with no filter the snapshot is empty. */
+  dehydrate: (options?: DehydrateOptions) => DehydratedState
   /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */
   hydrate: (state: DehydratedState) => void
   /** Drop every cached query: mounted ones go back to pending and refetch, the rest are removed. Every
@@ -160,34 +176,63 @@ export interface QueryClient {
   clear: () => void
 }
 
-/**
- * Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays
- * keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable
- * identity). Mirrors TanStack Query's structural hashing.
- */
-export function hashQueryKey(key: unknown): string {
-  return JSON.stringify(key, (_k, value) => {
-    if (typeof value === "function" || typeof value === "symbol")
-      throw new TypeError("[nifra/web] a query key must be serializable (no functions/symbols)")
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      const obj = value as Record<string, unknown>
-      return Object.fromEntries(
-        Object.keys(obj)
-          .sort()
-          .map((k) => [k, obj[k]]),
-      )
-    }
-    return value
-  })
+const QUERY_KEY_HASHES = new WeakMap<object, string>()
+
+const queryKeyReplacer = (_key: string, value: unknown): unknown => {
+  if (typeof value === "function" || typeof value === "symbol")
+    throw new TypeError("[nifra/web] a query key must be serializable (no functions/symbols)")
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>
+    return Object.fromEntries(
+      Object.keys(obj)
+        .sort()
+        .map((k) => [k, obj[k]]),
+    )
+  }
+  return value
 }
 
-// Structural array-prefix match on un-hashed keys: invalidate(["todo"]) hits ["todo", id]. Non-array
-// keys (or a non-array prefix) match exactly (by hash).
-function keyMatchesPrefix(key: unknown, prefix: unknown): boolean {
-  if (!Array.isArray(key) || !Array.isArray(prefix))
-    return hashQueryKey(key) === hashQueryKey(prefix)
+/**
+ * Hash a query key to a stable cache string. Object keys are sorted; arrays keep order. Keys must be
+ * serializable - a function/symbol in the key throws. Query-key objects are cached by identity, so
+ * treat them as immutable after hashing. Mirrors TanStack Query's structural hashing.
+ */
+export function hashQueryKey(key: unknown): string {
+  if (key !== null && typeof key === "object") {
+    const cached = QUERY_KEY_HASHES.get(key)
+    if (cached !== undefined) return cached
+    const hash = JSON.stringify(key, queryKeyReplacer) ?? "null"
+    QUERY_KEY_HASHES.set(key, hash)
+    return hash
+  }
+  return JSON.stringify(key, queryKeyReplacer) ?? "null"
+}
+
+type KeyPartHashes = readonly string[]
+
+function hashQueryKeyPart(part: unknown): string {
+  return hashQueryKey(part === undefined ? null : part) ?? "null"
+}
+
+/** Hash array components once when an entry is created, so prefix invalidation compares strings rather
+ * than serializing every component of every cached key on every invalidation. */
+function hashQueryKeyParts(key: unknown): KeyPartHashes | undefined {
+  if (!Array.isArray(key)) return undefined
+  const parts: string[] = []
+  for (let index = 0; index < key.length; index++) parts.push(hashQueryKeyPart(key[index]))
+  return parts
+}
+
+// Structural array-prefix match. Non-array keys (or a non-array prefix) match exactly by their full hash.
+function keyMatchesPrefix(
+  keyHash: string,
+  keyParts: KeyPartHashes | undefined,
+  prefixHash: string,
+  prefixParts: KeyPartHashes | undefined,
+): boolean {
+  if (keyParts === undefined || prefixParts === undefined) return keyHash === prefixHash
   return (
-    prefix.length <= key.length && prefix.every((p, i) => hashQueryKey(key[i]) === hashQueryKey(p))
+    prefixParts.length <= keyParts.length && prefixParts.every((part, i) => keyParts[i] === part)
   )
 }
 
@@ -213,6 +258,7 @@ function relive(entry: LiveFields, live: readonly string[] | undefined): void {
 
 interface Entry extends LiveFields {
   readonly key: unknown
+  readonly keyParts: KeyPartHashes | undefined
   fn: () => Promise<unknown>
   staleTime: number
   /** The {@link liveTick} at the start of the latest fetch, and of the fetch that produced `state`. */
@@ -258,32 +304,107 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   const gcTime = options.gcTime ?? 5 * 60_000
   const max = options.max ?? 1000
   const cache = new Map<string, Entry>()
+  const cacheIndex = new Map<string, Set<string>>()
+  const infiniteIndex = new Map<string, Set<string>>()
+
+  const addToIndex = (
+    index: Map<string, Set<string>>,
+    keyParts: KeyPartHashes | undefined,
+    hash: string,
+  ): void => {
+    const first = keyParts?.[0]
+    if (typeof first !== "string") return
+    let hashes = index.get(first)
+    if (hashes === undefined) {
+      hashes = new Set()
+      index.set(first, hashes)
+    }
+    hashes.add(hash)
+  }
+  const removeFromIndex = (
+    index: Map<string, Set<string>>,
+    keyParts: KeyPartHashes | undefined,
+    hash: string,
+  ): void => {
+    const first = keyParts?.[0]
+    if (typeof first !== "string") return
+    const hashes = index.get(first)
+    if (hashes === undefined) return
+    hashes.delete(hash)
+    if (hashes.size === 0) index.delete(first)
+  }
+  const indexedCandidates = (
+    index: Map<string, Set<string>>,
+    prefixParts: KeyPartHashes | undefined,
+  ): Set<string> | undefined => {
+    const first = prefixParts?.[0]
+    return typeof first === "string" ? index.get(first) : undefined
+  }
 
   // Lazily evict entries whose GC timer has elapsed (no subscribers), then enforce the hard cap by
-  // dropping the oldest-inserted unsubscribed entries. Called on every `query()` - no background timer.
+  // dropping the oldest-inserted unsubscribed entries. Runs from `query()` when `sweepDue()` - no
+  // background timer. Returns the earliest GC time still pending, for `sweepAt`.
   const sweepEntries = (
-    entries: Map<string, { readonly subscribers: number; readonly gcAt: number | undefined }>,
+    entries: Map<
+      string,
+      {
+        readonly keyParts: KeyPartHashes | undefined
+        readonly subscribers: number
+        readonly gcAt: number | undefined
+      }
+    >,
+    index: Map<string, Set<string>>,
     t: number,
-  ): void => {
+  ): number => {
+    let next = Number.POSITIVE_INFINITY
     for (const [h, e] of entries) {
-      if (e.subscribers === 0 && e.gcAt !== undefined && t >= e.gcAt) entries.delete(h)
+      if (e.subscribers !== 0 || e.gcAt === undefined) continue
+      if (t >= e.gcAt) {
+        removeFromIndex(index, e.keyParts, h)
+        entries.delete(h)
+      } else if (e.gcAt < next) next = e.gcAt
     }
-    if (entries.size <= max) return
+    if (entries.size <= max) return next
     for (const [h, e] of entries) {
       if (entries.size <= max) break
-      if (e.subscribers === 0) entries.delete(h) // oldest-inserted unsubscribed first (Map order)
+      if (e.subscribers === 0) {
+        removeFromIndex(index, e.keyParts, h)
+        entries.delete(h) // oldest-inserted unsubscribed first (Map order)
+      }
     }
+    return next
+  }
+  // The earliest time a GC timer can have elapsed. A read walks the caches only once this has passed,
+  // or after an insertion/unsubscribe makes a cap sweep necessary; a stale value then resets it.
+  let sweepAt = Number.POSITIVE_INFINITY
+  let capSweepPending = false
+  const sweepDue = (): boolean => capSweepPending || now() >= sweepAt
+  const markCapSweep = (size: number): void => {
+    if (size > max) capSweepPending = true
+  }
+  // Start the GC timer of an entry whose last subscriber left.
+  const scheduleGc = (entry: { gcAt: number | undefined }): void => {
+    entry.gcAt = now() + gcTime
+    if (cache.size > max || infinite.size > max) capSweepPending = true
+    sweepAt = Math.min(sweepAt, entry.gcAt)
   }
   const sweep = (): void => {
     const t = now()
-    sweepEntries(cache, t)
-    sweepEntries(infinite, t)
+    sweepAt = Math.min(sweepEntries(cache, cacheIndex, t), sweepEntries(infinite, infiniteIndex, t))
+    // A cap sweep is retried after a new insertion or unsubscribe, not on every render while all
+    // entries over the cap remain mounted and therefore ineligible for eviction.
+    capSweepPending = false
   }
 
   // Build a cache entry + its handle. `fn`/`staleTime` are mutated in place on re-bind (closures change
   // between renders). All the fetch/dedup/generation machinery lives here so query(), prefetchQuery(),
   // setQueryData(), and invalidateQueries() share exactly one implementation.
-  const makeEntry = (key: unknown, fn: () => Promise<unknown>, staleTime: number): Entry => {
+  const makeEntry = (
+    key: unknown,
+    fn: () => Promise<unknown>,
+    staleTime: number,
+    keyParts: KeyPartHashes | undefined,
+  ): Entry => {
     const lq: LiveQuery = {
       keys: () => entry.live,
       tick: () =>
@@ -296,6 +417,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     const unset: unknown = undefined
     const entry: Entry = {
       key,
+      keyParts,
       fn,
       staleTime,
       live: [],
@@ -403,7 +525,8 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           entry.listeners.delete(listener)
           entry.subscribers--
           if (entry.subscribers === 0) {
-            entry.gcAt = now() + gcTime
+            scheduleGc(entry)
+            markCapSweep(cache.size)
             querySeam()?.track(lq, false)
           }
         }
@@ -436,8 +559,9 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     fn: () => Promise<unknown>,
     staleTime: number,
     live?: readonly string[],
+    knownHash?: string,
   ): Entry => {
-    const h = hashQueryKey(key)
+    const h = knownHash ?? hashQueryKey(key)
     const existing = cache.get(h)
     if (existing !== undefined) {
       existing.fn = fn
@@ -445,15 +569,17 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       relive(existing, live)
       return existing
     }
-    const entry = makeEntry(key, fn, staleTime)
+    const entry = makeEntry(key, fn, staleTime, hashQueryKeyParts(key))
     relive(entry, live)
     cache.set(h, entry)
+    addToIndex(cacheIndex, entry.keyParts, h)
+    markCapSweep(cache.size)
     return entry
   }
 
   const query = <T>(key: unknown, fn: () => Promise<T>, opts?: QueryOptions): QueryHandle<T> => {
     checkEpoch()
-    sweep()
+    if (sweepDue()) sweep()
     return upsert(
       key,
       fn as () => Promise<unknown>,
@@ -464,11 +590,35 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   const invalidateQueries = (keyOrPrefix: unknown): void => {
     checkEpoch()
-    for (const entry of cache.values()) {
-      if (keyMatchesPrefix(entry.key, keyOrPrefix)) invalidateEntry(entry)
+    const prefixHash = hashQueryKey(keyOrPrefix)
+    const prefixParts = hashQueryKeyParts(keyOrPrefix)
+    if (prefixParts === undefined) {
+      const entry = cache.get(prefixHash)
+      if (entry !== undefined) invalidateEntry(entry)
+      infinite.get(prefixHash)?.invalidate()
+      return
     }
-    for (const entry of infinite.values()) {
-      if (keyMatchesPrefix(entry.key, keyOrPrefix)) entry.invalidate()
+    const invalidateCache = (hash: string): void => {
+      const entry = cache.get(hash)
+      if (entry !== undefined && keyMatchesPrefix(hash, entry.keyParts, prefixHash, prefixParts))
+        invalidateEntry(entry)
+    }
+    const invalidateInfinite = (hash: string): void => {
+      const entry = infinite.get(hash)
+      if (entry !== undefined && keyMatchesPrefix(hash, entry.keyParts, prefixHash, prefixParts))
+        entry.invalidate()
+    }
+    const cacheCandidates = indexedCandidates(cacheIndex, prefixParts)
+    if (cacheCandidates === undefined) {
+      for (const hash of cache.keys()) invalidateCache(hash)
+    } else {
+      for (const hash of cacheCandidates) invalidateCache(hash)
+    }
+    const infiniteCandidates = indexedCandidates(infiniteIndex, prefixParts)
+    if (infiniteCandidates === undefined) {
+      for (const hash of infinite.keys()) invalidateInfinite(hash)
+    } else {
+      for (const hash of infiniteCandidates) invalidateInfinite(hash)
     }
   }
 
@@ -482,14 +632,18 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
 
   const setQueryData = <T>(key: unknown, updater: T | ((prev: T | undefined) => T)): void => {
     checkEpoch()
+    const h = hashQueryKey(key)
+    const existing = cache.get(h)
     // Create a placeholder entry if none exists - its `fn` throws until a real `query(key, fn)` re-binds
     // it, so a `setQueryData` for a key nobody queries yet never triggers a fetch on its own.
     const entry = upsert(
       key,
-      cache.get(hashQueryKey(key))?.fn ??
+      existing?.fn ??
         (() =>
           Promise.reject(new Error("[nifra/web] query has no fetcher (setQueryData-only key)"))),
       defaultStaleTime,
+      undefined,
+      h,
     )
     const prev = entry.state.status === "success" ? (entry.state.data as T) : undefined
     const data =
@@ -508,7 +662,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     opts?: QueryOptions,
   ): Promise<void> => {
     checkEpoch()
-    sweep()
+    if (sweepDue()) sweep()
     await upsert(
       key,
       fn as () => Promise<unknown>,
@@ -517,11 +671,20 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     ).run(false)
   }
 
-  const dehydrate = (): DehydratedState => {
+  const dehydrate = (options: DehydrateOptions = {}): DehydratedState => {
     checkEpoch()
+    const shouldDehydrateQuery = options.shouldDehydrateQuery ?? (() => false)
     const queries: Array<{ key: unknown; data: unknown; updatedAt: number }> = []
     for (const entry of cache.values()) {
-      if (entry.state.status === "success")
+      if (
+        entry.state.status === "success" &&
+        shouldDehydrateQuery({
+          kind: "query",
+          key: entry.key,
+          data: entry.state.data,
+          updatedAt: entry.state.updatedAt,
+        })
+      )
         queries.push({ key: entry.key, data: entry.state.data, updatedAt: entry.state.updatedAt })
     }
     const infiniteQueries: Array<{
@@ -531,7 +694,11 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     }> = []
     for (const entry of infinite.values()) {
       const { status, data, updatedAt } = entry.handle.snapshot()
-      if (status === "success" && data !== undefined)
+      if (
+        status === "success" &&
+        data !== undefined &&
+        shouldDehydrateQuery({ kind: "infinite", key: entry.key, data, updatedAt })
+      )
         infiniteQueries.push({ key: entry.key, data, updatedAt })
     }
     return { queries, infiniteQueries }
@@ -540,11 +707,14 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   const hydrate = (state: DehydratedState): void => {
     checkEpoch()
     for (const q of state.queries) {
+      const h = hashQueryKey(q.key)
       const entry = upsert(
         q.key,
-        cache.get(hashQueryKey(q.key))?.fn ??
+        cache.get(h)?.fn ??
           (() => Promise.reject(new Error("[nifra/web] hydrated query has no fetcher yet"))),
         defaultStaleTime,
+        undefined,
+        h,
       )
       // Don't clobber a client entry that's already fresher than the server snapshot (the client may
       // have refetched between SSR and hydration). Seed only when we have no successful data or the
@@ -572,7 +742,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     opts: InfiniteQueryOptions<T, P>,
   ): InfiniteQueryHandle<T, P> => {
     checkEpoch()
-    sweep()
+    if (sweepDue()) sweep()
     const h = hashQueryKey(key)
     const existing = infinite.get(h)
     if (existing !== undefined) {
@@ -582,8 +752,10 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       )
       return existing.handle as InfiniteQueryHandle<T, P>
     }
-    const created = makeInfinite<T, P>(key, fn, opts)
+    const created = makeInfinite<T, P>(key, fn, opts, hashQueryKeyParts(key))
     infinite.set(h, created as InfiniteEntry<unknown, unknown>)
+    addToIndex(infiniteIndex, created.keyParts, h)
+    markCapSweep(infinite.size)
     const snapshot = seeded.get(h)
     if (snapshot !== undefined) {
       seeded.delete(h)
@@ -595,6 +767,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   // Infinite entries live in their own map (their data shape + fetch model differ from plain queries).
   interface InfiniteEntry<T, P> extends LiveFields {
     readonly key: unknown
+    readonly keyParts: KeyPartHashes | undefined
     handle: InfiniteQueryHandle<T, P>
     rebind: (fn: (p: P) => Promise<T>, opts: InfiniteQueryOptions<T, P>) => void
     /** Mark stale, drop an in-flight fetch's result, and refetch when mounted. */
@@ -613,6 +786,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     key: unknown,
     fetchPage: (pageParam: P) => Promise<T>,
     initialOpts: InfiniteQueryOptions<T, P>,
+    keyParts: KeyPartHashes | undefined,
   ): InfiniteEntry<T, P> => {
     let fn = fetchPage
     let opts = initialOpts
@@ -743,7 +917,8 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           listeners.delete(listener)
           entry.subscribers--
           if (entry.subscribers === 0) {
-            entry.gcAt = now() + gcTime
+            scheduleGc(entry)
+            markCapSweep(infinite.size)
             querySeam()?.track(lq, false)
           }
         }
@@ -796,6 +971,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     }
     const entry: InfiniteEntry<T, P> = {
       key,
+      keyParts,
       handle,
       rebind: (nextFn, nextOpts) => {
         fn = nextFn
@@ -917,14 +1093,28 @@ export interface MutationState<TData, TVariables> {
 
 /** Lifecycle callbacks for a mutation. All optional; `onSettled` runs after success OR error. */
 export interface MutationCallbacks<TData, TVariables> {
-  readonly onMutate?: (variables: TVariables) => void | Promise<void>
-  readonly onSuccess?: (data: TData, variables: TVariables) => void | Promise<void>
-  readonly onError?: (error: unknown, variables: TVariables) => void | Promise<void>
+  readonly onMutate?: (variables: TVariables, context: MutationContext) => void | Promise<void>
+  readonly onSuccess?: (
+    data: TData,
+    variables: TVariables,
+    context: MutationContext,
+  ) => void | Promise<void>
+  readonly onError?: (
+    error: unknown,
+    variables: TVariables,
+    context: MutationContext,
+  ) => void | Promise<void>
   readonly onSettled?: (
     data: TData | undefined,
     error: unknown,
     variables: TVariables,
+    context: MutationContext,
   ) => void | Promise<void>
+}
+
+/** Cooperative cancellation context supplied to mutation functions and callbacks. */
+export interface MutationContext {
+  readonly signal: AbortSignal
 }
 
 /** A standalone mutation store: subscribe to its state, fire `mutate`, `reset` back to idle. */
@@ -938,11 +1128,14 @@ export interface MutationHandle<TData, TVariables> {
   mutate: (variables: TVariables) => Promise<TData>
   /** Rebind the latest `fn`/callbacks (closures change between renders) without losing state. */
   rebind: (
-    fn: (variables: TVariables) => Promise<TData>,
+    fn: (variables: TVariables, context: MutationContext) => Promise<TData>,
     callbacks: MutationCallbacks<TData, TVariables>,
   ) => void
   /** Reset to the idle state (clears data/error/variables). */
   reset: () => void
+  /** Reject pending mutate promises, discard local state and abort the signal. Uncooperative work may
+   * continue; the server may still finish an accepted request. */
+  cancel: () => void
 }
 
 const IDLE_MUTATION: MutationState<unknown, unknown> = Object.freeze({
@@ -952,6 +1145,20 @@ const IDLE_MUTATION: MutationState<unknown, unknown> = Object.freeze({
   variables: undefined,
 })
 
+/** Rejection returned when {@link MutationHandle.cancel} discards an in-flight result. */
+export class MutationCancelledError extends Error {
+  constructor() {
+    super("[nifra/web] mutation result was cancelled")
+    this.name = "MutationCancelledError"
+  }
+}
+
+/** A call in flight: its abort controller, and the way to settle it as cancelled whatever its work does. */
+interface MutationFlight {
+  readonly controller: AbortController
+  stop: (error: unknown) => void
+}
+
 /**
  * Create a standalone mutation state machine - framework-agnostic, so a per-adapter `useMutation`
  * binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each
@@ -960,7 +1167,7 @@ const IDLE_MUTATION: MutationState<unknown, unknown> = Object.freeze({
  * `onSettled`.
  */
 export function createMutation<TData, TVariables>(
-  fn: (variables: TVariables) => Promise<TData>,
+  fn: (variables: TVariables, context: MutationContext) => Promise<TData>,
   callbacks: MutationCallbacks<TData, TVariables> = {},
 ): MutationHandle<TData, TVariables> {
   let mutationFn = fn
@@ -968,12 +1175,37 @@ export function createMutation<TData, TVariables>(
   let state = IDLE_MUTATION as MutationState<TData, TVariables>
   let latest = 0
   const listeners = new Set<() => void>()
+  const active = new Set<MutationFlight>()
+  let stopIdentityWatch: (() => void) | undefined
+  let identityEpoch = documentEpoch()
   const emit = (): void => {
     for (const l of listeners) l()
   }
   const setState = (next: MutationState<TData, TVariables>): void => {
     state = Object.freeze(next)
     emit()
+  }
+  const stopWatchingWhenIdle = (): void => {
+    if (active.size !== 0) return
+    stopIdentityWatch?.()
+    stopIdentityWatch = undefined
+  }
+  const watchIdentity = (): void => {
+    if (stopIdentityWatch !== undefined) return
+    if (Reflect.get(globalThis, "window") === undefined) return
+    stopIdentityWatch = onIdentityChange(cancel)
+  }
+  const cancel = (): void => {
+    identityEpoch = documentEpoch()
+    const pending = [...active]
+    active.clear()
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The idle mutation state carries no generic data or variables, only undefined payloads.
+    setState(IDLE_MUTATION as MutationState<TData, TVariables>)
+    for (const { controller, stop } of pending) {
+      controller.abort()
+      stop(new MutationCancelledError())
+    }
+    stopWatchingWhenIdle()
   }
   return {
     snapshot: () => state,
@@ -987,31 +1219,95 @@ export function createMutation<TData, TVariables>(
       mutationFn = nextFn
       cbs = nextCallbacks
     },
-    reset: () => setState(IDLE_MUTATION as MutationState<TData, TVariables>),
+    reset: () => {
+      latest++
+      setState(IDLE_MUTATION as MutationState<TData, TVariables>)
+    },
+    cancel,
     mutate: async (variables) => {
+      const currentEpoch = documentEpoch()
+      if (currentEpoch !== identityEpoch) cancel()
       const mine = ++latest
-      setState({ status: "pending", data: undefined, error: undefined, variables })
-      let data: TData
-      try {
-        // Only await a callback when one is actually supplied - an `await undefined` would insert a
-        // needless microtask before the mutationFn runs (and complicates single-flight timing).
-        if (cbs.onMutate !== undefined) await cbs.onMutate(variables)
-        data = await mutationFn(variables)
-      } catch (error) {
-        if (mine === latest) setState({ status: "error", data: undefined, error, variables })
-        if (cbs.onError !== undefined) await cbs.onError(error, variables)
-        if (cbs.onSettled !== undefined) await cbs.onSettled(undefined, error, variables)
-        throw error
+      const mutationEpoch = identityEpoch
+      const controller = new AbortController()
+      const context: MutationContext = { signal: controller.signal }
+      const flight: MutationFlight = { controller, stop: () => {} }
+      active.add(flight)
+      const wasCancelled = (): boolean => {
+        if (controller.signal.aborted) return true
+        if (documentEpoch() !== mutationEpoch) {
+          cancel()
+          return true
+        }
+        return false
       }
-      if (mine === latest) setState({ status: "success", data, error: undefined, variables })
-      // The write happened: a success callback that throws rejects the call, but is no failure of the
-      // write, so it never reaches onError (which would roll back what the server kept).
+      const cancelled = new Promise<never>((_, reject) => {
+        flight.stop = reject
+      })
+      cancelled.catch(() => {}) // it may reject while no call is waiting on it
+      const within = <T>(work: () => T | PromiseLike<T>): Promise<T> =>
+        Promise.race([work(), cancelled])
       try {
-        if (cbs.onSuccess !== undefined) await cbs.onSuccess(data, variables)
+        watchIdentity()
+        setState({ status: "pending", data: undefined, error: undefined, variables })
+        if (wasCancelled()) throw new MutationCancelledError()
+        let data: TData
+        try {
+          // Only await a callback when one is supplied; awaiting undefined adds a microtask.
+          if (cbs.onMutate !== undefined) await within(() => cbs.onMutate?.(variables, context))
+          if (wasCancelled()) throw new MutationCancelledError()
+          data = await within(() => mutationFn(variables, context))
+          if (wasCancelled()) throw new MutationCancelledError()
+        } catch (error) {
+          if (wasCancelled()) throw new MutationCancelledError()
+          if (mine === latest) setState({ status: "error", data: undefined, error, variables })
+          if (wasCancelled()) throw new MutationCancelledError()
+          try {
+            if (cbs.onError !== undefined)
+              await within(() => cbs.onError?.(error, variables, context))
+            if (wasCancelled()) throw new MutationCancelledError()
+            if (cbs.onSettled !== undefined)
+              await within(() => cbs.onSettled?.(undefined, error, variables, context))
+            if (wasCancelled()) throw new MutationCancelledError()
+          } catch (callbackError) {
+            if (wasCancelled()) throw new MutationCancelledError()
+            throw callbackError
+          }
+          throw error
+        }
+
+        if (mine === latest) setState({ status: "success", data, error: undefined, variables })
+        if (wasCancelled()) throw new MutationCancelledError()
+        // A callback failure after the write rejects the call but must not be reported as a write
+        // failure through onError, which could incorrectly roll back successful server state.
+        let successCallbackFailed = false
+        let successCallbackError: unknown
+        try {
+          if (cbs.onSuccess !== undefined)
+            await within(() => cbs.onSuccess?.(data, variables, context))
+        } catch (error) {
+          successCallbackFailed = true
+          successCallbackError = error
+        }
+        if (wasCancelled()) throw new MutationCancelledError()
+
+        let settledCallbackFailed = false
+        let settledCallbackError: unknown
+        try {
+          if (cbs.onSettled !== undefined)
+            await within(() => cbs.onSettled?.(data, undefined, variables, context))
+        } catch (error) {
+          settledCallbackFailed = true
+          settledCallbackError = error
+        }
+        if (wasCancelled()) throw new MutationCancelledError()
+        if (settledCallbackFailed) throw settledCallbackError
+        if (successCallbackFailed) throw successCallbackError
+        return data
       } finally {
-        if (cbs.onSettled !== undefined) await cbs.onSettled(data, undefined, variables)
+        active.delete(flight)
+        stopWatchingWhenIdle()
       }
-      return data
     },
   }
 }

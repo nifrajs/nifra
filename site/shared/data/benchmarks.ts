@@ -8,7 +8,6 @@
  */
 
 import data from "./benchmarks.json"
-import type { HttpMemoryCapture } from "./memory-types"
 
 /** A bar-chart row: a framework's req/s (higher is better); `you` flags Nifra's rows. */
 export interface BenchRow {
@@ -26,20 +25,63 @@ export interface Multiplier {
   readonly rivalVersion: string
 }
 
-/** When and with which toolchain a slice was measured; `deno` is absent for a suite that skips it. */
+export interface CaptureMachine {
+  readonly runner: string
+  readonly cpu: string
+  readonly vcpus: number
+}
+
+export interface SsrOutputGuardCostResult {
+  readonly runtimeVersion: string
+  readonly guardRounds: number
+  readonly iterationsPerRound: number
+  readonly rps: number
+  readonly p50ms: number
+  readonly guardUsPerRequest: number
+  readonly identityUsPerRequest: number
+  readonly addedUsPerRequest: number
+  readonly guardShareOfP50Percent: number
+  readonly guardSamplesUs: readonly number[]
+  readonly identitySamplesUs: readonly number[]
+}
+
+export interface SsrOutputGuardCostCapture {
+  readonly date: string
+  readonly source: string
+  readonly machine: string
+  readonly bun: string
+  readonly node: string
+  readonly oha: string
+  readonly items: number
+  readonly connections: number
+  readonly durationS: number
+  readonly warmupS: number
+  readonly guardRounds: number
+  readonly iterationsPerRound: number
+  readonly results: Readonly<Record<"bun" | "node", SsrOutputGuardCostResult>>
+}
+
+/** When, where, and with which toolchain a slice was measured. */
 export interface CapturedMeta {
   readonly date: string
+  readonly nifraVersion: string
   readonly bun: string
   readonly node: string
   readonly deno?: string
   readonly oha: string
+  readonly source?: string
+  readonly sourceUrl?: string
+  readonly machine?: CaptureMachine
+  readonly machines?: Partial<Record<"bun" | "node" | "deno", CaptureMachine>>
 }
 
 /** One measured HTTP workload row, shared by the benchmarks page and comparison articles. */
 export interface HttpWorkloadRow {
   readonly name: string
   readonly version: string
+  readonly getRoot?: string
   readonly getUsers: string
+  readonly getSearch?: string
   readonly postUsers: string
   readonly nifra?: boolean
 }
@@ -133,9 +175,11 @@ export function ssrMultiplier(framework: string): string {
 
 export const HTTP_WORKLOADS_CAPTURED: CapturedMeta = data.httpWorkloadsCaptured
 export const HTTP_REALWORLD_CAPTURED: CapturedMeta = data.httpRealworldCaptured
-// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The optional committed capture is produced by memoryCapture's validated native-Node protocol and covered by benchmark dataset tests.
-export const HTTP_MEMORY = (data as { readonly httpMemory?: HttpMemoryCapture }).httpMemory
+export const HTTP_MEMORY = Object.values(data.httpMemory ?? {}).sort(
+  (a, b) => ["node", "bun", "deno"].indexOf(a.runtime) - ["node", "bun", "deno"].indexOf(b.runtime),
+)
 export const SSR_CAPTURED: CapturedMeta = data.ssrCaptured
+export const SSR_OUTPUT_GUARD_COST: SsrOutputGuardCostCapture = data.ssrOutputGuardCost
 
 export type HttpWorkloadMetric = "getUsers" | "postUsers"
 export type HttpRealworldMetric = "get" | "post" | "body"

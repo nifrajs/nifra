@@ -37,6 +37,14 @@ export const cpuOf = async (origin: string): Promise<number> => {
   return usage.user + usage.system
 }
 
+export const sampledPeakRssDeltaOf = async (origin: string): Promise<number> => {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the bench server's own /__cpu route returns its sampled RSS window.
+  const metrics = (await (await fetch(`${origin}/__cpu`)).json()) as {
+    sampledPeakRssDeltaBytes: number
+  }
+  return metrics.sampledPeakRssDeltaBytes
+}
+
 /** The process's CPU per millisecond while it serves nothing. */
 export async function idleCpuPerMs(origin: string): Promise<number> {
   const before = await cpuOf(origin)

@@ -1,6 +1,6 @@
 import { t } from "@nifrajs/schema"
-import { noteSlowAbort } from "../../../app/lib/probe.ts"
-import { visitorName } from "../../../app/lib/session.ts"
+import { noteSlowAbort } from "../../../app/lib/probe.backend.ts"
+import { visitorName } from "../../../app/lib/session.backend.ts"
 
 export const shellLoader = (ctx: { readonly params: Readonly<Record<string, string>> }) => ({
   title: `Product ${ctx.params.id}`,

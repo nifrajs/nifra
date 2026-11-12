@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { compareMeta } from "../../shared/meta"
 
 export const meta = compareMeta(
@@ -26,8 +27,8 @@ export default function VsHono() {
         including a schema-validated <code>POST</code> and a realistic middleware stack (security
         headers + CORS + request-id). In that shape Nifra runs level with Elysia on Bun and with
         Fastify on Node, ahead of every measured framework on Deno, and ahead of Hono on all three.
-        Every number is reproducible from the repo - the <a href="/benchmarks">benchmarks page</a>{" "}
-        publishes the losses too.
+        Every number is reproducible from the repo - the{" "}
+        <a href={href({ to: "/benchmarks" })}>benchmarks page</a> publishes the losses too.
       </p>
 
       <h2>Both run everywhere. Differently.</h2>
@@ -97,7 +98,7 @@ export default function VsHono() {
           <strong>Pick Nifra</strong> when the API and frontend are one product, when you want
           validation and typing to be the default rather than a discipline, or when AI agents write
           a meaningful share of the code and need docs and verification built for them - see{" "}
-          <a href="/blog/docs-as-mcp">the agent-native thesis</a>.
+          <a href={href({ to: "/blog/docs-as-mcp" })}>the agent-native thesis</a>.
         </li>
         <li>
           <strong>Hono fits</strong> a small service or worker where a minimal router is the whole
@@ -105,8 +106,8 @@ export default function VsHono() {
         </li>
       </ul>
       <p>
-        Full capability breakdown: <a href="/docs/comparison">the comparison doc</a>. Scaffold:{" "}
-        <code>bun create nifra my-app</code>.
+        Full capability breakdown: <a href={href({ to: "/docs/comparison" })}>the comparison doc</a>
+        . Scaffold: <code>bun create nifra my-app</code>.
       </p>
     </article>
   )

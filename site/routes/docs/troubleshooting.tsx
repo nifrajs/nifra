@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href, rawHref } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/troubleshooting",
@@ -277,7 +278,7 @@ export default function Troubleshooting() {
           This applies to every framework with module-global render state, not just React (Preact,
           Vue, Solid, Svelte). Nifra dedupes the active adapter's runtime in build and dev; a{" "}
           <code>file:</code>-linked package shipping its own copy is the thing to fix. See{" "}
-          <a href="/docs/dev">Dev &amp; HMR</a> and the <code>file:</code>-linked-package note in{" "}
+          <a href={href({ to: "/docs/dev" })}>Dev &amp; HMR</a> and the <code>file:</code>-linked-package note in{" "}
           <code>AGENTS.md</code>.
         </p>
       </blockquote>
@@ -295,7 +296,7 @@ export default function Troubleshooting() {
           plain object and shape the response with <code>c.set</code> - reach for <code>c.json</code> /{" "}
           <code>c.text</code> only for an error short-circuit (<code>throw</code> from a{" "}
           <code>derive</code> / <code>beforeHandle</code>), not a route's happy path. See{" "}
-          <a href="/docs/api">API &amp; typed client</a>.
+          <a href={href({ to: "/docs/api" })}>API &amp; typed client</a>.
         </li>
         <li>
           <b>A plugin widened the app's type.</b> A plugin that registers routes/hooks but whose return
@@ -304,7 +305,7 @@ export default function Troubleshooting() {
           registry. Build it with <code>defineRouterPlugin(name, …)</code> (the clearer-named{" "}
           <code>defineIdentityPlugin</code>) so <code>.use()</code> returns your server unchanged and
           routes added after it stay typed. See{" "}
-          <a href="/docs/plugins">Plugins → keep types with defineRouterPlugin</a>.
+          <a href={href({ to: "/docs/plugins" })}>Plugins → keep types with defineRouterPlugin</a>.
         </li>
       </ul>
       <p>
@@ -361,7 +362,7 @@ export default function Troubleshooting() {
         upfront</strong>, and <code>implement(contract, handlers)</code> binds handlers to it. Nothing
         grows a registry per call, so there is <strong>no ceiling at all</strong> - this is the path for
         an API that will keep adding routes for years. Handlers stay checked against the contract exactly
-        as inline routes are. See <a href="/docs/contract">Contract-first</a>.
+        as inline routes are. See <a href={href({ to: "/docs/contract" })}>Contract-first</a>.
       </p>
       <CodeBlock code={CONTRACT_FIRST} />
       <h3>
@@ -431,7 +432,7 @@ export default function Troubleshooting() {
         where it came from. It only reads files, and it never fails the run.
       </p>
       <p>
-        The fix is <a href="/docs/cli#upgrade"><code>nifra upgrade &lt;highest&gt;</code></a>, not a
+        The fix is <a href={href({ to: "/docs/cli", hash: "upgrade" })}><code>nifra upgrade &lt;highest&gt;</code></a>, not a
         hand edit of the pins: it runs
         every release's migration steps between your oldest pin and the target, then re-pins. Run it
         without <code>--write</code> first to see each planned edit. It edits files under the
@@ -464,7 +465,7 @@ export default function Troubleshooting() {
       <p>
         Run <code>nifra check --json</code> as the done-gate - it surfaces the import-chain leaks,
         typed-client drift, and raw-<code>Response</code>-from-a-route issues before you ship. The
-        full machine-readable contract is at <a href="/llms-full.txt">/llms-full.txt</a>, and each
+        full machine-readable contract is at <a href={rawHref("/llms-full.txt")}>/llms-full.txt</a>, and each
         package ships a tight <code>LLM.md</code> contract card.
       </p>
     </div>

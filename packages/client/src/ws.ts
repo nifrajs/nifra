@@ -177,6 +177,9 @@ export function openWebSocket(
     close(code?: number, reason?: string): void {
       socket.close(code, reason)
     },
+    [Symbol.dispose](): void {
+      socket.close()
+    },
     onMessage,
     messages(options?: { signal?: AbortSignal }): AsyncIterableIterator<unknown> {
       const buffered: unknown[] = []

@@ -91,6 +91,15 @@ export function ciWorkloads(section: SsrTableSection): CiWorkload[] {
   return workloads
 }
 
+/**
+ * The row a CI workload's percentages divide by. `bench:ssr` divides every row by the table's baseline,
+ * so a baseline that is one of the workload's rows wins over the reference row; a cache-warmed ISR row
+ * pairs with the rival's ISR row, not the baseline, and keeps the reference row.
+ */
+export function ciDivisor(section: SsrTableSection, w: CiWorkload): SsrBenchTarget | undefined {
+  return w.rows.find((r) => r.name === section.baseline) ?? w.ceiling
+}
+
 /** Who a CI workload compares; the shape bench/ci/report.ts parses. */
 export interface CiRoles {
   readonly nifra: string
@@ -129,7 +138,8 @@ export function ciRunOutput(
         rows[row.name] = cells
         cells[w.workload] = { rounds: measured }
       }
-      if (w.ceiling !== undefined) ceilings[w.workload] = w.ceiling.name
+      const divisor = ciDivisor(section, w)
+      if (divisor !== undefined) ceilings[w.workload] = divisor.name
       roles[w.workload] =
         w.rival === undefined
           ? { nifra: w.nifra.name }

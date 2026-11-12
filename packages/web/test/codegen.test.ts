@@ -10,7 +10,6 @@ import {
   buildManifest,
   createWebApp,
   generateClientEntry,
-  generateRouteSearchTypes,
   generateServerManifest,
   notFound,
   type RenderAdapter,
@@ -105,7 +104,33 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
     "matchChains[id] = { ids: [...(layoutIdsOf[id] ?? []), id], handles: mods.map((m) => m.handle) }",
   )
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
-  expect(code).toContain("requestAnimationFrame(signalHydrated)")
+  expect(code).toContain(
+    'document.visibilityState === "hidden" ? setTimeout(signalHydrated, 0) : requestAnimationFrame(signalHydrated)',
+  )
+  // The line behaves as written: a frame while the view is visible, a timer while it is hidden (a hidden
+  // view runs no frames, so waiting for one would hold the marker for as long as the window stays hidden).
+  const signalLine = code
+    .split("\n")
+    .find((l) => l.includes("requestAnimationFrame(signalHydrated)"))
+  const run = (visibilityState: string): string[] => {
+    const calls: string[] = []
+    // The generated line, run against stand-ins for the four names it uses.
+    new Function(
+      "document",
+      "setTimeout",
+      "requestAnimationFrame",
+      "signalHydrated",
+      signalLine ?? "",
+    )(
+      { visibilityState },
+      () => calls.push("timer"),
+      () => calls.push("frame"),
+      () => {},
+    )
+    return calls
+  }
+  expect(run("visible")).toEqual(["frame"])
+  expect(run("hidden")).toEqual(["timer"])
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data - #3.
   // A layout's function meta reads its own loader data; the page's (last) reads the page's.
   expect(code).toContain(
@@ -389,31 +414,6 @@ test("generated server manifests compile under a strict consumer tsconfig", asyn
     await rm(root, { recursive: true, force: true })
   }
 }, { timeout: 30_000 })
-
-test("generateRouteSearchTypes augments RouteSearch for static routes only", () => {
-  const m = buildManifest(
-    ["index.tsx", "reports.tsx", "users/[id].tsx", "files/[...p].tsx"],
-    importer,
-  )
-  const code = generateRouteSearchTypes(m, {
-    resolve: (f) => `./routes/${f.replace(/\.tsx$/, "")}`,
-  })
-  expect(code).toContain('import type { SearchOf } from "@nifrajs/web"')
-  expect(code).toContain('declare module "@nifrajs/web" {')
-  expect(code).toContain("interface RouteSearch {")
-  // Static routes map their pattern -> the route module's search output type.
-  expect(code).toContain('"/": SearchOf<typeof import("./routes/index")>')
-  expect(code).toContain('"/reports": SearchOf<typeof import("./routes/reports")>')
-  // Dynamic routes (a :param or catch-all) are excluded - their pattern is not a concrete `to`.
-  expect(code).not.toContain("/users/:id")
-  expect(code).not.toContain("/files/")
-})
-
-test("generateRouteSearchTypes targets a custom module when asked", () => {
-  const m = buildManifest(["index.tsx"], importer)
-  const code = generateRouteSearchTypes(m, { resolve: (f) => `./${f}`, module: "@my/router" })
-  expect(code).toContain('declare module "@my/router" {')
-})
 
 /**
  * Run the generated entry's initial-route choice - the real emitted lines, not a copy - for a URL and

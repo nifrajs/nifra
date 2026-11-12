@@ -33,7 +33,7 @@ export interface Suppression {
 }
 
 export interface Finding {
-  /** sha256(probe|ruleId|file|startLine|detailNormalized), first 16 hex. Stable across runs. */
+  /** sha256 of the finding identity and, when available, its complete scanner match span. */
   readonly fingerprint: string
   readonly probe: ProbeId
   readonly severity: Severity
@@ -41,7 +41,11 @@ export interface Finding {
   readonly title: string
   readonly file?: string
   readonly startLine?: number
+  readonly startColumn?: number
+  readonly startOffset?: number
   readonly endLine?: number
+  readonly endColumn?: number
+  readonly endOffset?: number
   readonly detail: string
   readonly remediation: string
   readonly reference?: string
@@ -65,7 +69,23 @@ const isSeverity = (value: unknown): value is Severity =>
 
 /** Deterministic content hash. Never folds in a timestamp, so an unchanged finding keeps its id. */
 export function fingerprint(raw: RawFinding): string {
-  const key = [raw.probe, raw.ruleId, raw.file ?? "", raw.startLine ?? "", raw.detail].join("|")
+  const span =
+    raw.endLine !== undefined ||
+    raw.startColumn !== undefined ||
+    raw.startOffset !== undefined ||
+    raw.endColumn !== undefined ||
+    raw.endOffset !== undefined
+      ? [
+          raw.endLine ?? "",
+          raw.startColumn ?? "",
+          raw.endColumn ?? "",
+          raw.startOffset ?? "",
+          raw.endOffset ?? "",
+        ].join("|")
+      : undefined
+  const key =
+    [raw.probe, raw.ruleId, raw.file ?? "", raw.startLine ?? "", raw.detail].join("|") +
+    (span === undefined ? "" : `|${span}`)
   return createHash("sha256").update(key).digest("hex").slice(0, 16)
 }
 

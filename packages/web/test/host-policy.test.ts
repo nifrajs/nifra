@@ -198,7 +198,7 @@ function rawStatus(port: number, target: string, host: string): Promise<number> 
   })
 }
 
-test("on Node a dot-segment target is judged by the path it routes to, not as sent", async () => {
+test("on Node with normalizeTarget a dot-segment target is judged by the path it routes to, not as sent", async () => {
   const app = createWebApp({
     adapter,
     manifest: buildManifest(
@@ -208,7 +208,7 @@ test("on Node a dot-segment target is judged by the path it routes to, not as se
     clientEntry: "/assets/entry-abc.js",
     hostPolicy: partner,
   })
-  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0, normalizeTarget: true })
   try {
     expect(await rawStatus(running.port, "/share/a", "partner.example")).toBe(200)
     // Sent as `/share/...`, which the policy allows, but it routes to the sign-in page.

@@ -13,10 +13,12 @@ import {
   keepAliveClient,
   PAGE_HIDE_EVENT,
   PAGE_SHOW_EVENT,
+  rememberView,
   type SlotNode,
   slotTree,
 } from "../src/keep-alive.ts"
 import { buildManifest, type ClientRouteHooks, type RouteModule } from "../src/manifest.ts"
+import { createMutation } from "../src/query.ts"
 import type { MatchChain } from "../src/render-seam.ts"
 import {
   type ClientRouter,
@@ -57,20 +59,20 @@ class FakeHistory {
 class FakeChannel {
   static open: FakeChannel[] = []
   readonly sent: unknown[] = []
-  readonly #listeners = new Set<() => void>()
+  readonly #listeners = new Set<(event: { data: unknown }) => void>()
   constructor(readonly name: string) {
     FakeChannel.open.push(this)
   }
-  addEventListener(_type: "message", listener: () => void): void {
+  addEventListener(_type: "message", listener: (event: { data: unknown }) => void): void {
     this.#listeners.add(listener)
   }
   postMessage(message: unknown): void {
     this.sent.push(message)
     for (const other of FakeChannel.open)
-      if (other !== this && other.name === this.name) other.receive()
+      if (other !== this && other.name === this.name) other.receive(message)
   }
-  receive(): void {
-    for (const listener of [...this.#listeners]) listener()
+  receive(data: unknown = "changed"): void {
+    for (const listener of [...this.#listeners]) listener({ data })
   }
   close(): void {}
 }
@@ -174,6 +176,9 @@ const fakeRouter = (initial: RouterState): FakeRouter => {
     fetchers: () => [fetcher],
     subscribeFetchers: () => () => {},
     match: (path) => ({ routeId: path, params: {} }),
+    loadModule: async () => {},
+    routeSlotsFor: () => ({}),
+    routePattern: () => undefined,
   }
   return {
     inner,
@@ -267,6 +272,86 @@ const keptOf = (router: KeepAliveRouter): string[] =>
 // ---- the router layer ----------------------------------------------------------------------------
 
 describe("keepAliveClient", () => {
+  test("stamping a legacy primitive history state does not copy its characters", () => {
+    Reflect.set(fakeHistory.entries, 0, "legacy")
+    const { router } = setup(state("list", "/list/1"))
+    expect(fakeHistory.state).toEqual({ nifraInstance: router.snapshot().instance })
+  })
+
+  test("a pending same-entry update prevents the next page from being kept", () => {
+    const { router, fake, push } = setup(state("list", "/list/1"), {
+      hooks: { list: { keepAlive: true }, detail: { keepAlive: true } },
+    })
+    push(state("detail", "/detail"))
+    fake.publish({ ...fake.inner.snapshot(), pending: true, pendingPath: "/detail" })
+    router.dropKept()
+    push(state("list", "/list/2"))
+    expect(keptOf(router)).not.toContain("/detail")
+  })
+
+  test("a replace at the current history index does not drop forward kept pages", async () => {
+    const { router, fake, push } = setup(state("list", "/list/1"))
+    push(state("list", "/list/2"))
+    fakeHistory.go(-1)
+    const restoring = router.navigate("/list/1")
+    fake.publish({ ...fake.inner.snapshot(), pending: true, pendingPath: "/list/1" })
+    fake.publish(state("list", "/list/1"))
+    await restoring
+    expect(keptOf(router)).toEqual(["/list/2"])
+
+    fakeHistory.replace()
+    fake.publish(state("item", "/item"))
+    expect(keptOf(router)).toEqual(["/list/2"])
+  })
+
+  test("rememberView is safe when no document exists", () => {
+    const before = Object.getOwnPropertyDescriptor(globalThis, "document")
+    try {
+      Reflect.deleteProperty(globalThis, "document")
+      expect(() => rememberView([])).not.toThrow()
+    } finally {
+      if (before === undefined) Reflect.deleteProperty(globalThis, "document")
+      else Object.defineProperty(globalThis, "document", before)
+    }
+  })
+
+  test("a completed restore stops supplying kept data to later loads", async () => {
+    let baseCalls = 0
+    const { router, push, fake, client } = setup(state("list", "/list/1"), {
+      fetchData: async (path) => {
+        baseCalls++
+        return { from: path }
+      },
+    })
+    push(state("detail", "/detail"))
+    const release = fake.hold()
+    fakeHistory.go(-1)
+    const restoring = router.navigate("/list/1")
+    release()
+    await restoring
+
+    const loaded = await client.fetchData("/list/1", { routeId: "list", params: {} })
+    expect(loaded).toEqual({ from: "/list/1" })
+    expect(baseCalls).toBe(1)
+  })
+
+  test("a restore that lands on another page creates a new active instance", async () => {
+    const modal = state("list", "/photo/3", {
+      intercepted: { boundary: "photo", pagePath: "/list/1" },
+    })
+    const { router, push, fake } = setup(state("list", "/list/1"))
+    const first = router.snapshot().instance
+    push(modal)
+    push(state("detail", "/detail"))
+    const release = fake.hold()
+    fakeHistory.go(-1)
+    const restoring = router.navigate("/photo/3")
+    fake.publish(state("detail", "/detail/2"))
+    expect(router.snapshot().instance).not.toBe(first)
+    release()
+    await restoring
+  })
+
   test("a page left by a push is kept, and back to its own entry shows that same instance", async () => {
     const list = state("list", "/list/1", { params: { id: "1" } })
     const { router, push, fake, traverse } = setup(list)
@@ -814,15 +899,81 @@ describe("keepAliveClient", () => {
     expect(published).toBe(3)
   })
 
-  test("a new epoch cookie after a navigation drops every kept page and tells the other tabs", () => {
-    fakeDocument.cookie = "theme=dark; nifra-epoch=a"
-    const { router, push, drops } = setup(state("list", "/list/1"))
-    push(state("list", "/list/2"))
-    fakeDocument.cookie = "theme=dark; nifra-epoch=b"
-    push(state("detail", "/detail"))
-    expect(router.snapshot().kept).toBeUndefined()
-    expect(drops.map(([reason]) => reason)).toEqual(["identity"])
-    expect(FakeChannel.open[0]?.sent).toEqual(["changed"])
+  // The document's shared identity channel needs a `window`; it is rebuilt for the test and put back.
+  const withSharedChannel = async (run: () => void | Promise<void>): Promise<void> => {
+    const slot = Symbol.for("nifra.identity.channel")
+    const channelBefore = Object.getOwnPropertyDescriptor(globalThis, slot)
+    const windowBefore = Object.getOwnPropertyDescriptor(globalThis, "window")
+    Reflect.deleteProperty(globalThis, slot)
+    Object.defineProperty(globalThis, "window", { value: {}, configurable: true, writable: true })
+    try {
+      await run()
+    } finally {
+      for (const [name, before] of [
+        [slot, channelBefore],
+        ["window", windowBefore],
+      ] as const) {
+        if (before === undefined) Reflect.deleteProperty(globalThis, name)
+        else Object.defineProperty(globalThis, name, before)
+      }
+    }
+  }
+
+  test("a new epoch cookie after a navigation drops every kept page and tells the other tabs, not this tab's own listeners", async () => {
+    await withSharedChannel(() => {
+      fakeDocument.cookie = "theme=dark; nifra-epoch=a"
+      const { router, push, drops } = setup(state("list", "/list/1"))
+      let heard = 0
+      onIdentityChange(() => {
+        heard++
+      })
+      push(state("list", "/list/2"))
+      fakeDocument.cookie = "theme=dark; nifra-epoch=b"
+      push(state("detail", "/detail"))
+      expect(router.snapshot().kept).toBeUndefined()
+      expect(drops.map(([reason]) => reason)).toEqual(["identity"])
+      expect(FakeChannel.open.flatMap((channel) => channel.sent)).toEqual(["changed"])
+      // The tab that noticed the epoch acted on it already: its listeners hear no echo of its own post.
+      expect(heard).toBe(0)
+    })
+  })
+
+  test("a mutation in flight when a new epoch cookie is read keeps running, and is discarded when it lands", async () => {
+    await withSharedChannel(async () => {
+      fakeDocument.cookie = "nifra-epoch=alice"
+      const { push } = setup(state("list", "/list/1"))
+      let finish!: (value: number) => void
+      let signal: AbortSignal | undefined
+      const callbacks: string[] = []
+      const mutation = createMutation(
+        (_variables: undefined, context) => {
+          signal = context.signal
+          return new Promise<number>((done) => {
+            finish = done
+          })
+        },
+        {
+          onSuccess: () => {
+            callbacks.push("success")
+          },
+          onSettled: () => {
+            callbacks.push("settled")
+          },
+        },
+      )
+      const pending = mutation.mutate(undefined)
+      push(state("list", "/list/2"))
+      fakeDocument.cookie = "nifra-epoch=bob"
+      push(state("detail", "/detail"))
+      // Reading the cookie drops kept pages and tells the other tabs; this tab's request is not aborted.
+      expect(signal?.aborted).toBe(false)
+      expect(mutation.snapshot().status).toBe("pending")
+      finish(1)
+      await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
+      expect(signal?.aborted).toBe(true)
+      expect(mutation.snapshot().status).toBe("idle")
+      expect(callbacks).toEqual([])
+    })
   })
 
   test("a restore whose page was kept under another epoch renders fresh", async () => {
@@ -1628,5 +1779,35 @@ describe("checkSlotCss", () => {
     checkSlotCss(asElement(entry), asElement(new FakeElement("DIV")))
     const { entry: placed } = layout()
     checkSlotCss(asElement(placed), asElement(new FakeElement("DIV")))
+  })
+
+  test("a slot first rendered hidden is checked when it becomes visible", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const main = new FakeElement("MAIN")
+      const entry = new FakeElement("DIV")
+      const page = new FakeElement("DIV")
+      const section = new FakeElement("SECTION", "", ["first-parked"])
+      main.append(entry.append(page.append(section)))
+      fakeDocument.styleSheets = sheets([new FakeStyleRule("main > .first-parked")])
+      const key = "first-hidden"
+      const hidden: SlotNode = {
+        key,
+        depth: 1,
+        state: state("list", "/list"),
+        hidden: true,
+        wrapped: true,
+      }
+      const parking = createSlotParking()
+      parking.entry(key)(asElement(entry))
+      parking.page(key)(asElement(page))
+      parking.after([hidden])
+      parking.after([{ ...hidden, hidden: false }])
+      expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([
+        expect.stringContaining('selector "main > .first-parked"'),
+      ])
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

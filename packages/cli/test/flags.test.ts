@@ -312,3 +312,10 @@ test("arguments typed before the command follow it instead of being dropped", ()
   expect(commandArgv(["bun", "--config=a.toml", "/app/cli.ts", "dev"], 3)).toEqual(["dev"])
   expect(commandArgv(["dev", "--port", "3000"], 0)).toEqual(["dev", "--port", "3000"])
 })
+
+test("--prerender is a build flag with a value", () => {
+  expect(parseFlags([]).prerender).toBeUndefined()
+  expect(parseFlags(["--prerender", "/,/about"]).prerender).toBe("/,/about")
+  expect(parseFlags(["--prerender=/", "--target", "static"]).prerender).toBe("/")
+  expect(() => parseFlags(["--prerender"])).toThrow("--prerender needs a value")
+})

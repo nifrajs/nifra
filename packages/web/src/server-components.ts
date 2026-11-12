@@ -17,6 +17,7 @@ export type {
   ComponentIsland,
   ComponentKey,
   ComponentOwner,
+  ComponentOwnerCachePolicy,
   ComponentRecord,
   ComponentRender,
   ComponentRenderContext,

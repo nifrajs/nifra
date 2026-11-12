@@ -1,6 +1,6 @@
 import type { RenderProps } from "@nifrajs/web"
 import { type Component, createComponent, type JSX } from "solid-js"
-import { RenderPropsContext, SearchContext } from "./router.ts"
+import { RenderPropsContext, SearchContext } from "./router-context.ts"
 
 // Frozen empty search so a render with no search context has a stable provider value.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -29,7 +29,9 @@ export function compose(chain: readonly unknown[], props: RenderProps): () => JS
         get data() {
           return props.layoutData?.[i] ?? null
         },
-        ...(props.boundaries !== undefined ? { boundaries: props.boundaries } : {}),
+        get boundaries() {
+          return props.boundaries
+        },
         children: child(),
       })
   }

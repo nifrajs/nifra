@@ -1,4 +1,4 @@
-interface ModuleEntry<T extends object> {
+export interface ModuleEntry<T extends object> {
   readonly load: () => Promise<T>
 }
 

@@ -90,18 +90,22 @@ export function isOtherInstall(dir: string): boolean {
 }
 
 /**
- * Hand this stdio session to the project's own CLI when it installs a different version, or the same
- * version from another directory. Resolves to the child's exit code once the session ends, or
- * `undefined` when this process should serve itself (this is the project's CLI, no project CLI or
- * bin, already a hand-off, or the spawn failed). Must run before anything reads stdin: the child
- * inherits the descriptor and owns the whole conversation.
+ * The command that runs the project's own CLI as `nifra mcp`, when the project installs a different
+ * version, or the same version from another directory. `undefined` when this process should serve
+ * itself: this is the project's CLI, no project CLI or bin, or this process is already a hand-off.
  */
-export async function delegateToProjectCli(options: {
-  readonly cwd: string
+export async function projectCliCommand(options: {
   readonly root: string
   readonly version: string
   readonly args: readonly string[]
-}): Promise<number | undefined> {
+}): Promise<
+  | {
+      readonly cli: ProjectCli
+      readonly command: readonly string[]
+      readonly env: Record<string, string | undefined>
+    }
+  | undefined
+> {
   if (process.env[MCP_DELEGATED_ENV] === "1") return undefined
   const cli = await findProjectCli(options.root)
   if (
@@ -112,10 +116,32 @@ export async function delegateToProjectCli(options: {
     return undefined
   // Not the `.bin` shim: its `bun` would load the project's `.env`, and the inherited
   // NIFRA_MCP_WITHOUT_ENV_FILES then tells that CLI the values are already gone.
-  return handOffSession([process.execPath, "--no-env-file", cli.bin, "mcp", ...options.args], {
-    cwd: options.cwd,
+  return {
+    cli,
+    command: [process.execPath, "--no-env-file", cli.bin, "mcp", ...options.args],
     env: { ...process.env, [MCP_DELEGATED_ENV]: "1" },
-    announce: `[nifra] mcp: this CLI is ${options.version}; the project installs @nifrajs/cli ${cli.version} - serving this session from ${cli.bin}`,
+  }
+}
+
+/**
+ * Hand this stdio session to the project's own CLI when it installs a different version, or the same
+ * version from another directory. Resolves to the child's exit code once the session ends, or
+ * `undefined` when this process should serve itself (see {@link projectCliCommand}, or the spawn
+ * failed). Must run before anything reads stdin: the child inherits the descriptor and owns the whole
+ * conversation.
+ */
+export async function delegateToProjectCli(options: {
+  readonly cwd: string
+  readonly root: string
+  readonly version: string
+  readonly args: readonly string[]
+}): Promise<number | undefined> {
+  const target = await projectCliCommand(options)
+  if (target === undefined) return undefined
+  return handOffSession(target.command, {
+    cwd: options.cwd,
+    env: target.env,
+    announce: `[nifra] mcp: this CLI is ${options.version}; the project installs @nifrajs/cli ${target.cli.version} - serving this session from ${target.cli.bin}`,
   })
 }
 

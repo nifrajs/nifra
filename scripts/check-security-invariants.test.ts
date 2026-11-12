@@ -30,7 +30,9 @@ describe("security invariant ledger", () => {
     }
     const errors = validateSecurityInvariantLedger(root, broken, {})
     expect(errors.some((error) => error.includes("duplicates"))).toBe(true)
-    expect(errors.some((error) => error.includes("missing test path"))).toBe(true)
+    expect(errors.some((error) => error.includes("missing or outside-repository test path"))).toBe(
+      true,
+    )
     expect(errors.some((error) => error.includes("missing mutation target"))).toBe(true)
   })
 
@@ -54,10 +56,10 @@ describe("security invariant ledger", () => {
       [target]: { files: ["missing-target-file.ts"], tests: ["missing-target-test.ts"] },
     })
     expect(errors).toContain(
-      `${invariant.id}: mutation target ${target} missing file missing-target-file.ts`,
+      `${invariant.id}: mutation target ${target} has a missing or outside-repository file missing-target-file.ts`,
     )
     expect(errors).toContain(
-      `${invariant.id}: mutation target ${target} missing test missing-target-test.ts`,
+      `${invariant.id}: mutation target ${target} has a missing or outside-repository test missing-target-test.ts`,
     )
   })
 })

@@ -30,7 +30,7 @@ export interface StaticCtx {
 }
 
 /**
- * Experimental: what a partially prerendered page's `shellLoader` receives. No request, env, draft or
+ * What a partially prerendered page's `shellLoader` receives. No request, env, draft or
  * search: the shell is shared by every visitor whose URL maps to the same params and locale.
  */
 export interface ShellCtx {
@@ -50,7 +50,7 @@ export interface ShellCtx {
 }
 
 /**
- * Experimental: what a shared hole's loader receives. The keys it declares are kept with the built
+ * What a shared hole's loader receives. The keys it declares are kept with the built
  * entry and watched for every visitor it serves; a change reloads the hole, which the shared entry
  * answers until a purge by one of its `revalidateTags` drops it, so publish each key with a tag.
  */
@@ -76,14 +76,14 @@ export type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & {
 export type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & {
   readonly mode: "dynamic"
   readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>
-  /** Experimental, partial prerendering: the hole ships its props and hydrates. Default `false`. */
+  /** Partial prerendering: the hole ships its props and hydrates. Default `false`. */
   readonly interactive?: boolean
-  /** Experimental, partial prerendering: the hole's deadline in milliseconds. Default 5000. */
+  /** Partial prerendering: the hole's deadline in milliseconds. Default 5000. */
   readonly timeout?: number
 }
 
 /**
- * Experimental, partial prerendering: a hole that is the same for every visitor, built like the shell
+ * Partial prerendering: a hole that is the same for every visitor, built like the shell
  * from a request-free context and cached on its own `revalidate`, then written right after the shell.
  * Its loader entry in `boundaryLoaders` needs `revalidate`.
  */

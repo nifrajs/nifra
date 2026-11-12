@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/live",
@@ -146,7 +147,7 @@ export default function Live() {
         is your own name for a piece of data, such as <code>post:42</code>: a letter, then up to
         127 of <code>A-Z a-z 0-9 . _ : / -</code>. A frame holds at most 64. A live load returns
         an encrypted grant for its keys beside the data. A hole of a{" "}
-        <a href="/docs/partial-prerendering">partially prerendered page</a> declares its own the
+        <a href={href({ to: "/docs/partial-prerendering" })}>partially prerendered page</a> declares its own the
         same way, and a change reloads that hole alone.
       </p>
       <CodeBlock code={LOADER} />

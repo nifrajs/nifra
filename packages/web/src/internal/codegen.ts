@@ -61,6 +61,11 @@ export interface GenerateClientEntryOptions {
    * non-live one.
    */
   readonly live?: LiveClientEntry | undefined
+  /**
+   * A module whose default export is the `fetch` the router reaches its server through: for pages
+   * that ship inside a native shell while the server lives elsewhere. An absolute path.
+   */
+  readonly transport?: string | undefined
 }
 
 // The router as the entry names it: in a keep-alive app, the keep-alive layer over `router`.
@@ -204,16 +209,29 @@ export function generateClientEntry(
   }
 
   const live = options.live
-  const liveFetch =
+  const transport = options.transport
+  const own = transport === undefined ? "matched && !terminal" : "matched && !terminal && !detour"
+  const liveFetch = `${
     keep !== undefined
       ? ", fetchData: __keep.fetchData"
       : live === undefined
         ? ""
         : ", fetchData: __live.fetchData"
+  }${transport === undefined ? "" : ", fetch: __transport"}`
   return `${[
     // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
     // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
     'import { createClientRouter, createMatcher, mergeHeads, resolveChainMeta } from "@nifrajs/web/client"',
+    ...(transport !== undefined && keep !== undefined
+      ? ['import { routeDataTransport } from "@nifrajs/web/shell"']
+      : []),
+    ...(transport === undefined
+      ? []
+      : [
+          `import __transport from ${jsStringLiteral(transport)}`,
+          // Where `appFetch` and the server-function stubs find it.
+          'globalThis[Symbol.for("nifra.fetch")] = __transport',
+        ]),
     'import { applyHead, currentDocumentNonce, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
     ...(options.serverComponents
       ? ['import { bindComponentRouter } from "@nifrajs/web/server-components/client"']
@@ -289,6 +307,9 @@ export function generateClientEntry(
             "layoutIdsOf",
             ...(live.path === undefined ? [] : [`path: ${jsStringLiteral(live.path)}`]),
             ...(live.loadPath === undefined ? [] : [`loadPath: ${jsStringLiteral(live.loadPath)}`]),
+            ...(transport === undefined
+              ? []
+              : ["fetch: __transport", "origin: __transport.origin"]),
           ].join(", ")} })`,
         ]),
     "const matchChains = {}",
@@ -296,7 +317,7 @@ export function generateClientEntry(
       ? []
       : [
           `const keepAliveTable = ${jsValueLiteral(keep)}`,
-          `const __keep = keepAliveClient({ table: keepAliveTable, routeHooks, matchChains${live === undefined ? "" : ", fetchData: __live.fetchData"} })`,
+          `const __keep = keepAliveClient({ table: keepAliveTable, routeHooks, matchChains${live === undefined ? (transport === undefined ? "" : ", fetchData: routeDataTransport(__transport)") : ", fetchData: __live.fetchData"} })`,
         ]),
     `const ${options.copyChunks === true ? "loadRoute" : "loadModule"} = async (id) => {`,
     "  if (chains[id]) return",
@@ -333,7 +354,7 @@ export function generateClientEntry(
     // backend half, which no browser bundle contains.
     "  const boundaryMods = errorRouteIds.has(id) ? mods.slice(0, -1) : mods",
     "  const boundaries = boundaryMods.flatMap((m) => (m.boundaries ?? []).map((b) => ({ name: b.name, mode: b.mode, ...(b.errorId === undefined ? {} : { errorId: b.errorId }) })))",
-    `  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, shareData: page.shareData, ${keep === undefined ? "" : "keepAlive: page.keepAlive, "}boundaries }`,
+    `  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, shareData: page.shareData, routeSlots: page.routeSlots, ${keep === undefined ? "" : "keepAlive: page.keepAlive, "}boundaries }`,
     "  if (page.ssr === false) holds[id] = [...chains[id].slice(0, -1), page.HydrateFallback ?? (() => null)]",
     "}",
     ...(options.copyChunks === true
@@ -376,16 +397,29 @@ export function generateClientEntry(
     // `learn/[slug]`, and hydrating that route with null data over the 404 markup is wrong. Membership
     // in the status table, not a `_` prefix: `routes/_admin/index.tsx` is an ordinary routable id.
     "const terminal = Object.values(statusRoutes).includes(serverRoute)",
+    ...(transport === undefined
+      ? []
+      : [
+          // A native shell answers a path it has no page for with the document it ships. That document
+          // is hydrated as it stands, and the router goes where the URL points once it is mounted.
+          // The fragment is not part of the route: the router matches the path and query, and the fragment
+          // is put back once it has gone there.
+          "const target = location.pathname + location.search",
+          "const fragment = location.hash",
+          'const detour = !!matched && !terminal && serverRoute !== "" && matched.routeId !== serverRoute',
+          "const shipped = patterns.find((p) => p.routeId === serverRoute)",
+          'const shippedPath = shipped && !/[:*]/.test(shipped.pattern) ? shipped.pattern : "/"',
+        ]),
     // Map any `{__nifra_deferred: id}` placeholder in the SSR data to the registry's promise, so the
     // component receives real promises to `<Await>` (a no-op when a page has no deferred data).
     MAP_DEFERRED_SOURCE,
     "const initial = {",
-    "  routeId: matched && !terminal ? matched.routeId : serverRoute,",
-    "  params: matched && !terminal ? matched.params : {},",
+    `  routeId: ${own} ? matched.routeId : serverRoute,`,
+    `  params: ${own} ? matched.params : {},`,
     // pathname + search (NOT just pathname): the SSR render threads `pathname+search` into
     // `useLocation`/`useSearchParams`, so the hydrating initial state must carry the query too or a
     // page reading the search string would hydrate-mismatch. The #hash is client-only (never SSR'd).
-    "  path: location.pathname + location.search,",
+    `  path: ${transport === undefined ? "location.pathname + location.search" : "detour ? shippedPath : location.pathname + location.search"},`,
     `  data: mapDeferred(window.${DATA_GLOBAL}),`,
     // Undefined on a page-only app, which is exactly what the router treats as "no layout data".
     `  layoutData: window.${LAYOUT_DATA_GLOBAL} && window.${LAYOUT_DATA_GLOBAL}.map(mapDeferred),`,
@@ -474,11 +508,23 @@ export function generateClientEntry(
     // server data is already in `window.__NIFRA_DATA__`, so `serverLoader()` reuses it and cannot
     // duplicate the first request.
     "  router.hydrate().catch((error) => console.error('[nifra/web] clientLoader failed:', error))",
+    ...(transport === undefined
+      ? []
+      : [
+          "  if (detour) router.navigate(target).then(() => {",
+          '    if (fragment === "") return',
+          '    history.replaceState(history.state, "", target + fragment)',
+          "    try { document.getElementById(decodeURIComponent(fragment.slice(1)))?.scrollIntoView() } catch {}",
+          "  }).catch((error) => console.error('[nifra/web] deep link failed:', error))",
+        ]),
     // Once mounted: the first live load and the socket must not race the hydration.
     ...(live === undefined ? [] : ["  __live.attach(router)"]),
     // Next frame: the adapter has committed its initial hydration, so handlers are attached. Flip the
     // document to interactive (`data-nifra-hydrated` + `nifra:hydrated`) for apps to gate pre-hydration UI.
-    "  requestAnimationFrame(signalHydrated)",
+    // A hidden view (a window created hidden, a minimized or occluded one) runs no frames, so a pending
+    // `requestAnimationFrame` would hold the marker until someone shows it - and a shell that shows its
+    // window once the page is ready would never show it.
+    '  document.visibilityState === "hidden" ? setTimeout(signalHydrated, 0) : requestAnimationFrame(signalHydrated)',
     "  router.subscribe(() => {",
     "    const s = router.snapshot()",
     // Merge the matched route's chain meta (layouts→page) into one head - same contract as SSR.
@@ -491,53 +537,6 @@ export function generateClientEntry(
     "    }",
     "  })",
     "}).catch((error) => console.error('[nifra/web] hydration failed:', error))",
-  ].join("\n")}\n`
-}
-
-export interface GenerateRouteSearchTypesOptions {
-  /** Turn a route source file into a module specifier for a `typeof import(...)` type - the same contract
-   * as `generateClientEntry`'s `resolve`, but WITHOUT a file extension (a `.d.ts` imports a module, not a
-   * path). Relative to wherever the emitted `.d.ts` is written. */
-  readonly resolve: (file: string) => string
-  /** The module whose `RouteSearch` interface is augmented (default `"@nifrajs/web"`). Every adapter's
-   * `NavigateTarget` reads `@nifrajs/web`'s `RouteSearch`, so the default types `navigate` on all of them. */
-  readonly module?: string
-}
-
-/**
- * Codegen: emit a `.d.ts` that types cross-route `navigate({ to, search })` against each route's
- * `searchSchema`. It augments the {@link RouteSearch} map with `"<pattern>": SearchOf<typeof import(...)>`
- * for every **static** route (one with no `:param`/`*` segment - a concrete `to` a caller can pass; a
- * dynamic route's concrete path can't match its pattern key, so those keep the loose object form). Written
- * by `nifra sync-routes` next to the route tree and included in the app's `tsconfig`; because it is
- * regenerated from the route files, a `navigate` whose `search` no longer matches the route's schema
- * becomes a `tsc` error - the same drift guarantee as nifra's typed client, no hand-maintained map.
- */
-export function generateRouteSearchTypes(
-  manifest: Manifest,
-  options: GenerateRouteSearchTypesOptions,
-): string {
-  const { resolve, module = "@nifrajs/web" } = options
-  // Static routes only (no `:param` / `*` catch-all): their pattern IS a concrete `to`. Sorted for stable
-  // output; a dynamic route falls through to the loose `{ to: string; search?: Record<...> }` form.
-  const entries = manifest.routes
-    .filter((route) => !/[:*]/.test(route.pattern))
-    .map((route) => [route.pattern, resolve(route.file)] as const)
-    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-    .map(
-      ([pattern, spec]) =>
-        `    ${jsStringLiteral(pattern)}: SearchOf<typeof import(${jsStringLiteral(spec)})>`,
-    )
-  return `${[
-    "// GENERATED by @nifrajs/web generateRouteSearchTypes - typed cross-route navigate({ to, search }).",
-    "// Regenerated from the route files; a stale navigate search shape becomes a tsc error. Do not edit.",
-    'import type { SearchOf } from "@nifrajs/web"',
-    `declare module ${jsStringLiteral(module)} {`,
-    "  interface RouteSearch {",
-    ...entries,
-    "  }",
-    "}",
-    "export {}",
   ].join("\n")}\n`
 }
 

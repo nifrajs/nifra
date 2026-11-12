@@ -6,6 +6,7 @@
 ```sh
 bun run build                                # node bundles and client builds read packages/*/dist
 bun run bench:ssr                            # every table
+bun run bench:ssr:output-cost --write      # per-request loaderOutput guard cost
 bun run bench/ssr/run.ts react vue:A         # React (both tables) + Vue Table A
 BENCH_ROUNDS=3 BENCH_SSR_JSON=out.json bun run bench/ssr/run.ts svelte
 bun run bench/ssr/run.ts --runtime node vue  # nifra's Vue rows on Node only, with every rival
@@ -22,6 +23,12 @@ Every accepted sample must have a 100% success rate and only HTTP 200 responses.
 Duration-bounded samples finish outstanding requests instead of cancelling them at the deadline.
 A row that fails to build or to measure a round fails the run once every selected table has run:
 it exits non-zero and writes no results.
+
+`bench:ssr:output-cost` times the actual compiled `outputGuard` + per-request `guardValue` path for
+the detailed 50-item React `loaderOutput`, subtracting an identity function control. It also measures
+that route's end-to-end p50 in the same local run to show the guard time in context. The ratio is a
+latency reference, not a throughput uplift. It needs the built `packages/web/dist`; pass `--write` to
+save the capture to `site/shared/data/benchmarks.json`.
 
 Runtime versions are pinned in `.tool-versions`. Comparator apps have isolated installs;
 after changing their dependencies, run `bun install` in each changed app before measuring,
@@ -73,7 +80,7 @@ Every nifra app row is a real app, written the way the docs teach it:
 
 - `routes/index.*` - the page component (`.tsx`, `.vue` or `.svelte`), typed with
   `LoaderData<typeof loader>`
-- `routes/index.backend.ts` - a `loader` with a `loaderOutput` schema
+- `routes/index.backend.ts` - a `loader` with a `loaderOutput` schema for the shared catalog
 - `nifra.config.ts` and `backend/framework.ts` - the adapter and its build plugins
 
 `nifra build --target bun` or `--target node` builds it, and the `server.js` it generates serves it.
@@ -88,7 +95,11 @@ bundle and its static files.
 | Svelte | `nifra-svelte-app` | SvelteKit `adapter-node` |
 | Preact | `nifra-preact-app` | none runs on Node (Fresh is Deno-only); `preact-ssr` is `preact-render-to-string` in a bare Node server, the renderer's ceiling |
 
-No dynamic row caches anything: each request runs the loader and renders the page.
+No dynamic row caches anything: each request runs the loader and renders the page. All rows return
+the same catalog. Nifra's rows also run the `loaderOutput` projection and validation required for
+this client-bound loader data; the comparator frameworks do not expose an equivalent boundary.
+Table A therefore measures each complete app path, including Nifra's enforced output contract, not
+the renderer alone. Nifra's static rows pay that validation during the build rather than per request.
 
 ### The renderer row (Preact only)
 

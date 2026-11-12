@@ -78,13 +78,16 @@ import { getSourceRewrite } from "./source-rewrites.ts"
 
 export interface UpgradeOptions {
   /** Target version, e.g. "1.8.0". Required unless `list` is set. */
-  readonly version?: string
+  readonly version?: string | undefined
   /** Apply the edits. Without it, the run is a dry-run that only prints the plan. */
   readonly write?: boolean
   /** Emit a machine-readable plan/result instead of the human report. */
   readonly json?: boolean
   /** Print the available target versions and return. */
   readonly list?: boolean
+  /** The version to upgrade from, in place of the lowest one the project's pins name. After the
+   * pins were bumped by hand, the recipes they skipped apply again only from this version. */
+  readonly from?: string | undefined
   /** After `--write`, run `nifra check` and fail the command if it fails, once the install matches
    * the target; until then, print the install command to run first. Default true. */
   readonly verify?: boolean
@@ -1888,11 +1891,76 @@ async function uncoveredContracts(cwd: string): Promise<string[]> {
 const uncoveredContractsNote = (routes: readonly string[]): string =>
   `note: contracts.lock.json records no request schema for ${routes.slice(0, 3).join(", ")}${routes.length > 3 ? ` and ${routes.length - 3} more` : ""}. Where this release reads a schema the installed one could not, \`nifra check\` reports it as newly covered: review it, then run \`nifra contracts snapshot\`.`
 
+const UPGRADE_SWITCHES: readonly string[] = [
+  "--write",
+  "--json",
+  "--list",
+  "--exact",
+  "--allow-downgrade",
+  "--allow-linked-skew",
+  "--no-verify",
+  "--no-hooks",
+]
+
+export interface UpgradeArgs {
+  readonly version: string | undefined
+  readonly from: string | undefined
+  readonly write: boolean
+  readonly json: boolean
+  readonly list: boolean
+  readonly exact: boolean
+  readonly allowDowngrade: boolean
+  readonly allowLinkedSkew: boolean
+  readonly verify: boolean
+  readonly hooks: boolean
+}
+
+/** The arguments of `nifra upgrade`. Anything else is refused: an ignored `--from` would plan the
+ * upgrade from the wrong version and still exit 0. */
+export function parseUpgradeArgs(args: readonly string[]): UpgradeArgs {
+  const on = new Set<string>()
+  let version: string | undefined
+  let from: string | undefined
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? ""
+    const equals = arg.startsWith("--") ? arg.indexOf("=") : -1
+    const name = equals === -1 ? arg : arg.slice(0, equals)
+    if (name === "--from") {
+      const value = equals === -1 ? args[++i] : arg.slice(equals + 1)
+      if (value === undefined || value === "" || (equals === -1 && value.startsWith("-")))
+        throw new Error("[nifra] --from needs a version, e.g. --from 5.8.0")
+      from = value
+    } else if (UPGRADE_SWITCHES.includes(arg)) on.add(arg)
+    else if (arg.startsWith("-")) {
+      throw new Error(`[nifra] unknown option: ${arg} - see \`nifra help\``)
+    } else if (version === undefined) version = arg
+    else throw new Error(`[nifra] unexpected argument: ${arg} - see \`nifra help\``)
+  }
+  return {
+    version,
+    from,
+    write: on.has("--write"),
+    json: on.has("--json"),
+    list: on.has("--list"),
+    exact: on.has("--exact"),
+    allowDowngrade: on.has("--allow-downgrade"),
+    allowLinkedSkew: on.has("--allow-linked-skew"),
+    verify: !on.has("--no-verify"),
+    hooks: !on.has("--no-hooks"),
+  }
+}
+
 export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<boolean> {
   const cliVersion = options.cliVersion ?? listRecipeVersions().at(-1) ?? "0.0.0"
   const targets = upgradeTargets(cliVersion)
+  if (options.from !== undefined && !RELEASE_VERSION.test(options.from)) {
+    console.error(
+      `[nifra] --from ${JSON.stringify(options.from)} is not a release version, e.g. ${cliVersion}`,
+    )
+    return false
+  }
   if (options.list) {
-    const installed = installedGroupVersion(cwd)
+    const installed = options.from ?? installedGroupVersion(cwd)
     const notes = Object.fromEntries(targets.map((v) => [v, getRecipe(v)?.notes ?? []]))
     const ahead = targets.filter((v) => installed === null || compareSemverSpec(v, installed) > 0)
     const unaffected = unaffectedReleases(ahead, groupSurface(cwd))
@@ -1952,7 +2020,7 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   const write = options.write === true
   const allowDowngrade = options.allowDowngrade === true
   const exact = options.exact === true
-  const from = installedGroupVersion(cwd)
+  const from = options.from ?? installedGroupVersion(cwd)
   const recipe = chainRecipes(version, from)
 
   // Fail-closed on rollback: a dry pass writes nothing, so we can refuse before any package.json is touched.

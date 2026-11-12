@@ -664,8 +664,11 @@ Deno.test("a method token that differs only in case is a different method on the
 
 // Deno hands the adapter the target exactly as sent; the app routes the path a URL parser resolves
 // it to, as it does on every other runtime.
-Deno.test("a target with dot segments or a backslash routes the path it resolves to", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+Deno.test("normalizeTarget routes a target with dot segments or a backslash on the path it resolves to", async () => {
+  const running = await serve(requestTargetApp(server({ normalizeTarget: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
   try {
     assertEquals(await requestTargetMismatches(running.port), [])
     assertEquals(await requestTargetMismatches(running.port, true), [])
@@ -676,8 +679,11 @@ Deno.test("a target with dot segments or a backslash routes the path it resolves
 
 // Deno builds the request URL from the Host as received: `Host: x/users/7#` with `GET /posts` was
 // routed to `/users/:id`. Such a Host is refused, as Node refuses it.
-Deno.test("a Host that is not an authority never steers the routed path", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+Deno.test("validateHost prevents a Host from steering the routed path", async () => {
+  const running = await serve(requestTargetApp(server({ validateHost: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
   try {
     assertEquals(await invalidHostMismatches(running.port), [])
     assertEquals(await refusedHostMismatches(running.port), [])
@@ -692,10 +698,44 @@ Deno.test("a Host that is not an authority never steers the routed path", async 
   }
 })
 
+Deno.test("validateHost is opt-in on Deno", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const served = await rawExchange(running.port, "GET", "/posts", undefined, "a!b")
+    assertEquals(served, { status: 200, body: '{"route":"GET /posts"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+Deno.test("unparseable Host cannot steer dot-segment routing with validation off", async () => {
+  const running = await serve(requestTargetApp(server({ normalizeTarget: true })), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
+  try {
+    const refused = await rawExchange(
+      running.port,
+      "GET",
+      "/users/../posts",
+      undefined,
+      "127.0.0.1:99999",
+    )
+    assertEquals(refused, { status: 400, body: '{"ok":false,"error":"invalid_host"}' })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 // No URL can be built on a port past 65535, so resolving the dot segment threw out of `fetch` and the
 // adapter answered 500. Found by the runtime differential (scripts/check-runtime-differential.ts).
 Deno.test("a Host port past 65535 is refused, dot segments or not", async () => {
-  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  const running = await serve(
+    requestTargetApp(server({ validateHost: true, normalizeTarget: true })),
+    {
+      port: 0,
+      hostname: "127.0.0.1",
+    },
+  )
   try {
     for (const target of ["/posts", "/users/../posts"]) {
       const refused = await rawExchange(running.port, "GET", target, undefined, "127.0.0.1:99999")
@@ -729,6 +769,59 @@ Deno.test("a request no Request can be rebuilt from is routed on its resolved ta
       answers.push((await rawExchange(running.port, method, target, body)).status)
     }
     assertEquals(answers, [405, 404, 405])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// A mount is handed the request as Deno delivered it, so a mounted app without `normalizeTarget`
+// matched the dot segments raw and answered 404 where it answers the rebuilt copy of any other
+// request 405. Found by scripts/check-runtime-differential.ts.
+Deno.test("a mounted app routes a request no Request can be rebuilt from on the target its parent resolved", async () => {
+  const child = (prefix: string) => server().get(`${prefix}/item`, () => ({ ok: true }))
+  const wrapped = child("/wrapped")
+  const app = server({ normalizeTarget: true })
+    .mount({ path: "/pages", app: child("/pages") })
+    .mountFetch("/wrapped", (req) => wrapped.fetch(req))
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const answers: Record<string, number[]> = {}
+    for (const method of ["TRACE", "TRACK"]) {
+      const statuses: number[] = []
+      for (const target of [
+        "/pages/item",
+        "/x/../pages/item",
+        "/pages/./item",
+        "/x/../wrapped/item",
+        "/x/../pages/none",
+      ]) {
+        statuses.push((await rawExchange(running.port, method, target)).status)
+      }
+      answers[method] = statuses
+    }
+    assertEquals(answers, {
+      TRACE: [405, 405, 405, 405, 404],
+      TRACK: [405, 405, 405, 405, 404],
+    })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// An onRequest hook that hands back the request it was given changes nothing, so the mounted app
+// still routes the target its parent resolved.
+Deno.test("a mounted app's onRequest hook returning its own request keeps the target its parent resolved", async () => {
+  const child = server()
+    .onRequest((req) => req)
+    .get("/pages/item", () => ({ ok: true }))
+  const app = server({ normalizeTarget: true }).mount({ path: "/pages", app: child })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const statuses: number[] = []
+    for (const target of ["/pages/item", "/x/../pages/item", "/x/../pages/none"]) {
+      statuses.push((await rawExchange(running.port, "TRACE", target)).status)
+    }
+    assertEquals(statuses, [405, 405, 404])
   } finally {
     await running.stop({ drainMs: 0 })
   }
@@ -888,7 +981,7 @@ function headersCacheSlot(): symbol {
 Deno.test("the Host check, upgrade probe and JSON body lane leave the header list unbuilt", async () => {
   const headersCache = headersCacheSlot()
   const seen: Request[] = []
-  const app = server()
+  const app = server({ validateHost: true })
     .use(websocket())
     .ws("/socket", { message: (ws, data) => ws.send(data) })
     .get("/bare", (c) => {
@@ -945,7 +1038,7 @@ Deno.test("the body lane reads the headers of a request a hook rebuilt", async (
 
 // A request Deno did not parse off the wire has no single-header reader; its Host is still checked.
 Deno.test("a constructed request's Host is checked through its headers", async () => {
-  const app = requestTargetApp(server())
+  const app = requestTargetApp(server({ validateHost: true }))
   const refused = await app.fetch(
     new Request("http://127.0.0.1/posts", { headers: { host: "x/users/7#" } }),
   )
@@ -958,7 +1051,7 @@ Deno.test("a constructed request's Host is checked through its headers", async (
 })
 
 Deno.test("a handshake whose Host is not an authority is refused", async () => {
-  const app = server()
+  const app = server({ validateHost: true })
     .use(websocket())
     .ws("/echo", { message: (ws, data) => ws.send(data) })
   const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
@@ -971,7 +1064,7 @@ Deno.test("a handshake whose Host is not an authority is refused", async () => {
 })
 
 Deno.test("a handshake target with dot segments upgrades on the path it resolves to", async () => {
-  const app = server()
+  const app = server({ normalizeTarget: true })
     .use(websocket())
     .ws("/echo", { message: (ws, data) => ws.send(data) })
   const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
@@ -1134,4 +1227,68 @@ Deno.test("stop() drains a static response in flight", async () => {
   ])
   await running.stop({ drainMs: 1000 })
   assertEquals(await pending, "slow file")
+})
+
+Deno.test("dot segments are routed as sent unless normalizeTarget is set", async () => {
+  const build = (normalizeTarget: boolean) =>
+    server({ normalizeTarget })
+      .get("/admin", () => ({ where: "admin" }))
+      .get("/public/:name", (c) => ({ where: "public", name: c.params.name }))
+  const off = await serve(build(false), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const missed = await rawExchange(off.port, "GET", "/public/../admin")
+    assertEquals(missed.status, 404)
+  } finally {
+    await off.stop({ drainMs: 0 })
+  }
+  const on = await serve(build(true), { port: 0, hostname: "127.0.0.1" })
+  try {
+    const hit = await rawExchange(on.port, "GET", "/public/../admin")
+    assertEquals(hit.status, 200)
+  } finally {
+    await on.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("await using a serve() handle runs the app's stop hooks when the scope ends", async () => {
+  const log: string[] = []
+  const app = server()
+    .get("/", () => "ok")
+    .onStop(() => {
+      log.push("stopped")
+    })
+  {
+    await using running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+    assertEquals((await fetch(`http://127.0.0.1:${running.port}/`)).status, 200)
+    assertEquals(log, [])
+  }
+  assertEquals(log, ["stopped"])
+})
+
+Deno.test("disposing during a shutdown that is under way waits for it", async () => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const log: string[] = []
+  const app = server()
+    .onStopping(async () => {
+      await gate
+    })
+    .onStop(() => {
+      log.push("stopped")
+    })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
+  const stopping = running.stop()
+  const disposed = running[Symbol.asyncDispose]()
+  try {
+    const outcome = await Promise.race([disposed.then(() => "done"), Promise.resolve("pending")])
+    assertEquals(outcome, "pending")
+    assertEquals(log, [])
+  } finally {
+    release()
+  }
+  await disposed
+  await stopping
+  assertEquals(log, ["stopped"])
 })

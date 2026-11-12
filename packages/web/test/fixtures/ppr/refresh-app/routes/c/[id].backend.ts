@@ -1,5 +1,5 @@
 import { t } from "@nifrajs/schema"
-import { add, countOf } from "../../lib/counts.ts"
+import { add, countOf } from "../../lib/counts.backend.ts"
 
 export const shellLoader = async (ctx: { readonly params: Readonly<Record<string, string>> }) => ({
   title: `Cart ${ctx.params.id}`,

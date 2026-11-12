@@ -1,5 +1,6 @@
 import { ServerComponentError } from "./error.ts"
 import { COMPONENT_LIMITS } from "./protocol.ts"
+export const COMPONENT_OUTPUT_LIMIT = COMPONENT_LIMITS.outputBytes
 
 export function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({

@@ -17,19 +17,19 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 - **Await** _(function)_ - `Await: <T>(props: AwaitProps<T>) => VNode | ComponentChildren` · from `@nifrajs/web-preact/await`
 - **Content** _(function)_ - `Content: ({ html, as, ...rest }: ContentProps) => VNode` · from `@nifrajs/web-preact/content`
 - **Hole** _(function)_ - `Hole: <Data>(props: HoleProps<Data>) => ComponentChildren` · from `@nifrajs/web-preact/ppr`
+- **HydrationBoundary** _(function)_ - `HydrationBoundary: (props: { readonly state: DehydratedState | undefined; readonly children?: ComponentChildren; }) => ComponentChildren` · from `@nifrajs/web-preact/query`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => VNode` · from `@nifrajs/web-preact/i18n`
-- **Image** _(function)_ - `Image: (props: ImageComponentProps) => VNode` · from `@nifrajs/web-preact/image`
+- **Image** _(function)_ - `Image: (props: ImageComponentProps | StaticImageComponentProps) => VNode` · from `@nifrajs/web-preact/image`
+- **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ComponentChildren; }) => ComponentChildren` · from `@nifrajs/web-preact/query`
+- **RouteSlot** _(function)_ - `RouteSlot: ({ name, fallback, error }: RouteSlotProps) => VNode | null` · from `@nifrajs/web-preact/router`
 - **ServerComponent** _(function)_ - `ServerComponent: <Input, Props, View>(props: ServerComponentProps<Input, Props, View>) => import("preact").VNode<import("preact").Attribute…` · from `@nifrajs/web-preact/server-components/outlet`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-preact/client`
+- **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>` · from `@nifrajs/web-preact/router`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-preact/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-preact/client`
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void` · from `@nifrajs/web-preact/keep-alive`
-- **onPageShow** _(function)_ - `onPageShow: (callback: () => void) => void` · from `@nifrajs/web-preact/keep-alive`
-- **preactComponentClient** _(function)_ - `preactComponentClient: (options: Omit<NativeRangeOptions, "adapter" | "runtime">) => import("@nifrajs/web/server-components/client").Compon…` · from `@nifrajs/web-preact/server-components/client`
-- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-preact/i18n`
-- **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-preact/fetcher`
 
-_…and 34 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 48 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

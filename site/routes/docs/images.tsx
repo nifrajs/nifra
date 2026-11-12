@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/images",
@@ -111,6 +112,46 @@ const info = await readImageDimensions(Bun.file("public/hero.jpg"))
 const headerBytes = await Bun.file("public/hero.jpg").bytes()
 imageDimensions(headerBytes)`
 
+const IMPORTED = `// env.d.ts — enable the typed metadata import:
+/// <reference types="@nifrajs/image/imports" />
+
+// routes/index.tsx (React; also supported by Preact, Solid, Vue and Svelte)
+import { Image } from "@nifrajs/web-react/image"
+import hero from "../shared/images/hero.jpg?image"
+
+export default function Page() {
+  return <Image src={hero} alt="Mountain lake" priority />
+  // Optional width={600} infers height from the source aspect ratio.
+}`
+
+const IMPORT_PLUGINS = `// backend/framework.ts — add these beside your existing framework plugins:
+import { imageBunPlugin } from "@nifrajs/image/plugins"
+
+const images = { root: process.cwd() }
+export const clientPlugins = [imageBunPlugin(images)]
+export const serverPlugins = [imageBunPlugin(images)]
+
+// For the Vite pipeline instead (including component mode):
+// import { imageVitePlugin } from "@nifrajs/image/plugins"
+// export const vitePlugins = [imageVitePlugin(images)]`
+
+const STATIC_VARIANTS = `// doc-check: skip - install sharp and merge with your framework's existing plugins.
+import sharp from "sharp"
+import { Buffer } from "node:buffer"
+import { sharpImageBackend } from "@nifrajs/image/backends"
+import { imageBunPlugin } from "@nifrajs/image/plugins"
+
+const images = {
+  root: process.cwd(),
+  widths: [320, 640, 1200],
+  format: "webp" as const,
+  quality: 80,
+  backend: sharpImageBackend((bytes) => sharp(Buffer.from(bytes))),
+}
+export const clientPlugins = [imageBunPlugin(images)]
+export const serverPlugins = [imageBunPlugin(images)]
+// Vite: use imageVitePlugin(images) in vitePlugins instead.`
+
 export default function Images() {
   return (
     <div className="prose">
@@ -124,9 +165,9 @@ export default function Images() {
 
       <h2>The &lt;Image&gt; component</h2>
       <p>
-        <code>width</code> and <code>height</code> are <b>required</b> and validated{" "}
-        <code>&gt; 0</code> - they reserve layout space so the page never shifts when the image loads
-        (the CLS contract). It's <code>loading="lazy"</code> + <code>decoding="async"</code> by default;
+        For string URLs, <code>width</code> and <code>height</code> are <b>required</b> and validated{" "}
+        <code>&gt; 0</code>. Imported metadata can supply them automatically. Dimensions reserve layout
+        space so the page never shifts (the CLS contract). It's <code>loading="lazy"</code> + <code>decoding="async"</code> by default;
         mark the LCP image with <code>priority</code> to get <code>eager</code> +{" "}
         <code>fetchpriority="high"</code>. Extra DOM props (<code>className</code>, <code>style</code>,{" "}
         <code>id</code>, <code>data-*</code>) pass straight through to the <code>&lt;img&gt;</code>.
@@ -139,6 +180,41 @@ export default function Images() {
         <code>{`[width, width*2]`}</code> for 1×/2× retina), de-duped and sorted; if every width yields
         the same URL (e.g. the identity loader), <code>srcSet</code> is omitted. The browser then picks
         the right candidate for the device's pixel ratio and the <code>sizes</code> you declare.
+      </p>
+
+      <h2>Local image imports</h2>
+      <p>
+        Opt into <code>?image</code> imports to read PNG, JPEG, GIF and WebP dimensions at build time,
+        including JPEG, PNG and WebP display orientation. The import is a browser-safe <code>StaticImageData</code>
+        object; no filesystem code or codec ships to the browser. Ordinary string URLs are unchanged.
+      </p>
+      <CodeBlock code={IMPORTED} />
+      <CodeBlock code={IMPORT_PLUGINS} />
+      <p>
+        Keep the same image options in client and server builds. Preserve your framework's existing
+        plugins when adding these. Metadata-only imports need no native dependency. Nifra emits the
+        original bytes under <code>/assets/_images/</code> with content-hashed names, registers them in
+        the build manifest, and serves them in development. Static builds deploy these files too;
+        no image endpoint is needed. For standalone bundler use, emit the plugin's
+        <code>nifraStaticAssets()</code> files yourself. A custom <code>publicPath</code> (a root-relative prefix
+        or an absolute http(s) URL) must match your client build's asset prefix; a mismatch fails the build.
+      </p>
+      <h2>Build-time responsive variants</h2>
+      <p>
+        Supply <code>widths</code> and an explicit <code>ImageBackend</code> to generate real responsive
+        files at build time. This reuses the sharp, Bun.Image or WASM backend seam; sharp is an optional
+        application dependency, not a Nifra runtime dependency. Both the processor and sharp path work
+        on Node without Bun. Outputs support WebP (default), JPEG and PNG; widths never upscale the source.
+      </p>
+      <CodeBlock code={STATIC_VARIANTS} />
+      <p>
+        The component chooses only emitted variants; per-render <code>widths</code> filters available
+        candidates rather than creating files. Build-time <code>quality</code> is baked in. An explicit
+        CDN loader overrides the static variant selection. Defaults cap sources at 16 MiB and 40 million
+        pixels; <code>maxSourceBytes</code> and <code>maxSourcePixels</code> are configurable. At most 32
+        widths, each up to 8192 pixels, are accepted. Sources must remain inside <code>root</code>,
+        including symlink targets. GIF, animated PNG and animated WebP imports are metadata-only; AVIF and SVG metadata
+        imports are not supported.
       </p>
 
       <h2>Loaders</h2>
@@ -227,7 +303,7 @@ export default function Images() {
         Signatures over <code>(src, w, q)</code> are <b>stable</b> (no expiry), so an SSR-rendered{" "}
         <code>&lt;Image&gt;</code> srcset hydrates and caches identically. The secret makes a loader{" "}
         config <b>server-only</b> - inject it from <code>env</code> in backend code, never a page or{" "}
-        <code>frontend/</code> module (same discipline as a <a href="/docs/auth">session secret</a>). For time-limited links to
+        <code>frontend/</code> module (same discipline as a <a href={href({ to: "/docs/auth" })}>session secret</a>). For time-limited links to
         private images, <code>signImageUrl(…, {`{ expiresIn }`})</code> adds an <code>&amp;exp=</code> the
         handler enforces.
       </p>

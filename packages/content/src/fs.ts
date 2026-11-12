@@ -1,7 +1,8 @@
 /**
  * Filesystem-backed content collections - `defineCollection` reads a directory of Markdown files and
- * gives you a typed, validated API over them. Build/server-time (Bun/Node/Deno); for the edge, bake the
- * entries at build (the manifest approach `@nifrajs/web/fs` uses for routes) - tracked as a follow-up.
+ * gives you a typed, validated API over them. Build/server-time (Bun/Node/Deno). An edge bundle reads
+ * a snapshot instead: `bakeCollection` where the filesystem is available, `fromBaked` on the edge.
+ * Both are in `@nifrajs/content`.
  */
 import type { BigIntStats } from "node:fs"
 import { readdir, readFile, stat as statPath } from "node:fs/promises"

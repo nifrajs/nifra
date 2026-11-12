@@ -1,4 +1,5 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { setRouteSlotRuntime } from "@nifrajs/web/client"
 /**
  * @nifrajs/web-solid/client - Solid client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates the initial route then drives navigation through a Solid signal - so a
@@ -36,6 +37,7 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
  */
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, matchChains, container } = options
+  setRouteSlotRuntime({ router, routes, searchSchemas, matchChains })
   setMountedRouter(router) // expose it to createFetcher/useFetchers (same page, client-only)
   const el = container as Element
 

@@ -964,6 +964,38 @@ describe("attachWebSocket", () => {
     expect(socket.sent).toHaveLength(0)
   })
 
+  test("a topic cleanup failure is reported without skipping the close callback", () => {
+    const socket = new FakeSocket()
+    const cleanupError = new Error("cleanup failed")
+    const errors: unknown[] = []
+    let closed = false
+    const pubsub = {
+      subscribe: () => {},
+      unsubscribe: () => {},
+      unsubscribeAll: () => {
+        throw cleanupError
+      },
+      publish: () => {},
+    }
+    attachWebSocket(
+      socket,
+      {
+        error: (_ws, error) => {
+          errors.push(error)
+        },
+        close: () => {
+          closed = true
+        },
+      },
+      undefined,
+      { openNow: true, pubsub },
+    )
+
+    expect(() => socket.fire("close", { code: 1000, reason: "" })).not.toThrow()
+    expect(errors).toEqual([cleanupError])
+    expect(closed).toBe(true)
+  })
+
   test("a subscribe that lands after close is dropped, not held by the registry", async () => {
     const socket = new FakeSocket()
     const pubsub = new TopicRegistry()

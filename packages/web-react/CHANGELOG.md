@@ -1,5 +1,171 @@
 # @nifrajs/web-react
 
+## 5.13.0
+
+### Patch Changes
+
+- Updated dependencies [591f74e]
+- Updated dependencies [b427443]
+- Updated dependencies [3b39e39]
+- Updated dependencies [16023e9]
+- Updated dependencies [9c47fad]
+- Updated dependencies [d75437b]
+- Updated dependencies [9c8a464]
+- Updated dependencies [72fe9ce]
+- Updated dependencies [8bba4fa]
+- Updated dependencies [820a05a]
+- Updated dependencies [497449f]
+  - @nifrajs/core@5.13.0
+  - @nifrajs/web@5.13.0
+
+## 5.12.1
+
+### Patch Changes
+
+- Updated dependencies [eae0213]
+  - @nifrajs/core@5.12.1
+  - @nifrajs/web@5.12.1
+
+## 5.12.0
+
+### Patch Changes
+
+- Updated dependencies [d274304]
+- Updated dependencies [3a42e07]
+- Updated dependencies [91cc290]
+- Updated dependencies [28bdd6c]
+- Updated dependencies [878bb89]
+- Updated dependencies [c4bd5b2]
+  - @nifrajs/core@5.12.0
+  - @nifrajs/web@5.12.0
+
+## 5.11.0
+
+### Minor Changes
+
+- 3c8024d: Add independently addressable route slots with typed targets, server allowlists, and framework bindings.
+- bc40a1d: React server-component owner refreshes for one selected component without descendants can progressively commit ready Suspense content through a bounded Flight stream. Other adapters, multi-component selections, and refreshes with descendants use the buffered response path. Owner routes may explicitly opt into ISR when their complete output is request-independent and anonymous; Nifra disables shared storage when route, layout, middleware, component authorization/loading, or app hooks registered through `createWebApp({ use })` read request headers. Uninspectable request replacements fail closed. The `requestIndependent` declaration remains the application's assertion for dependencies Nifra cannot observe, such as database, environment, global, or external-service state, and hooks attached after app creation. Cache entries are isolated by deployment, build, adapter, route, and canonical URL, while responses sent to clients remain `private, no-store`. Pass the same app to `revalidateEndpoint({ app, store, secret })` to purge an owner route by path.
+
+### Patch Changes
+
+- Updated dependencies [3c8024d]
+- Updated dependencies [d76f9d7]
+- Updated dependencies [9a0f0a0]
+- Updated dependencies [bc40a1d]
+- Updated dependencies [97a55bf]
+- Updated dependencies [abf5a0b]
+  - @nifrajs/web@5.11.0
+  - @nifrajs/core@5.11.0
+
+## 5.10.0
+
+### Minor Changes
+
+- 611a3be: Expose mutation and infinite-query bindings across the framework adapters, with request-scoped query-client providers and SSR cache hydration. Mutation functions and callbacks receive a cooperative abort signal, and identity changes cancel pending work across tabs. `dehydrate` can filter regular and infinite query values before they are serialized to the browser.
+- d2066e0: Add opt-in local `?image` metadata imports and content-hashed build-time responsive variants using the existing injectable image backends. Emit images with client, SSR and static builds, and infer imported dimensions in all five UI adapters. String image URLs retain their existing dimension requirements.
+  
+  Add explicit static translated-path mappings to i18n routing, with reciprocal URL/SEO helpers, availability-aware redirects and static-path enumeration. These mappings do not implicitly create filesystem route aliases.
+  
+  Add `vercelRuntime: "node"` for ordinary SSR Vercel builds through both bundlers, using a shared streaming Node request bridge. Vercel Edge remains the default.
+- 824a75e: Partial prerendering is no longer experimental. `createWebApp` takes it as `ppr`, where it was `experimental.ppr`, and the `experimental` option is gone: passing it throws a `TypeError` that names `ppr`, and the startup errors name `ppr.origin`, `ppr.deployment` and `ppr.store`. `nifra upgrade` moves `experimental: { ppr }` to `ppr` in a `createWebApp` options literal and lists any other `experimental` shape it finds there by line (options spread in, or built in another file, are yours to check). `nifra scaffold` is stable.
+- 1faf86c: `href({ to, params, search, hash })` builds an in-app URL from a route pattern and returns an `Href`; `rawHref(path)` returns one for a same-origin path built elsewhere (a CMS link, `/llms.txt`). `to` is a key of the generated `RouteTable`, so a misspelt route, a missing, misspelt or extra param, and a `search` that breaks the route's schema are compile errors. A route without a `searchSchema` takes any `search`. Each param is encoded as one path segment, so a value such as `a/b` or `//evil.com` cannot change where the URL goes; a param that is missing, empty, `.`, `..` or an unpaired surrogate throws a `TypeError` naming it and the pattern. `rawHref` throws a `TypeError` unless `isSameOriginPath` accepts the path. Both are exported by `@nifrajs/web` and by the `/router` entry of every adapter.
+  
+  `navigate` takes an `Href` or a history delta. A string, a template literal and the `{ to, search }` object form are compile errors, and a value forged past the types is still held to the same-origin check the browser navigate makes. `<Navigate to>` and the `useSearchParams` setter in `@nifrajs/web-react` pass their path through `rawHref`, so an off-origin `to` throws instead of doing nothing. `isSameOriginPath` is exported from `@nifrajs/core/pattern` as well as `@nifrajs/core/server`.
+  
+  Upgrade: `navigate("/users/7")` becomes `navigate(href({ to: "/users/:id", params: { id: "7" } }))`, `navigate({ to, search, replace: true })` becomes `navigate(href({ to, search }), { replace: true })`, and a path built elsewhere is `navigate(rawHref(path))`. `resolveNavigate`, `NavigateTargetInput` and `NavigateSearchOf` are removed from `@nifrajs/web`.
+- 950996b: `redirect()` takes an `Href` (from `href()` or `rawHref()`), and any other string needs `{ external: true }`, so `redirect("/login")`, a template literal and a string variable are compile errors. React's `Link`, `NavLink` and `Navigate` take `to: Href`. `Link` and `NavLink` render the anchor without an `href` (and log a `console.error`) when `to` is not a same-origin path, instead of writing it into the anchor's `href`; a link to another site is a plain `<a href>`.
+  
+  Upgrade: `redirect("/login")` becomes `redirect(href({ to: "/login" }))`, `<Link to="/pricing">` becomes `<Link to={href({ to: "/pricing" })}>`, and a path built elsewhere is `rawHref(path)` in either. `redirect(url, { external: true })` is unchanged.
+
+### Patch Changes
+
+- 548bade: A destination that is not a same-origin path costs only its own link: `Link` and `NavLink` render the anchor without an `href`, `Navigate` and `setSearchParams` do not navigate, and each logs a `console.error` instead of throwing. `rawHref` still throws a `TypeError`.
+- Updated dependencies [535c4e5]
+- Updated dependencies [87e7fd9]
+- Updated dependencies [611a3be]
+- Updated dependencies [7f32bb2]
+- Updated dependencies [0aa10d0]
+- Updated dependencies [ab69ee6]
+- Updated dependencies [548bade]
+- Updated dependencies [d2066e0]
+- Updated dependencies [7e292dd]
+- Updated dependencies [a6af4c9]
+- Updated dependencies [e465ed5]
+- Updated dependencies [683c3d6]
+- Updated dependencies [824a75e]
+- Updated dependencies [d2066e0]
+- Updated dependencies [5845e1c]
+- Updated dependencies [5d1be78]
+- Updated dependencies [1faf86c]
+- Updated dependencies [950996b]
+  - @nifrajs/web@5.10.0
+  - @nifrajs/core@5.10.0
+
+## 5.9.0
+
+### Patch Changes
+
+- 2ffa7c1: The React, Preact, Solid, Svelte and Vue `useServerFn` bindings take their function through one shared helper in `@nifrajs/web/internal/client-server-fn`.
+  
+  The React, Svelte and Vue client and keep-alive mounts read a hydration verification runner's hooks through one reader in `@nifrajs/web/internal/hydration-assurance`. Recoverable errors and warnings reach the runner as before.
+- 100a0aa: The React and Preact `ServerComponent` outlets mount, adopt and tear down their instance through one lifecycle in `@nifrajs/web/internal/component-outlet`, and behave alike. An outlet whose host holds no `<nifra-component>` reports `component_contract` through `onError` rather than returning silently in React or throwing in Preact. A mount, adoption or teardown failure reaches both the controller a page passes and the outlet's own `onError`. A React outlet adopts new component state only when that state changes, not when its `onError` does.
+- 71dea89: Every binding's `useNavigate` returns one navigate from `@nifrajs/web/internal/navigate-runtime`, the same function on every call. The React, Preact, Solid and Vue `Hole` components read their boundary state through the `HoleState` type in `@nifrajs/web/internal/hole-runtime`.
+- a0fe5bf: The keep-alive mounts of the React, Preact, Svelte, Solid and Vue adapters take their framework-free half from `@nifrajs/web/internal/keep-alive-mount`. This covers the slot tree of each router state, the parking each committed tree goes to, render props made once per state, and the slots under each layout. Each adapter still renders the slots its own way. Kept pages behave as before.
+- 159ae97: The React, Preact and Vue client mounts and the Svelte keep-alive mount build a route's props with one builder from `@nifrajs/web`. The props a page receives are unchanged.
+- Updated dependencies [2ffa7c1]
+- Updated dependencies [100a0aa]
+- Updated dependencies [71dea89]
+- Updated dependencies [9c20e05]
+- Updated dependencies [9942748]
+- Updated dependencies [8cdb138]
+- Updated dependencies [be1c677]
+- Updated dependencies [f399e06]
+- Updated dependencies [93e7078]
+- Updated dependencies [2c2f58b]
+- Updated dependencies [123409c]
+- Updated dependencies [7ee17d0]
+- Updated dependencies [68d9f31]
+- Updated dependencies [fa7d102]
+- Updated dependencies [ddeb735]
+- Updated dependencies [a3fb195]
+- Updated dependencies [47a864f]
+- Updated dependencies [9942748]
+- Updated dependencies [ffcf41a]
+- Updated dependencies [7a15327]
+- Updated dependencies [866c8ec]
+- Updated dependencies [bc42fd2]
+- Updated dependencies [a29d1cc]
+- Updated dependencies [9942748]
+- Updated dependencies [77b98ea]
+- Updated dependencies [a3caf9b]
+- Updated dependencies [a0fe5bf]
+- Updated dependencies [7ba5c9b]
+- Updated dependencies [0445564]
+- Updated dependencies [180bf9d]
+- Updated dependencies [ff9bc11]
+- Updated dependencies [8094874]
+- Updated dependencies [a7b89ee]
+- Updated dependencies [34b780e]
+- Updated dependencies [111c3be]
+- Updated dependencies [5bd225e]
+- Updated dependencies [d6e6617]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [159ae97]
+- Updated dependencies [6ba9740]
+- Updated dependencies [5f4416a]
+- Updated dependencies [bc05ec5]
+- Updated dependencies [d3c050e]
+- Updated dependencies [c4ed3e9]
+- Updated dependencies [9942748]
+- Updated dependencies [5bc60b7]
+- Updated dependencies [3299474]
+- Updated dependencies [543d00a]
+- Updated dependencies [020eb7b]
+- Updated dependencies [9942748]
+- Updated dependencies [9785cd4]
+  - @nifrajs/web@5.9.0
+  - @nifrajs/core@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

@@ -115,6 +115,8 @@ export interface WorkerOptions {
 export interface Worker {
   /** Stop polling and await every job in flight (graceful). */
   stop(): Promise<void>
+  /** `await using worker = queue.start()`: the same as `stop()`. */
+  [Symbol.asyncDispose](): Promise<void>
   readonly running: boolean
 }
 
@@ -593,7 +595,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
       }, report)
     }
     if (timer === undefined) timer = setInterval(poll, intervalMs)
-    return {
+    const worker: Worker = {
       get running() {
         return timer !== undefined
       },
@@ -606,7 +608,9 @@ export function createQueue(options: QueueOptions = {}): Queue {
         await leasing?.catch(() => {})
         await Promise.allSettled([...running])
       },
+      [Symbol.asyncDispose]: () => worker.stop(),
     }
+    return worker
   }
 
   return {

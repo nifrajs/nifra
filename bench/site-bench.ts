@@ -12,8 +12,13 @@
  */
 
 import { existsSync, readFileSync } from "node:fs"
+import { arch, availableParallelism, cpus, platform } from "node:os"
 import { dirname, join } from "node:path"
-import type { HttpMemoryCapture } from "../site/shared/data/memory-types.ts"
+import type {
+  HttpMemoryCapture,
+  HttpMemoryRow,
+  HttpMemoryRuntime,
+} from "../site/shared/data/memory-types.ts"
 
 export interface BenchRow {
   readonly name: string
@@ -38,19 +43,33 @@ export interface ProofStat {
   readonly label: string
 }
 
-/** When and with which toolchain a slice was measured; `deno` is absent for a suite that skips it. */
+export interface CaptureMachine {
+  readonly runner: string
+  readonly cpu: string
+  readonly vcpus: number
+}
+
+/** When, where, and with which toolchain a slice was measured. */
 export interface CapturedMeta {
   readonly date: string
+  /** The Nifra release the capture was built from, so version labels cannot drift on their own. */
+  readonly nifraVersion: string
   readonly bun: string
   readonly node: string
   readonly deno?: string
   readonly oha: string
+  readonly source?: string
+  readonly sourceUrl?: string
+  readonly machine?: CaptureMachine
+  readonly machines?: Partial<Record<"bun" | "node" | "deno", CaptureMachine>>
 }
 
 export interface HttpWorkloadRow {
   readonly name: string
   readonly version: string
+  readonly getRoot?: string
   readonly getUsers: string
+  readonly getSearch?: string
   readonly postUsers: string
   readonly nifra?: boolean
 }
@@ -103,14 +122,47 @@ export interface SsrSiteTable {
   readonly rows: readonly SsrSiteRow[]
 }
 
+export interface SsrOutputGuardCostResult {
+  readonly runtimeVersion: string
+  readonly guardRounds: number
+  readonly iterationsPerRound: number
+  readonly rps: number
+  readonly p50ms: number
+  readonly guardUsPerRequest: number
+  readonly identityUsPerRequest: number
+  /** Paired median of guard time minus the identity control, in microseconds per result. */
+  readonly addedUsPerRequest: number
+  /** The added guard time as a fraction of this route's observed end-to-end p50. */
+  readonly guardShareOfP50Percent: number
+  readonly guardSamplesUs: readonly number[]
+  readonly identitySamplesUs: readonly number[]
+}
+
+export interface SsrOutputGuardCostCapture {
+  readonly date: string
+  readonly source: string
+  readonly machine: string
+  readonly bun: string
+  readonly node: string
+  readonly oha: string
+  readonly items: number
+  readonly connections: number
+  readonly durationS: number
+  readonly warmupS: number
+  readonly guardRounds: number
+  readonly iterationsPerRound: number
+  readonly results: Readonly<Record<"bun" | "node", SsrOutputGuardCostResult>>
+}
+
 export interface SiteBench {
-  readonly httpMemory?: HttpMemoryCapture
+  readonly httpMemory?: Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>>
   readonly _note?: string
   // One record per slice, not one for the file: the suites run at different times, and a shared
   // record would attribute every table to whichever suite wrote last.
   readonly httpWorkloadsCaptured?: CapturedMeta
   readonly httpRealworldCaptured?: CapturedMeta
   readonly ssrCaptured?: CapturedMeta
+  readonly ssrOutputGuardCost?: SsrOutputGuardCostCapture
   readonly heroSsr: readonly BenchRow[]
   readonly frontend: readonly BenchRow[]
   readonly multipliers: readonly Multiplier[]
@@ -124,6 +176,105 @@ export interface SiteBench {
   readonly httpRealworld?: readonly HttpRealworldTable[]
   readonly bundle: readonly BundleRow[]
   readonly proof: readonly ProofStat[]
+}
+
+export type LegacyNodeHttpMemoryCapture = Omit<HttpMemoryCapture, "runtime" | "runtimeVersion">
+export type LegacySiteBench = Omit<SiteBench, "httpMemory"> & {
+  readonly httpMemory?: LegacyNodeHttpMemoryCapture
+}
+
+const HTTP_MEMORY_RUNTIMES = ["node", "bun", "deno"] as const
+
+// biome-ignore lint/plugin/noHelperCopy: Benchmark publishing validates persisted JSON locally; importing an unrelated package's internal guard would cross package boundaries.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function isMemoryRow(value: unknown): value is HttpMemoryRow {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.name === "string" &&
+    typeof value.version === "string" &&
+    (!("nifra" in value) || typeof value.nifra === "boolean") &&
+    typeof value.readyRssMiB === "number" &&
+    typeof value.getRssMiB === "number" &&
+    typeof value.postRssMiB === "number" &&
+    typeof value.postHeapMiB === "number" &&
+    typeof value.peakRssMiB === "number" &&
+    typeof value.postRssMinMiB === "number" &&
+    typeof value.postRssMaxMiB === "number"
+  )
+}
+
+function isMemoryCaptureBase(value: unknown): value is LegacyNodeHttpMemoryCapture {
+  if (!isRecord(value) || !Array.isArray(value.rows) || !value.rows.every(isMemoryRow)) return false
+  return (
+    typeof value.node === "string" &&
+    typeof value.date === "string" &&
+    typeof value.platform === "string" &&
+    typeof value.cpu === "string" &&
+    typeof value.revision === "string" &&
+    typeof value.workspaceArtifactSHA256 === "string" &&
+    (!("sourceUrl" in value) || typeof value.sourceUrl === "string") &&
+    (value.protocol === "fresh-native-node-v1" ||
+      value.protocol === "fresh-native-bun-v1" ||
+      value.protocol === "fresh-native-deno-v1") &&
+    typeof value.rounds === "number" &&
+    typeof value.requestsPerPhase === "number" &&
+    typeof value.connections === "number"
+  )
+}
+
+function isLegacyNodeMemoryCapture(value: unknown): value is LegacyNodeHttpMemoryCapture {
+  return (
+    isMemoryCaptureBase(value) &&
+    value.protocol === "fresh-native-node-v1" &&
+    !("runtime" in value) &&
+    !("runtimeVersion" in value)
+  )
+}
+
+function isHttpMemoryRuntime(value: string): value is HttpMemoryRuntime {
+  return HTTP_MEMORY_RUNTIMES.some((runtime) => runtime === value)
+}
+
+function isHttpMemoryCapture(
+  value: unknown,
+  runtime: HttpMemoryRuntime,
+): value is HttpMemoryCapture {
+  const expectedProtocol =
+    runtime === "node"
+      ? "fresh-native-node-v1"
+      : runtime === "bun"
+        ? "fresh-native-bun-v1"
+        : "fresh-native-deno-v1"
+  return (
+    isMemoryCaptureBase(value) &&
+    "runtime" in value &&
+    value.runtime === runtime &&
+    "runtimeVersion" in value &&
+    typeof value.runtimeVersion === "string" &&
+    value.protocol === expectedProtocol
+  )
+}
+
+function normalizeHttpMemory(
+  value: unknown,
+): Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>> {
+  if (value === undefined || value === null) return {}
+  if (isLegacyNodeMemoryCapture(value)) {
+    return { node: { ...value, runtime: "node", runtimeVersion: value.node } }
+  }
+  if (!isRecord(value)) throw new Error("invalid HTTP memory capture map")
+
+  const captures: Partial<Record<HttpMemoryRuntime, HttpMemoryCapture>> = {}
+  for (const [runtime, candidate] of Object.entries(value)) {
+    if (!isHttpMemoryRuntime(runtime) || !isHttpMemoryCapture(candidate, runtime)) {
+      throw new Error(`invalid HTTP memory capture for ${runtime}`)
+    }
+    captures[runtime] = candidate
+  }
+  return captures
 }
 
 const SITE_DATA = join(import.meta.dir, "..", "site", "shared", "data", "benchmarks.json")
@@ -188,13 +339,39 @@ export function capturedMeta(versions: {
   readonly oha: string
 }): CapturedMeta {
   const bare = (version: string): string => version.trim().replace(/^v/, "")
+  const runId = process.env.GITHUB_RUN_ID
+  const githubRun = process.env.GITHUB_ACTIONS === "true" && runId !== undefined
+  const runner = githubRun
+    ? `GitHub Actions (${process.env.RUNNER_OS ?? platform()} ${process.env.RUNNER_ARCH ?? arch()})`
+    : "Local"
+  const cpu = cpus()[0]?.model.trim() || `${platform()} ${arch()}`
+  const sourceUrl = benchmarkSourceUrl()
   const captured: CapturedMeta = {
     date: new Date().toISOString().slice(0, 10),
+    nifraVersion: NIFRA_VERSION,
     bun: bare(versions.bun),
     node: bare(versions.node),
     oha: bare(versions.oha),
+    source:
+      githubRun && process.env.GITHUB_WORKFLOW !== undefined
+        ? `GitHub Actions: ${process.env.GITHUB_WORKFLOW} run #${runId}`
+        : "Local benchmark capture",
+    machine: { runner, cpu, vcpus: availableParallelism() },
   }
-  return versions.deno === undefined ? captured : { ...captured, deno: bare(versions.deno) }
+  const withDeno =
+    versions.deno === undefined ? captured : { ...captured, deno: bare(versions.deno) }
+  return sourceUrl === undefined ? withDeno : { ...withDeno, sourceUrl }
+}
+
+/** The current GitHub Actions run, when a capture is being published from Actions. */
+export function benchmarkSourceUrl(): string | undefined {
+  const runId = process.env.GITHUB_RUN_ID
+  const repository = process.env.GITHUB_REPOSITORY
+  if (process.env.GITHUB_ACTIONS !== "true" || runId === undefined || repository === undefined) {
+    return undefined
+  }
+  const server = (process.env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/$/, "")
+  return `${server}/${repository}/actions/runs/${runId}`
 }
 
 /** The installed `oha`'s version; a published slice names it, so a missing `oha` throws. */
@@ -206,8 +383,23 @@ export function ohaVersion(): string {
 }
 
 /** Merge a partial set of slices over the current data - pure; only the passed slices change. */
-export function mergeSiteBench(current: SiteBench, partial: Partial<SiteBench>): SiteBench {
-  return { ...current, ...partial }
+/** Merge a partial set of slices over the current data - pure; only the passed slices change. */
+export function mergeSiteBench(
+  current: SiteBench | LegacySiteBench,
+  partial: Partial<SiteBench>,
+): SiteBench {
+  const { httpMemory: currentMemory, ...currentWithoutMemory } = current
+  const { httpMemory: partialMemory, ...partialWithoutMemory } = partial
+  const merged = { ...currentWithoutMemory, ...partialWithoutMemory }
+
+  if (currentMemory === undefined && partialMemory === undefined) return merged
+  return {
+    ...merged,
+    httpMemory: {
+      ...normalizeHttpMemory(currentMemory),
+      ...normalizeHttpMemory(partialMemory),
+    },
+  }
 }
 
 /** The HTTP slice the landing shows: Node, `GET /users/:id` (routing + path param - the representative
@@ -237,7 +429,7 @@ export function httpSliceFromNode(
   return rows.sort((a, b) => b.reqs - a.reqs)
 }
 
-/** Convert the complete core GET/POST matrix to the canonical article/page slice. A partial runtime
+/** Convert the complete four-workload matrix to the canonical article/page slice. A partial runtime
  * result omits its table; the aggregate writer only publishes this slice when all runtimes ran. */
 export function httpWorkloadsFromResults(
   results: Record<
@@ -251,9 +443,9 @@ export function httpWorkloadsFromResults(
     title: string
     frameworks: readonly string[]
   }> = [
-    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "bun", title: "Bun", frameworks: ["nifra", "fastify", "elysia", "hono"] },
     { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
-    { key: "deno", title: "Deno", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "deno", title: "Deno", frameworks: ["nifra", "fastify", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",
@@ -269,7 +461,9 @@ export function httpWorkloadsFromResults(
     if (source === undefined) continue
     const rows: HttpWorkloadRow[] = []
     for (const framework of runtime.frameworks) {
+      const root = source[framework]?.["GET /"]?.rps
       const get = source[framework]?.["GET /users/:id"]?.rps
+      const search = source[framework]?.["GET /search?query"]?.rps
       const post = source[framework]?.["POST /users"]?.rps
       if (
         get === undefined ||
@@ -283,7 +477,13 @@ export function httpWorkloadsFromResults(
       rows.push({
         name: display[framework] ?? framework,
         version: httpFrameworkVersion(framework),
+        ...(root !== undefined && Number.isFinite(root) && root >= 0
+          ? { getRoot: format(root) }
+          : {}),
         getUsers: format(get),
+        ...(search !== undefined && Number.isFinite(search) && search >= 0
+          ? { getSearch: format(search) }
+          : {}),
         postUsers: format(post),
         ...(framework === "nifra" ? { nifra: true } : {}),
       })
@@ -316,9 +516,9 @@ export function httpRealworldFromResults(
     title: string
     frameworks: readonly string[]
   }> = [
-    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "bun", title: "Bun", frameworks: ["nifra", "fastify", "elysia", "hono"] },
     { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
-    { key: "deno", title: "Deno", frameworks: ["nifra", "elysia", "hono"] },
+    { key: "deno", title: "Deno", frameworks: ["nifra", "fastify", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",
@@ -362,7 +562,7 @@ export function httpRealworldFromResults(
 /** Read the site data, merge the slice, write it back (stable 2-space JSON). No-ops on an empty slice. */
 export async function writeSiteBench(partial: Partial<SiteBench>): Promise<void> {
   if (Object.keys(partial).length === 0) return
-  const current = (await Bun.file(SITE_DATA).json()) as SiteBench
+  const current: SiteBench | LegacySiteBench = await Bun.file(SITE_DATA).json()
   await Bun.write(SITE_DATA, `${JSON.stringify(mergeSiteBench(current, partial), null, 2)}\n`)
   process.stderr.write(
     `updated site/shared/data/benchmarks.json (${Object.keys(partial).join(", ")})\n`,

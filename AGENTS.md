@@ -71,9 +71,9 @@ const local = inProcessClient(app) // SSR loaders / tests: same call, no network
 ```
 
 **Reserved proxy keys.** The client resolves `get`/`post`/`put`/`patch`/`delete`/`head`/`options`
-(any casing) plus `subscribe`, `ws`, `index`, and `then` (exact) BEFORE path segments, so
-`.post("/api/delete", …)` cannot be reached by dot access (`api.delete.post` calls the DELETE verb
-instead). The typed spelling for such a segment is a call on the parent node -
+(any casing) plus `subscribe`, `ws`, `index`, `then`, and `$query` (exact) BEFORE path segments, so
+`.post("/api/delete", …)` cannot be reached by dot access (`api.delete()` invokes the DELETE verb;
+`api.delete.post` is undefined). The typed spelling for such a segment is a call on the parent node -
 `api.api("delete").post()` sends `POST /api/delete` - accepting exactly the colliding names. The
 client type rejects the dot access with that guidance and `nifra check` reports the collision
 (NF-C018, advisory); prefer a verb-free segment (`/api/remove`) when you control the path.
@@ -143,11 +143,11 @@ backend is loader-only; `nifra check` reports that as NF-C035, and `nifra fix --
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +
   server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency. When capability
   assurance is configured, this also fails on raw effect-import bypasses and declaration/evidence drift.
-- For a release-equivalent repository gate, run **`bun run check:release`**: it builds first, then runs
-  the normal check, the explicit **`bun run check:corpus`** (LLM/docs/cards/Node contract), the
-  core hot-path performance gate, publish-consumer matrix, and coverage ratchet. With
-  `RELEASE_MODE=1` it first refuses a working tree that differs from HEAD, so a release run verifies
-  the commit and nothing beside it.
+- For a release-equivalent repository gate, run **`bun run check:release`**: it builds and runs the
+  release plan, including lint/typecheck/tests, coverage, the explicit **`bun run check:corpus`**
+  (LLM/docs/cards/Node contract), site/public-artifact checks, size and performance gates, publishing
+  and consumer checks, and the cross-runtime matrix. With `RELEASE_MODE=1` it first refuses a working
+  tree that differs from HEAD, so a release run verifies the commit and nothing beside it.
 - If the project has `nifra.assurance.ts`, also run **`nifra assure`** (`--json` in CI). It fails closed
   when a route is unclassified or lacks/forbids the enforcement evidence required by its first policy rule.
 - If that config declares `capabilities`, commit the output of **`nifra capabilities snapshot`** and run
@@ -161,11 +161,33 @@ content-hashed, immutable assets). One `app.fetch` runs on Bun / Node / Deno / C
 Vercel / any VPS. `prerenderRoutes` + `cloudflarePagesRoutes` (`@nifrajs/web/build`) emit the static
 output + `_routes.json`.
 
+Public deployment adapters extend packaging around an existing target without replacing its runtime:
+set `target` to the adapter id and export `{ adapter, options? }` as `deploymentAdapter` from
+`nifra.config.ts`. Keep runtime `adapter`/`clientModule` exports in `backend/framework.ts` and
+re-export them from `nifra.config.ts`, so build-time adapter code cannot enter the deployed server.
+The versioned `DeploymentTargetAdapter` contract is exported from `@nifrajs/web/build`; adapters
+validate config, declare component-pipeline support, and return declarative files plus deploy guidance.
+Nifra rejects unsafe paths and collisions, scans adapter files for credentials, and retains the last
+successful output if the build or adapter fails. `@nifrajs/deploy-fly` is the reference Node adapter.
+
 ## Release policy
 
 Prepare every release on a `release/<name>` branch. Run `bun run release:prepare` there so the one
 release pull request contains package versions, changelogs, lockfile, and generated artifacts. Never
 stage versioning on `main`, push directly to `main`, or create a second Version Packages pull request.
+
+`release:prepare` syncs the docs and issue form, regenerates the API/LLM docs, and refreshes the
+frameworks demo and deterministic server bundle row. Before the release pull request, run
+`bun run bench:site:update` to capture the measured public benchmark tables, then run
+`bun run check:public-release-freshness`. The release checks reject public data whose Nifra version
+does not match `@nifrajs/core`. After npm packages publish, the release workflow publishes the matching
+`server.json` version to the official MCP Registry with GitHub OIDC.
+
+If the local host cannot pass the benchmark publish guard, download all artifacts from one successful
+`benchmark-accuracy.yml` run and import them with `bun run bench:site:import-ci <artifact-dir>
+<ssr-payloads.json>`. The SSR payload file comes from `BENCH_SSR_RESULTS_JSON`; its build must use the
+same Nifra release as the CI artifacts. The importer checks the artifact commit's core version before
+writing the site tables.
 
 `release:prepare` also rebuilds and rewrites `packed-files.json`, the list of files each package
 publishes, so the pull request shows every file a package gained or lost since the last release.

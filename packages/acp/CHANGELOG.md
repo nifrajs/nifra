@@ -1,5 +1,42 @@
 # @nifrajs/acp
 
+## 5.13.0
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.13.0
+
+## 5.12.1
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.12.1
+
+## 5.12.0
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.12.0
+
+## 5.11.0
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.11.0
+
+## 5.10.0
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@5.10.0
+
+## 5.9.0
+
+### Patch Changes
+
+- Updated dependencies [5bc60b7]
+  - @nifrajs/agent-protocol@5.9.0
+
 ## 5.8.0
 
 ### Patch Changes

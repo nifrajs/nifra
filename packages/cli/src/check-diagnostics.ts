@@ -25,6 +25,7 @@ import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
 import { contractVisibilityRule } from "./rules/contract-visibility.ts"
 import { dataGuardRules } from "./rules/data-guard.ts"
 import { parseRulePacks, runRuleRegistry } from "./rules/index.ts"
+import { internalLinkRules } from "./rules/internal-links.ts"
 import { islandRules } from "./rules/islands.ts"
 import { retiredLayoutRule } from "./rules/layout.ts"
 import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legacy.ts"
@@ -35,6 +36,7 @@ import { routeStatementRule } from "./rules/route-statement.ts"
 import { routeRules } from "./rules/routes.ts"
 import { secretRules } from "./rules/secrets.ts"
 import { securityRules } from "./rules/security.ts"
+import { serverFnNamespaceRule } from "./rules/server-fn-namespace.ts"
 import { swapRules } from "./rules/swap.ts"
 import { textSlotBooleanRule } from "./rules/text-slot-boolean.ts"
 import { undeclaredResponseRule } from "./rules/undeclared-response.ts"
@@ -381,6 +383,7 @@ export interface CheckTypecheckResult {
   /** TypeScript sources found with no tsconfig.json to typecheck them. */
   readonly sourcesWithoutTsconfig?: number
   readonly outsideProgram?: readonly string[]
+  readonly routeTableOutsideProgram?: string
 }
 
 export interface CheckAnalysisInput {
@@ -507,6 +510,8 @@ export async function collectCheckDiagnostics(
     routeStatementRule,
     undeclaredResponseRule,
     textSlotBooleanRule,
+    ...internalLinkRules,
+    serverFnNamespaceRule,
     ...zoneRules,
     ...dataGuardRules,
     ...secretRules,

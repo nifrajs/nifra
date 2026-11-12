@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -16,6 +16,7 @@ import {
   rootInstructions,
   rootMismatch,
   rootVerdict,
+  workspaceMemberDirs,
 } from "../src/mcp-root.ts"
 
 /** A temp dir carrying the `@nifrajs/*` dependency marker. */
@@ -184,6 +185,59 @@ describe("resolveRootState - package-manager workspaces", () => {
     expect(next.source).toBe("client-root")
     await rm(dir, { recursive: true, force: true })
     await rm(start, { recursive: true, force: true })
+  })
+})
+
+describe("workspace patterns that leave the root", () => {
+  /** A workspace root and a nifra project beside it, outside the root. */
+  const withSibling = async (workspaces: unknown) => {
+    const base = await mkdtemp(join(tmpdir(), "nifra-root-escape-"))
+    const root = join(base, "root")
+    await mkdir(root)
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "ws", workspaces }))
+    await mkdir(join(base, "outside", "pkg"), { recursive: true })
+    await writeFile(
+      join(base, "outside", "pkg", "package.json"),
+      JSON.stringify({ name: "out", dependencies: { "@nifrajs/core": "0.0.0" } }),
+    )
+    return { base, root }
+  }
+
+  test("a `..` or absolute pattern adopts nothing outside the root", async () => {
+    for (const pattern of ["../outside/*", "apps/../../outside/*", "./../outside/*"]) {
+      const { base, root } = await withSibling([pattern])
+      expect(await workspaceMemberDirs(root)).toEqual([])
+      expect((await resolveRootState(root, false)).root).toBe(root)
+      await rm(base, { recursive: true, force: true })
+    }
+    const { base, root } = await withSibling([])
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "ws", workspaces: [join(base, "outside", "*")] }),
+    )
+    expect(await workspaceMemberDirs(root)).toEqual([])
+    await rm(base, { recursive: true, force: true })
+  })
+
+  test("a symlinked directory that resolves outside the root is not a member", async () => {
+    const { base, root } = await withSibling(["apps/*", "linked/*"])
+    await mkdir(join(root, "apps"))
+    await symlink(join(base, "outside", "pkg"), join(root, "apps", "escape"), "dir")
+    await symlink(join(base, "outside"), join(root, "linked"), "dir")
+    expect(await workspaceMemberDirs(root)).toEqual([])
+    await rm(base, { recursive: true, force: true })
+  })
+
+  test("a member inside the root is still found, including a name that only looks rooted", async () => {
+    const dir = await workspaceRoot(["apps/*", "~tools/*"], {
+      "apps/web": true,
+      "~tools/cli": true,
+    })
+    expect(await workspaceMemberDirs(dir)).toEqual([
+      join(dir, "apps", "web"),
+      join(dir, "~tools", "cli"),
+    ])
+    await rm(dir, { recursive: true, force: true })
   })
 })
 

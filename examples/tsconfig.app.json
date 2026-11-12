@@ -8,6 +8,12 @@
     // Merges the generated tree in, so a route imports its types as `./+types/<name>`.
     "rootDirs": ["${configDir}", "${configDir}/.nifra/types"]
   },
-  "include": ["${configDir}/**/*.ts", "${configDir}/**/*.tsx"],
+  // The route table is generated into a dot directory the globs skip; a page that imports no `./+types/...`
+  // would otherwise see an empty table and `href()` would accept no route.
+  "include": [
+    "${configDir}/**/*.ts",
+    "${configDir}/**/*.tsx",
+    "${configDir}/.nifra/types/routes.d.ts"
+  ],
   "exclude": ["${configDir}/node_modules", "${configDir}/dist", "${configDir}/public"]
 }

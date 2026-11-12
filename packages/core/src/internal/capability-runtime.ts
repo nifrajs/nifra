@@ -2,7 +2,8 @@ import type { EffectLifecycleObserver } from "../effect-lifecycle.ts"
 import type { EffectCost } from "../ledger.ts"
 
 export const CAPABILITY_GUARD = Symbol("nifra.capability.guard")
-const CAPABILITY_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/
+// Lowercase segments joined by `.`, `-` or `_`, so a snake_case tool name is a valid capability segment.
+const CAPABILITY_ID = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/
 
 export function validCapabilityId(value: string): boolean {
   return CAPABILITY_ID.test(value)
@@ -103,7 +104,7 @@ export function normalizeRouteCapabilities(
   for (const value of values) {
     if (typeof value !== "string" || !validCapabilityId(value)) {
       throw new Error(
-        `route capabilities: invalid capability id ${JSON.stringify(value)} (use lowercase dot/dash segments)`,
+        `route capabilities: invalid capability id ${JSON.stringify(value)} (use lowercase dot/dash/underscore segments)`,
       )
     }
     if (!seen.has(value)) {

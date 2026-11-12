@@ -166,7 +166,7 @@ test("the check finds the read, and the fix moves it and its markup into a hole 
     adapter: reactAdapter,
     manifest: discoverRoutes(join(root, "routes")),
     clientEntry: "/c.js",
-    experimental: { ppr: partialPrerendering({ shellChecks: "unchecked-development" }) },
+    ppr: partialPrerendering({ shellChecks: "unchecked-development" }),
   })
   const html = await (await app.fetch(new Request("http://shop.test/v/3"))).text()
   expect(html).toContain('<h1 id="title">Visit 3</h1>')

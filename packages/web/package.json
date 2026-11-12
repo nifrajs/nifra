@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web",
-  "version": "5.8.0",
+  "version": "5.13.0",
   "description": "Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.",
   "keywords": [
     "bun",
@@ -41,6 +41,11 @@
       "bun": "./src/client.ts",
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
+    },
+    "./shell": {
+      "bun": "./src/shell.ts",
+      "types": "./dist/shell.d.ts",
+      "default": "./dist/shell.js"
     },
     "./keep-alive": {
       "bun": "./src/keep-alive.ts",
@@ -450,6 +455,8 @@
     "@babel/plugin-syntax-jsx": "^7.29.7",
     "@babel/plugin-syntax-typescript": "^7.29.7",
     "@nifrajs/client": "workspace:*",
+    "@nifrajs/i18n": "workspace:*",
+    "@nifrajs/image": "workspace:*",
     "@nifrajs/schema": "workspace:*",
     "@nifrajs/test-utils": "workspace:*",
     "@nifrajs/web-react": "workspace:*",

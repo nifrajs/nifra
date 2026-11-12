@@ -6,8 +6,8 @@
  * tooling can consume the same claims. A missing test or mutation target is a failed check: an
  * invariant without executable evidence is a label, not a security guarantee.
  */
-import { existsSync, readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { readFileSync, realpathSync, statSync } from "node:fs"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 
 export interface SecurityInvariant {
   readonly id: string
@@ -35,6 +35,26 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => {
 
 const strings = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((entry) => typeof entry === "string" && entry.length > 0)
+
+function within(root: string, path: string): boolean {
+  const rel = relative(root, path)
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
+
+/** Evidence paths must resolve to files inside this checkout, including through symlinks. */
+function repositoryFileExists(root: string, path: string): boolean {
+  if (isAbsolute(path) || path.includes("\\")) return false
+  const resolvedRoot = resolve(root)
+  const candidate = resolve(resolvedRoot, path)
+  if (!within(resolvedRoot, candidate)) return false
+  try {
+    const realRoot = realpathSync(resolvedRoot)
+    const realCandidate = realpathSync(candidate)
+    return within(realRoot, realCandidate) && statSync(realCandidate).isFile()
+  } catch {
+    return false
+  }
+}
 
 export function readSecurityInvariantLedger(root: string): SecurityInvariantLedger {
   const value: unknown = JSON.parse(readFileSync(resolve(root, "security-invariants.json"), "utf8"))
@@ -81,8 +101,8 @@ export function validateSecurityInvariantLedger(
     if (typeof invariant.docs !== "string" || !invariant.docs.startsWith("/docs/"))
       errors.push(`${prefix}.docs must be a /docs/ path`)
     for (const path of invariant.tests ?? []) {
-      if (typeof path === "string" && !existsSync(resolve(root, path)))
-        errors.push(`${invariant.id}: missing test path ${path}`)
+      if (typeof path === "string" && !repositoryFileExists(root, path))
+        errors.push(`${invariant.id}: missing or outside-repository test path ${path}`)
     }
     for (const target of invariant.mutationTargets ?? []) {
       const targetSpec = targets[target]
@@ -92,14 +112,18 @@ export function validateSecurityInvariantLedger(
         if (!strings(targetSpec.files) || targetSpec.files.length === 0)
           errors.push(`${invariant.id}: mutation target ${target} has no files`)
         for (const file of strings(targetSpec.files) ? targetSpec.files : []) {
-          if (!existsSync(resolve(root, file)))
-            errors.push(`${invariant.id}: mutation target ${target} missing file ${file}`)
+          if (!repositoryFileExists(root, file))
+            errors.push(
+              `${invariant.id}: mutation target ${target} has a missing or outside-repository file ${file}`,
+            )
         }
         if (!strings(targetSpec.tests) || targetSpec.tests.length === 0)
           errors.push(`${invariant.id}: mutation target ${target} has no tests`)
         for (const test of strings(targetSpec.tests) ? targetSpec.tests : []) {
-          if (!existsSync(resolve(root, test)))
-            errors.push(`${invariant.id}: mutation target ${target} missing test ${test}`)
+          if (!repositoryFileExists(root, test))
+            errors.push(
+              `${invariant.id}: mutation target ${target} has a missing or outside-repository test ${test}`,
+            )
         }
       }
     }

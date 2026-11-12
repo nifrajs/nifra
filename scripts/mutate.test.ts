@@ -19,6 +19,7 @@ import {
   formatSummary,
   gateFailures,
   generateMutants,
+  groupRssKb,
   importsOf,
   loadBaseline,
   loadEquivalents,
@@ -30,7 +31,9 @@ import {
   onLines,
   parseChangedLines,
   parseJunit,
+  runTests,
   selectTests,
+  targetTests,
 } from "./mutate.ts"
 
 const SCRIPT = join(import.meta.dir, "mutate.ts")
@@ -281,10 +284,13 @@ describe("baseline and targets", () => {
       writeFileSync(path, JSON.stringify({ "f.ts": [{ ...known, nth: 0 }] }))
       expect(() => loadBaseline(path)).toThrow("not a positive integer")
       writeFileSync(path, JSON.stringify({ t: { files: ["a.ts"], tests: ["a.test.ts"] } }))
-      expect(loadTargets(path)).toEqual({ t: { files: ["a.ts"], tests: ["a.test.ts"], env: [] } })
+      expect(loadTargets(path)).toEqual({
+        t: { files: ["a.ts"], tests: ["a.test.ts"], exclude: [], env: [] },
+      })
       for (const bad of [
         { files: [], tests: ["a"] },
         { files: ["a"], tests: [1] },
+        { files: ["a"], tests: ["a"], exclude: [1] },
         { files: "a" },
       ]) {
         writeFileSync(path, JSON.stringify({ t: bad }))
@@ -316,6 +322,7 @@ describe("baseline and targets", () => {
       tests: [],
       baselineMs: 1,
       baselineFailures: [],
+      baselineExitCode: 0,
       mutants: [],
       unusedEquivalents: [],
       ...patch,
@@ -359,6 +366,62 @@ describe("baseline and targets", () => {
     expect(
       gateFailures([report({ baselineFailures: ["x"], mutants: [mutant(0, "not-run")] })]),
     ).toEqual(["f.ts: the tests fail with no mutant in place"])
+    expect(
+      gateFailures([
+        report({ baselineFailures: [], baselineExitCode: 1, mutants: [mutant(0, "not-run")] }),
+      ]),
+    ).toEqual(["f.ts: the tests fail with no mutant in place"])
+  })
+})
+
+describe("the tests a target runs", () => {
+  const root = "/r"
+  const at = (path: string) => join(root, path)
+  const graph = new Map<string, string[]>([
+    [at("t/a.test.ts"), [at("src/a.ts")]],
+    [at("t/b.test.ts"), [at("src/b.ts"), at("src/other.ts")]],
+    [at("t/slow.test.ts"), [at("src/a.ts")]],
+    [at("t/deep.test.ts"), [at("t/helper.ts")]],
+    [at("t/helper.ts"), [at("src/a.ts")]],
+    [at("x/listed/in-dir.test.ts"), [at("src/a.ts")]],
+    [at("src/a.ts"), []],
+    [at("src/b.ts"), []],
+    [at("src/other.ts"), []],
+  ])
+  const tests = new Set([...graph.keys()].filter((file) => file.endsWith(".test.ts")))
+
+  test("are its listed tests, then each test importing one of its files directly, in a stable order", () => {
+    expect(
+      targetTests(
+        root,
+        { files: ["src/b.ts", "src/a.ts"], tests: ["internal/inv.test.ts"], exclude: [] },
+        graph,
+        tests,
+      ),
+    ).toEqual([
+      "internal/inv.test.ts",
+      "t/a.test.ts",
+      "t/b.test.ts",
+      "t/slow.test.ts",
+      "x/listed/in-dir.test.ts",
+    ])
+  })
+
+  test("skip a test already listed, one inside a listed directory, and one excluded", () => {
+    expect(
+      targetTests(
+        root,
+        { files: ["src/a.ts"], tests: ["t/a.test.ts", "x/listed"], exclude: ["t/slow.test.ts"] },
+        graph,
+        tests,
+      ),
+    ).toEqual(["t/a.test.ts", "x/listed"])
+  })
+
+  test("leave out a test that reaches a file only through a helper", () => {
+    expect(
+      targetTests(root, { files: ["src/a.ts"], tests: [], exclude: [] }, graph, tests),
+    ).not.toContain("t/deep.test.ts")
   })
 })
 
@@ -368,7 +431,7 @@ describe("the nightly targets", () => {
 
   test("name files and tests that exist", () => {
     for (const [name, target] of Object.entries(targets))
-      for (const file of [...target.files, ...target.tests])
+      for (const file of [...target.files, ...target.tests, ...target.exclude])
         expect({ name, file, exists: existsSync(join(root, file)) }).toEqual({
           name,
           file,
@@ -428,14 +491,16 @@ describe("parseJunit and classify", () => {
       { id: "u.test.ts:1 elsewhere", failed: false },
     ],
     errors: 0,
+    exitCode: 0,
   }
   const run = (
     cases: ReturnType<typeof parseJunit> | undefined,
-    extra: { errors?: number; timedOut?: boolean } = {},
+    extra: { errors?: number; timedOut?: boolean; exitCode?: number | null } = {},
   ) => ({
     cases,
     errors: extra.errors ?? 0,
     timedOut: extra.timedOut ?? false,
+    exitCode: extra.exitCode === undefined ? 0 : extra.exitCode,
     ms: 1,
   })
 
@@ -460,6 +525,31 @@ describe("parseJunit and classify", () => {
     expect(classify(baseline, run(green), false)).toEqual({ status: "survived", killedBy: [] })
   })
 
+  test("a hook that breaks under the mutant kills, and the same hook already red does not", () => {
+    const hooked = `<testsuites><testsuite file="h.test.ts"><testcase name="(unnamed)" classname="a" file="h.test.ts" line="2"><failure /></testcase></testsuite></testsuites>`
+    expect(classify(baseline, run(parseJunit(hooked)), true)).toEqual({
+      status: "killed",
+      killedBy: ["h.test.ts:2 (unnamed)"],
+    })
+    const red = {
+      ...baseline,
+      cases: [...baseline.cases, { id: "h.test.ts:2 (unnamed)", failed: true }],
+    }
+    expect(classify(red, run(parseJunit(hooked)), true).status).toBe("survived")
+  })
+
+  test("a run that ends non-zero kills though its report lists no failing case", () => {
+    const green = baseline.cases.map((c) => ({ ...c }))
+    for (const exitCode of [1, null])
+      expect(classify(baseline, run(green, { exitCode }), true)).toEqual({
+        status: "killed",
+        killedBy: ["(test run failed)"],
+      })
+    // A baseline that already ended non-zero says nothing about the mutant.
+    const red = { ...baseline, exitCode: 1 }
+    expect(classify(red, run(green, { exitCode: 1 }), true).status).toBe("survived")
+  })
+
   test("a timeout, a missing report and a new error outside a test are detections", () => {
     const green = baseline.cases.map((c) => ({ ...c }))
     expect(classify(baseline, run(green, { timedOut: true }), false).status).toBe("timeout")
@@ -473,6 +563,57 @@ describe("parseJunit and classify", () => {
       "survived",
     )
   })
+})
+
+describe("a run that outgrows its memory", () => {
+  test("sums the resident size of one process group only", () => {
+    const ps = " 100  2048\n 100   512\n 200  9999\n\n  7 1\n"
+    expect(groupRssKb(ps, 100)).toBe(2560)
+    expect(groupRssKb(ps, 7)).toBe(1)
+    expect(groupRssKb(ps, 999)).toBe(0)
+    expect(groupRssKb("", 100)).toBe(0)
+  })
+
+  // The watchdog reads `ps` and ends a process group, neither of which Windows has.
+  test.skipIf(process.platform === "win32")(
+    "is ended as a timeout while it grows, and a run that stays small is left alone",
+    async () => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "mutate-memory-")))
+      try {
+        writeFileSync(
+          join(dir, "grow.test.ts"),
+          'import { test } from "bun:test"\n' +
+            'test("grows", () => { const held: object[] = []; for (;;) held.push({ a: held.length }) })\n',
+        )
+        writeFileSync(
+          join(dir, "small.test.ts"),
+          'import { expect, test } from "bun:test"\ntest("small", () => { expect(1).toBe(1) })\n',
+        )
+        const grown = await runTests(
+          dir,
+          ["grow.test.ts"],
+          join(dir, "grow.xml"),
+          60_000,
+          false,
+          400_000,
+        )
+        expect(grown.timedOut).toBe(true)
+        expect(grown.ms).toBeLessThan(30_000)
+        const small = await runTests(
+          dir,
+          ["small.test.ts"],
+          join(dir, "small.xml"),
+          60_000,
+          false,
+          400_000,
+        )
+        expect(small.timedOut).toBe(false)
+        expect(small.exitCode).toBe(0)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
 })
 
 describe("test selection", () => {

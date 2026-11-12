@@ -16,7 +16,7 @@
  * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and
  * `check:publish` asserts it equals `@nifrajs/core`'s package version.
  */
-export const VERSION = "5.8.0" as const
+export const VERSION = "5.13.0" as const
 
 export type Version = typeof VERSION
 
@@ -190,9 +190,11 @@ export type {
   SSEStream,
   TypedSSEStream,
 } from "./server/sse.ts"
+export { staticResponse } from "./server/static-response.ts"
 export type {
   NifraWebSocket,
   StandardWebSocket,
+  TopicAdapter,
   WebSocketContext,
   WebSocketData,
   WebSocketHandler,

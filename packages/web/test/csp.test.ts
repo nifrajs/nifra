@@ -106,6 +106,7 @@ test("a deferred page, a meta script or a nonced link under a CSP policy carries
     const nonce = html.match(/<script nonce="([^"]+)"/)?.[1]
     expect(nonce).toBeTruthy()
     expect(res.headers.get("cache-control")).toBe("private, no-store")
+    expect(res.headers.get("x-nifra-owner-nonce-used")).toBeNull()
     expect(res.headers.get("content-security-policy")).toContain(`'nonce-${nonce}'`)
     for (const { attrs } of executableInlineScripts(html)) {
       expect(attrs).toContain(`nonce="${nonce}"`)

@@ -1,5 +1,31 @@
 # @nifrajs/agent-protocol
 
+## 5.13.0
+
+No changes in this release.
+
+## 5.12.1
+
+No changes in this release.
+
+## 5.12.0
+
+No changes in this release.
+
+## 5.11.0
+
+No changes in this release.
+
+## 5.10.0
+
+No changes in this release.
+
+## 5.9.0
+
+### Patch Changes
+
+- 5bc60b7: Small helpers that several modules of a package each defined (the object check, RegExp escaping, `\` to `/` path conversion, line lookup) now have one definition per package. No API or behavior change.
+
 ## 5.8.0
 
 No changes in this release.

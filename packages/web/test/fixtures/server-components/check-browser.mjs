@@ -261,11 +261,88 @@ for (const [name, engine] of Object.entries(engines)) {
     ])
     assert.equal(await progressive.locator("#revision").textContent(), "Revision 3")
     await progressive.close()
+    let progressiveTimings = null
+    if ((process.env.NIFRA_COMPONENT_ADAPTER ?? "vue") === "react") {
+      const progressiveUrl = new URL(process.env.NIFRA_COMPONENT_URL ?? "http://127.0.0.1:4422/")
+      progressiveUrl.searchParams.set("remove", "yes")
+      await page.goto(progressiveUrl.toString())
+      await page.waitForFunction(() => window.fixture?.ready)
+      await page.evaluate(() => {
+        const timing = {
+          startedAt: performance.now(),
+          fallbackAt: null,
+          readyAt: null,
+        }
+        window.__nifraFlightTiming = timing
+        const observer = new MutationObserver(() => {
+          if (
+            timing.fallbackAt === null &&
+            document.querySelector("#slow-fallback")?.getClientRects().length
+          ) {
+            timing.fallbackAt = performance.now()
+          }
+          if (
+            timing.readyAt === null &&
+            document.querySelector("#slow-ready")?.getClientRects().length
+          ) {
+            timing.readyAt = performance.now()
+          }
+        })
+        observer.observe(document.documentElement, {
+          attributes: true,
+          childList: true,
+          subtree: true,
+        })
+        window.__nifraFlightTimingObserver = observer
+      })
+      await page.evaluate(() => {
+        window.flightRefreshSettled = false
+        window.flightRefresh = window.fixture
+          .refresh("?revision=new&delay=flight&remove=yes")
+          .then((result) => {
+            window.flightRefreshSettled = true
+            return result
+          })
+      })
+      await page.locator("#slow-fallback").waitFor({ state: "visible", timeout: 10_000 })
+      assert.equal(await page.locator("#revision").textContent(), "Revision 4")
+      assert.equal(await page.locator("#slow-ready").count(), 0)
+      assert.equal(await page.evaluate(() => window.flightRefreshSettled), false)
+      await page.locator("#slow-ready").waitFor({ state: "visible" })
+      assert.equal(await page.evaluate(() => window.flightRefresh), true)
+      assert.equal(await page.evaluate(() => window.flightRefreshSettled), true)
+      progressiveTimings = await page.evaluate(() => {
+        const timing = window.__nifraFlightTiming
+        const response = performance
+          .getEntriesByType("resource")
+          .filter(
+            (entry) => new URL(entry.name, location.href).searchParams.get("delay") === "flight",
+          )
+          .at(-1)
+        window.__nifraFlightTimingObserver?.disconnect()
+        return {
+          ttfbMs: response ? response.responseStart - response.requestStart : null,
+          refreshToFirstByteMs: response ? response.responseStart - timing.startedAt : null,
+          fallbackCommitMs:
+            timing.fallbackAt === null ? null : timing.fallbackAt - timing.startedAt,
+          contentCompleteMs: timing.readyAt === null ? null : timing.readyAt - timing.startedAt,
+        }
+      })
+      assert.ok(
+        Object.values(progressiveTimings).every(Number.isFinite),
+        `Progressive refresh must expose browser timings: ${JSON.stringify(progressiveTimings)}`,
+      )
+      assert.ok(
+        progressiveTimings.contentCompleteMs >= progressiveTimings.fallbackCommitMs,
+        "The final Suspense content must commit after its fallback",
+      )
+    }
     console.log(
       JSON.stringify({
         engine: name,
         version: browser.version(),
         adapter: process.env.NIFRA_COMPONENT_ADAPTER ?? "vue",
+        progressiveTimings,
         cases: [
           "hydrate",
           "native-props",
@@ -290,6 +367,9 @@ for (const [name, engine] of Object.entries(engines)) {
           "auth-during-native-prepare",
           "navigation-during-native-prepare",
           "progressive-form",
+          ...(process.env.NIFRA_COMPONENT_ADAPTER === "react"
+            ? ["react-progressive-suspense-commit"]
+            : []),
           "dispose",
         ],
         status: "passed",

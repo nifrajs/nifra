@@ -21,7 +21,7 @@ import { discoverRoutes } from "../fs.ts"
 import { codeUnitOrder } from "./code-unit-order.ts"
 import { withoutComments } from "./html-spans.ts"
 import { isIdentitySensitivePackage } from "./identity-policy.ts"
-import { publicUrlPath } from "./public-url.ts"
+import { publicUrlPaths } from "./public-url.ts"
 import { isRecord } from "./record.ts"
 
 const DEPENDENCY_FIELDS = [
@@ -1108,7 +1108,7 @@ const publicFilesUnder = (publicDir: string | false | undefined): readonly strin
       if (isHiddenPath(entry.name)) continue // the build skips it too
       const path = join(current, entry.name)
       if (entry.isDirectory()) walk(path)
-      else if (entry.isFile()) files.push(publicUrlPath(relative(root, path)))
+      else if (entry.isFile()) files.push(...publicUrlPaths(relative(root, path)))
     }
   }
   walk(root)

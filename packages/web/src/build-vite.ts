@@ -47,6 +47,7 @@ import {
 } from "./internal/build-steps.ts"
 import { loadCopySplit } from "./internal/copy-split.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
+import { emitPluginImages } from "./internal/image-assets.ts"
 import { assertIdentityParity } from "./internal/parity.ts"
 import { emittedScanFiles, formatSecretFindings, scanForSecrets } from "./internal/secret-scan.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
@@ -180,7 +181,13 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     routesDir,
     ".nifra-vite-client-",
     routeManifest,
-    { clientModule, resolve, copyChunks: copySplit !== undefined, live: options.live },
+    {
+      clientModule,
+      resolve,
+      copyChunks: copySplit !== undefined,
+      live: options.live,
+      transport: options.transport === undefined ? undefined : resolvePath(options.transport),
+    },
   )
 
   // Each an additional entry, giving the per-route chunk + CSS mapping below.
@@ -435,6 +442,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   }
   const copyChunks = copy?.urls ?? {}
   for (const chunk of Object.values(copyChunks)) assets.add(chunk)
+  for (const image of emitPluginImages(options.vitePlugins ?? [], outDir, publicPath))
+    assets.add(image)
 
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
@@ -677,6 +686,7 @@ export const viteBundler: Bundler = {
       ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
       ...(input.root ? { root: input.root } : {}),
       live: input.live,
+      transport: input.transport,
     }),
   buildServer: ({ plugins, root, ...fields }) =>
     buildServerVite({

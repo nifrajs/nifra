@@ -91,3 +91,58 @@ test("a non-relative clientModule shadowing a local file is rejected with the ./
     loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` }),
   ).rejects.toThrow(/no "\.\/" prefix.*"\.\/frontend\/client\.tsx"/s)
 })
+
+test("nifra.config.ts retains the ordinary Vercel runtime selector", async () => {
+  const root = createFixtureRoot("tmp-load-vercel-")
+  dirs.push(root)
+  writeAppFile(root, "routes/index.ts", "export default function Page() {}")
+  writeAppFile(root, "backend/framework.ts", "export const adapter = {}")
+  writeAppFile(
+    root,
+    "nifra.config.ts",
+    `export { adapter } from "./backend/framework.ts"
+export const clientModule = "./frontend/client.ts"
+export const target = "vercel"
+export const vercelRuntime = "node"`,
+  )
+  const app = await loadApp(root)
+  expect(app.framework.target).toBe("vercel")
+  expect(app.framework.vercelRuntime).toBe("node")
+})
+
+for (const value of ["nodejs22.x", "invalid", 22, null]) {
+  test(`loadApp rejects unsupported vercelRuntime ${JSON.stringify(value)}`, async () => {
+    const root = createFixtureRoot("tmp-load-vercel-")
+    dirs.push(root)
+    writeAppFile(root, "routes/index.ts", "export default function Page() {}")
+    writeAppFile(
+      root,
+      "nifra.config.ts",
+      `export const adapter = {}
+export const clientModule = "./frontend/client.ts"
+export const target = "vercel"
+export const vercelRuntime = ${JSON.stringify(value)}`,
+    )
+    await expect(loadApp(root)).rejects.toThrow('`vercelRuntime` must be "edge" or "node"')
+  })
+}
+
+async function loadWithTransport(literal: string): Promise<{ transport?: string }> {
+  const root = createFixtureRoot("tmp-load-")
+  dirs.push(root)
+  mkdirSync(join(root, "routes"))
+  writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
+  writeAppFile(
+    root,
+    "backend/framework.ts",
+    `export const adapter = {}\nexport const clientModule = "./client.ts"\nexport const transport = ${literal}\n`,
+  )
+  const app = await loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` })
+  return app.framework
+}
+
+test("a transport module path is read from the framework config and anything else is refused", async () => {
+  expect((await loadWithTransport('"./shell/transport.ts"')).transport).toBe("./shell/transport.ts")
+  await expect(loadWithTransport('""')).rejects.toThrow("`transport` must be a module path")
+  await expect(loadWithTransport("42")).rejects.toThrow("`transport` must be a module path")
+})

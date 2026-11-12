@@ -9,6 +9,7 @@ import {
   type RenderAdapter,
   type RouteMiddleware,
   type RouteModule,
+  rawHref,
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER, REDIRECT_HEADER } from "../src/router.ts"
@@ -28,7 +29,7 @@ const guard: RouteMiddleware = (ctx) => {
   const { pathname, search } = new URL(ctx.request.url)
   const match = urls.matchSegment(ctx.params.lang, pathname + search)
   if (match.kind === "not-found") notFound()
-  if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+  if (match.kind === "redirect") return redirect(rawHref(match.location), { status: 308 })
   return undefined
 }
 

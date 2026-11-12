@@ -5,6 +5,7 @@ import {
   notFound,
   type RenderAdapter,
   type RouteModule,
+  rawHref,
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER, REDIRECT_HEADER } from "../src/router.ts"
@@ -49,10 +50,10 @@ const redirecting = () =>
   appOf({
     "index.tsx": {},
     "login.tsx": {},
-    "returned.tsx": { loader: () => redirect("/login") },
+    "returned.tsx": { loader: () => redirect(rawHref("/login")) },
     "thrown.tsx": {
       loader: () => {
-        throw redirect("/login?next=%2Fthrown")
+        throw redirect(rawHref("/login?next=%2Fthrown"))
       },
     },
     "native.tsx": { loader: () => Response.redirect("http://x/login", 307) },
@@ -60,13 +61,13 @@ const redirecting = () =>
     "cookie.tsx": {
       loader: (ctx) => {
         ctx.set.cookie("session", "", { maxAge: 0 })
-        return redirect("/login")
+        return redirect(rawHref("/login"))
       },
     },
     "admin/_layout.tsx": {
       gate: true,
       loader: () => {
-        throw redirect("/login")
+        throw redirect(rawHref("/login"))
       },
     },
     "admin/index.tsx": {},
@@ -82,7 +83,9 @@ const redirecting = () =>
           ],
         }),
     },
-    "plain.tsx": { loader: () => redirect("/login", { headers: { "set-cookie": "c=3; Path=/" } }) },
+    "plain.tsx": {
+      loader: () => redirect(rawHref("/login"), { headers: { "set-cookie": "c=3; Path=/" } }),
+    },
     "act.tsx": {
       action: () =>
         new Response(null, {
@@ -184,7 +187,7 @@ describe("a redirect answering a navigation's data request", () => {
   test("a native form POST answers the re-render's returned redirect or status as its GET does", async () => {
     const app = appOf({
       "login.tsx": {},
-      "save.tsx": { loader: () => redirect("/login"), action: () => ({ ok: true }) },
+      "save.tsx": { loader: () => redirect(rawHref("/login")), action: () => ({ ok: true }) },
       "gone.tsx": { loader: () => notFound(), action: () => ({ ok: true }) },
     })
     const post = (path: string) =>

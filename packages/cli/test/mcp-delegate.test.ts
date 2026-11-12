@@ -42,6 +42,29 @@ const result = {
 process.stdout.write(\`\${JSON.stringify({ jsonrpc: "2.0", id: 1, result })}\\n\`)
 `
 
+/** A project CLI that answers every request with the method it was asked, and what it started with. */
+const RELAY_CLI_SOURCE = `#!/usr/bin/env bun
+const decoder = new TextDecoder()
+let buffered = ""
+for await (const chunk of Bun.stdin.stream()) {
+  buffered += decoder.decode(chunk, { stream: true })
+  for (let at = buffered.indexOf("\\n"); at !== -1; at = buffered.indexOf("\\n")) {
+    const line = buffered.slice(0, at).trim()
+    buffered = buffered.slice(at + 1)
+    if (line === "") continue
+    const message = JSON.parse(line)
+    if (message.id === undefined) continue
+    const result = {
+      from: "project-cli",
+      method: message.method,
+      marker: process.env[${JSON.stringify(MCP_DELEGATED_ENV)}] ?? "",
+      args: process.argv.slice(2).join(" "),
+    }
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }) + "\\n")
+  }
+}
+`
+
 /** A nifra project whose install pins `@nifrajs/*` to {@link PROJECT_VERSION}. */
 const project = async (
   label: string,
@@ -96,6 +119,7 @@ const session = (
   )
   const stdin = proc.stdin as { write(s: string): unknown }
   const byId: Record<number, Record<string, unknown>> = {}
+  const received: Record<string, unknown>[] = []
   const waiters = new Map<number, () => void>()
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const pumped = (async () => {
@@ -111,6 +135,7 @@ const session = (
         for (const line of lines) {
           if (!line.startsWith("{")) continue
           const parsed = JSON.parse(line) as Record<string, unknown>
+          received.push(parsed)
           if (typeof parsed.id !== "number") continue
           byId[parsed.id] = parsed
           waiters.get(parsed.id)?.()
@@ -121,6 +146,7 @@ const session = (
     }
   })()
   return {
+    received,
     send(message: object): void {
       stdin.write(`${JSON.stringify(message)}\n`)
     },
@@ -251,6 +277,70 @@ describe("nifra mcp against a project on another nifra release", () => {
     expect(isErrorOf(answered[8])).not.toBe(true)
     expect(textOf(answered[8])).not.toContain("refused")
   }, 45_000)
+
+  test("a CLI the project installs mid-session takes over the rest of it", async () => {
+    const dir = await project("mid-session")
+    const live = session(dir, [])
+    try {
+      live.send(initialize)
+      live.send({ jsonrpc: "2.0", method: "notifications/initialized" })
+      expect(await live.answer(1)).toHaveProperty("result.serverInfo.name", "nifra")
+
+      const cli = join(dir, "node_modules", "@nifrajs", "cli")
+      await mkdir(join(cli, "dist"), { recursive: true })
+      await writeFile(
+        join(cli, "package.json"),
+        JSON.stringify({
+          name: "@nifrajs/cli",
+          version: PROJECT_VERSION,
+          bin: { nifra: "./dist/cli.js" },
+        }),
+      )
+      await writeFile(join(cli, "dist", "cli.js"), RELAY_CLI_SOURCE)
+
+      live.send({ jsonrpc: "2.0", id: 2, method: "tools/list" })
+      live.send(call(3, "nifra_docs", { query: "routing" }))
+      expect((await live.answer(2))?.result).toEqual({
+        from: "project-cli",
+        method: "tools/list",
+        marker: "1",
+        args: "mcp",
+      })
+      expect((await live.answer(3))?.result).toHaveProperty("method", "tools/call")
+      // The replayed handshake answers nobody, and the client is told its list changed.
+      expect(live.received.filter((message) => message.id === "nifra-relay-handshake")).toEqual([])
+      expect(live.received.some((m) => m.method === "notifications/tools/list_changed")).toBe(true)
+    } finally {
+      await live.close()
+    }
+  }, 60_000)
+
+  test("a project CLI that never answers the handshake leaves the session where it was", async () => {
+    const dir = await project("mid-session-mute")
+    const live = session(dir, [])
+    try {
+      live.send(initialize)
+      await live.answer(1)
+      const cli = join(dir, "node_modules", "@nifrajs", "cli")
+      await mkdir(join(cli, "dist"), { recursive: true })
+      await writeFile(
+        join(cli, "package.json"),
+        JSON.stringify({
+          name: "@nifrajs/cli",
+          version: PROJECT_VERSION,
+          bin: { nifra: "./dist/cli.js" },
+        }),
+      )
+      await writeFile(join(cli, "dist", "cli.js"), "process.exit(3)\n")
+      live.send(call(2, "nifra_learn"))
+      const answer = await live.answer(2)
+      expect(textOf(answer)).not.toContain("project-cli")
+      expect(isErrorOf(answer)).not.toBe(true)
+      expect(live.received.some((m) => m.method === "notifications/tools/list_changed")).toBe(false)
+    } finally {
+      await live.close()
+    }
+  }, 60_000)
 
   test("an already handed-off server that still disagrees refuses instead of handing off again", async () => {
     const dir = await project("loop-guard", { cli: true, bin: true })

@@ -112,3 +112,21 @@ test("a route's allowedOrigins replaces the same-origin default", async () => {
   expect(seen).toEqual([null, "https://app.example"])
   expect(decided.action).toBe(1)
 })
+
+test("a route's allowedOrigins is told whether the default would admit the request, so it can add an origin to its own site", async () => {
+  const counts = { action: 0 }
+  const app = appWith(counts, {
+    allowedOrigins: (origin, sameOrigin) => sameOrigin || origin === "tauri://localhost",
+  })
+  const statuses = []
+  for (const request of [
+    post("https://app.example/settings", { origin: "https://app.example" }),
+    post("https://app.example/settings", { origin: "tauri://localhost" }),
+    post("https://app.example/settings", {}),
+    post("https://app.example/settings", { origin: "https://evil.example" }),
+  ]) {
+    statuses.push((await app.fetch(request)).status)
+  }
+  expect(statuses).toEqual([200, 200, 200, 403])
+  expect(counts.action).toBe(3)
+})

@@ -1,3 +1,5 @@
+import { href } from "@nifrajs/web-preact/router"
+
 export const meta = { title: "Not found" }
 
 export default function NotFound() {
@@ -7,7 +9,7 @@ export default function NotFound() {
         <span className="grad">404</span>
       </h1>
       <p>That page doesn't exist.</p>
-      <a className="btn" href="/">
+      <a className="btn" href={href({ to: "/" })}>
         ← Back home
       </a>
     </section>

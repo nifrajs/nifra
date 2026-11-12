@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/custom-server",
@@ -84,7 +85,23 @@ await serve(app, {
   gracefulSignals: { drainMs: 8_000 },
 })`
 
-const BUILD_SERVER = `// doc-check: skip - fragment: a build script; the routes and entry paths are your app's.
+const DISPOSE = `import { server } from "@nifrajs/core"
+import { createScheduler } from "@nifrajs/cron"
+import { createQueue } from "@nifrajs/jobs"
+
+const app = server().get("/", () => "ok")
+const queue = createQueue()
+
+export async function runUntilDone(done: Promise<void>): Promise<void> {
+  await using running = app.listen(3000) // graceful stop() when the scope ends
+  await using worker = queue.start() // stops polling, waits for jobs in flight
+  using scheduler = createScheduler() // stop() when the scope ends
+  scheduler.start()
+  await done
+  console.log(running.port, worker.running)
+}`
+
+const BUILD_SERVER =`// doc-check: skip - fragment: a build script; the routes and entry paths are your app's.
 import { buildClient, buildServer } from "@nifrajs/web/build"
 
 const client = await buildClient({ routesDir: "routes", outDir: "dist/assets", clientModule })
@@ -335,6 +352,25 @@ export default function CustomServer() {
         <code>app.onStop(fn)</code> still runs after the drain, on Bun, Node and Deno alike.{" "}
         <code>delayMs + drainMs</code> has to fit in the kill grace period.
       </p>
+      <p>
+        To stop at the end of a scope instead of on a signal, hold the handle with{" "}
+        <code>await using</code>. The handle <code>listen()</code> returns, the one{" "}
+        <code>serve()</code> returns on Node and Deno, and the worker <code>@nifrajs/jobs</code>{" "}
+        starts all stop when the scope ends, on a throw or an early return too. On Bun, disposal runs
+        the app's graceful <code>app.stop()</code> with its default options, not Bun's raw stop. On
+        Node and Deno it calls the <code>stop()</code> of the <code>serve()</code> handle, also with
+        default options, which runs the same <code>onStopping</code> and <code>onStop</code> hooks and
+        drains the same way; it does not call <code>app.stop()</code>, which would leave that listener
+        open. If a shutdown is already under way, disposal waits for that one rather than starting
+        another. A <code>@nifrajs/cron</code> scheduler is synchronous, so it takes{" "}
+        <code>using</code>.
+      </p>
+      <CodeBlock code={DISPOSE} />
+      <p>
+        This needs a runtime and a TypeScript <code>lib</code> that know explicit resource management
+        (<code>esnext.disposable</code>). Nifra's own declaration files reference that lib, so
+        importing them is enough for the types.
+      </p>
 
       <h2>Letting check and assure read the app</h2>
       <p>
@@ -343,7 +379,7 @@ export default function CustomServer() {
         reads what the app declares sets <code>NIFRA_REFLECT</code> to its own name first:{" "}
         <code>check</code>, <code>routes</code>, <code>context</code>, <code>openapi</code>,{" "}
         <code>contracts</code>, <code>capabilities</code>, <code>manifest</code>, <code>doctor</code>
-        , <code>diff</code>, <code>sync-routes</code>, <code>sync-manifest</code>, and{" "}
+        , <code>diff</code>, <code>sync-manifest</code>, and{" "}
         <code>assure</code> without <code>--bundle</code>, <code>--strict</code>,{" "}
         <code>--hydration</code>, <code>--interact</code> or <code>--out</code>. Commands that send the
         app requests, such as <code>smoke</code>, <code>prove</code>, <code>levels</code> and the{" "}
@@ -395,7 +431,7 @@ export default function CustomServer() {
       <p>
         Packages duplicated the same way are reported as one finding with one combined{" "}
         <code>singleCopy</code> list. The preload this needs, and the version-skew case it cannot
-        cover, are in <a href="/docs/troubleshooting">Troubleshooting</a>.
+        cover, are in <a href={href({ to: "/docs/troubleshooting" })}>Troubleshooting</a>.
       </p>
     </div>
   )

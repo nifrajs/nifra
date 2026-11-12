@@ -1,6 +1,6 @@
 /**
  * The PUBLIC nifra docs MCP - Streamable-HTTP transport exposing the project-INDEPENDENT tools
- * (`nifra_docs`, `nifra_example`, `nifra_types`, `nifra_learn`, `nifra_frontend` + the `nifra_gallery`
+ * (`nifra_docs`, `nifra_example`, `nifra_types`, `nifra_learn`, `nifra_frontend`, `nifra_runtime` + the `nifra_gallery`
  * MCP Apps widget)
  * so any remote AI agent can learn nifra without a local checkout. They read the bundled corpus
  * (llms-full.txt / examples.json / types.json shipped in this package) and ignore `cwd`, so they reuse the
@@ -30,7 +30,7 @@ export { docsTools } from "./mcp-docs-tools.ts"
 export type { TypeEntry } from "./types-search.ts"
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const VERSION = "5.8.0"
+const VERSION = "5.13.0"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
 // Derive the GET/health tool list from the tools actually served, so the line can never drift from them.
 const docsHealth = (tools: McpTool[]): string =>

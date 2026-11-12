@@ -170,6 +170,22 @@ export interface LayoutMigrationOptions {
   readonly typescript?: typeof TS
 }
 
+type LayoutMigrationReport = Omit<LayoutMigrationResult, "write">
+
+/**
+ * The complete set of changes discovered by the layout migration. Planning keeps reading the
+ * project directly for now; applying the plan is the only mutating step in the migration command.
+ */
+interface LayoutMigrationPlan {
+  readonly root: string
+  readonly original: ReadonlyMap<string, string>
+  readonly final: ReadonlyMap<string, string>
+  readonly toolingWrites: ReadonlyMap<string, string>
+  readonly scriptWrites: ReadonlyMap<string, string>
+  readonly moves: readonly { readonly from: string; readonly to: string }[]
+  readonly report: LayoutMigrationReport
+}
+
 /** A file's text, as the migration sees it before writing. */
 type Files = Map<string, string>
 
@@ -2244,10 +2260,10 @@ function nestedAppHint(root: string): string {
   return `. ${found.map((name) => `${name}/routes/`).join(", ")} exists: run \`nifra migrate layout --dir ${first}\` to migrate the app there`
 }
 
-export async function migrateLayout(
+async function planLayoutMigration(
   appRoot: string,
   options: LayoutMigrationOptions = {},
-): Promise<LayoutMigrationResult> {
+): Promise<LayoutMigrationPlan> {
   const ts = options.typescript ?? (await importTypeScript())
   if (ts === undefined)
     throw new Error("[nifra] `nifra migrate layout` needs TypeScript: bun add -d typescript")
@@ -3185,44 +3201,60 @@ export async function migrateLayout(
     })
   }
 
-  if (options.write === true) {
-    for (const [file, text] of toolingWrites) writeFileSync(join(root, file), text)
-    for (const [file, text] of final) {
-      if (original.get(file) === text) continue
-      const path = join(root, file)
-      mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(path, text)
-    }
-    const vacated: string[] = []
-    for (const file of original.keys()) {
-      if (final.has(file)) continue
-      rmSync(join(root, file), { force: true })
-      vacated.push(file)
-    }
-    for (const { from, to } of moves) {
-      if (original.has(from) || !existsSync(join(root, from))) continue
-      mkdirSync(dirname(join(root, to)), { recursive: true })
-      renameSync(join(root, from), join(root, to))
-      vacated.push(from)
-    }
-    for (const [file, text] of scriptWrites) writeFileSync(join(root, file), text)
-    pruneVacatedDirs(root, vacated)
-  }
-  return {
+  const report: LayoutMigrationReport = {
     ok: issues.length === 0,
-    write: options.write === true,
     mode,
     followUps,
     splits: splits.sort((a, b) => codeUnitOrder(a.file, b.file)),
     moves,
     rewritten: rewritten.sort(),
     tooling,
-    schemas: schemas.map((entry) =>
+    schemas,
+    issues,
+  }
+  return { root, original, final, toolingWrites, scriptWrites, moves, report }
+}
+
+/** Apply a planned migration in the same order the command historically used. */
+function applyLayoutMigration(plan: LayoutMigrationPlan): void {
+  const { root, original, final, toolingWrites, scriptWrites, moves } = plan
+  for (const [file, text] of toolingWrites) writeFileSync(join(root, file), text)
+  for (const [file, text] of final) {
+    if (original.get(file) === text) continue
+    const path = join(root, file)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, text)
+  }
+  const vacated: string[] = []
+  for (const file of original.keys()) {
+    if (final.has(file)) continue
+    rmSync(join(root, file), { force: true })
+    vacated.push(file)
+  }
+  for (const { from, to } of moves) {
+    if (original.has(from) || !existsSync(join(root, from))) continue
+    mkdirSync(dirname(join(root, to)), { recursive: true })
+    renameSync(join(root, from), join(root, to))
+    vacated.push(from)
+  }
+  for (const [file, text] of scriptWrites) writeFileSync(join(root, file), text)
+  pruneVacatedDirs(root, vacated)
+}
+
+export async function migrateLayout(
+  appRoot: string,
+  options: LayoutMigrationOptions = {},
+): Promise<LayoutMigrationResult> {
+  const plan = await planLayoutMigration(appRoot, options)
+  if (options.write === true) applyLayoutMigration(plan)
+  return {
+    ...plan.report,
+    write: options.write === true,
+    schemas: plan.report.schemas.map((entry) =>
       options.write === true && entry.reason === undefined
         ? { ...entry, status: "generated" }
         : entry,
     ),
-    issues,
   }
 }
 

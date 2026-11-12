@@ -13,6 +13,7 @@ import {
   rawBodySourceOf,
   readBoundedBytes,
 } from "../src/server/body.ts"
+import { method } from "../src/server/methods.ts"
 
 /**
  * `parseContentLength` is the integer guard at the front of the body-size cap (it replaced a
@@ -537,5 +538,42 @@ describe("capBodyBytes", () => {
     expect(await rejection(capBodyBytes(post("1", { "content-length": "-1" }), 8))).toBe(
       '400 {"ok":false,"error":"invalid_content_length"}',
     )
+  })
+
+  test("Bun's route table marks a body method's request as runtime-framed and leaves a GET alone", async () => {
+    const marked = (request: Request): boolean => hasTrustedBodyFraming(request)
+    const app = server()
+      .get("/probe/:id", (c) => ({ marked: marked(c.req) }))
+      .post("/probe", (c) => ({ marked: marked(c.req) }))
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const base = `http://127.0.0.1:${instance.port}`
+      expect(await (await fetch(`${base}/probe/1`)).json()).toEqual({ marked: false })
+      expect(await (await fetch(`${base}/probe`, { method: "POST" })).json()).toEqual({
+        marked: true,
+      })
+    } finally {
+      instance.stop(true)
+    }
+  })
+
+  test("Bun's route table leaves an explicit HEAD route's request unmarked too", async () => {
+    // The implicit HEAD slot reuses the GET handler, so only a registered HEAD route reaches the
+    // HEAD term of the mark choice. A HEAD response has no body to carry the answer, so record it.
+    let marked: boolean | undefined
+    const app = server().use(
+      method("HEAD", "/probe", (c) => {
+        marked = hasTrustedBodyFraming(c.req)
+        return new Response(null)
+      }),
+    )
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const response = await fetch(`http://127.0.0.1:${instance.port}/probe`, { method: "HEAD" })
+      expect(response.status).toBe(200)
+      expect(marked).toBe(false)
+    } finally {
+      instance.stop(true)
+    }
   })
 })

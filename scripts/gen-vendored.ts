@@ -102,6 +102,11 @@ export const VENDORED: readonly VendoredCopy[] = [
     why: "Copied so `nifra init-agents` writes what a scaffold writes, without depending on create-nifra.",
   },
   {
+    source: "packages/cli/src/shell-files.ts",
+    targets: ["packages/create-nifra/src/shell-files.ts"],
+    why: "Copied so `create-nifra --shell tauri` writes what `nifra shell tauri` writes, without depending on the CLI.",
+  },
+  {
     source: "packages/node/src/node-stream.ts",
     targets: ["packages/proxy/src/node-stream.ts"],
     why: "Copied so @nifrajs/proxy/undici claims the stream @nifrajs/node offers, without depending on it.",

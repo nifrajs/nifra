@@ -135,6 +135,11 @@ const TARGETS: readonly Target[] = [
   { name: "@nifrajs/client", entries: ["@nifrajs/client"] },
   { name: "@nifrajs/web", entries: ["@nifrajs/web", "@nifrajs/web/client"] },
   {
+    name: "@nifrajs/deploy-fly",
+    entries: ["@nifrajs/deploy-fly"],
+    consumerDependencies: { "@types/bun": "^1.3.0" },
+  },
+  {
     name: "@nifrajs/webmcp",
     entries: ["@nifrajs/webmcp"],
     tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"] },
@@ -232,6 +237,7 @@ const SKIPS: Readonly<Record<string, string>> = Object.freeze({
   "@nifrajs/cron": "cron scheduling helpers; covered by package tests",
   "@nifrajs/deno": "proven on the real Deno runtime by test:deno and check:deno-tarball",
   "@nifrajs/devtools": "development tooling; covered by package tests",
+  "@nifrajs/e2e": "browser test tooling; covered by package tests and the on-demand browser smoke",
   "@nifrajs/env": "environment helpers; covered by package tests",
   "@nifrajs/events": "event delivery abstractions; covered by certification profiles",
   "@nifrajs/graphql":

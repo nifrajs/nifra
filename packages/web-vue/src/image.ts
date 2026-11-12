@@ -5,7 +5,13 @@
  * (`class`, `style`, `id`, `data-*`, listeners) fall through to the `<img>` via Vue's attribute
  * inheritance. Resizing is delegated to the `loader` (an image CDN); nifra bundles no codec. No template.
  */
-import { type ImageLoader, type ImageProps, resolveImage, toHtmlAttrs } from "@nifrajs/image"
+import {
+  type ImageInputProps,
+  type ImageLoader,
+  resolveImage,
+  type StaticImageData,
+  toHtmlAttrs,
+} from "@nifrajs/image"
 import { defineComponent, h, type PropType } from "vue"
 
 export const Image = defineComponent({
@@ -13,9 +19,10 @@ export const Image = defineComponent({
   // Declared props are routed to `props` (not fall-through attrs), so nifra-only props
   // (loader/widths/quality/priority) never leak to the DOM; everything else falls through to <img>.
   props: {
-    src: { type: String, required: true },
-    width: { type: Number, required: true },
-    height: { type: Number, required: true },
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: Vue's string/object constructors describe URL or imported metadata props; resolveImage checks intrinsic dimensions before rendering.
+    src: { type: [String, Object] as PropType<string | StaticImageData>, required: true },
+    width: { type: Number, required: false, default: undefined },
+    height: { type: Number, required: false, default: undefined },
     alt: { type: String, required: true },
     sizes: { type: String, required: false, default: undefined },
     widths: { type: Array as PropType<readonly number[]>, required: false, default: undefined },
@@ -28,10 +35,7 @@ export const Image = defineComponent({
     return () => {
       // Build ImageProps via conditional spreads so an unset optional is *absent*, not `undefined`
       // (exactOptionalPropertyTypes). resolveImage validates width/height > 0 (CLS contract).
-      const input: ImageProps = {
-        src: props.src,
-        width: props.width,
-        height: props.height,
+      const common = {
         alt: props.alt,
         ...(props.sizes !== undefined ? { sizes: props.sizes } : {}),
         ...(props.widths !== undefined ? { widths: props.widths } : {}),
@@ -39,6 +43,20 @@ export const Image = defineComponent({
         ...(props.loading !== undefined ? { loading: props.loading } : {}),
         ...(props.priority !== undefined ? { priority: props.priority } : {}),
       }
+      const input: ImageInputProps =
+        typeof props.src === "string"
+          ? {
+              ...common,
+              src: props.src,
+              width: props.width ?? Number.NaN,
+              height: props.height ?? Number.NaN,
+            }
+          : {
+              ...common,
+              src: props.src,
+              ...(props.width !== undefined ? { width: props.width } : {}),
+              ...(props.height !== undefined ? { height: props.height } : {}),
+            }
       return h("img", { ...toHtmlAttrs(resolveImage(input, props.loader)) })
     }
   },

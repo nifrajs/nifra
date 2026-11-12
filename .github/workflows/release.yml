@@ -7,7 +7,7 @@ name: Release
 # After a release PR merges, the workflow_run path only publishes the exact CI-validated merge SHA.
 # It is guarded by the GitHub API association between that SHA and a merged release PR, so an
 # ordinary main merge is a no-op. workflow_dispatch on main retries that merge, or recovers failed
-# release CI using an explicitly selected green descendant. Recovery preserves the original release
+# release CI using the run ID of a successful main CI run. Recovery preserves the original release
 # PR proof and rejects changes to the prepared release metadata.
 #
 # npm publishes through trusted publishing: every public package trusts this workflow file run in the
@@ -34,8 +34,8 @@ on:
         description: Merge commit of the release PR whose publish to retry
         required: true
         type: string
-      publish_sha:
-        description: Optional green main descendant to publish after fixing failed release CI
+      publish_run_id:
+        description: Optional successful main CI run to use after fixing failed release CI
         required: false
         type: string
 
@@ -63,7 +63,7 @@ jobs:
       fail-fast: false
       matrix:
         group: [core, artifacts, packages, runtimes, pipelines, server-components]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 75
     # Publishing needs a successful check on the merged head SHA only, so a run for an older head
     # is cancelled once a newer push starts one.
@@ -94,7 +94,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -105,11 +105,15 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/nifra-playwright
 
       # The same server as ci.yml's postgres group, for the postgres-live gate in the runtimes group.
-      - name: Start PostgreSQL
+      - name: Start PostgreSQL 16
         if: matrix.group == 'runtimes'
         run: |
-          sudo systemctl start postgresql.service
-          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'nifra-ci'"
+          docker run -d --name nifra-pg16 -e POSTGRES_PASSWORD=nifra-ci -p 127.0.0.1:5432:5432 \
+            postgres:16@sha256:1beaa3084eee2676f20a9cd9928f0bf2c5bf674f8e49f81017912183d377c61c
+          for _ in $(seq 60); do
+            pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
           test "$(psql "$NIFRA_TEST_POSTGRES_URL" -tAc "SELECT count(*) FROM pg_available_extensions WHERE name = 'dblink'")" = 1
         env:
           NIFRA_TEST_POSTGRES_URL: postgres://postgres:nifra-ci@127.0.0.1:5432/postgres
@@ -138,7 +142,7 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'release/')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -156,7 +160,7 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       actions: read
@@ -181,19 +185,39 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           MERGE_SHA: ${{ github.event.workflow_run.head_sha || inputs.merge_sha }}
-          PUBLISH_SHA: ${{ inputs.publish_sha }}
+          DISPATCH_CI_RUN_ID: ${{ inputs.publish_run_id }}
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
             PUBLISH_SHA="$MERGE_SHA"
-          fi
-          PUBLISH_SHA="${PUBLISH_SHA:-$MERGE_SHA}"
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ ! "$MERGE_SHA" =~ ^[0-9a-fA-F]{40}$ || ! "$PUBLISH_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
-              echo "merge_sha and publish_sha must be full 40-character commit SHAs." >&2
+          elif [[ -n "$DISPATCH_CI_RUN_ID" ]]; then
+            if [[ ! "$DISPATCH_CI_RUN_ID" =~ ^[0-9]+$ ]]; then
+              echo "publish_run_id must be a numeric GitHub Actions run ID." >&2
               exit 1
             fi
-            # What the workflow_run path gets from its trigger: a commit on main whose push CI passed.
+            ci_run="$(gh api "repos/${REPOSITORY}/actions/runs/${DISPATCH_CI_RUN_ID}")"
+            PUBLISH_SHA="$(jq -er \
+              --arg repository "$REPOSITORY" \
+              'select(
+                .event == "push" and
+                .head_branch == "main" and
+                .head_repository.full_name == $repository and
+                (.path | split("@")[0]) == ".github/workflows/ci.yml" and
+                .conclusion == "success" and
+                (.head_sha | test("^[0-9a-fA-F]{40}$"))
+              ) | .head_sha' <<<"$ci_run")" || {
+                echo "publish_run_id is not a successful push CI run on this repository's main." >&2
+                exit 1
+              }
+          else
+            PUBLISH_SHA="$MERGE_SHA"
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ ! "$MERGE_SHA" =~ ^[0-9a-fA-F]{40}$ || ! "$PUBLISH_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              echo "merge_sha and the validated publish SHA must be full 40-character commit SHAs." >&2
+              exit 1
+            fi
+            # Confirm the selected CI run's commit remains on main and still has green main CI.
             on_main="$(gh api "repos/${REPOSITORY}/compare/${PUBLISH_SHA}...main" --jq .status)"
             if [[ "$on_main" != "ahead" && "$on_main" != "identical" ]]; then
               echo "${PUBLISH_SHA} is not on main; refusing to publish." >&2
@@ -284,16 +308,27 @@ jobs:
     name: build-release
     needs: prove-release
     if: needs.prove-release.outputs.is_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
     steps:
-      - name: Checkout the validated merge
+      # Keep the checkout action on a fixed branch: prove-release has validated the target commit,
+      # and selecting it from the complete main history avoids passing a job output into the action ref.
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -325,19 +360,27 @@ jobs:
     name: publish-release
     needs: [prove-release, build-release]
     if: needs.prove-release.outputs.is_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     environment: npm-publish
     permissions:
       contents: read
       id-token: write
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -349,7 +392,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
           registry-url: https://registry.npmjs.org
 
       - name: Check npm can publish through trusted publishing
@@ -393,16 +436,25 @@ jobs:
   github-release:
     name: github-release
     needs: [prove-release, publish]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -431,16 +483,25 @@ jobs:
   verify-published:
     name: verify-published
     needs: [prove-release, publish]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -453,21 +514,167 @@ jobs:
       - name: Read back the published tarballs
         run: bun scripts/verify-published.ts --wait 900
 
+  # Publish the versioned remote MCP server entry only after npm has served every package. The
+  # registry trusts GitHub OIDC, so this job has no long-lived registry credential to rotate.
+  publish-mcp-registry:
+    name: publish-mcp-registry
+    needs: [prove-release, publish, verify-published]
+    if: needs.prove-release.outputs.is_release == 'true'
+    concurrency:
+      group: nifra-official-mcp-registry
+      cancel-in-progress: false
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.7
+    steps:
+      - name: Checkout main for the validated release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
+
+      - name: Confirm the MCP manifest matches the npm release
+        id: manifest
+        run: |
+          set -euo pipefail
+          package_version="$(jq -r '.version' packages/core/package.json)"
+          manifest_version="$(jq -r '.version' server.json)"
+          name="$(jq -r '.name' server.json)"
+          [[ "$manifest_version" == "$package_version" ]] || {
+            echo "server.json is ${manifest_version}; @nifrajs/core is ${package_version}." >&2
+            exit 1
+          }
+          [[ "$name" == "io.github.nifrajs/"* ]] || {
+            echo "Unexpected MCP Registry namespace: ${name}." >&2
+            exit 1
+          }
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$manifest_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          archive="mcp-publisher_${os}_${arch}.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate server.json
+
+      - name: Check whether this version is already published
+        id: registry-version
+        env:
+          SERVER_NAME: ${{ steps.manifest.outputs.name }}
+          SERVER_VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          encoded_name="$(jq -rn --arg name "$SERVER_NAME" '$name | @uri')"
+          endpoint="https://registry.modelcontextprotocol.io/v0.1/servers/${encoded_name}/versions/${SERVER_VERSION}"
+          status="$(curl --location --silent --show-error --output "$RUNNER_TEMP/mcp-registry-version.json" --write-out '%{http_code}' "$endpoint")"
+          case "$status" in
+            200)
+              jq -e --arg name "$SERVER_NAME" --arg version "$SERVER_VERSION" \
+                '.server.name == $name and .server.version == $version' \
+                "$RUNNER_TEMP/mcp-registry-version.json" > /dev/null
+              echo "present=true" >> "$GITHUB_OUTPUT"
+              echo "${SERVER_NAME}@${SERVER_VERSION} is already in the official registry; the final step will verify it is latest."
+              ;;
+            404)
+              echo "present=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Registry lookup returned HTTP ${status}." >&2
+              cat "$RUNNER_TEMP/mcp-registry-version.json" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Authenticate with GitHub OIDC and publish
+        if: steps.registry-version.outputs.present != 'true'
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.json
+
+      - name: Verify the official registry serves this release as latest
+        env:
+          SERVER_NAME: ${{ steps.manifest.outputs.name }}
+          SERVER_VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          encoded_name="$(jq -rn --arg name "$SERVER_NAME" '$name | @uri')"
+          endpoint="https://registry.modelcontextprotocol.io/v0.1/servers/${encoded_name}/versions/latest"
+          for attempt in $(seq 1 20); do
+            status="$(curl --location --silent --show-error --output "$RUNNER_TEMP/mcp-registry-latest.json" --write-out '%{http_code}' "$endpoint")"
+            if [[ "$status" == "200" ]] && jq -e \
+              --arg name "$SERVER_NAME" --arg version "$SERVER_VERSION" \
+              '.server.name == $name and .server.version == $version and ._meta["io.modelcontextprotocol.registry/official"].isLatest == true' \
+              "$RUNNER_TEMP/mcp-registry-latest.json" > /dev/null; then
+              echo "Verified ${SERVER_NAME}@${SERVER_VERSION} is latest in the official MCP Registry."
+              exit 0
+            fi
+            if [[ "$status" != "200" && "$status" != "404" ]]; then
+              echo "Registry lookup returned HTTP ${status}." >&2
+              cat "$RUNNER_TEMP/mcp-registry-latest.json" >&2
+              exit 1
+            fi
+            echo "Waiting for ${SERVER_NAME}@${SERVER_VERSION} to become the registry's latest version (${attempt}/20)."
+            sleep 15
+          done
+          echo "The official MCP Registry does not serve ${SERVER_NAME}@${SERVER_VERSION} as latest." >&2
+          cat "$RUNNER_TEMP/mcp-registry-latest.json" >&2
+          exit 1
+
   # The smoke test installs from the registry and the deploy runs wrangler: third-party code, kept out
   # of the job that can publish. site.yml deploys from main without a release, with the same steps.
   deploy-site:
     name: deploy-site
     needs: [prove-release, publish]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
     steps:
-      - name: Checkout the validated merge
+      - name: Checkout main for the validated release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prove-release.outputs.publish_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Select the validated release commit
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -526,14 +733,19 @@ jobs:
 
       # Two deployments can serve identical pages, so each carries its own stamp for the probe to look for.
       # Pages serves /assets/* statically, without the Worker.
-      - name: Deploy site to Cloudflare Pages
+      # The build runs the site's bundler and plugins, so it runs without the Cloudflare credentials.
+      - name: Build the site
         working-directory: site
         run: |
           bun run build
           printf '%s\n' "$DEPLOYMENT" > dist/assets/deployment.txt
-          bunx wrangler pages deploy --branch main
         env:
           DEPLOYMENT: ${{ github.run_id }}.${{ github.run_attempt }}
+
+      - name: Deploy site to Cloudflare Pages
+        working-directory: site
+        run: bunx wrangler pages deploy --branch main
+        env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 

@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto"
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
-import { build } from "vite"
+import type { build as ViteBuild } from "vite"
+import { emitPluginImages } from "../internal/image-assets.ts"
 import { unsupportedBuiltin } from "../internal/target-compat.ts"
+import { importVite } from "../internal/vite-import.ts"
 import type { ComponentPipelineOptions } from "./build.ts"
 import { componentBundleImports } from "./bundle-proof.ts"
 import { componentServerEntry } from "./server-entry.ts"
+
+type ViteBuildModule = { build: typeof ViteBuild }
 
 export interface ComponentBuildResult {
   readonly outDir: string
@@ -77,6 +81,7 @@ export async function assembleComponentTarget(
   const entries = records.filter((record) => record.isEntry)
   if (entries.length !== 1)
     throw new Error("[nifra/components] Exactly one client entry is required")
+  emitPluginImages(options.plugins ?? [], resolve(out, "client/assets"))
   const assets = (await files(resolve(out, "client/assets"))).map(
     (file) => `/${relative(resolve(out, "client"), file).replaceAll("\\", "/")}`,
   )
@@ -101,6 +106,7 @@ export async function assembleComponentTarget(
     assets,
   }
   if (target === "cloudflare") {
+    const { build } = await importVite<ViteBuildModule>()
     const source = componentServerEntry({ ...metadata, serverEntry, platform: "cloudflare" })
     const input = resolve(out, ".nifra-entry.backend.js")
     await writeFile(input, source)

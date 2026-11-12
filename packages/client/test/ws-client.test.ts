@@ -484,3 +484,15 @@ describe("WebSocket runtime behavior", () => {
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0)
   })
 })
+
+describe("WebSocket disposal", () => {
+  test("using a socket closes it with the default code when the scope ends", () => {
+    useFakeWebSocket()
+    {
+      using handle = openWebSocket("https://example.test", "/chat", {}, false)
+      expect(FakeWebSocket.instances[0]!.closeCalls).toEqual([])
+      expect(handle.opened).toBeInstanceOf(Promise)
+    }
+    expect(FakeWebSocket.instances[0]!.closeCalls).toEqual([{}])
+  })
+})

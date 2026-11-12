@@ -21,6 +21,10 @@ import { recipe as v5_6_0 } from "./5.6.0.ts"
 import { recipe as v5_7_0 } from "./5.7.0.ts"
 import { recipe as v5_8_0 } from "./5.8.0.ts"
 import { recipe as v5_9_0 } from "./5.9.0.ts"
+import { recipe as v5_10_0 } from "./5.10.0.ts"
+import { recipe as v5_11_0 } from "./5.11.0.ts"
+import { recipe as v5_12_0 } from "./5.12.0.ts"
+import { recipe as v5_13_0 } from "./5.13.0.ts"
 
 /** A pin rule: every dependency whose name starts with `match` is set to version `to`. */
 export interface PinRule {
@@ -101,6 +105,10 @@ const RECIPES: Record<string, UpgradeRecipe> = {
   [v5_7_0.version]: v5_7_0,
   [v5_8_0.version]: v5_8_0,
   [v5_9_0.version]: v5_9_0,
+  [v5_10_0.version]: v5_10_0,
+  [v5_11_0.version]: v5_11_0,
+  [v5_12_0.version]: v5_12_0,
+  [v5_13_0.version]: v5_13_0,
 }
 
 export function getRecipe(version: string): UpgradeRecipe | undefined {

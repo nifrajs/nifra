@@ -1,13 +1,12 @@
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 // `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
 // bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
-// Vite's dev server. Sourced from the ROOT so the generated `RouteSearch` augmentation applies.
+// Vite's dev server. Sourced from the ROOT so the generated `RouteTable` augmentation applies.
 import type {
   Blocker,
   BlockerFunction,
   BlockerState,
   NavigateFunction,
-  RenderProps,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
@@ -23,19 +22,16 @@ import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
  * DOM-free bridges (`getBrowserNavigate` / `registerBlocker`, populated by `installHistory`); `useSearch`
  * reads the accessor `compose` provides on SSR + client mount alike. Imports only `solid-js`. No JSX.
  */
-import {
-  type Accessor,
-  type Context,
-  createContext,
-  createMemo,
-  createSignal,
-  onCleanup,
-  useContext,
-} from "solid-js"
+import { type Accessor, createMemo, createSignal, onCleanup, useContext } from "solid-js"
 import { PageContext } from "./page-visibility.ts"
+import { RenderPropsContext, SearchContext } from "./router-context.ts"
 
+export { href, rawHref } from "@nifrajs/web/client"
 export { onPageHide, onPageShow, usePageVisibility } from "./page-visibility.ts"
+export type { RouteSlotController, RouteSlotProps } from "./route-slot.tsx"
+export { RouteSlot, useRouteSlot } from "./route-slot.tsx"
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
+export { RenderPropsContext, SearchContext }
 
 // Frozen empty search + a stable accessor for a `useSearch` used outside a nifra route tree.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -48,22 +44,6 @@ const EMPTY_SEARCH_ACCESSOR: Accessor<Record<string, unknown>> = () => EMPTY_SEA
  * code under Bun provides; route modules through Vite's SSR runner read), and Solid matches provider
  * to reader by context object identity - two `createContext` results make `useSearch` SSR-render its
  * empty default in dev. */
-const SEARCH_CONTEXT_SLOT = Symbol.for("nifra.web-solid.search-context")
-const searchContextSlot = globalThis as {
-  [SEARCH_CONTEXT_SLOT]?: Context<Accessor<Record<string, unknown>> | undefined>
-}
-export const SearchContext =
-  searchContextSlot[SEARCH_CONTEXT_SLOT] ?? createContext<Accessor<Record<string, unknown>>>()
-searchContextSlot[SEARCH_CONTEXT_SLOT] = SearchContext
-
-/** The props `compose` rendered the chain with - getters over the router snapshot on the client - which
- * {@link useMatches} reads. A `globalThis` singleton for the same reason as {@link SearchContext}. */
-const PROPS_CONTEXT_SLOT = Symbol.for("nifra.web-solid.props-context")
-const propsContextSlot = globalThis as { [PROPS_CONTEXT_SLOT]?: Context<RenderProps | undefined> }
-export const RenderPropsContext =
-  propsContextSlot[PROPS_CONTEXT_SLOT] ?? createContext<RenderProps>()
-propsContextSlot[PROPS_CONTEXT_SLOT] = RenderPropsContext
-
 const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
 
 /**
@@ -104,7 +84,7 @@ export function useSearch<Schema extends StandardSchemaV1 | undefined = undefine
   >
 }
 
-/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).
+/** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta).
  * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops
  * before then / on the server. */
 export function useNavigate(): NavigateFunction {

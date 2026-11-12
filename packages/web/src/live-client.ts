@@ -42,6 +42,9 @@ export interface LiveClientOptions {
    * that way; cookies are sent by default.
    */
   readonly fetch?: (input: string, init: RequestInit) => Promise<Response>
+  /** The server's origin when the page is served from another one, such as a native shell's. The
+   * socket connects there; the loads reach it through `fetch`. */
+  readonly origin?: string
   /** Route id to its layout ids, outermost first. The generated client entry passes its own table. */
   readonly layoutIdsOf?: Readonly<Record<string, readonly string[]>>
 }
@@ -767,7 +770,10 @@ export function liveClient(options: LiveClientOptions = {}): LiveClient {
   const connect = (): void => {
     reconnect = undefined
     if (stopped) return
-    const url = new URL(appUrl(socketPath), globalThis.location?.href ?? "http://localhost/")
+    const url = new URL(
+      options.origin === undefined ? appUrl(socketPath) : socketPath,
+      options.origin ?? globalThis.location?.href ?? "http://localhost/",
+    )
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
     let socket: WebSocket
     try {

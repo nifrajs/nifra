@@ -20,6 +20,7 @@ import {
 import { DB_CHOICES, DB_PRESETS, type DbChoice, writeDbFiles } from "../db.ts"
 import { applyFeatures, type FeatureContribution } from "./features.ts"
 import { starterRouteTypes } from "./route-types.ts"
+import { SHELL_FEATURE, writeShellFiles } from "./shell.ts"
 import { materializeSite } from "./site.ts"
 import {
   DEPLOY_TARGETS,
@@ -173,6 +174,8 @@ export interface ScaffoldOptions {
   readonly docker?: boolean
   /** Emit a CI deploy workflow for the site's target. Only `"github"` today. */
   readonly ci?: string
+  /** Add a native shell for the site's pages: `tauri` (Tauri 2). */
+  readonly shell?: string
   /** Wire a data layer: `drizzle-{libsql,postgres,sqlite}` | `prisma-{postgres,sqlite}` | `kysely-postgres`. */
   readonly db?: string
   /** Wire authentication: `better-auth` (requires `--db` - auth needs a database). */
@@ -194,6 +197,8 @@ export interface ScaffoldResult {
     readonly label: string
     readonly docker: boolean
   }
+  /** The native shell added, when `--shell` was passed. */
+  readonly shell?: "tauri"
   /** The CI provider a workflow was generated for, when `--ci` was passed. */
   readonly ci?: "github"
   /** Repo secrets the generated workflow needs (for the next-steps message). */
@@ -256,6 +261,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
       ["--target", opts.deployTarget !== undefined],
       ["--docker", opts.docker === true],
       ["--ci", opts.ci !== undefined],
+      ["--shell", opts.shell !== undefined],
     ] as const) {
       if (given) throw new Error(`${flag} requires the site template (got "${template}")`)
     }
@@ -276,6 +282,9 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     deploy = { target, label: TARGETS[target].label, docker }
   }
 
+  if (opts.shell !== undefined && opts.shell !== "tauri") {
+    throw new Error(`unknown --shell "${opts.shell}". options: tauri`)
+  }
   if (opts.ci !== undefined && opts.ci !== "github") {
     throw new Error(`unknown --ci "${opts.ci}". options: github`)
   }
@@ -367,6 +376,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   if (auth !== undefined) {
     features.push({ label: `--auth ${auth}`, dependencies: AUTH_PRESETS[auth].deps })
   }
+  if (opts.shell === "tauri") features.push(SHELL_FEATURE)
   applyFeatures(pkg, features)
   // --link: replace @nifrajs/* semver refs with file: paths pointing at the local monorepo's packages/
   // directory - lets an app consume nifra from a sibling repo before the packages are published.
@@ -421,6 +431,8 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     await writeFile(path, pointer.content())
   }
 
+  if (opts.shell === "tauri") await writeShellFiles(dir, name)
+
   // Wire the Drizzle data layer (db/ module + drizzle.config + .env.example + gitignore entries).
   if (db !== undefined) await writeDbFiles(dir, db)
   // Wire auth AFTER the DB (it appends to the .env.example the DB preset wrote; --auth requires --db).
@@ -441,6 +453,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     template,
     ...(framework !== undefined ? { framework } : {}),
     ...(deploy !== undefined ? { deploy } : {}),
+    ...(opts.shell === "tauri" ? { shell: "tauri" as const } : {}),
     ...(ciResult !== undefined ? ciResult : {}),
     ...(db !== undefined ? { db } : {}),
     ...(auth !== undefined ? { auth } : {}),

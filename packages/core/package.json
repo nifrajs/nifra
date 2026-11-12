@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/core",
-  "version": "5.8.0",
+  "version": "5.13.0",
   "description": "Bun-native, contract-first HTTP framework - the router, server, and route descriptor.",
   "keywords": [
     "bun",
@@ -109,6 +109,11 @@
       "bun": "./src/canonical-json.ts",
       "types": "./dist/canonical-json.d.ts",
       "default": "./dist/canonical-json.js"
+    },
+    "./guard-deny": {
+      "bun": "./src/guard-deny.ts",
+      "types": "./dist/guard-deny.d.ts",
+      "default": "./dist/guard-deny.js"
     },
     "./idempotency": {
       "bun": "./src/idempotency.ts",

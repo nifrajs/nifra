@@ -1,0 +1,75 @@
+{
+  "name": "@nifrajs/e2e",
+  "version": "5.13.0",
+  "description": "Browser end-to-end tests for Nifra apps: typed open() from the route table, locators and retrying expect, hydration-aware actions, and an engine seam with Playwright and in-memory implementations.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "e2e",
+    "testing",
+    "playwright"
+  ],
+  "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./fake": {
+      "bun": "./src/fake.ts",
+      "types": "./dist/fake.d.ts",
+      "default": "./dist/fake.js"
+    },
+    "./playwright": {
+      "bun": "./src/playwright.ts",
+      "types": "./dist/playwright.d.ts",
+      "default": "./dist/playwright.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/node": "workspace:*",
+    "@nifrajs/testing": "workspace:*"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  },
+  "peerDependencies": {
+    "playwright": ">=1.50.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/e2e"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

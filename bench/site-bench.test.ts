@@ -6,6 +6,8 @@ import {
   httpFrameworkVersion,
   httpRealworldFromResults,
   httpWorkloadsFromResults,
+  type LegacySiteBench,
+  mergeSiteBench,
   NIFRA_VERSION,
   packageVersion,
   type SiteBench,
@@ -73,20 +75,33 @@ describe("published HTTP slices", () => {
 
   test("a capture record names bare versions and today's date", () => {
     const today = new Date().toISOString().slice(0, 10)
-    expect(capturedMeta({ ...runtimes, oha: "1.16.0" })).toEqual({
+    const allRuntimes = capturedMeta({ ...runtimes, oha: "1.16.0" })
+    expect(allRuntimes).toMatchObject({
       date: today,
       bun: "1.4.3",
       node: "26.12.0",
       deno: "2.9.7",
       oha: "1.16.0",
     })
+    expect(typeof allRuntimes.source).toBe("string")
+    expect(typeof allRuntimes.machine?.runner).toBe("string")
+    expect(typeof allRuntimes.machine?.cpu).toBe("string")
+    expect(typeof allRuntimes.machine?.vcpus).toBe("number")
+    expect(allRuntimes.source?.length).toBeGreaterThan(0)
     // The SSR suite runs no Deno target, so its record names none.
-    expect(capturedMeta({ bun: "1.4.3", node: "v26.12.0", oha: "1.16.0" })).toEqual({
+    const ssr = capturedMeta({ bun: "1.4.3", node: "v26.12.0", oha: "1.16.0" })
+    expect(ssr).toMatchObject({
       date: today,
       bun: "1.4.3",
       node: "26.12.0",
       oha: "1.16.0",
     })
+    expect(typeof ssr.source).toBe("string")
+    expect(typeof ssr.machine?.runner).toBe("string")
+    expect(typeof ssr.machine?.cpu).toBe("string")
+    expect(typeof ssr.machine?.vcpus).toBe("number")
+    expect(ssr).not.toHaveProperty("deno")
+    expect(ssr.source?.length).toBeGreaterThan(0)
   })
 })
 
@@ -94,6 +109,24 @@ describe("the committed site dataset", () => {
   const data: SiteBench = JSON.parse(
     readFileSync(join(import.meta.dir, "..", "site", "shared", "data", "benchmarks.json"), "utf8"),
   )
+
+  test("a legacy Node memory capture is normalized before a partial runtime update", () => {
+    const nodeCapture = data.httpMemory?.node
+    const bunCapture = data.httpMemory?.bun
+    if (nodeCapture === undefined || bunCapture === undefined)
+      throw new Error("[test] committed Node and Bun memory captures are required")
+    const { runtime, runtimeVersion, ...legacyMemory } = nodeCapture
+    expect(runtime).toBe("node")
+    expect(runtimeVersion).toBe(nodeCapture.node)
+
+    const legacyData: LegacySiteBench = { ...data, httpMemory: legacyMemory }
+    const merged = mergeSiteBench(legacyData, { httpMemory: { bun: bunCapture } })
+    expect(merged.httpMemory).toEqual({
+      node: { ...legacyMemory, runtime: "node", runtimeVersion: legacyMemory.node },
+      bun: bunCapture,
+    })
+  })
+
   const published: ReadonlyArray<
     readonly [string, ReadonlyArray<{ readonly name: string; readonly version: string }>]
   > = [

@@ -61,6 +61,7 @@ export const IN_PROCESS_TOOLS: ReadonlySet<string> = new Set([
   "nifra_types",
   "nifra_learn",
   "nifra_frontend",
+  "nifra_runtime",
 ])
 
 /** A tool result is bounded again by the stdio message limit when the server sends it. */

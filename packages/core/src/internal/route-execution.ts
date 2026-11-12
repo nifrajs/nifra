@@ -31,6 +31,7 @@ import type {
 } from "../server/response-contract-lane.ts"
 import type { HandlerResult, ResponseResult } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource } from "../server/server.ts"
+import type { StaticResponseDefinition } from "../server/static-response.ts"
 import type { RouteProgram } from "./route-program.ts"
 
 export type InternalHandler = (ctx: RawContext) => MaybePromise<HandlerResult>
@@ -139,7 +140,7 @@ export function compileRouteExecutionPlan(options: {
   readonly hasLedger: boolean
   readonly fusedWeb: FusedWebRunner | undefined
   readonly fusedBody: FusedBodyRunner | undefined
-  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
+  readonly fusedLane: "bare" | "body" | "query" | "inputs" | "hooks" | undefined
 }): RouteExecutionPlan {
   const { lane, contextless, hasAround, hasLedger, fusedWeb, fusedBody, fusedLane } = options
 
@@ -261,13 +262,14 @@ export interface RouteExecutionPlan {
   readonly fusedWeb: FusedWebRunner | undefined
   readonly fusedBody: FusedBodyRunner | undefined
   /** Which builder produced {@link fusedWeb} - a merge rebinds the closure to the executing server
-   * and must rebuild it with the SAME semantics (a query-fused route rebuilt as bare would skip its
-   * validation). `undefined` iff `fusedWeb` is. */
-  readonly fusedLane: "bare" | "body" | "query" | "hooks" | "body-hooks" | undefined
+   * and must rebuild it with the SAME semantics (a query- or input-fused route rebuilt as bare would
+   * skip its validation). `undefined` iff `fusedWeb` is. */
+  readonly fusedLane: "bare" | "body" | "query" | "inputs" | "hooks" | undefined
 }
 
 export interface RouteEntry {
   readonly handler: InternalHandler
+  readonly staticResponse: StaticResponseDefinition | undefined
   readonly schema: RouteSchema | undefined
   /**
    * Effective transport body cap, already resolved at registration: the route's own
@@ -305,6 +307,9 @@ export interface RouteEntry {
   readonly onError: ReadonlyArray<RawErrorHandler>
   /** Registration-specialized hook shape: a route whose only lifecycle steps are derive, before and after hooks. */
   readonly lifecycleHookLane: "hooks" | undefined
+  /** An unsafe method with no body schema: no lane reads a body to refuse a cross-site form, so the
+   * dispatchers refuse it before the lanes run. */
+  readonly formOriginGuard: boolean
   /** Wraps the matched route lifecycle. Empty for the common no-around path. */
   readonly around: ReadonlyArray<RawAround>
   /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */

@@ -24,3 +24,7 @@ export function define(out: Record<string, unknown>, key: string, value: unknown
     Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
   else out[key] = value
 }
+
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the member is optional, so an engine without JSON.rawJSON leaves it undefined.
+export const isRawJson = (JSON as JSON & { readonly isRawJSON?: (value: unknown) => boolean })
+  .isRawJSON

@@ -185,8 +185,8 @@ export function serveDatabaseAsMcp(
     for (const table of options.tables) {
       let rows: unknown = null
       try {
+        // nifra-expect sql-dynamic: operator-allowlisted table identifier is escaped by sqlIdentifiers; SQL identifiers cannot be bound as values.
         const [count] = await session.run(
-          // nifra-expect sql-dynamic: table name from the operator-configured allowlist, escaped by sqlIdentifier; SQL cannot bind an identifier as a parameter
           sqlIdentifiers`SELECT count(*) AS n FROM "${table}"`,
           deadline,
         )

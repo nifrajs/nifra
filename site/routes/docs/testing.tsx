@@ -1,5 +1,6 @@
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
+import { href } from "@nifrajs/web-react/router"
 
 export const meta = docsMeta(
   "/docs/testing",
@@ -154,7 +155,7 @@ export default function ContractTesting() {
         strict schema (<code>@nifrajs/schema</code>&rsquo;s <code>t.object</code>) reports them and the
         test fails, while a stripping one (Zod, Valibot) accepts them silently. To catch extras
         regardless, or to stop them reaching the wire in production, use{" "}
-        <a href="/docs/security">
+        <a href={href({ to: "/docs/security" })}>
           <code>responseContract</code>
         </a>
         .
@@ -243,7 +244,9 @@ export default function ContractTesting() {
         browser: <code>serveTestApp</code> binds the app to an ephemeral port,{" "}
         <code>e2eUrl</code> typechecks the visited path against the route registry, and the
         session jar crosses into the browser as a <code>Cookie</code> header. Bring Playwright
-        (or Vitest Browser) for the browser itself - nifra supplies the glue, not another runner.
+        (or Vitest Browser) for the browser itself - nifra supplies the glue, not another runner.{" "}
+        <a href={href({ to: "/docs/e2e" })}>@nifrajs/e2e</a> wraps that glue into locators, assertions, agent steps
+        and a replay cache.
       </p>
       <CodeBlock code={E2E} lang="ts" />
 

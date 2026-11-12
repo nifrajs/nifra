@@ -84,6 +84,11 @@ export interface ToolContractOptions<
   readonly description: string
   readonly input: InputSchema
   readonly output: OutputSchema
+  /**
+   * The capability a caller must hold to run the tool. Defaults to `tool.execute.<name>`, valid for
+   * any name made of lowercase segments joined by `.`, `-` or `_` (`list_orders`); a name with an
+   * empty segment (`a__b`, a trailing `-`) derives none and must pass one.
+   */
   readonly capability?: string
   readonly approval?: ToolApprovalPolicy
   readonly idempotency?: ToolIdempotencyPolicy<Input>
@@ -398,8 +403,13 @@ export function defineTool<
   if (!isStandardSchema(options.input) || !isStandardSchema(options.output)) {
     throw new TypeError("tool contract: input and output must implement Standard Schema")
   }
-  if (options.capability !== undefined && !validCapabilityId(options.capability)) {
-    throw new TypeError(`tool contract: invalid capability ${JSON.stringify(options.capability)}`)
+  const capability = options.capability ?? `${DEFAULT_CAPABILITY}.${options.name}`
+  if (typeof capability !== "string" || !validCapabilityId(capability)) {
+    throw new TypeError(
+      options.capability === undefined
+        ? `tool contract: name ${JSON.stringify(options.name)} derives no valid capability; pass \`capability\``
+        : `tool contract: invalid capability ${JSON.stringify(options.capability)}`,
+    )
   }
   const approval = validateApprovalPolicy(options.approval ?? { kind: "none" })
   const cost =
@@ -415,7 +425,7 @@ export function defineTool<
     description: options.description.trim(),
     input: options.input,
     output: options.output,
-    capability: options.capability ?? `${DEFAULT_CAPABILITY}.${options.name}`,
+    capability,
     approval,
     ...(options.idempotency === undefined ? {} : { idempotency: options.idempotency }),
     ...(cost === undefined ? {} : { cost }),

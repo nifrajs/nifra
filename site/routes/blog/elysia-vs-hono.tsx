@@ -1,3 +1,4 @@
+import { href } from "@nifrajs/web-react/router"
 import { formatPercent, formatRps, httpWorkloadRps, percentOf } from "../../shared/data/benchmarks"
 import { postMeta } from "../../shared/meta"
 
@@ -17,8 +18,9 @@ export default function ElysiaVsHono() {
       <h1>Elysia vs Hono in 2026</h1>
       <p>
         <em>
-          Updated 2026-08-04 · Disclosure: we build <a href="/">Nifra</a> and measure all three in
-          one harness. The Elysia-vs-Hono verdict below is straight from the data.
+          Updated 2026-08-04 · Disclosure: we build <a href={href({ to: "/" })}>Nifra</a> and
+          measure all three in one harness. The Elysia-vs-Hono verdict below is straight from the
+          data.
         </em>
       </p>
 
@@ -68,8 +70,8 @@ export default function ElysiaVsHono() {
       </table>
       <p>
         (oha @ 50 conns, identical route semantics, medians; every row on{" "}
-        <a href="/benchmarks">benchmarks</a>.) On throughput Elysia leads on Bun and Node, and the
-        two trade wins on Deno - Hono's design trades peak throughput for reach.
+        <a href={href({ to: "/benchmarks" })}>benchmarks</a>.) On throughput Elysia leads on Bun and
+        Node, and the two trade wins on Deno - Hono's design trades peak throughput for reach.
       </p>
 
       <h2>The real differences</h2>
@@ -119,8 +121,9 @@ export default function ElysiaVsHono() {
           ),
         )}{" "}
         of Elysia on validated POST), runs on all the same runtimes, and ships its docs as a{" "}
-        <a href="/blog/docs-as-mcp">live MCP server</a> for AI coding agents. Head-to-heads:{" "}
-        <a href="/compare/elysia">vs Elysia</a> · <a href="/compare/hono">vs Hono</a>.
+        <a href={href({ to: "/blog/docs-as-mcp" })}>live MCP server</a> for AI coding agents.
+        Head-to-heads: <a href={href({ to: "/compare/elysia" })}>vs Elysia</a> ·{" "}
+        <a href={href({ to: "/compare/hono" })}>vs Hono</a>.
       </p>
     </article>
   )

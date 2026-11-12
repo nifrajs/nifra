@@ -26,6 +26,8 @@ export function staticMount(dir: string) {
 
 export interface DifferentialAppOptions {
   readonly staticFiles?: StaticHandler
+  readonly validateHost?: boolean
+  readonly normalizeTarget?: boolean
 }
 
 /** The route cap: small, so a generated length crosses it without sending a megabyte. */
@@ -72,7 +74,15 @@ function encodePath(path: string): string | undefined {
 
 export function createDifferentialApp(options: DifferentialAppOptions = {}) {
   const staticFiles = options.staticFiles
-  const app = server({ logger: silentLogger, maxBodyBytes: MAX_BODY_BYTES })
+  const serverOptions = {
+    logger: silentLogger,
+    maxBodyBytes: MAX_BODY_BYTES,
+  }
+  const app = server({
+    ...serverOptions,
+    ...(options.validateHost === undefined ? {} : { validateHost: options.validateHost }),
+    ...(options.normalizeTarget === undefined ? {} : { normalizeTarget: options.normalizeTarget }),
+  })
     .use(websocket())
     .use(responseContract("enforce", { extra: "strip" }))
     .use(responseObserver())
@@ -242,9 +252,11 @@ export function createDifferentialApp(options: DifferentialAppOptions = {}) {
   app.ws<{ caller: string }>("/ws/guarded", {
     upgrade: (c) => {
       const token = c.req.headers.get("x-ws-token")
+      // nifra-expect NF-S002: public fixture control word selects the throwing handshake path; it is not a credential.
       if (token === "throw") throw new Error(INTERNAL_SENTINEL)
       // Both ways a guard refuses a handshake: a Response, and the status() a handler returns.
       if (token === null) return new Response("unauthorized", { status: 401 })
+      // nifra-expect NF-S002: public fixture control word selects the successful handshake path; it is not a credential.
       if (token !== "ok") return status(403, { error: "bad_token" })
       return { caller: c.caller }
     },

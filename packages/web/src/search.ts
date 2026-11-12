@@ -11,6 +11,7 @@
  */
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import { isRecord } from "./internal/record.ts"
+import { stripRouteSlotsSearch } from "./route-slots.ts"
 
 /**
  * Bounds applied while parsing a query string. A search string is attacker-controlled, so it is capped
@@ -190,6 +191,9 @@ export function parseSearch(
   codec: SearchCodec = jsonCodec,
   limits: SearchLimits = DEFAULT_SEARCH_LIMITS,
 ): Record<string, unknown> {
+  const query = raw.startsWith("?") ? raw.slice(1) : raw
+  const stripped = stripRouteSlotsSearch(query)
+  if (stripped !== query) raw = stripped
   if (raw.length > limits.maxLength) return {}
   return codec.parse(raw, limits)
 }
@@ -246,8 +250,9 @@ export function searchOfChain(
 /**
  * The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed
  * query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route
- * navigation: generated route types (`nifra sync-routes`) map each path to
- * `SearchOf<typeof import("./routes/<file>")>`, populating the augmentable `RouteSearch` interface.
+ * navigation: `nifra types` maps each route pattern to
+ * `SearchOf<typeof import("./routes/<file>")>` in `.nifra/types/routes.d.ts`, populating the augmentable
+ * `RouteTable` interface.
  */
 export type SearchOf<Module> = Module extends { searchSchema: infer S }
   ? S extends StandardSchemaV1

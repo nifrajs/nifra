@@ -11,6 +11,7 @@ import {
   notFound,
   type RenderAdapter,
   type RouteModule,
+  rawHref,
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER, STATUS_HEADER } from "../src/router.ts"
@@ -82,7 +83,7 @@ const admin = (): Modules => ({
   "admin/_layout.tsx": {
     gate: true,
     loader: (ctx) => {
-      if (searchParam(ctx, "auth") === "no") throw redirect("/login")
+      if (searchParam(ctx, "auth") === "no") throw redirect(rawHref("/login"))
       if (searchParam(ctx, "auth") === "hidden") notFound()
       return { user: "ada" }
     },

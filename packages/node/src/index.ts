@@ -683,6 +683,21 @@ export interface ServeOptions {
   /** Use this validated authority when constructing Request.url, ignoring the inbound Host value. */
   readonly canonicalHost?: string
   /**
+   * Route a request on the path a WHATWG parser would give it. Bun and workerd deliver a parsed URL,
+   * so `/public/../admin` reaches the app as `/admin`; Node's `IncomingMessage.url` is the target as
+   * sent. Off, Node routes the text received, as most frameworks do: a guard on `/admin` does not see
+   * `/public/../admin`, and a proxy that normalizes paths before forwarding disagrees with the app
+   * about which route a request is for. On, dot segments (`.`, `..`, `%2e`), backslashes and the
+   * characters a parser percent-encodes are resolved before routing, so every runtime routes the
+   * same path. Off by default; enable it when path guards, or a path-normalizing proxy, sit in front
+   * of or inside the app. The same option as `server({ normalizeTarget })` on Deno.
+   *
+   * Off applies to requests the adapter serves from Node's own request object. A request the adapter
+   * must hand over as a Web `Request` - one a `static` callback sees, and every WebSocket upgrade -
+   * is built by the platform's URL parser, which resolves dot segments whatever this option says.
+   */
+  readonly normalizeTarget?: boolean
+  /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
    * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as
    * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.
@@ -739,6 +754,8 @@ export interface NodeServer {
    * terminated if still open at the deadline. Mirrors nifra's Bun `stop()`.
    */
   stop(options?: NodeStopOptions): Promise<void>
+  /** `await using server = await serve(app, { port: 3000 })`: `stop()` with default options. Waits for a shutdown already under way. */
+  [Symbol.asyncDispose](): Promise<void>
 }
 
 const DEFAULT_DRAIN_MS = 10_000
@@ -747,6 +764,7 @@ const DRAIN_POLL_MS = 10
 interface HostPolicy {
   readonly allowedHosts: ReadonlySet<string> | ((host: string) => boolean) | undefined
   readonly canonicalHost: string | undefined
+  readonly normalizeTarget: boolean
 }
 
 function normalizeHostAuthority(value: string): string | undefined {
@@ -806,7 +824,7 @@ function hostPolicyOf(options: ServeOptions): HostPolicy {
   if (options.canonicalHost !== undefined && canonicalHost === undefined) {
     throw new TypeError(`@nifrajs/node: invalid canonical host ${options.canonicalHost}`)
   }
-  return { allowedHosts, canonicalHost }
+  return { allowedHosts, canonicalHost, normalizeTarget: options.normalizeTarget ?? false }
 }
 
 // Last inbound Host and what it normalized to. Normalization is pure and the value repeats for
@@ -1368,10 +1386,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   }
 
   const lifecycle = lifecycleOf(app)
-  async function stop({
+  // The first stop's shutdown, which a handle disposed mid-shutdown waits for.
+  let shutdown: Promise<void> | undefined
+  function stop(options: NodeStopOptions = {}): Promise<void> {
+    const run = stopOnce(options)
+    shutdown ??= run
+    return run
+  }
+  async function stopOnce({
     drainMs = DEFAULT_DRAIN_MS,
     delayMs = 0,
-  }: NodeStopOptions = {}): Promise<void> {
+  }: NodeStopOptions): Promise<void> {
     if (closed) return // idempotent
     closed = true
     if (signals !== undefined) {
@@ -1405,7 +1430,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
         process.once("SIGTERM", onSignal)
         process.once("SIGINT", onSignal)
       }
-      resolve({ port, stop })
+      resolve({ port, stop, [Symbol.asyncDispose]: () => shutdown ?? stop() })
     }
     if (options.hostname === undefined) server.listen(options.port, onListening)
     else server.listen(options.port, options.hostname, onListening)
@@ -1458,7 +1483,7 @@ function runNodeSource(
  */
 const ABSOLUTE_FORM = /^[a-z][a-z\d+.-]*:\/\//i
 
-function resolveTarget(nodeReq: IncomingMessage): void {
+function resolveTarget(nodeReq: IncomingMessage, normalizeTarget: boolean): void {
   let target = nodeReq.url
   if (target === undefined) return
   // Absolute-form (`GET http://host/path`, RFC 9112 section 3.2.2) is routed as its origin-form path
@@ -1471,7 +1496,7 @@ function resolveTarget(nodeReq: IncomingMessage): void {
     target = rest.charCodeAt(0) === 47 ? rest : `/${rest}`
     nodeReq.url = target
   }
-  if (needsResolving(target)) nodeReq.url = resolveDotSegments(target)
+  if (normalizeTarget && needsResolving(target)) nodeReq.url = resolveDotSegments(target)
 }
 
 function handle(
@@ -1483,7 +1508,7 @@ function handle(
   hostPolicy: HostPolicy,
   staticHandler?: (request: Request) => Response | Promise<Response | undefined> | undefined,
 ): void | Promise<void> {
-  resolveTarget(nodeReq)
+  resolveTarget(nodeReq, hostPolicy.normalizeTarget)
   const host = requestHost(nodeReq, hostPolicy)
   if (host === undefined) {
     writeBadRequest(nodeRes)
@@ -2960,7 +2985,7 @@ async function handleUpgrade(
 ): Promise<void> {
   // A peer can reset the socket while the guard is awaited; with no listener that error ends the process.
   socket.on("error", ignoreSocketError)
-  resolveTarget(nodeReq)
+  resolveTarget(nodeReq, hostPolicy.normalizeTarget)
   let outcome: WsUpgradeOutcome
   let request: Request
   let platform: NodePlatform | undefined
@@ -3084,7 +3109,11 @@ function attachNodeWebSocket(
     safe(() => handler.message?.(nifra, payload))
   })
   ws.on("close", (code, reason) => {
-    pubsub.unsubscribeAll(nifra) // drop topic subscriptions so the registry never holds a dead socket
+    try {
+      pubsub.unsubscribeAll(nifra)
+    } catch (error) {
+      reportError(error)
+    }
     const [sentCode, sentReason] = sentClose ?? [code, reason.toString()]
     safe(() => handler.close?.(nifra, sentCode, sentReason))
   })

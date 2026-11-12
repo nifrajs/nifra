@@ -7,6 +7,7 @@
     "files": ["packages/authjs/src/index.ts"],
     "tests": [
       "packages/authjs/test/authjs.test.ts",
+      "packages/authjs/test/authjs-boundaries.test.ts",
       "packages/authjs/test/client.test.ts",
       "internal/invariants/test/identity-epoch.test.ts"
     ]
@@ -21,6 +22,7 @@
       "packages/mcp-db/src/postgres.ts"
     ],
     "tests": ["packages/mcp-db/test"],
+    "exclude": ["packages/cli/test/db-tool.test.ts"],
     "env": ["NIFRA_TEST_POSTGRES_URL"]
   },
   "web-keep-alive": {
@@ -40,10 +42,12 @@
       "packages/web/test/router-intercept.test.ts",
       "packages/web/test/router-origin.test.ts",
       "packages/web/test/router-share.test.ts",
+      "packages/web/test/router-supersede.test.ts",
       "packages/web/test/navigation.test.ts",
       "packages/web/test/navigation-redirect.test.ts",
       "internal/invariants/test/visitor-stores.test.ts"
-    ]
+    ],
+    "exclude": ["packages/web-preact/test/ppr.test.ts"]
   },
   "web-visitor": {
     "files": [
@@ -84,7 +88,8 @@
     ],
     "tests": [
       "packages/core/test/idempotency-gate.test.ts",
-      "packages/core/test/idempotency-replay-auth.test.ts"
+      "packages/core/test/idempotency-replay-auth.test.ts",
+      "packages/core/test/idempotency.test.ts"
     ]
   },
   "core-ledger": {
@@ -109,7 +114,8 @@
     "tests": [
       "packages/core/test/body-parser.test.ts",
       "packages/middleware/test/body-limit.test.ts",
-      "packages/core/test/proto-poisoning.test.ts"
+      "packages/core/test/proto-poisoning.test.ts",
+      "packages/core/test/form-origin.test.ts"
     ]
   },
   "web-server-boundary": {
@@ -120,7 +126,8 @@
     ],
     "tests": [
       "packages/web/test/leak-matrix.test.ts",
-      "packages/web/test/build-server-only-marker.test.ts"
+      "packages/web/test/build-server-only-marker.test.ts",
+      "packages/web/test/secret-scan.test.ts"
     ]
   }
 }

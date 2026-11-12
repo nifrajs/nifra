@@ -36,7 +36,7 @@ describe("nifra types", () => {
     const report = JSON.parse(written.stdout) as Record<string, unknown>
     expect(report).toMatchObject({
       ok: true,
-      written: [".nifra/types/routes/+types/index.d.ts"],
+      written: [".nifra/types/routes.d.ts", ".nifra/types/routes/+types/index.d.ts"],
       removed: [],
     })
     expect(report.tsconfig).toBeUndefined()

@@ -5,5 +5,5 @@ import { createDifferentialApp, staticMount } from "./app.ts"
 const dir = process.argv[2]
 if (dir === undefined) throw new Error("usage: serve-node.ts <public-dir>")
 const app = createDifferentialApp({ staticFiles: serveStatic(staticMount(dir)) })
-const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+const running = await serve(app, { port: 0, hostname: "127.0.0.1", normalizeTarget: true })
 process.stdout.write(`${JSON.stringify({ port: running.port })}\n`)

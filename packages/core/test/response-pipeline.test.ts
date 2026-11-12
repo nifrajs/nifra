@@ -158,6 +158,20 @@ describe("onResponse", () => {
     expect(seen).toEqual(["hello", "<p>page</p>"])
   })
 
+  test("returns an untouched raw Response as-is", async () => {
+    const direct = new Response("plain", {
+      status: 202,
+      headers: { "content-type": "text/plain", "x-direct": "1" },
+    })
+    const app = server().get("/raw", () => direct)
+    const response = await app.fetch(new Request("http://x/raw"))
+
+    expect(response).toBe(direct)
+    expect(response.status).toBe(202)
+    expect(response.headers.get("x-direct")).toBe("1")
+    expect(await response.text()).toBe("plain")
+  })
+
   test("does not treat a legacy unowned marker as a local framework body", async () => {
     const response = new Response('{"source":true}')
     Object.defineProperty(response, Symbol.for("nifra.response.body"), {

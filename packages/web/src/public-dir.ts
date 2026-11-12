@@ -10,7 +10,8 @@
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
 import { type FileHandle, realpath } from "node:fs/promises"
-import { normalize, resolve, sep } from "node:path"
+import { normalize, relative, resolve, sep } from "node:path"
+import { decodePathSegment } from "@nifrajs/core/pattern"
 import { isHiddenPath } from "@nifrajs/core/static-file"
 import { openResolved } from "./open-resolved.ts"
 
@@ -20,7 +21,8 @@ import { openResolved } from "./open-resolved.ts"
  * linking to `.env` is refused too.
  */
 function hiddenUnder(root: string, abs: string): boolean {
-  return abs !== root && isHiddenPath(abs.slice(root.length + 1))
+  const rel = relative(root, abs)
+  return rel !== "" && isHiddenPath(rel)
 }
 
 /**
@@ -32,12 +34,8 @@ function hiddenUnder(root: string, abs: string): boolean {
  * because a blocklist over encodings is exactly the kind of check that gets bypassed.
  */
 export function resolvePublicPath(root: string, pathname: string): string | undefined {
-  let decoded: string
-  try {
-    decoded = decodeURIComponent(pathname)
-  } catch {
-    return undefined // malformed percent-encoding: not a path we will guess at
-  }
+  const decoded = decodePathSegment(pathname)
+  if (decoded === undefined) return undefined // malformed percent-encoding: not a path we will guess at
   // A NUL can truncate a path in a downstream syscall; refuse rather than normalize it away.
   if (decoded.includes("\0")) return undefined
   const rootResolved = resolve(root)
@@ -84,7 +82,8 @@ export function prerenderedPageReader(
     if (
       resolvedRoot === undefined ||
       resolvedFile === undefined ||
-      !resolvedFile.startsWith(resolvedRoot + sep)
+      !resolvedFile.startsWith(resolvedRoot + sep) ||
+      hiddenUnder(resolvedRoot, resolvedFile)
     ) {
       return undefined
     }

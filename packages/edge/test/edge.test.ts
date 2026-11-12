@@ -307,6 +307,57 @@ test("parity: a form body from another site is refused unless formOrigins lists 
   expect((await listed.fetch(req("https://idp.test")())).status).toBe(422)
 })
 
+test("parity: a cross-site form to an unsafe route without a body schema is refused unless listed", async () => {
+  const edge = (formOrigins?: readonly string[]) =>
+    server(formOrigins === undefined ? {} : { formOrigins })
+      .get("/open", () => ({ ok: true }))
+      .post("/act", () => ({ ok: true }))
+      .put("/act", () => ({ ok: true }))
+      .patch("/act", () => ({ ok: true }))
+      .delete("/act", () => ({ ok: true }))
+  const core = () =>
+    coreServer()
+      .get("/open", () => ({ ok: true }))
+      .post("/act", () => ({ ok: true }))
+      .put("/act", () => ({ ok: true }))
+      .patch("/act", () => ({ ok: true }))
+      .delete("/act", () => ({ ok: true }))
+  const send = (method: string, contentType: string | null, origin: string | null) => {
+    const headers = new Headers()
+    if (contentType !== null) headers.set("content-type", contentType)
+    if (origin !== null) headers.set("origin", origin)
+    return new Request("https://x.test/act", { method, headers, body: "a=1" })
+  }
+  const types = [
+    "application/x-www-form-urlencoded",
+    "multipart/form-data; boundary=b",
+    "text/plain",
+  ]
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    for (const type of types) {
+      const e = await wire(await edge().fetch(send(method, type, "https://evil.test")))
+      expect([method, type, e.status]).toEqual([method, type, 403])
+      expect(e).toEqual(await wire(await core().fetch(send(method, type, "https://evil.test"))))
+      // Its own origin, no Origin, and JSON (which a browser preflights) all reach the handler.
+      for (const ok of [
+        send(method, type, "https://x.test"),
+        send(method, type, null),
+        send(method, "application/json", "https://evil.test"),
+      ]) {
+        expect((await edge().fetch(ok)).status).toBe(200)
+      }
+    }
+  }
+  const listed = edge(["https://idp.test"])
+  expect((await listed.fetch(send("POST", types[0]!, "https://idp.test"))).status).toBe(200)
+  expect((await listed.fetch(send("POST", types[0]!, "https://evil.test"))).status).toBe(403)
+  // A safe method is never guarded.
+  const read = new Request("https://x.test/open", {
+    headers: { "content-type": types[0]!, origin: "https://evil.test" },
+  })
+  expect((await edge().fetch(read)).status).toBe(200)
+})
+
 /** A hand-rolled Standard Schema for an upload form: a text `title` and one `doc` file. */
 const uploadBody: StandardSchemaV1<{ title: string; doc: File }> = {
   "~standard": {

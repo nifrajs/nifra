@@ -27,6 +27,41 @@
       "code": "const id = unsigned === null ? null : (DATA_TAG.exec(unsigned)?.[1] ?? unsigned)",
       "from": "unsigned === null",
       "reason": "DATA_TAG.exec coerces null to the string \"null\", which carries no tag, so the id stays null."
+    },
+    {
+      "op": "condition->false",
+      "fn": "loadFromRaw",
+      "code": "if (raw === undefined || raw === \"\") return make({})",
+      "from": "raw === undefined || raw === \"\"",
+      "reason": "An absent or empty cookie fails the signature check in unsign and ends as the same anonymous session; the guard only skips that check."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "loadFromRaw",
+      "code": "if (raw === undefined || raw === \"\") return make({})",
+      "from": "||",
+      "reason": "An absent or empty cookie fails the signature check in unsign and ends as the same anonymous session; the guard only skips that check."
+    },
+    {
+      "op": "condition->false",
+      "fn": "revoke",
+      "code": "if (store === undefined) return",
+      "from": "store === undefined",
+      "reason": "Only called with a store: destroy and commit reach it inside their own store checks."
+    },
+    {
+      "op": "condition->false",
+      "fn": "commit",
+      "code": "family === state.id ? undefined : store.get(revokedKey(family)),",
+      "from": "family === state.id",
+      "reason": "When the family is the id, its marker is the id's own marker, which the same Promise.all already reads."
+    },
+    {
+      "op": "condition->false",
+      "fn": "destroy",
+      "code": "const state = session === undefined ? undefined : states.get(session)",
+      "from": "session === undefined",
+      "reason": "WeakMap.get(undefined) returns undefined, so the guard changes nothing."
     }
   ],
   "packages/authjs/src/index.ts": [
@@ -36,6 +71,76 @@
       "code": "payload === null",
       "from": "payload === null",
       "reason": "Object.keys(null) throws, and the catch around the comparison returns the response without the header."
+    },
+    {
+      "op": "condition->false",
+      "fn": "readEnvSecret",
+      "code": "if (typeof process === \"undefined\") return undefined",
+      "from": "typeof process === \"undefined\"",
+      "reason": "process is defined on every runtime these tests run on; the guard serves platforms without that global, which no test here can remove."
+    },
+    {
+      "op": "condition->true",
+      "fn": "resolveSecret",
+      "code": "if (configured !== undefined) return typeof configured === \"string\" ? configured : [...configured]",
+      "from": "typeof configured === \"string\"",
+      "reason": "resolveSecret runs on every request, so the copy it makes of a rotation list is never shared between requests, and activeConfig copies the list again."
+    },
+    {
+      "op": "condition->false",
+      "fn": "authEnv",
+      "code": "const processEnv = typeof process === \"undefined\" ? undefined : process.env",
+      "from": "typeof process === \"undefined\"",
+      "reason": "process is defined on every runtime these tests run on; the guard serves platforms without that global, which no test here can remove."
+    },
+    {
+      "op": "condition->false",
+      "fn": "get",
+      "code": "if (typeof key !== \"string\") return undefined",
+      "from": "typeof key !== \"string\"",
+      "reason": "A symbol key reads undefined from both the bindings and the process environment, the same as the early return."
+    },
+    {
+      "op": "condition->true",
+      "fn": "activeConfig",
+      "code": "secret: typeof secret === \"string\" ? secret : [...secret],",
+      "from": "typeof secret === \"string\"",
+      "reason": "resolveSecret already hands over its own copy of a rotation list."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "activeConfig",
+      "code": "applyEnvDefaults(env, active, true)",
+      "from": "true",
+      "reason": "basePath is always explicit here, so the warning this flag suppresses is never raised."
+    },
+    {
+      "op": "delete statement",
+      "fn": "sanitizePublicRequest",
+      "code": "rewritten.headers.delete(\"host\")",
+      "from": "rewritten.headers.delete(\"host\")",
+      "reason": "The set on the next line replaces any host header the delete would have removed."
+    },
+    {
+      "op": "condition->false",
+      "fn": "publicUrl",
+      "code": "if (proto === null && host === null) return url",
+      "from": "proto === null && host === null",
+      "reason": "With neither header the code goes on to rebuild the same request URL."
+    },
+    {
+      "op": "binary ??->&&",
+      "fn": "getSession",
+      "code": "const base = normalizeBasePath(options.basePath ?? config.basePath)",
+      "from": "??",
+      "reason": "The base path only ties the session request to the config built from the same value, so any value reads the same session."
+    },
+    {
+      "op": "condition->false",
+      "fn": "getSession",
+      "code": "if (!response.ok) return null",
+      "from": "!response.ok",
+      "reason": "An Auth.js failure answers JSON with a message and no user, so the user check that follows returns null the same way."
     }
   ],
   "packages/coding-agent/src/subagents.ts": [
@@ -143,6 +248,29 @@
       "code": "if (parent === existing) return resolve(path)",
       "from": "return resolve(path)",
       "reason": "realpath of the filesystem root never throws, so the root is never reached here."
+    }
+  ],
+  "packages/core/src/server/body-lane.ts": [
+    {
+      "op": "return undefined",
+      "fn": "formOriginAllowed",
+      "code": "if (formOrigins === undefined) return false",
+      "from": "return false",
+      "reason": "Its only caller negates the result (`!formOriginAllowed(...)`), so `undefined` and `false` refuse the same way."
+    },
+    {
+      "op": "return undefined",
+      "fn": "crossSiteFormRefused",
+      "code": "if (origin === null || headerOf(source, \"sec-fetch-site\") === \"same-origin\") return false",
+      "from": "return false",
+      "reason": "Every caller branches on the result (`if (crossSiteFormRefused(...))`), so `undefined` and `false` pass the request the same way."
+    },
+    {
+      "op": "condition->true",
+      "fn": "crossSiteFormRefused",
+      "code": "const authorization = type === \"\" ? headerOf(source, \"authorization\") : null",
+      "from": "type === \"\"",
+      "reason": "`authorization` is read only inside the `type === \"\"` branch below, so reading it for a typed request changes nothing."
     }
   ],
   "packages/core/src/server/response-contract-lane.ts": [
@@ -549,6 +677,15 @@
       "reason": "With no calls the lookup returns no rows, so the loop ends in the same undefined."
     }
   ],
+  "packages/web/src/identity.ts": [
+    {
+      "op": "condition->false",
+      "fn": "identityChannel",
+      "code": "if (typeof BroadcastChannel === \"undefined\") return undefined",
+      "from": "typeof BroadcastChannel === \"undefined\"",
+      "reason": "Without a BroadcastChannel the constructor throws a ReferenceError, which the try block below catches and answers with no channel, as the check does."
+    }
+  ],
   "packages/web/src/internal/identity-epoch.ts": [
     {
       "op": "condition->true",
@@ -623,6 +760,361 @@
       "reason": "Only whether kept is zero is read, and kept-- leaves it non-zero exactly when kept++ does."
     }
   ],
+  "packages/web/src/query.ts": [
+    {
+      "op": "condition->false",
+      "fn": "sweepEntries",
+      "code": "if (e.subscribers !== 0 || e.gcAt === undefined) continue",
+      "from": "e.subscribers !== 0 || e.gcAt === undefined",
+      "reason": "A subscribed entry has no GC time (subscribing clears it), so the guard and the single `gcAt` test below it agree on every entry."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "sweepEntries",
+      "code": "if (e.subscribers !== 0 || e.gcAt === undefined) continue",
+      "from": "||",
+      "reason": "A subscribed entry has no GC time (subscribing clears it), so the guard and the single `gcAt` test below it agree on every entry."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "sweepEntries",
+      "code": "} else if (e.gcAt < next) next = e.gcAt",
+      "from": "<",
+      "reason": "Two entries due at the same instant give the same earliest time whichever is kept."
+    },
+    {
+      "op": "condition->false",
+      "fn": "sweepEntries",
+      "code": "if (entries.size <= max) return next",
+      "from": "entries.size <= max",
+      "reason": "The cap loop below opens with the same size test and stops at once, so returning early only skips a no-op walk."
+    },
+    {
+      "op": "binary <=-><",
+      "fn": "sweepEntries",
+      "code": "if (entries.size <= max) return next",
+      "from": "<=",
+      "reason": "The cap loop below opens with the same size test and stops at once, so returning early only skips a no-op walk."
+    },
+    {
+      "op": "condition->false",
+      "fn": "watchIdentity",
+      "code": "if (stopIdentityWatch !== undefined) return",
+      "from": "stopIdentityWatch !== undefined",
+      "reason": "Registering the same cancel function again adds nothing to the listener set, and removing it once removes it for every call."
+    },
+    {
+      "op": "condition->true",
+      "fn": "mutate",
+      "code": "if (cbs.onError !== undefined)",
+      "from": "cbs.onError !== undefined",
+      "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "condition->true",
+      "fn": "mutate",
+      "code": "if (cbs.onSettled !== undefined)",
+      "from": "cbs.onSettled !== undefined",
+      "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "condition->true",
+      "fn": "mutate",
+      "code": "if (cbs.onSuccess !== undefined)",
+      "from": "cbs.onSuccess !== undefined",
+      "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "condition->true",
+      "fn": "mutate",
+      "code": "if (cbs.onSettled !== undefined)",
+      "from": "cbs.onSettled !== undefined",
+      "nth": 1,
+      "reason": "Awaiting an absent callback only adds a microtask; the call answers the same."
+    },
+    {
+      "op": "return undefined",
+      "fn": "wasCancelled",
+      "code": "return false",
+      "from": "return false",
+      "reason": "Every caller reads the result only in an `if`, where `undefined` and `false` take the same branch."
+    },
+    {
+      "op": "condition->false",
+      "fn": "hashQueryKeyPart",
+      "code": "return hashQueryKey(part === undefined ? null : part) ?? \"null\"",
+      "from": "part === undefined",
+      "reason": "hashQueryKey canonicalizes an undefined top-level value to the same `null` hash, so the explicit normalization only avoids that call."
+    },
+    {
+      "op": "condition->true",
+      "fn": "addToIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "typeof first !== \"string\"",
+      "reason": "An index entry for a non-string first component is never read; indexedCandidates only consults string first components and otherwise falls back to a full scan."
+    },
+    {
+      "op": "condition->false",
+      "fn": "addToIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "typeof first !== \"string\"",
+      "reason": "Skipping or creating an index bucket for a non-string first component cannot affect candidates; non-string prefixes always use the full cache scan."
+    },
+    {
+      "op": "binary !==->===",
+      "fn": "addToIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "!==",
+      "reason": "The mutated guard only skips the string-index fast path; invalidation falls back to scanning the full cache with the same result."
+    },
+    {
+      "op": "delete statement",
+      "fn": "addToIndex",
+      "code": "index.set(first, hashes)",
+      "from": "index.set(first, hashes)",
+      "reason": "Without the bucket, invalidation scans the full cache; the index only narrows candidates and is not part of the public state."
+    },
+    {
+      "op": "condition->true",
+      "fn": "removeFromIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "typeof first !== \"string\"",
+      "reason": "A non-string first component has no index bucket used by invalidation, so removing or retaining that unused bucket does not change cache results."
+    },
+    {
+      "op": "condition->false",
+      "fn": "removeFromIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "typeof first !== \"string\"",
+      "reason": "The index is only a candidate-set optimization; a missing or extra non-string bucket is never consulted by the fallback scan."
+    },
+    {
+      "op": "binary !==->===",
+      "fn": "removeFromIndex",
+      "code": "if (typeof first !== \"string\") return",
+      "from": "!==",
+      "reason": "Changing this guard only changes maintenance of the unused index fast path; invalidation still scans or validates the cache entries themselves."
+    },
+    {
+      "op": "condition->true",
+      "fn": "removeFromIndex",
+      "code": "if (hashes === undefined) return",
+      "from": "hashes === undefined",
+      "reason": "The index is advisory: if its bucket is absent, invalidation already takes the full-scan path, and no public cache entry is removed here."
+    },
+    {
+      "op": "condition->false",
+      "fn": "removeFromIndex",
+      "code": "if (hashes === undefined) return",
+      "from": "hashes === undefined",
+      "reason": "A missing index bucket contains no candidate to remove; the index is not observable and cache invalidation does not depend on it."
+    },
+    {
+      "op": "binary ===->!==",
+      "fn": "removeFromIndex",
+      "code": "if (hashes === undefined) return",
+      "from": "===",
+      "reason": "The index bucket is only a narrowing hint; changing this guard affects no cache or infinite-query data."
+    },
+    {
+      "op": "delete statement",
+      "fn": "removeFromIndex",
+      "code": "hashes.delete(hash)",
+      "from": "hashes.delete(hash)",
+      "reason": "Retaining a stale hash in the advisory index is harmless: the next candidate lookup rechecks the cache map before invalidating."
+    },
+    {
+      "op": "condition->true",
+      "fn": "removeFromIndex",
+      "code": "if (hashes.size === 0) index.delete(first)",
+      "from": "hashes.size === 0",
+      "reason": "Empty or retained index buckets only affect candidate scanning; cache entries and their invalidation state are held in the primary maps."
+    },
+    {
+      "op": "condition->false",
+      "fn": "removeFromIndex",
+      "code": "if (hashes.size === 0) index.delete(first)",
+      "from": "hashes.size === 0",
+      "reason": "Keeping an empty advisory bucket merely makes a later invalidation scan an empty set instead of the full cache."
+    },
+    {
+      "op": "binary ===->!==",
+      "fn": "removeFromIndex",
+      "code": "if (hashes.size === 0) index.delete(first)",
+      "from": "===",
+      "reason": "The index bucket's lifetime is an optimization only; changing its deletion condition cannot alter primary cache state."
+    },
+    {
+      "op": "delete statement",
+      "fn": "removeFromIndex",
+      "code": "if (hashes.size === 0) index.delete(first)",
+      "from": "index.delete(first)",
+      "reason": "An empty index bucket is equivalent to a retained empty bucket because indexed candidate lookup and the full-scan fallback produce the same results."
+    },
+    {
+      "op": "return undefined",
+      "fn": "indexedCandidates",
+      "code": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "from": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "reason": "Returning no candidates forces the already-correct full scan; the index only improves invalidation cost."
+    },
+    {
+      "op": "condition->true",
+      "fn": "indexedCandidates",
+      "code": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "from": "typeof first === \"string\"",
+      "reason": "An index hit is only a narrowing optimization; using the full scan for every prefix preserves invalidation semantics."
+    },
+    {
+      "op": "condition->false",
+      "fn": "indexedCandidates",
+      "code": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "from": "typeof first === \"string\"",
+      "reason": "Falling back to the complete map scan preserves the same prefix checks when the index is not consulted."
+    },
+    {
+      "op": "binary ===->!==",
+      "fn": "indexedCandidates",
+      "code": "return typeof first === \"string\" ? index.get(first) : undefined",
+      "from": "===",
+      "reason": "The candidate index only narrows work; returning undefined for string components selects the existing full-scan path."
+    },
+    {
+      "op": "delete statement",
+      "fn": "sweepEntries",
+      "code": "removeFromIndex(index, e.keyParts, h)",
+      "from": "removeFromIndex(index, e.keyParts, h)",
+      "reason": "The entry is deleted from the primary map immediately; leaving its hash in the advisory index is harmless because candidate hits recheck the map."
+    },
+    {
+      "op": "delete statement",
+      "fn": "sweepEntries",
+      "code": "removeFromIndex(index, e.keyParts, h)",
+      "from": "removeFromIndex(index, e.keyParts, h)",
+      "nth": 1,
+      "reason": "The cap eviction deletes the primary entry; index cleanup only avoids a stale candidate and is not observable."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "createQueryClient",
+      "code": "let capSweepPending = false",
+      "from": "false",
+      "reason": "Starting with an eager sweep only walks empty or still-mounted entries; it does not change cache contents or query results."
+    },
+    {
+      "op": "condition->true",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "cache.size > max || infinite.size > max",
+      "reason": "An extra cap sweep is a cost-only change; no entry is evicted until the existing sweep applies the same subscriber and max rules."
+    },
+    {
+      "op": "condition->false",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "cache.size > max || infinite.size > max",
+      "reason": "Every call is followed by markCapSweep for the same cache, so over-cap state is still scheduled; this guard only avoids a redundant flag write."
+    },
+    {
+      "op": "binary ||->&&",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "||",
+      "reason": "The following markCapSweep call observes the relevant cache size, so the cap sweep remains pending when either cache is over its limit."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": ">",
+      "reason": "At exactly max, sweepEntries returns without evicting; scheduling that no-op walk changes only work."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": ">",
+      "nth": 1,
+      "reason": "At exactly max, sweepEntries returns without evicting; scheduling that no-op walk changes only work."
+    },
+    {
+      "op": "delete statement",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "capSweepPending = true",
+      "reason": "The unsubscribe path immediately calls markCapSweep with the same cache size, so this assignment is redundant."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "scheduleGc",
+      "code": "if (cache.size > max || infinite.size > max) capSweepPending = true",
+      "from": "true",
+      "reason": "The following markCapSweep call restores the required pending flag when the cache is over its cap; otherwise an eager sweep is only extra work."
+    },
+    {
+      "op": "delete statement",
+      "fn": "subscribe",
+      "code": "entry.gcAt = undefined // in use again - cancel any pending eviction",
+      "from": "entry.gcAt = undefined",
+      "reason": "sweepEntries never evicts a subscribed entry, and the next unsubscribe schedules a fresh GC deadline."
+    },
+    {
+      "op": "delete statement",
+      "fn": "subscribe",
+      "code": "markCapSweep(cache.size)",
+      "from": "markCapSweep(cache.size)",
+      "reason": "scheduleGc immediately performs the same over-cap check for this cache; the second flag write is redundant."
+    },
+    {
+      "op": "delete statement",
+      "fn": "upsert",
+      "code": "addToIndex(cacheIndex, entry.keyParts, h)",
+      "from": "addToIndex(cacheIndex, entry.keyParts, h)",
+      "reason": "The index only narrows invalidation candidates; the primary cache map and full-scan fallback preserve all results without this bucket."
+    },
+    {
+      "op": "condition->false",
+      "fn": "invalidateQueries",
+      "code": "if (prefixParts === undefined) {",
+      "from": "prefixParts === undefined",
+      "reason": "With no part index, the following fallback scans both primary maps and keyMatchesPrefix still performs the same exact-hash comparison."
+    },
+    {
+      "op": "condition->true",
+      "fn": "invalidateQueries",
+      "code": "if (cacheCandidates === undefined) {",
+      "from": "cacheCandidates === undefined",
+      "reason": "Scanning the whole cache instead of the advisory candidate set preserves the per-entry prefix check and only costs more."
+    },
+    {
+      "op": "condition->true",
+      "fn": "invalidateQueries",
+      "code": "if (infiniteCandidates === undefined) {",
+      "from": "infiniteCandidates === undefined",
+      "reason": "Scanning all infinite entries instead of the advisory candidate set preserves invalidation semantics and only costs more."
+    },
+    {
+      "op": "condition->true",
+      "fn": "prefetchQuery",
+      "code": "if (sweepDue()) sweep()",
+      "from": "sweepDue()",
+      "reason": "Sweeping before every prefetch only adds a scan when no GC or cap work is due; it leaves the same entries and result."
+    },
+    {
+      "op": "delete statement",
+      "fn": "infiniteQuery",
+      "code": "addToIndex(infiniteIndex, created.keyParts, h)",
+      "from": "addToIndex(infiniteIndex, created.keyParts, h)",
+      "reason": "The infinite index only narrows invalidation candidates; its absence selects the existing full scan."
+    },
+    {
+      "op": "delete statement",
+      "fn": "subscribe",
+      "code": "markCapSweep(infinite.size)",
+      "from": "markCapSweep(infinite.size)",
+      "reason": "scheduleGc already checks the same infinite cache size, so this second cap flag write is redundant."
+    }
+  ],
   "packages/web/src/router.ts": [
     {
       "op": "condition->false",
@@ -644,6 +1136,412 @@
       "code": "cachePut(pagePath, reloaded)",
       "from": "cachePut(pagePath, reloaded)",
       "reason": "Cache entries are only marked stale and their keys only pick which fetchers invalidate() refreshes; a fetcher's own load already caches the path it shows."
+    },
+    {
+      "op": "condition->false",
+      "fn": "dataUrlFor",
+      "code": "pathname === \"/\" ? \"/_data.json\" : `${trimTrailingSlashes(pathname)}/_data.json`",
+      "from": "pathname === \"/\"",
+      "reason": "The root takes the other branch to the same URL: trimming \"/\" leaves \"\", and \"\" + \"/_data.json\" is \"/_data.json\"."
+    },
+    {
+      "op": "delete statement",
+      "fn": "interceptionFor",
+      "code": "void target",
+      "from": "void target",
+      "reason": "The statement only marks the parameter as used; it has no effect to remove."
+    },
+    {
+      "op": "condition->true",
+      "fn": "loadRouteData",
+      "code": "...(payload.boundaries !== undefined ? { boundaries: payload.boundaries } : {}),",
+      "from": "payload.boundaries !== undefined",
+      "reason": "Passes boundaries: undefined instead of no key; dataFields, cachePut and shareShown all treat an undefined boundaries as absent."
+    },
+    {
+      "op": "binary !==->===",
+      "fn": "cachePut",
+      "code": "...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),",
+      "from": "!==",
+      "reason": "The cache readers currently use only the entry status; retaining or omitting this optional boundary payload does not change navigation behavior."
+    },
+    {
+      "op": "condition->false",
+      "fn": "cachePut",
+      "code": "...(loaded.boundaries !== undefined ? { boundaries: loaded.boundaries } : {}),",
+      "from": "loaded.boundaries !== undefined",
+      "reason": "The keyed cache is read for freshness/status and is rewritten on a load; boundary payload shape is not observable through this cache path."
+    },
+    {
+      "op": "condition->true",
+      "fn": "navigate",
+      "code": "if (Object.keys(routeSlotTargets).length > 0) {",
+      "from": "Object.keys(routeSlotTargets).length > 0",
+      "reason": "Validating an empty route-slot target set is a no-op, so entering the block only adds work."
+    },
+    {
+      "op": "binary >->>=",
+      "fn": "navigate",
+      "code": "if (Object.keys(routeSlotTargets).length > 0) {",
+      "from": ">",
+      "reason": "An empty target set has length zero; the >= mutation only enters the same no-op validation block."
+    },
+    {
+      "op": "condition->false",
+      "fn": "navigate",
+      "code": "return pattern === undefined ? null : { pattern }",
+      "from": "pattern === undefined",
+      "reason": "A non-null route match always came from patternsById, so its pattern is defined; the undefined branch is unreachable."
+    }
+  ],
+  "packages/mcp-db/src/internal/pg-exec.ts": [
+    {
+      "op": "binary <-><=",
+      "fn": "planReads",
+      "code": "for (let i = 0; i + 2 < tokens.length; i++) {",
+      "from": "<",
+      "reason": "The extra iteration reads tokens[i + 2] past the end, which the `column === undefined` check on the next lines skips, so it changes nothing."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "planReads",
+      "code": "for (let i = 0; i + 2 < tokens.length; i++) {",
+      "from": "+",
+      "reason": "The loop only runs further past the end, where every iteration meets an undefined token and skips: `qualifier` or `dot` or `column` is undefined."
+    }
+  ],
+  "packages/cli/src/source-rewrites.ts": [
+    {
+      "op": "condition->true",
+      "fn": "move",
+      "code": "const inner = ts.isPropertyAssignment(experimental) ? experimental.initializer : undefined",
+      "from": "ts.isPropertyAssignment(experimental)",
+      "reason": "A shorthand `experimental` has no `initializer`, so reading it gives the `undefined` the other branch returns."
+    }
+  ],
+  "packages/core/src/router/path-codec.ts": [
+    {
+      "op": "binary <-><=",
+      "fn": "rawTable",
+      "code": "for (let i = 0; i < chars.length; i++) table[chars.charCodeAt(i)] = 1",
+      "from": "<",
+      "reason": "charCodeAt past the end is NaN, and a typed array ignores a write at that index."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "encodeWith",
+      "code": "while (i < length) {",
+      "from": "<",
+      "reason": "One more pass at i = length reads NaN, emits an empty run and leaves the same string."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "encodeWith",
+      "code": "if (code < 128 && raw[code] === 1) {",
+      "from": "<",
+      "reason": "raw[128] is undefined, so U+0080 is not a raw character either way."
+    },
+    {
+      "op": "condition->false",
+      "fn": "encodeWith",
+      "code": "if (code < 128) {",
+      "from": "code < 128",
+      "reason": "One ASCII character through encodeURIComponent gives the %XX the table spells: every ASCII character it leaves alone is in the raw set."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "encodeWith",
+      "code": "while (end < length && value.charCodeAt(end) >= 128) end++",
+      "from": "<",
+      "reason": "charCodeAt(length) is NaN, which is not >= 128."
+    },
+    {
+      "op": "binary >=->>",
+      "fn": "encodeWith",
+      "code": "while (end < length && value.charCodeAt(end) >= 128) end++",
+      "from": ">=",
+      "reason": "U+0080 then starts its own run, and the encodings of two runs concatenate to the encoding of both."
+    },
+    {
+      "op": "condition->false",
+      "fn": "encodeWith",
+      "code": "return start === 0 ? value : out + value.slice(start)",
+      "from": "start === 0",
+      "reason": "start 0 means out is empty, and out + value.slice(0) is value."
+    }
+  ],
+  "packages/core/src/router/pattern.ts": [
+    {
+      "op": "delete statement",
+      "fn": "fillRoutePath",
+      "code": "path += \"/\"",
+      "from": "path += \"/\"",
+      "reason": "A missing param makes the result not ok, and the path is dropped."
+    }
+  ],
+  "packages/core/src/router/same-origin-path.ts": [
+    {
+      "op": "binary <-><=",
+      "fn": "isSameOriginPath",
+      "code": "for (let i = 1; i < value.length; i++) {",
+      "from": "<",
+      "reason": "charCodeAt(length) is NaN and equals no rejected code."
+    }
+  ],
+  "packages/web/src/href.ts": [
+    {
+      "op": "condition->true",
+      "fn": "compiled",
+      "code": "if (entry === undefined) {",
+      "from": "entry === undefined",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "condition->true",
+      "fn": "compiled",
+      "code": "if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear()",
+      "from": "compiledPatterns.size >= MAX_COMPILED_PATTERNS",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "condition->false",
+      "fn": "compiled",
+      "code": "if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear()",
+      "from": "compiledPatterns.size >= MAX_COMPILED_PATTERNS",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "binary >=->>",
+      "fn": "compiled",
+      "code": "if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear()",
+      "from": ">=",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "delete statement",
+      "fn": "compiled",
+      "code": "if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear()",
+      "from": "compiledPatterns.clear()",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    },
+    {
+      "op": "delete statement",
+      "fn": "compiled",
+      "code": "compiledPatterns.set(pattern, entry)",
+      "from": "compiledPatterns.set(pattern, entry)",
+      "reason": "A cache only: a miss recompiles an equal pattern, and the cap bounds memory without changing a result."
+    }
+  ],
+  "packages/web/src/route-types.ts": [
+    {
+      "op": "binary &&->||",
+      "fn": "paramsType",
+      "code": "const own = kind === \"page\" && !basename(file).startsWith(\"_\")",
+      "from": "&&",
+      "reason": "A layout's kind is always the underscore-prefixed `_layout`, so the page test and the name test agree."
+    },
+    {
+      "op": "condition->true",
+      "fn": "paramsType",
+      "code": "const owner = own ? file : dir === \".\" ? \"index.tsx\" : `${dir}/index.tsx`",
+      "from": "own",
+      "reason": "A `_layout` or `_404` file spells the same param names as its directory's index, so the owner file does not change them."
+    },
+    {
+      "op": "condition->false",
+      "fn": "paramsType",
+      "code": "const owner = own ? file : dir === \".\" ? \"index.tsx\" : `${dir}/index.tsx`",
+      "from": "dir === \".\"",
+      "reason": "`./index.tsx` and `index.tsx` are the same route."
+    }
+  ],
+  "packages/cli/src/rules/internal-links.ts": [
+    {
+      "op": "condition->true",
+      "fn": "pageRoutes",
+      "code": "if (loaded === undefined) {",
+      "from": "loaded === undefined",
+      "reason": "A per-run cache: a miss builds an equal route set."
+    },
+    {
+      "op": "condition->false",
+      "fn": "loadPageRoutes",
+      "code": "if (!existsSync(routesDir)) return undefined",
+      "from": "!existsSync(routesDir)",
+      "reason": "discoverRoutes on a folder that does not exist throws or finds nothing, and both end in the same undefined."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "commentAt",
+      "code": "if (text.startsWith(\">\", body)) return { start, bodyEnd: body, end: body + 1 }",
+      "from": "+",
+      "reason": "The characters between the shortened and the real end are not markup, so the scan from there finds the same anchors, comments and lines."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "markupEnd",
+      "code": "} else if (!expression && braces === 0 && char === \">\") return at + 1",
+      "from": "+",
+      "reason": "The end moves back onto the tag's own >, which the scan then steps over as text."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "lineLookup",
+      "code": "for (let at = text.indexOf(\"\\n\"); at !== -1; at = text.indexOf(\"\\n\", at + 1)) starts.push(at + 1)",
+      "from": "+",
+      "nth": 1,
+      "reason": "No tag or attribute starts on the last character of a line."
+    },
+    {
+      "op": "condition->true",
+      "fn": "backendMount",
+      "code": "if (read.kind === \"literal\") prefix = read.value",
+      "from": "read.kind === \"literal\"",
+      "reason": "An unreadable prefix has no value, and the mount is unknown then anyway."
+    },
+    {
+      "op": "delete statement",
+      "fn": "pageRoutes",
+      "code": "cache.set(ctx, loaded)",
+      "from": "cache.set(ctx, loaded)",
+      "reason": "A per-run cache: a miss builds an equal route set."
+    },
+    {
+      "op": "flip boolean",
+      "fn": "loadPageRoutes",
+      "code": "apiStrip: mount?.strip ?? false,",
+      "from": "false",
+      "reason": "With the mount unknown, backendUnknown already stops every dead-link verdict, so the backend entries are never consulted."
+    },
+    {
+      "op": "return undefined",
+      "fn": "servedElsewhere",
+      "code": "return false",
+      "from": "return false",
+      "reason": "false and undefined are both falsy to the caller."
+    },
+    {
+      "op": "condition->false",
+      "fn": "judge",
+      "code": "const rest = cut < 0 ? \"\" : written.slice(cut)",
+      "from": "cut < 0",
+      "reason": "With no ? or #, written.slice(-1) is the path's last character, which is neither of them."
+    },
+    {
+      "op": "binary +->-",
+      "fn": "commentAt",
+      "code": "if (text.startsWith(\"->\", body)) return { start, bodyEnd: body, end: body + 2 }",
+      "from": "+",
+      "reason": "The characters between the shortened and the real end are not markup, so the scan from there finds the same anchors, comments and lines."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "markupEnd",
+      "code": "for (let at = start; at < text.length; at++) {",
+      "from": "<",
+      "reason": "At text.length the character is undefined, which no branch takes."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "templateHrefs",
+      "code": "for (let at = 0; at < text.length; ) {",
+      "from": "<",
+      "reason": "At text.length the character is undefined, which no branch takes."
+    },
+    {
+      "op": "condition->false",
+      "fn": "templateHrefs",
+      "code": "if (text[at] !== \"<\") {",
+      "from": "text[at] !== \"<\"",
+      "reason": "The tag pattern below rejects every position that is not a <, and the scan steps on by one."
+    },
+    {
+      "op": "condition->false",
+      "fn": "templateFindings",
+      "code": "if (!text.includes(\"href\")) continue",
+      "from": "!text.includes(\"href\")",
+      "reason": "A file without the word href holds no href attribute, so the scan below finds nothing in it."
+    },
+    {
+      "op": "binary &&->||",
+      "fn": "mayMatch",
+      "code": "mayMatch: (text) => text.includes(\"<a\") && text.includes(\"href\"),",
+      "from": "&&",
+      "reason": "A pre-filter: find reads the real anchors, so a looser filter costs time and changes no finding."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "judge",
+      "code": "const path = cut < 0 ? written : written.slice(0, cut)",
+      "from": "<",
+      "reason": "cut is the index of ? or # in a path that begins with /, so it is never 0."
+    },
+    {
+      "op": "binary <-><=",
+      "fn": "judge",
+      "code": "const rest = cut < 0 ? \"\" : written.slice(cut)",
+      "from": "<",
+      "reason": "cut is the index of ? or # in a path that begins with /, so it is never 0."
+    },
+    {
+      "op": "condition->true",
+      "fn": "report",
+      "code": "message: note === undefined ? verdict.message : `${verdict.message} ${note}`,",
+      "from": "note === undefined",
+      "reason": "note is never set: this rule does not ask scanSources to require a reason."
+    },
+    {
+      "op": "delete statement",
+      "fn": "templateHrefs",
+      "code": "expectations += code(text.slice(previous))",
+      "from": "expectations += code(text.slice(previous))",
+      "reason": "A line past the last comment holds no comment, and the upward search stops on a missing line as it does on a line of code."
+    }
+  ],
+  "packages/web/src/keep-alive.ts": [
+    {
+      "op": "condition->true",
+      "fn": "refresh",
+      "code": "if (stuck.length > 0) {",
+      "from": "stuck.length > 0",
+      "reason": "When stuck is empty, drop([]) returns immediately and recomposing produces the same page set; entering that block only repeats no-op work."
+    },
+    {
+      "op": "delete statement",
+      "fn": "after",
+      "code": "slot.shown = false",
+      "from": "slot.shown = false",
+      "reason": "The hidden transition already records offsets before this assignment, and every subsequent visible transition sets shown true; retaining true only repeats guarded no-op bookkeeping while parked."
+    },
+    {
+      "op": "condition->false",
+      "fn": "breaksAround",
+      "code": ".map((part, j) => (j === 0 ? part.compound : `${part.before} ${part.compound}`))",
+      "from": "j === 0",
+      "reason": "For the first selector component, the mutated leading descendant whitespace is equivalent to the selector without that whitespace."
+    }
+  ],
+  "packages/core/src/idempotency.ts": [
+    {
+      "op": "condition->false",
+      "fn": "boundedResponseBytes",
+      "code": "if (cloneBody === null) return new Uint8Array()",
+      "from": "cloneBody === null",
+      "reason": "The function has already observed a non-null original body; Response.clone() preserves a non-null body, so the branch is unreachable."
+    },
+    {
+      "op": "return undefined",
+      "fn": "boundedResponseBytes",
+      "code": "if (cloneBody === null) return new Uint8Array()",
+      "from": "return new Uint8Array()",
+      "reason": "The cloned body cannot be null after the original body check, so changing this unreachable return has no observable path."
+    },
+    {
+      "op": "condition->true",
+      "fn": "boundedResponseBytes",
+      "code": "if (liveBody !== null) cancellations.push(liveBody.cancel())",
+      "from": "liveBody !== null",
+      "reason": "The original response body was checked non-null before cloning and remains the live tee branch during the oversize read."
     }
   ]
 }

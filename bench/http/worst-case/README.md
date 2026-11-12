@@ -1,16 +1,23 @@
 # Worst-case HTTP benchmark
 
-This benchmark compares Nifra with Elysia across Bun, Node, and Deno, plus Fastify on Node.
-The application is intentionally adversarial for Nifra: it combines lifecycle hooks, a
-multi-parameter route, validated query data, JSON body validation, and dynamic response headers.
-The default one-derive/one-before/one-after shape is eligible for lifecycle fusion. Set
-`BENCH_GENERIC=1` to add a second no-op before hook to every peer, excluding Nifra's closed-shape
-fusion. This mode is a valid-request generic-lane stress case, not a representative application benchmark or
-the untrusted-stream/body-limit path.
+This benchmark compares Nifra with Elysia across Bun, Node, and Deno, plus Fastify across all three.
+Fastify's Bun and Deno rows use the same `node:http` server through each runtime's Node compatibility.
+The application is intentionally adversarial for Nifra: it combines lifecycle hooks, validated
+multi-parameter routes, validated query data, JSON body validation, and dynamic response headers.
+Path params are schema-validated in every mode. The default workload exercises Nifra's fused param,
+query, and body validation with derive/before/after hooks. Multiple hooks and error hooks are fused
+too, so a second no-op hook alone no longer selects the general runner.
+
+Set `BENCH_GENERIC=1` to configure a no-op `onValidationError` recovery hook on Nifra's routes, which
+selects its general lifecycle plan for otherwise valid traffic. Elysia and Fastify get a matching
+extra no-op before hook. The recovery callback is only invoked by the invalid-param correctness probe;
+the measured requests are valid. This compares the same valid route inputs while isolating Nifra's
+generic lifecycle lane. It is a valid-request stress case, not a representative application benchmark
+or the untrusted-stream/body-limit path.
 
 Every server is correctness-probed before load: successful GET and POST responses, dynamic
-headers, hook rejection, and invalid-body rejection must all behave as expected. The benchmark
-uses paired, count-bounded `oha` runs and reports median results.
+headers, hook rejection, invalid-body rejection, and invalid-parameter rejection must all behave as
+expected. The benchmark uses paired, count-bounded `oha` runs and reports median results.
 
 ## Run
 
@@ -36,6 +43,12 @@ Run the generic runner across all runtimes:
 
 ```sh
 BENCH_GENERIC=1 bun run bench/http/worst-case/run.ts
+```
+
+For a fresh-process median across three full generic matrices:
+
+```sh
+BENCH_GENERIC=1 bun run bench/http/worst-case/aggregate.ts --runs 3
 ```
 
 For CPU per request, sampled allocations including collected objects, and retained heap, see

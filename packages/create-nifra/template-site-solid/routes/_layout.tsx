@@ -1,3 +1,5 @@
+import { href } from "@nifrajs/web-solid/router"
+
 const css = `
   :root { --bg:#0a0a0f; --panel:#14141c; --border:#26263a; --fg:#e8e8f0; --muted:#9a9ab0; --accent:#7c5cff; --accent2:#00d4ff; }
   * { box-sizing: border-box; } html { color-scheme: dark; }
@@ -24,7 +26,7 @@ export default function Layout(props: { children?: unknown }) {
       <style>{css}</style>
       <header class="site">
         <div class="wrap">
-          <a href="/" class="logo">
+          <a href={href({ to: "/" })} class="logo">
             <b>nifra</b>
           </a>
           <a href="https://github.com">GitHub</a>

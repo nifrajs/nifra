@@ -5,6 +5,7 @@ import {
   type Manifest,
   notFound,
   type RenderAdapter,
+  rawHref,
   redirect,
   type ShouldRevalidateArgs,
 } from "../src/index.ts"
@@ -752,9 +753,9 @@ const answer = async (res: Response) => ({
 test("a gate that returns a redirect refuses exactly as one that throws it", async () => {
   const returned = { page: 0, action: 0 }
   const thrown = { page: 0, action: 0 }
-  const returning = gatedApp(() => redirect("/login"), returned)
+  const returning = gatedApp(() => redirect(rawHref("/login")), returned)
   const throwing = gatedApp(() => {
-    throw redirect("/login")
+    throw redirect(rawHref("/login"))
   }, thrown)
   const requests = (): Request[] => [
     new Request("http://x/admin"),
@@ -786,10 +787,10 @@ test("a gate that returns a Response answers with it and runs nothing else", asy
 })
 
 test("an ordinary layout loader that returns a redirect refuses exactly as one that throws it", async () => {
-  const returning = gatedApp(() => redirect("/login"), { page: 0, action: 0 }, false)
+  const returning = gatedApp(() => redirect(rawHref("/login")), { page: 0, action: 0 }, false)
   const throwing = gatedApp(
     () => {
-      throw redirect("/login")
+      throw redirect(rawHref("/login"))
     },
     { page: 0, action: 0 },
     false,
@@ -815,8 +816,8 @@ test("in development, an ordinary layout loader that refuses access is warned ab
   try {
     process.env.NODE_ENV = "development"
     const counts = { page: 0, action: 0 }
-    const ungated = gatedApp(() => redirect("/login"), counts, false)
-    const gated = gatedApp(() => redirect("/login"), counts, true)
+    const ungated = gatedApp(() => redirect(rawHref("/login")), counts, false)
+    const gated = gatedApp(() => redirect(rawHref("/login")), counts, true)
     const missing = gatedApp(() => notFound(), counts, false)
     const denied = gatedApp(() => new Response("no", { status: 403 }), counts, false)
     for (const app of [ungated, ungated, gated, missing])
@@ -837,7 +838,7 @@ test("in development, an ordinary layout loader that refuses access is warned ab
 test("outside development, a refusing ordinary layout loader stays quiet", async () => {
   const warn = spyOn(console, "warn").mockImplementation(() => {})
   try {
-    const app = gatedApp(() => redirect("/login"), { page: 0, action: 0 }, false)
+    const app = gatedApp(() => redirect(rawHref("/login")), { page: 0, action: 0 }, false)
     await app.fetch(new Request("http://x/admin"))
     expect(warn).not.toHaveBeenCalled()
   } finally {

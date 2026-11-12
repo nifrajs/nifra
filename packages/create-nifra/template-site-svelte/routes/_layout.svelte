@@ -1,5 +1,6 @@
 <!-- Root layout - wraps every page via the `children` snippet (the Chain fold passes the page there). -->
 <script lang="ts">
+  import { href } from "@nifrajs/web-svelte/router"
   let { children } = $props()
   const css = `
   :root { --bg:#0a0a0f; --panel:#14141c; --border:#26263a; --fg:#e8e8f0; --muted:#9a9ab0; --accent:#7c5cff; --accent2:#00d4ff; }
@@ -26,7 +27,7 @@
   {@html `<style>${css}</style>`}
   <header class="site">
     <div class="wrap">
-      <a href="/" class="logo"><b>nifra</b></a>
+      <a href={href({ to: "/" })} class="logo"><b>nifra</b></a>
       <a href="https://github.com">GitHub</a>
     </div>
   </header>
