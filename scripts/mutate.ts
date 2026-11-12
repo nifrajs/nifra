@@ -812,12 +812,31 @@ function killChild(): void {
   }
 }
 
-async function runTests(
+/**
+ * What one test run's process group may hold. A mutant can turn a loop into one that allocates on
+ * every pass (a token pushed per turn); within the per-run timeout that fills a 16 GB runner, and the
+ * runner is shut down with the whole shard. A suite holds about 0.1 GiB, so this is far above any
+ * run that is not that.
+ */
+export const MAX_GROUP_RSS_KB = 6 * 1024 * 1024
+
+/** The resident kilobytes of the processes in group `pgid`, from `ps -A -o pgid=,rss=`. */
+export function groupRssKb(ps: string, pgid: number): number {
+  let total = 0
+  for (const line of ps.split("\n")) {
+    const [group, rss] = line.trim().split(/\s+/)
+    if (Number(group) === pgid) total += Number(rss)
+  }
+  return total
+}
+
+export async function runTests(
   root: string,
   tests: readonly string[],
   junit: string,
   timeout: number,
   bail: boolean,
+  maxRssKb = MAX_GROUP_RSS_KB,
 ): Promise<Run> {
   rmSync(junit, { force: true })
   const started = performance.now()
@@ -845,6 +864,15 @@ async function runTests(
     timedOut = true
     killChild()
   }, timeout)
+  // A run that outgrows its memory is ended as a run that outlasts its time: either way the mutant
+  // broke the program, and the report of a killed run is never read.
+  const memory = setInterval(() => {
+    if (proc.pid === undefined) return
+    const ps = spawnSync("ps", ["-A", "-o", "pgid=,rss="], { encoding: "utf8" })
+    if (ps.status !== 0 || groupRssKb(ps.stdout, proc.pid) <= maxRssKb) return
+    timedOut = true
+    killChild()
+  }, 250)
   const closed = new Promise<void>((done) => proc.on("close", () => done()))
   let exitCode: number | null = null
   await new Promise<void>((done) =>
@@ -854,6 +882,7 @@ async function runTests(
     }),
   )
   clearTimeout(timer)
+  clearInterval(memory)
   // A server a test left running would hold the output pipes open; the group goes before reading on.
   killChild()
   await closed
