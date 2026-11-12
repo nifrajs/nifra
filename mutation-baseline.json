@@ -7272,12 +7272,6 @@
     },
     {
       "op": "condition->false",
-      "fn": "fetchData",
-      "code": "if (ownsLoader(match.routeId)) noteSource(path, payload)",
-      "from": "ownsLoader(match.routeId)"
-    },
-    {
-      "op": "condition->false",
       "fn": "fillsOnto",
       "code": "if (!isRouteDataEnvelope(payload) || payload.status !== undefined) return envelope",
       "from": "!isRouteDataEnvelope(payload) || payload.status !== undefined"
@@ -7918,12 +7912,6 @@
       "fn": "endRestore",
       "code": "reloading = undefined",
       "from": "reloading = undefined"
-    },
-    {
-      "op": "delete statement",
-      "fn": "fetchData",
-      "code": "if (ownsLoader(match.routeId)) noteSource(path, payload)",
-      "from": "noteSource(path, payload)"
     },
     {
       "op": "delete statement",
@@ -10812,12 +10800,6 @@
       "fn": "submit",
       "code": "navAbort?.abort()",
       "from": "navAbort?.abort()"
-    },
-    {
-      "op": "delete statement",
-      "fn": "submit",
-      "code": "shownFor = reads",
-      "from": "shownFor = reads"
     },
     {
       "op": "delete statement",

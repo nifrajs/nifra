@@ -304,6 +304,17 @@ export function exchange(port: number, request: WireRequest, deadlineMs: number)
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+const ABSOLUTE_FORM = /^[a-z][a-z\d+.-]*:\/\//i
+
+/** Strip an absolute-form authority the same way the socket adapters do before building a Request. */
+function originFormTarget(target: string): string {
+  if (target.charCodeAt(0) === 47 || !ABSOLUTE_FORM.test(target)) return target
+  let end = target.indexOf("//") + 2
+  while (end < target.length && target[end] !== "/" && target[end] !== "?") end++
+  const rest = target.slice(end)
+  return rest.charCodeAt(0) === 47 ? rest : `/${rest}`
+}
+
 /**
  * The same request as a `Request`, for the in-process lane - or why it cannot be one. A request that
  * only a socket can carry (a body on GET, a length that lies, a header `Headers` refuses) never
@@ -334,9 +345,7 @@ export function toRequest(request: WireRequest): Request | string {
   let url: string
   try {
     // Origin-form is appended to the authority, never resolved against it: `//x` is a path, not a host.
-    url = new URL(
-      request.target.startsWith("/") ? `http://${host}${request.target}` : request.target,
-    ).href
+    url = new URL(`http://${host}${originFormTarget(request.target)}`).href
   } catch (error) {
     return `URL: ${messageOf(error)}`
   }
