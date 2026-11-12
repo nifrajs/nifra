@@ -574,42 +574,46 @@ describe("a run that outgrows its memory", () => {
     expect(groupRssKb("", 100)).toBe(0)
   })
 
-  test("is ended as a timeout while it grows, and a run that stays small is left alone", async () => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "mutate-memory-")))
-    try {
-      writeFileSync(
-        join(dir, "grow.test.ts"),
-        'import { test } from "bun:test"\n' +
-          'test("grows", () => { const held: object[] = []; for (;;) held.push({ a: held.length }) })\n',
-      )
-      writeFileSync(
-        join(dir, "small.test.ts"),
-        'import { expect, test } from "bun:test"\ntest("small", () => { expect(1).toBe(1) })\n',
-      )
-      const grown = await runTests(
-        dir,
-        ["grow.test.ts"],
-        join(dir, "grow.xml"),
-        60_000,
-        false,
-        400_000,
-      )
-      expect(grown.timedOut).toBe(true)
-      expect(grown.ms).toBeLessThan(30_000)
-      const small = await runTests(
-        dir,
-        ["small.test.ts"],
-        join(dir, "small.xml"),
-        60_000,
-        false,
-        400_000,
-      )
-      expect(small.timedOut).toBe(false)
-      expect(small.exitCode).toBe(0)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
+  // The watchdog reads `ps` and ends a process group, neither of which Windows has.
+  test.skipIf(process.platform === "win32")(
+    "is ended as a timeout while it grows, and a run that stays small is left alone",
+    async () => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "mutate-memory-")))
+      try {
+        writeFileSync(
+          join(dir, "grow.test.ts"),
+          'import { test } from "bun:test"\n' +
+            'test("grows", () => { const held: object[] = []; for (;;) held.push({ a: held.length }) })\n',
+        )
+        writeFileSync(
+          join(dir, "small.test.ts"),
+          'import { expect, test } from "bun:test"\ntest("small", () => { expect(1).toBe(1) })\n',
+        )
+        const grown = await runTests(
+          dir,
+          ["grow.test.ts"],
+          join(dir, "grow.xml"),
+          60_000,
+          false,
+          400_000,
+        )
+        expect(grown.timedOut).toBe(true)
+        expect(grown.ms).toBeLessThan(30_000)
+        const small = await runTests(
+          dir,
+          ["small.test.ts"],
+          join(dir, "small.xml"),
+          60_000,
+          false,
+          400_000,
+        )
+        expect(small.timedOut).toBe(false)
+        expect(small.exitCode).toBe(0)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
 })
 
 describe("test selection", () => {
