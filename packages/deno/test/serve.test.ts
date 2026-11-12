@@ -774,6 +774,59 @@ Deno.test("a request no Request can be rebuilt from is routed on its resolved ta
   }
 })
 
+// A mount is handed the request as Deno delivered it, so a mounted app without `normalizeTarget`
+// matched the dot segments raw and answered 404 where it answers the rebuilt copy of any other
+// request 405. Found by scripts/check-runtime-differential.ts.
+Deno.test("a mounted app routes a request no Request can be rebuilt from on the target its parent resolved", async () => {
+  const child = (prefix: string) => server().get(`${prefix}/item`, () => ({ ok: true }))
+  const wrapped = child("/wrapped")
+  const app = server({ normalizeTarget: true })
+    .mount({ path: "/pages", app: child("/pages") })
+    .mountFetch("/wrapped", (req) => wrapped.fetch(req))
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const answers: Record<string, number[]> = {}
+    for (const method of ["TRACE", "TRACK"]) {
+      const statuses: number[] = []
+      for (const target of [
+        "/pages/item",
+        "/x/../pages/item",
+        "/pages/./item",
+        "/x/../wrapped/item",
+        "/x/../pages/none",
+      ]) {
+        statuses.push((await rawExchange(running.port, method, target)).status)
+      }
+      answers[method] = statuses
+    }
+    assertEquals(answers, {
+      TRACE: [405, 405, 405, 405, 404],
+      TRACK: [405, 405, 405, 405, 404],
+    })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// An onRequest hook that hands back the request it was given changes nothing, so the mounted app
+// still routes the target its parent resolved.
+Deno.test("a mounted app's onRequest hook returning its own request keeps the target its parent resolved", async () => {
+  const child = server()
+    .onRequest((req) => req)
+    .get("/pages/item", () => ({ ok: true }))
+  const app = server({ normalizeTarget: true }).mount({ path: "/pages", app: child })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const statuses: number[] = []
+    for (const target of ["/pages/item", "/x/../pages/item", "/x/../pages/none"]) {
+      statuses.push((await rawExchange(running.port, "TRACE", target)).status)
+    }
+    assertEquals(statuses, [405, 405, 404])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
 const named: StandardSchemaV1<unknown, { name: string }> = {
   "~standard": {
     version: 1,
