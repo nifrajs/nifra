@@ -379,6 +379,67 @@ describe("judge", () => {
     expect(judge(repeated, denoAlone).excusedBy).toEqual(["U6 repeated-header-empty-member"])
   })
 
+  test("a backslash dot segment waits on U9 only where workerd alone differs", () => {
+    const backslash = caseOf(get("/dav/a;b=c/..\\/../0"), "dav")
+    const read = new Map<LaneName, Outcome>([
+      ["bun-serve", response(200, '{"path":"0"}')],
+      ["node", response(200, '{"path":"0"}')],
+      ["workerd", response(200, '{"path":"a;b=c/0"}')],
+    ])
+    expect(judge(backslash, read)).toEqual({
+      violations: [],
+      excusedBy: ["U9 workerd-resolves-dot-segments-twice"],
+    })
+    const split = new Map<LaneName, Outcome>([...read, ["node", response(404, "{}")]])
+    expect(judge(backslash, split).violations[0]?.kind).toBe("difference")
+    // A backslash with no dot segment to resolve is not workerd's quirk.
+    expect(judge(caseOf(get("/dav/a\\b"), "dav"), read).violations[0]?.kind).toBe("difference")
+  })
+
+  test("a Host that outranks an absolute-form target waits on U19 only along that line", () => {
+    const absolute = {
+      ...get("http://127.0.0.1/pages/form", [
+        ["Host", "example.com"],
+        ["origin", "http://127.0.0.1"],
+      ]),
+      method: "POST",
+    }
+    const refused = response(403, "Forbidden")
+    const parsed = response(400, '{"ok":false,"error":"invalid_form"}')
+    const read = new Map<LaneName, Outcome>([
+      ["bun-fetch", parsed],
+      ["bun-serve", refused],
+      ["node", refused],
+      ["deno", parsed],
+    ])
+    expect(judge(caseOf(absolute, "pageForm"), read)).toEqual({
+      violations: [],
+      excusedBy: ["U19 bun-and-node-take-the-authority-from-host"],
+    })
+    // workerd answering as either side still waits; a third answer does not.
+    expect(
+      judge(caseOf(absolute, "pageForm"), new Map([...read, ["workerd", parsed]])).violations,
+    ).toEqual([])
+    expect(
+      judge(caseOf(absolute, "pageForm"), new Map([...read, ["workerd", response(200, "{}")]]))
+        .violations[0]?.kind,
+    ).toBe("difference")
+    // Deno splitting from the in-process fetch is a difference of its own.
+    expect(
+      judge(caseOf(absolute, "pageForm"), new Map([...read, ["deno", response(200, "{}")]]))
+        .violations[0]?.kind,
+    ).toBe("difference")
+    // The same split with the Host the target names is nobody's quirk.
+    const same = {
+      ...absolute,
+      headers: [
+        ["Host", "127.0.0.1"],
+        ["origin", "http://127.0.0.1"],
+      ] as [string, string][],
+    }
+    expect(judge(caseOf(same, "pageForm"), read).violations[0]?.kind).toBe("difference")
+  })
+
   test("an exposed open finding is reported instead of excused", () => {
     const echoed = caseOf(
       get("/whoami", [

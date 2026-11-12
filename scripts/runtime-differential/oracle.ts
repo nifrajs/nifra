@@ -228,6 +228,33 @@ const repeatsEmptyMember = (testCase: Case) => {
 const hasTrailingSpace = (testCase: Case) =>
   testCase.request.headers.some(([, value]) => value !== value.trimEnd())
 
+/**
+ * An absolute-form target names an authority other than the Host's, and the lanes split along the
+ * line that decides it: Bun.serve and Node (the Host's) against the in-process fetch and Deno (the
+ * target's). workerd answers with either side or not at all.
+ */
+function hostOutranksTarget(testCase: Case, outcomes: Outcomes): boolean {
+  const { target, headers } = testCase.request
+  if (!/^https?:\/\//i.test(target) || !URL.canParse(target)) return false
+  const host = headers.find(([name]) => name.toLowerCase() === "host")?.[1]
+  if (host === undefined || new URL(target).host === host.toLowerCase()) return false
+  const side = (...lanes: LaneName[]) =>
+    new Set(
+      [...outcomes]
+        .filter(([name]) => lanes.includes(name))
+        .map(([, outcome]) => canonical(outcome)),
+    )
+  const byHost = side("bun-serve", "node")
+  const byTarget = side("bun-fetch", "deno")
+  if (byHost.size !== 1 || byTarget.size !== 1) return false
+  const workerd = outcomes.get("workerd")
+  return workerd === undefined || byHost.has(canonical(workerd)) || byTarget.has(canonical(workerd))
+}
+
+/** A raw `.` or `..` segment that only shows once a backslash is read as `/`. */
+const backslashDots = (target: string) =>
+  target.includes("\\") && /\/\.{1,2}(?:[/?#]|$)/.test(target.replaceAll("\\", "/"))
+
 const statusOf = (outcomes: Outcomes, lane: LaneName) => {
   const outcome = outcomes.get(lane)
   return outcome?.kind === "response" ? outcome.status : undefined
@@ -367,14 +394,26 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
   {
     id: "U9 workerd-resolves-dot-segments-twice",
     why:
-      "workerd resolves a raw `..` before the Worker's URL parser sees `%2e%2e`, so `/old/%2e%2e/..` " +
-      "reaches the app as `/old/` where a single WHATWG pass (Bun, Node, Deno) gives `/`. The app " +
-      "routes a different handler on workerd.",
+      "workerd resolves a raw `..` before the Worker's URL parser sees `%2e%2e` or a backslash, so " +
+      "`/old/%2e%2e/..` reaches the app as `/old/` where a single WHATWG pass (Bun, Node, Deno) gives " +
+      "`/`, and `/a/..\\/../0` reaches it as `/a/0` where that pass reads `\\` as `/` and gives `/0`. " +
+      "The app routes a different handler on workerd.",
     matches: (violation, testCase, outcomes) =>
       violation.kind === "difference" &&
-      /%2e/i.test(testCase.request.target) &&
+      (/%2e/i.test(testCase.request.target) || backslashDots(testCase.request.target)) &&
       needsResolving(testCase.request.target) &&
       othersAgree(outcomes, "workerd"),
+  },
+  {
+    id: "U19 bun-and-node-take-the-authority-from-host",
+    why:
+      "Given an absolute-form target whose authority is not the Host's, Bun.serve and Node's adapter " +
+      "build the request URL from the Host, where Deno and an in-process fetch take the target's, as " +
+      "RFC 9112 section 3.2.2 says to. Only a route that reads the URL's origin shows it: the cross-site " +
+      "form guard answers 403 on the first pair and goes on to the form on the second. Bun's " +
+      "`request.url` is Bun's; the app holds no other copy of the target to correct it from.",
+    matches: (violation, testCase, outcomes) =>
+      violation.kind === "difference" && hostOutranksTarget(testCase, outcomes),
   },
   {
     id: "U7 workerd-keeps-trailing-space",
