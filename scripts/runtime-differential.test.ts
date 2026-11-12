@@ -326,6 +326,33 @@ describe("judge", () => {
     })
   })
 
+  test("raw backslash waiver keeps unrelated workerd differences visible", () => {
+    const request = {
+      ...get("/dav/a;b=c/..\\/../0"),
+      method: "PROPFIND",
+    }
+    const references = [
+      ["bun-fetch", response(200, '{"path":"0"}')],
+      ["bun-serve", response(200, '{"path":"0"}')],
+      ["node", response(200, '{"path":"0"}')],
+      ["deno", response(200, '{"path":"0"}')],
+    ] as const
+    const workerdOutcomes = [
+      response(404, '{"path":"a;b=c/0"}'),
+      response(200, '{"path":"a;b=c/0"}', [["x-extra", "1"]]),
+      response(200, '{"path":"a;b=c/0","extra":true}'),
+    ]
+    for (const workerd of workerdOutcomes) {
+      const result = judge(
+        caseOf(request, "dav"),
+        new Map<LaneName, Outcome>([...references, ["workerd", workerd]]),
+      )
+      expect(result.violations).toHaveLength(1)
+      expect(result.violations[0]?.kind).toBe("difference")
+      expect(result.excusedBy).not.toContain("U19 workerd-normalizes-raw-backslashes")
+    }
+  })
+
   test("an absolute-form Host mismatch excuses differing 4xx refusals", () => {
     const request = {
       ...get("http://127.0.0.1/pages/form", [["Host", "example.com"]]),
