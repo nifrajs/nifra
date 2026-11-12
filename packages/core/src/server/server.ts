@@ -767,6 +767,14 @@ function resolvedSource(req: Request, url: string): RequestSource {
   return source
 }
 
+/**
+ * The target each request {@link resolvedSource} routes was resolved to; made by the first one. A mount
+ * is handed that request itself, so the app it reaches routes this target, as it routes the rebuilt
+ * copy of any other request: left to `req.url`, a mounted app without `normalizeTarget` matched the
+ * dot segments raw.
+ */
+let resolvedTargets: WeakMap<Request, string> | undefined
+
 // A Host as RFC 9110 allows it: a reg-name or an IP literal, then an optional port. Deno builds
 // `Request.url` by appending the target to the Host as received, so `Host: x/admin#` turned a
 // request for `/public` into one for `/admin`. Node refuses such a Host before routing; so does this.
@@ -3552,8 +3560,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (target === true) return jsonError(400, "invalid_host")
     if (target !== false) {
       const rebuilt = withResolvedTarget(req, target)
-      if (rebuilt === undefined) return this.fetchSource(resolvedSource(req, target), platform)
+      if (rebuilt === undefined) {
+        if (rawRequestTargets) {
+          resolvedTargets ??= new WeakMap()
+          resolvedTargets.set(req, target)
+        }
+        return this.fetchSource(resolvedSource(req, target), platform)
+      }
       req = rebuilt
+    } else if (resolvedTargets !== undefined) {
+      const inherited = resolvedTargets.get(req)
+      if (inherited !== undefined) {
+        return this.fetchSource(resolvedSource(req, inherited), platform)
+      }
     }
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
