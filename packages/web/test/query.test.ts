@@ -546,6 +546,21 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     expect(calls).toBe(1) // fresh cache hit - no refetch
   })
 
+  test("prefetchQuery leaves a fresh entry alone and refreshes a stale one", async () => {
+    let t = 0
+    const c = createQueryClient({ now: () => t, staleTime: 1000 })
+    let calls = 0
+    const fn = async () => ++calls
+    await c.prefetchQuery(["k"], fn)
+    t = 500
+    await c.prefetchQuery(["k"], fn)
+    expect(calls).toBe(1)
+    t = 1500
+    await c.prefetchQuery(["k"], fn)
+    expect(calls).toBe(2)
+    expect(c.getQueryData<number>(["k"])).toBe(2)
+  })
+
   test("prefetchQuery sweeps expired entries before storing a new one", async () => {
     let t = 0
     const c = createQueryClient({ now: () => t, gcTime: 10 })

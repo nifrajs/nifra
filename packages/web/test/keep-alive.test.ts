@@ -592,6 +592,28 @@ describe("keepAliveClient", () => {
     }
   })
 
+  test("a page with no maxAge of its own is kept for ten minutes and no longer", async () => {
+    let at = 1_000
+    const clock = spyOn(Date, "now").mockImplementation(() => at)
+    try {
+      for (const [hidden, kept] of [
+        [600_000, true],
+        [600_001, false],
+      ] as const) {
+        const { router, push, drops } = setup(state("list", "/list/1"))
+        const hiddenAt = at
+        push(state("detail", "/detail"))
+        at = hiddenAt + hidden
+        fakeHistory.go(-1)
+        await router.navigate("/list/1")
+        expect(drops.map(([reason]) => reason)).toEqual(kept ? [] : ["expired"])
+        expect(router.snapshot().restored === undefined).toBe(!kept)
+      }
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   test("revalidate: false shows the kept data without a request, until a submit marks it stale", async () => {
     const requests: string[] = []
     const kept = state("list", "/list/1", { layoutData: [{ nav: 1 }] })

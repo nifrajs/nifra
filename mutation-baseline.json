@@ -6943,13 +6943,6 @@
       "from": "&&"
     },
     {
-      "op": "binary *->/",
-      "fn": "<module>",
-      "code": "export const KEEP_ALIVE_MAX_AGE_MS = 10 * 60 * 1000",
-      "from": "*",
-      "nth": 1
-    },
-    {
       "op": "binary +->-",
       "fn": "splitSelectors",
       "code": "start = i + 1",
@@ -7276,6 +7269,12 @@
       "fn": "fetchData",
       "code": "const hooks = routeHooks[target === undefined ? restore.kept.routeId : match.routeId]",
       "from": "target === undefined"
+    },
+    {
+      "op": "condition->false",
+      "fn": "fetchData",
+      "code": "if (ownsLoader(match.routeId)) noteSource(path, payload)",
+      "from": "ownsLoader(match.routeId)"
     },
     {
       "op": "condition->false",
