@@ -104,8 +104,9 @@ export function evaluateDocConsts(file: string, src: string): DocConsts {
           why.push("an array contains a non-pair element")
           return undefined
         }
-        const first = evaluate(element.elements[0], why)
-        const second = evaluate(element.elements[1], why)
+        const [left, right] = element.elements
+        const first = left === undefined ? undefined : evaluate(left, why)
+        const second = right === undefined ? undefined : evaluate(right, why)
         if (typeof first !== "string" || typeof second !== "string") {
           why.push("a row contains a non-string value")
           return undefined

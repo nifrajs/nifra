@@ -71,10 +71,20 @@ describe("jsxToMarkdown", () => {
         "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
       ),
     )
-    expect(md).toContain("Dependency | Certified tuple |")
-    expect(md).toContain("React | 19.3.1 |")
-    expect(md).toContain("TypeScript | 6.0.3 |")
+    expect(md).toContain(
+      "| Dependency | Certified tuple |\n| --- | --- |\n| React | 19.3.1 |\n| TypeScript | 6.0.3 |",
+    )
     expect(md).not.toContain("TUPLE.map")
+  })
+
+  test("a literal pipe in a tuple cell is escaped so the row keeps two columns", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["React | Solid", "19 | 1"]] as const',
+        "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("| React \\| Solid | 19 \\| 1 |")
   })
 
   test("a block whose code cannot be evaluated fails, naming the page and the const", () => {

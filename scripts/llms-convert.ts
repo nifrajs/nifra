@@ -58,9 +58,12 @@ function renderStaticTupleTable(
     (match: string, header: string, valueHeader: string, name: string): string => {
       const rows = tuples.get(name)
       if (rows === undefined) return match
-      return `${header} | ${valueHeader} |\n\n${rows
-        .map(([label, value]) => `${escapeText(label)} | ${escapeText(value)} |`)
-        .join("\n\n")}`
+      const cell = (text: string): string => escapeText(text).replace(/\|/g, "\\|")
+      return [
+        `| ${cell(header)} | ${cell(valueHeader)} |`,
+        "| --- | --- |",
+        ...rows.map(([label, value]) => `| ${cell(label)} | ${cell(value)} |`),
+      ].join("\n")
     },
   )
 }
