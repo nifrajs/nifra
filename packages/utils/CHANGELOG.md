@@ -1,5 +1,7 @@
 # @nifrajs/utils
 
-## 5.8.0
+## 5.13.0
 
-- Add shared runtime-neutral helpers used across Nifra packages.
+### Patch Changes
+
+- Add the shared runtime-neutral helpers used across Nifra packages.
