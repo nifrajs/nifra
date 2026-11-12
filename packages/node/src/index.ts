@@ -803,7 +803,9 @@ function normalizeHostAuthority(value: string): string | undefined {
   return port === undefined ? hostname : `${hostname}:${port}`
 }
 
-function hostPolicyOf(options: ServeOptions): HostPolicy {
+function hostPolicyOf(
+  options: Pick<ServeOptions, "allowedHosts" | "canonicalHost" | "normalizeTarget">,
+): HostPolicy {
   let allowedHosts: HostPolicy["allowedHosts"]
   if (options.allowedHosts !== undefined && typeof options.allowedHosts !== "function") {
     const normalized = new Set<string>()
@@ -924,7 +926,17 @@ function nodeRequestHeader(req: IncomingMessage, name: string): string | null {
 }
 
 function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefined {
-  const host = rawHost(req)
+  return resolveRequestHost(rawHost(req), policy)
+}
+
+/**
+ * The authority a request is answered as: `host` is the Host header's value (`undefined` when absent,
+ * `null` when it repeated), `undefined` out means refuse with 400.
+ */
+function resolveRequestHost(
+  host: string | null | undefined,
+  policy: HostPolicy,
+): string | undefined {
   if (host === null) return undefined
   const normalized = normalizeHostCached(host ?? "localhost")
   if (normalized === undefined) return undefined
@@ -1481,8 +1493,15 @@ function runNodeSource(
 const ABSOLUTE_FORM = /^[a-z][a-z\d+.-]*:\/\//i
 
 function resolveTarget(nodeReq: IncomingMessage, normalizeTarget: boolean): void {
-  let target = nodeReq.url
+  const target = nodeReq.url
   if (target === undefined) return
+  const resolved = resolveRequestTarget(target, normalizeTarget)
+  if (resolved !== target) nodeReq.url = resolved
+}
+
+/** {@link resolveTarget} on the text itself: the origin-form target the app is routed on. */
+function resolveRequestTarget(input: string, normalizeTarget: boolean): string {
+  let target = input
   // Absolute-form (`GET http://host/path`, RFC 9112 section 3.2.2) is routed as its origin-form path
   // with the Host header, as Bun does. Kept whole, hooks saw `http://hosthttp://...` while the
   // router matched the full URL against a `/*` route.
@@ -1491,9 +1510,8 @@ function resolveTarget(nodeReq: IncomingMessage, normalizeTarget: boolean): void
     while (end < target.length && target[end] !== "/" && target[end] !== "?") end++
     const rest = target.slice(end)
     target = rest.charCodeAt(0) === 47 ? rest : `/${rest}`
-    nodeReq.url = target
   }
-  if (normalizeTarget && needsResolving(target)) nodeReq.url = resolveDotSegments(target)
+  return normalizeTarget && needsResolving(target) ? resolveDotSegments(target) : target
 }
 
 function handle(
@@ -3165,3 +3183,22 @@ async function writeSocketResponse(
     await reader.cancel().catch(() => {})
   }
 }
+
+/**
+ * The pieces a sibling HTTP adapter (`@nifrajs/node-uws`) shares with this one: the node-direct
+ * outcome runtime, Host and target policy, and the app's lifecycle and error hooks. Parked on `serve`
+ * under a registry symbol so the package's public exports stay exactly what they were; the
+ * `@nifrajs/node/transport` entry reads it back.
+ */
+Object.defineProperty(serve, Symbol.for("@nifrajs/node/transport-kit"), {
+  value: {
+    runtime: NODE_OUTCOME_RUNTIME,
+    enableNodeDirect,
+    activateAsyncContextFrame,
+    errorReporterOf,
+    lifecycleOf,
+    hostPolicyOf,
+    resolveRequestHost,
+    resolveRequestTarget,
+  },
+})
