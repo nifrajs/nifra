@@ -5,15 +5,7 @@ export interface ChunkReader {
   releaseLock(): void
 }
 
-export function concatBytes(chunks: readonly Uint8Array[], total: number): Uint8Array {
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
-}
+export { concatBytes } from "@nifrajs/utils/bytes"
 
 /**
  * `res` again, its body the already-read `chunks` followed by the rest of `reader`: the prefix is

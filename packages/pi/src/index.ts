@@ -18,6 +18,8 @@ import {
   type SendMessageInput,
   splitAgentText,
 } from "@nifrajs/agent-protocol"
+import { escapeRegExp } from "@nifrajs/utils/escape-regexp"
+import { isRecord } from "@nifrajs/utils/record"
 import { writeRpc } from "./rpc-write.ts"
 
 export interface PiBackendOptions {
@@ -1016,10 +1018,6 @@ function failedStream(error: unknown): AgentEventStream {
   return stream
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-}
-
 interface ToolStartedPayload {
   type: "tool.started"
   turnId: string
@@ -1066,8 +1064,6 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bhf_[A-Za-z0-9]{20,}/g,
   /\bnvapi-[A-Za-z0-9_-]{20,}/g,
 ]
-
-const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /** Mask every value Pi was given except its base environment - the credentials it may echo, in any
  * shape - then the key shapes a provider or proxy could hand back on its own. A value under six

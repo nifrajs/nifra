@@ -16,6 +16,7 @@
   "dependencies": {
     "@nifrajs/agent-app": "workspace:*",
     "@nifrajs/agent-protocol": "workspace:*",
-    "@nifrajs/coding-agent": "workspace:*"
+    "@nifrajs/coding-agent": "workspace:*",
+    "@nifrajs/utils": "workspace:*"
   }
 }

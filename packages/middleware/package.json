@@ -50,7 +50,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@nifrajs/schema": "workspace:*"
+    "@nifrajs/schema": "workspace:*",
+    "@nifrajs/utils": "workspace:*"
   },
   "peerDependencies": {
     "@nifrajs/core": "workspace:^"
