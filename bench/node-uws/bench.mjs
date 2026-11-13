@@ -51,6 +51,12 @@ const activeShapes =
   only === undefined ? shapes : shapes.filter((s) => only.some((o) => s.name.includes(o)))
 
 const servers = []
+// Registered before the first spawn, so a failed startup cleans up too. Servers die with the bench on any exit path: a throw, a failed sample, Ctrl-C.
+process.on("exit", () => {
+  for (const s of servers) s.child.kill()
+})
+process.on("SIGINT", () => process.exit(130))
+process.on("SIGTERM", () => process.exit(143))
 let nextPort = 47400
 for (const arm of arms) {
   for (const app of ["bare", "real"]) {
@@ -63,12 +69,6 @@ for (const arm of arms) {
     servers.push({ arm, app, port, pid: child.pid, child })
   }
 }
-// Servers die with the bench on any exit path: a throw, a failed sample, Ctrl-C.
-process.on("exit", () => {
-  for (const s of servers) s.child.kill()
-})
-process.on("SIGINT", () => process.exit(130))
-process.on("SIGTERM", () => process.exit(143))
 const ours = new Set(servers.map((s) => s.pid))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 await sleep(2500)
