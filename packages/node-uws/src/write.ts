@@ -37,6 +37,7 @@ function checkName(name: string): void {
   checkedNames.add(name)
 }
 
+const lastChecked = new Map<string, string>()
 function checkValue(value: string): void {
   if (BAD_VALUE.test(value)) throw new TypeError("Invalid character in header content")
 }
@@ -70,10 +71,18 @@ function validate(
     const guard = inherits(headers)
     for (const name in headers) {
       if (guard && !hasOwn(headers, name)) continue
-      checkName(name)
       const value = headers[name]
-      if (typeof value === "string") checkValue(value)
-      else if (value !== undefined) for (const each of value) checkValue(each)
+      if (typeof value === "string") {
+        // The same string as the last one that passed under this name needs no second look.
+        if (lastChecked.get(name) === value) continue
+        checkName(name)
+        checkValue(value)
+        if (lastChecked.size >= 512) lastChecked.clear()
+        lastChecked.set(name, value)
+      } else {
+        checkName(name)
+        if (value !== undefined) for (const each of value) checkValue(each)
+      }
     }
   }
   if (cookies !== undefined) for (const cookie of cookies) checkValue(cookie)

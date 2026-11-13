@@ -89,6 +89,12 @@ function makeApp() {
       c.set.headers["x-reflected"] = "ok\r\nx-injected: yes"
       return { ok: true }
     })
+    .get("/plain-response", () => new Response("ok", { headers: { "x-own": "1" } }))
+    .get("/flip", (c) => {
+      flips += 1
+      c.set.headers["x-flip"] = flips === 2 ? "bad\r\nx-injected: yes" : "fine"
+      return { ok: true }
+    })
     .get("/bad-status", () => new Response("x", { status: 200 }))
     .get("/custom-status", () => status(299, { ok: true }))
     .get("/never", () => new Promise<never>(() => {}))
@@ -115,6 +121,7 @@ function makeApp() {
 }
 
 let port = 0
+let flips = 0
 let handle: UwsServer
 before(async () => {
   handle = await serve(makeApp(), { port: 0, hostname: "127.0.0.1" })
@@ -201,6 +208,38 @@ test("a CR/LF in a header value never reaches the wire: 500, no injected header"
   assert.equal(head.headers.has("x-injected"), false)
   assert.equal(head.headers.has("x-reflected"), false)
   assert.ok(!text.includes("x-injected"))
+})
+
+test("a header value that changes between responses is checked again", async () => {
+  const statuses: number[] = []
+  for (let i = 0; i < 3; i++) {
+    const text = await raw(port, GET("/flip"), (r) => r.includes("\r\n\r\n") && r.length > 60)
+    const head = parseHead(text)
+    statuses.push(head.status)
+    assert.equal(head.headers.has("x-injected"), false)
+  }
+  assert.deepEqual(statuses, [200, 500, 200])
+})
+
+test("an enumerable property on Object.prototype never becomes a response header", async () => {
+  Object.defineProperty(Object.prototype, "x-polluted", {
+    value: "yes",
+    enumerable: true,
+    configurable: true,
+  })
+  try {
+    const text = await raw(
+      port,
+      GET("/plain-response"),
+      (r) => r.includes("\r\n\r\n") && r.length > 60,
+    )
+    const head = parseHead(text)
+    assert.equal(head.status, 200)
+    assert.equal(head.headers.get("x-own")?.[0], "1")
+    assert.equal(head.headers.has("x-polluted"), false)
+  } finally {
+    delete (Object.prototype as Record<string, unknown>)["x-polluted"]
+  }
 })
 
 test("a custom status code is written with its reason phrase", async () => {
