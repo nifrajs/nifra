@@ -23,7 +23,7 @@ type Marked = { readonly [FILE]?: true; readonly [Kind]?: string; readonly items
 
 /** Whether a JSON Schema is a file field, or a list of them. */
 export function isFileSchema(schema: TSchema): boolean {
-  const node = schema as unknown as Marked
+  const node = schema as Marked
   return (
     node[FILE] === true ||
     (node[Kind] === "Array" && node.items !== undefined && isFileSchema(node.items))

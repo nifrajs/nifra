@@ -64,7 +64,7 @@ export function scheduleTrigger(
 ): () => void {
   // Cast through unknown so a consumer's DOM lib cannot merge its stricter Element signatures into
   // this structural, DOM-free contract.
-  const browser = globalThis as unknown as BrowserCapabilities
+  const browser = globalThis as BrowserCapabilities
   let disposed = false
   let cleanup: (() => void) | undefined
 

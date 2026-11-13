@@ -42,7 +42,7 @@ type ReadBytes = { readonly bytes: Uint8Array } | { readonly response: Response 
 async function readBytesCapped(res: Response, maxBytes: number): Promise<ReadBytes> {
   const body = res.body
   if (body === null) return { bytes: new Uint8Array() }
-  const reader = body.getReader() as unknown as ChunkReader
+  const reader = body.getReader() as ChunkReader
   const chunks: Uint8Array[] = []
   let total = 0
   try {

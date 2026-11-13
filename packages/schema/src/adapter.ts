@@ -139,7 +139,7 @@ function coercionStep(schema: unknown): CoercionStep | null {
 
 /** Extract a flat conversion plan, or `null` when this schema needs the full recursive Convert. */
 function flatCoercionPlan(schema: TSchema): CoercionPlan | null {
-  if ((schema as unknown as Record<symbol, unknown>)[Kind] !== "Object") return null
+  if ((schema as TSchema & { [Kind]?: unknown })[Kind] !== "Object") return null
   const props = (schema as { readonly properties?: unknown }).properties
   if (props === null || typeof props !== "object") return null
   const record = props as Record<string, unknown>

@@ -118,7 +118,7 @@ interface EffectLedgerInstallable {
 export function effectLedger(options: EffectLedgerOptions): IdentityPlugin {
   const runtime = createEffectLedgerRuntime(options)
   const apply = <S extends AnyServer>(app: S): S => {
-    ;(app as unknown as EffectLedgerInstallable)[INSTALL_EFFECT_LEDGER](runtime)
+    ;(app as EffectLedgerInstallable)[INSTALL_EFFECT_LEDGER](runtime)
     return app
   }
   return Object.assign(apply, { pluginName: "nifra:effect-ledger" }) as IdentityPlugin

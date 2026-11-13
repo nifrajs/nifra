@@ -238,7 +238,7 @@ interface SseInstallable {
  */
 export function streaming(): IdentityPlugin {
   const apply = <S extends AnyServer>(app: S): S => {
-    ;(app as unknown as SseInstallable)[INSTALL_SSE]({
+    ;(app as SseInstallable)[INSTALL_SSE]({
       response(context, run, init) {
         return sse(context, (stream) => run(typedSSEStream(stream)), init)
       },

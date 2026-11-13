@@ -166,7 +166,7 @@ describe("defer + prepareDeferred", () => {
       '{"outer":{"__proto__":{"isAdmin":true},"later":0}}',
       '{"outer":{"later":0,"__proto__":{"isAdmin":true}}}',
     ]
-    const isRecord = (value: unknown): value is Record<string, unknown> =>
+    const isNonNullObject = (value: unknown): value is Record<string, unknown> =>
       typeof value === "object" && value !== null
     for (const json of cases) {
       const input: Record<string, unknown> & { outer?: Record<string, unknown> } = JSON.parse(json)
@@ -175,8 +175,8 @@ describe("defer + prepareDeferred", () => {
       holder.later = defer(Promise.resolve(1))
       const { forComponent, forClient } = prepareDeferred(input)
       for (const out of [forComponent, forClient]) {
-        const rebuilt = isRecord(out) && nested ? out.outer : out
-        if (!isRecord(rebuilt)) throw new Error("expected the rebuilt object")
+        const rebuilt = isNonNullObject(out) && nested ? out.outer : out
+        if (!isNonNullObject(rebuilt)) throw new Error("expected the rebuilt object")
         expect(Object.getPrototypeOf(rebuilt)).toBe(Object.prototype)
         expect(Object.hasOwn(rebuilt, "__proto__")).toBe(true)
         expect(rebuilt.isAdmin).toBeUndefined()

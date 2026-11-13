@@ -71,7 +71,7 @@ export function attachCapabilityJournal(
   context: object,
   journal: CapabilityExecutionJournal,
 ): void {
-  ;(context as Record<PropertyKey, unknown>)[EXECUTION_JOURNAL as unknown as string] = journal
+  ;(context as typeof context & { [EXECUTION_JOURNAL]?: unknown })[EXECUTION_JOURNAL] = journal
 }
 
 /** The journal installed for this request, if any. */

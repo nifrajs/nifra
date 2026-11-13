@@ -280,8 +280,8 @@ export async function verifyJwt<C extends JwtClaims = JwtClaims>(
   if (headerRaw.crit !== undefined) throw jwtError("crit headers are not supported")
   if (!isObject(claimsRaw)) throw jwtError("invalid claims")
 
-  const header = headerRaw as unknown as JwtHeader
-  const claims = claimsRaw as unknown as C
+  const header = headerRaw as JwtHeader
+  const claims = claimsRaw as C
   const alg = verifyAlgorithm(header.alg, allowed)
 
   const resolved =

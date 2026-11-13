@@ -563,7 +563,7 @@ export function applyTransportCap(source: object, request: Request): void {
   // A wrapper source (Node's lazy source) delegates its own body readers to the request once it
   // materializes - which are now the shadowed ones. Mirror the raw-reader stash onto the source so
   // framework readers (`rawBodySourceOf(source)`) keep reading pre-shadow there too.
-  const raw = (request as unknown as { [RAW_BODY_READERS]?: RawBodyReaders })[RAW_BODY_READERS]
+  const raw = (request as { [RAW_BODY_READERS]?: RawBodyReaders })[RAW_BODY_READERS]
   if ((source as unknown) !== request && raw !== undefined) {
     ;(source as { [RAW_BODY_READERS]?: RawBodyReaders })[RAW_BODY_READERS] = raw
   }

@@ -562,7 +562,7 @@ async function createTypeScript7Session(
     isParameter,
     isStringLiteralLike,
   }
-  const compiler = Object.freeze(facade) as unknown as TypeScriptApi
+  const compiler = Object.freeze(facade) as TypeScriptApi
 
   const firstProject = projects.values().next().value as TypeScript7Project | undefined
   const semantic =

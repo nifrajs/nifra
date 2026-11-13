@@ -30,7 +30,7 @@ type Peeked =
 async function peekText(res: Response, maxBytes: number): Promise<Peeked> {
   const body = res.body
   if (body === null) return { response: res }
-  const reader = body.getReader() as unknown as ChunkReader
+  const reader = body.getReader() as ChunkReader
   const chunks: Uint8Array[] = []
   let total = 0
   try {

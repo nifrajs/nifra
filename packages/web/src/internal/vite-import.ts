@@ -49,7 +49,7 @@ const RELAXED: unique symbol = Symbol.for("@nifrajs/web/relaxed-capture-stack-tr
 export function relaxCaptureStackTrace(): void {
   const strict = Error.captureStackTrace
   if (typeof strict !== "function") return
-  if ((Error as unknown as Record<PropertyKey, unknown>)[RELAXED] === true) return
+  if ((Error as typeof Error & { [RELAXED]?: unknown })[RELAXED] === true) return
   try {
     Error.captureStackTrace = ((target: object, constructorOpt?: unknown) => {
       try {
@@ -75,7 +75,7 @@ export function relaxCaptureStackTrace(): void {
  */
 export async function importVite<T>(): Promise<T> {
   relaxCaptureStackTrace()
-  return (await import("vite")) as unknown as T
+  return (await import("vite")) as T
 }
 
 /**

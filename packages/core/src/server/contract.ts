@@ -430,5 +430,5 @@ export function implement<
   target.registerBatch(routes)
   // Runtime registered exactly the contract's routes through the inline path; the
   // registry type is computed from the contract inputs + handler return types.
-  return target as unknown as Server<R & RegistryFromImpl<C, H, Ctx, HookOutput>, Ctx, HookOutput>
+  return target as Server<R & RegistryFromImpl<C, H, Ctx, HookOutput>, Ctx, HookOutput>
 }

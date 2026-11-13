@@ -53,7 +53,7 @@ interface Frame<R> {
 }
 
 const TAG = new RegExp(TAG_SOURCE, "y")
-const EMPTY: Readonly<Record<string, unknown>> = {}
+const EMPTY: Readonly<Record<string, never>> = {}
 
 const handlerOf = <R>(
   tags: RichTags<R>,
