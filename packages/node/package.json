@@ -58,6 +58,6 @@
   },
   "homepage": "https://github.com/nifrajs/nifra#readme",
   "dependencies": {
-    "srvx": "0.12.5"
+    "srvx": "1.0.8"
   }
 }
