@@ -124,14 +124,15 @@ async function sample(shape, arm) {
   proc.stdout.on("data", (d) => (out += d))
   // Registered before the first await: a short run can finish inside the delay below.
   const finished = new Promise((r) => {
-    proc.once("close", r)
-    proc.once("error", r)
+    proc.once("close", (code) => r(code))
+    proc.once("error", () => r(-1))
   })
   await sleep(400)
   const mid = othersCpu()
-  await finished
+  const exitCode = await finished
   const after = othersCpu()
   const cpu1 = cpuSeconds(server.pid)
+  if (exitCode !== 0) return { discarded: `load generator exited ${exitCode}` }
   let j
   try {
     j = JSON.parse(out)
