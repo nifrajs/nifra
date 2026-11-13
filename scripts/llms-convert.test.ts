@@ -97,6 +97,16 @@ describe("jsxToMarkdown", () => {
     expect(md).toContain("| a\\\\\\|b | c |")
   })
 
+  test("a line break inside a header or a tuple value cannot split the row", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["Re\\nact", "19.3\\n.1"]] as const',
+        "<table><thead><tr><th>Depen\ndency</th><th>Certified\n  tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("| Depen dency | Certified tuple |\n| --- | --- |\n| Re act | 19.3 .1 |")
+  })
+
   test("a block whose code cannot be evaluated fails, naming the page and the const", () => {
     const src = page("const CODE = load()", "<CodeBlock code={CODE} />")
     expect(() => convert(src)).toThrow(
