@@ -115,7 +115,7 @@ export class UwsSource {
     let found: string | undefined
     for (let i = 0; i < pairs.length; i += 2) {
       if (pairs[i] === lower) {
-        const value = pairs[i + 1] as string
+        const value = pairs[i + 1] ?? ""
         found = found === undefined ? value : `${found}, ${value}`
       }
     }
@@ -146,7 +146,7 @@ export class UwsSource {
     }
     const pairs = this.captured
     if (pairs !== undefined)
-      for (let i = 0; i < pairs.length; i += 2) add(pairs[i] as string, pairs[i + 1] as string)
+      for (let i = 0; i < pairs.length; i += 2) add(pairs[i] ?? "", pairs[i + 1] ?? "")
     else this.req?.forEach(add)
     return record
   }

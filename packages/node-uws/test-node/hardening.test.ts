@@ -238,7 +238,7 @@ test("an enumerable property on Object.prototype never becomes a response header
     assert.equal(head.headers.get("x-own")?.[0], "1")
     assert.equal(head.headers.has("x-polluted"), false)
   } finally {
-    delete (Object.prototype as Record<string, unknown>)["x-polluted"]
+    Reflect.deleteProperty(Object.prototype, "x-polluted")
   }
 })
 
