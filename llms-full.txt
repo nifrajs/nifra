@@ -14399,7 +14399,7 @@ Islands.
 throws at startup without one. Pages stored before the upgrade render once more.
 
 -
-The server-component pipeline is certified on Vite 8.3.4: pin `vite` to exactly
+The server-component pipeline is certified on Vite 8.3.8: pin `vite` to exactly
 that version.
 
 -
