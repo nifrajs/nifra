@@ -1,7 +1,7 @@
 /** A non-null, non-array object. The prototype is not checked: a `Date` or a `Map` passes. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
+import { isRecord } from "@nifrajs/utils/record"
+
+export { isRecord }
 
 /** `value` as a record, or `undefined` when {@link isRecord} refuses it. */
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
