@@ -6,7 +6,7 @@ const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
     slug: "nextjs",
     title: "Nifra vs Next.js",
     summary:
-      "Reproducible SSR benchmarks, five UI frameworks instead of one, typed end-to-end without codegen - and why RSC-first apps should still pick Next.",
+      "Reproducible SSR benchmarks, five UI frameworks instead of one, typed end-to-end without codegen - including opt-in React RSC/Flight and explicit ranges for the current non-React adapters.",
   },
   {
     slug: "elysia",
