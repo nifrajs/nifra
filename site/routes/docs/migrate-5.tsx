@@ -263,7 +263,7 @@ export default function Migrate5() {
           throws at startup without one. Pages stored before the upgrade render once more.
         </li>
         <li>
-          The server-component pipeline is certified on Vite 8.3.4: pin <code>vite</code> to exactly
+          The server-component pipeline is certified on Vite 8.3.8: pin <code>vite</code> to exactly
           that version.
         </li>
         <li>

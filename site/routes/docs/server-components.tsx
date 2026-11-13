@@ -106,11 +106,11 @@ h(ProductOutlet, { state, instanceKey: "product", input: { id }, controller, cli
 
 const TUPLE = [
   ["React / React DOM / Flight", "19.3.1 / 19.3.1 / 19.3.1"],
-  ["Vue / plugin-vue", "3.5.40 / 6.0.9"],
-  ["Svelte / plugin-svelte", "5.56.8 / 7.3.1"],
-  ["Solid / vite-plugin-solid", "1.9.14 / 2.11.14"],
-  ["Preact / render-to-string / preset-vite", "10.29.8 / 6.7.0 / 2.10.5"],
-  ["Vite / plugin-rsc", "8.3.4 / 0.5.35"],
+  ["Vue / plugin-vue", "3.5.45 / 6.0.11"],
+  ["Svelte / plugin-svelte", "5.57.3 / 7.3.1"],
+  ["Solid / vite-plugin-solid", "1.9.19 / 2.11.16"],
+  ["Preact / render-to-string / preset-vite", "10.29.8 / 6.8.3 / 2.10.6"],
+  ["Vite / plugin-rsc", "8.3.8 / 0.5.39"],
   ["TypeScript", "6.0.3"],
 ] as const
 
