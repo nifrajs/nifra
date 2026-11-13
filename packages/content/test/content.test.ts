@@ -40,6 +40,27 @@ describe("parseEntry", () => {
     expect(entry.body.trim()).toBe("# Heading\n\n**bold**")
   })
 
+  test("keeps a code span that wraps across lines inside a list item as one span", async () => {
+    const entry = await parseEntry({
+      raw: "---\ntitle: Hi\ndraft: false\n---\n- call `.prompt(name, { description,\n  arguments? }, handler)` here",
+      slug: "x",
+      schema,
+    })
+    expect(entry.html.replace(/\s+/g, " ")).toContain(
+      "<code>.prompt(name, { description, arguments? }, handler)</code>",
+    )
+  })
+
+  test("a lone tilde is text, not strikethrough", async () => {
+    const entry = await parseEntry({
+      raw: "---\ntitle: Hi\ndraft: false\n---\nabout ~10% and ~8% of the time",
+      slug: "x",
+      schema,
+    })
+    expect(entry.html).toContain("~10%")
+    expect(entry.html).not.toContain("<del>")
+  })
+
   test("throws (naming the slug) when frontmatter is invalid", async () => {
     await expect(
       parseEntry({ raw: "---\ntitle: 123\ndraft: false\n---\nx", slug: "bad-post", schema }),

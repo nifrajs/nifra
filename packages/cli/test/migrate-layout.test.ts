@@ -93,7 +93,6 @@ describe("splitRouteSource", () => {
         "/** Every entry, by slug. */",
         "const ENTRIES: Record<string, Entry> = {",
         "  a: { profile: { ...BASE, name: 'A' } },",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         "  b: { profile: { ...BASE, name: `B${1 + 1}` } },",
         "}",
         "export const SLUGS = Object.keys(ENTRIES)",
@@ -118,7 +117,6 @@ describe("splitRouteSource", () => {
         "/** Every entry, by slug. */",
         "export const ENTRIES: Record<string, Entry> = {",
         "  a: { profile: { ...BASE, name: 'A' } },",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         "  b: { profile: { ...BASE, name: `B${1 + 1}` } },",
         "}",
         "export const SLUGS = Object.keys(ENTRIES)",
@@ -469,7 +467,6 @@ describe("migrateLayout", () => {
         "",
       ].join("\n"),
       "lib/ui/button.tsx":
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         'import labels from "./labels.json"\nexport const Button = (s: string) => `${labels.ok} ${s}`\n',
       "lib/ui/labels.json": '{ "ok": "Fine" }\n',
       "lib/ui/card.tsx": "export const Card = () => null\n",
@@ -787,7 +784,6 @@ describe("migrateLayout", () => {
         "export const posts = [",
         '  join(import.meta.dir, "..", "content", "posts"),',
         '  resolve(__dirname, "../content/"),',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         "  `${import.meta.dirname}/data.json`,",
         '  new URL("./util.ts", import.meta.url),',
         "  fileURLToPath(import.meta.url),",
@@ -808,7 +804,6 @@ describe("migrateLayout", () => {
         "export const posts = [",
         '  join(import.meta.dir, "..", "..", "content", "posts"),',
         '  resolve(__dirname, "../../content/"),',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         "  `${import.meta.dirname}/../../lib/data.json`,",
         '  new URL("./util.ts", import.meta.url),',
         "  fileURLToPath(import.meta.url),",
@@ -837,7 +832,6 @@ describe("migrateLayout", () => {
       "lib/feeds.ts": [
         'import { join } from "node:path"',
         "const here = import.meta.dir",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         'export const feeds = [join(here, "..", "content"), `${here}/feeds.ts`]',
         "",
       ].join("\n"),
@@ -852,7 +846,6 @@ describe("migrateLayout", () => {
         'import { resolve } from "node:path"',
         "const root = import.meta.dir",
         'export const entry = resolve(root, "src/start.tsx")',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         "export const sheet = `${root}/src/look.css`",
         "",
       ].join("\n"),
@@ -864,7 +857,6 @@ describe("migrateLayout", () => {
     })
     const result = await migrateLayout(dir, { typescript: ts, write: true })
     expect(read(dir, "backend/lib/feeds.ts")).toContain(
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
       'export const feeds = [join(here, "..", "..", "content"), `${here}/feeds.ts`]',
     )
     // A file that stays keeps its own spelling but follows what moved.
@@ -873,7 +865,6 @@ describe("migrateLayout", () => {
         'import { resolve } from "node:path"',
         "const root = import.meta.dir",
         'export const entry = resolve(root, "frontend/src/start.tsx")',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         "export const sheet = `${root}/frontend/src/look.css`",
         "",
       ].join("\n"),
@@ -897,9 +888,7 @@ describe("migrateLayout", () => {
       "tools/lint.sh": [
         "#!/usr/bin/env bash",
         'cd "$(dirname "$0")/.."',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion in a fixture script, written literally
         'REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion in a fixture script, written literally
         'bash "${0%/*}/sweep.sh" "$REPO"',
         "",
       ].join("\n"),
@@ -912,9 +901,7 @@ describe("migrateLayout", () => {
       [
         "#!/usr/bin/env bash",
         'cd "$(dirname "$0")/../.."',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion in a fixture script, written literally
         'REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion in a fixture script, written literally
         'bash "${0%/*}/sweep.sh" "$REPO"',
         "",
       ].join("\n"),
@@ -1000,7 +987,6 @@ describe("migrateLayout", () => {
       ].join("\n"),
       "src/notes/one.md": "one\n",
       "src/notes/draft.md": "draft\n",
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
       "src/odd.ts": "const at = 'grove'\nexport const odd = import.meta.glob(`./${at}/*.ts`)\n",
     })
     const result = await migrateLayout(dir, { typescript: ts, write: true })
@@ -1898,7 +1884,6 @@ describe("migrateLayout entries, tests and workspace siblings", () => {
       "apps/api/src/boot.test.ts": [
         'const REPO = new URL("../../../", import.meta.url).pathname',
         "const script = 'const m = await import(\"./src/lib/origins.ts\"); console.log(m)'",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         'Bun.spawnSync(["bun", "-e", script], { cwd: `${REPO}apps/web` })',
         "",
       ].join("\n"),

@@ -639,8 +639,11 @@ export default function Contract() {
         The optional <a href={href({ to: "/docs/server-components" })}>server-components pipeline</a> supports
         React, Preact, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
         in <code>*.component.server.ts(x)</code>, register owner instances and export a named
-        <code>componentPipeline</code> configuration. React uses native RSC/Flight; the other four
-        hydrate native islands in validated server ranges. Refresh repeats owner GET admission;
+        <code>componentPipeline</code> configuration. React uses native RSC/Flight; Vue, Svelte,
+        Preact and Nifra's current Solid 1.x adapter use schema-checked server-rendered ranges and
+        explicitly registered native islands, not a Flight-equivalent protocol. Solid 2 has a
+        separate experimental server-component frames protocol that Nifra does not currently target.
+        Refresh repeats owner GET admission;
         HTML/data/refresh are private/no-store. Writes use server functions or actions. Bind the
         router and await auth-scope invalidation on identity, tenant or permission changes.
       </p>

@@ -126,6 +126,7 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
           throw POISONED
         }
         // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
+        // biome-ignore lint/suspicious/noProto: this deletes an own "__proto__" key from a parsed record, it never reads the accessor
         delete record["__proto__"]
         continue
       }

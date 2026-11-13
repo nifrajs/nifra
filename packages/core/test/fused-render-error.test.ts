@@ -86,21 +86,20 @@ describe("a fused lane's render error", () => {
     expect(logged).toEqual(["unhandled request error"])
   })
 
-  test.each([
-    ["/contextless"],
-    ["/contextless-async"],
-    ["/context-async"],
-  ])("%s on the Node-direct lane is logged and answered 500", async (path) => {
-    const logged: string[] = []
-    const app = server({ logger: loggerInto(logged) })
-      .use(nodeDirect())
-      .get("/contextless", unrenderable)
-      .get("/contextless-async", async () => ({ n: cyclic() }))
-      .get("/context-async", async (c) => ({ n: cyclic(), at: c.params }))
-    const outcome = await app.resolveNode(new Request(`http://x${path}`))
-    expect(outcome.kind === "json" && outcome.status).toBe(500)
-    expect(logged).toEqual(["unhandled request error"])
-  })
+  test.each([["/contextless"], ["/contextless-async"], ["/context-async"]])(
+    "%s on the Node-direct lane is logged and answered 500",
+    async (path) => {
+      const logged: string[] = []
+      const app = server({ logger: loggerInto(logged) })
+        .use(nodeDirect())
+        .get("/contextless", unrenderable)
+        .get("/contextless-async", async () => ({ n: cyclic() }))
+        .get("/context-async", async (c) => ({ n: cyclic(), at: c.params }))
+      const outcome = await app.resolveNode(new Request(`http://x${path}`))
+      expect(outcome.kind === "json" && outcome.status).toBe(500)
+      expect(logged).toEqual(["unhandled request error"])
+    },
+  )
 
   test("Bun's native route table answers it with the app's response headers", async () => {
     const logged: string[] = []

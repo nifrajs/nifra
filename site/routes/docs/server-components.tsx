@@ -2,7 +2,7 @@ import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
 import { href } from "@nifrajs/web-react/router"
 
-export const meta = docsMeta("/docs/server-components", "Nifra - Server components", "Server-only views with schema-guarded props, owner-route authorization and native React, Vue, Svelte, Solid and Preact hydration.")
+export const meta = docsMeta("/docs/server-components", "Nifra - Server components", "Server-only views with closed schemas and owner-route authorization: native React RSC/Flight, or explicit server-rendered ranges and client islands for Vue, Svelte, Solid 1.x and Preact.")
 
 const DEFINE = `// Product.component.server.ts - native Vue/Svelte/Solid view.
 import { t } from "@nifrajs/schema"
@@ -36,7 +36,7 @@ const components = createServerComponents({
   deployment: deploymentId,
   adapter: vueServerComponents(),
   owners: {
-    product: { // exact manifest route id, not a URL pattern
+    "product/[id]": { // exact manifest route id, not a URL pattern
       components: [Product],
       scope: "anonymous", // personalized pages supply a public auth-scope token
       cache: {
@@ -106,25 +106,31 @@ h(ProductOutlet, { state, instanceKey: "product", input: { id }, controller, cli
 
 const TUPLE = [
   ["React / React DOM / Flight", "19.3.1 / 19.3.1 / 19.3.1"],
-  ["Vue / plugin-vue", "3.5.40 / 6.0.9"],
-  ["Svelte / plugin-svelte", "5.56.8 / 7.3.1"],
-  ["Solid / vite-plugin-solid", "1.9.14 / 2.11.14"],
-  ["Preact / render-to-string / preset-vite", "10.29.8 / 6.7.0 / 2.10.5"],
-  ["Vite / plugin-rsc", "8.3.4 / 0.5.35"],
+  ["Vue / plugin-vue", "3.5.45 / 6.0.11"],
+  ["Svelte / plugin-svelte", "5.57.3 / 7.3.1"],
+  ["Solid / vite-plugin-solid", "1.9.19 / 2.11.16"],
+  ["Preact / render-to-string / preset-vite", "10.29.8 / 6.8.3 / 2.10.6"],
+  ["Vite / plugin-rsc", "8.3.8 / 0.5.39"],
   ["TypeScript", "6.0.3"],
 ] as const
 
 export default function ServerComponents() {
-  return <div className="prose">
+  return (
+    <div className="prose">
     <h1 className="page">Server components</h1>
-    <p className="lead">Compose server-only views and refresh their content while keeping native client state. React uses RSC and Flight; Vue, Svelte, Solid and Preact use server-rendered ranges with their own client islands.</p>
-    <p>This additive feature shipped in 5.0.0, and all five adapters pass the same certification. Ordinary SSR, loaders, islands and server functions keep their existing APIs.</p>
+    <p className="lead">Compose server-only views and refresh their content while keeping native client state. React uses native RSC and Flight. Nifra's current certified Vue, Svelte, Solid 1.x and Preact adapters use schema-guarded server-rendered ranges with explicitly registered client islands, not a Flight-equivalent protocol.</p>
+    <p>This additive feature shipped in 5.0.0. All five adapters pass the same admission, ownership, limits and hydration-safety certification; that shared certification does not make their component semantics identical. Ordinary SSR, loaders, islands and server functions keep their existing APIs.</p>
 
     <h2>Execution and public props</h2>
     <p>A <code>*.component.server.ts</code> or <code>*.component.server.tsx</code> module declares a closed input schema, closed public-props schema, authorization, a read operation and a view. The compiler replaces browser imports with an opaque typed handle. The server implementation and its imports stay in the server build.</p>
     <CodeBlock code={DEFINE} lang="ts" />
     <p>The input is validated before component authorization and loading. The load result is projected through the props schema, so undeclared fields such as <code>internal</code> never reach the view or browser. The view receives <code>{"{ props, children }"}</code>. Public values are bounded JSON: finite numbers, strings, booleans, null, arrays and plain objects. Functions, framework contexts, requests, bindings, class instances and executable closures cannot cross this seam.</p>
     <p>Keep ownership checks in the scoped read service too. Every definition requires an authorization callback. Use <code>inheritOwnerAuthorization</code> only when the owning route already enforces the full resource authorization; it records an intentional choice to reuse that admission.</p>
+
+    <h2>Why non-React adapters use ranges</h2>
+    <p>RSC is a React wire-format and runtime contract, not a generic SSR feature that every UI library can share. For the current Vue, Svelte, Solid 1.x and Preact adapters, the portable unit is an owned server-rendered HTML range: Nifra calls that framework's own SSR renderer for the range, places registered client islands behind owned markers, and sends bounded JSON props plus validated slot and nested-range HTML. The browser's matching native adapter then creates independent roots for those islands and updates their props or remounts them according to their stable reference and key. The server-rendered range itself is not interactive.</p>
+    <p>This is intentionally narrower than React RSC/Flight: non-React adapters do not have a Flight payload, server references, serialized closures, or automatic React-style server/client tree composition. Named slots and nested server ranges must be registered explicitly, and a separate native root does not inherit outer page context; pass the needed public data explicitly. Domain writes still go through a validated server function or route action, followed by a component refresh. Native <code>"use server"</code> actions are not part of Nifra's component contract.</p>
+    <p>Solid has a separate path here. Solid 2.0 RC exposes experimental reactive server components behind <code>serverFunctions: &#123; components: true &#125;</code>; its server functions return streamed Solid HTML that the Solid client applies in place through Solid's frames runtime. Nifra does not currently target that Solid 2 frames protocol: the certified tuple below is Solid 1.x with <code>vite-plugin-solid</code>, so the Nifra Solid adapter intentionally uses ordinary Solid SSR and hydration inside the shared range/island contract. Adding Solid 2 frames would require a separate renderer, the <code>installServerComponents()</code> client setup and a new version tuple; it would not turn the result into React Flight.</p>
 
     <h2>Register the owning page</h2>
     <CodeBlock code={OWNER} lang="ts" />
@@ -134,8 +140,9 @@ export default function ServerComponents() {
     <p>A partially prerendered page can instead show a component in a hole, rendered for each visitor after the shared shell; its route lists the component under <code>holes</code> rather than <code>owners</code>. See <a href={href({ to: "/docs/partial-prerendering" })}>partial prerendering</a>.</p>
 
     <h2>Native views and client islands</h2>
-    <p>React definitions return JSX in the RSC environment. Register every definition with <code>createReactComponentRenderer</code> in the RSC entry, and connect that renderer through <code>reactServerComponents</code> in the SSR entry. Imported <code>"use client"</code> exports require a companion <code>*.props.ts</code> with a matching closed schema for every export. The compiler guards element creation and cloning before a client prop handoff.</p>
-    <p>Vue, Svelte, Solid and Preact definitions return <code>nativeServerView(View, islands, ranges)</code>. Their native view receives public <code>props</code> plus named island and nested-range markup. Use <code>vueServerComponents()</code>, <code>svelteServerComponents()</code> or <code>solidServerComponents()</code> or <code>preactServerComponents()</code> with the matching client adapter.</p>
+    <p>React definitions return JSX in a compiler-generated RSC entry. <code>createReactComponentRenderer</code> resolves an allowlisted definition, guards its public props, and renders it with the plugin's React server renderer into a sanitized Flight stream. <code>reactServerComponents</code> consumes that stream, produces the initial HTML with React's server renderer, and carries the bounded Flight payload for hydration. The browser decodes the payload with React Flight and hydrates or creates a real React root; refreshes publish the next React tree into that root, preserving React state. One selected React component can additionally negotiate progressive Flight during an owner refresh; other cases use the bounded buffered response. Imported <code>"use client"</code> exports require a companion <code>*.props.ts</code> with a matching closed schema for every export. The compiler guards element creation and cloning before a client prop handoff.</p>
+    <p>Nifra's React path is still an opt-in owner/component pipeline, not a claim that every Nifra route becomes a Next.js App Router tree. Component inputs and public props are closed, bounded JSON; server references, serialized closures, arbitrary framework context and native React <code>"use server"</code> actions do not cross this public seam. Mutations use Nifra server functions or route actions, and progressive Flight is limited to one selected component with no mounted Nifra descendants. Multiple records, descendants, unsupported negotiation and all non-React adapters use the bounded buffered component response.</p>
+    <p>Vue, Svelte, Solid 1.x and Preact definitions return <code>nativeServerView(View, islands, ranges)</code>. Their native view receives public <code>props</code> plus named island and nested-range markup. Use <code>vueServerComponents()</code>, <code>svelteServerComponents()</code> or <code>solidServerComponents()</code> or <code>preactServerComponents()</code> with the matching client adapter.</p>
     <p>Preact uses <code>preactServerComponents()</code> from <code>@nifrajs/web-preact/server-components</code>, <code>{"preactComponentClient({ islands })"}</code> from its <code>/client</code> subpath, and a typed <code>ServerComponent</code> from its <code>/outlet</code> subpath. Pass the controller or client adapter to the outlet and hydrate with Preact. Use <code>@preact/preset-vite</code> for JSX and development updates. Preact uses native Preact roots; <code>preact/compat</code> does not supply React Flight.</p>
     <CodeBlock code={ISLAND} lang="ts" />
     <p>A stable island reference, key and parent keep the native root, state, DOM node, focus and text selection. Changed keys remount. Removal awaits disposal; reappearance mounts a fresh root. Named slots contain validated server-owned HTML. Nested ranges must refer to registered children of that parent. Use <code>serverComponentIdentity</code> when registering a child's parent and <code>serverComponentChild</code> when selecting a child's render.</p>
@@ -171,5 +178,6 @@ export default function ServerComponents() {
     <p>The repository contains runnable React, Vue, Svelte, Solid and Preact examples under <code>examples/server-components/</code>. They exercise native islands, nested ranges, slots, portals, actions and navigation. Their data, scope tokens and fixed nonce are certification fixtures; replace them with scoped application services, auth integration and fresh nonces before deployment.</p>
     <CodeBlock code={`bun examples/server-components/react/run.ts\nbun examples/server-components/vue/run.ts\nbun examples/server-components/svelte/run.ts\nbun examples/server-components/solid/run.ts\n# Add build to emit a Bun production application.\nbun run check:server-components\nbun run check:server-components:consumers\nbun run check:server-components:performance`} lang="bash" />
     <p>Deploy the complete server build, integrity manifest and immutable assets together. Keep old hashed assets for the deployment overlap window. Roll back by redeploying the previous complete build. Disabling components requires rebuilding the application with an ordinary SSR fallback; component source cannot be dropped unchanged into an older runtime.</p>
-  </div>
+    </div>
+  )
 }

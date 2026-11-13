@@ -541,6 +541,8 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     await c.prefetchQuery(["k"], fn)
     expect(calls).toBe(1)
     expect(c.getQueryData<string>(["k"])).toBe("P")
+    await c.prefetchQuery(["k"], fn)
+    expect(calls).toBe(1) // a fresh prefetch is a no-op too
     t = 500 // still within staleTime
     await c.query(["k"], fn).fetch()
     expect(calls).toBe(1) // fresh cache hit - no refetch

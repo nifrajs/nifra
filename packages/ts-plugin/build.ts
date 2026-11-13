@@ -44,6 +44,23 @@ const tsc = Bun.spawn(["node", tscEntry, "-p", "tsconfig.build.json", "--increme
 })
 if ((await tsc.exited) !== 0) throw new Error("ts-plugin: tsc failed")
 
+// Runtime JavaScript stays comment-free, while the declaration surface keeps its editor-facing JSDoc.
+const declarationTsc = Bun.spawn(
+  [
+    "node",
+    tscEntry,
+    "-p",
+    "tsconfig.build.json",
+    "--emitDeclarationOnly",
+    "--removeComments",
+    "false",
+    "--incremental",
+    "false",
+  ],
+  { cwd: dir, stdout: "inherit", stderr: "inherit" },
+)
+if ((await declarationTsc.exited) !== 0) throw new Error("ts-plugin: declaration emit failed")
+
 // 2) Rewrite the `.ts`->`.js` relative specifiers TS 5.9 leaves in emitted `.d.ts` (same pass as
 //    scripts/fix-dts.ts, inlined). Relative `from "./x.ts"` / `import("./x.ts")` only.
 const relativeTs = /((?:from|import\()\s*["'])(\.\.?\/[^"']*?)\.ts(["'])/g
@@ -71,6 +88,7 @@ const entry = await Bun.build({
   target: "node",
   format: "cjs",
   external,
+  minify: true,
 })
 if (!entry.success) throw new AggregateError(entry.logs, "ts-plugin: index bundle failed")
 const [entryOut] = entry.outputs

@@ -249,8 +249,8 @@ export interface CreateWebAppOptions<Env = unknown> {
    * The default suits a backend that declares FULL paths (`server().post("/api/sync", …)`), which is
    * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT the
    * prefix because it also runs standalone behind its own shell, so its paths cannot carry a prefix that
-   * only exists when it is mounted. Without it every request 404s inside the backend, and the workaround
-   * is a `Proxy` that rewrites each URL.
+   * only exists when it is mounted. Without it every request 404s inside the backend; the routing layer
+   * must strip the mount prefix before dispatching.
    */
   readonly apiStrip?: boolean
   /**

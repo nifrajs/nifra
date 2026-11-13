@@ -58,7 +58,6 @@ run: bun test packages/cli/test --randomize
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: checked-in workflow; absent fields fail the assertions below
     const workflow = Bun.YAML.parse(source) as CheckWorkflow
     const gate = workflow.jobs.check?.steps?.find((step) => step.env?.RESULT !== undefined)
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression
     expect(gate?.env?.RESULT).toBe("${{ needs.checks.result }}")
     if (gate?.run === undefined) throw new Error("missing aggregate check command")
     for (const result of ["success", "failure", "cancelled", "skipped"]) {

@@ -11,7 +11,10 @@
  * reproduction in the PR that added the harness. Delete an `OPEN_*` entry with its fix.
  */
 import { brotliDecompressSync, gunzipSync } from "node:zlib"
-import { needsResolving } from "../../packages/core/src/server/request-target.ts"
+import {
+  needsResolving,
+  resolveDotSegments,
+} from "../../packages/core/src/server/request-target.ts"
 import { INTERNAL_SENTINEL } from "../fixtures/runtime-differential/app.ts"
 import { type Case, nonAscii, SERVER_FAULT_ROUTES } from "./arbitraries.ts"
 import { LANE_NAMES, type LaneName } from "./lanes.ts"
@@ -68,6 +71,9 @@ export function canonical(outcome: Outcome): string {
     .map(({ name, value }) => `${name}: ${value}`)
   return `${outcome.status}\n${headers.join("\n")}\n\n${bodyText(outcome.body)}`
 }
+
+const responseWithoutBody = (outcome: Outcome): string | undefined =>
+  outcome.kind === "response" ? canonical({ ...outcome, body: new Uint8Array() }) : undefined
 
 /** Short label of an outcome for signatures: the status, or the kind of non-answer. */
 export function label(outcome: Outcome): string {
@@ -158,6 +164,7 @@ export const DOCUMENTED_EQUIVALENCES: readonly Equivalence[] = [
 export const OPEN_EQUIVALENCES: readonly Equivalence[] = []
 
 const PARSER_REFUSAL = "refused by its own parser"
+const AUTHORITY_CONFLICT = "absolute-form authority differs from Host"
 
 /** An open entry named in `exposed`, by its whole id or its leading code (`U16`), excuses nothing. */
 export const isExposed = (id: string, exposed: ReadonlySet<string>) =>
@@ -200,6 +207,10 @@ export function excluded(
     for (const [lane, outcome] of outcomes)
       if (isRefusal(outcome) && !out.has(lane)) out.set(lane, PARSER_REFUSAL)
   }
+  if (absoluteFormHostConflict(testCase.request)) {
+    for (const [lane, outcome] of outcomes)
+      if (isRefusal(outcome) && !out.has(lane)) out.set(lane, AUTHORITY_CONFLICT)
+  }
   return out
 }
 
@@ -227,6 +238,81 @@ const repeatsEmptyMember = (testCase: Case) => {
 
 const hasTrailingSpace = (testCase: Case) =>
   testCase.request.headers.some(([, value]) => value !== value.trimEnd())
+
+/** An absolute-form proxy target and Host name different authorities; transports do not make one
+ * stable Request URL for this ambiguous input, so differing client refusals are not compared. */
+const absoluteFormHostConflict = (request: Case["request"]): boolean => {
+  const hosts = request.headers.filter(([name]) => name.toLowerCase() === "host")
+  if (hosts.length !== 1 || !/^[a-z][a-z\d+.-]*:\/\/[^/?#]+/i.test(request.target)) return false
+  try {
+    return (
+      new URL(request.target).host.toLowerCase() !==
+      new URL(`http://${hosts[0]?.[1]}`).host.toLowerCase()
+    )
+  } catch {
+    return false
+  }
+}
+
+const normalizedDavPath = (target: string): string | undefined => {
+  try {
+    const resolved = resolveDotSegments(target)
+    const url = new URL(resolved.startsWith("/") ? `http://localhost${resolved}` : resolved)
+    if (!url.pathname.startsWith("/dav/")) return undefined
+    return decodeURIComponent(url.pathname.slice("/dav/".length))
+  } catch {
+    return undefined
+  }
+}
+
+const responsePath = (outcome: Outcome): string | undefined => {
+  if (outcome.kind !== "response") return undefined
+  try {
+    const parsed: unknown = JSON.parse(bodyText(outcome.body))
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 1 ||
+      !("path" in parsed) ||
+      typeof parsed.path !== "string"
+    )
+      return undefined
+    return parsed.path
+  } catch {
+    return undefined
+  }
+}
+
+/** U19 is only the known DAV path-body rewrite; unrelated response differences remain visible. */
+const expectedRawBackslashDifference = (testCase: Case, outcomes: Outcomes): boolean => {
+  if (testCase.route !== "dav" || testCase.request.method !== "PROPFIND") return false
+  const normalizedPath = normalizedDavPath(testCase.request.target)
+  if (normalizedPath === undefined) return false
+  const references = LANE_NAMES.filter((lane) => lane !== "workerd")
+    .map((lane) => outcomes.get(lane))
+    .filter((outcome): outcome is Outcome => outcome !== undefined)
+  const reference = references[0]
+  const workerd = outcomes.get("workerd")
+  if (
+    reference === undefined ||
+    workerd === undefined ||
+    reference.kind !== "response" ||
+    workerd.kind !== "response" ||
+    references.length !== LANE_NAMES.length - 1 ||
+    references.some((outcome) => canonical(outcome) !== canonical(reference))
+  )
+    return false
+  const expectedBody = JSON.stringify({ path: normalizedPath })
+  const workerdPath = responsePath(workerd)
+  return (
+    bodyText(reference.body) === expectedBody &&
+    responseWithoutBody(workerd) === responseWithoutBody(reference) &&
+    workerdPath !== undefined &&
+    workerdPath !== normalizedPath &&
+    bodyText(workerd.body) === JSON.stringify({ path: workerdPath })
+  )
+}
 
 const statusOf = (outcomes: Outcomes, lane: LaneName) => {
   const outcome = outcomes.get(lane)
@@ -375,6 +461,19 @@ export const OPEN_FINDINGS: readonly Waiver[] = [
       /%2e/i.test(testCase.request.target) &&
       needsResolving(testCase.request.target) &&
       othersAgree(outcomes, "workerd"),
+  },
+  {
+    id: "U19 workerd-normalizes-raw-backslashes",
+    why:
+      "The local workerd HTTP front turns a raw backslash into a path separator and resolves the dot " +
+      "segments before the Worker receives the Request. Nifra cannot recover the original target or " +
+      "apply its single normalization pass after that front rewrite. The waiver is limited to the " +
+      "DAV fixture's normalized path response, with status and headers still compared exactly.",
+    matches: (violation, testCase, outcomes) =>
+      violation.kind === "difference" &&
+      testCase.request.target.includes("\\") &&
+      needsResolving(testCase.request.target) &&
+      expectedRawBackslashDifference(testCase, outcomes),
   },
   {
     id: "U7 workerd-keeps-trailing-space",
@@ -584,6 +683,7 @@ export function judge(
   const excusedBy = new Set<string>()
   const skip = excluded(testCase, outcomes, exposed)
   if ([...skip.values()].includes(PARSER_REFUSAL)) excusedBy.add("parser-refusal")
+  if ([...skip.values()].includes(AUTHORITY_CONFLICT)) excusedBy.add(AUTHORITY_CONFLICT)
   if ([...skip.values()].includes(FRONT_ANSWER)) excusedBy.add(FRONT_ANSWER)
   const violations = ownViolations(
     testCase,

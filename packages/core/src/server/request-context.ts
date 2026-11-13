@@ -216,17 +216,17 @@ export class RequestContext implements RawContext {
   // declared (`c.params` stays `readonly` to handlers via the `Context` interface).
   declare params: Record<string, string>
   declare body: unknown
-  private declare searchValue: string | undefined
-  private declare signalValue: AbortSignal | undefined
-  private declare budgetValue: RequestBudget | undefined
-  private declare platformValue: PeerPlatform | undefined
-  private declare peerValue: string | undefined
+  declare private searchValue: string | undefined
+  declare private signalValue: AbortSignal | undefined
+  declare private budgetValue: RequestBudget | undefined
+  declare private platformValue: PeerPlatform | undefined
+  declare private peerValue: string | undefined
 
-  private declare setValue: CtxSet | undefined
-  private declare queryValue: unknown
-  private declare queryReady: boolean
-  private declare headersValue: Record<string, string> | undefined
-  private declare cookiesValue: Readonly<Record<string, string>> | undefined
+  declare private setValue: CtxSet | undefined
+  declare private queryValue: unknown
+  declare private queryReady: boolean
+  declare private headersValue: Record<string, string> | undefined
+  declare private cookiesValue: Readonly<Record<string, string>> | undefined
   declare jsonReply: Response | undefined
   declare jsonBody: unknown
   /** The route's response contract, if it has one, for {@link json} to write by. */
@@ -236,9 +236,9 @@ export class RequestContext implements RawContext {
         readonly definition: ResponseContractDefinition
       }
     | undefined
-  private declare readonly source: RequestSource
-  private declare readonly maxBodyBytes: number
-  private declare readonly protoPoisoning: ProtoPoisoning
+  declare private readonly source: RequestSource
+  declare private readonly maxBodyBytes: number
+  declare private readonly protoPoisoning: ProtoPoisoning
 
   constructor(
     source: RequestSource,

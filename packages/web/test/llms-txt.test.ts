@@ -90,9 +90,7 @@ describe("generateLlmsTxt", () => {
     // A constraint is not part of the argument's name.
     expect(out).toContain("api.orders({ id }).lines({ kind }).get()")
     // A segment that is part literal, part parameter is called with the segment text.
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: the printed call is a template literal
     expect(out).toContain("api.files(`${name}.json`).get()")
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: the printed call is a template literal
     expect(out).toContain("api.img(`${id}.png`).meta.get()")
     // A wildcard is called by its name; an unnamed one is `*`.
     expect(out).toContain('api.assets({ "*": rest }).get()')

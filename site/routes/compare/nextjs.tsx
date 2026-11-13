@@ -55,10 +55,11 @@ export default function VsNextjs() {
           <tr>
             <td>Server components</td>
             <td>
-              Opt-in: native RSC/Flight for React, server-rendered ranges for the other four (see
-              below)
+              Opt-in: native RSC/Flight for React; schema-checked server-rendered ranges with
+              explicit client islands for Vue, Svelte, Preact and the current Solid 1.x adapter (not
+              Flight)
             </td>
-            <td>Yes, the App Router is built on them</td>
+            <td>Built in and default for App Router pages and layouts; React only</td>
           </tr>
           <tr>
             <td>Partial prerendering</td>
@@ -86,6 +87,14 @@ export default function VsNextjs() {
           </tr>
         </tbody>
       </table>
+      <p>
+        <strong>Solid version caveat.</strong> Solid 2.0 RC has its own experimental
+        server-component path behind <code>serverFunctions: &#123; components: true &#125;</code>.
+        It streams Solid's own HTML/frame updates through server functions; it is not React Flight.
+        Nifra currently certifies Solid 1.x, so its Solid adapter uses Nifra's portable range and
+        native-island boundary. That is a version and protocol distinction, not a claim that Solid
+        has no server-component model.
+      </p>
 
       <h2>The {REACT_SSR_MULTIPLIER} number, honestly</h2>
       <p>
@@ -101,10 +110,13 @@ export default function VsNextjs() {
       <h2>Where Next.js is the right choice</h2>
       <p>
         Next.js brings the largest React ecosystem, years of production hardening at scale, and
-        first-party Vercel integration. Nifra's optional{" "}
-        <a href={href({ to: "/docs/server-components" })}>server-components pipeline</a> uses native
-        React RSC/Flight and corresponding Vue, Svelte, Solid and Preact implementations, with its
-        own certified compiler tuple and explicit support limits.
+        first-party Vercel integration. If you want React Server Components enabled by default in
+        the App Router, or React Server Functions and Actions via <code>"use server"</code>, Next.js
+        is the more direct fit. Nifra's optional{" "}
+        <a href={href({ to: "/docs/server-components" })}>server-components pipeline</a> uses the
+        same native React RSC/Flight protocol for React, so that protocol is not exclusive to
+        Next.js. Nifra keeps mutations in typed server functions or route actions and uses a
+        stricter cross-framework contract for the other four UI libraries.
       </p>
 
       <h2>Where Nifra wins</h2>
