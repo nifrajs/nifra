@@ -7262,8 +7262,21 @@
   {
     "name": "HostPolicy",
     "kind": "interface",
+    "package": "@nifrajs/node",
+    "signature": "export interface HostPolicy {\n    readonly allowedHosts: ReadonlySet<string> | ((host: string) => boolean) | undefined;\n    readonly canonicalHost: string | undefined;\n    readonly normalizeTarget: boolean;\n}",
+    "doc": "/** The Host and target options `serve()` accepts, resolved once at startup. */"
+  },
+  {
+    "name": "HostPolicy",
+    "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface HostPolicy {\n    readonly rules: readonly HostPolicyRule[];\n    /**\n     * Whether `pathname` (as requested, percent-encoded, without the query) may be served on `host` (a\n     * Host header value; its port and case are ignored). `buildAssets` is the build's file set; without\n     * it a rule's `buildAssets` matches nothing.\n     */\n    allows(host: string, pathname: string, buildAssets?: BuildAssetSet): boolean;\n    /** The refusal for `pathname` on `host`, or `undefined` to serve it. */\n    refusal(host: string, pathname: string, buildAssets?: BuildAssetSet): Response | undefined;\n    /** {@link HostPolicy.refusal} for a request: its Host header (else its URL's host) and path. */\n    check(request: Request, buildAssets?: BuildAssetSet): Response | undefined;\n}"
+  },
+  {
+    "name": "HostPolicyOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node",
+    "signature": "export interface HostPolicyOptions {\n    readonly allowedHosts?: readonly string[] | ((host: string) => boolean);\n    readonly canonicalHost?: string;\n    readonly normalizeTarget?: boolean;\n}"
   },
   {
     "name": "HostPolicyOptions",
@@ -10972,6 +10985,12 @@
     "package": "@nifrajs/core",
     "signature": "export type NodeServeOutcome = {\n    readonly kind: \"response\";\n    readonly response: Response;\n} | {\n    readonly kind: \"json\";\n    readonly status: number;\n    /** Header record after native hooks; repeated values are retained as arrays. */\n    readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined;\n    /** Queued `Set-Cookie` lines, or `undefined`; the adapter emits one header line each. */\n    readonly cookies: readonly string[] | undefined;\n    /** The JSON body already stringified, or `null` for an empty (204) response. */\n    readonly body: string | null;\n} | {\n    readonly kind: \"body\";\n    readonly status: number;\n    readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined;\n    readonly body: string | Uint8Array;\n};",
     "doc": "/**\n * What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes\n * to the socket directly (`kind: \"json\"` - status + headers + cookies + a pre-stringified body, **no**\n * undici `Response` built or drained), a marked buffered response body (`kind: \"body\"` - e.g.\n * @nifrajs/web's non-deferred SSR HTML), or a `Response` (`kind: \"response\"`) for everything else\n * (redirects, 404/405/errors, unmarked or streaming bodies). Internal to the nifra<->node bridge.\n */"
+  },
+  {
+    "name": "NodeServeOutcome",
+    "kind": "type",
+    "package": "@nifrajs/node",
+    "signature": "export type NodeServeOutcome = {\n    readonly kind: \"response\";\n    readonly response: Response;\n} | {\n    readonly kind: \"json\";\n    readonly status: number;\n    /** Header record after native hooks; repeated values are retained as arrays. */\n    readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined;\n    /** Queued `Set-Cookie` lines, or `undefined`; the adapter emits one header line each. */\n    readonly cookies: readonly string[] | undefined;\n    /** The JSON body already stringified, or `null` for an empty (204) response. */\n    readonly body: string | null;\n} | {\n    readonly kind: \"body\";\n    readonly status: number;\n    readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined;\n    readonly body: string | Uint8Array;\n};"
   },
   {
     "name": "NodeServeOutcome",
@@ -18367,6 +18386,13 @@
     "doc": "/** A `\"nifra\": { \"zones\": ... }` setting that cannot be applied. Thrown when a classifier is created. */"
   },
   {
+    "name": "activateAsyncContextFrame",
+    "kind": "const",
+    "package": "@nifrajs/node",
+    "signature": "export declare const activateAsyncContextFrame: () => void;",
+    "doc": "/** Node's async-context bookkeeping flips on lazily; flipping it before listening keeps the tick loop monomorphic. */"
+  },
+  {
     "name": "addSourceTransform",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -19083,6 +19109,13 @@
     "signature": "export declare function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array>;"
   },
   {
+    "name": "bytesToHex",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function bytesToHex(bytes: Uint8Array): string;",
+    "doc": "/** Lowercase hex, two digits per byte. */"
+  },
+  {
     "name": "cache",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -19631,6 +19664,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function computed<T>(fn: () => T): Computed<T>;",
     "doc": "/**\n * Derived value, cached into a signal and computed on first read. While an effect (or another\n * computed) reads it, it recomputes when its tracked inputs change. Once nothing reads it, the next\n * input change stops it instead of recomputing, so a dropped computed costs nothing; reading it\n * again starts it afresh. `dispose()` stops it at once.\n */"
+  },
+  {
+    "name": "concatBytes",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function concatBytes(chunks: readonly Uint8Array[], total: number): Uint8Array;",
+    "doc": "/** Concatenate chunks into an output array with the supplied total byte length. */"
   },
   {
     "name": "concatSourceMaps",
@@ -21113,6 +21153,13 @@
     "doc": "/**\n * Turn draft mode **on** for this client by setting a signed, HttpOnly `__nifra_draft` cookie. Call it\n * from a route you've already authorized. `secret` signs the cookie - pass the SAME secret to\n * `createWebApp({ draftSecret })` and `withISR({ draftSecret })` so the framework can verify it.\n */"
   },
   {
+    "name": "enableNodeDirect",
+    "kind": "const",
+    "package": "@nifrajs/node",
+    "signature": "export declare const enableNodeDirect: (app: object) => void;",
+    "doc": "/** Install the app's node-direct hooks (a no-op for a plain `{ fetch }` handler or an already-served app). */"
+  },
+  {
     "name": "enableSwap",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -21220,6 +21267,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function errorFromCoreLog(entry: CoreLogEntry): Error | undefined;",
     "doc": "/** The thrown error core's `unhandled request error` log line describes, rebuilt for a Diagnostic. */"
+  },
+  {
+    "name": "errorReporterOf",
+    "kind": "const",
+    "package": "@nifrajs/node",
+    "signature": "export declare const errorReporterOf: (app: object) => ((error: unknown) => void) | undefined;",
+    "doc": "/** The app's own error log, when it has one. */"
+  },
+  {
+    "name": "escapeRegExp",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function escapeRegExp(value: string): string;",
+    "doc": "/** Escape every RegExp metacharacter so `value` matches literally inside a pattern. */"
   },
   {
     "name": "etag",
@@ -21859,6 +21920,13 @@
     "doc": "/**\n * How the client islands inside partially prerendered holes that show server\n * components mount, as the adapter's component client, such as `vueComponentClient({ islands })`;\n * `undefined` forgets it. Call it in the client entry before the router mounts. Without one such a\n * hole shows its error slot.\n */"
   },
   {
+    "name": "hostPolicyOf",
+    "kind": "const",
+    "package": "@nifrajs/node",
+    "signature": "export declare const hostPolicyOf: (options: HostPolicyOptions) => HostPolicy;",
+    "doc": "/** Validate and normalize `allowedHosts` / `canonicalHost` / `normalizeTarget`; throws a `TypeError` on a malformed entry. */"
+  },
+  {
     "name": "hotUpdateNeedsReload",
     "kind": "const",
     "package": "@nifrajs/web-preact",
@@ -22344,6 +22412,13 @@
     "doc": "/** Whether a process with `pid` exists (EPERM means it exists but is not ours). */"
   },
   {
+    "name": "isRecord",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function isRecord(value: unknown): value is Record<string, unknown>;",
+    "doc": "/** A non-null, non-array object; its prototype is not restricted. */"
+  },
+  {
     "name": "isRegistrableMethod",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -22564,6 +22639,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function lastModifiedOf(version: FileVersion): number | undefined;",
     "doc": "/**\n * The time a file can be dated by in Last-Modified, or `undefined`: its mtime, only while that is\n * the time of its own last change. A copy or build that keeps or normalizes timestamps - `cp -p`,\n * `rsync -a`, tar, a container image layer, SOURCE_DATE_EPOCH, the Nix store's 1 s - gives a\n * same-size replacement the old file's date, so its files are left undated and their content tag\n * validates them alone.\n */"
+  },
+  {
+    "name": "lifecycleOf",
+    "kind": "const",
+    "package": "@nifrajs/node",
+    "signature": "export declare const lifecycleOf: (app: object) => (phase: \"stopping\" | \"stopped\") => Promise<void>;",
+    "doc": "/** The app's `onStopping` / `onStop` hooks as one function; a no-op for a plain handler. */"
   },
   {
     "name": "lintPostgresStatement",
@@ -23080,6 +23162,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function nodeDirect(): IdentityPlugin;",
     "doc": "/** Enable `app.resolveNode()` for direct callers. Applying it twice is a no-op (named plugin dedupe). */"
+  },
+  {
+    "name": "nodeOutcomeRuntime",
+    "kind": "const",
+    "package": "@nifrajs/node",
+    "signature": "export declare const nodeOutcomeRuntime: object;",
+    "doc": "/** Handed to `app.resolveNodeSource(source, platform, runtime)`; opaque to the transport. */"
   },
   {
     "name": "noopArtifactPort",
@@ -24790,6 +24879,20 @@
     "doc": "/**\n * Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.\n *\n * This is a user-path-to-filesystem sink, which makes it the one part of this feature with a security\n * consequence. Decode first (`%2e%2e%2f` is `../`), then normalize, then verify the result is still\n * under `root` by prefix - checking the *resolved* path rather than scanning the input for `..`,\n * because a blocklist over encodings is exactly the kind of check that gets bypassed.\n */"
   },
   {
+    "name": "resolveRequestHost",
+    "kind": "const",
+    "package": "@nifrajs/node",
+    "signature": "export declare const resolveRequestHost: (host: string | null | undefined, policy: HostPolicy) => string | undefined;",
+    "doc": "/** The authority a request is answered as, or `undefined` to refuse it with 400. `null` means Host repeated. */"
+  },
+  {
+    "name": "resolveRequestTarget",
+    "kind": "const",
+    "package": "@nifrajs/node",
+    "signature": "export declare const resolveRequestTarget: (target: string, normalizeTarget: boolean) => string;",
+    "doc": "/** The origin-form target the app routes on: absolute-form unwrapped, dot segments resolved when asked. */"
+  },
+  {
     "name": "resolveRouteFile",
     "kind": "function",
     "package": "@nifrajs/ts-plugin",
@@ -25667,6 +25770,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function sha256Hex(bytes: Uint8Array): Promise<string>;",
     "doc": "/** SHA-256 of `bytes` as lowercase hex. Collision-resistant so a digest cannot be forged from content. */"
+  },
+  {
+    "name": "sha256Hex",
+    "kind": "function",
+    "package": "@nifrajs/utils",
+    "signature": "export declare function sha256Hex(input: string | Uint8Array): Promise<string>;",
+    "doc": "/** SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. Collision-resistant so a digest cannot be forged from content. */"
   },
   {
     "name": "sha256HexOf",

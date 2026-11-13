@@ -3,7 +3,7 @@
  * facts beside them, and the summary computed from them. The raw rounds are what the artifact keeps;
  * every percentage is recomputed from them, so a later regression gate can re-pool old reports.
  */
-import { isRecord } from "../is-record.ts"
+import { isRecord } from "@nifrajs/utils/record"
 import { type Matrix, type Measure, median, pooledRatios, type RoundCell } from "../rounds.ts"
 import type { CoreSplit } from "./host.ts"
 import { type MedianInterval, medianInterval } from "./stats.ts"

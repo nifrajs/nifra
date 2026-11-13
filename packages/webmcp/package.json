@@ -41,7 +41,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/utils": "workspace:*"
   },
   "devDependencies": {
     "@nifrajs/schema": "workspace:*"

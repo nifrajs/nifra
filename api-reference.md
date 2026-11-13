@@ -4685,6 +4685,8 @@ _No named exports (side-effect entrypoint)._
 
 ## @nifrajs/node
 
+### `@nifrajs/node`
+
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
   Anything exposing a Web `fetch` handler - a nifra `app`, for instance.
 - **HashedFiles** _(type)_ - `type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)`
@@ -4700,6 +4702,31 @@ _No named exports (side-effect entrypoint)._
 - **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<NodeServer>`
 - **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
   The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the app on i…
+
+### `@nifrajs/node/transport`
+
+- **HostPolicy** _(interface)_ - `interface HostPolicy`
+  The Host and target options `serve()` accepts, resolved once at startup.
+- **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions`
+- **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
+- **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
+  How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`.
+- **activateAsyncContextFrame** _(const)_ - `activateAsyncContextFrame: () => void`
+  Node's async-context bookkeeping flips on lazily; flipping it before listening keeps the tick loop monomorphic.
+- **enableNodeDirect** _(const)_ - `enableNodeDirect: (app: object) => void`
+  Install the app's node-direct hooks (a no-op for a plain `{ fetch }` handler or an already-served app).
+- **errorReporterOf** _(const)_ - `errorReporterOf: (app: object) => ((error: unknown) => void) | undefined`
+  The app's own error log, when it has one.
+- **hostPolicyOf** _(const)_ - `hostPolicyOf: (options: HostPolicyOptions) => HostPolicy`
+  Validate and normalize `allowedHosts` / `canonicalHost` / `normalizeTarget`; throws a `TypeError` on a malformed entry.
+- **lifecycleOf** _(const)_ - `lifecycleOf: (app: object) => (phase: "stopping" | "stopped") => Promise<void>`
+  The app's `onStopping` / `onStop` hooks as one function; a no-op for a plain handler.
+- **nodeOutcomeRuntime** _(const)_ - `nodeOutcomeRuntime: object`
+  Handed to `app.resolveNodeSource(source, platform, runtime)`; opaque to the transport.
+- **resolveRequestHost** _(const)_ - `resolveRequestHost: (host: string | null | undefined, policy: HostPolicy) => string | undefined`
+  The authority a request is answered as, or `undefined` to refuse it with 400. `null` means Host repeated.
+- **resolveRequestTarget** _(const)_ - `resolveRequestTarget: (target: string, normalizeTarget: boolean) => string`
+  The origin-form target the app routes on: absolute-form unwrapped, dot segments resolved when asked.
 
 ## @nifrajs/otel
 
@@ -5403,6 +5430,43 @@ _No named exports (side-effect entrypoint)._
   Validate uploaded bytes/Blob: size cap + magic-byte type sniff against an optional allow-list.
 - **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>`
   Verify a URL produced by {@link signDownloadUrl}: signature (constant-time) + not expired.
+
+## @nifrajs/utils
+
+### `@nifrajs/utils`
+
+- **bytesToHex** _(function)_ - `bytesToHex: (bytes: Uint8Array) => string`
+  Lowercase hex, two digits per byte.
+- **concatBytes** _(function)_ - `concatBytes: (chunks: readonly Uint8Array[], total: number) => Uint8Array`
+  Concatenate chunks into an output array with the supplied total byte length.
+- **escapeRegExp** _(function)_ - `escapeRegExp: (value: string) => string`
+  Escape every RegExp metacharacter so `value` matches literally inside a pattern.
+- **isRecord** _(function)_ - `isRecord: (value: unknown) => value is Record<string, unknown>`
+  A non-null, non-array object; its prototype is not restricted.
+- **sha256Hex** _(function)_ - `sha256Hex: (input: string | Uint8Array) => Promise<string>`
+  SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. Collision-resistant so a digest cannot be forged from content.
+
+### `@nifrajs/utils/bytes`
+
+- **concatBytes** _(function)_ - `concatBytes: (chunks: readonly Uint8Array[], total: number) => Uint8Array`
+  Concatenate chunks into an output array with the supplied total byte length.
+
+### `@nifrajs/utils/escape-regexp`
+
+- **escapeRegExp** _(function)_ - `escapeRegExp: (value: string) => string`
+  Escape every RegExp metacharacter so `value` matches literally inside a pattern.
+
+### `@nifrajs/utils/hash`
+
+- **bytesToHex** _(function)_ - `bytesToHex: (bytes: Uint8Array) => string`
+  Lowercase hex, two digits per byte.
+- **sha256Hex** _(function)_ - `sha256Hex: (input: string | Uint8Array) => Promise<string>`
+  SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. Collision-resistant so a digest cannot be forged from content.
+
+### `@nifrajs/utils/record`
+
+- **isRecord** _(function)_ - `isRecord: (value: unknown) => value is Record<string, unknown>`
+  A non-null, non-array object; its prototype is not restricted.
 
 ## @nifrajs/web
 

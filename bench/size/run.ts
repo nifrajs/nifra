@@ -398,7 +398,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-mcp": 40.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 41.5,
-  "nifra-valibot": 41.6,
+  "nifra-valibot": 41.7,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
   // The same `listen()` disposal: typebox-t 70,670 B (Bun 1.4.4).

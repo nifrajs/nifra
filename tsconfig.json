@@ -35,6 +35,8 @@
       "@nifrajs/image/server": ["./packages/image/src/server.ts"],
       "@nifrajs/image/backends": ["./packages/image/src/backend.ts"],
       "@nifrajs/node": ["./packages/node/src/index.ts"],
+      "@nifrajs/node/transport": ["./packages/node/src/transport.ts"],
+      "@nifrajs/node-uws": ["./packages/node-uws/src/index.ts"],
       "@nifrajs/deno": ["./packages/deno/src/index.ts"],
       "@nifrajs/workers": ["./packages/workers/src/index.ts"],
       "@nifrajs/proxy": ["./packages/proxy/src/index.ts"],

@@ -237,13 +237,15 @@ const pkgs: Pkg[] = []
 for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
   const json = JSON.parse(read(`${ROOT}/${file}`)) as {
     name?: string
+    private?: boolean
     description?: string
     types?: string
     exports?: unknown
     main?: unknown
     bin?: unknown
   }
-  if (!json.name) continue
+  // An unpublished package is not part of the corpus, as it is not part of the cards or the API reference.
+  if (!json.name || json.private === true) continue
   pkgs.push({
     name: json.name,
     description: json.description ?? "",
