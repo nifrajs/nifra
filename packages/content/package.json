@@ -45,7 +45,7 @@
     "access": "public"
   },
   "dependencies": {
-    "marked": "^15.0.0",
+    "marked": "^18.0.0",
     "yaml": "^2.9.1"
   },
   "peerDependencies": {
