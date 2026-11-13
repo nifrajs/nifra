@@ -136,7 +136,7 @@ const isIdentChar = (c: string): boolean => /[\w-]/.test(c)
 
 /**
  * Reject the CSS-Modules features this 95%-case scoper deliberately doesn't implement, so a file using
- * them fails loud (with the file + a workaround) rather than emitting silently-wrong or invalid CSS:
+ * them fails loud (with the file + a supported replacement) rather than emitting silently-wrong or invalid CSS:
  * `composes:` (would leak into the output as invalid CSS) and `@value` (would not be substituted).
  */
 function assertSupportedDeclaration(declaration: string, filePath: string): void {
