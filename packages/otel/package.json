@@ -81,9 +81,9 @@
     "@nifrajs/events": "workspace:*",
     "@nifrajs/jobs": "workspace:*",
     "@opentelemetry/api": "^1.10.0",
-    "@opentelemetry/context-async-hooks": "^2.12.1",
-    "@opentelemetry/instrumentation-undici": "^0.32.0",
-    "@opentelemetry/sdk-trace-base": "^2.12.1"
+    "@opentelemetry/context-async-hooks": "^3.1.1",
+    "@opentelemetry/instrumentation-undici": "^0.35.1",
+    "@opentelemetry/sdk-trace": "^3.1.1"
   },
   "repository": {
     "type": "git",

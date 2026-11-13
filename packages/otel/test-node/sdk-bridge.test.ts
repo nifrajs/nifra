@@ -13,11 +13,7 @@ import { otelBridge } from "@nifrajs/otel/sdk-bridge"
 import * as api from "@opentelemetry/api"
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks"
 import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici"
-import {
-  BasicTracerProvider,
-  InMemorySpanExporter,
-  SimpleSpanProcessor,
-} from "@opentelemetry/sdk-trace-base"
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace"
 
 // `bun test packages/otel/test` also collects this directory; Bun's fetch is not undici, so these
 // checks (and the global SDK registration) run on Node only.
@@ -29,9 +25,9 @@ const exporter = new InMemorySpanExporter()
 let upstreamUrl = ""
 
 if (onNode) {
-  const provider = new BasicTracerProvider({
+  const provider = new TracerProvider({
     idGenerator: bridge.idGenerator,
-    spanProcessors: [new SimpleSpanProcessor(exporter)],
+    spanProcessors: [new SimpleSpanProcessor({ exporter })],
   })
   api.trace.setGlobalTracerProvider(provider)
   api.context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable())
