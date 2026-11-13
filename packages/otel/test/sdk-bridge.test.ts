@@ -5,13 +5,13 @@ import * as api from "@opentelemetry/api"
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks"
 import {
   AlwaysOnSampler,
-  BasicTracerProvider,
   InMemorySpanExporter,
   ParentBasedSampler,
   type ReadableSpan,
   SimpleSpanProcessor,
-  type TracerConfig,
-} from "@opentelemetry/sdk-trace-base"
+  TracerProvider,
+  type TracerProviderOptions,
+} from "@opentelemetry/sdk-trace"
 import { jobTracing } from "../src/jobs.ts"
 import { createObservationLifecycle } from "../src/lifecycle.ts"
 import { type OtelBridge, otelBridge } from "../src/sdk-bridge.ts"
@@ -33,12 +33,12 @@ afterEach(() => {
 /** An SDK provider; with `bridge`, registered globally with the bridge's idGenerator. */
 function sdk(bridge?: OtelBridge) {
   const exporter = new InMemorySpanExporter()
-  const config: TracerConfig = {
+  const config: TracerProviderOptions = {
     sampler: new ParentBasedSampler({ root: new AlwaysOnSampler() }),
-    spanProcessors: [new SimpleSpanProcessor(exporter)],
+    spanProcessors: [new SimpleSpanProcessor({ exporter })],
   }
   if (bridge !== undefined) config.idGenerator = bridge.idGenerator
-  const provider = new BasicTracerProvider(config)
+  const provider = new TracerProvider(config)
   if (bridge !== undefined) api.trace.setGlobalTracerProvider(provider)
   return { exporter, tracer: provider.getTracer("test") }
 }

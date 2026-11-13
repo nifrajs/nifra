@@ -492,7 +492,6 @@ const ROWS: readonly LeakPath[] = [
     name: "a split app: page, backend half, shared code and a server function",
     files: {
       ...DB,
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: the fixture's own template literal
       "shared/format.ts": "export const format = (n: number) => `#${n}`\n",
       "frontend/button.ts": 'export const label = "nifra-leak-matrix-frontend"\n',
       "backend/notes.fn.ts": `import { serverFn } from "@nifrajs/web/fn"\nexport const note = serverFn(async () => "${FN_MARKER}")\n`,

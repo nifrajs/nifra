@@ -16,19 +16,27 @@ describe("doc consts", () => {
       "page.tsx",
       [
         'const BASE = "nifra check"',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         'const STEPS = [`${BASE} --json`, "nifra fix --code NF-C030"].join("\\n")',
         'const BOTH = BASE + " && " + STEPS',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: a fixture file's own template literal, written as source text
         "const ESCAPED = `a \\` b \\${c}`",
         "const meta = docsMeta()",
       ].join("\n"),
     )
     expect(values.get("STEPS")).toBe("nifra check --json\nnifra fix --code NF-C030")
     expect(values.get("BOTH")).toBe("nifra check && nifra check --json\nnifra fix --code NF-C030")
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: the escaped interpolation the converter keeps literal
     expect(values.get("ESCAPED")).toBe("a ` b ${c}")
     expect(unresolved.get("meta")).toBe("CallExpression is not a string the page can show")
+  })
+
+  test("literal two-column rows evaluate for static JSX tables", () => {
+    const { tuples } = evaluateDocConsts(
+      "page.tsx",
+      'const TUPLE = [["React", "19.3.1"], ["TypeScript", "6.0.3"]] as const',
+    )
+    expect(tuples.get("TUPLE")).toEqual([
+      ["React", "19.3.1"],
+      ["TypeScript", "6.0.3"],
+    ])
   })
 })
 
@@ -51,6 +59,72 @@ describe("jsxToMarkdown", () => {
       page('const A = "a"', '<CodeBlock\n  code={\n    A + "\\nb"\n  }\n  lang="ts"\n/>'),
     )
     expect(md).toBe("```ts\na\nb\n```")
+  })
+
+  test("a literal tuple map renders table rows instead of JSX residue", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["React", "19.3.1"], ["TypeScript", "6.0.3"]] as const',
+        "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain(
+      "| Dependency | Certified tuple |\n| --- | --- |\n| React | 19.3.1 |\n| TypeScript | 6.0.3 |",
+    )
+    expect(md).not.toContain("TUPLE.map")
+  })
+
+  test("a literal pipe in a tuple cell is escaped so the row keeps two columns", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["React | Solid", "19 | 1"]] as const',
+        "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("| React \\| Solid | 19 \\| 1 |")
+  })
+
+  test("a backslash in a tuple cell is escaped too, so it cannot cancel the pipe escape", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["a\\\\|b", "c"]] as const',
+        "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("| a\\\\\\|b | c |")
+  })
+
+  test("a line break inside a header or a tuple value cannot split the row", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["Re\\nact", "19.3\\n.1"]] as const',
+        "<table><thead><tr><th>Depen\ndency</th><th>Certified\n  tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("| Depen dency | Certified tuple |\n| --- | --- |\n| Re act | 19.3 .1 |")
+  })
+
+  test("a static table before a tuple table is not swallowed into its header", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["React", "19.3.1"]] as const',
+        "<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>x</td><td>y</td></tr></tbody></table><p>between</p>" +
+          "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("between")
+    expect(md).toContain("| Dependency | Certified tuple |\n| --- | --- |\n| React | 19.3.1 |")
+    expect(md).not.toContain("| A")
+  })
+
+  test("a value written with angle brackets stays literal text in its cell", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["<reason>", "a & b"]] as const',
+        "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("| &lt;reason&gt; | a &amp; b |")
   })
 
   test("a block whose code cannot be evaluated fails, naming the page and the const", () => {

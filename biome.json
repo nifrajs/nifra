@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.7/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "plugins": [
@@ -14,7 +14,11 @@
     "rules": {
       "recommended": true,
       "correctness": {
-        "useHookAtTopLevel": "off"
+        "useHookAtTopLevel": "off",
+        "noComponentHookFactories": "off"
+      },
+      "complexity": {
+        "useMathMinMax": "off"
       },
       "suspicious": {
         "noExplicitAny": "error"
@@ -25,6 +29,18 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["**/test/**", "**/test-node/**", "**/*.test.ts", "**/*.test.tsx"],
+      "linter": {
+        "rules": {
+          "complexity": { "noCommaOperator": "off" },
+          "correctness": { "noUnsafeOptionalChaining": "off" },
+          "suspicious": { "noProto": "off", "noTemplateCurlyInString": "off" }
+        }
+      }
+    }
+  ],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -92,7 +108,10 @@
       "!**/next-env.d.ts",
       "!**/bench/ssr/next/tsconfig.json",
       "!packages/web/test/fixtures/broken.css",
-      "!packed-files.json"
+      "!packed-files.json",
+      "!**/*.svg",
+      "!**/*.yml",
+      "!**/*.grit"
     ]
   }
 }

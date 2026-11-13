@@ -929,6 +929,34 @@ export function classify(
   return { status: "survived", killedBy: [] }
 }
 
+export interface Verdict {
+  readonly status: Status
+  readonly killedBy: string[]
+  readonly ms: number
+}
+
+/** How often a kill of a mutant the baseline lists as a survivor is run again before it stands. */
+export const CONFIRMATIONS = 2
+
+/**
+ * `first` unless it detected a mutant the baseline lists as a survivor, which a test that fails or
+ * outlasts its time by chance on a loaded runner does too: then the run is repeated, and one survival
+ * keeps the mutant a survivor. A kill that holds on every repeat is a real one, and the baseline sheds
+ * the entry.
+ */
+export async function confirmed(
+  first: Verdict,
+  again: () => Promise<Verdict>,
+  repeats = CONFIRMATIONS,
+): Promise<Verdict> {
+  if (!DETECTED.has(first.status)) return first
+  for (let i = 0; i < repeats; i++) {
+    const next = await again()
+    if (next.status === "survived") return next
+  }
+  return first
+}
+
 export interface FileReport {
   readonly file: string
   readonly tests: ReadonlyArray<{ readonly file: string; readonly depth: number }>
@@ -1236,14 +1264,21 @@ async function main(argv: readonly string[]): Promise<number> {
           results.push({ ...m, status: "not-run", killedBy: [] })
           continue
         }
-        writeFileSync(path, original.slice(0, m.start) + m.to + original.slice(m.end))
-        let run: Run
-        try {
-          run = await runTests(root, files, junit, timeout, options.bail)
-        } finally {
-          writeFileSync(path, original)
+        const attempt = async (): Promise<Verdict> => {
+          writeFileSync(path, original.slice(0, m.start) + m.to + original.slice(m.end))
+          let run: Run
+          try {
+            run = await runTests(root, files, junit, timeout, options.bail)
+          } finally {
+            writeFileSync(path, original)
+          }
+          return { ...classify(base, run, options.bail), ms: run.ms }
         }
-        results.push({ ...m, ...classify(base, run, options.bail), ms: run.ms })
+        const first = await attempt()
+        results.push({
+          ...m,
+          ...(known.matched.has(m.id) ? await confirmed(first, attempt) : first),
+        })
         if ((i + 1) % 25 === 0)
           console.log(`  ${i + 1}/${pending.length} ${elapsed(Date.now() - started)}`)
       }

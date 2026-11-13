@@ -245,65 +245,63 @@ test("a page written as .mdx, .vue or .svelte is a page: its links are not dead"
   ])
 })
 
-test.each([
-  "/api",
-  "/api/",
-  "/api/*",
-  "/",
-])("backend hrefs use the normalized stripped mount %s", async (prefix) => {
-  pages()
-  writeAppFile(
-    root,
-    "backend/framework.ts",
-    `export const apiPrefix = ${JSON.stringify(prefix)}\nexport const apiStrip = true\n`,
-  )
-  writeAppFile(
-    root,
-    "backend/routes.ts",
-    `import { server } from "@nifrajs/core/server"
+test.each(["/api", "/api/", "/api/*", "/"])(
+  "backend hrefs use the normalized stripped mount %s",
+  async (prefix) => {
+    pages()
+    writeAppFile(
+      root,
+      "backend/framework.ts",
+      `export const apiPrefix = ${JSON.stringify(prefix)}\nexport const apiStrip = true\n`,
+    )
+    writeAppFile(
+      root,
+      "backend/routes.ts",
+      `import { server } from "@nifrajs/core/server"
 export const app = server().get("/export", () => "csv").get("/", () => "root")
 `,
-  )
-  const mounted = prefix === "/" ? "/export" : "/api/export"
-  writeAppFile(
-    root,
-    "components/nav.tsx",
-    `export const Nav = () => <nav>
+    )
+    const mounted = prefix === "/" ? "/export" : "/api/export"
+    writeAppFile(
+      root,
+      "components/nav.tsx",
+      `export const Nav = () => <nav>
   <a href="${mounted}">export</a>
   <a href="${prefix === "/" ? "/" : "/api"}">root</a>
   <a href="/missing">missing</a>
 </nav>\n`,
-  )
-  expect(await findings("NF-C057")).toEqual(["NF-C057 components/nav.tsx:4 warning"])
-})
+    )
+    expect(await findings("NF-C057")).toEqual(["NF-C057 components/nav.tsx:4 warning"])
+  },
+)
 
-test.each([
-  "",
-  "export const apiStrip = false\n",
-])("a non-stripping mount keeps full registration paths (%s)", async (strip) => {
-  pages()
-  writeAppFile(root, "backend/framework.ts", `export const apiPrefix = "/api/"\n${strip}`)
-  writeAppFile(
-    root,
-    "backend/routes.ts",
-    `import { server } from "@nifrajs/core/server"
+test.each(["", "export const apiStrip = false\n"])(
+  "a non-stripping mount keeps full registration paths (%s)",
+  async (strip) => {
+    pages()
+    writeAppFile(root, "backend/framework.ts", `export const apiPrefix = "/api/"\n${strip}`)
+    writeAppFile(
+      root,
+      "backend/routes.ts",
+      `import { server } from "@nifrajs/core/server"
 export const app = server().get("/export", () => "csv").get("/api/health", () => "ok")
 `,
-  )
-  writeAppFile(
-    root,
-    "components/nav.tsx",
-    `export const Nav = () => <nav>
+    )
+    writeAppFile(
+      root,
+      "components/nav.tsx",
+      `export const Nav = () => <nav>
   <a href="/api/health">health</a>
   <a href="/api/export">not prefixed automatically</a>
   <a href="/export">outside the mount</a>
 </nav>\n`,
-  )
-  expect(await findings("NF-C057")).toEqual([
-    "NF-C057 components/nav.tsx:3 warning",
-    "NF-C057 components/nav.tsx:4 warning",
-  ])
-})
+    )
+    expect(await findings("NF-C057")).toEqual([
+      "NF-C057 components/nav.tsx:3 warning",
+      "NF-C057 components/nav.tsx:4 warning",
+    ])
+  },
+)
 
 test.each([
   "export const apiPrefix = process.env.API_PREFIX\nexport const apiStrip = true\n",
@@ -352,12 +350,11 @@ export const app = server().get("/export", () => "csv")\n`,
   expect(await findings("NF-C057")).toEqual(["NF-C057 components/nav.tsx:3 warning"])
 })
 
-test.each([
-  "vue",
-  "svelte",
-])("%s only scans rendered anchors, preserving attribute lines", async (ext) => {
-  pages()
-  const content = `<script setup lang="ts" data-note=">">
+test.each(["vue", "svelte"])(
+  "%s only scans rendered anchors, preserving attribute lines",
+  async (ext) => {
+    pages()
+    const content = `<script setup lang="ts" data-note=">">
 const example = '<a href="/script-dead">example</a>'
 const page = '<a href="/pricing">example</a>'
 </script>
@@ -373,22 +370,22 @@ ${ext === "vue" ? "<template>" : "<main>"}
 ${ext === "vue" ? "</template>" : "</main>"}
 <style>/* <a href="/style-dead"> */</style>
 `
-  writeAppFile(root, `routes/links.${ext}`, content)
-  expect(await findings("NF-C057", "NF-C058")).toEqual([
-    `NF-C057 routes/links.${ext}:12 warning`,
-    `NF-C058 routes/links.${ext}:13 info`,
-  ])
-})
+    writeAppFile(root, `routes/links.${ext}`, content)
+    expect(await findings("NF-C057", "NF-C058")).toEqual([
+      `NF-C057 routes/links.${ext}:12 warning`,
+      `NF-C058 routes/links.${ext}:13 info`,
+    ])
+  },
+)
 
-test.each([
-  "vue",
-  "svelte",
-])("%s HTML expectations match source-rule suppression semantics", async (ext) => {
-  pages()
-  writeAppFile(
-    root,
-    `routes/links.${ext}`,
-    `${ext === "vue" ? "<template>" : "<nav>"}
+test.each(["vue", "svelte"])(
+  "%s HTML expectations match source-rule suppression semantics",
+  async (ext) => {
+    pages()
+    writeAppFile(
+      root,
+      `routes/links.${ext}`,
+      `${ext === "vue" ? "<template>" : "<nav>"}
 <!-- nifra-expect NF-C057: CDN serves this -->
 <a
   href="/accepted">accepted</a>
@@ -419,19 +416,20 @@ test.each([
 <a href="/interrupted">warn</a>
 ${ext === "vue" ? "</template>" : "</nav>"}
 `,
-  )
-  expect(await findings("NF-C057", "NF-C058")).toEqual([
-    `NF-C057 routes/links.${ext}:12 warning`,
-    `NF-C057 routes/links.${ext}:14 warning`,
-    `NF-C057 routes/links.${ext}:24 warning`,
-    `NF-C057 routes/links.${ext}:26 warning`,
-    `NF-C057 routes/links.${ext}:29 warning`,
-  ])
-  const result = await collectCheckResult(root, { lintsOnly: true })
-  const warning = result.diagnostics.find((item) => item.code === "NF-C057")
-  expect(warning?.evidence?.join("\n")).toContain("<!-- nifra-expect NF-C057: <reason> -->")
-  expect(warning?.evidence?.join("\n")).not.toContain("// nifra-expect")
-})
+    )
+    expect(await findings("NF-C057", "NF-C058")).toEqual([
+      `NF-C057 routes/links.${ext}:12 warning`,
+      `NF-C057 routes/links.${ext}:14 warning`,
+      `NF-C057 routes/links.${ext}:24 warning`,
+      `NF-C057 routes/links.${ext}:26 warning`,
+      `NF-C057 routes/links.${ext}:29 warning`,
+    ])
+    const result = await collectCheckResult(root, { lintsOnly: true })
+    const warning = result.diagnostics.find((item) => item.code === "NF-C057")
+    expect(warning?.evidence?.join("\n")).toContain("<!-- nifra-expect NF-C057: <reason> -->")
+    expect(warning?.evidence?.join("\n")).not.toContain("// nifra-expect")
+  },
+)
 
 test("an HTML comment ends at --> or --!>, and <!--> and <!---> are empty comments", async () => {
   pages()

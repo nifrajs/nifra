@@ -93,9 +93,11 @@ export default function NextjsAlternatives() {
       <h2>Match the alternative to your reason</h2>
       <ul>
         <li>
-          <strong>"RSC complexity is killing us, keeping React":</strong> Nifra (streaming SSR +
-          islands, no RSC, typed loaders/actions) or Remix/React Router. If your app is architected
-          AROUND RSC, stay on Next.js - porting that model is a rewrite.
+          <strong>"RSC complexity is killing us, keeping React":</strong> Nifra (typed
+          loaders/actions, optional native RSC/Flight for React, and islands for the other UI
+          libraries) or Remix/React Router. If your app depends on Next-specific App Router
+          conventions or <code>"use server"</code> actions, stay on Next.js - porting those
+          conventions is a rewrite.
         </li>
         <li>
           <strong>"Server bill / SSR throughput":</strong> the table is the answer. This is where
@@ -123,8 +125,9 @@ export default function NextjsAlternatives() {
         are inferred from the server's TypeScript (zero codegen), validation is on by default, SSR
         runs {REACT_SSR_MULTIPLIER} Next.js in our harness, and the docs/types are a{" "}
         <a href={href({ to: "/blog/docs-as-mcp" })}>live MCP server</a> so AI agents build against
-        the real API. It is NOT the pick if you need RSC itself, or the largest possible ecosystem
-        of React-specific integrations - that is still Next.js, and we say so in the{" "}
+        the real API. It is NOT the pick if you need Next-specific App Router conventions, native{" "}
+        <code>"use server"</code> actions, or the largest possible ecosystem of React-specific
+        integrations - that is still Next.js, and we say so in the{" "}
         <a href={href({ to: "/compare/nextjs" })}>full comparison</a>.
       </p>
       <p>

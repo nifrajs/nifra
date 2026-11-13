@@ -85,20 +85,21 @@ describe("export placement", () => {
     for (const name of FRONTEND_ROUTE_EXPORTS) expect(BACKEND_ROUTE_EXPORTS.has(name)).toBe(false)
   })
 
-  test.each([
-    ...BACKEND_ROUTE_EXPORTS,
-  ])("%s in a frontend file is refused, even when the route has no backend half", (name) => {
-    expect(() =>
-      mergeRouteHalves(
-        "page.tsx",
-        asModule({ default: null, [name]: () => 1 }),
-        undefined,
-        undefined,
-      ),
-    ).toThrow(
-      `"page.tsx" exports "${name}", which runs on the server only. Move it to "page.backend.ts"`,
-    )
-  })
+  test.each([...BACKEND_ROUTE_EXPORTS])(
+    "%s in a frontend file is refused, even when the route has no backend half",
+    (name) => {
+      expect(() =>
+        mergeRouteHalves(
+          "page.tsx",
+          asModule({ default: null, [name]: () => 1 }),
+          undefined,
+          undefined,
+        ),
+      ).toThrow(
+        `"page.tsx" exports "${name}", which runs on the server only. Move it to "page.backend.ts"`,
+      )
+    },
+  )
 
   test.each([...FRONTEND_ROUTE_EXPORTS])("%s in a backend half is refused", (name) => {
     expect(() =>
@@ -222,22 +223,19 @@ describe("shared boundaries", () => {
     ).toThrow("its backend half must export shellLoader")
   })
 
-  test.each([
-    undefined,
-    0,
-    1.5,
-    "30",
-    365 * 24 * 60 * 60 + 1,
-  ])("a shared entry with revalidate %p is refused", (revalidate) => {
-    expect(() =>
-      mergeRouteHalves("p.tsx", front("shared"), "p.backend.ts", {
-        shellLoader,
-        boundaryLoaders: { price: { load: () => 1, revalidate } },
-      }),
-    ).toThrow(
-      'boundaryLoaders["price"] in "p.backend.ts" is for a shared boundary, so it needs revalidate',
-    )
-  })
+  test.each([undefined, 0, 1.5, "30", 365 * 24 * 60 * 60 + 1])(
+    "a shared entry with revalidate %p is refused",
+    (revalidate) => {
+      expect(() =>
+        mergeRouteHalves("p.tsx", front("shared"), "p.backend.ts", {
+          shellLoader,
+          boundaryLoaders: { price: { load: () => 1, revalidate } },
+        }),
+      ).toThrow(
+        'boundaryLoaders["price"] in "p.backend.ts" is for a shared boundary, so it needs revalidate',
+      )
+    },
+  )
 
   test("tags that are neither a list of strings nor a function are refused", () => {
     expect(() =>
