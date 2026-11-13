@@ -25,7 +25,7 @@
     "mcp-app:start": "bun run mcp-app/server.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.1",
+    "@electric-sql/pglite": "^0.5.16",
     "@mdx-js/rollup": "^3",
     "@nifrajs/auth": "workspace:*",
     "@nifrajs/cli": "workspace:*",
@@ -49,25 +49,25 @@
     "@nifrajs/web-vanilla": "workspace:*",
     "@nifrajs/web-vue": "workspace:*",
     "@nifrajs/workers": "workspace:*",
-    "@preact/preset-vite": "^2.9.0",
+    "@preact/preset-vite": "^2.10.6",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "@vitejs/plugin-react": "^6.1.2",
+    "@vitejs/plugin-react": "^6.3.0",
     "@vitejs/plugin-vue": "^5.2.0",
-    "drizzle-kit": "^0.31.10",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-kit": "^0.31.11",
+    "drizzle-orm": "^0.45.4",
     "preact": "^10.19.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "solid-js": "^1.9.3",
-    "svelte": "^5.0.0",
+    "solid-js": "^1.9.19",
+    "svelte": "^5.57.3",
     "vite": "8.3.4",
-    "vite-plugin-solid": "^2.10.0",
-    "vue": "^3.5.0"
+    "vite-plugin-solid": "^2.11.16",
+    "vue": "^3.5.45"
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "svelte-check": "^4.7.6",
-    "vue-tsc": "^3.3.12"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "svelte-check": "^4.7.8",
+    "vue-tsc": "^3.3.14"
   }
 }
