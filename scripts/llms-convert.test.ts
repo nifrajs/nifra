@@ -87,6 +87,16 @@ describe("jsxToMarkdown", () => {
     expect(md).toContain("| React \\| Solid | 19 \\| 1 |")
   })
 
+  test("a backslash in a tuple cell is escaped too, so it cannot cancel the pipe escape", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["a\\\\|b", "c"]] as const',
+        "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("| a\\\\\\|b | c |")
+  })
+
   test("a block whose code cannot be evaluated fails, naming the page and the const", () => {
     const src = page("const CODE = load()", "<CodeBlock code={CODE} />")
     expect(() => convert(src)).toThrow(
