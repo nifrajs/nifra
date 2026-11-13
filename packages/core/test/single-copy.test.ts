@@ -280,54 +280,54 @@ test("an undeclared package is left alone", async () => {
   }
 })
 
-test.each([
-  "link",
-  "file",
-] as const)("the plugin collapses two copies into one module instance at RUNTIME (%s install)", async (install) => {
-  const { ground, app } = await linkedRepos(`runtime-${install}`, {
-    declaration: ["state"],
-    install,
-  })
-  try {
-    // Proved in a child process: `Bun.plugin` is global and permanent, so registering it in this
-    // process would leak into every other test file. The child is also the honest test - the runtime
-    // arm exists precisely for the case where nothing bundles the graph first.
-    await writeFile(
-      join(app, "preload.ts"),
-      `import { registerSingleCopy } from ${JSON.stringify(join(import.meta.dir, "..", "src", "single-copy.ts"))};\nregisterSingleCopy({ cwd: ${JSON.stringify(app)} });\n`,
-    )
-    await writeFile(
-      join(app, "probe.ts"),
-      // The app's own copy and the linked package's - two physical files, one shared Set if the
-      // redirect worked.
-      'import { mark, seen } from "state"\n' +
-        'import { seen as theirSeen, mark as theirMark } from "@example/ui"\n' +
-        'mark("app")\ntheirMark("ui")\nconsole.log(JSON.stringify({ ours: seen(), theirs: theirSeen() }))\n',
-    )
-    const run = (...args: readonly string[]) => {
-      const probe = Bun.spawnSync({
-        cmd: ["bun", ...args, "./probe.ts"],
-        cwd: app,
-        stdout: "pipe",
-        stderr: "pipe",
-      })
-      const output = probe.stdout.toString().trim()
-      expect(probe.stderr.toString()).toBe("")
-      expect(output).not.toBe("")
-      return JSON.parse(output) as { readonly ours: string[]; readonly theirs: string[] }
-    }
-    // The control. Without the plugin the two copies keep separate state, which is the whole defect -
-    // and without asserting it, the assertion below would pass just as well on a fixture where Bun
-    // happened to resolve one copy anyway, proving nothing.
-    expect(run()).toEqual({ ours: ["app"], theirs: ["ui"] })
-    expect(run("--preload", "./preload.ts")).toEqual({
-      ours: ["app", "ui"],
-      theirs: ["app", "ui"],
+test.each(["link", "file"] as const)(
+  "the plugin collapses two copies into one module instance at RUNTIME (%s install)",
+  async (install) => {
+    const { ground, app } = await linkedRepos(`runtime-${install}`, {
+      declaration: ["state"],
+      install,
     })
-  } finally {
-    await rm(ground, { recursive: true, force: true })
-  }
-})
+    try {
+      // Proved in a child process: `Bun.plugin` is global and permanent, so registering it in this
+      // process would leak into every other test file. The child is also the honest test - the runtime
+      // arm exists precisely for the case where nothing bundles the graph first.
+      await writeFile(
+        join(app, "preload.ts"),
+        `import { registerSingleCopy } from ${JSON.stringify(join(import.meta.dir, "..", "src", "single-copy.ts"))};\nregisterSingleCopy({ cwd: ${JSON.stringify(app)} });\n`,
+      )
+      await writeFile(
+        join(app, "probe.ts"),
+        // The app's own copy and the linked package's - two physical files, one shared Set if the
+        // redirect worked.
+        'import { mark, seen } from "state"\n' +
+          'import { seen as theirSeen, mark as theirMark } from "@example/ui"\n' +
+          'mark("app")\ntheirMark("ui")\nconsole.log(JSON.stringify({ ours: seen(), theirs: theirSeen() }))\n',
+      )
+      const run = (...args: readonly string[]) => {
+        const probe = Bun.spawnSync({
+          cmd: ["bun", ...args, "./probe.ts"],
+          cwd: app,
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const output = probe.stdout.toString().trim()
+        expect(probe.stderr.toString()).toBe("")
+        expect(output).not.toBe("")
+        return JSON.parse(output) as { readonly ours: string[]; readonly theirs: string[] }
+      }
+      // The control. Without the plugin the two copies keep separate state, which is the whole defect -
+      // and without asserting it, the assertion below would pass just as well on a fixture where Bun
+      // happened to resolve one copy anyway, proving nothing.
+      expect(run()).toEqual({ ours: ["app"], theirs: ["ui"] })
+      expect(run("--preload", "./preload.ts")).toEqual({
+        ours: ["app", "ui"],
+        theirs: ["app", "ui"],
+      })
+    } finally {
+      await rm(ground, { recursive: true, force: true })
+    }
+  },
+)
 
 test("the preload finds the declaring app root from a filtered workspace cwd", async () => {
   const { ground, app } = await linkedRepos("workspace-preload-root", {

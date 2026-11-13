@@ -698,12 +698,10 @@ describe("type-only imports grant no entry ownership", () => {
     )
   })
 
-  test.each([
-    "valueDefault",
-    "sideEffect",
-    "named",
-    "mixed",
-  ])("%s.ts is loaded at runtime, so both entries own it", (name) => {
-    expect(zoneOf(name)).toBe("library")
-  })
+  test.each(["valueDefault", "sideEffect", "named", "mixed"])(
+    "%s.ts is loaded at runtime, so both entries own it",
+    (name) => {
+      expect(zoneOf(name)).toBe("library")
+    },
+  )
 })

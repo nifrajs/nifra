@@ -474,7 +474,6 @@ describe("forgetAutoLoadedEnv", () => {
 
   test("removes what Bun loaded from .env files and keeps what the environment set", async () => {
     const dir = tempRoot()
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: a .env expansion for Bun, written literally
     writeFileSync(join(dir, ".env"), "A_FILE=file\nA_SHELL=file\nA_EXPANDED=at-${HOME}\n")
     writeFileSync(join(dir, ".env.local"), "A_LOCAL=local\n")
     const { removed, left } = await forgetIn(dir, { A_SHELL: "shell", NODE_ENV: "development" })

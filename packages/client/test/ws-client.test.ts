@@ -420,36 +420,34 @@ describe("WebSocket runtime behavior", () => {
     await iterator.return?.()
   })
 
-  test.each([
-    "close",
-    "error",
-    "abort",
-    "return",
-  ] as const)("%s settles every overlapping iterator read", async (ending) => {
-    useFakeWebSocket()
-    const handle = openWebSocket("http://example.test", "/chat", undefined, false)
-    const socket = FakeWebSocket.instances[0]!
-    const controller = new AbortController()
-    const iterator = handle.messages({ signal: controller.signal })
-    const completed: IteratorResult<unknown>[] = []
-    const reads = Array.from({ length: 3 }, () =>
-      iterator.next().then((result) => completed.push(result)),
-    )
+  test.each(["close", "error", "abort", "return"] as const)(
+    "%s settles every overlapping iterator read",
+    async (ending) => {
+      useFakeWebSocket()
+      const handle = openWebSocket("http://example.test", "/chat", undefined, false)
+      const socket = FakeWebSocket.instances[0]!
+      const controller = new AbortController()
+      const iterator = handle.messages({ signal: controller.signal })
+      const completed: IteratorResult<unknown>[] = []
+      const reads = Array.from({ length: 3 }, () =>
+        iterator.next().then((result) => completed.push(result)),
+      )
 
-    if (ending === "close") socket.end()
-    else if (ending === "error") socket.fail()
-    else if (ending === "abort") controller.abort()
-    else await iterator.return?.()
+      if (ending === "close") socket.end()
+      else if (ending === "error") socket.fail()
+      else if (ending === "abort") controller.abort()
+      else await iterator.return?.()
 
-    await Promise.resolve()
-    expect(completed).toEqual([
-      { value: undefined, done: true },
-      { value: undefined, done: true },
-      { value: undefined, done: true },
-    ])
-    await Promise.all(reads)
-    expect(await iterator.next()).toEqual({ value: undefined, done: true })
-  })
+      await Promise.resolve()
+      expect(completed).toEqual([
+        { value: undefined, done: true },
+        { value: undefined, done: true },
+        { value: undefined, done: true },
+      ])
+      await Promise.all(reads)
+      expect(await iterator.next()).toEqual({ value: undefined, done: true })
+    },
+  )
 
   test("a closed socket ends a new iteration at once and drops a send", async () => {
     useFakeWebSocket()

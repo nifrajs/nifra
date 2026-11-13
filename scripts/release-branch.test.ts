@@ -119,7 +119,6 @@ test("release verification runs one job per plan group, and one check passes onl
   )
   expect(workflow).toHaveProperty(
     ["jobs", "verify-release-pr", "concurrency", "group"],
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression
     expect.stringContaining("-${{ matrix.group }}"),
   )
   expect(workflow).toHaveProperty(["jobs", "release-verification", "name"], "release-verification")
@@ -384,22 +383,22 @@ test.skipIf(process.platform === "win32")(
   },
 )
 
-test.each([
-  "release.yml",
-  "site.yml",
-])("%s gives the Cloudflare credentials to the deploy step alone, after the build has run", (file) => {
-  const steps = workflowJobs(file)["deploy-site"]?.steps ?? []
-  const holders = steps
-    .filter((step) => Object.keys(step.env ?? {}).some((key) => key.startsWith("CLOUDFLARE_")))
-    .map((step) => step.name)
-  expect(holders).toEqual([DEPLOY])
-  const names = steps.map((step) => step.name)
-  expect(names.indexOf(BUILD)).toBeLessThan(names.indexOf(DEPLOY))
-  expect(steps.find((step) => step.name === DEPLOY)?.run).not.toMatch(/\bbun run\b/)
-  expect(JSON.stringify(steps.filter((step) => step.name !== DEPLOY))).not.toContain(
-    "secrets.CLOUDFLARE",
-  )
-})
+test.each(["release.yml", "site.yml"])(
+  "%s gives the Cloudflare credentials to the deploy step alone, after the build has run",
+  (file) => {
+    const steps = workflowJobs(file)["deploy-site"]?.steps ?? []
+    const holders = steps
+      .filter((step) => Object.keys(step.env ?? {}).some((key) => key.startsWith("CLOUDFLARE_")))
+      .map((step) => step.name)
+    expect(holders).toEqual([DEPLOY])
+    const names = steps.map((step) => step.name)
+    expect(names.indexOf(BUILD)).toBeLessThan(names.indexOf(DEPLOY))
+    expect(steps.find((step) => step.name === DEPLOY)?.run).not.toMatch(/\bbun run\b/)
+    expect(JSON.stringify(steps.filter((step) => step.name !== DEPLOY))).not.toContain(
+      "secrets.CLOUDFLARE",
+    )
+  },
+)
 
 test.skipIf(process.platform === "win32")(
   "the site check passes once a healthy nifra.dev serves this deployment's stamp, not just the same pages",

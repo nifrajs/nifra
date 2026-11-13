@@ -39,16 +39,17 @@ describe("pathnameOf / searchOf - equivalent to `new URL`, without the parse [AU
     expect(urlPartsOf(url).pathname).toBe(new URL(url).pathname)
   })
 
-  test.each(
-    ABSOLUTE_URLS,
-  )("query of %s parses to the same params as new URL().searchParams", (url) => {
-    expect(Object.fromEntries(new URLSearchParams(searchOf(url)))).toEqual(
-      Object.fromEntries(new URL(url).searchParams),
-    )
-    expect(Object.fromEntries(new URLSearchParams(urlPartsOf(url).search))).toEqual(
-      Object.fromEntries(new URL(url).searchParams),
-    )
-  })
+  test.each(ABSOLUTE_URLS)(
+    "query of %s parses to the same params as new URL().searchParams",
+    (url) => {
+      expect(Object.fromEntries(new URLSearchParams(searchOf(url)))).toEqual(
+        Object.fromEntries(new URL(url).searchParams),
+      )
+      expect(Object.fromEntries(new URLSearchParams(urlPartsOf(url).search))).toEqual(
+        Object.fromEntries(new URL(url).searchParams),
+      )
+    },
+  )
 
   test("urlPartsOf parses pathname and search together, preserving later question marks", () => {
     expect(urlPartsOf("http://host/search?q=a?b&limit=10#frag?ignored")).toEqual({

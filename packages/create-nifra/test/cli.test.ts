@@ -432,28 +432,29 @@ describe("run (argv → code + message)", () => {
     expect(message).toMatch(/already exists/)
   })
 
-  test.each([
-    ["api"],
-    ["site"],
-  ])("%s into a directory with files of its own → refused, and none of its files replaced", async (template) => {
-    const dir = await freshDir(`occupied-${template}`)
-    await mkdir(join(dir, ".github"), { recursive: true })
-    const mine: Record<string, string> = {
-      ".gitignore": "mine\n",
-      "AGENTS.md": "mine\n",
-      "CLAUDE.md": "mine\n",
-      ".mcp.json": "{}\n",
-      ".github/copilot-instructions.md": "mine\n",
-    }
-    for (const [file, contents] of Object.entries(mine)) await writeFile(join(dir, file), contents)
-    const { code, message } = await run([dir, "--template", template])
-    expect(code).toBe(1)
-    expect(message).toMatch(/already exists/)
-    for (const [file, contents] of Object.entries(mine)) {
-      expect(await readFile(join(dir, file), "utf8")).toBe(contents)
-    }
-    expect(await exists(join(dir, "package.json"))).toBe(false)
-  })
+  test.each([["api"], ["site"]])(
+    "%s into a directory with files of its own → refused, and none of its files replaced",
+    async (template) => {
+      const dir = await freshDir(`occupied-${template}`)
+      await mkdir(join(dir, ".github"), { recursive: true })
+      const mine: Record<string, string> = {
+        ".gitignore": "mine\n",
+        "AGENTS.md": "mine\n",
+        "CLAUDE.md": "mine\n",
+        ".mcp.json": "{}\n",
+        ".github/copilot-instructions.md": "mine\n",
+      }
+      for (const [file, contents] of Object.entries(mine))
+        await writeFile(join(dir, file), contents)
+      const { code, message } = await run([dir, "--template", template])
+      expect(code).toBe(1)
+      expect(message).toMatch(/already exists/)
+      for (const [file, contents] of Object.entries(mine)) {
+        expect(await readFile(join(dir, file), "utf8")).toBe(contents)
+      }
+      expect(await exists(join(dir, "package.json"))).toBe(false)
+    },
+  )
 
   test("an existing empty directory is scaffolded without --force", async () => {
     const dir = await freshDir("empty")
@@ -661,7 +662,6 @@ describe("CI workflows (--ci github)", () => {
     expect(yml).toContain("command: pages deploy dist --project-name=my-app")
     expect(yml).toContain("CLOUDFLARE_API_TOKEN")
     // Asserting the literal GitHub Actions expression survives (wasn't eaten by JS template interpolation).
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: that literal `${{ }}` is exactly what we verify
     expect(yml).toContain("${{ secrets.CLOUDFLARE_API_TOKEN }}")
     expect(yml).toContain("if: github.ref == 'refs/heads/main'") // deploy only on main
     expect(yml).toContain("bun run build")
