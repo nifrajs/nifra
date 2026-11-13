@@ -8,18 +8,28 @@ Run a nifra app on Node's http server - a Request<->stream adapter with a gracef
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/node` · `@nifrajs/node/transport`
+
 ## Key exports
 
-- **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<NodeServer>`
-- **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
-- **FetchHandler** _(interface)_ - `interface FetchHandler`
-- **NodeServer** _(interface)_ - `interface NodeServer`
-- **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
-- **ServeOptions** _(interface)_ - `interface ServeOptions`
-- **ServeStaticOptions** _(interface)_ - `interface ServeStaticOptions`
-- **HashedFiles** _(type)_ - `type HashedFiles = Iterable<string> | readonly RegExp[] | ((pathname: string) => boolean)`
-- **RequestProtocol** _(type)_ - `type RequestProtocol = "http" | "https"`
-- **RequestProtocolOption** _(type)_ - `type RequestProtocolOption = | RequestProtocol | ((request: IncomingMessage) => RequestProtocol)`
+- **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<NodeServer>` · from `@nifrajs/node`
+- **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined` · from `@nifrajs/node`
+- **activateAsyncContextFrame** _(const)_ - `activateAsyncContextFrame: () => void` · from `@nifrajs/node/transport`
+- **enableNodeDirect** _(const)_ - `enableNodeDirect: (app: object) => void` · from `@nifrajs/node/transport`
+- **errorReporterOf** _(const)_ - `errorReporterOf: (app: object) => ((error: unknown) => void) | undefined` · from `@nifrajs/node/transport`
+- **hostPolicyOf** _(const)_ - `hostPolicyOf: (options: HostPolicyOptions) => HostPolicy` · from `@nifrajs/node/transport`
+- **lifecycleOf** _(const)_ - `lifecycleOf: (app: object) => (phase: "stopping" | "stopped") => Promise<void>` · from `@nifrajs/node/transport`
+- **nodeOutcomeRuntime** _(const)_ - `nodeOutcomeRuntime: object` · from `@nifrajs/node/transport`
+- **resolveRequestHost** _(const)_ - `resolveRequestHost: (host: string | null | undefined, policy: HostPolicy) => string | undefined` · from `@nifrajs/node/transport`
+- **resolveRequestTarget** _(const)_ - `resolveRequestTarget: (target: string, normalizeTarget: boolean) => string` · from `@nifrajs/node/transport`
+- **FetchHandler** _(interface)_ - `interface FetchHandler` · from `@nifrajs/node`
+- **HostPolicy** _(interface)_ - `interface HostPolicy` · from `@nifrajs/node/transport`
+- **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions` · from `@nifrajs/node/transport`
+- **NodeServer** _(interface)_ - `interface NodeServer` · from `@nifrajs/node`
+
+_…and 7 more - see [`api-reference.md`](../../api-reference.md#nifrajsnode) for the complete list._
 
 ## Footguns
 

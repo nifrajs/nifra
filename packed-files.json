@@ -3035,6 +3035,10 @@
     "dist/open-resolved.d.ts.map",
     "dist/open-resolved.js",
     "dist/open-resolved.js.map",
+    "dist/transport.d.ts",
+    "dist/transport.d.ts.map",
+    "dist/transport.js",
+    "dist/transport.js.map",
     "dist/ws-frame.d.ts",
     "dist/ws-frame.d.ts.map",
     "dist/ws-frame.js",
@@ -3054,6 +3058,7 @@
     "src/index.ts",
     "src/node-stream.ts",
     "src/open-resolved.ts",
+    "src/transport.ts",
     "src/ws-frame.ts"
   ],
   "@nifrajs/otel": [
