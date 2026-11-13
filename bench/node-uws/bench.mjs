@@ -63,6 +63,12 @@ for (const arm of arms) {
     servers.push({ arm, app, port, pid: child.pid, child })
   }
 }
+// Servers die with the bench on any exit path: a throw, a failed sample, Ctrl-C.
+process.on("exit", () => {
+  for (const s of servers) s.child.kill()
+})
+process.on("SIGINT", () => process.exit(130))
+process.on("SIGTERM", () => process.exit(143))
 const ours = new Set(servers.map((s) => s.pid))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 await sleep(2500)
@@ -88,8 +94,10 @@ async function quiet() {
 }
 function cpuSeconds(pid) {
   const t = execFileSync("ps", ["-o", "time=", "-p", String(pid)], { encoding: "utf8" }).trim()
-  const [mins, rest] = t.split(":")
-  return Number(mins) * 60 + Number(rest)
+  // `[DD-]HH:MM:SS` on Linux, `MM:SS.ss` or `HH:MM:SS` on macOS.
+  const [days, clock] = t.includes("-") ? t.split("-") : [undefined, t]
+  const seconds = clock.split(":").reduce((total, part) => total * 60 + Number(part), 0)
+  return seconds + (days === undefined ? 0 : Number(days) * 86400)
 }
 
 async function sample(shape, arm) {
@@ -114,12 +122,22 @@ async function sample(shape, arm) {
   )
   let out = ""
   proc.stdout.on("data", (d) => (out += d))
+  // Registered before the first await: a short run can finish inside the delay below.
+  const finished = new Promise((r) => {
+    proc.once("close", r)
+    proc.once("error", r)
+  })
   await sleep(400)
   const mid = othersCpu()
-  await new Promise((r) => proc.on("close", r))
+  await finished
   const after = othersCpu()
   const cpu1 = cpuSeconds(server.pid)
-  const j = JSON.parse(out)
+  let j
+  try {
+    j = JSON.parse(out)
+  } catch {
+    return { discarded: "load generator produced no result" }
+  }
   const total = Object.values(j.statusCodeDistribution).reduce((a, b) => a + b, 0)
   const ok = j.statusCodeDistribution["200"] ?? 0
   const maxOther = Math.max(before, mid, after)
@@ -177,5 +195,4 @@ for (const [name, byArm] of Object.entries(results)) {
     )
   }
 }
-for (const s of servers) s.child.kill()
 process.exit(0)

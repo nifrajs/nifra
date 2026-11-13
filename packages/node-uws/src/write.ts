@@ -245,7 +245,18 @@ function writeResponse(
   const status = response.status
   const stream = response.body
   if (stream === null || isBodyless(status)) {
-    writeBuffered(res, source, status, headers, cookies, null, isHead, undefined, inHandler)
+    writeBuffered(
+      res,
+      source,
+      status,
+      headers,
+      cookies,
+      null,
+      isHead,
+      undefined,
+      inHandler,
+      isHead ? declaredLength(headers) : undefined,
+    )
     return
   }
   if (isHead) {
@@ -368,6 +379,7 @@ async function pump(
       if (chunk.byteLength === 0) continue
     }
     if (sentBefore + chunk.byteLength > declared) {
+      void reader.cancel().catch(() => {})
       res.close()
       throw new RangeError("response body is longer than its Content-Length")
     }
@@ -390,7 +402,10 @@ async function pump(
       await writable
       if (source.aborted) return
     }
-    if (responded) return
+    if (responded) {
+      void reader.cancel().catch(() => {})
+      return
+    }
   }
   if (!responded) {
     res.close()

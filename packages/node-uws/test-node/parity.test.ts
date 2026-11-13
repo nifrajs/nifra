@@ -64,13 +64,11 @@ const stops: Array<() => Promise<void>> = []
 
 before(async () => {
   const a = await serveNode(makeApp(), { port: 0, hostname: "127.0.0.1" })
+  stops.push(() => a.stop({ drainMs: 0 }))
   const b = await serveUws(makeApp(), { port: 0, hostname: "127.0.0.1" })
+  stops.push(() => b.stop({ drainMs: 0 }))
   nodePort = a.port
   uwsPort = b.port
-  stops.push(
-    () => a.stop({ drainMs: 0 }),
-    () => b.stop({ drainMs: 0 }),
-  )
 })
 
 after(async () => {
@@ -88,12 +86,19 @@ interface Observed {
 async function observe(port: number, request: string | Buffer): Promise<Observed> {
   const text = await raw(port, request, (received) => {
     const parsed = parseHead(received)
+    if (!received.includes("\r\n\r\n")) return false
+    if (
+      /^HEAD /.test(request.toString("latin1")) ||
+      parsed.status === 204 ||
+      parsed.status === 304
+    ) {
+      return true
+    }
+    if (parsed.headers.get("transfer-encoding")?.[0]?.toLowerCase() === "chunked") {
+      return parsed.body.endsWith("0\r\n\r\n")
+    }
     const length = Number(parsed.headers.get("content-length")?.[0] ?? Number.NaN)
-    const head = /^HEAD /.test(request.toString("latin1"))
-    return (
-      received.includes("\r\n\r\n") &&
-      (head || Number.isNaN(length) || parsed.body.length >= length)
-    )
+    return !Number.isNaN(length) && parsed.body.length >= length
   })
   const parsed = parseHead(text)
   const headers: Array<[string, string]> = []

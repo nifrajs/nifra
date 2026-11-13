@@ -49,25 +49,27 @@ if (transport === "raw") {
           ["access-control-allow-origin", "https://app.example.com"],
           ["access-control-allow-credentials", "true"],
         ]
-  const answer = (res: RawResponse): void => {
+  // What the framework's POST /api/orders answers for the body the bench sends, so the arms move the same bytes.
+  const postBody = '{"ok":true,"id":"ord_new","sku":"SKU-1","qty":2,"by":"abcdefghijkl"}'
+  const answer = (res: RawResponse, body: string): void => {
     res.cork(() => {
       res.writeStatus("200 OK")
       for (const [name, value] of headers) res.writeHeader(name, value)
       if (shape === "real") res.writeHeader("x-request-id", crypto.randomUUID())
       res.writeHeader("content-type", "application/json")
-      res.end(bodyOf())
+      res.end(body)
     })
   }
   uWS
     .App()
     .get("/*", (res) => {
       res.onAborted(() => {})
-      answer(res)
+      answer(res, bodyOf())
     })
     .post("/*", (res) => {
       res.onAborted(() => {})
       res.onData((_chunk, isLast) => {
-        if (isLast) answer(res)
+        if (isLast) answer(res, shape === "bare" ? bodyOf() : postBody)
       })
     })
     .listen("127.0.0.1", port, (token) => {

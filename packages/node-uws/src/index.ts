@@ -270,9 +270,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
   let shutdown: Promise<void> | undefined
   let token: ListenSocket | undefined
   function stop(stopOptions: NodeStopOptions = {}): Promise<void> {
-    const run = stopOnce(stopOptions)
-    shutdown ??= run
-    return run
+    shutdown ??= stopOnce(stopOptions)
+    return shutdown
   }
   async function stopOnce({
     drainMs = DEFAULT_DRAIN_MS,
@@ -284,7 +283,14 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
       process.removeListener("SIGTERM", onSignal)
       process.removeListener("SIGINT", onSignal)
     }
-    await lifecycle("stopping")
+    try {
+      await lifecycle("stopping")
+    } catch (error) {
+      // A failed hook must not leave the listener accepting after `closed` has made a retry a no-op.
+      if (token !== undefined) uWS.us_listen_socket_close(token)
+      app$.close()
+      throw error
+    }
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
     if (token !== undefined) uWS.us_listen_socket_close(token)
     const deadline = Date.now() + drainMs

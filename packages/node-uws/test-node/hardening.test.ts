@@ -9,7 +9,7 @@ import { after, before, test } from "node:test"
 import { server, status } from "@nifrajs/core"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
 import { serve, type UwsServer } from "../src/index.ts"
-import { AUTH, parseHead, raw, sleep } from "./support.ts"
+import { AUTH, parseHead, raw, rawExchange, sleep } from "./support.ts"
 
 const BIG = Buffer.alloc(6_000_000)
 for (let i = 0; i < BIG.length; i++) BIG[i] = (i * 31 + (i >> 8)) & 255
@@ -112,6 +112,27 @@ function makeApp() {
       await reader?.cancel()
       return { first: first?.value?.byteLength ?? 0 }
     })
+    .post("/big-upload", { bodyLimit: 8_000_000 }, async (c) => {
+      const body = new Uint8Array(await c.req.arrayBuffer())
+      return { length: body.byteLength }
+    })
+    .get("/head-length", () => new Response(null, { headers: { "content-length": "123" } }))
+    .get("/cancel-probe", () => {
+      const encoder = new TextEncoder()
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode("abc"))
+            controller.enqueue(encoder.encode("de"))
+          },
+          cancel() {
+            cancelled = true
+          },
+        }),
+        { headers: { "content-length": "5", "content-type": "text/plain" } },
+      )
+    })
+    .get("/cancelled", () => ({ cancelled }))
     .post("/no-read", () => ({ ignored: true }))
     .post("/auth-first", (c) => {
       if (c.header("authorization") === null) return status(401, { ok: false })
@@ -122,6 +143,7 @@ function makeApp() {
 
 let port = 0
 let flips = 0
+let cancelled = false
 let handle: UwsServer
 before(async () => {
   handle = await serve(makeApp(), { port: 0, hostname: "127.0.0.1" })
@@ -187,7 +209,8 @@ test("a 6 MB chunked body arrives intact", async () => {
 })
 
 test("a stream shorter than its Content-Length cuts the connection and the server keeps serving", async () => {
-  const text = await raw(port, GET("/short-known"), () => false, 1500)
+  const { received: text, end } = await rawExchange(port, GET("/short-known"), () => false, 1500)
+  assert.equal(end, "closed", "the server cut the connection")
   assert.ok(!text.includes("0\r\n\r\n"), "no clean end of response")
   const next = await fetch(`http://127.0.0.1:${port}/stream`)
   assert.equal(next.status, 200)
@@ -195,7 +218,8 @@ test("a stream shorter than its Content-Length cuts the connection and the serve
 })
 
 test("a stream that errors after the head cuts the connection instead of finishing it", async () => {
-  const text = await raw(port, GET("/errors-midway"), () => false, 1500)
+  const { received: text, end } = await rawExchange(port, GET("/errors-midway"), () => false, 1500)
+  assert.equal(end, "closed", "the server cut the connection")
   assert.match(text, /^HTTP\/1\.1 200/)
   assert.ok(!text.endsWith("0\r\n\r\n"), "the chunked body was not terminated")
   assert.equal((await fetch(`http://127.0.0.1:${port}/custom-status`)).status, 299)
@@ -381,6 +405,33 @@ test("a reader that cancels the body stream does not leave the upload paused", a
   // The 1 MB cap refuses the declared length before any read; either way the exchange completes.
   assert.ok([200, 413].includes(response.status))
   await response.text()
+})
+
+test("a 3 MB upload read whole from the first byte is not throttled into a hang", async () => {
+  const response = await fetch(`http://127.0.0.1:${port}/big-upload`, {
+    method: "POST",
+    body: Buffer.alloc(3_000_000, 7),
+    headers: { "content-type": "application/octet-stream" },
+    signal: AbortSignal.timeout(5000),
+  })
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { length: 3_000_000 })
+})
+
+test("a HEAD answer for a bodyless Response keeps the declared Content-Length", async () => {
+  const text = await raw(port, "HEAD /head-length HTTP/1.1\r\nHost: x\r\n\r\n", (r) =>
+    r.includes("\r\n\r\n"),
+  )
+  assert.deepEqual(parseHead(text).headers.get("content-length"), ["123"])
+})
+
+test("a stream is cancelled once its declared length has been sent", async () => {
+  cancelled = false
+  const response = await fetch(`http://127.0.0.1:${port}/cancel-probe`)
+  assert.equal(await response.text(), "abcde")
+  await sleep(50)
+  const probe = await fetch(`http://127.0.0.1:${port}/cancelled`)
+  assert.deepEqual(await probe.json(), { cancelled: true })
 })
 
 test("the client's address is the socket peer", async () => {

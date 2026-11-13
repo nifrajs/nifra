@@ -27,6 +27,7 @@ export class BodyChannel {
   private pulled = false
   private discarded = false
   private gone = false
+  private collecting = false
 
   constructor(res: HttpResponse) {
     this.res = res
@@ -40,7 +41,7 @@ export class BodyChannel {
         copy.set(view)
         this.chunks.push(copy)
         this.queued += chunk.byteLength
-        if (!isLast && !this.paused && this.queued >= BODY_HIGH_WATER) {
+        if (!isLast && !this.paused && !this.collecting && this.queued >= BODY_HIGH_WATER) {
           this.paused = true
           res.pause()
         }
@@ -102,6 +103,7 @@ export class BodyChannel {
   private async collect(): Promise<Buffer> {
     // A reader that wants every byte has no use for the throttle; the cap on how much it may take
     // is the caller's (core checks Content-Length before it reads, and caps a chunked body itself).
+    this.collecting = true
     if (this.paused && !this.gone) {
       this.paused = false
       this.res.resume()
@@ -153,6 +155,10 @@ export class BodyChannel {
             if (this.ended) {
               if (this.failure !== undefined) controller.error(this.failure)
               else controller.close()
+              return
+            }
+            if (this.gone) {
+              controller.error(new Error("request closed before body completed"))
               return
             }
             this.release()

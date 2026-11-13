@@ -1,28 +1,40 @@
 import { connect } from "node:net"
 
+export type RawEnd = "matched" | "closed" | "timeout"
+
+/** One raw HTTP exchange that also reports why it ended, for tests that need the server to close. */
+export function rawExchange(
+  port: number,
+  request: string | Buffer,
+  until: (received: string) => boolean = () => false,
+  timeoutMs = 2000,
+): Promise<{ received: string; end: RawEnd }> {
+  return new Promise((resolve) => {
+    const socket = connect(port, "127.0.0.1", () => socket.write(request))
+    let received = ""
+    const done = (end: RawEnd): void => {
+      clearTimeout(timer)
+      socket.destroy()
+      resolve({ received, end })
+    }
+    const timer = setTimeout(() => done("timeout"), timeoutMs)
+    socket.on("data", (chunk) => {
+      received += chunk.toString("latin1")
+      if (until(received)) done("matched")
+    })
+    socket.on("close", () => done("closed"))
+    socket.on("error", () => done("closed"))
+  })
+}
+
 /** One raw HTTP exchange: write `request`, collect everything until the server closes or `until` matches. */
-export function raw(
+export async function raw(
   port: number,
   request: string | Buffer,
   until: (received: string) => boolean = () => false,
   timeoutMs = 2000,
 ): Promise<string> {
-  return new Promise((resolve) => {
-    const socket = connect(port, "127.0.0.1", () => socket.write(request))
-    let received = ""
-    const done = (): void => {
-      clearTimeout(timer)
-      socket.destroy()
-      resolve(received)
-    }
-    const timer = setTimeout(done, timeoutMs)
-    socket.on("data", (chunk) => {
-      received += chunk.toString("latin1")
-      if (until(received)) done()
-    })
-    socket.on("close", done)
-    socket.on("error", done)
-  })
+  return (await rawExchange(port, request, until, timeoutMs)).received
 }
 
 /** Parse the head of a raw response: status line and a lowercase header multimap. */

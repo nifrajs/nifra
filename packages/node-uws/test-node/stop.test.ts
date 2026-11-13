@@ -1,9 +1,22 @@
 import assert from "node:assert/strict"
 import { connect } from "node:net"
-import { test } from "node:test"
+import { afterEach, test } from "node:test"
 import { server } from "@nifrajs/core"
-import { serve } from "../src/index.ts"
+import { serve as serveUws } from "../src/index.ts"
 import { sleep } from "./support.ts"
+
+const open: Array<Awaited<ReturnType<typeof serveUws>>> = []
+async function serve(
+  ...args: Parameters<typeof serveUws>
+): Promise<Awaited<ReturnType<typeof serveUws>>> {
+  const handle = await serveUws(...args)
+  open.push(handle)
+  return handle
+}
+
+afterEach(async () => {
+  for (const handle of open.splice(0)) await handle.stop({ drainMs: 0 })
+})
 
 test("stop() lets an in-flight request finish, refuses new connections, and runs the lifecycle hooks in order", async () => {
   const events: string[] = []
@@ -81,4 +94,22 @@ test("an idle keep-alive connection does not hold stop() back", async () => {
   await handle.stop({ drainMs: 5000 })
   assert.ok(Date.now() - started < 1500)
   socket.destroy()
+})
+
+test("a second stop() resolves only when the shutdown under way has finished", async () => {
+  const events: string[] = []
+  const app = server()
+    .onStopping(async () => {
+      await sleep(80)
+      events.push("stopping")
+    })
+    .onStop(() => {
+      events.push("stopped")
+    })
+  const handle = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  const first = handle.stop({ drainMs: 0 })
+  await sleep(10)
+  await handle.stop()
+  assert.deepEqual(events, ["stopping", "stopped"])
+  await first
 })
