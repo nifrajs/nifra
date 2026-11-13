@@ -409,7 +409,7 @@ export async function computeEffectDigest(
       ["sign"],
     )
   } else {
-    const algorithm = key.algorithm as unknown as {
+    const algorithm = key.algorithm as {
       readonly name?: unknown
       readonly hash?: { readonly name?: unknown }
       readonly length?: unknown
@@ -437,7 +437,7 @@ const EFFECT_LEDGER = Symbol("nifra.effect.ledger")
 
 /** Framework wiring: attach a per-request ledger to a handler context. Not for application code. */
 export function attachEffectLedger(context: object, ledger: RequestLedger): void {
-  ;(context as Record<PropertyKey, unknown>)[EFFECT_LEDGER as unknown as string] = ledger
+  ;(context as typeof context & { [EFFECT_LEDGER]?: unknown })[EFFECT_LEDGER] = ledger
 }
 
 /** The request's effect ledger, when the server enabled one for this route. Read-only access. */

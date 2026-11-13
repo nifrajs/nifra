@@ -34,7 +34,7 @@ interface NodeDirectInstallable {
 /** Enable `app.resolveNode()` for direct callers. Applying it twice is a no-op (named plugin dedupe). */
 export function nodeDirect(): IdentityPlugin {
   const apply = <S extends AnyServer>(app: S): S => {
-    ;(app as unknown as NodeDirectInstallable)[INSTALL_NODE_DIRECT](NODE_OUTCOME_RUNTIME)
+    ;(app as NodeDirectInstallable)[INSTALL_NODE_DIRECT](NODE_OUTCOME_RUNTIME)
     return app
   }
   return Object.assign(apply, { pluginName: "nifra:node-direct" }) as IdentityPlugin

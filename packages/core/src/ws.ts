@@ -52,7 +52,7 @@ interface WsInstallable {
  */
 export function websocket(): IdentityPlugin {
   const apply = <S extends AnyServer>(app: S): S => {
-    ;(app as unknown as WsInstallable)[INSTALL_WS](WS_RUNTIME)
+    ;(app as WsInstallable)[INSTALL_WS](WS_RUNTIME)
     return app
   }
   return Object.assign(apply, { pluginName: "nifra:websocket" }) as IdentityPlugin

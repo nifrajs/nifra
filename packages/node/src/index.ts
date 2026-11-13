@@ -454,7 +454,7 @@ const DeferringResponse = /* @__PURE__ */ (() => {
 // helper skips the header re-walk `deferredBodyView` does for the raw `new Response` patch. `??=`:
 // first adapter load wins; a re-import is a no-op.
 const DEFERRED_RESPONDER_KEY = Symbol.for("nifra.deferred.responder")
-;(globalThis as unknown as Record<symbol, unknown>)[DEFERRED_RESPONDER_KEY] ??= (
+;(globalThis as Record<symbol, unknown>)[DEFERRED_RESPONDER_KEY] ??= (
   body: string,
   status: number,
   headers: Record<string, string>,
@@ -600,7 +600,7 @@ function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
   const response = new FastResponse(body, {
     status: outcome.status,
     headers: pairs,
-  }) as unknown as Response
+  }) as Response
   if (body !== null) Object.defineProperty(response, NODE_RESPONSE_BODY, { value: body })
   return response
 }
@@ -1098,7 +1098,7 @@ function errorReporterOf(app: FetchHandler): ((error: unknown) => void) | undefi
 }
 
 function enableNodeDirect(app: FetchHandler): void {
-  const install = (app as unknown as Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
+  const install = (app as FetchHandler & Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
   if (typeof install !== "function") return
   try {
     ;(install as (runtime: NodeOutcomeRuntime) => void).call(app, NODE_OUTCOME_RUNTIME)
@@ -1601,7 +1601,7 @@ function toApp(
   // `nodeRes`; `false` means its optional transport was unavailable, so the same untouched source
   // continues through the ordinary Web/direct path below.
   const resolveNodeSource = (app as Partial<NodeFastHandler>).resolveNodeSource
-  const resolveNodeMount = (app as unknown as Record<symbol, unknown>)[RESOLVE_NODE_MOUNT]
+  const resolveNodeMount = (app as FetchHandler & Record<symbol, unknown>)[RESOLVE_NODE_MOUNT]
   if (typeof resolveNodeSource === "function" || typeof resolveNodeMount === "function") {
     const nodeSource = toNodeRequestSource(nodeReq, protocol, host, nodeRes)
 
@@ -2267,7 +2267,7 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
   private handedBody(): ReadableStream<Uint8Array> | undefined {
     const handed = this.bodyValue
     if (handed == null || !handed.locked) return handed ?? undefined
-    const owner = this.requestValue as unknown as { readonly _real?: Request } | undefined
+    const owner = this.requestValue as { readonly _real?: Request } | undefined
     return owner?._real?.body ?? handed
   }
 
@@ -2330,7 +2330,7 @@ class LazyNodeRequestSource extends NodeSourceBase implements NodeRequestSource 
         return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, signal)
       },
       this.nodeRes,
-    ) as unknown as Request
+    )
     return this.requestValue
   }
 
@@ -2414,7 +2414,7 @@ class LeanNodeGetSource extends NodeSourceBase implements NodeRequestSource {
       (headers, signal) =>
         makeWebRequest(this.nodeReq, this.method, this.url, headers, null, signal),
       this.nodeRes,
-    ) as unknown as Request
+    )
     return this.requestValue
   }
 }
@@ -2514,7 +2514,29 @@ function makeWebRequest(
  */
 const LazyWebRequest = /* @__PURE__ */ (() => {
   const NativeRequest = globalThis.Request
-  class LazyWebRequest {
+  class LazyWebRequest implements Request {
+    // `forwardToReal` installs these descriptors at runtime; declarations make that contract
+    // visible to TypeScript without emitting class fields.
+    declare readonly body: Request["body"]
+    declare readonly bodyUsed: Request["bodyUsed"]
+    declare readonly duplex: Request extends { readonly duplex: infer Duplex } ? Duplex : never
+    declare readonly textStream: Request["textStream"]
+    declare arrayBuffer: Request["arrayBuffer"]
+    declare blob: Request["blob"]
+    declare bytes: Request["bytes"]
+    declare formData: Request["formData"]
+    declare json: Request["json"]
+    declare text: Request["text"]
+    declare readonly cache: Request["cache"]
+    declare readonly credentials: Request["credentials"]
+    declare readonly destination: Request["destination"]
+    declare readonly integrity: Request["integrity"]
+    declare readonly keepalive: Request["keepalive"]
+    declare readonly mode: Request["mode"]
+    declare readonly redirect: Request["redirect"]
+    declare readonly referrer: Request["referrer"]
+    declare readonly referrerPolicy: Request["referrerPolicy"]
+    declare clone: Request["clone"]
     #method: string
     #url: string
     #headersInit: (() => Headers | NodeHeaderInit) | undefined

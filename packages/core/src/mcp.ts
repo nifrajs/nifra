@@ -58,7 +58,7 @@ interface McpInstallable {
  */
 export function mcp(): IdentityPlugin {
   const apply = <S extends AnyServer>(app: S): S => {
-    ;(app as unknown as McpInstallable)[INSTALL_MCP](MCP_RUNTIME)
+    ;(app as McpInstallable)[INSTALL_MCP](MCP_RUNTIME)
     return app
   }
   return Object.assign(apply, { pluginName: "nifra:mcp" }) as IdentityPlugin

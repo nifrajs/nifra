@@ -220,7 +220,7 @@ async function buildHydrationApp(cwd: string): Promise<BuiltHydrationApp | { ski
       clientEntry: client.entry,
       ...frameworkWebAppOptions(loaded.framework, loaded.backend),
       ...(client.copyChunks === undefined ? {} : { copyChunks: client.copyChunks }),
-    }) as unknown as AppLike
+    }) as AppLike
     return {
       app: webApp,
       client,
@@ -273,8 +273,8 @@ async function runDomHydration(
     unknown
   >
   const documentValue = windowValue.document as Record<string, unknown>
-  const globals = globalThis as unknown as Record<string, unknown>
-  const globalRecord = globalThis as unknown as Record<PropertyKey, unknown>
+  const globals = globalThis as Record<string, unknown>
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
   const runtimeKey = Symbol.for("nifra.hydration.runtime")
   const previous = new Map<string, unknown>()
   const names = [

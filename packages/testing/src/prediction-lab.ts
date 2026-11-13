@@ -582,7 +582,7 @@ const LAB_CASES: readonly LabCase[] = [
       for (const hostile of hostiles) {
         const web = (await webmcp.execute(hostile.input)) as { readonly ok: boolean }
         const viaMcp = (await mcp.handler(
-          hostile.input as unknown as Record<string, unknown>,
+          hostile.input as Record<string, unknown>,
           mcpContext,
         )) as { readonly isError?: true }
         if (web.ok !== false) mismatches.push(`webmcp accepted ${hostile.name}`)

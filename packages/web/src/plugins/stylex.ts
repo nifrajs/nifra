@@ -87,19 +87,19 @@ interface RecordLike {
   readonly [key: string]: unknown
 }
 
-const isRecord = (value: unknown): value is RecordLike =>
+const isObjectLike = (value: unknown): value is RecordLike =>
   (typeof value === "object" && value !== null) || typeof value === "function"
 
 const unwrapDefault = (value: unknown): unknown => {
-  if (!isRecord(value)) return value
+  if (!isObjectLike(value)) return value
   return value.default ?? value
 }
 
 const isBabelCompiler = (value: unknown): value is StylexBabelCompiler =>
-  isRecord(value) && typeof value.transformAsync === "function"
+  isObjectLike(value) && typeof value.transformAsync === "function"
 
 const isStylexCompiler = (value: unknown): value is StylexCompiler =>
-  isRecord(value) &&
+  isObjectLike(value) &&
   typeof value.withOptions === "function" &&
   typeof value.processStylexRules === "function"
 
@@ -201,7 +201,7 @@ const transformModule = async (
   const code = typeof result?.code === "string" ? result.code : undefined
   if (code === undefined) return undefined
 
-  const metadata = isRecord(result?.metadata) ? result.metadata : undefined
+  const metadata = isObjectLike(result?.metadata) ? result.metadata : undefined
   const rules = Array.isArray(metadata?.stylex) ? metadata.stylex : []
   const css =
     rules.length === 0

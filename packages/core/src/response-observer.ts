@@ -43,7 +43,7 @@ export type ResponseObserverPlugin = (<S extends AnyServer>(
  */
 export function responseObserver(): ResponseObserverPlugin {
   const apply = <S extends AnyServer>(app: S): ResponseObserverServer<S> => {
-    const install = (app as unknown as Record<symbol, unknown>)[INSTALL_RESPONSE_OBSERVER]
+    const install = (app as Record<symbol, unknown>)[INSTALL_RESPONSE_OBSERVER]
     if (typeof install !== "function") {
       throw new TypeError("[nifra] responseObserver() requires a compatible Server")
     }

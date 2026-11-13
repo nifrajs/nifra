@@ -111,8 +111,9 @@ export function toFetchHandler<Env = unknown>(
       // the body out to recount its bytes. Written as the registered symbol, not an import of
       // `markTrustedBodyFraming`, so this file keeps its no-runtime-edge property: a GET-only edge
       // app must not pull `body.ts` (and `http.ts` behind it) into its bundle for one flag.
-      ;(request as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] =
-        true
+      ;(request as typeof request & { [key: symbol]: unknown })[
+        Symbol.for("nifra.body.trustedFraming")
+      ] = true
       const platform: Platform<Env> = { env, waitUntil: (promise) => ctx.waitUntil(promise) }
       // WebSocket broadcast on Workers: route upgrades to the hub Durable Object (it holds the
       // connections + runs the app's pub/sub, so `app.publish` reaches every client). The hub itself
@@ -146,7 +147,7 @@ export function toFetchHandler<Env = unknown>(
           })
           // `webSocket` is a Workers-only `ResponseInit` field (absent from the standard type), and a
           // 101 status is only valid on the Workers runtime - both gated by the `Pair` feature check.
-          return new Response(null, { status: 101, webSocket: pair[0] } as unknown as ResponseInit)
+          return new Response(null, { status: 101, webSocket: pair[0] } as ResponseInit)
         }
         const out = resolveWs(request, platform)
         return out instanceof Promise ? out.then(accept) : accept(out)

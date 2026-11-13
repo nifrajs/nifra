@@ -452,7 +452,7 @@ export class AgentAppClient {
       !Array.isArray(value.capabilities)
     )
       throw new AgentAppError(`${method} did not return a session snapshot`)
-    return value as unknown as AgentSessionSnapshot
+    return value as AgentSessionSnapshot & Record<string, unknown>
   }
 
   private decodeResume(value: unknown): ReplayResult {
@@ -460,7 +460,7 @@ export class AgentAppClient {
     const resume = isRecord(value.resume) ? value.resume : value
     const session =
       isRecord(value.snapshot) && typeof value.snapshot.id === "string"
-        ? toSessionView(value.snapshot as unknown as AgentSessionSnapshot)
+        ? toSessionView(value.snapshot as AgentSessionSnapshot & Record<string, unknown>)
         : undefined
     if (resume.status === "resync_required") {
       return Object.freeze({

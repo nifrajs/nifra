@@ -180,7 +180,7 @@ async function readBytesCapped(res: Response, maxBytes: number): Promise<ReadByt
       }),
     }
   }
-  const reader = body.getReader() as unknown as ChunkReader
+  const reader = body.getReader() as ChunkReader
   const chunks: Uint8Array[] = []
   let total = 0
   try {

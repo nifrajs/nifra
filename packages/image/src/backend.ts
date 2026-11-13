@@ -97,7 +97,7 @@ export function bunImageBackend(): ImageBackend {
   if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
     throw new Error("[nifra/image] bunImageBackend() requires the Bun runtime")
   }
-  const Image = (globalThis as unknown as { Bun: { Image: BunImageCtor } }).Bun.Image
+  const Image = (globalThis as { Bun: { Image: BunImageCtor } }).Bun.Image
   return {
     async probe(bytes) {
       try {

@@ -147,7 +147,7 @@ type Sliceable = { slice(start: number, end: number): { arrayBuffer(): Promise<A
 
 async function sniff(file: File, accept: readonly string[]): Promise<StandardResult<File>> {
   // Only the leading bytes are read, whatever the file's size.
-  const source = file as unknown as Sliceable
+  const source = file as Sliceable
   const head = new Uint8Array(await source.slice(0, FILE_TYPE_PREFIX_BYTES).arrayBuffer())
   const detected = detectFileType(head)
   if (detected === null) return fail("File type could not be recognized")
@@ -301,7 +301,7 @@ function form<P extends Props>(props: P, options?: FormOptions): NifraSchema<For
     // Assigning this key to an ordinary object would replace its prototype instead of adding a field.
     if (key === "__proto__") throw new TypeError('t.form: "__proto__" cannot be a field name')
     const node = schema.jsonSchema
-    const marks = node as unknown as { readonly [Kind]?: string; readonly [OptionalKind]?: string }
+    const marks = node as { readonly [Kind]?: string; readonly [OptionalKind]?: string }
     const list = marks[Kind] === "Array"
     const required = marks[OptionalKind] !== "Optional"
     all[key] = node
@@ -364,10 +364,7 @@ function form<P extends Props>(props: P, options?: FormOptions): NifraSchema<For
   }
   // Branded here, so the schema is a route's `body` as is: a form that did not read multipart
   // bodies would refuse every request it exists to accept.
-  return multipartBody(
-    custom(Type.Object(all, objectOptions) as unknown as FormShape<P>, validate),
-    options,
-  )
+  return multipartBody(custom(Type.Object(all, objectOptions) as FormShape<P>, validate), options)
 }
 
 /** `t` from `@nifrajs/schema`, plus the two constructors a `multipart/form-data` body needs. */

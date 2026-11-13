@@ -540,7 +540,7 @@ async function selectDefaultTransport(): Promise<ProxyTransport> {
 
 function nativeTransportOf(value: unknown): NativeProxyTransport | undefined {
   if (typeof value !== "function") return undefined
-  const candidate = (value as unknown as Record<symbol, unknown>)[NODE_NATIVE_TRANSPORT]
+  const candidate = (value as object & { [NODE_NATIVE_TRANSPORT]?: unknown })[NODE_NATIVE_TRANSPORT]
   return typeof candidate === "function" ? (candidate as NativeProxyTransport) : undefined
 }
 

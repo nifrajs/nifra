@@ -82,7 +82,7 @@ function typeScriptProgramPath(
   fileName: string,
 ): ts.Path | undefined {
   const toPath = (
-    tsm as unknown as {
+    tsm as {
       toPath?: (
         fileName: string,
         currentDirectory: string,
@@ -166,7 +166,7 @@ function hostSourceFile(
   const text = snapshot.getText(0, snapshot.getLength())
   const options = program?.getCompilerOptions()
   const getScriptKindFromFileName = (
-    tsm as unknown as {
+    tsm as {
       getScriptKindFromFileName?: (fileName: string) => ts.ScriptKind
     }
   ).getScriptKindFromFileName
@@ -195,7 +195,7 @@ function diskSourceFile(
     return undefined
   }
   const getScriptKindFromFileName = (
-    tsm as unknown as {
+    tsm as {
       getScriptKindFromFileName?: (fileName: string) => ts.ScriptKind
     }
   ).getScriptKindFromFileName
