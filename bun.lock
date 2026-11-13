@@ -21,6 +21,7 @@
         "@nifrajs/island-trigger": "workspace:*",
         "@nifrajs/pi": "workspace:*",
         "@nifrajs/testing": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
         "@nifrajs/web": "workspace:*",
         "@nifrajs/web-vanilla": "workspace:*",
         "@types/bun": "^1.4.4",
@@ -53,6 +54,7 @@
         "@nifrajs/agent-app": "workspace:*",
         "@nifrajs/agent-protocol": "workspace:*",
         "@nifrajs/coding-agent": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
       },
     },
     "bench": {
@@ -194,6 +196,7 @@
       "version": "5.13.0",
       "dependencies": {
         "@nifrajs/agent-protocol": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
       },
     },
     "packages/ag-ui": {
@@ -217,6 +220,7 @@
       "version": "5.13.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
       },
     },
     "packages/agent-app": {
@@ -224,6 +228,7 @@
       "version": "5.13.0",
       "dependencies": {
         "@nifrajs/agent-protocol": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
       },
     },
     "packages/agent-protocol": {
@@ -324,6 +329,7 @@
         "@nifrajs/runner": "workspace:*",
         "@nifrajs/schema": "workspace:*",
         "@nifrajs/testing": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
         "@nifrajs/web": "workspace:*",
       },
       "devDependencies": {
@@ -362,12 +368,14 @@
         "@nifrajs/core": "workspace:*",
         "@nifrajs/jobs": "workspace:*",
         "@nifrajs/pi": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
       },
     },
     "packages/content": {
       "name": "@nifrajs/content",
       "version": "5.13.0",
       "dependencies": {
+        "@nifrajs/utils": "workspace:*",
         "marked": "^18.0.0",
         "yaml": "^2.9.1",
       },
@@ -554,6 +562,7 @@
       "version": "5.13.0",
       "dependencies": {
         "@nifrajs/schema": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
       },
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
@@ -618,6 +627,7 @@
       "version": "5.13.0",
       "dependencies": {
         "@nifrajs/agent-protocol": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
       },
     },
     "packages/prompt": {
@@ -683,6 +693,7 @@
         "@nifrajs/core": "workspace:*",
         "@nifrajs/mcp": "workspace:*",
         "@nifrajs/mock": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
         "@nifrajs/webmcp": "workspace:*",
       },
       "peerDependencies": {
@@ -715,12 +726,17 @@
         "@nifrajs/core": "workspace:^",
       },
     },
+    "packages/utils": {
+      "name": "@nifrajs/utils",
+      "version": "5.13.0",
+    },
     "packages/web": {
       "name": "@nifrajs/web",
       "version": "5.13.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/island-trigger": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
         "parse5": "8.0.1",
       },
       "devDependencies": {
@@ -932,6 +948,7 @@
       "version": "5.13.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
+        "@nifrajs/utils": "workspace:*",
       },
       "devDependencies": {
         "@nifrajs/schema": "workspace:*",
@@ -1446,6 +1463,8 @@
     "@nifrajs/ts-plugin": ["@nifrajs/ts-plugin@workspace:packages/ts-plugin"],
 
     "@nifrajs/uploads": ["@nifrajs/uploads@workspace:packages/uploads"],
+
+    "@nifrajs/utils": ["@nifrajs/utils@workspace:packages/utils"],
 
     "@nifrajs/web": ["@nifrajs/web@workspace:packages/web"],
 

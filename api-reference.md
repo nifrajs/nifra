@@ -5404,6 +5404,43 @@ _No named exports (side-effect entrypoint)._
 - **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>`
   Verify a URL produced by {@link signDownloadUrl}: signature (constant-time) + not expired.
 
+## @nifrajs/utils
+
+### `@nifrajs/utils`
+
+- **bytesToHex** _(function)_ - `bytesToHex: (bytes: Uint8Array) => string`
+  Lowercase hex, two digits per byte.
+- **concatBytes** _(function)_ - `concatBytes: (chunks: readonly Uint8Array[], total: number) => Uint8Array`
+  Concatenate chunks into an output array with the supplied total byte length.
+- **escapeRegExp** _(function)_ - `escapeRegExp: (value: string) => string`
+  Escape every RegExp metacharacter so `value` matches literally inside a pattern.
+- **isRecord** _(function)_ - `isRecord: (value: unknown) => value is Record<string, unknown>`
+  A non-null, non-array object; its prototype is not restricted.
+- **sha256Hex** _(function)_ - `sha256Hex: (input: string | Uint8Array) => Promise<string>`
+  SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. Collision-resistant so a digest cannot be forged from content.
+
+### `@nifrajs/utils/bytes`
+
+- **concatBytes** _(function)_ - `concatBytes: (chunks: readonly Uint8Array[], total: number) => Uint8Array`
+  Concatenate chunks into an output array with the supplied total byte length.
+
+### `@nifrajs/utils/escape-regexp`
+
+- **escapeRegExp** _(function)_ - `escapeRegExp: (value: string) => string`
+  Escape every RegExp metacharacter so `value` matches literally inside a pattern.
+
+### `@nifrajs/utils/hash`
+
+- **bytesToHex** _(function)_ - `bytesToHex: (bytes: Uint8Array) => string`
+  Lowercase hex, two digits per byte.
+- **sha256Hex** _(function)_ - `sha256Hex: (input: string | Uint8Array) => Promise<string>`
+  SHA-256 of UTF-8 text or a stable copy of bytes, as lowercase hex. Collision-resistant so a digest cannot be forged from content.
+
+### `@nifrajs/utils/record`
+
+- **isRecord** _(function)_ - `isRecord: (value: unknown) => value is Record<string, unknown>`
+  A non-null, non-array object; its prototype is not restricted.
+
 ## @nifrajs/web
 
 ### `@nifrajs/web`
