@@ -34,7 +34,7 @@ function resolveExpressions(s: string): string {
  * converter can't evaluate) rather than prose. Dropped during conversion - runs while code is still
  * placeholders, so real code is never matched. Keeps blank lines + placeholders. */
 function isJsxResidue(line: string): boolean {
-  if (line === "" || /^@@(?:FENCE|CODE)\d+@@$/.test(line)) return false
+  if (line === "" || /^@@(?:FENCE|CODE|TABLE)\d+@@$/.test(line)) return false
   if (/^\{[\w$]+(?:\.[\w$]+)*(?:\.map\b|\()/.test(line)) return true // {FRAMEWORKS.map((f) => (  {fn(
   if (/^`?\{[\w$]+(?:\.[\w$]+)+\}`?$/.test(line)) return true // {f.name}  `{f.pkg}`
   if (/^[)\]}]+[);,]*$/.test(line)) return true // ))}  )}  )  };
@@ -42,7 +42,7 @@ function isJsxResidue(line: string): boolean {
 }
 
 const STATIC_TUPLE_TABLE =
-  /<table\b[^>]*>\s*<thead\b[^>]*>\s*<tr\b[^>]*>\s*<th\b[^>]*>([\s\S]*?)<\/th>\s*<th\b[^>]*>([\s\S]*?)<\/th>\s*<\/tr>\s*<\/thead>\s*<tbody\b[^>]*>\s*\{([A-Za-z_$][\w$]*)\.map\(\(\[([A-Za-z_$][\w$]*),\s*([A-Za-z_$][\w$]*)\]\)\s*=>\s*(?:\(\s*)?<tr\b[^>]*>\s*<td\b[^>]*>\{\4\}<\/td>\s*<td\b[^>]*>\{\5\}<\/td>\s*<\/tr>\s*\)?\)\}\s*<\/tbody>\s*<\/table>/g
+  /<table\b[^>]*>\s*<thead\b[^>]*>\s*<tr\b[^>]*>\s*<th\b[^>]*>((?:(?!<\/?(?:table|thead|tbody|tr|th)\b)[\s\S])*)<\/th>\s*<th\b[^>]*>((?:(?!<\/?(?:table|thead|tbody|tr|th)\b)[\s\S])*)<\/th>\s*<\/tr>\s*<\/thead>\s*<tbody\b[^>]*>\s*\{([A-Za-z_$][\w$]*)\.map\(\(\[([A-Za-z_$][\w$]*),\s*([A-Za-z_$][\w$]*)\]\)\s*=>\s*(?:\(\s*)?<tr\b[^>]*>\s*<td\b[^>]*>\{\4\}<\/td>\s*<td\b[^>]*>\{\5\}<\/td>\s*<\/tr>\s*\)?\)\}\s*<\/tbody>\s*<\/table>/g
 
 function escapeText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -52,6 +52,7 @@ function escapeText(s: string): string {
 function renderStaticTupleTable(
   body: string,
   tuples: ReadonlyMap<string, readonly (readonly [string, string])[]>,
+  tables: string[],
 ): string {
   return body.replace(
     STATIC_TUPLE_TABLE,
@@ -62,11 +63,14 @@ function renderStaticTupleTable(
         escapeText(text)
           .replace(/\s*\n\s*/g, " ")
           .replace(/[\\|]/g, "\\$&")
-      return [
-        `| ${cell(header)} | ${cell(valueHeader)} |`,
-        "| --- | --- |",
-        ...rows.map(([label, value]) => `| ${cell(label)} | ${cell(value)} |`),
-      ].join("\n")
+      tables.push(
+        [
+          `| ${cell(header)} | ${cell(valueHeader)} |`,
+          "| --- | --- |",
+          ...rows.map(([label, value]) => `| ${cell(label)} | ${cell(value)} |`),
+        ].join("\n"),
+      )
+      return `\n\n@@TABLE${tables.length - 1}@@\n\n`
     },
   )
 }
@@ -136,7 +140,10 @@ export function jsxToMarkdown(
   if (body.includes("<CodeBlock"))
     throw new Error(`${file}: a <CodeBlock> is written in a form the converter cannot read`)
   body = evaluateDataCalls(file, body, data)
-  body = renderStaticTupleTable(body, consts.tuples)
+  // The table is finished markdown: held aside so the tag-stripping and entity passes cannot undo
+  // the `&lt;` that keeps a cell value from reading as an HTML tag.
+  const tables: string[] = []
+  body = renderStaticTupleTable(body, consts.tuples, tables)
   // Inline code is text, never markup: `<reason>` inside it must survive the leftover-tag pass.
   const spans: string[] = []
   body = body.replace(/<code>([\s\S]*?)<\/code>/g, (_, t: string) => {
@@ -176,6 +183,7 @@ export function jsxToMarkdown(
     .replace(/\n{3,}/g, "\n\n")
   // Then restore the code verbatim (fences keep their own indentation).
   body = body
+    .replace(/@@TABLE(\d+)@@/g, (_, i) => tables[Number(i)] ?? "")
     .replace(/@@CODE(\d+)@@/g, (_, i) => spans[Number(i)] ?? "")
     .replace(/@@FENCE(\d+)@@/g, (_, i) => fences[Number(i)] ?? "")
   return body.trim()

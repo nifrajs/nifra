@@ -107,6 +107,29 @@ describe("jsxToMarkdown", () => {
     expect(md).toContain("| Depen dency | Certified tuple |\n| --- | --- |\n| Re act | 19.3 .1 |")
   })
 
+  test("a static table before a tuple table is not swallowed into its header", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["React", "19.3.1"]] as const',
+        "<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>x</td><td>y</td></tr></tbody></table><p>between</p>" +
+          "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("between")
+    expect(md).toContain("| Dependency | Certified tuple |\n| --- | --- |\n| React | 19.3.1 |")
+    expect(md).not.toContain("| A")
+  })
+
+  test("a value written with angle brackets stays literal text in its cell", () => {
+    const md = convert(
+      page(
+        'const TUPLE = [["<reason>", "a & b"]] as const',
+        "<table><thead><tr><th>Dependency</th><th>Certified tuple</th></tr></thead><tbody>{TUPLE.map(([name, version]) => <tr key={name}><td>{name}</td><td>{version}</td></tr>)}</tbody></table>",
+      ),
+    )
+    expect(md).toContain("| &lt;reason&gt; | a &amp; b |")
+  })
+
   test("a block whose code cannot be evaluated fails, naming the page and the const", () => {
     const src = page("const CODE = load()", "<CodeBlock code={CODE} />")
     expect(() => convert(src)).toThrow(
