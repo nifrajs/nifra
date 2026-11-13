@@ -394,24 +394,27 @@ describe("dynamic boundaries beside static ones under createWebApp", () => {
   test.each([
     ["soft navigation", { "x-nifra-data": "1" }],
     ["document", {}],
-  ])("a client that leaves a %s mid-stream is not reported as a failed load", async (_, headers) => {
-    const app = appWith(
-      ({ signal }) =>
-        new Promise((_, reject) => {
-          signal.addEventListener("abort", () =>
-            reject(new DOMException("The operation was aborted.", "AbortError")),
-          )
-        }),
-    )
-    const client = new AbortController()
-    const reported = await captureServerErrors(async () => {
-      const request = new Request("http://shop.example/", { headers, signal: client.signal })
-      const reader = (await app.fetch(request)).body!.getReader()
-      await reader.read()
-      client.abort()
-      await reader.cancel("client went away")
-      for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
-    })
-    expect(reported).toEqual([])
-  })
+  ])(
+    "a client that leaves a %s mid-stream is not reported as a failed load",
+    async (_, headers) => {
+      const app = appWith(
+        ({ signal }) =>
+          new Promise((_, reject) => {
+            signal.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            )
+          }),
+      )
+      const client = new AbortController()
+      const reported = await captureServerErrors(async () => {
+        const request = new Request("http://shop.example/", { headers, signal: client.signal })
+        const reader = (await app.fetch(request)).body!.getReader()
+        await reader.read()
+        client.abort()
+        await reader.cancel("client went away")
+        for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+      })
+      expect(reported).toEqual([])
+    },
+  )
 })

@@ -72,7 +72,6 @@ describe("generateMutants", () => {
     const source = [
       "export const q = (db: Db, v: string) => db`",
       "  SELECT a FROM t WHERE t.kind = 'r' AND NOT t.hidden -- a = b AND c",
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: source text whose template interpolates
       "    AND t.id IN (${v}) OR t.n > 0",
       "`",
       "export const write = (db: Db) => db`UPDATE t SET a = 1 AND b`",

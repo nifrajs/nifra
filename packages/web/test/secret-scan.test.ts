@@ -69,7 +69,6 @@ describe("format rules", () => {
     for (const placeholder of [
       "postgres://user:password@localhost/db",
       "postgres://postgres:postgres@localhost/db",
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal placeholder, as written in docs
       "redis://default:${REDIS_PASSWORD}@cache:6379",
       "mysql://root:<password>@localhost/db",
     ]) {
@@ -114,7 +113,6 @@ describe("assigned secrets", () => {
       'const tokenKey = "nifra_session_token"',
       `const apiKey = "${join2("AIza", "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY")}"`,
       'const clientSecret = "changeme"',
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: source text holding an interpolation
       "const secret = `${prefix}Zq8mW2vX9pLr4TbN7yKc3HdF`",
     ]) {
       expect(source(text)).toEqual([])

@@ -83,7 +83,9 @@ export function createStatusRenderer<Env = unknown>(
       const ld = dirOfId(id, "_layout")
       return ld === "" || ld === errDir || errDir.startsWith(`${ld}/`)
     })
-    const errorModule = await (manifest.errors?.[errorId] as LayoutEntry).load()
+    const errorEntry = manifest.errors?.[errorId]
+    if (errorEntry === undefined) throw new Error(`nifra: no error module for "${errorId}"`)
+    const errorModule = await errorEntry.load()
     const e = err instanceof Error ? err : new Error(String(err))
     // An error's text can carry a connection string or a query, so only a run that says it is
     // development or test shows it; an unset NODE_ENV (an unbuilt `bun app.ts`) counts as production.

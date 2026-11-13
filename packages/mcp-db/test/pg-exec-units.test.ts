@@ -72,16 +72,14 @@ describe("the read-only transaction", () => {
     return { reserve: async () => connection, close: async () => {} }
   }
 
-  test.each([
-    0,
-    -1,
-    1.5,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    2 ** 60,
-  ])("refuses a timeout of %p", async (ms) => {
-    await expect(inReadOnlyTransaction(client(), ms, async () => "ran")).rejects.toThrow(RangeError)
-  })
+  test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 60])(
+    "refuses a timeout of %p",
+    async (ms) => {
+      await expect(inReadOnlyTransaction(client(), ms, async () => "ran")).rejects.toThrow(
+        RangeError,
+      )
+    },
+  )
 
   test("accepts one millisecond and returns what the work returned", async () => {
     const calls: string[] = []

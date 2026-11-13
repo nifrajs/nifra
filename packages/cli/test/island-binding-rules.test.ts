@@ -162,7 +162,6 @@ describe("NF-C047 island binding names", () => {
       ].join("\n"),
     }
     const markup =
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: the generated page interpolates these, so the host id and the name are not literal
       '<div data-island="d"><b data-bind-text="zz" data-bind-on="click:yy"></b></div><div data-island="e"><b data-bind-text="zz"></b></div><div data-island="f"><b data-bind-text="zz"></b></div><div data-island="${id}"><b data-bind-text="zz"></b></div><div data-island="cart"><b data-bind-text="${name}"></b></div><div data-island="nowhere"><b data-bind-text="zz"></b></div>'
     expect(codes(await scan(CLIENT, dynamic, page(markup)))).toEqual([])
   })

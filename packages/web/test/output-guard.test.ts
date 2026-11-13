@@ -64,241 +64,241 @@ const withoutCodegen = {
   stop: () => Reflect.deleteProperty(globalThis, "document"),
 }
 
-describe.each([
-  "generated",
-  "closure",
-])("projection drops what the schema does not declare (%s projector)", (projector) => {
-  if (projector === "closure") {
-    beforeAll(withoutCodegen.start)
-    afterAll(withoutCodegen.stop)
-  }
+describe.each(["generated", "closure"])(
+  "projection drops what the schema does not declare (%s projector)",
+  (projector) => {
+    if (projector === "closure") {
+      beforeAll(withoutCodegen.start)
+      afterAll(withoutCodegen.stop)
+    }
 
-  test("a plain object projects by generated code wherever code generation is allowed", () => {
-    const compiled = outputGuard(
-      projectingBy({ type: "object", properties: { a: { type: "string" } } }),
-      '"page.backend.ts"',
-      "loaderOutput",
-    )
-    expect(String(compiled.project).includes("switch (key)")).toBe(projector === "generated")
-  })
-
-  test("any key name projects as data, never as code", () => {
-    const names = [
-      'a"b',
-      "back\\slash",
-      "`tick`",
-      '"); throw new Error("x"); ("',
-      "line\u2028break",
-      "",
-      "0",
-      "constructor",
-      "__proto__",
-    ]
-    const schema = projectingBy({
-      type: "object",
-      properties: Object.fromEntries(names.map((name) => [name, { type: "string" }])),
+    test("a plain object projects by generated code wherever code generation is allowed", () => {
+      const compiled = outputGuard(
+        projectingBy({ type: "object", properties: { a: { type: "string" } } }),
+        '"page.backend.ts"',
+        "loaderOutput",
+      )
+      expect(String(compiled.project).includes("switch (key)")).toBe(projector === "generated")
     })
-    const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
-    expect(String(compiled.project).includes("switch (key)")).toBe(projector === "generated")
-    const kept = Object.fromEntries(names.map((name) => [name, `value of ${name}`]))
-    const out = guard(schema, JSON.parse(JSON.stringify({ drop: 1, ...kept })))
-    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
-    expect(JSON.stringify(out)).toBe(JSON.stringify(kept))
-    const exact: unknown = JSON.parse(JSON.stringify(kept))
-    expect(guard(schema, exact)).toBe(exact)
-  })
 
-  test("a declared __proto__ object is projected and kept as data", () => {
-    const schema = projectingBy(
-      JSON.parse(
-        '{"type": "object", "properties": {"__proto__": {"type": "object", "properties": {"a": {"type": "string"}}}}}',
-      ),
-    )
-    const out = guard(schema, JSON.parse('{"__proto__": {"a": "x", "b": 1}}'))
-    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
-    expect(Object.getOwnPropertyDescriptor(out, "__proto__")?.value).toEqual({ a: "x" })
-  })
-
-  test("at every depth, through arrays, records and optional fields", () => {
-    const schema = t.object({
-      user: t.object({ name: t.string(), nickname: t.optional(t.string()) }),
-      posts: t.array(t.object({ title: t.string() })),
-      tags: t.record(t.object({ count: t.integer() })),
+    test("any key name projects as data, never as code", () => {
+      const names = [
+        'a"b',
+        "back\\slash",
+        "`tick`",
+        '"); throw new Error("x"); ("',
+        "line\u2028break",
+        "",
+        "0",
+        "constructor",
+        "__proto__",
+      ]
+      const schema = projectingBy({
+        type: "object",
+        properties: Object.fromEntries(names.map((name) => [name, { type: "string" }])),
+      })
+      const compiled = outputGuard(schema, '"page.backend.ts"', "loaderOutput")
+      expect(String(compiled.project).includes("switch (key)")).toBe(projector === "generated")
+      const kept = Object.fromEntries(names.map((name) => [name, `value of ${name}`]))
+      const out = guard(schema, JSON.parse(JSON.stringify({ drop: 1, ...kept })))
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+      expect(JSON.stringify(out)).toBe(JSON.stringify(kept))
+      const exact: unknown = JSON.parse(JSON.stringify(kept))
+      expect(guard(schema, exact)).toBe(exact)
     })
-    expect(
-      guard(schema, {
-        user: { name: "Ada", passwordHash: "x", email: "ada@example.com" },
-        posts: [{ title: "a", draftNotes: "x" }, { title: "b" }],
-        tags: { db: { count: 2, internal: true } },
-        sessionSecret: "x",
-      }),
-    ).toEqual({
-      user: { name: "Ada" },
-      posts: [{ title: "a" }, { title: "b" }],
-      tags: { db: { count: 2 } },
+
+    test("a declared __proto__ object is projected and kept as data", () => {
+      const schema = projectingBy(
+        JSON.parse(
+          '{"type": "object", "properties": {"__proto__": {"type": "object", "properties": {"a": {"type": "string"}}}}}',
+        ),
+      )
+      const out = guard(schema, JSON.parse('{"__proto__": {"a": "x", "b": 1}}'))
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+      expect(Object.getOwnPropertyDescriptor(out, "__proto__")?.value).toEqual({ a: "x" })
     })
-  })
 
-  test("a strict t.object drops extra keys instead of failing on them", () => {
-    expect(guard(t.object({ id: t.string() }), { id: "1", extra: 1 })).toEqual({ id: "1" })
-  })
-
-  test("an object that holds only declared keys is passed through as it is", () => {
-    const value = { user: { name: "Ada" }, list: [{ id: 1 }] }
-    const out = guard(
-      t.object({
-        user: t.object({ name: t.string() }),
-        list: t.array(t.object({ id: t.number() })),
-      }),
-      value,
-    )
-    expect(out).toBe(value)
-  })
-
-  test("an explicitly open object keeps its extra keys", () => {
-    expect(guard(t.looseObject({ id: t.string() }), { id: "1", extra: 1 })).toEqual({
-      id: "1",
-      extra: 1,
+    test("at every depth, through arrays, records and optional fields", () => {
+      const schema = t.object({
+        user: t.object({ name: t.string(), nickname: t.optional(t.string()) }),
+        posts: t.array(t.object({ title: t.string() })),
+        tags: t.record(t.object({ count: t.integer() })),
+      })
+      expect(
+        guard(schema, {
+          user: { name: "Ada", passwordHash: "x", email: "ada@example.com" },
+          posts: [{ title: "a", draftNotes: "x" }, { title: "b" }],
+          tags: { db: { count: 2, internal: true } },
+          sessionSecret: "x",
+        }),
+      ).toEqual({
+        user: { name: "Ada" },
+        posts: [{ title: "a" }, { title: "b" }],
+        tags: { db: { count: 2 } },
+      })
     })
-  })
 
-  test("a raw TypeBox object with no additionalProperties is closed", () => {
-    const schema = projectingBy({ type: "object", properties: { a: { type: "string" } } })
-    expect(guard(schema, { a: "x", b: "y" })).toEqual({ a: "x" })
-  })
+    test("a strict t.object drops extra keys instead of failing on them", () => {
+      expect(guard(t.object({ id: t.string() }), { id: "1", extra: 1 })).toEqual({ id: "1" })
+    })
 
-  test("a union keeps only keys some branch declares", () => {
-    const schema = t.union([
-      t.object({ kind: t.literal("user"), name: t.string() }),
-      t.object({ kind: t.literal("team"), members: t.integer() }),
-    ])
-    expect(guard(schema, { kind: "user", name: "Ada", token: "x" })).toEqual({
-      kind: "user",
-      name: "Ada",
+    test("an object that holds only declared keys is passed through as it is", () => {
+      const value = { user: { name: "Ada" }, list: [{ id: 1 }] }
+      const out = guard(
+        t.object({
+          user: t.object({ name: t.string() }),
+          list: t.array(t.object({ id: t.number() })),
+        }),
+        value,
+      )
+      expect(out).toBe(value)
     })
-  })
 
-  test("a Date in a string field is sent as its ISO string, as JSON would send it", () => {
-    const createdAt = new Date("2026-01-02T03:04:05Z")
-    const schema = t.object({
-      createdAt: t.string({ format: "date-time" }),
-      rows: t.array(t.object({ at: t.string() })),
+    test("an explicitly open object keeps its extra keys", () => {
+      expect(guard(t.looseObject({ id: t.string() }), { id: "1", extra: 1 })).toEqual({
+        id: "1",
+        extra: 1,
+      })
     })
-    const value = { createdAt, rows: [{ at: createdAt }] }
-    expect(guard(schema, value)).toEqual({
-      createdAt: "2026-01-02T03:04:05.000Z",
-      rows: [{ at: "2026-01-02T03:04:05.000Z" }],
-    })
-    // Copy-on-write: the loader's own object keeps its Date.
-    expect(value.createdAt).toBe(createdAt)
-    expect(
-      guard(t.object({ at: t.union([t.string(), t.null()]) }), { at: new Date(Number.NaN) }),
-    ).toEqual({
-      at: null,
-    })
-  })
 
-  test("a class instance becomes a plain object of its declared fields", () => {
-    class User {
-      constructor(
-        readonly name: string,
-        readonly passwordHash: string,
-      ) {}
-      toJSON() {
-        return { name: this.name, passwordHash: this.passwordHash }
+    test("a raw TypeBox object with no additionalProperties is closed", () => {
+      const schema = projectingBy({ type: "object", properties: { a: { type: "string" } } })
+      expect(guard(schema, { a: "x", b: "y" })).toEqual({ a: "x" })
+    })
+
+    test("a union keeps only keys some branch declares", () => {
+      const schema = t.union([
+        t.object({ kind: t.literal("user"), name: t.string() }),
+        t.object({ kind: t.literal("team"), members: t.integer() }),
+      ])
+      expect(guard(schema, { kind: "user", name: "Ada", token: "x" })).toEqual({
+        kind: "user",
+        name: "Ada",
+      })
+    })
+
+    test("a Date in a string field is sent as its ISO string, as JSON would send it", () => {
+      const createdAt = new Date("2026-01-02T03:04:05Z")
+      const schema = t.object({
+        createdAt: t.string({ format: "date-time" }),
+        rows: t.array(t.object({ at: t.string() })),
+      })
+      const value = { createdAt, rows: [{ at: createdAt }] }
+      expect(guard(schema, value)).toEqual({
+        createdAt: "2026-01-02T03:04:05.000Z",
+        rows: [{ at: "2026-01-02T03:04:05.000Z" }],
+      })
+      // Copy-on-write: the loader's own object keeps its Date.
+      expect(value.createdAt).toBe(createdAt)
+      expect(
+        guard(t.object({ at: t.union([t.string(), t.null()]) }), { at: new Date(Number.NaN) }),
+      ).toEqual({
+        at: null,
+      })
+    })
+
+    test("a class instance becomes a plain object of its declared fields", () => {
+      class User {
+        constructor(
+          readonly name: string,
+          readonly passwordHash: string,
+        ) {}
+        toJSON() {
+          return { name: this.name, passwordHash: this.passwordHash }
+        }
       }
-    }
-    const out = guard(t.object({ name: t.string() }), new User("Ada", "x"))
-    expect(out).toEqual({ name: "Ada" })
-    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
-  })
-
-  test("an own toJSON, enumerable or not, never decides what is serialized", () => {
-    const hook = <T extends object>(value: T): T =>
-      Object.defineProperty(value, "toJSON", { value: () => ({ passwordHash: "never-sent" }) })
-    const user = t.object({ name: t.string() })
-    expect(JSON.stringify(guard(user, hook({ name: "Ada" })))).toBe('{"name":"Ada"}')
-    expect(JSON.stringify(guard(t.object({ u: user }), { u: hook({ name: "Ada" }) }))).toBe(
-      '{"u":{"name":"Ada"}}',
-    )
-    const listed = guard(t.object({ l: t.array(user), s: t.array(t.string()) }), {
-      l: hook([{ name: "Ada" }]),
-      s: hook(["a"]),
+      const out = guard(t.object({ name: t.string() }), new User("Ada", "x"))
+      expect(out).toEqual({ name: "Ada" })
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
     })
-    expect(JSON.stringify(listed)).toBe('{"l":[{"name":"Ada"}],"s":["a"]}')
-    expect(JSON.stringify(guard(t.array(t.string()), hook(["a"])))).toBe('["a"]')
-  })
 
-  test("an array subclass serializes as its items, not by its prototype toJSON", () => {
-    class Leaky<T> extends Array<T> {
-      toJSON() {
-        return { passwordHash: "never-sent" }
+    test("an own toJSON, enumerable or not, never decides what is serialized", () => {
+      const hook = <T extends object>(value: T): T =>
+        Object.defineProperty(value, "toJSON", { value: () => ({ passwordHash: "never-sent" }) })
+      const user = t.object({ name: t.string() })
+      expect(JSON.stringify(guard(user, hook({ name: "Ada" })))).toBe('{"name":"Ada"}')
+      expect(JSON.stringify(guard(t.object({ u: user }), { u: hook({ name: "Ada" }) }))).toBe(
+        '{"u":{"name":"Ada"}}',
+      )
+      const listed = guard(t.object({ l: t.array(user), s: t.array(t.string()) }), {
+        l: hook([{ name: "Ada" }]),
+        s: hook(["a"]),
+      })
+      expect(JSON.stringify(listed)).toBe('{"l":[{"name":"Ada"}],"s":["a"]}')
+      expect(JSON.stringify(guard(t.array(t.string()), hook(["a"])))).toBe('["a"]')
+    })
+
+    test("an array subclass serializes as its items, not by its prototype toJSON", () => {
+      class Leaky<T> extends Array<T> {
+        toJSON() {
+          return { passwordHash: "never-sent" }
+        }
       }
-    }
-    const rows = Leaky.from([{ name: "Ada", secret: 1 }])
-    const out = guard(t.object({ rows: t.array(t.object({ name: t.string() })) }), { rows })
-    expect(JSON.stringify(out)).toBe('{"rows":[{"name":"Ada"}]}')
-    expect(JSON.stringify(guard(t.array(t.string()), Leaky.from(["a"])))).toBe('["a"]')
-  })
-
-  test("a recursive schema projects every level", () => {
-    const schema = projectingBy({
-      $id: "Node",
-      type: "object",
-      properties: {
-        name: { type: "string" },
-        children: { type: "array", items: { $ref: "Node" } },
-      },
+      const rows = Leaky.from([{ name: "Ada", secret: 1 }])
+      const out = guard(t.object({ rows: t.array(t.object({ name: t.string() })) }), { rows })
+      expect(JSON.stringify(out)).toBe('{"rows":[{"name":"Ada"}]}')
+      expect(JSON.stringify(guard(t.array(t.string()), Leaky.from(["a"])))).toBe('["a"]')
     })
-    const tree = { name: "a", secretNote: 1, children: [{ name: "b", children: [], x: 1 }] }
-    expect(guard(schema, tree)).toEqual({ name: "a", children: [{ name: "b", children: [] }] })
-  })
 
-  test("an own __proto__ key stays data, never a prototype", () => {
-    const value = JSON.parse('{"__proto__": {"polluted": true}, "drop": 1}') as object
-    const out = guard(t.looseObject({}), value) as Record<string, unknown>
-    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
-    expect(({} as { polluted?: unknown }).polluted).toBeUndefined()
-  })
-
-  test("a key inherited from a polluted prototype never becomes data", () => {
-    const schema = t.object({ name: t.string(), isAdmin: t.optional(t.boolean()) })
-    Object.defineProperty(Object.prototype, "isAdmin", {
-      value: true,
-      enumerable: true,
-      configurable: true,
-      writable: true,
+    test("a recursive schema projects every level", () => {
+      const schema = projectingBy({
+        $id: "Node",
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          children: { type: "array", items: { $ref: "Node" } },
+        },
+      })
+      const tree = { name: "a", secretNote: 1, children: [{ name: "b", children: [], x: 1 }] }
+      expect(guard(schema, tree)).toEqual({ name: "a", children: [{ name: "b", children: [] }] })
     })
-    try {
-      const out = guard(schema, { name: "Ada", drop: 1 })
-      expect(Object.hasOwn(out as object, "isAdmin")).toBe(false)
-    } finally {
-      delete (Object.prototype as { isAdmin?: unknown }).isAdmin
-    }
-  })
 
-  test("a Standard JSON Schema projects like a nifra schema", () => {
-    // zod's own validate would REJECT the extra key on a strict object; projection drops it first.
-    const zod = z.strictObject({ id: z.string() })
-    expect(guard(zod, { id: "1", secretField: "x" })).toEqual({ id: "1" })
-    // And `.passthrough()` declares the object open, so its JSON Schema keeps extra keys.
-    expect(guard(z.object({ id: z.string() }).passthrough(), { id: "1", more: 2 })).toEqual({
-      id: "1",
-      more: 2,
+    test("an own __proto__ key stays data, never a prototype", () => {
+      const value = JSON.parse('{"__proto__": {"polluted": true}, "drop": 1}') as object
+      const out = guard(t.looseObject({}), value) as Record<string, unknown>
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+      expect(({} as { polluted?: unknown }).polluted).toBeUndefined()
     })
-  })
 
-  test("a schema with no JSON Schema keeps its own validate output", () => {
-    const stripping: StandardSchemaV1 = {
-      "~standard": {
-        version: 1,
-        vendor: "test",
-        validate: (value) => ({ value: { id: (value as { id: string }).id } }),
-      },
-    }
-    expect(guard(stripping, { id: "1", extra: 2 })).toEqual({ id: "1" })
-  })
-})
+    test("a key inherited from a polluted prototype never becomes data", () => {
+      const schema = t.object({ name: t.string(), isAdmin: t.optional(t.boolean()) })
+      Object.defineProperty(Object.prototype, "isAdmin", {
+        value: true,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      })
+      try {
+        const out = guard(schema, { name: "Ada", drop: 1 })
+        expect(Object.hasOwn(out as object, "isAdmin")).toBe(false)
+      } finally {
+        delete (Object.prototype as { isAdmin?: unknown }).isAdmin
+      }
+    })
+
+    test("a Standard JSON Schema projects like a nifra schema", () => {
+      // zod's own validate would REJECT the extra key on a strict object; projection drops it first.
+      const zod = z.strictObject({ id: z.string() })
+      expect(guard(zod, { id: "1", secretField: "x" })).toEqual({ id: "1" })
+      // And `.passthrough()` declares the object open, so its JSON Schema keeps extra keys.
+      expect(guard(z.object({ id: z.string() }).passthrough(), { id: "1", more: 2 })).toEqual({
+        id: "1",
+        more: 2,
+      })
+    })
+
+    test("a schema with no JSON Schema keeps its own validate output", () => {
+      const stripping: StandardSchemaV1 = {
+        "~standard": {
+          version: 1,
+          vendor: "test",
+          validate: (value) => ({ value: { id: (value as { id: string }).id } }),
+        },
+      }
+      expect(guard(stripping, { id: "1", extra: 2 })).toEqual({ id: "1" })
+    })
+  },
+)
 
 test("an edge bundle never generates code: objects project by the closure", () => {
   Reflect.set(globalThis, "__NIFRA_EDGE_RUNTIME__", true)

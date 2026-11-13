@@ -127,6 +127,7 @@ function readElements(elements: readonly unknown[]): ElementState[] {
       el.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true })
     const value = typeof el.value === "string" ? el.value : undefined
     const visible = box.width > 0 && box.height > 0 && shown
+    // biome-ignore lint/performance/useDomNodeTextContent: innerText is the rendered text a user sees; textContent includes hidden nodes
     const text = el.innerText ?? el.textContent ?? ""
     return value === undefined ? { visible, text } : { visible, text, value }
   })

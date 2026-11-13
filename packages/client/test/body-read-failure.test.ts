@@ -33,34 +33,37 @@ function read(route: "json" | "text" | "binary", options: ClientOptions, signal?
 }
 
 describe("a body that stops arriving after its headers", () => {
-  test.each([
-    "json",
-    "text",
-    "binary",
-  ] as const)("%s: the call's deadline is a timeout Result", async (route) => {
-    expect(await read(route, { timeoutMs: 100 })).toEqual({
-      ok: false,
-      status: 0,
-      data: null,
-      error: { error: "timeout" },
-    })
-  })
+  test.each(["json", "text", "binary"] as const)(
+    "%s: the call's deadline is a timeout Result",
+    async (route) => {
+      expect(await read(route, { timeoutMs: 100 })).toEqual({
+        ok: false,
+        status: 0,
+        data: null,
+        error: { error: "timeout" },
+      })
+    },
+  )
 
-  test.each([
-    "json",
-    "text",
-    "binary",
-  ] as const)("%s: the caller's abort is a Result", async (route) => {
-    const controller = new AbortController()
-    const result = await read(
-      route,
-      {
-        onResponse: () => {
-          controller.abort()
+  test.each(["json", "text", "binary"] as const)(
+    "%s: the caller's abort is a Result",
+    async (route) => {
+      const controller = new AbortController()
+      const result = await read(
+        route,
+        {
+          onResponse: () => {
+            controller.abort()
+          },
         },
-      },
-      controller.signal,
-    )
-    expect(result).toEqual({ ok: false, status: 0, data: null, error: { error: "network_error" } })
-  })
+        controller.signal,
+      )
+      expect(result).toEqual({
+        ok: false,
+        status: 0,
+        data: null,
+        error: { error: "network_error" },
+      })
+    },
+  )
 })
