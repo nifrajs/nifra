@@ -17,6 +17,7 @@
  *   bun run bench/http/run.ts bun        # one section only (bun | node | deno)
  */
 import { loadavg } from "node:os"
+import { join } from "node:path"
 import { cpuListFromEnv, pinned } from "../pinning.ts"
 import {
   type Matrix,
@@ -159,20 +160,31 @@ const fastifyCompatTarget = (runtime: "bun" | "deno"): Target => ({
 // nifra on Node: real Node can't resolve the @nifrajs/* workspace packages (Bun resolves
 // them via tsconfig paths, which Node ignores), so bundle the app for Node first - which
 // is also nifra's actual Node deploy path. The bundle lands in a gitignored dist/ dir.
+const buildNodeBundle = (entry: string) => async (): Promise<void> => {
+  const result = await Bun.build({
+    entrypoints: [`${import.meta.dir}/${entry}`],
+    target: "node",
+    outdir: `${import.meta.dir}/dist`,
+  })
+  if (!result.success) {
+    throw new Error(`${entry} bundle failed: ${result.logs.map(String).join("; ")}`)
+  }
+}
 const NIFRA_NODE_BUNDLE = `${import.meta.dir}/dist/serve-node-nifra.js`
 const nifraNodeTarget: Target = {
   framework: "nifra",
-  prepare: async () => {
-    const result = await Bun.build({
-      entrypoints: [`${import.meta.dir}/serve-node-nifra.ts`],
-      target: "node",
-      outdir: `${import.meta.dir}/dist`,
-    })
-    if (!result.success) {
-      throw new Error(`nifra-node bundle failed: ${result.logs.map(String).join("; ")}`)
-    }
-  },
+  prepare: buildNodeBundle("serve-node-nifra.ts"),
   spawn: (port) => ["node", NIFRA_NODE_BUNDLE, String(port)],
+}
+
+// nifra through `@nifrajs/node-uws`: the same app on uWebSockets.js. The addon is installed from
+// GitHub for `packages/node-uws` only, so the bundle leaves it to Node and `NODE_PATH` finds it.
+const NIFRA_UWS_BUNDLE = `${import.meta.dir}/dist/serve-node-nifra-uws.js`
+const UWS_ADDON_DIR = join(import.meta.dir, "..", "..", "packages", "node-uws", "node_modules")
+const nifraUwsTarget: Target = {
+  framework: "nifra-uws",
+  prepare: buildNodeBundle("serve-node-nifra-uws.ts"),
+  spawn: (port) => ["env", `NODE_PATH=${UWS_ADDON_DIR}`, "node", NIFRA_UWS_BUNDLE, String(port)],
 }
 
 const SECTIONS: readonly Section[] = [
@@ -190,6 +202,7 @@ const SECTIONS: readonly Section[] = [
     runtime: "node",
     targets: [
       nifraNodeTarget,
+      nifraUwsTarget,
       nodeTarget("hono"),
       nodeTarget("fastify"),
       nodeTarget("express"),

@@ -308,6 +308,11 @@ export const NIFRA_VERSION = manifestVersion(
   join(import.meta.dir, "..", "packages", "core", "package.json"),
 )
 
+/** The `@nifrajs/node-uws` workspace build, which the `nifra-uws` row serves the app through. */
+const NODE_UWS_VERSION = manifestVersion(
+  join(import.meta.dir, "..", "packages", "node-uws", "package.json"),
+)
+
 /** The package each HTTP framework key measures; nifra is the workspace build. */
 const HTTP_PACKAGES: Readonly<Record<string, string>> = {
   elysia: "elysia",
@@ -319,6 +324,7 @@ const HTTP_PACKAGES: Readonly<Record<string, string>> = {
 /** The version a published HTTP row carries. */
 export function httpFrameworkVersion(framework: string): string {
   if (framework === "nifra") return NIFRA_VERSION
+  if (framework === "nifra-uws") return NODE_UWS_VERSION
   const pkg = HTTP_PACKAGES[framework]
   if (pkg === undefined) throw new Error(`no package recorded for HTTP framework ${framework}`)
   return packageVersion(pkg)
@@ -444,11 +450,16 @@ export function httpWorkloadsFromResults(
     frameworks: readonly string[]
   }> = [
     { key: "bun", title: "Bun", frameworks: ["nifra", "fastify", "elysia", "hono"] },
-    { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
+    {
+      key: "node",
+      title: "Node",
+      frameworks: ["nifra", "nifra-uws", "fastify", "elysia", "express", "hono"],
+    },
     { key: "deno", title: "Deno", frameworks: ["nifra", "fastify", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",
+    "nifra-uws": "Nifra + uWebSockets",
     elysia: "Elysia",
     fastify: "Fastify",
     express: "Express",
@@ -485,7 +496,7 @@ export function httpWorkloadsFromResults(
           ? { getSearch: format(search) }
           : {}),
         postUsers: format(post),
-        ...(framework === "nifra" ? { nifra: true } : {}),
+        ...(framework === "nifra" || framework === "nifra-uws" ? { nifra: true } : {}),
       })
     }
     if (rows.length > 0)
@@ -517,11 +528,16 @@ export function httpRealworldFromResults(
     frameworks: readonly string[]
   }> = [
     { key: "bun", title: "Bun", frameworks: ["nifra", "fastify", "elysia", "hono"] },
-    { key: "node", title: "Node", frameworks: ["nifra", "fastify", "elysia", "express", "hono"] },
+    {
+      key: "node",
+      title: "Node",
+      frameworks: ["nifra", "nifra-uws", "fastify", "elysia", "express", "hono"],
+    },
     { key: "deno", title: "Deno", frameworks: ["nifra", "fastify", "elysia", "hono"] },
   ]
   const display: Record<string, string> = {
     nifra: "Nifra",
+    "nifra-uws": "Nifra + uWebSockets",
     elysia: "Elysia",
     fastify: "Fastify",
     express: "Express",
@@ -546,7 +562,7 @@ export function httpRealworldFromResults(
         get: format(get),
         post: format(post),
         body: format(body),
-        ...(framework === "nifra" ? { nifra: true } : {}),
+        ...(framework === "nifra" || framework === "nifra-uws" ? { nifra: true } : {}),
       })
     }
     if (rows.length > 0)
