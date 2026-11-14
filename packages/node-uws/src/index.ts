@@ -129,6 +129,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
       // A logger that throws must not keep the 500 from going out.
     }
     try {
+      source.channel?.unthrottle()
       writeFailure(res, source)
     } catch {
       // The connection went away between the failure and the write.
@@ -158,6 +159,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
         (settled) => {
           if (source.aborted) return
           try {
+            source.channel?.unthrottle()
             const written = writeOutcome(res, source, settled, isHead, false)
             if (written instanceof Promise) {
               written.then(
@@ -178,6 +180,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
       return
     }
     try {
+      source.channel?.unthrottle()
       // uWS corks a response written from the handler's own synchronous part; a write after an
       // `await` is the one that needs `cork`.
       const written = writeOutcome(res, source, outcome, isHead, true)

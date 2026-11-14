@@ -58,7 +58,9 @@ do on `@nifrajs/node`.
   and `Transfer-Encoding`, and an absolute-form target with `400`, before the app sees them. Its idle
   timeout is fixed at 10 seconds, and there is no equivalent of Node's `requestTimeout`.
 - **Request bodies are pushed by uWS**, not pulled. The socket is throttled once 1 MiB is buffered
-  unread; a body larger than the route's cap is refused with `413` as on `@nifrajs/node`.
+  unread; a body larger than the route's cap is refused with `413` as on `@nifrajs/node`. A handler
+  that answers without reading the body releases the throttle first and the rest of the upload is
+  dropped, so the next request on that connection is read; reading the body afterwards rejects.
 - **An empty header value reads as absent** through `c.header()`.
 
 ## Notes for contributors

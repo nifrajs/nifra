@@ -193,7 +193,9 @@ The server answers for the nifra the project installs. When the project has its 
 a different version than the `nifra` the client spawned (a global install, say), the session is handed
 to `./node_modules/.bin/nifra mcp`. When that is impossible, `nifra_check`, `nifra_types`,
 `nifra_docs`, `nifra_example`, `nifra_assure` and `nifra_contracts` refuse with the fix instead of
-describing a different release.
+describing a different release. A project CLI that installs mid-session takes the session over the same
+way; a single message from it larger than 16 MiB ends that CLI, and the request waiting on it gets a
+`-32603` error.
 
 The server runs none of the project's code and keeps none of its `.env`. Every tool, resource and
 prompt that loads the app, including the ones the app declares with `.tool()`, runs in a fresh process

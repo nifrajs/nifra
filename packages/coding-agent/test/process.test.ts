@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { readBoundedText, runBoundedProcess } from "../src/process.ts"
 
 const encoder = new TextEncoder()
@@ -53,23 +56,30 @@ test("a chunk after the cap is filled exactly marks the text truncated", async (
 })
 
 test.skipIf(process.platform === "win32")(
-  "a child that exits while a process it started holds stdout open settles without timing out",
+  "a process the child left running is ended with it, and its open pipes no longer hold the call",
   async () => {
-    // The background sleep inherits both pipes and outlives the shell; its pid goes to stderr.
-    const result = await runBoundedProcess(["sh", "-c", "printf done; sleep 60 & echo $! >&2"], {
-      cwd: import.meta.dir,
-      env: { PATH: process.env.PATH ?? "" },
-      timeoutMs: 120_000,
-      maxStdoutBytes: 1024,
-      maxStderrBytes: 1024,
-    })
+    const ground = await mkdtemp(join(tmpdir(), "nifra-process-test-"))
     try {
+      // The descendant announces SIGTERM on stderr and exits; it holds both pipes, so the call can only
+      // finish by reading to their end, and the text proves the signal reached it rather than a timer.
+      // The shell waits for the handler to be installed before it exits.
+      const descendant =
+        'process.on("SIGTERM", () => { console.error("termed"); process.exit(0) });' +
+        'await Bun.write("ready", ""); setInterval(() => {}, 1000)'
+      const script = '"$BUN" -e "$CODE" &\nwhile [ ! -e ready ]; do :; done\nprintf done'
+      const result = await runBoundedProcess(["sh", "-c", script], {
+        cwd: ground,
+        env: { PATH: process.env.PATH ?? "", BUN: process.execPath, CODE: descendant },
+        timeoutMs: 120_000,
+        maxStdoutBytes: 1024,
+        maxStderrBytes: 1024,
+      })
       expect(result.status).toBe(0)
       expect(result.timedOut).toBe(false)
       expect(result.stdout.text).toBe("done")
+      expect(result.stderr.text).toBe("termed\n")
     } finally {
-      const pid = Number(result.stderr.text.trim())
-      if (Number.isSafeInteger(pid) && pid > 0) process.kill(pid)
+      await rm(ground, { recursive: true, force: true })
     }
   },
   20_000,

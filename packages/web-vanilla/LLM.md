@@ -23,5 +23,5 @@ Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template H
 ## Footguns
 
 - Output is **auto-escaping** tagged-template HTML - interpolated values are escaped; opt into raw HTML explicitly, and only for trusted content.
-- A value is written for where it lands: an unquoted attribute value is quoted, and a `javascript:` URL that begins `href`/`src`/`action` becomes `about:invalid`. A string or template **throws** as a tag name, inside `<script>`/`<style>`, or in an `on*`/`srcdoc` value; an attribute name takes only a plain valueless name (`checked`). Interpolate a number there, or `raw()` trusted text.
+- A value is written for where it lands: an unquoted attribute value is quoted, and a `javascript:` URL that begins `href`/`src`/`action` becomes `about:invalid`, as does a `data:` URL that begins a `<script>`'s `src`/`href` (other `data:` URLs are kept). A string or template **throws** as a tag name, inside `<script>`/`<style>`, or in an `on*`/`srcdoc` value; an attribute name takes only a plain valueless name (`checked`). Interpolate a number there, or `raw()` trusted text.
 - Interactivity comes from islands (`@nifrajs/web/islands`), not a framework runtime - ~0 KB client JS by default.

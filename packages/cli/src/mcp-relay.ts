@@ -7,6 +7,7 @@
  */
 
 import type { StdioMessage } from "@nifrajs/mcp/stdio"
+import { readBoundedLines } from "./mcp-io.ts"
 import {
   isJsonRpcRequest,
   isJsonRpcResponse,
@@ -20,6 +21,8 @@ type JsonRpcId = JsonRpcResponse["id"]
 const HANDSHAKE_ID = "nifra-relay-handshake"
 const HANDSHAKE_MS = 30_000
 const CLOSE_MS = 5_000
+/** The largest line the child may send. A tool result is one line, so this bounds a result, not a session. */
+export const RELAY_FRAME_MAX_BYTES = 16 * 1024 * 1024
 
 const spawnChild = (
   command: readonly string[],
@@ -54,6 +57,8 @@ export async function startRelay(options: {
   readonly send: (message: StdioMessage) => void
   /** Written to stderr once the child answers. */
   readonly announce: string
+  /** Largest line read from the child before it is ended. Default {@link RELAY_FRAME_MAX_BYTES}. */
+  readonly maxFrameBytes?: number
 }): Promise<McpRelay | undefined> {
   let child: ReturnType<typeof spawnChild>
   try {
@@ -90,15 +95,22 @@ export async function startRelay(options: {
     } else if (isJsonRpcRequest(parsed)) options.send(parsed)
   }
   const pumped = (async () => {
-    const decoder = new TextDecoder()
-    let buffered = ""
-    for await (const chunk of child.stdout) {
-      buffered += decoder.decode(chunk, { stream: true })
-      for (let at = buffered.indexOf("\n"); at !== -1; at = buffered.indexOf("\n")) {
-        const line = buffered.slice(0, at).trim()
-        buffered = buffered.slice(at + 1)
+    for await (const item of readBoundedLines(
+      child.stdout,
+      options.maxFrameBytes ?? RELAY_FRAME_MAX_BYTES,
+    )) {
+      if (item.kind === "line") {
+        const line = item.text.trim()
         if (line !== "") route(line)
+        continue
       }
+      // The frame was dropped, so a response may be missing and the stream can no longer be trusted:
+      // end the child, and the requests waiting on it settle with an error.
+      process.stderr.write(
+        "nifra mcp: the project's nifra CLI sent an oversized message; ending it\n",
+      )
+      child.kill("SIGKILL")
+      return
     }
   })().catch(() => {})
   void child.exited.then(async () => {

@@ -77,8 +77,10 @@ const PROCESS_GROUPS = process.platform !== "win32"
 /**
  * Run a trusted command to completion within `timeoutMs`. On POSIX the child leads its own process
  * group, so a timeout reaches every process it started: SIGTERM, then SIGKILL after a grace period.
- * The call settles when the child exits: a process it left running that still holds the pipes open
- * is read from for a short grace and then no longer waited on, and `timedOut` stays `false`.
+ * The call settles when the child exits, and `timedOut` stays `false`. A process the child left
+ * running does not outlive it: the group gets the same SIGTERM, then SIGKILL after the grace, and
+ * output it still holds open is read for a short grace and then no longer waited on. Where there are
+ * no process groups (Windows), only the child itself is signalled.
  */
 export async function runBoundedProcess(
   argv: readonly string[],
@@ -118,6 +120,11 @@ export async function runBoundedProcess(
     if (!timedOut) {
       clearTimeout(timer)
       drain = setTimeout(() => reading.abort(), DRAIN_GRACE_MS)
+      if (PROCESS_GROUPS) {
+        signalAll("SIGTERM")
+        // Not awaited by the call, and not kept alive for: a group that is gone makes this a no-op.
+        setTimeout(() => signalAll("SIGKILL"), KILL_GRACE_MS).unref()
+      }
     }
     return status
   })

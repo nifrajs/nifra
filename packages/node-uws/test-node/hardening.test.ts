@@ -134,6 +134,10 @@ function makeApp() {
     })
     .get("/cancelled", () => ({ cancelled }))
     .post("/no-read", () => ({ ignored: true }))
+    .post("/no-read-slow", async () => {
+      await sleep(60)
+      return { ignored: true }
+    })
     .post("/auth-first", (c) => {
       if (c.header("authorization") === null) return status(401, { ok: false })
       return { ok: true }
@@ -366,6 +370,34 @@ test("a handler that answers without reading the body leaves the connection usab
       socket.destroy()
       resolve(received)
     }, 3000).unref()
+  })
+  assert.equal((text.match(/HTTP\/1\.1 200/g) ?? []).length, 2, text.slice(0, 400))
+})
+
+test("an answer that goes out while the upload is paused for backpressure frees the socket for the next request", async () => {
+  // 4 MB lands while the handler is still awaiting: the channel pauses the socket at 1 MB, and the
+  // handler then answers without ever reading, so nothing but the channel's close can resume it.
+  const body = Buffer.alloc(4_000_000, 5)
+  const first = `POST /no-read-slow HTTP/1.1\r\nHost: x\r\ncontent-length: ${body.length}\r\n\r\n`
+  const text = await new Promise<string>((resolve) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(first)
+      socket.write(body)
+      socket.write("GET /who HTTP/1.1\r\nHost: x\r\n\r\n")
+    })
+    let received = ""
+    socket.on("data", (data) => {
+      received += data.toString("latin1")
+      if ((received.match(/HTTP\/1\.1 200/g) ?? []).length === 2 && received.endsWith("}")) {
+        socket.destroy()
+        resolve(received)
+      }
+    })
+    // Well inside uWS's 10 s idle timeout, which would otherwise end a stuck socket and mask the hang.
+    setTimeout(() => {
+      socket.destroy()
+      resolve(received)
+    }, 4000).unref()
   })
   assert.equal((text.match(/HTTP\/1\.1 200/g) ?? []).length, 2, text.slice(0, 400))
 })

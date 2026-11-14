@@ -72,6 +72,37 @@ describe("interpolation positions", () => {
     )
   })
 
+  test("a data: URL that loads a script is written as about:invalid, and kept anywhere else", () => {
+    for (const url of ["data:text/javascript,alert(1)", " \tDATA:text/javascript,x", "da\nta:,x"]) {
+      expect(html`<script src="${url}"></script>`.html).toBe(
+        '<script src="about:invalid"></script>',
+      )
+      expect(html`<SCRIPT type=module src=${url}></SCRIPT>`.html).toBe(
+        '<SCRIPT type=module src="about:invalid"></SCRIPT>',
+      )
+    }
+    expect(html`<svg><script href="${"data:text/javascript,x"}"></script></svg>`.html).toBe(
+      '<svg><script href="about:invalid"></script></svg>',
+    )
+    expect(html`<script src="${"data:"}${"text/javascript,x"}"></script>`.html).toBe(
+      '<script src="about:invalid"></script>',
+    )
+    expect(html`<script src="${"https://cdn.example/a.js"}"></script>`.html).toBe(
+      '<script src="https://cdn.example/a.js"></script>',
+    )
+    expect(html`<script src="/a.js?u=${"data:x"}"></script>`.html).toBe(
+      '<script src="/a.js?u=data:x"></script>',
+    )
+    for (const tag of [
+      html`<img src="${"data:image/png;base64,AAAA"}">`,
+      html`<a download href="${"data:text/plain,hi"}">x</a>`,
+      html`<iframe src="${"data:application/pdf;base64,AAAA"}"></iframe>`,
+      html`<object data="${"data:application/pdf;base64,AAAA"}"></object>`,
+      html`<link rel="stylesheet" href="${"data:text/css,a{}"}">`,
+    ])
+      expect(tag.html).toContain("data:")
+  })
+
   test("a URL attribute keeps any other URL, and a scheme after its start is only text", () => {
     expect(html`<a href="${"https://x.example/a?b=1&c=2"}">x</a>`.html).toBe(
       '<a href="https://x.example/a?b=1&amp;c=2">x</a>',

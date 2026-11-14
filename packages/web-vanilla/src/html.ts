@@ -9,7 +9,9 @@
  * - An unquoted attribute value: quoted for you, then escaped, so a space cannot start another
  *   attribute.
  * - A URL attribute (`href`, `src`, `action`, ...) whose value an interpolation begins: a
- *   `javascript:` or `vbscript:` URL becomes `about:invalid`.
+ *   `javascript:` or `vbscript:` URL becomes `about:invalid`, and so does a `data:` URL where the
+ *   attribute loads a `<script>` (`src`, `href`, `xlink:href`). Any other `data:` URL, an image's or a
+ *   download's, is kept.
  * - A tag name, the body of `<script>` or `<style>`, and an event handler or `srcdoc` value: no
  *   escaping makes a string safe there, so a string or a nested template throws. An attribute name
  *   takes only a plain valueless name, such as `checked`. Numbers, booleans and an explicit
@@ -112,6 +114,8 @@ interface Place {
   readonly lead: number
   /** An attribute name: the static text after it gives the attribute a value. */
   readonly valued: boolean
+  /** A URL value that loads a script: `data:` runs there as well, so it is refused too. */
+  readonly strict: boolean
 }
 
 interface Hole extends Place {
@@ -389,7 +393,7 @@ function analyze(strings: readonly string[]): CallSite {
       case TAG_OPEN:
       case END_TAG_OPEN:
       case TAG_NAME:
-        hole = { kind: TAG, lead: 0, valued: false }
+        hole = { kind: TAG, lead: 0, valued: false, strict: false }
         if (state !== TAG_NAME) endTag = state === END_TAG_OPEN
         state = TAG_NAME
         tagDynamic = true
@@ -401,10 +405,10 @@ function analyze(strings: readonly string[]): CallSite {
       case SELF_CLOSING:
         if (state === ATTR_NAME && (attrName.startsWith("data-") || attrName.startsWith("aria-"))) {
           // No name past these prefixes runs code or loads a URL, so the value stays plain text.
-          hole = { kind: NAME, lead: 0, valued: false }
+          hole = { kind: NAME, lead: 0, valued: false, strict: false }
           break
         }
-        hole = { kind: NAME, lead: 0, valued: VALUED.test(strings[part + 1] ?? "") }
+        hole = { kind: NAME, lead: 0, valued: VALUED.test(strings[part + 1] ?? ""), strict: false }
         if (state !== ATTR_NAME) attrName = ""
         state = ATTR_NAME
         attrDynamic = true
@@ -429,15 +433,19 @@ function analyze(strings: readonly string[]): CallSite {
         state = QUOTED
         const kind = valueKind === URL_VALUE && !isBlank(valueText) ? ATTR : valueKind
         const lead = kind === URL_VALUE ? (valueHoles === 0 ? valueText.length : -1) : 0
-        hole = { kind, lead, valued: false }
+        const loadsScript =
+          kind === URL_VALUE &&
+          (attrName === "src" || attrName === "href" || attrName === "xlink:href") &&
+          tagName.toLowerCase() === "script"
+        hole = { kind, lead, valued: false, strict: loadsScript }
         valueHoles++
         break
       }
       case RAW:
-        hole = { kind: rawCode ? CODE : TEXT, lead: 0, valued: false }
+        hole = { kind: rawCode ? CODE : TEXT, lead: 0, valued: false, strict: false }
         break
       default:
-        hole = { kind: TEXT, lead: 0, valued: false }
+        hole = { kind: TEXT, lead: 0, valued: false, strict: false }
     }
     statics.push(cur)
     places.push(hole)
@@ -538,12 +546,16 @@ function urlText(value: HtmlValue): string {
   return value == null || value === false ? "" : String(value)
 }
 
-/** Whether a URL value would run script when followed. */
-function scriptUrl(url: string): boolean {
+/** Whether a URL value would run script when followed; `loadsScript` where it is the script itself. */
+function scriptUrl(url: string, loadsScript: boolean): boolean {
   // A URL parser drops leading controls and spaces, and tabs and newlines anywhere.
   let i = 0
   while (i < url.length && url.charCodeAt(i) <= 0x20) i++
-  return schemeAt(url, i, "javascript:") || schemeAt(url, i, "vbscript:")
+  return (
+    schemeAt(url, i, "javascript:") ||
+    schemeAt(url, i, "vbscript:") ||
+    (loadsScript && schemeAt(url, i, "data:"))
+  )
 }
 
 function schemeAt(url: string, start: number, scheme: string): boolean {
@@ -582,7 +594,7 @@ export function html(strings: TemplateStringsArray, ...values: HtmlValue[]): Tem
         url = urlText(value)
       } else url += hole.before + urlText(value)
       out += renderIn(value, hole)
-      if (scriptUrl(url)) out = `${out.slice(0, urlStart)}about:invalid`
+      if (scriptUrl(url, hole.strict)) out = `${out.slice(0, urlStart)}about:invalid`
       out += hole.after
     } else out += renderIn(value, hole) + hole.after
   }
