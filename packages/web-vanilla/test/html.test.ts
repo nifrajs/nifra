@@ -136,6 +136,14 @@ describe("interpolation positions", () => {
       '<a href="about:invalid">x</a>',
     )
     expect(html`<a href="/a?x=&am${"p;y"}">x</a>`.html).toBe('<a href="/a?x=&amp;y">x</a>')
+    // Blanks that only the static text supplies still lead the URL. What a later interpolation adds
+    // follows `about:` and stays inert text.
+    expect(html`<script src="${""} data:text/javascript,${"alert(1)"}"></script>`.html).toBe(
+      '<script src="about:invalidalert(1)"></script>',
+    )
+    expect(html`<a href="${""}\n javascript:${"alert(1)"}">x</a>`.html).toBe(
+      '<a href="about:invalidalert(1)">x</a>',
+    )
     expect(html`<a href="${"home"}">x</a>`.html).toBe('<a href="home">x</a>')
     expect(html`<script src="${"data"}"></script>`.html).toBe('<script src="data"></script>')
     for (const tag of [

@@ -742,3 +742,14 @@ test("a lifted upload that a response starts to read within the mark is delivere
     total += next.value.byteLength
   assert.equal(total, 1500)
 })
+
+test("a lifted upload that a response reads whole is not cut at the high-water mark", async () => {
+  const { res, push } = fakeUpload()
+  const channel = new BodyChannel(res)
+  channel.stream()
+  channel.unthrottle()
+  const whole = channel.bytes()
+  for (let i = 0; i < 6; i++) push(BODY_HIGH_WATER / 2)
+  push(10, true)
+  assert.equal((await whole).byteLength, 3 * BODY_HIGH_WATER + 10)
+})

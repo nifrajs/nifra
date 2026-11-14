@@ -144,6 +144,7 @@ export class BodyChannel {
     // A reader that wants every byte has no use for the throttle; the cap on how much it may take
     // is the caller's (core checks Content-Length before it reads, and caps a chunked body itself).
     this.collecting = true
+    this.lifted = false
     if (this.paused && !this.gone) {
       this.paused = false
       this.res.resume()

@@ -614,9 +614,9 @@ function urlText(value: HtmlValue): string {
  */
 function scriptUrl(url: string, tail: string, loadsScript: boolean): boolean {
   // A URL parser drops leading controls and spaces, and tabs and newlines anywhere.
+  if (tail.length > 0 && schemeOpen(url)) url += decoded(tail)
   let i = 0
   while (i < url.length && url.charCodeAt(i) <= 0x20) i++
-  if (tail.length > 0 && schemeOpen(url)) url += decoded(tail)
   return (
     schemeAt(url, i, "javascript:") ||
     schemeAt(url, i, "vbscript:") ||
