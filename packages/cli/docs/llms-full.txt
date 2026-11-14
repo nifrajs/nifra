@@ -21119,6 +21119,12 @@ const handle = await serve(app, { port: 3000 })
 
 ## Install
 
+Install this package with its core and Node adapter dependencies:
+
+```sh
+npm install @nifrajs/node-uws @nifrajs/node @nifrajs/core
+```
+
 uWebSockets.js is not published to npm. Install it from GitHub, next to this package:
 
 ```sh
@@ -21127,8 +21133,9 @@ npm install uNetworking/uWebSockets.js#v20.71.0
 
 Its releases ship prebuilt binaries for Node 22, 24 and 26 on macOS and Linux (x64, arm64) and Windows
 (x64). There is none for Alpine (musl) or Windows on arm64, and a new Node major has none until upstream
-publishes one. Importing this package fails with an error that says so when the addon cannot load.
-Use `@nifrajs/node` where that matters.
+publishes one. The Node 24 binary for Linux arm64 needs glibc 2.38 or newer, so Debian 12 and Ubuntu 22.04
+cannot load it. Importing this package succeeds either way; `serve()` loads the addon and throws an error
+that says so when it cannot load. Use `@nifrajs/node` where that matters.
 
 ## Options
 

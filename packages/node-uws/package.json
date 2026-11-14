@@ -27,6 +27,7 @@
     "dist",
     "src",
     "README.md",
+    "LLM.md",
     "CHANGELOG.md"
   ],
   "sideEffects": false,
@@ -37,7 +38,7 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "@nifrajs/node": "^5.13.0",
+    "@nifrajs/node": "^5.14.0",
     "uWebSockets.js": ">=20.60.0"
   },
   "peerDependenciesMeta": {
