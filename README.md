@@ -279,7 +279,7 @@ See [benchmark methodology and full results](https://nifra.dev/benchmarks), and 
 - The local process and extension agent adapters contain crashes and accidents; they are not hostile-code sandboxes.
 - Every protocol boundary still needs application authentication and authorization. Public reference adapters keep credentials, durable storage, tenant state, and operated policy outside the package so you can supply the right implementation for your deployment.
 
-## Batteries (59 packages, all typed, all optional)
+## Batteries (60 packages, all typed, all optional)
 
 <details>
 <summary>Package map by job</summary>

@@ -6599,6 +6599,13 @@
     "doc": "/** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */"
   },
   {
+    "name": "FetchHandler",
+    "kind": "interface",
+    "package": "@nifrajs/node-uws",
+    "signature": "export interface FetchHandler {\n    fetch(request: Request, platform?: {\n        readonly clientIp?: string | undefined;\n    }): Response | Promise<Response>;\n    /** Present on every nifra app: the node-direct lane, which skips building a Web `Request`. */\n    resolveNodeSource?(source: unknown, platform?: unknown, runtime?: object | undefined): NodeServeOutcome | Promise<NodeServeOutcome>;\n}",
+    "doc": "/** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */"
+  },
+  {
     "name": "FetchRouteData",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -11011,6 +11018,13 @@
     "package": "@nifrajs/node",
     "signature": "export interface NodeStopOptions {\n    /** How long in-flight requests get to finish before the stop forces them closed. Default 10_000. */\n    readonly drainMs?: number;\n    /**\n     * How long the server keeps serving after `stop()` began, before it stops accepting connections:\n     * the time a load balancer takes to see readiness fail. Default 0.\n     */\n    readonly delayMs?: number;\n}",
     "doc": "/** How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes. */"
+  },
+  {
+    "name": "NodeStopOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-uws",
+    "signature": "export interface NodeStopOptions {\n    readonly drainMs?: number;\n    readonly delayMs?: number;\n}",
+    "doc": "/** How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`. */"
   },
   {
     "name": "NonceContext",
@@ -15559,6 +15573,12 @@
     "signature": "export interface ServeOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /**\n     * Protocol used when the adapter constructs `Request.url`.\n     *\n     * The default is `\"https\"` when {@link ServeOptions.tls} is set and `\"http\"` otherwise. Deployments\n     * behind TLS termination can set `\"https\"` (or a trusted infra-aware function) so app code that reads\n     * `request.url` sees the public scheme. Forwarded headers are not trusted implicitly.\n     */\n    readonly protocol?: RequestProtocolOption;\n    /**\n     * Serve HTTPS directly, with no proxy in front: `{ cert, key }` as PEM text or the files' bytes\n     * (`readFileSync(\"cert.pem\")`), plus any other `node:tls` server option (`passphrase`, `ca`,\n     * `requestCert` for client certificates, `minVersion`, `SNICallback`, ...). Unset, the server speaks\n     * plain HTTP, which is what a proxy or platform that terminates TLS expects.\n     */\n    readonly tls?: TlsOptions;\n    /** Reject requests whose normalized Host authority is not in this allowlist or callback result. */\n    readonly allowedHosts?: readonly string[] | ((host: string) => boolean);\n    /** Use this validated authority when constructing Request.url, ignoring the inbound Host value. */\n    readonly canonicalHost?: string;\n    /**\n     * Route a request on the path a WHATWG parser would give it. Bun and workerd deliver a parsed URL,\n     * so `/public/../admin` reaches the app as `/admin`; Node's `IncomingMessage.url` is the target as\n     * sent. Off, Node routes the text received, as most frameworks do: a guard on `/admin` does not see\n     * `/public/../admin`, and a proxy that normalizes paths before forwarding disagrees with the app\n     * about which route a request is for. On, dot segments (`.`, `..`, `%2e`), backslashes and the\n     * characters a parser percent-encodes are resolved before routing, so every runtime routes the\n     * same path. Off by default; enable it when path guards, or a path-normalizing proxy, sit in front\n     * of or inside the app. The same option as `server({ normalizeTarget })` on Deno.\n     *\n     * Off applies to requests the adapter serves from Node's own request object. A request the adapter\n     * must hand over as a Web `Request` - one a `static` callback sees, and every WebSocket upgrade -\n     * is built by the platform's URL parser, which resolves dot segments whatever this option says.\n     */\n    readonly normalizeTarget?: boolean;\n    /**\n     * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on\n     * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in, as\n     * `server({ gracefulSignals })` is for Bun's `listen()`. The object form is passed to `stop()`.\n     *\n     * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap\n     * are *not* set here - they live inside `app.fetch`, so they already apply through\n     * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /\n     * `headersTimeout` (60s) defaults.\n     */\n    readonly gracefulSignals?: boolean | NodeStopOptions;\n    /**\n     * Sees every request before the app does, so a file it answers wins over any route at the same\n     * path. It returns the file's response, or `undefined` to let the app route the request. No hook\n     * of the app runs for a request it answers. The same option as Bun's `app.listen()` and\n     * `@nifrajs/deno`'s `serve()`.\n     *\n     * {@link serveStatic} is the one to pass for files on disk: this adapter runs its mounts on Node's\n     * own request, so a request they pass on keeps the app's direct lane. Any other function needs a\n     * Web `Request` for every request, which roughly doubles the cost of a small route.\n     */\n    readonly static?: (request: Request) => Response | Promise<Response | undefined> | undefined;\n    /**\n     * Make a hand-rolled `return new Response(body)` ride the direct-write lane, by swapping\n     * `globalThis.Response` for a stand-in that defers a *simple* construction (a string body, no\n     * `statusText`, no headers or a plain header record) the way `c.text` / `c.json` already do.\n     *\n     * Off by default: prefer `c.text` / `c.json`, which get this without a global swap. Reach for the\n     * flag only when handlers construct `Response` by hand on the hot path. It patches a process-global\n     * builtin, so every `new Response(...)` anywhere in the process goes through the stand-in -\n     * transparent (non-simple bodies build a real `Response`, and simple ones stay `instanceof\n     * Response`), but a broad enough change to be opt-in.\n     */\n    readonly fastResponse?: boolean;\n}"
   },
   {
+    "name": "ServeOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-uws",
+    "signature": "export interface ServeOptions extends HostPolicyOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /** The scheme `Request.url` carries. `\"https\"` by default when {@link tls} is set, else `\"http\"`. */\n    readonly protocol?: \"http\" | \"https\";\n    readonly tls?: UwsTlsOptions;\n    /** SIGTERM/SIGINT call `stop()`; off by default, as in `@nifrajs/node`. */\n    readonly gracefulSignals?: boolean | NodeStopOptions;\n}"
+  },
+  {
     "name": "ServeStaticOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -17879,6 +17899,19 @@
     "package": "@nifrajs/web-vue",
     "signature": "export interface UseQueryResult<T> {\n    readonly state: Readonly<ShallowRef<QueryState<T>>>;\n    /** Force a refetch (ignores `staleTime`). */\n    readonly refetch: () => Promise<T>;\n}",
     "doc": "/** A query's reactive {@link QueryState} (read `.value`) plus `refetch`. */"
+  },
+  {
+    "name": "UwsServer",
+    "kind": "interface",
+    "package": "@nifrajs/node-uws",
+    "signature": "export interface UwsServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Run the app's `onStopping` hooks, keep serving for `delayMs`, stop accepting connections, let\n     * in-flight requests finish for up to `drainMs`, then close what is left and run `onStop`.\n     */\n    stop(options?: NodeStopOptions): Promise<void>;\n    [Symbol.asyncDispose](): Promise<void>;\n}"
+  },
+  {
+    "name": "UwsTlsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-uws",
+    "signature": "export interface UwsTlsOptions {\n    readonly keyFileName: string;\n    readonly certFileName: string;\n    readonly passphrase?: string;\n    readonly caFileName?: string;\n    readonly dhParamsFileName?: string;\n    readonly sslCiphers?: string;\n    readonly sslPreferLowMemoryUsage?: boolean;\n}",
+    "doc": "/**\n * HTTPS from files, in uWS's own terms: it reads the key and certificate itself, so these are paths\n * rather than the PEM text `@nifrajs/node` takes.\n */"
   },
   {
     "name": "VERSION",
@@ -25551,6 +25584,12 @@
     "kind": "function",
     "package": "@nifrajs/node",
     "signature": "export declare function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer>;"
+  },
+  {
+    "name": "serve",
+    "kind": "function",
+    "package": "@nifrajs/node-uws",
+    "signature": "export declare function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServer>;"
   },
   {
     "name": "serveDatabaseAsMcp",

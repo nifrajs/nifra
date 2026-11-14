@@ -36,6 +36,7 @@ const LIBRARY_PACKAGE_DIRS = [
   "uploads",
   "storage",
   "node",
+  "node-uws",
   "deno",
   "deploy-fly",
   "aws-lambda",
