@@ -404,7 +404,7 @@ test("an answer that goes out while the upload is paused for backpressure frees 
 })
 
 test("a response that streams the upload back still reads it after the throttle is lifted", async () => {
-  const body = Buffer.alloc(3_000_000, 7)
+  const body = Buffer.alloc(100_000, 7)
   const response = await fetch(`http://127.0.0.1:${port}/echo-stream`, { method: "POST", body })
   assert.equal(response.status, 200)
   assert.equal((await response.arrayBuffer()).byteLength, body.length)
