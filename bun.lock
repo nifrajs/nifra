@@ -615,7 +615,7 @@
         "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.71.0",
       },
       "peerDependencies": {
-        "@nifrajs/node": "^5.13.0",
+        "@nifrajs/node": "^5.14.0",
         "uWebSockets.js": ">=20.60.0",
       },
       "optionalPeers": [

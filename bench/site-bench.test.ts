@@ -68,6 +68,43 @@ describe("published HTTP slices", () => {
     ])
   })
 
+  test("the node-uws row publishes on Node only, labelled and versioned as the adapter", () => {
+    const uwsCell = { "GET /users/:id": cell(95), "POST /users": cell(75) }
+    const tables = httpWorkloadsFromResults(
+      {
+        bun: { nifra: bare.bun.nifra, "nifra-uws": uwsCell },
+        node: { ...bare.node, "nifra-uws": uwsCell },
+      },
+      runtimes,
+    )
+    const [bun, node] = tables
+    expect(bun?.rows.map((row) => row.name)).toEqual(["Nifra"])
+    expect(node?.rows.map((row) => row.name)).toEqual(["Nifra", "Nifra + uWebSockets"])
+    expect(node?.rows[1]).toMatchObject({ version: httpFrameworkVersion("nifra-uws"), nifra: true })
+
+    const workloads = { get: "get", post: "post", body: "body" }
+    const rows = httpRealworldFromResults(
+      {
+        node: {
+          "nifra-uws": { get: cell(70), post: cell(60) },
+          "nifra-uws-body": { body: cell(50) },
+        },
+      },
+      workloads,
+      runtimes,
+    ).flatMap((table) => table.rows)
+    expect(rows).toEqual([
+      {
+        name: "Nifra + uWebSockets",
+        version: httpFrameworkVersion("nifra-uws"),
+        get: "70",
+        post: "60",
+        body: "50",
+        nifra: true,
+      },
+    ])
+  })
+
   test("a framework with no recorded package, or a package not installed, is refused", () => {
     expect(() => httpFrameworkVersion("bun-native")).toThrow("no package recorded")
     expect(() => packageVersion("nifra-no-such-package-installed")).toThrow("no installed")

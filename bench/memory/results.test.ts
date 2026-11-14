@@ -3,7 +3,7 @@ import { memoryCapture } from "./results.ts"
 
 const frameworkTargets = ["nifra", "fastify", "elysia", "hono", "express"] as const
 const targets = {
-  node: frameworkTargets,
+  node: ["nifra", "nifra-uws", "fastify", "elysia", "hono", "express"],
   bun: [...frameworkTargets, "bun-native"],
   deno: [...frameworkTargets, "deno-raw"],
 } as const
@@ -37,6 +37,7 @@ function fixture(runtime: Runtime = "node") {
       head: "a".repeat(40),
       versions: {
         "@nifrajs/core": "5.5.1",
+        "@nifrajs/node-uws": "5.5.1",
         fastify: "5.12.7",
         elysia: "1.4.30",
         hono: "4.13.13",
@@ -60,7 +61,12 @@ test("memory summaries use fresh-process medians and retain the observed range",
   for (const runtime of ["node", "bun", "deno"] as const) {
     const capture = memoryCapture(fixture(runtime))
     expect(capture.runtime).toBe(runtime)
-    expect(capture.rows).toHaveLength(5)
+    // Only Node serves the app through @nifrajs/node-uws too.
+    expect(capture.rows.map((row) => row.name)).toEqual(
+      runtime === "node"
+        ? ["Nifra", "Nifra + uWebSockets", "Fastify", "Elysia", "Hono", "Express"]
+        : ["Nifra", "Fastify", "Elysia", "Hono", "Express"],
+    )
     expect(capture.rows[0]?.postRssMiB).toBe(4000 / 1048576)
     expect(capture.rows[0]?.postRssMinMiB).toBe(3000 / 1048576)
     expect(capture.rows[0]?.postRssMaxMiB).toBe(9000 / 1048576)

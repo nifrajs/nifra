@@ -16,6 +16,7 @@ const snapshot = z.object({
 const runtimes = ["node", "bun", "deno"] as const satisfies readonly HttpMemoryRuntime[]
 const allTargets = [
   "nifra",
+  "nifra-uws",
   "fastify",
   "elysia",
   "hono",
@@ -24,13 +25,23 @@ const allTargets = [
   "deno-raw",
 ] as const
 const expectedTargets: Record<HttpMemoryRuntime, readonly (typeof allTargets)[number][]> = {
-  node: ["nifra", "fastify", "elysia", "hono", "express"],
+  node: ["nifra", "nifra-uws", "fastify", "elysia", "hono", "express"],
   bun: ["nifra", "fastify", "elysia", "hono", "express", "bun-native"],
   deno: ["nifra", "fastify", "elysia", "hono", "express", "deno-raw"],
 }
 const publishedTargets = ["nifra", "fastify", "elysia", "hono", "express"] as const
+// Node alone also serves the app through @nifrajs/node-uws; Bun and Deno have no such adapter.
+const publishedFor = (runtime: HttpMemoryRuntime): readonly (keyof typeof names)[] =>
+  runtime === "node"
+    ? ["nifra", "nifra-uws", "fastify", "elysia", "hono", "express"]
+    : publishedTargets
+const versionKeys: Partial<Record<(typeof allTargets)[number], string>> = {
+  nifra: "@nifrajs/core",
+  "nifra-uws": "@nifrajs/node-uws",
+}
 const names = {
   nifra: "Nifra",
+  "nifra-uws": "Nifra + uWebSockets",
   fastify: "Fastify",
   elysia: "Elysia",
   hono: "Hono",
@@ -99,10 +110,10 @@ export function memoryCapture(input: unknown): HttpMemoryCapture {
     rounds: meta.rounds,
     requestsPerPhase: meta.requests,
     connections: meta.connections,
-    rows: publishedTargets.map((target) => {
+    rows: publishedFor(meta.runtime).map((target) => {
       const xs = samples.filter((sample) => sample.target === target)
       if (xs.length !== meta.rounds) throw new Error(`missing memory samples: ${target}`)
-      const version = meta.versions[target === "nifra" ? "@nifrajs/core" : target]
+      const version = meta.versions[versionKeys[target] ?? target]
       if (version === undefined) throw new Error(`missing package version: ${target}`)
       const postRss = xs.map((sample) => sample.snapshots.post.rss)
       const row = {
@@ -116,7 +127,7 @@ export function memoryCapture(input: unknown): HttpMemoryCapture {
         postRssMinMiB: mib(Math.min(...postRss)),
         postRssMaxMiB: mib(Math.max(...postRss)),
       }
-      return target === "nifra" ? { ...row, nifra: true } : row
+      return target === "nifra" || target === "nifra-uws" ? { ...row, nifra: true } : row
     }),
   }
 }

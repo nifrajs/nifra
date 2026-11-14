@@ -4,12 +4,13 @@ Build the workspace packages first, then capture the authenticated GET/POST work
 HTTP real-world benchmark:
 
 ```sh
-bun run --filter '@nifrajs/core' --filter '@nifrajs/node' --filter '@nifrajs/middleware' build
+bun run --filter '@nifrajs/core' --filter '@nifrajs/node' --filter '@nifrajs/node-uws' --filter '@nifrajs/middleware' build
 bun run bench:memory
 ```
 
-The Node matrix includes Nifra, Fastify, Elysia, Hono, and Express. Bun and Deno run those same
-frameworks, plus a raw runtime server used as a local floor in the capture artifact. Nifra, Elysia,
+The Node matrix includes Nifra, Nifra on `@nifrajs/node-uws` (uWebSockets.js), Fastify, Elysia, Hono,
+and Express. Bun and Deno run the same frameworks minus the uWebSockets row, plus a raw runtime
+server used as a local floor in the capture artifact. Nifra, Elysia,
 and Hono use their runtime-native server fixtures on Bun and Deno; Fastify and Express use that
 runtime's `node:http` compatibility. Raw runtime rows stay out of the website tables.
 
