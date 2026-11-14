@@ -539,13 +539,15 @@ export const KNOWN_STDERR: readonly {
   {
     // Linux workerd logs the C++ check that refused an input: a URL or Host it cannot parse (a port
     // past 65535 fails while it builds the request URL), a bad chunk size, a CONNECT with no connect()
-    // handler to take it, a close frame RFC 6455 forbids (and the proxy's copy of that failure). macOS
-    // workerd logs none of these. The case is still judged on its answer, and an exception in the
-    // Worker's own code logs as a JavaScript error, not one of these.
+    // handler to take it, a close frame RFC 6455 forbids (and the proxy's copy of that failure). Newer
+    // workerd builds redact the same input failure as `Uncaught Error: internal error; reference = ...`.
+    // Only that reference form is accepted; a generic JavaScript error remains a fault. macOS workerd
+    // logs none of these. The case is still judged on its answer, and an exception in the Worker's own
+    // code logs as a JavaScript error, not one of these.
     id: "U17 workerd-logs-refused-input",
     lane: "workerd",
     entry:
-      /^✘ \[ERROR\] (?:Uncaught exception: |e = )(?:kj|workerd)\/[\w/-]+\.(?:c\+\+|h):\d+: failed: /,
+      /^✘ \[ERROR\] (?:(?:Uncaught exception: |e = )(?:kj|workerd)\/[\w/-]+\.(?:c\+\+|h):\d+: failed: |Uncaught Error: internal error; reference = [A-Za-z0-9]+$)/,
   },
 ]
 
