@@ -112,6 +112,22 @@ describe("interpolation positions", () => {
     expect(html`<a href="java${"script:alert(1)"}">x</a>`.html).toBe(
       '<a href="about:invalid">x</a>',
     )
+    // Character references in the static text spell the same scheme once the browser decodes them.
+    expect(html`<script src="d&#97;${"ta:text/javascript,x"}"></script>`.html).toBe(
+      '<script src="about:invalid"></script>',
+    )
+    expect(html`<script src="${"data"}&#58;text/javascript,x"></script>`.html).toBe(
+      '<script src="about:invalid"></script>',
+    )
+    expect(html`<a href="j&#x61;va${"script&colon;alert(1)"}">x</a>`.html).toContain(
+      "script&amp;colon;",
+    )
+    expect(html`<a href="${"javascript"}&colon;alert(1)">x</a>`.html).toBe(
+      '<a href="about:invalid">x</a>',
+    )
+    expect(html`<a href="${"java"}&Tab;${"script:x"}">x</a>`.html).toBe(
+      '<a href="about:invalid">x</a>',
+    )
     expect(html`<a href="${"home"}">x</a>`.html).toBe('<a href="home">x</a>')
     expect(html`<script src="${"data"}"></script>`.html).toBe('<script src="data"></script>')
     for (const tag of [

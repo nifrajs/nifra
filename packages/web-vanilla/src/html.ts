@@ -155,6 +155,21 @@ const isSpace = (c: string): boolean =>
   c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f"
 const isAlpha = (c: string): boolean => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z")
 
+const REFERENCE = /&(?:#[xX]([0-9a-fA-F]+);?|#([0-9]+);?|(colon|Tab|NewLine);)/g
+
+/**
+ * Static template text as the browser reads it: the character references that spell a scheme
+ * (`&#97;`, `&#x3a;`, `&colon;`, `&Tab;`) decoded, so `d&#97;${...}` is judged as `da...`.
+ */
+const decoded = (text: string): string =>
+  text.indexOf("&") < 0
+    ? text
+    : text.replace(REFERENCE, (_, hex?: string, dec?: string, named?: string) => {
+        if (named !== undefined) return named === "colon" ? ":" : named === "Tab" ? "\t" : "\n"
+        const code = hex !== undefined ? Number.parseInt(hex, 16) : Number.parseInt(dec ?? "", 10)
+        return code > 0x10ffff ? "\ufffd" : String.fromCodePoint(code)
+      })
+
 const valueEnd = (after: string): string => {
   for (let i = 0; i < after.length; i++) {
     const c = after.charCodeAt(i)
@@ -459,7 +474,7 @@ function analyze(strings: readonly string[]): CallSite {
           synthetic = true
         }
         state = QUOTED
-        const kind = valueKind === URL_VALUE && !schemeOpen(valueText) ? ATTR : valueKind
+        const kind = valueKind === URL_VALUE && !schemeOpen(decoded(valueText)) ? ATTR : valueKind
         const lead = kind === URL_VALUE ? (valueHoles === 0 ? valueText.length : -1) : 0
         const loadsScript =
           kind === URL_VALUE &&
@@ -584,7 +599,7 @@ function scriptUrl(url: string, tail: string, loadsScript: boolean): boolean {
   // A URL parser drops leading controls and spaces, and tabs and newlines anywhere.
   let i = 0
   while (i < url.length && url.charCodeAt(i) <= 0x20) i++
-  if (tail.length > 0 && schemeOpen(url)) url += tail
+  if (tail.length > 0 && schemeOpen(url)) url += decoded(tail)
   return (
     schemeAt(url, i, "javascript:") ||
     schemeAt(url, i, "vbscript:") ||
@@ -625,8 +640,8 @@ export function html(strings: TemplateStringsArray, ...values: HtmlValue[]): Tem
     else if (hole.kind === URL_VALUE) {
       if (hole.lead >= 0) {
         urlStart = out.length - hole.lead
-        url = (hole.lead > 0 ? out.slice(urlStart) : "") + urlText(value)
-      } else url += hole.before + urlText(value)
+        url = (hole.lead > 0 ? decoded(out.slice(urlStart)) : "") + urlText(value)
+      } else url += decoded(hole.before) + urlText(value)
       out += renderIn(value, hole)
       if (scriptUrl(url, hole.tail, hole.strict)) {
         // The static text that completed the scheme goes with it.
