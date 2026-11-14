@@ -183,8 +183,8 @@ const valueEnd = (after: string): string => {
       break
     }
   }
-  // Text that opens with a character no scheme or reference can contain (`/`, `?`, `#`...) cannot
-  // complete a scheme, so it is not carried at all.
+  // Text that opens with a character no scheme or character reference can contain (`/`, `?`...)
+  // cannot complete a scheme, so it is not carried at all. `#` and `;` finish a reference.
   const first = after.charCodeAt(0)
   const l = first | 0x20
   const extends_ =
@@ -195,7 +195,9 @@ const valueEnd = (after: string): string => {
     first === 0x2d ||
     first === 0x2e ||
     first === 0x3a ||
-    first === 0x26
+    first === 0x26 ||
+    first === 0x23 ||
+    first === 0x3b
   return end > 0 && extends_ ? after.slice(0, end) : ""
 }
 
