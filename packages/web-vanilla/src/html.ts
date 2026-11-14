@@ -116,6 +116,8 @@ interface Place {
   readonly valued: boolean
   /** A URL value that loads a script: `data:` runs there as well, so it is refused too. */
   readonly strict: boolean
+  /** The static text before it ends inside a character reference the interpolation completes. */
+  readonly joined: boolean
 }
 
 interface Hole extends Place {
@@ -155,6 +157,8 @@ const isSpace = (c: string): boolean =>
   c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f"
 const isAlpha = (c: string): boolean => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z")
 
+// A character reference the text ends in the middle of: an interpolation can complete it.
+const OPEN_REFERENCE = /&#?[0-9A-Za-z]*$/
 const REFERENCE = /&(?:#[xX]([0-9a-fA-F]+);?|#([0-9]+);?|(colon|Tab|NewLine);)/g
 
 /**
@@ -436,7 +440,7 @@ function analyze(strings: readonly string[]): CallSite {
       case TAG_OPEN:
       case END_TAG_OPEN:
       case TAG_NAME:
-        hole = { kind: TAG, lead: 0, valued: false, strict: false }
+        hole = { kind: TAG, lead: 0, valued: false, strict: false, joined: false }
         if (state !== TAG_NAME) endTag = state === END_TAG_OPEN
         state = TAG_NAME
         tagDynamic = true
@@ -448,10 +452,16 @@ function analyze(strings: readonly string[]): CallSite {
       case SELF_CLOSING:
         if (state === ATTR_NAME && (attrName.startsWith("data-") || attrName.startsWith("aria-"))) {
           // No name past these prefixes runs code or loads a URL, so the value stays plain text.
-          hole = { kind: NAME, lead: 0, valued: false, strict: false }
+          hole = { kind: NAME, lead: 0, valued: false, strict: false, joined: false }
           break
         }
-        hole = { kind: NAME, lead: 0, valued: VALUED.test(strings[part + 1] ?? ""), strict: false }
+        hole = {
+          kind: NAME,
+          lead: 0,
+          valued: VALUED.test(strings[part + 1] ?? ""),
+          strict: false,
+          joined: false,
+        }
         if (state !== ATTR_NAME) attrName = ""
         state = ATTR_NAME
         attrDynamic = true
@@ -474,21 +484,28 @@ function analyze(strings: readonly string[]): CallSite {
           synthetic = true
         }
         state = QUOTED
-        const kind = valueKind === URL_VALUE && !schemeOpen(decoded(valueText)) ? ATTR : valueKind
+        const settled = valueText.replace(OPEN_REFERENCE, "")
+        const kind = valueKind === URL_VALUE && !schemeOpen(decoded(settled)) ? ATTR : valueKind
         const lead = kind === URL_VALUE ? (valueHoles === 0 ? valueText.length : -1) : 0
         const loadsScript =
           kind === URL_VALUE &&
           (attrName === "src" || attrName === "href" || attrName === "xlink:href") &&
           tagName.toLowerCase() === "script"
-        hole = { kind, lead, valued: false, strict: loadsScript }
+        hole = {
+          kind,
+          lead,
+          valued: false,
+          strict: loadsScript,
+          joined: settled.length !== valueText.length,
+        }
         valueHoles++
         break
       }
       case RAW:
-        hole = { kind: rawCode ? CODE : TEXT, lead: 0, valued: false, strict: false }
+        hole = { kind: rawCode ? CODE : TEXT, lead: 0, valued: false, strict: false, joined: false }
         break
       default:
-        hole = { kind: TEXT, lead: 0, valued: false, strict: false }
+        hole = { kind: TEXT, lead: 0, valued: false, strict: false, joined: false }
     }
     statics.push(cur)
     places.push(hole)
@@ -631,6 +648,7 @@ export function html(strings: TemplateStringsArray, ...values: HtmlValue[]): Tem
   const ranges: SlotRange[] = []
   let urlStart = 0
   let url = ""
+  let joined = false
   const holes = site.holes
   for (let i = 0; i < holes.length; i++) {
     const hole = holes[i]
@@ -640,10 +658,14 @@ export function html(strings: TemplateStringsArray, ...values: HtmlValue[]): Tem
     else if (hole.kind === URL_VALUE) {
       if (hole.lead >= 0) {
         urlStart = out.length - hole.lead
+        joined = false
         url = (hole.lead > 0 ? decoded(out.slice(urlStart)) : "") + urlText(value)
       } else url += decoded(hole.before) + urlText(value)
       out += renderIn(value, hole)
-      if (scriptUrl(url, hole.tail, hole.strict)) {
+      // A reference the interpolation completes (`&#9` + `7;`) only exists in the emitted text.
+      if (hole.joined) joined = true
+      if (joined) url = decoded(out.slice(urlStart) + hole.tail)
+      if (scriptUrl(url, joined ? "" : hole.tail, hole.strict)) {
         // The static text that completed the scheme goes with it.
         out = `${out.slice(0, urlStart)}about:invalid${hole.after.slice(hole.tail.length)}`
       } else out += hole.after

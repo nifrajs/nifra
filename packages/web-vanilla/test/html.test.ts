@@ -128,6 +128,14 @@ describe("interpolation positions", () => {
     expect(html`<a href="${"java"}&Tab;${"script:x"}">x</a>`.html).toBe(
       '<a href="about:invalid">x</a>',
     )
+    // ...including a reference the interpolation itself completes.
+    expect(html`<script src="d&#9${"7;ta:text/javascript,x"}"></script>`.html).toBe(
+      '<script src="about:invalid"></script>',
+    )
+    expect(html`<a href="${"javascript"}&colon${";alert(1)"}">x</a>`.html).toBe(
+      '<a href="about:invalid">x</a>',
+    )
+    expect(html`<a href="/a?x=&am${"p;y"}">x</a>`.html).toBe('<a href="/a?x=&amp;y">x</a>')
     expect(html`<a href="${"home"}">x</a>`.html).toBe('<a href="home">x</a>')
     expect(html`<script src="${"data"}"></script>`.html).toBe('<script src="data"></script>')
     for (const tag of [
