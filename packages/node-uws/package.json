@@ -1,7 +1,6 @@
 {
   "name": "@nifrajs/node-uws",
   "version": "5.13.0",
-  "private": true,
   "description": "Serve a nifra app on uWebSockets.js from Node - the node-direct lane over uWS's native HTTP server.",
   "keywords": [
     "nifra",
@@ -28,6 +27,7 @@
     "dist",
     "src",
     "README.md",
+    "LLM.md",
     "CHANGELOG.md"
   ],
   "sideEffects": false,
@@ -38,7 +38,7 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "@nifrajs/node": "^5.13.0",
+    "@nifrajs/node": "^5.14.0",
     "uWebSockets.js": ">=20.60.0"
   },
   "peerDependenciesMeta": {
@@ -52,5 +52,17 @@
     "typescript": "^6.0.3",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.71.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/node-uws"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
 }

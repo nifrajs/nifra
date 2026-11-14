@@ -73,7 +73,7 @@ const WORKLOADS: readonly string[] = FULL
 // Canonical row order per section (ceiling last in each list is fine - rows are re-sorted by rps).
 const FRAMEWORKS: Record<string, readonly string[]> = {
   bun: ["nifra", "elysia", "hono", "fastify", "bun-native"],
-  node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
+  node: ["nifra", "nifra-uws", "hono", "fastify", "express", "elysia", "node-raw"],
   deno: ["nifra", "hono", "elysia", "fastify", "deno-raw"],
 }
 const CEILING: Record<string, string> = {

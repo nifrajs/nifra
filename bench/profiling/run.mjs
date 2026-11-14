@@ -89,6 +89,12 @@ let targets = [
   },
 ]
 if (mode === "memory") {
+  if (runtime === "node")
+    targets.splice(1, 0, {
+      name: "nifra-uws",
+      file: "bench/http-realworld/serve-node-nifra-uws.ts",
+      args: [],
+    })
   for (const name of ["hono", "express"])
     targets.push({ name, file: "bench/http-realworld/serve-node.ts", args: [name] })
 }
@@ -297,10 +303,15 @@ const meta = {
   platform: `${platform()} ${release()}`,
   cpu: cpus()[0]?.model,
   versions: Object.fromEntries(
-    ["@nifrajs/core", "fastify", "elysia", "@elysiajs/node", "hono", "express"].map((name) => [
-      name,
-      packageVersion(name),
-    ]),
+    [
+      "@nifrajs/core",
+      "@nifrajs/node-uws",
+      "fastify",
+      "elysia",
+      "@elysiajs/node",
+      "hono",
+      "express",
+    ].map((name) => [name, packageVersion(name)]),
   ),
   nifraBundleSHA256: createHash("sha256")
     .update(await readFile(nifraBundle))
