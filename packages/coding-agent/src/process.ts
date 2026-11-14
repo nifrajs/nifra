@@ -102,6 +102,22 @@ export async function runBoundedProcess(
       // The group is already gone.
     }
   }
+  // Not awaited by the call, but it keeps the process alive while the group still has members, so a
+  // short-lived caller cannot exit before the SIGKILL that ends a descendant ignoring SIGTERM.
+  const reapGroup = (): void => {
+    signalAll("SIGTERM")
+    const deadline = Date.now() + KILL_GRACE_MS
+    const poll = setInterval(() => {
+      try {
+        process.kill(-proc.pid, 0)
+      } catch {
+        return clearInterval(poll)
+      }
+      if (Date.now() < deadline) return
+      signalAll("SIGKILL")
+      clearInterval(poll)
+    }, 25)
+  }
   const reading = new AbortController()
   const graceMs = Math.min(KILL_GRACE_MS, options.timeoutMs)
   let timedOut = false
@@ -120,11 +136,7 @@ export async function runBoundedProcess(
     if (!timedOut) {
       clearTimeout(timer)
       drain = setTimeout(() => reading.abort(), DRAIN_GRACE_MS)
-      if (PROCESS_GROUPS) {
-        signalAll("SIGTERM")
-        // Not awaited by the call, and not kept alive for: a group that is gone makes this a no-op.
-        setTimeout(() => signalAll("SIGKILL"), KILL_GRACE_MS).unref()
-      }
+      if (PROCESS_GROUPS) reapGroup()
     }
     return status
   })

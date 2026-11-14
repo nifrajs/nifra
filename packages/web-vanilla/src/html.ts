@@ -123,6 +123,8 @@ interface Hole extends Place {
   readonly before: string
   /** The static text between this interpolation and the next, quotes added. */
   readonly after: string
+  /** What of {@link after} still belongs to the attribute value: it ends at the closing quote. */
+  readonly tail: string
 }
 
 interface CallSite {
@@ -152,8 +154,34 @@ const VALUED = /^[\t\n\f\r ]*=/
 const isSpace = (c: string): boolean =>
   c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f"
 const isAlpha = (c: string): boolean => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z")
-const isBlank = (s: string): boolean => {
-  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 0x20) return false
+
+const valueEnd = (after: string): string => {
+  for (let i = 0; i < after.length; i++) {
+    const c = after.charCodeAt(i)
+    if (c === 0x22 || c === 0x27) return after.slice(0, i)
+  }
+  return after
+}
+
+/** Whether `text` could still be the start of a URL scheme: nothing in it has ended one. */
+const schemeOpen = (text: string): boolean => {
+  let i = 0
+  while (i < text.length && text.charCodeAt(i) <= 0x20) i++
+  for (; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c === 9 || c === 10 || c === 13) continue
+    const l = c | 0x20
+    if (
+      !(
+        (l >= 0x61 && l <= 0x7a) ||
+        (c >= 0x30 && c <= 0x39) ||
+        c === 0x2b ||
+        c === 0x2d ||
+        c === 0x2e
+      )
+    )
+      return false
+  }
   return true
 }
 
@@ -431,7 +459,7 @@ function analyze(strings: readonly string[]): CallSite {
           synthetic = true
         }
         state = QUOTED
-        const kind = valueKind === URL_VALUE && !isBlank(valueText) ? ATTR : valueKind
+        const kind = valueKind === URL_VALUE && !schemeOpen(valueText) ? ATTR : valueKind
         const lead = kind === URL_VALUE ? (valueHoles === 0 ? valueText.length : -1) : 0
         const loadsScript =
           kind === URL_VALUE &&
@@ -456,6 +484,7 @@ function analyze(strings: readonly string[]): CallSite {
       ...place,
       before: statics[i] ?? "",
       after: statics[i + 1] ?? "",
+      tail: valueEnd(statics[i + 1] ?? ""),
     })),
   }
 }
@@ -546,11 +575,16 @@ function urlText(value: HtmlValue): string {
   return value == null || value === false ? "" : String(value)
 }
 
-/** Whether a URL value would run script when followed; `loadsScript` where it is the script itself. */
-function scriptUrl(url: string, loadsScript: boolean): boolean {
+/**
+ * Whether a URL value would run script when followed; `loadsScript` where it is the script itself.
+ * `tail` is the static text that follows the interpolation inside the value: it can complete a scheme
+ * the interpolated text only began.
+ */
+function scriptUrl(url: string, tail: string, loadsScript: boolean): boolean {
   // A URL parser drops leading controls and spaces, and tabs and newlines anywhere.
   let i = 0
   while (i < url.length && url.charCodeAt(i) <= 0x20) i++
+  if (tail.length > 0 && schemeOpen(url)) url += tail
   return (
     schemeAt(url, i, "javascript:") ||
     schemeAt(url, i, "vbscript:") ||
@@ -591,11 +625,13 @@ export function html(strings: TemplateStringsArray, ...values: HtmlValue[]): Tem
     else if (hole.kind === URL_VALUE) {
       if (hole.lead >= 0) {
         urlStart = out.length - hole.lead
-        url = urlText(value)
+        url = (hole.lead > 0 ? out.slice(urlStart) : "") + urlText(value)
       } else url += hole.before + urlText(value)
       out += renderIn(value, hole)
-      if (scriptUrl(url, hole.strict)) out = `${out.slice(0, urlStart)}about:invalid`
-      out += hole.after
+      if (scriptUrl(url, hole.tail, hole.strict)) {
+        // The static text that completed the scheme goes with it.
+        out = `${out.slice(0, urlStart)}about:invalid${hole.after.slice(hole.tail.length)}`
+      } else out += hole.after
     } else out += renderIn(value, hole) + hole.after
   }
   const template = new Template(out)

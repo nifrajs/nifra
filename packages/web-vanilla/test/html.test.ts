@@ -93,6 +93,27 @@ describe("interpolation positions", () => {
     expect(html`<script src="/a.js?u=${"data:x"}"></script>`.html).toBe(
       '<script src="/a.js?u=data:x"></script>',
     )
+    // The scheme is only complete once the static text around the interpolation is read with it.
+    expect(html`<script src="${"data"}:text/javascript,x"></script>`.html).toBe(
+      '<script src="about:invalid"></script>',
+    )
+    expect(html`<script src=${"data"}:text/javascript,x></script>`.html).toBe(
+      '<script src="about:invalid"></script>',
+    )
+    expect(html`<script src="da${"ta:text/javascript,x"}"></script>`.html).toBe(
+      '<script src="about:invalid"></script>',
+    )
+    expect(html`<script src="${"da"}t${"a:x"}"></script>`.html).toBe(
+      '<script src="about:invalid"></script>',
+    )
+    expect(html`<a href="${"javascript"}:alert(1)">x</a>`.html).toBe(
+      '<a href="about:invalid">x</a>',
+    )
+    expect(html`<a href="java${"script:alert(1)"}">x</a>`.html).toBe(
+      '<a href="about:invalid">x</a>',
+    )
+    expect(html`<a href="${"home"}">x</a>`.html).toBe('<a href="home">x</a>')
+    expect(html`<script src="${"data"}"></script>`.html).toBe('<script src="data"></script>')
     for (const tag of [
       html`<img src="${"data:image/png;base64,AAAA"}">`,
       html`<a download href="${"data:text/plain,hi"}">x</a>`,

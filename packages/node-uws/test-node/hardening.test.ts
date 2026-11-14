@@ -134,6 +134,7 @@ function makeApp() {
     })
     .get("/cancelled", () => ({ cancelled }))
     .post("/no-read", () => ({ ignored: true }))
+    .post("/echo-stream", (c) => new Response(c.req.body))
     .post("/no-read-slow", async () => {
       await sleep(60)
       return { ignored: true }
@@ -400,6 +401,13 @@ test("an answer that goes out while the upload is paused for backpressure frees 
     }, 4000).unref()
   })
   assert.equal((text.match(/HTTP\/1\.1 200/g) ?? []).length, 2, text.slice(0, 400))
+})
+
+test("a response that streams the upload back still reads it after the throttle is lifted", async () => {
+  const body = Buffer.alloc(3_000_000, 7)
+  const response = await fetch(`http://127.0.0.1:${port}/echo-stream`, { method: "POST", body })
+  assert.equal(response.status, 200)
+  assert.equal((await response.arrayBuffer()).byteLength, body.length)
 })
 
 test("answering before the upload finishes (a 401) does not corrupt the next request on the socket", async () => {

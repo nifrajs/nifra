@@ -71,10 +71,17 @@ export class BodyChannel {
    * The answer is about to be written. A body nothing has started to read never will be, so it stops
    * being buffered and throttled: a socket left paused here cannot be resumed once the response ends
    * (uWS invalidates `res` then), and the next request on the connection would never be read. A body
-   * with a reader keeps its own flow control.
+   * with a reader, or a stream handed out that a response may yet read, keeps its own flow control.
    */
   unthrottle(): void {
-    if (this.gone || this.aborted || this.collecting || this.pulled || this.all !== undefined)
+    if (
+      this.gone ||
+      this.aborted ||
+      this.collecting ||
+      this.pulled ||
+      this.all !== undefined ||
+      this.streamValue !== undefined
+    )
       return
     this.discarded = true
     this.chunks = []

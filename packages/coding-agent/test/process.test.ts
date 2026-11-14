@@ -84,3 +84,40 @@ test.skipIf(process.platform === "win32")(
   },
   20_000,
 )
+
+test.skipIf(process.platform === "win32")(
+  "a descendant that ignores SIGTERM is still killed when the caller's process exits right after",
+  async () => {
+    const ground = await mkdtemp(join(tmpdir(), "nifra-process-test-"))
+    try {
+      const descendant =
+        'process.on("SIGTERM", () => {}); await Bun.write("pid", String(process.pid));' +
+        "setInterval(() => {}, 1000)"
+      const runner =
+        `import { runBoundedProcess } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};` +
+        'await runBoundedProcess(["sh", "-c", \'"$BUN" -e "$CODE" >/dev/null 2>&1 &\\nwhile [ ! -e pid ]; do :; done\'], ' +
+        `{ cwd: ${JSON.stringify(ground)}, env: { PATH: process.env.PATH ?? "", BUN: process.execPath, CODE: process.env.CODE ?? "" }, ` +
+        "timeoutMs: 120000, maxStdoutBytes: 1024, maxStderrBytes: 1024 })"
+      const parent = Bun.spawn([process.execPath, "-e", runner], {
+        env: { PATH: process.env.PATH ?? "", CODE: descendant },
+        stdout: "ignore",
+        stderr: "inherit",
+      })
+      expect(await parent.exited).toBe(0)
+      const pid = Number(await Bun.file(join(ground, "pid")).text())
+      let alive = true
+      for (let i = 0; i < 40 && alive; i++) {
+        try {
+          process.kill(pid, 0)
+          await Bun.sleep(25)
+        } catch {
+          alive = false
+        }
+      }
+      expect(alive).toBe(false)
+    } finally {
+      await rm(ground, { recursive: true, force: true })
+    }
+  },
+  20_000,
+)
