@@ -4728,6 +4728,18 @@ _No named exports (side-effect entrypoint)._
 - **resolveRequestTarget** _(const)_ - `resolveRequestTarget: (target: string, normalizeTarget: boolean) => string`
   The origin-form target the app routes on: absolute-form unwrapped, dot segments resolved when asked.
 
+## @nifrajs/node-uws
+
+- **FetchHandler** _(interface)_ - `interface FetchHandler`
+  Anything exposing a Web `fetch` handler - a nifra `app`, for instance.
+- **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
+  How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`.
+- **ServeOptions** _(interface)_ - `interface ServeOptions`
+- **UwsServer** _(interface)_ - `interface UwsServer`
+- **UwsTlsOptions** _(interface)_ - `interface UwsTlsOptions`
+  HTTPS from files, in uWS's own terms: it reads the key and certificate itself, so these are paths rather than the PEM text `@nifrajs/node` takes.
+- **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<UwsServer>`
+
 ## @nifrajs/otel
 
 ### `@nifrajs/otel`

@@ -25,7 +25,7 @@ const DIR = import.meta.dir
 // Mirrors aggregate.ts's canonical sets (ceiling listed last). Fastify uses node:http compatibility
 // on Bun and Deno; Elysia uses its Node adapter and Web-Standard adapter outside Bun.
 const SETS = {
-  node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
+  node: ["nifra", "nifra-uws", "hono", "fastify", "express", "elysia", "node-raw"],
   bun: ["nifra", "hono", "elysia", "fastify", "bun-native"],
   deno: ["nifra", "hono", "elysia", "fastify", "deno-raw"],
 } as const

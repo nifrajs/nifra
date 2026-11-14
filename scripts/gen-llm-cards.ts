@@ -338,6 +338,9 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   "@nifrajs/node": [
     "Adapts Node's `http` server via a `Request`<->stream bridge; call the graceful `stop()` so in-flight requests drain on shutdown.",
   ],
+  "@nifrajs/node-uws": [
+    "Serves the app on uWebSockets.js, which is installed from GitHub and ships no musl or Windows-arm64 binary; it has no WebSocket or static-file support, so use `@nifrajs/node` for those.",
+  ],
   "@nifrajs/deno": [
     "Runs on `Deno.serve` with a graceful `stop()`; OS signal handling is **opt-in** (Deno permissions), not automatic.",
   ],

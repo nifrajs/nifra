@@ -106,6 +106,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/middleware` - Composable middleware for nifra - auth, CSRF, JWT/JWKS, IP restriction, CORS, body limits, response cache, timing, and operational helpers.
 - `@nifrajs/mock` - Contract-based mock server - reads route schemas and generates fake responses.
 - `@nifrajs/node` - Run a nifra app on Node's http server - a Request<->stream adapter with a graceful stop().
+- `@nifrajs/node-uws` - Serve a nifra app on uWebSockets.js from Node - the node-direct lane over uWS's native HTTP server.
 - `@nifrajs/otel` - Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTelemetry-semantic-convention spans via a pluggable exporter. Bridge to the OpenTelemetry SDK or log spans directly; no SDK bundled. Edge-safe.
 - `@nifrajs/pi` - Optional Pi coding-agent backend for the Nifra agent protocol.
 - `@nifrajs/prompt` - Type-safe prompts - bind an instruction to input/output Standard Schemas and get validated, typed LLM results from any provider.

@@ -251,6 +251,8 @@ const SKIPS: Readonly<Record<string, string>> = Object.freeze({
   "@nifrajs/middleware": "middleware package; covered by package and contract tests",
   "@nifrajs/mock": "test-only mock adapter; covered by package tests",
   nifra: "unscoped convenience re-export; publication gate covers its manifest",
+  "@nifrajs/node-uws":
+    "loads the uWebSockets.js native addon, which is installed from GitHub rather than npm; covered by test:node",
   "@nifrajs/otel": "OpenTelemetry integration package; covered by package tests",
   "@nifrajs/prompt": "prompt tooling; covered by package tests and corpus gates",
   "@nifrajs/runner": "development runner; covered by package tests",
