@@ -136,6 +136,17 @@ describe("interpolation positions", () => {
       '<a href="about:invalid">x</a>',
     )
     expect(html`<a href="/a?x=&am${"p;y"}">x</a>`.html).toBe('<a href="/a?x=&amp;y">x</a>')
+    // A tail that opens with `;` or `#` can still finish a character reference.
+    expect(html`<a href="jav&#9${"7"};script:alert(1)">x</a>`.html).toBe(
+      '<a href="about:invalid">x</a>',
+    )
+    expect(html`<a href="java&#11${"5"};cript:alert(1)">x</a>`.html).toBe(
+      '<a href="about:invalid">x</a>',
+    )
+    expect(html`<a href="&${""}#106;avascript:alert(1)">x</a>`.html).toBe(
+      '<a href="about:invalid">x</a>',
+    )
+    expect(html`<a href="/p${"x"}#top">x</a>`.html).toBe('<a href="/px#top">x</a>')
     // Blanks that only the static text supplies still lead the URL. What a later interpolation adds
     // follows `about:` and stays inert text.
     expect(html`<script src="${""} data:text/javascript,${"alert(1)"}"></script>`.html).toBe(

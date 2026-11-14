@@ -175,11 +175,30 @@ const decoded = (text: string): string =>
       })
 
 const valueEnd = (after: string): string => {
+  let end = after.length
   for (let i = 0; i < after.length; i++) {
     const c = after.charCodeAt(i)
-    if (c === 0x22 || c === 0x27) return after.slice(0, i)
+    if (c === 0x22 || c === 0x27) {
+      end = i
+      break
+    }
   }
-  return after
+  // Text that opens with a character no scheme or character reference can contain (`/`, `?`...)
+  // cannot complete a scheme, so it is not carried at all. `#` and `;` finish a reference.
+  const first = after.charCodeAt(0)
+  const l = first | 0x20
+  const extends_ =
+    first <= 0x20 ||
+    (l >= 0x61 && l <= 0x7a) ||
+    (first >= 0x30 && first <= 0x39) ||
+    first === 0x2b ||
+    first === 0x2d ||
+    first === 0x2e ||
+    first === 0x3a ||
+    first === 0x26 ||
+    first === 0x23 ||
+    first === 0x3b
+  return end > 0 && extends_ ? after.slice(0, end) : ""
 }
 
 /** Whether `text` could still be the start of a URL scheme: nothing in it has ended one. */
@@ -613,8 +632,19 @@ function urlText(value: HtmlValue): string {
  * the interpolated text only began.
  */
 function scriptUrl(url: string, tail: string, loadsScript: boolean): boolean {
+  // Most URLs open with a character no scheme that runs script does (`j`, `v`, `d`, or a blank).
+  const first = url.charCodeAt(0)
+  const letter = first | 0x20
+  if (tail.length === 0 && first > 0x20 && letter !== 0x6a && letter !== 0x76 && letter !== 0x64)
+    return false
+  return (
+    runsScript(url, loadsScript) ||
+    (tail.length > 0 && schemeOpen(url) && runsScript(url + decoded(tail), loadsScript))
+  )
+}
+
+function runsScript(url: string, loadsScript: boolean): boolean {
   // A URL parser drops leading controls and spaces, and tabs and newlines anywhere.
-  if (tail.length > 0 && schemeOpen(url)) url += decoded(tail)
   let i = 0
   while (i < url.length && url.charCodeAt(i) <= 0x20) i++
   return (
