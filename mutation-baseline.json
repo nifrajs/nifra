@@ -7059,12 +7059,6 @@
     },
     {
       "op": "binary ??->&&",
-      "fn": "attach",
-      "code": "sources: sourcesOf(next) ?? active.sources,",
-      "from": "??"
-    },
-    {
-      "op": "binary ??->&&",
       "fn": "breaksAround",
       "code": "if (matches(parent, owner) && tops.some((top) => matches(top, has[1] ?? \"\"))) return true",
       "from": "??"
@@ -7815,12 +7809,6 @@
       "fn": "after",
       "code": "slots.delete(key)",
       "from": "slots.delete(key)"
-    },
-    {
-      "op": "delete statement",
-      "fn": "attach",
-      "code": "active = {",
-      "from": "active = { instance: active.instance, index: active.index, settled: next, // The epoch and identity the restore started "
     },
     {
       "op": "delete statement",
