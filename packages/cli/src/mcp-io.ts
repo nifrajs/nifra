@@ -233,7 +233,11 @@ function decodeLine(chunks: readonly Uint8Array[], totalBytes: number): string {
   return new TextDecoder().decode(bytes)
 }
 
-/** Read newline-delimited input without retaining a line larger than the configured byte budget. */
+/**
+ * Read newline-delimited input without retaining a line larger than the configured byte budget. A
+ * line over the budget is reported as `too-large` the moment it crosses it, not when it ends, so a
+ * peer that never sends a newline is noticed; the rest of that line is skipped.
+ */
 export async function* readBoundedLines(
   stream: ReadableStream<Uint8Array>,
   maxBytes = CHILD_INPUT_MAX_BYTES,
@@ -255,22 +259,21 @@ export async function* readBoundedLines(
           tooLarge = true
           chunks.length = 0
           totalBytes = 0
+          yield { kind: "too-large" }
         } else if (segment.byteLength > 0) {
           chunks.push(segment)
           totalBytes += segment.byteLength
         }
       }
       if (newline === -1) break
-      if (tooLarge) yield { kind: "too-large" }
-      else yield { kind: "line", text: decodeLine(chunks, totalBytes) }
+      if (!tooLarge) yield { kind: "line", text: decodeLine(chunks, totalBytes) }
       chunks.length = 0
       totalBytes = 0
       tooLarge = false
       start = newline + 1
     }
   }
-  if (tooLarge) yield { kind: "too-large" }
-  else if (totalBytes > 0) yield { kind: "line", text: decodeLine(chunks, totalBytes) }
+  if (!tooLarge && totalBytes > 0) yield { kind: "line", text: decodeLine(chunks, totalBytes) }
 }
 
 /** Serialize a JSON value only when its UTF-8 representation fits within the byte budget. */

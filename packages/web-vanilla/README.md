@@ -18,7 +18,7 @@ To refresh one region from a link or GET form without a full reload, render it w
 
 - In text and in a quoted attribute value, it is HTML-escaped.
 - An unquoted attribute value (`class=${name}`) is quoted for you, so a space in the value cannot start another attribute.
-- A `javascript:` or `vbscript:` URL that begins an `href`, `src`, `action` or other URL attribute is written as `about:invalid`.
+- A `javascript:` or `vbscript:` URL that begins an `href`, `src`, `action` or other URL attribute is written as `about:invalid`. So is a `data:` URL that begins the `src` (or `href`) of a `<script>`, which runs; a `data:` image, download, frame or object URL is kept.
 - No escaping makes a string safe as a tag name, inside `<script>` or `<style>`, or in an `on*` handler or `srcdoc` value, so a string or nested template throws there. An attribute name takes only a plain name with no value (`<input ${checked ? "checked" : ""}>`), or a suffix after `data-` or `aria-`. Numbers and booleans fill any of these, and `raw()` is the explicit opt-out for trusted text.
 
 Need a stateful app UI with reactive components? That is what the five framework adapters are for - reach for `@nifrajs/web-preact` or `@nifrajs/web-solid` when you want a small reactive runtime.

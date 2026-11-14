@@ -114,6 +114,25 @@ test("bounded worker lines cap oversized input and preserve split UTF-8 lines", 
   ])
 })
 
+test("a line that crosses the byte budget is reported before its newline arrives", async () => {
+  const open = Promise.withResolvers<void>()
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(new TextEncoder().encode("xxxxxxxx"))
+      // Nothing more until the first report is in: a peer that never ends its line.
+      await open.promise
+      controller.enqueue(new TextEncoder().encode("yy\nok\n"))
+      controller.close()
+    },
+  })
+  const reader = readBoundedLines(stream, 4)
+  expect(await reader.next()).toEqual({ done: false, value: { kind: "too-large" } })
+  open.resolve()
+  const rest: Array<{ kind: string; text?: string }> = []
+  for await (const line of reader) rest.push(line)
+  expect(rest).toEqual([{ kind: "line", text: "ok" }])
+})
+
 test("bounded JSON serialization rejects oversized or non-serializable values", () => {
   expect(serializeBoundedJson({ ok: true }, 32)).toBe('{"ok":true}')
   expect(serializeBoundedJson({ value: "x".repeat(64) }, 32)).toBeUndefined()

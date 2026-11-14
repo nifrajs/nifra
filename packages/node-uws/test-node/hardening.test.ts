@@ -8,6 +8,7 @@ import { join } from "node:path"
 import { after, before, test } from "node:test"
 import { server, status } from "@nifrajs/core"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
+import { BODY_HIGH_WATER, BodyChannel } from "../src/body.ts"
 import { serve, type UwsServer } from "../src/index.ts"
 import { AUTH, parseHead, raw, rawExchange, sleep } from "./support.ts"
 
@@ -134,6 +135,16 @@ function makeApp() {
     })
     .get("/cancelled", () => ({ cancelled }))
     .post("/no-read", () => ({ ignored: true }))
+    .post("/echo-stream", (c) => new Response(c.req.body))
+    .post("/touch-body-slow", async (c) => {
+      void c.req.body
+      await sleep(60)
+      return { ignored: true }
+    })
+    .post("/no-read-slow", async () => {
+      await sleep(60)
+      return { ignored: true }
+    })
     .post("/auth-first", (c) => {
       if (c.header("authorization") === null) return status(401, { ok: false })
       return { ok: true }
@@ -368,6 +379,69 @@ test("a handler that answers without reading the body leaves the connection usab
     }, 3000).unref()
   })
   assert.equal((text.match(/HTTP\/1\.1 200/g) ?? []).length, 2, text.slice(0, 400))
+})
+
+test("an answer that goes out while the upload is paused for backpressure frees the socket for the next request", async () => {
+  // 4 MB lands while the handler is still awaiting: the channel pauses the socket at 1 MB, and the
+  // handler then answers without ever reading, so nothing but the channel's close can resume it.
+  const body = Buffer.alloc(4_000_000, 5)
+  const first = `POST /no-read-slow HTTP/1.1\r\nHost: x\r\ncontent-length: ${body.length}\r\n\r\n`
+  const text = await new Promise<string>((resolve) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(first)
+      socket.write(body)
+      socket.write("GET /who HTTP/1.1\r\nHost: x\r\n\r\n")
+    })
+    let received = ""
+    socket.on("data", (data) => {
+      received += data.toString("latin1")
+      if ((received.match(/HTTP\/1\.1 200/g) ?? []).length === 2 && received.endsWith("}")) {
+        socket.destroy()
+        resolve(received)
+      }
+    })
+    // Well inside uWS's 10 s idle timeout, which would otherwise end a stuck socket and mask the hang.
+    setTimeout(() => {
+      socket.destroy()
+      resolve(received)
+    }, 4000).unref()
+  })
+  assert.equal((text.match(/HTTP\/1\.1 200/g) ?? []).length, 2, text.slice(0, 400))
+})
+
+test("an answer that goes out with the body stream touched but unread, upload paused, frees the socket for the next request", async () => {
+  // 4 MB lands while the handler is still awaiting: the channel pauses the socket at 1 MB, and the
+  // handler then answers without ever reading, so nothing but the channel's close can resume it.
+  const body = Buffer.alloc(4_000_000, 5)
+  const first = `POST /touch-body-slow HTTP/1.1\r\nHost: x\r\ncontent-length: ${body.length}\r\n\r\n`
+  const text = await new Promise<string>((resolve) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(first)
+      socket.write(body)
+      socket.write("GET /who HTTP/1.1\r\nHost: x\r\n\r\n")
+    })
+    let received = ""
+    socket.on("data", (data) => {
+      received += data.toString("latin1")
+      if ((received.match(/HTTP\/1\.1 200/g) ?? []).length === 2 && received.endsWith("}")) {
+        socket.destroy()
+        resolve(received)
+      }
+    })
+    // Well inside uWS's 10 s idle timeout, which would otherwise end a stuck socket and mask the hang.
+    setTimeout(() => {
+      socket.destroy()
+      resolve(received)
+    }, 4000).unref()
+  })
+  assert.equal((text.match(/HTTP\/1\.1 200/g) ?? []).length, 2, text.slice(0, 400))
+})
+
+test("a response that streams the upload back still reads it after the throttle is lifted", async () => {
+  const body = Buffer.alloc(100_000, 7)
+  const response = await fetch(`http://127.0.0.1:${port}/echo-stream`, { method: "POST", body })
+  assert.equal(response.status, 200)
+  assert.equal((await response.arrayBuffer()).byteLength, body.length)
 })
 
 test("answering before the upload finishes (a 401) does not corrupt the next request on the socket", async () => {
@@ -618,4 +692,64 @@ test("HTTPS from key and certificate files", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+function fakeUpload(): {
+  res: never
+  push: (bytes: number, last?: boolean) => void
+  resumed: () => number
+} {
+  let onData: (chunk: ArrayBuffer, isLast: boolean) => void = () => {}
+  let resumes = 0
+  const res = {
+    onData: (cb: typeof onData) => {
+      onData = cb
+    },
+    pause: () => {},
+    resume: () => {
+      resumes++
+    },
+  }
+  return {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: BodyChannel only calls onData, pause and resume on it
+    res: res as never,
+    push: (bytes, last = false) => onData(new ArrayBuffer(bytes), last),
+    resumed: () => resumes,
+  }
+}
+
+test("a lifted, untouched upload stops being buffered once a high-water mark of it has piled up", async () => {
+  const { res, push, resumed } = fakeUpload()
+  const channel = new BodyChannel(res)
+  const stream = channel.stream()
+  push(BODY_HIGH_WATER - 10)
+  push(BODY_HIGH_WATER - 10) // paused here, as it would be on the socket
+  channel.unthrottle()
+  assert.equal(resumed(), 1)
+  for (let i = 0; i < 8; i++) push(BODY_HIGH_WATER / 2)
+  await assert.rejects(stream.getReader().read(), TypeError)
+})
+
+test("a lifted upload that a response starts to read within the mark is delivered", async () => {
+  const { res, push } = fakeUpload()
+  const channel = new BodyChannel(res)
+  const reader = channel.stream().getReader()
+  push(1000)
+  channel.unthrottle()
+  push(500, true)
+  let total = 0
+  for (let next = await reader.read(); !next.done; next = await reader.read())
+    total += next.value.byteLength
+  assert.equal(total, 1500)
+})
+
+test("a lifted upload that a response reads whole is not cut at the high-water mark", async () => {
+  const { res, push } = fakeUpload()
+  const channel = new BodyChannel(res)
+  channel.stream()
+  channel.unthrottle()
+  const whole = channel.bytes()
+  for (let i = 0; i < 6; i++) push(BODY_HIGH_WATER / 2)
+  push(10, true)
+  assert.equal((await whole).byteLength, 3 * BODY_HIGH_WATER + 10)
 })

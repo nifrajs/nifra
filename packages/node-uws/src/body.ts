@@ -8,6 +8,7 @@ import type { HttpResponse } from "./uws.ts"
 export const BODY_HIGH_WATER = 1 << 20
 
 const EMPTY = Buffer.alloc(0)
+const UNREAD = "Body is unusable: the response was already being sent"
 
 /**
  * A request body as uWS delivers it: pushed chunks, copied out (uWS neuters the ArrayBuffer when the
@@ -27,6 +28,8 @@ export class BodyChannel {
   private pulled = false
   private discarded = false
   private gone = false
+  private aborted = false
+  private lifted = false
   private collecting = false
 
   constructor(res: HttpResponse) {
@@ -41,7 +44,19 @@ export class BodyChannel {
         copy.set(view)
         this.chunks.push(copy)
         this.queued += chunk.byteLength
-        if (!isLast && !this.paused && !this.collecting && this.queued >= BODY_HIGH_WATER) {
+        // Lifted with nobody reading: a long-lived response must not keep buffering the upload.
+        if (this.lifted && this.queued >= BODY_HIGH_WATER) {
+          this.discarded = true
+          this.chunks = []
+          this.queued = 0
+        }
+        if (
+          !isLast &&
+          !this.paused &&
+          !this.collecting &&
+          !this.lifted &&
+          this.queued >= BODY_HIGH_WATER
+        ) {
           this.paused = true
           res.pause()
         }
@@ -65,8 +80,32 @@ export class BodyChannel {
     this.wakeAll()
   }
 
+  /**
+   * The answer is about to be written. A body nothing has started to read never will be, so it stops
+   * being buffered and throttled: a socket left paused here cannot be resumed once the response ends
+   * (uWS invalidates `res` then), and the next request on the connection would never be read. A body
+   * with a reader keeps its own flow control. A stream handed out that nothing has pulled yet may still
+   * be read by the response, so it keeps its bytes and stops throttling instead. Nobody reading by
+   * {@link BODY_HIGH_WATER} bytes means nobody will, and the upload is dropped; a reader that starts
+   * first takes back the normal flow control.
+   */
+  unthrottle(): void {
+    if (this.gone || this.aborted || this.collecting || this.pulled || this.all !== undefined)
+      return
+    if (this.streamValue === undefined) {
+      this.discarded = true
+      this.chunks = []
+      this.queued = 0
+    } else this.lifted = true
+    if (this.paused) {
+      this.paused = false
+      this.res.resume()
+    }
+  }
+
   /** The client went away before the body finished. */
   abort(reason: unknown): void {
+    this.aborted = true
     if (this.ended) return
     this.failure = reason
     this.ended = true
@@ -95,6 +134,7 @@ export class BodyChannel {
 
   /** The whole body. Unusable once the {@link stream} has been read from, as a read `Request` is. */
   bytes(): Promise<Buffer> {
+    if (this.discarded) return Promise.reject(new TypeError(UNREAD))
     if (this.pulled) return Promise.reject(new TypeError("Body is unusable: it was already read"))
     this.all ??= this.collect()
     return this.all
@@ -104,6 +144,7 @@ export class BodyChannel {
     // A reader that wants every byte has no use for the throttle; the cap on how much it may take
     // is the caller's (core checks Content-Length before it reads, and caps a chunked body itself).
     this.collecting = true
+    this.lifted = false
     if (this.paused && !this.gone) {
       this.paused = false
       this.res.resume()
@@ -143,7 +184,9 @@ export class BodyChannel {
     this.streamValue ??= new ReadableStream<Uint8Array>(
       {
         pull: async (controller) => {
+          if (this.discarded) return controller.error(new TypeError(UNREAD))
           this.pulled = true
+          this.lifted = false
           for (;;) {
             const next = this.chunks.shift()
             if (next !== undefined) {
