@@ -630,6 +630,11 @@ function urlText(value: HtmlValue): string {
  * the interpolated text only began.
  */
 function scriptUrl(url: string, tail: string, loadsScript: boolean): boolean {
+  // Most URLs open with a character no scheme that runs script does (`j`, `v`, `d`, or a blank).
+  const first = url.charCodeAt(0)
+  const letter = first | 0x20
+  if (tail.length === 0 && first > 0x20 && letter !== 0x6a && letter !== 0x76 && letter !== 0x64)
+    return false
   return (
     runsScript(url, loadsScript) ||
     (tail.length > 0 && schemeOpen(url) && runsScript(url + decoded(tail), loadsScript))
