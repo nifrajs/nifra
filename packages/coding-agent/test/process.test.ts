@@ -121,3 +121,38 @@ test.skipIf(process.platform === "win32")(
   },
   20_000,
 )
+
+test.skipIf(process.platform === "win32")(
+  "a descendant that ignores SIGTERM is killed at the end of the grace, and holding the pipes does not hold the call",
+  async () => {
+    const ground = await mkdtemp(join(tmpdir(), "nifra-process-test-"))
+    try {
+      const descendant =
+        'process.on("SIGTERM", () => {}); await Bun.write("pid", String(process.pid));' +
+        "setInterval(() => {}, 1000)"
+      const script = '"$BUN" -e "$CODE" &\nwhile [ ! -e pid ]; do :; done'
+      await runBoundedProcess(["sh", "-c", script], {
+        cwd: ground,
+        env: { PATH: process.env.PATH ?? "", BUN: process.execPath, CODE: descendant },
+        timeoutMs: 120_000,
+        maxStdoutBytes: 1024,
+        maxStderrBytes: 1024,
+      })
+      const pid = Number(await Bun.file(join(ground, "pid")).text())
+      process.kill(pid, 0)
+      let alive = true
+      for (let i = 0; i < 160 && alive; i++) {
+        await Bun.sleep(25)
+        try {
+          process.kill(pid, 0)
+        } catch {
+          alive = false
+        }
+      }
+      expect(alive).toBe(false)
+    } finally {
+      await rm(ground, { recursive: true, force: true })
+    }
+  },
+  20_000,
+)
