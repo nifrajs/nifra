@@ -8,6 +8,7 @@ import { join } from "node:path"
 import { after, before, test } from "node:test"
 import { server, status } from "@nifrajs/core"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
+import { BODY_HIGH_WATER, BodyChannel } from "../src/body.ts"
 import { serve, type UwsServer } from "../src/index.ts"
 import { AUTH, parseHead, raw, rawExchange, sleep } from "./support.ts"
 
@@ -691,4 +692,53 @@ test("HTTPS from key and certificate files", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+function fakeUpload(): {
+  res: never
+  push: (bytes: number, last?: boolean) => void
+  resumed: () => number
+} {
+  let onData: (chunk: ArrayBuffer, isLast: boolean) => void = () => {}
+  let resumes = 0
+  const res = {
+    onData: (cb: typeof onData) => {
+      onData = cb
+    },
+    pause: () => {},
+    resume: () => {
+      resumes++
+    },
+  }
+  return {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: BodyChannel only calls onData, pause and resume on it
+    res: res as never,
+    push: (bytes, last = false) => onData(new ArrayBuffer(bytes), last),
+    resumed: () => resumes,
+  }
+}
+
+test("a lifted, untouched upload stops being buffered once a high-water mark of it has piled up", async () => {
+  const { res, push, resumed } = fakeUpload()
+  const channel = new BodyChannel(res)
+  const stream = channel.stream()
+  push(BODY_HIGH_WATER - 10)
+  push(BODY_HIGH_WATER - 10) // paused here, as it would be on the socket
+  channel.unthrottle()
+  assert.equal(resumed(), 1)
+  for (let i = 0; i < 8; i++) push(BODY_HIGH_WATER / 2)
+  await assert.rejects(stream.getReader().read(), TypeError)
+})
+
+test("a lifted upload that a response starts to read within the mark is delivered", async () => {
+  const { res, push } = fakeUpload()
+  const channel = new BodyChannel(res)
+  const reader = channel.stream().getReader()
+  push(1000)
+  channel.unthrottle()
+  push(500, true)
+  let total = 0
+  for (let next = await reader.read(); !next.done; next = await reader.read())
+    total += next.value.byteLength
+  assert.equal(total, 1500)
 })

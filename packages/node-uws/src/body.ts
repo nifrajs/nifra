@@ -44,6 +44,12 @@ export class BodyChannel {
         copy.set(view)
         this.chunks.push(copy)
         this.queued += chunk.byteLength
+        // Lifted with nobody reading: a long-lived response must not keep buffering the upload.
+        if (this.lifted && this.queued >= BODY_HIGH_WATER) {
+          this.discarded = true
+          this.chunks = []
+          this.queued = 0
+        }
         if (
           !isLast &&
           !this.paused &&
@@ -79,8 +85,9 @@ export class BodyChannel {
    * being buffered and throttled: a socket left paused here cannot be resumed once the response ends
    * (uWS invalidates `res` then), and the next request on the connection would never be read. A body
    * with a reader keeps its own flow control. A stream handed out that nothing has pulled yet may still
-   * be read by the response, so it keeps its bytes and stops throttling instead; what arrives is held
-   * only until the response ends, when {@link close} drops it.
+   * be read by the response, so it keeps its bytes and stops throttling instead. Nobody reading by
+   * {@link BODY_HIGH_WATER} bytes means nobody will, and the upload is dropped; a reader that starts
+   * first takes back the normal flow control.
    */
   unthrottle(): void {
     if (this.gone || this.aborted || this.collecting || this.pulled || this.all !== undefined)
@@ -178,6 +185,7 @@ export class BodyChannel {
         pull: async (controller) => {
           if (this.discarded) return controller.error(new TypeError(UNREAD))
           this.pulled = true
+          this.lifted = false
           for (;;) {
             const next = this.chunks.shift()
             if (next !== undefined) {
