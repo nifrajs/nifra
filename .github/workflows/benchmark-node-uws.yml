@@ -1,0 +1,96 @@
+name: Benchmark node-uws
+
+# Interleaved A/B of one nifra app behind node:http, uWebSockets.js through @nifrajs/node-uws, and raw
+# uWebSockets.js with no framework (the ceiling). Runs on changes to the adapter or its bench, or on demand.
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "Interleaved rounds per shape"
+        required: false
+        default: "9"
+      seconds:
+        description: "Seconds per sample"
+        required: false
+        default: "6"
+  pull_request:
+    paths:
+      - "packages/node-uws/**"
+      - "bench/node-uws/**"
+      - ".github/workflows/benchmark-node-uws.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-node-uws-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-uws:
+    name: node:http vs node-uws vs raw uWS
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    env:
+      ROUNDS: ${{ inputs.rounds || '9' }}
+      SECONDS_PER_SAMPLE: ${{ inputs.seconds || '6' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+      - name: Install oha 1.16.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/oha" \
+            https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/oha"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - name: Bundle the bench server
+        run: >
+          bun build bench/node-uws/serve.ts --target node --external uWebSockets.js
+          --outfile bench/node-uws/dist/serve.js
+      - name: Measure
+        env:
+          CPU_LIMIT: "150"
+        run: |
+          mkdir -p bench-ci
+          {
+            printf 'commit=%s\nrun_id=%s\nattempt=%s\nrounds=%s\nseconds=%s\n' \
+              "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$ROUNDS" "$SECONDS_PER_SAMPLE"
+            date -u +%FT%TZ
+            node --version
+            uname -srm
+            lscpu
+            oha --version
+          } | tee bench-ci/node-uws-metadata.txt
+          node bench/node-uws/bench.mjs "$ROUNDS" "$SECONDS_PER_SAMPLE" 50 node,raw,uws | tee bench-ci/node-uws.txt
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### node-uws vs node:http vs raw uWebSockets.js'
+            echo
+            echo '```'
+            sed -n '/== summary/,$p' bench-ci/node-uws.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: bench-node-uws
+          path: |
+            bench-ci/node-uws.txt
+            bench-ci/node-uws-metadata.txt
+          if-no-files-found: error
+          retention-days: 90
