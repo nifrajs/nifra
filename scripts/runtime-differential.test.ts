@@ -585,6 +585,16 @@ test("workerd input checks, including redacted errors, are known; a Worker excep
     rest: "✘ [ERROR] Uncaught Error: internal error",
     known: [],
   })
+  expect(
+    unknownStderr(
+      "workerd",
+      "✘ [ERROR] Uncaught Error: internal error; reference = amaijbcvjibgefs9f95dfubo\n    at handler (worker.js:10:3)\n",
+    ),
+  ).toEqual({ rest: "", known: ["U17 workerd-logs-refused-input"] })
+  expect(
+    unknownStderr("workerd", "✘ [ERROR] Uncaught Error: internal error; reference = abc extra")
+      .known,
+  ).toEqual([])
 })
 
 test("a seed generates the same cases, each with the reasons a parser may refuse it", () => {
