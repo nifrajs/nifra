@@ -1,5 +1,18 @@
 # @nifrajs/workbench
 
+## 5.14.0
+
+### Patch Changes
+
+- Updated dependencies [ab4fa97]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [ae57f24]
+  - @nifrajs/coding-agent@5.14.0
+  - @nifrajs/utils@5.14.0
+  - @nifrajs/agent-app@5.14.0
+  - @nifrajs/agent-protocol@5.14.0
+
 ## 5.13.0
 
 ### Patch Changes

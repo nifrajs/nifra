@@ -287,19 +287,19 @@
   "bundle": [
     {
       "name": "Hono",
-      "version": "4.13.13",
-      "kb": 7.7
+      "version": "4.13.18",
+      "kb": 8.4
     },
     {
       "name": "Nifra",
-      "version": "5.13.0",
+      "version": "5.14.0",
       "kb": 40.6,
       "you": true
     },
     {
       "name": "Elysia",
-      "version": "1.4.30",
-      "kb": 98
+      "version": "1.4.32",
+      "kb": 101
     }
   ],
   "proof": [

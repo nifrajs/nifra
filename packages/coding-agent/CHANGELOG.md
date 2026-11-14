@@ -1,5 +1,24 @@
 # @nifrajs/coding-agent
 
+## 5.14.0
+
+### Patch Changes
+
+- ab4fa97: A command that exits normally no longer leaves the processes it started running: on POSIX its process group gets SIGTERM, then SIGKILL after two seconds. A background process that held the output open no longer delays the call by the drain grace.
+- b1ae79d: Copied record, hash, hex and regex-escape helpers and a few chained type assertions are replaced by the shared `@nifrajs/utils` helpers and single assertions. The runtime expressions are the same, so behavior does not change.
+- ae57f24: Chained type assertions in the source are replaced by single assertions or typed declarations. The edits are type-only, so behavior does not change.
+- Updated dependencies [b87c76c]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [ae57f24]
+  - @nifrajs/core@5.14.0
+  - @nifrajs/utils@5.14.0
+  - @nifrajs/agent@5.14.0
+  - @nifrajs/agent-protocol@5.14.0
+  - @nifrajs/pi@5.14.0
+  - @nifrajs/jobs@5.14.0
+  - @nifrajs/agent-review@5.14.0
+
 ## 5.13.0
 
 ### Patch Changes

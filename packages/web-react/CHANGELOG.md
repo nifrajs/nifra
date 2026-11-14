@@ -1,5 +1,22 @@
 # @nifrajs/web-react
 
+## 5.14.0
+
+### Minor Changes
+
+- 342d572: The certified server-component tuple moves to Vite 8.3.8 and `@vitejs/plugin-rsc` 0.5.39 (was 8.3.4 and 0.5.35), with Vue 3.5.45 / plugin-vue 6.0.11, Svelte 5.57.3, Solid 1.9.19 / vite-plugin-solid 2.11.16 and preact-render-to-string 6.8.3 / preset-vite 2.10.6 in the consumer matrix. The pipeline's guard accepts only the certified Vite, and the `@vitejs/plugin-rsc` peer is exact: an app using server components must pin `vite@8.3.8` and `@vitejs/plugin-rsc@0.5.39` together. Apps that do not opt in to server components are unaffected.
+
+### Patch Changes
+
+- Updated dependencies [ec5ac0d]
+- Updated dependencies [342d572]
+- Updated dependencies [b87c76c]
+- Updated dependencies [ae57f24]
+- Updated dependencies [f4ffe21]
+- Updated dependencies [a1f020e]
+  - @nifrajs/web@5.14.0
+  - @nifrajs/core@5.14.0
+
 ## 5.13.0
 
 ### Patch Changes

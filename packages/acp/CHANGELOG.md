@@ -1,5 +1,15 @@
 # @nifrajs/acp
 
+## 5.14.0
+
+### Patch Changes
+
+- b1ae79d: Use the shared record predicate from `@nifrajs/utils` and drop a redundant cast in `envSchema`. No behavior change.
+- Updated dependencies [b1ae79d]
+- Updated dependencies [b1ae79d]
+  - @nifrajs/utils@5.14.0
+  - @nifrajs/agent-protocol@5.14.0
+
 ## 5.13.0
 
 ### Patch Changes

@@ -1,5 +1,32 @@
 # @nifrajs/cli
 
+## 5.14.0
+
+### Patch Changes
+
+- ab4fa97: `nifra mcp` no longer buffers an unbounded line from a project CLI it hands a session over to. A message larger than 16 MiB, or a line that never ends, stops that CLI and answers the waiting request with an error instead of growing the server's memory. The shared line reader now reports an oversized line as soon as it crosses the limit, not when its newline arrives.
+- b1ae79d: Copied record, hash, hex and regex-escape helpers and a few chained type assertions are replaced by the shared `@nifrajs/utils` helpers and single assertions. The runtime expressions are the same, so behavior does not change.
+- ae57f24: Chained type assertions in the source are replaced by single assertions or typed declarations. The edits are type-only, so behavior does not change.
+- Updated dependencies [ec5ac0d]
+- Updated dependencies [342d572]
+- Updated dependencies [b87c76c]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [ae57f24]
+- Updated dependencies [f4ffe21]
+- Updated dependencies [a1f020e]
+  - @nifrajs/web@5.14.0
+  - @nifrajs/core@5.14.0
+  - @nifrajs/utils@5.14.0
+  - @nifrajs/i18n@5.14.0
+  - @nifrajs/schema@5.14.0
+  - @nifrajs/testing@5.14.0
+  - @nifrajs/client@5.14.0
+  - @nifrajs/mcp@5.14.0
+  - @nifrajs/mcp-db@5.14.0
+  - @nifrajs/agent-review@5.14.0
+  - @nifrajs/runner@5.14.0
+
 ## 5.13.0
 
 ### Minor Changes
