@@ -1,5 +1,12 @@
 # @nifrajs/core
 
+## 5.14.0
+
+### Patch Changes
+
+- b87c76c: On Deno with `normalizeTarget`, an app reached through `mount()` or `mountFetch()` routes a TRACE or TRACK request on the target its parent resolved. Before, it was handed the request with its dot segments as sent, so `TRACE /x/../pages/form` matched the mounted app's routes raw and got a 404, or a catch-all route's 405, where every other runtime answers the page's 405 with its `Allow`.
+- ae57f24: Chained type assertions in the source are replaced by single assertions or typed declarations. The edits are type-only, so behavior does not change.
+
 ## 5.13.0
 
 ### Minor Changes

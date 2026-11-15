@@ -1,5 +1,14 @@
 # @nifrajs/node
 
+## 5.14.0
+
+### Patch Changes
+
+- afba797: `@nifrajs/node` depends on srvx 1.0.8 (was 0.12.5) for the lazy `FastResponse` its twinless fallback builds. The adapter's own code is unchanged and its Node suite passes on both versions. Node 20.16 or newer, as before.
+- b8e98c0: `@nifrajs/node` has a `./transport` entry exposing its outcome runtime, Host and target policy, and lifecycle hooks to sibling HTTP adapters; `serve()` and the package's exports are unchanged. The new `@nifrajs/node-uws` serves a nifra app on uWebSockets.js through the same node-direct lane, with streaming responses, back-pressure, graceful `stop()` and the Host and target rules of `@nifrajs/node`. It has no WebSocket or static-file support.
+- b1ae79d: Copied record, hash, hex and regex-escape helpers and a few chained type assertions are replaced by the shared `@nifrajs/utils` helpers and single assertions. The runtime expressions are the same, so behavior does not change.
+- ae57f24: Chained type assertions in the source are replaced by single assertions or typed declarations. The edits are type-only, so behavior does not change.
+
 ## 5.13.0
 
 ### Minor Changes

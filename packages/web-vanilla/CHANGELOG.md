@@ -1,5 +1,11 @@
 # @nifrajs/web-vanilla
 
+## 5.14.0
+
+### Patch Changes
+
+- ab4fa97: An interpolated `data:` URL that begins a `<script>`'s `src` or `href` is written as `about:invalid`, as a `javascript:` URL already was. `data:` URLs on images, links, frames, objects and stylesheets are unchanged.
+
 ## 5.13.0
 
 No changes in this release.

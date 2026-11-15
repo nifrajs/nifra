@@ -13,7 +13,10 @@ test("a runtime's bare-GET gap is read from the published rows", () => {
   for (const table of HTTP_WORKLOADS) {
     const nifra = table.rows.find((row) => row.nifra)
     if (nifra === undefined) continue
-    const fastest = Math.max(...table.rows.map((row) => rps(row.getUsers)))
+    // A second Nifra row (the uWebSockets adapter) is not a rival.
+    const fastest = Math.max(
+      ...table.rows.filter((row) => !row.nifra).map((row) => rps(row.getUsers)),
+    )
     const trail = httpGetTrail(table.title)
     if (rps(nifra.getUsers) >= fastest) {
       expect(trail).toBeUndefined()

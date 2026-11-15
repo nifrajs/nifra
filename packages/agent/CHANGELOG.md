@@ -1,5 +1,16 @@
 # @nifrajs/agent
 
+## 5.14.0
+
+### Patch Changes
+
+- b1ae79d: Copied record, hash, hex and regex-escape helpers and a few chained type assertions are replaced by the shared `@nifrajs/utils` helpers and single assertions. The runtime expressions are the same, so behavior does not change.
+- Updated dependencies [b87c76c]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [ae57f24]
+  - @nifrajs/core@5.14.0
+  - @nifrajs/utils@5.14.0
+
 ## 5.13.0
 
 ### Patch Changes

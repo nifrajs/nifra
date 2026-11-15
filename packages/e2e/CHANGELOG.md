@@ -1,5 +1,19 @@
 # @nifrajs/e2e
 
+## 5.14.0
+
+### Patch Changes
+
+- ec5ac0d: No behavior change for consumers. Tooling moves to Biome 2.6; `@nifrajs/web` now throws a named error, not a bare TypeError, if an error render is asked for an `_error` module its manifest does not list.
+- Updated dependencies [b87c76c]
+- Updated dependencies [afba797]
+- Updated dependencies [b8e98c0]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [ae57f24]
+  - @nifrajs/core@5.14.0
+  - @nifrajs/node@5.14.0
+  - @nifrajs/testing@5.14.0
+
 ## 5.13.0
 
 ### Minor Changes

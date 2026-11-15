@@ -1,5 +1,27 @@
 # @nifrajs/web
 
+## 5.14.0
+
+### Minor Changes
+
+- 342d572: The certified server-component tuple moves to Vite 8.3.8 and `@vitejs/plugin-rsc` 0.5.39 (was 8.3.4 and 0.5.35), with Vue 3.5.45 / plugin-vue 6.0.11, Svelte 5.57.3, Solid 1.9.19 / vite-plugin-solid 2.11.16 and preact-render-to-string 6.8.3 / preset-vite 2.10.6 in the consumer matrix. The pipeline's guard accepts only the certified Vite, and the `@vitejs/plugin-rsc` peer is exact: an app using server components must pin `vite@8.3.8` and `@vitejs/plugin-rsc@0.5.39` together. Apps that do not opt in to server components are unaffected.
+
+### Patch Changes
+
+- ec5ac0d: No behavior change for consumers. Tooling moves to Biome 2.6; `@nifrajs/web` now throws a named error, not a bare TypeError, if an error render is asked for an `_error` module its manifest does not list.
+- ae57f24: Chained type assertions in the source are replaced by single assertions or typed declarations. The edits are type-only, so behavior does not change.
+- f4ffe21: The build plan's client-graph guards, server-manifest drift checks, bundle size report and build targets are each their own module under `internal/`, and `build-plan.ts` re-exports them. The package's exports and behaviour are unchanged.
+- a1f020e: Page request execution is split from one 2,000-line closure into modules under `internal/`: shared setup, layout and middleware running, status and error pages, document assembly, and the action handler. Each is built once when the app starts, so no work moves onto a request. The package's exports are unchanged.
+  
+  Three failures the split surfaced are fixed. A layout is no longer kept through a navigation that changed a param when the manifest does not say which params the layout owns. A gate that refuses a request no longer leaves a loader it did not wait for to fail unobserved. A layout whose `meta` throws no longer stops an error page or a status page from rendering; the page renders without the layouts.
+- Updated dependencies [b87c76c]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [b1ae79d]
+- Updated dependencies [ae57f24]
+  - @nifrajs/core@5.14.0
+  - @nifrajs/utils@5.14.0
+  - @nifrajs/island-trigger@5.14.0
+
 ## 5.13.0
 
 ### Minor Changes
