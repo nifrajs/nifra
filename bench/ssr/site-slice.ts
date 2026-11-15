@@ -5,7 +5,9 @@
  * as separately-labelled tables - never blended into one, which is exactly the apples-to-oranges
  * read bench/ssr/README.md warns against. The landing bar chart and multipliers stay Table A only.
  */
-import { type BenchRow, type Multiplier, NIFRA_VERSION, packageVersion } from "../site-bench.ts"
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+import { type BenchRow, type Multiplier, NIFRA_VERSION } from "../site-bench.ts"
 import { pairedRatio, rowKind, type SsrBenchResult, type SsrBenchTarget } from "./harness.ts"
 
 /** One measured Table A row: the target it ran plus the framework section it ran under. */
@@ -66,14 +68,62 @@ const RIVAL_PACKAGES: ReadonlyArray<readonly [prefix: string, pkg: string]> = [
   ["preact-ssr", "preact-render-to-string"],
 ]
 
-/** nifra rows carry the workspace version; a rival row the version installed in its own app. */
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+
+function manifestDeps(cwd: string): Record<string, string> {
+  const manifest: unknown = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"))
+  if (typeof manifest !== "object" || manifest === null) {
+    throw new Error(`${cwd}/package.json is not an object`)
+  }
+  const record = manifest as {
+    dependencies?: Record<string, string>
+    devDependencies?: Record<string, string>
+  }
+  return { ...record.dependencies, ...record.devDependencies }
+}
+
+/** The exact version `cwd` declares for `pkg`. A range is refused: the row would not name one install. */
+export function declaredExactVersion(cwd: string, pkg: string): string {
+  const spec = manifestDeps(cwd)[pkg]
+  if (spec === undefined) throw new Error(`${cwd} does not depend on ${pkg}`)
+  if (!EXACT_VERSION.test(spec)) {
+    throw new Error(`${pkg} in ${cwd} must be an exact version, found ${JSON.stringify(spec)}`)
+  }
+  return spec
+}
+
+/**
+ * nifra rows carry the workspace version. A rival row carries the version installed in that app,
+ * which has to be the exact pin in its package.json. Walking up to some other node_modules would
+ * label a package this app did not run.
+ */
 export function ssrTargetVersion(target: SsrBenchTarget): string {
   if (target.name.startsWith("nifra")) return NIFRA_VERSION
   const pkg = RIVAL_PACKAGES.find(([prefix]) => target.name.startsWith(prefix))?.[1]
   if (pkg === undefined || target.cwd === undefined) {
     throw new Error(`no package recorded for SSR target ${target.name}`)
   }
-  return packageVersion(pkg, target.cwd)
+  const declared = declaredExactVersion(target.cwd, pkg)
+  const manifest = join(target.cwd, "node_modules", pkg, "package.json")
+  if (!existsSync(manifest)) {
+    throw new Error(
+      `${pkg} is not installed in ${target.cwd}. The bench install has not run there.`,
+    )
+  }
+  const installedManifest: unknown = JSON.parse(readFileSync(manifest, "utf8"))
+  const installed =
+    typeof installedManifest === "object" &&
+    installedManifest !== null &&
+    "version" in installedManifest &&
+    typeof installedManifest.version === "string"
+      ? installedManifest.version
+      : undefined
+  if (installed !== declared) {
+    throw new Error(
+      `${target.name} declares ${pkg}@${declared} but ${target.cwd}/node_modules has ${String(installed)}`,
+    )
+  }
+  return installed
 }
 
 /** nifra Table B rows carry their mode in the bench name ("nifra+react (SSG)" / "(ISR)"). */

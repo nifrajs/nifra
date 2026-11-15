@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   assertUncompressed,
   clientScriptUrls,
@@ -13,7 +16,14 @@ import {
   SSR_BENCH_REQUEST_HEADERS,
   type SsrBenchTarget,
 } from "./harness.ts"
-import { frontendSlice, heroSsrSlice, multipliersSlice, ssrTablesSlice } from "./site-slice.ts"
+import {
+  declaredExactVersion,
+  frontendSlice,
+  heroSsrSlice,
+  multipliersSlice,
+  ssrTablesSlice,
+  ssrTargetVersion,
+} from "./site-slice.ts"
 import { staticFileFor } from "./static-path.ts"
 import { ALL_TABLE_SECTIONS } from "./targets.ts"
 
@@ -59,6 +69,69 @@ describe("like-for-like rows", () => {
       const host = ssg.filter((t) => rowKind(t) === "static-host")
       expect(host).toHaveLength(1)
       expect(host[0]?.build.slice(2, 5)).toEqual(["build", "--target", "static"])
+    }
+  })
+
+  test("a rival build installs its pin instead of keeping a stale node_modules", () => {
+    const measured: Readonly<Record<string, readonly string[]>> = {
+      next: ["next", "react", "react-dom"],
+      remix: ["react-router", "react", "react-dom"],
+      solidstart: ["@solidjs/start", "solid-js"],
+      nuxt: ["nuxt", "vue"],
+      sveltekit: ["@sveltejs/kit", "svelte"],
+      "preact-ssr": ["preact-render-to-string", "preact"],
+    }
+    const seen = new Set<string>()
+    for (const target of targets) {
+      if (target.cwd === undefined || target.name.startsWith("nifra") || seen.has(target.cwd)) {
+        continue
+      }
+      seen.add(target.cwd)
+      const cmd = target.build.join(" ")
+      expect(cmd).toContain("bun install --silent")
+      expect(cmd).not.toContain("test -d node_modules")
+      const key = Object.keys(measured).find((prefix) => target.name.startsWith(prefix))
+      const pkgs = key === undefined ? undefined : measured[key]
+      expect(pkgs).toBeDefined()
+      const manifest = JSON.parse(readFileSync(join(target.cwd, "package.json"), "utf8")) as {
+        dependencies?: Record<string, string>
+        devDependencies?: Record<string, string>
+      }
+      const deps = { ...manifest.dependencies, ...manifest.devDependencies }
+      const nifra = JSON.parse(
+        readFileSync(join(import.meta.dir, "../../package.json"), "utf8"),
+      ) as {
+        overrides?: Record<string, string>
+      }
+      for (const pkg of pkgs ?? []) {
+        expect(deps[pkg]).toBe(declaredExactVersion(target.cwd, pkg))
+        const workspace = nifra.overrides?.[pkg]
+        if (workspace !== undefined) expect(deps[pkg]).toBe(workspace)
+      }
+    }
+    expect(seen.size).toBeGreaterThan(0)
+  })
+
+  test("a rival row refuses an install that is not its pin", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ssr-pin-"))
+    try {
+      writeFileSync(join(cwd, "package.json"), JSON.stringify({ dependencies: { next: "16.4.6" } }))
+      mkdirSync(join(cwd, "node_modules", "next"), { recursive: true })
+      writeFileSync(
+        join(cwd, "node_modules", "next", "package.json"),
+        JSON.stringify({ version: "16.4.2" }),
+      )
+      const target: SsrBenchTarget = {
+        name: "next (dynamic)",
+        runtime: "node",
+        cwd,
+        build: ["bun", "install"],
+        serve: ["node", "server.js"],
+        port: 1,
+      }
+      expect(() => ssrTargetVersion(target)).toThrow("node_modules has 16.4.2")
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
     }
   })
 

@@ -7,7 +7,9 @@ import type { SsrBenchTarget } from "./harness.ts"
 const BENCH_DIR = import.meta.dir
 const NIFRA_CLI = `${BENCH_DIR}/../../packages/cli/src/cli.ts`
 
-const INSTALL = "(test -d node_modules || bun install --silent)"
+// Always install. Skipping an existing node_modules measured stale pins (the tree left behind
+// after a range bump) while CI, with an empty tree, resolved the range. The manifest pins are exact.
+const INSTALL = "bun install --silent"
 const NEXT_STANDALONE_BUILD = `${INSTALL} && bunx next build && rm -rf .next/standalone/.next/static && cp -r .next/static .next/standalone/.next/static`
 const NODE_HOST = { HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1" } as const
 const CATALOG_HTML = { rootId: "root", text: "Item 50", liCount: 50 } as const

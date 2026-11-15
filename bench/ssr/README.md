@@ -30,10 +30,11 @@ that route's end-to-end p50 in the same local run to show the guard time in cont
 latency reference, not a throughput uplift. It needs the built `packages/web/dist`; pass `--write` to
 save the capture to `site/shared/data/benchmarks.json`.
 
-Runtime versions are pinned in `.tool-versions`. Comparator apps have isolated installs;
-after changing their dependencies, run `bun install` in each changed app before measuring,
-including when its `node_modules` already exists. SolidStart 2 uses Vite and Nitro;
-SvelteKit 3 configures its adapter in the Vite plugin.
+Runtime versions are pinned in `.tool-versions`. Comparator apps pin the framework and the UI
+library they are measured against to exact versions, the same UI library versions the nifra rows
+use. Every build runs `bun install` in that app, so an existing `node_modules` cannot keep an older
+copy. The published version is that install, and it has to match the pin. SolidStart 2 uses Vite
+and Nitro; SvelteKit 3 configures its adapter in the Vite plugin.
 
 ## How a table is measured
 
