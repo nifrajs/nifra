@@ -37,7 +37,8 @@ import {
   multipliersSlice,
   type SsrRunRow,
   ssrTablesSlice,
-  ssrTargetVersion,
+  ssrTargetVersionMap,
+  ssrVersionOfMap,
 } from "./site-slice.ts"
 import { ALL_TABLE_SECTIONS } from "./targets.ts"
 
@@ -78,13 +79,17 @@ for (const section of sections) {
   if (section.label.includes("Table B")) tableBRows.push(...result.rows)
 }
 assertEveryTargetMeasured(failures)
+// Resolve versions after the same builds that produced the measurements. This both catches a
+// stale/mismatched comparator install and gives CI/public import the versions actually measured.
+const targetVersions = ssrTargetVersionMap(sections.flatMap((section) => section.targets))
+const versionOf = ssrVersionOfMap(targetVersions)
 const jsonOut = Bun.env.BENCH_SSR_JSON
 if (jsonOut !== undefined) await Bun.write(jsonOut, `${JSON.stringify(rawSamples, null, 1)}\n`)
 const resultsOut = Bun.env.BENCH_SSR_RESULTS_JSON
 if (resultsOut !== undefined) {
   await Bun.write(
     resultsOut,
-    `${JSON.stringify({ nifraVersion: NIFRA_VERSION, tableA: tableARows, tableB: tableBRows }, null, 2)}\n`,
+    `${JSON.stringify({ nifraVersion: NIFRA_VERSION, targetVersions, tableA: tableARows, tableB: tableBRows }, null, 2)}\n`,
     { createPath: true },
   )
 }
@@ -107,16 +112,17 @@ if (jsonMode && runtime !== undefined) {
     connections: SSR_BENCH_CONNECTIONS,
     durationS: SSR_BENCH_DURATION_S,
     warmupS: SSR_BENCH_WARMUP_S,
+    ssrTargetVersions: JSON.stringify(targetVersions),
   }
   console.log(JSON.stringify(ciRunOutput(runtime, measured, meta)))
 } else if (tableARows.length === expectedA && tableBRows.length === expectedB) {
   // writeSiteBench logs the update itself.
   await writeSiteBench({
-    heroSsr: heroSsrSlice(tableARows, ssrTargetVersion),
-    frontend: frontendSlice(tableARows, ssrTargetVersion),
-    multipliers: multipliersSlice(tableARows, ssrTargetVersion),
-    ssrTables: ssrTablesSlice(tableARows, ssrTargetVersion),
-    ssrTablesB: ssrTablesSlice(tableBRows, ssrTargetVersion),
+    heroSsr: heroSsrSlice(tableARows, versionOf),
+    frontend: frontendSlice(tableARows, versionOf),
+    multipliers: multipliersSlice(tableARows, versionOf),
+    ssrTables: ssrTablesSlice(tableARows, versionOf),
+    ssrTablesB: ssrTablesSlice(tableBRows, versionOf),
     ssrCaptured: capturedMeta({ bun: Bun.version, node, oha: ohaVersion() }),
   })
 } else {

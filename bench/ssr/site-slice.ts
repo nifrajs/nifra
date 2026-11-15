@@ -58,6 +58,9 @@ const DISPLAY: Record<string, string> = {
 /** The version a published row carries, by target; the run passes `ssrTargetVersion`. */
 export type SsrVersionOf = (target: SsrBenchTarget) => string
 
+/** Versions captured by the run that actually built and measured the target. */
+export type SsrTargetVersionMap = Readonly<Record<string, string>>
+
 /** The package each rival app measures, by bench target name prefix. */
 const RIVAL_PACKAGES: ReadonlyArray<readonly [prefix: string, pkg: string]> = [
   ["next", "next"],
@@ -78,8 +81,14 @@ function manifestDeps(cwd: string): Record<string, string> {
   const record = manifest as {
     dependencies?: Record<string, string>
     devDependencies?: Record<string, string>
+    overrides?: Record<string, string | Record<string, unknown>>
   }
-  return { ...record.dependencies, ...record.devDependencies }
+  const overrides = Object.fromEntries(
+    Object.entries(record.overrides ?? {}).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  )
+  return { ...record.dependencies, ...record.devDependencies, ...overrides }
 }
 
 /** The exact version `cwd` declares for `pkg`. A range is refused: the row would not name one install. */
@@ -90,6 +99,35 @@ export function declaredExactVersion(cwd: string, pkg: string): string {
     throw new Error(`${pkg} in ${cwd} must be an exact version, found ${JSON.stringify(spec)}`)
   }
   return spec
+}
+
+function installedVersion(cwd: string, pkg: string, declared: string): string {
+  const manifest = join(cwd, "node_modules", pkg, "package.json")
+  if (!existsSync(manifest)) {
+    throw new Error(`${pkg} is not installed in ${cwd}. The bench install has not run there.`)
+  }
+  const installedManifest: unknown = JSON.parse(readFileSync(manifest, "utf8"))
+  const installed =
+    typeof installedManifest === "object" &&
+    installedManifest !== null &&
+    "version" in installedManifest &&
+    typeof installedManifest.version === "string"
+      ? installedManifest.version
+      : undefined
+  if (installed !== declared) {
+    throw new Error(
+      `${pkg} in ${cwd} declares ${declared} but ${cwd}/node_modules has ${String(installed)}`,
+    )
+  }
+  return installed
+}
+
+/** Every direct benchmark dependency must be the exact install the app declared. */
+function assertInstalledDependencies(cwd: string): void {
+  for (const pkg of Object.keys(manifestDeps(cwd))) {
+    const declared = declaredExactVersion(cwd, pkg)
+    installedVersion(cwd, pkg, declared)
+  }
 }
 
 /**
@@ -103,27 +141,32 @@ export function ssrTargetVersion(target: SsrBenchTarget): string {
   if (pkg === undefined || target.cwd === undefined) {
     throw new Error(`no package recorded for SSR target ${target.name}`)
   }
+  assertInstalledDependencies(target.cwd)
   const declared = declaredExactVersion(target.cwd, pkg)
-  const manifest = join(target.cwd, "node_modules", pkg, "package.json")
-  if (!existsSync(manifest)) {
-    throw new Error(
-      `${pkg} is not installed in ${target.cwd}. The bench install has not run there.`,
-    )
+  return installedVersion(target.cwd, pkg, declared)
+}
+
+/** Resolve every target in one run once, so site rows cannot be labelled by a later install. */
+export function ssrTargetVersionMap(targets: readonly SsrBenchTarget[]): SsrTargetVersionMap {
+  const versions: Record<string, string> = {}
+  for (const target of targets) {
+    if (versions[target.name] !== undefined) {
+      throw new Error(`duplicate SSR target name ${target.name}`)
+    }
+    versions[target.name] = ssrTargetVersion(target)
   }
-  const installedManifest: unknown = JSON.parse(readFileSync(manifest, "utf8"))
-  const installed =
-    typeof installedManifest === "object" &&
-    installedManifest !== null &&
-    "version" in installedManifest &&
-    typeof installedManifest.version === "string"
-      ? installedManifest.version
-      : undefined
-  if (installed !== declared) {
-    throw new Error(
-      `${target.name} declares ${pkg}@${declared} but ${target.cwd}/node_modules has ${String(installed)}`,
-    )
+  return versions
+}
+
+/** Turn a captured version map into the callback consumed by the site-slice builders. */
+export function ssrVersionOfMap(versions: SsrTargetVersionMap): SsrVersionOf {
+  return (target) => {
+    const version = versions[target.name]
+    if (version === undefined) {
+      throw new Error(`SSR target version map has no entry for ${target.name}`)
+    }
+    return version
   }
-  return installed
 }
 
 /** nifra Table B rows carry their mode in the bench name ("nifra+react (SSG)" / "(ISR)"). */

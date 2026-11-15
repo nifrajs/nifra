@@ -12,10 +12,15 @@ const NIFRA_CLI = `${BENCH_DIR}/../../packages/cli/src/cli.ts`
 const INSTALL = "bun install --silent"
 const NEXT_STANDALONE_BUILD = `${INSTALL} && bunx next build && rm -rf .next/standalone/.next/static && cp -r .next/static .next/standalone/.next/static`
 const NODE_HOST = { HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1" } as const
-const CATALOG_HTML = { rootId: "root", text: "Item 50", liCount: 50 } as const
+const CATALOG_HTML = {
+  rootId: "root",
+  text: "Item 50",
+  texts: ["Items (50)"],
+  liCount: 50,
+} as const
 // Comparators have no fixed hydration-root id; the harness checks the whole document instead, so
 // every row - nifra and meta-framework alike - proves it server-rendered the same 50-item catalog.
-const CATALOG_DOC = { text: "Item 50", liCount: 50 } as const
+const CATALOG_DOC = { text: "Item 50", texts: ["Items (50)"], liCount: 50 } as const
 
 /**
  * A nifra app (`routes/` + a `.backend.ts` loader + `nifra.config.ts`) built by `nifra build --target

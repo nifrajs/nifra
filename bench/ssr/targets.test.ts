@@ -15,6 +15,7 @@ import {
   rowKind,
   SSR_BENCH_REQUEST_HEADERS,
   type SsrBenchTarget,
+  validateSsrHtml,
 } from "./harness.ts"
 import {
   declaredExactVersion,
@@ -23,6 +24,7 @@ import {
   multipliersSlice,
   ssrTablesSlice,
   ssrTargetVersion,
+  ssrVersionOfMap,
 } from "./site-slice.ts"
 import { staticFileFor } from "./static-path.ts"
 import { ALL_TABLE_SECTIONS } from "./targets.ts"
@@ -96,8 +98,10 @@ describe("like-for-like rows", () => {
       const manifest = JSON.parse(readFileSync(join(target.cwd, "package.json"), "utf8")) as {
         dependencies?: Record<string, string>
         devDependencies?: Record<string, string>
+        overrides?: Record<string, string>
       }
       const deps = { ...manifest.dependencies, ...manifest.devDependencies }
+      const pins = { ...deps, ...manifest.overrides }
       const nifra = JSON.parse(
         readFileSync(join(import.meta.dir, "../../package.json"), "utf8"),
       ) as {
@@ -107,6 +111,10 @@ describe("like-for-like rows", () => {
         expect(deps[pkg]).toBe(declaredExactVersion(target.cwd, pkg))
         const workspace = nifra.overrides?.[pkg]
         if (workspace !== undefined) expect(deps[pkg]).toBe(workspace)
+      }
+      for (const [pkg, spec] of Object.entries(pins)) {
+        expect(spec).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+        expect(declaredExactVersion(target.cwd, pkg)).toBe(spec)
       }
     }
     expect(seen.size).toBeGreaterThan(0)
@@ -133,6 +141,21 @@ describe("like-for-like rows", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
+  })
+
+  test("a captured target-version map labels only the install it came from", () => {
+    const target: SsrBenchTarget = {
+      name: "next (dynamic)",
+      runtime: "node",
+      build: [],
+      serve: [],
+      port: 1,
+    }
+    const versionOf = ssrVersionOfMap({ [target.name]: "16.4.6" })
+    expect(versionOf(target)).toBe("16.4.6")
+    expect(() => versionOf({ ...target, name: "remix" })).toThrow(
+      "version map has no entry for remix",
+    )
   })
 
   test("React ISR runs the same createWebApp entry on both runtimes, cache-warmed", () => {
@@ -185,6 +208,28 @@ describe("successful SSR samples", () => {
     expect(() => parseOha(sample(1, { "200": 999, "500": 1 }))).toThrow("invalid sample")
     expect(() => parseOha(sample(1, { "200": 0 }))).toThrow("invalid sample")
     expect(() => parseOha(sample(1, {}))).toThrow("unexpected JSON shape")
+  })
+})
+
+describe("rendered catalog validation", () => {
+  const target: SsrBenchTarget = {
+    name: "comparator",
+    runtime: "node",
+    build: [],
+    serve: [],
+    port: 1,
+    validate: { text: "Item 50", texts: ["Items (50)"], liCount: 2 },
+  }
+
+  test("requires the catalog count as well as its last item", () => {
+    const html = "<h1>Items (<!-- -->50)</h1><ul><li>Item 1</li><li>Item 50</li></ul>"
+    expect(() => validateSsrHtml(html, target)).not.toThrow()
+    expect(() => validateSsrHtml(html.replace("<!-- -->50", "<!-- -->0"), target)).toThrow(
+      'missing "Items (50)"',
+    )
+    expect(() => validateSsrHtml(html.replaceAll("<li", "<p"), target)).toThrow(
+      "expected at least 2",
+    )
   })
 })
 
