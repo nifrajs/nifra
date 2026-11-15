@@ -7,7 +7,9 @@ import {
   changedPublicPackageVersions,
   isReleaseBranch,
   type PackageManifest,
+  packagesMissingFromRegistry,
   pendingChangesetFiles,
+  registryHasPackage,
   releaseCheckBaseRef,
 } from "./release-branch.ts"
 
@@ -100,6 +102,18 @@ if (changesets.length > 0)
   throw new Error(
     `release:check found unconsumed changesets (${changesets.join(", ")}); run \`bun run release:prepare\` first`,
   )
+
+// A pull request is where a missing package can still be fixed before the merge publishes.
+if (!isMergeCheck) {
+  const missing = await packagesMissingFromRegistry(
+    changedVersions.map((change) => change.name),
+    (name) => registryHasPackage(name, fetch),
+  )
+  if (missing.length > 0)
+    throw new Error(
+      `release:check found public packages npm has never seen: ${missing.join(", ")}.\nTrusted publishing cannot create a package, so the publish would fail with E404. Publish a placeholder by hand and add the trust first (CONTRIBUTING.md, "A new package").`,
+    )
+}
 
 console.log(`Validated ${changedVersions.length} public package version change(s):`)
 for (const change of changedVersions)

@@ -38,3 +38,32 @@ export const changedPublicPackageVersions = (
     ]
   })
 }
+
+export type FetchLike = (
+  url: string,
+  init: { headers: Record<string, string> },
+) => Promise<{
+  status: number
+}>
+
+/** Whether npm knows the package at all; any answer but 200 or 404 is an error, not a verdict. */
+export const registryHasPackage = async (name: string, fetchImpl: FetchLike): Promise<boolean> => {
+  const url = `https://registry.npmjs.org/${name.replace("/", "%2f")}`
+  const headers = { accept: "application/vnd.npm.install-v1+json" }
+  let status = 0
+  for (let attempt = 0; attempt < 3; attempt++) {
+    status = (await fetchImpl(url, { headers })).status
+    if (status === 200) return true
+    if (status === 404) return false
+  }
+  throw new Error(`npm answered ${status} for ${name}`)
+}
+
+/** Released packages npm has never seen: trusted publishing cannot create them. */
+export const packagesMissingFromRegistry = async (
+  names: readonly string[],
+  exists: (name: string) => Promise<boolean>,
+): Promise<string[]> => {
+  const known = await Promise.all(names.map(exists))
+  return names.filter((_, index) => !known[index]).sort()
+}
