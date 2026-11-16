@@ -1,0 +1,163 @@
+name: "Nifra check"
+description: "Run nifra check on a pull request: annotate findings, write a job summary, and keep one up-to-date PR comment."
+author: "Nifra"
+
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  github-token:
+    description: "Token used to post/update the PR comment. Needs pull-requests: write. Defaults to github.token."
+    required: false
+  working-directory:
+    description: "Directory containing nifra.config.ts / nifra.check.json."
+    required: false
+    default: "."
+  nifra-version:
+    description: "CLI version passed to bunx. Use 'local' to use the project's installed CLI. Pin this in CI for reproducibility."
+    required: false
+    default: "latest"
+  bun-version:
+    description: "Bun version used to run the CLI and the result parser."
+    required: false
+    default: "1.4.4"
+  fail-on:
+    description: "Which findings fail the step: error (default), warning, or never. Parse and CLI failures always fail."
+    required: false
+    default: "error"
+  comment:
+    description: "Post or update a single PR comment with the findings."
+    required: false
+    default: "true"
+  summary:
+    description: "Append the report to GITHUB_STEP_SUMMARY."
+    required: false
+    default: "true"
+  annotations:
+    description: "Emit ::error / ::warning annotations for findings with a file."
+    required: false
+    default: "true"
+  marker:
+    description: "Hidden HTML marker used to find and update the previous comment instead of posting a new one."
+    required: false
+    default: "<!-- nifra-check:v1 -->"
+
+outputs:
+  ok:
+    description: "The ok field from nifra check --json (true when there are no error-severity findings)."
+    value: ${{ steps.parse.outputs.ok }}
+  failed:
+    description: "Whether this step failed under the fail-on policy."
+    value: ${{ steps.parse.outputs.failed }}
+  errors:
+    description: "Number of error findings."
+    value: ${{ steps.parse.outputs.errors }}
+  warnings:
+    description: "Number of warning findings."
+    value: ${{ steps.parse.outputs.warnings }}
+  infos:
+    description: "Number of info findings."
+    value: ${{ steps.parse.outputs.infos }}
+  findings:
+    description: "JSON array of normalized findings."
+    value: ${{ steps.parse.outputs.findings }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Run nifra check
+      id: run
+      shell: bash
+      env:
+        NIFRA_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        NIFRA_VERSION: ${{ inputs.nifra-version }}
+      run: |
+        cd "$NIFRA_WORKING_DIRECTORY"
+        set +e
+        if [ "$NIFRA_VERSION" = "local" ]; then
+          bunx nifra check --json > "$RUNNER_TEMP/nifra-check.json" 2> "$RUNNER_TEMP/nifra-check.err"
+        else
+          bunx "nifra@${NIFRA_VERSION}" check --json > "$RUNNER_TEMP/nifra-check.json" 2> "$RUNNER_TEMP/nifra-check.err"
+        fi
+        code=$?
+        set -e
+        if [ "$code" -ne 0 ] && [ "$code" -ne 1 ] && [ -s "$RUNNER_TEMP/nifra-check.err" ]; then
+          echo "nifra check exited with ${code}; stderr:"
+          cat "$RUNNER_TEMP/nifra-check.err"
+        fi
+        echo "exit=${code}" >> "$GITHUB_OUTPUT"
+
+    - name: Parse results
+      id: parse
+      shell: bash
+      env:
+        NIFRA_JSON_PATH: ${{ runner.temp }}/nifra-check.json
+        NIFRA_ERR_PATH: ${{ runner.temp }}/nifra-check.err
+        NIFRA_EXIT: ${{ steps.run.outputs.exit }}
+        NIFRA_FAIL_ON: ${{ inputs.fail-on }}
+        NIFRA_SUMMARY_PATH: ${{ runner.temp }}/nifra-summary.md
+        NIFRA_COMMENT_PATH: ${{ runner.temp }}/nifra-comment.md
+        NIFRA_ANNOTATIONS_PATH: ${{ runner.temp }}/nifra-annotations.txt
+        NIFRA_MARKER: ${{ inputs.marker }}
+        NIFRA_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: bun "$GITHUB_ACTION_PATH/src/parse.ts"
+
+    - name: Annotate findings
+      if: inputs.annotations == 'true'
+      shell: bash
+      env:
+        NIFRA_ANNOTATIONS_PATH: ${{ runner.temp }}/nifra-annotations.txt
+      run: |
+        if [ -s "$NIFRA_ANNOTATIONS_PATH" ]; then
+          cat "$NIFRA_ANNOTATIONS_PATH"
+        fi
+
+    - name: Write job summary
+      if: inputs.summary == 'true'
+      shell: bash
+      env:
+        NIFRA_SUMMARY_PATH: ${{ runner.temp }}/nifra-summary.md
+      run: |
+        if [ -s "$NIFRA_SUMMARY_PATH" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          cat "$NIFRA_SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    # Fork PRs get a read-only GITHUB_TOKEN, so skip the comment there rather than failing the check.
+    # The annotations and job summary still work for forks.
+    - name: Post or update PR comment
+      if: >-
+        inputs.comment == 'true' &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token || github.token }}
+        GH_REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        NIFRA_COMMENT_PATH: ${{ runner.temp }}/nifra-comment.md
+        NIFRA_MARKER: ${{ inputs.marker }}
+      run: |
+        existing=$(gh api "repos/$GH_REPO/issues/$PR_NUMBER/comments" --paginate \
+          --jq '[.[] | select(.body | contains(env.NIFRA_MARKER)) | .id][0] // empty' | head -n 1)
+        if [ -n "$existing" ]; then
+          gh api "repos/$GH_REPO/issues/comments/$existing" -X PATCH -F "body=@$NIFRA_COMMENT_PATH"
+        else
+          gh api "repos/$GH_REPO/issues/$PR_NUMBER/comments" -F "body=@$NIFRA_COMMENT_PATH"
+        fi
+
+    - name: Fail on findings
+      shell: bash
+      env:
+        NIFRA_FAILED: ${{ steps.parse.outputs.failed }}
+      run: |
+        if [ "$NIFRA_FAILED" = "true" ]; then
+          echo "nifra check failed the gate (fail-on policy or an unexpected CLI failure)."
+          exit 1
+        fi
