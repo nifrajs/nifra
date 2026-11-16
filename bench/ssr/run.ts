@@ -42,6 +42,18 @@ import {
 } from "./site-slice.ts"
 import { ALL_TABLE_SECTIONS } from "./targets.ts"
 
+const FULL_SHA = /^[0-9a-f]{40}$/i
+
+function sourceCommit(): string {
+  const fromEnv = Bun.env.GITHUB_SHA?.trim()
+  if (fromEnv !== undefined && FULL_SHA.test(fromEnv)) return fromEnv
+  const result = Bun.spawnSync(["git", "rev-parse", "HEAD"])
+  if (result.exitCode !== 0) throw new Error("could not determine the SSR benchmark source commit")
+  const commit = new TextDecoder().decode(result.stdout).trim()
+  if (!FULL_SHA.test(commit)) throw new Error("git returned an invalid SSR benchmark source commit")
+  return commit
+}
+
 const argv = process.argv.slice(2)
 const jsonMode = argv.includes("--json")
 const runtimeAt = argv.indexOf("--runtime")
@@ -87,9 +99,10 @@ const jsonOut = Bun.env.BENCH_SSR_JSON
 if (jsonOut !== undefined) await Bun.write(jsonOut, `${JSON.stringify(rawSamples, null, 1)}\n`)
 const resultsOut = Bun.env.BENCH_SSR_RESULTS_JSON
 if (resultsOut !== undefined) {
+  const measuredCommit = sourceCommit()
   await Bun.write(
     resultsOut,
-    `${JSON.stringify({ nifraVersion: NIFRA_VERSION, targetVersions, tableA: tableARows, tableB: tableBRows }, null, 2)}\n`,
+    `${JSON.stringify({ nifraVersion: NIFRA_VERSION, sourceCommit: measuredCommit, targetVersions, tableA: tableARows, tableB: tableBRows }, null, 2)}\n`,
     { createPath: true },
   )
 }

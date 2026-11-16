@@ -134,9 +134,11 @@ nifra's app rows on that runtime and every rival app, renderer and static-host r
 rounds. `--json` sends the tables to stderr and prints one result line holding every round; it never
 touches the website's numbers. The rival apps run on Node in both jobs.
 
-Each CI JSON line also records the exact installed comparator version for every measured target. The
-full-run `BENCH_SSR_RESULTS_JSON` payload artifact carries the same map; the public-site importer
-cross-checks both maps and refuses older artifacts that cannot prove which install was measured.
+Each CI JSON line also records the exact installed comparator version for every measured target. Before
+importing a payload, install every rival comparator at its pinned version (`bun install --frozen-lockfile`
+in each comparator directory). The full-run `BENCH_SSR_RESULTS_JSON` payload artifact carries the same
+map and its source commit; the public-site importer cross-checks both against the benchmark artifacts
+and refuses older artifacts that cannot prove which install was measured.
 
 The job's report divides each row by the table's ceiling where the table has one: the raw renderer in
 Preact's Table A, the static file server in every Table B. Every rival app's row also shows nifra over

@@ -7,6 +7,7 @@
  */
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { isJsonRecord } from "../../scripts/read-json.ts"
 import { type BenchRow, type Multiplier, NIFRA_VERSION } from "../site-bench.ts"
 import { pairedRatio, rowKind, type SsrBenchResult, type SsrBenchTarget } from "./harness.ts"
 
@@ -73,22 +74,25 @@ const RIVAL_PACKAGES: ReadonlyArray<readonly [prefix: string, pkg: string]> = [
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
-function manifestDeps(cwd: string): Record<string, string> {
-  const manifest: unknown = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"))
-  if (typeof manifest !== "object" || manifest === null) {
-    throw new Error(`${cwd}/package.json is not an object`)
-  }
-  const record = manifest as {
-    dependencies?: Record<string, string>
-    devDependencies?: Record<string, string>
-    overrides?: Record<string, string | Record<string, unknown>>
-  }
-  const overrides = Object.fromEntries(
-    Object.entries(record.overrides ?? {}).filter(
+function stringMap(value: unknown): Record<string, string> {
+  if (!isJsonRecord(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   )
-  return { ...record.dependencies, ...record.devDependencies, ...overrides }
+}
+
+function manifestDeps(cwd: string): Record<string, string> {
+  const manifest: unknown = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"))
+  if (!isJsonRecord(manifest)) {
+    throw new Error(`${cwd}/package.json is not an object`)
+  }
+  return {
+    ...stringMap(manifest.dependencies),
+    ...stringMap(manifest.devDependencies),
+    ...stringMap(manifest.overrides),
+  }
 }
 
 /** The exact version `cwd` declares for `pkg`. A range is refused: the row would not name one install. */

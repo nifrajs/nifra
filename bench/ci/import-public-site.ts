@@ -47,6 +47,7 @@ interface PayloadRow {
 
 interface PayloadArtifact {
   readonly nifraVersion: string
+  readonly sourceCommit: string
   readonly targetVersions: SsrTargetVersionMap
   readonly tableA: readonly PayloadRow[]
   readonly tableB: readonly PayloadRow[]
@@ -68,6 +69,7 @@ function isPayloadRow(value: unknown): value is PayloadRow {
 }
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+const FULL_SHA = /^[0-9a-f]{40}$/i
 
 function targetVersionMap(value: unknown, where: string): SsrTargetVersionMap {
   if (!isJsonRecord(value)) return fail(`${where} must be an object`)
@@ -85,6 +87,8 @@ function payloadArtifact(value: unknown): PayloadArtifact {
   if (
     !isJsonRecord(value) ||
     typeof value.nifraVersion !== "string" ||
+    typeof value.sourceCommit !== "string" ||
+    !FULL_SHA.test(value.sourceCommit) ||
     !isJsonRecord(value.targetVersions) ||
     !Array.isArray(value.tableA) ||
     !Array.isArray(value.tableB)
@@ -98,6 +102,7 @@ function payloadArtifact(value: unknown): PayloadArtifact {
   }
   return {
     nifraVersion: value.nifraVersion,
+    sourceCommit: value.sourceCommit,
     targetVersions: targetVersionMap(value.targetVersions, "SSR payload artifact.targetVersions"),
     tableA,
     tableB,
@@ -351,6 +356,11 @@ const memorySite = readJsonRecord(
 const payloads = payloadArtifact(readJson(payloadPath))
 if (payloads.nifraVersion !== NIFRA_VERSION) {
   fail(`SSR payload artifact is for ${payloads.nifraVersion}; this checkout is ${NIFRA_VERSION}`)
+}
+if (payloads.sourceCommit.toLowerCase() !== identity.commit.toLowerCase()) {
+  fail(
+    `SSR payload artifact is from ${payloads.sourceCommit}; benchmark artifacts are from ${identity.commit}`,
+  )
 }
 assertCompleteTargetVersionMap(payloads.targetVersions)
 const ssrVersions = {

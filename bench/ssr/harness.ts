@@ -252,17 +252,35 @@ function renderedRoot(html: string, rootId: string): string {
   throw new Error(`html validation failed: #${rootId} is not closed`)
 }
 
+/** Remove HTML comments without leaving a partially-sanitized marker behind. */
+function stripHtmlComments(html: string): string {
+  const visible: string[] = []
+  let offset = 0
+  while (offset < html.length) {
+    const start = html.indexOf("<!--", offset)
+    if (start < 0) {
+      visible.push(html.slice(offset))
+      return visible.join("")
+    }
+    visible.push(html.slice(offset, start))
+    const end = html.indexOf("-->", start + 4)
+    if (end < 0) return visible.join("")
+    offset = end + 3
+  }
+  return visible.join("")
+}
+
 export function validateSsrHtml(html: string, target: SsrBenchTarget): void {
   const spec = target.validate
   if (spec === undefined) return
   const requiredTexts = [spec.text, ...(spec.texts ?? [])]
   // React-style SSR may split an interpolated text node with HTML comments (`Items (<!-- -->50)`).
   // Comments do not change visible output, so remove them before checking the shared markers.
-  const textHtml = html.replace(/<!--[\s\S]*?-->/g, "")
+  const textHtml = stripHtmlComments(html)
   const missingText = requiredTexts.find((text) => !textHtml.includes(text))
   if (spec.rootId !== undefined) {
     const root = renderedRoot(html, spec.rootId)
-    const textRoot = root.replace(/<!--[\s\S]*?-->/g, "")
+    const textRoot = stripHtmlComments(root)
     const trimmed = root.trim()
     if (trimmed === "" || trimmed === "undefined" || trimmed === "null") {
       throw new Error(`html validation failed: #${spec.rootId} rendered ${JSON.stringify(trimmed)}`)

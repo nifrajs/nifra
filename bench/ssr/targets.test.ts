@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { readJsonRecord } from "../../scripts/read-json.ts"
 import {
   assertUncompressed,
   clientScriptUrls,
@@ -34,6 +35,14 @@ const tables = (which: "A" | "B") =>
   ALL_TABLE_SECTIONS.filter((section) => section.label.includes(`Table ${which}`))
 const nifraRows = (section: (typeof ALL_TABLE_SECTIONS)[number]) =>
   section.targets.filter((t) => t.name.startsWith("nifra+"))
+const stringMap = (value: unknown): Record<string, string> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(
+        Object.entries(value).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      )
+    : {}
 
 describe("like-for-like rows", () => {
   test("every port is unique and every baseline is a row of its own table", () => {
@@ -95,21 +104,13 @@ describe("like-for-like rows", () => {
       const key = Object.keys(measured).find((prefix) => target.name.startsWith(prefix))
       const pkgs = key === undefined ? undefined : measured[key]
       expect(pkgs).toBeDefined()
-      const manifest = JSON.parse(readFileSync(join(target.cwd, "package.json"), "utf8")) as {
-        dependencies?: Record<string, string>
-        devDependencies?: Record<string, string>
-        overrides?: Record<string, string>
-      }
-      const deps = { ...manifest.dependencies, ...manifest.devDependencies }
-      const pins = { ...deps, ...manifest.overrides }
-      const nifra = JSON.parse(
-        readFileSync(join(import.meta.dir, "../../package.json"), "utf8"),
-      ) as {
-        overrides?: Record<string, string>
-      }
+      const manifest = readJsonRecord(join(target.cwd, "package.json"))
+      const deps = { ...stringMap(manifest.dependencies), ...stringMap(manifest.devDependencies) }
+      const pins = { ...deps, ...stringMap(manifest.overrides) }
+      const nifra = readJsonRecord(join(import.meta.dir, "../../package.json"))
       for (const pkg of pkgs ?? []) {
         expect(deps[pkg]).toBe(declaredExactVersion(target.cwd, pkg))
-        const workspace = nifra.overrides?.[pkg]
+        const workspace = stringMap(nifra.overrides)[pkg]
         if (workspace !== undefined) expect(deps[pkg]).toBe(workspace)
       }
       for (const [pkg, spec] of Object.entries(pins)) {
