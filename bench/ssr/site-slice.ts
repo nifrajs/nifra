@@ -5,7 +5,10 @@
  * as separately-labelled tables - never blended into one, which is exactly the apples-to-oranges
  * read bench/ssr/README.md warns against. The landing bar chart and multipliers stay Table A only.
  */
-import { type BenchRow, type Multiplier, NIFRA_VERSION, packageVersion } from "../site-bench.ts"
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+import { isJsonRecord } from "../../scripts/read-json.ts"
+import { type BenchRow, type Multiplier, NIFRA_VERSION } from "../site-bench.ts"
 import { pairedRatio, rowKind, type SsrBenchResult, type SsrBenchTarget } from "./harness.ts"
 
 /** One measured Table A row: the target it ran plus the framework section it ran under. */
@@ -56,6 +59,9 @@ const DISPLAY: Record<string, string> = {
 /** The version a published row carries, by target; the run passes `ssrTargetVersion`. */
 export type SsrVersionOf = (target: SsrBenchTarget) => string
 
+/** Versions captured by the run that actually built and measured the target. */
+export type SsrTargetVersionMap = Readonly<Record<string, string>>
+
 /** The package each rival app measures, by bench target name prefix. */
 const RIVAL_PACKAGES: ReadonlyArray<readonly [prefix: string, pkg: string]> = [
   ["next", "next"],
@@ -66,14 +72,105 @@ const RIVAL_PACKAGES: ReadonlyArray<readonly [prefix: string, pkg: string]> = [
   ["preact-ssr", "preact-render-to-string"],
 ]
 
-/** nifra rows carry the workspace version; a rival row the version installed in its own app. */
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+
+function stringMap(value: unknown): Record<string, string> {
+  if (!isJsonRecord(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  )
+}
+
+function manifestDeps(cwd: string): Record<string, string> {
+  const manifest: unknown = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"))
+  if (!isJsonRecord(manifest)) {
+    throw new Error(`${cwd}/package.json is not an object`)
+  }
+  return {
+    ...stringMap(manifest.dependencies),
+    ...stringMap(manifest.devDependencies),
+    ...stringMap(manifest.overrides),
+  }
+}
+
+/** The exact version `cwd` declares for `pkg`. A range is refused: the row would not name one install. */
+export function declaredExactVersion(cwd: string, pkg: string): string {
+  const spec = manifestDeps(cwd)[pkg]
+  if (spec === undefined) throw new Error(`${cwd} does not depend on ${pkg}`)
+  if (!EXACT_VERSION.test(spec)) {
+    throw new Error(`${pkg} in ${cwd} must be an exact version, found ${JSON.stringify(spec)}`)
+  }
+  return spec
+}
+
+function installedVersion(cwd: string, pkg: string, declared: string): string {
+  const manifest = join(cwd, "node_modules", pkg, "package.json")
+  if (!existsSync(manifest)) {
+    throw new Error(`${pkg} is not installed in ${cwd}. The bench install has not run there.`)
+  }
+  const installedManifest: unknown = JSON.parse(readFileSync(manifest, "utf8"))
+  const installed =
+    typeof installedManifest === "object" &&
+    installedManifest !== null &&
+    "version" in installedManifest &&
+    typeof installedManifest.version === "string"
+      ? installedManifest.version
+      : undefined
+  if (installed !== declared) {
+    throw new Error(
+      `${pkg} in ${cwd} declares ${declared} but ${cwd}/node_modules has ${String(installed)}`,
+    )
+  }
+  return installed
+}
+
+/** Every direct benchmark dependency must be the exact install the app declared. */
+function assertInstalledDependencies(cwd: string): void {
+  for (const pkg of Object.keys(manifestDeps(cwd))) {
+    const declared = declaredExactVersion(cwd, pkg)
+    installedVersion(cwd, pkg, declared)
+  }
+}
+
+/**
+ * nifra rows carry the workspace version. A rival row carries the version installed in that app,
+ * which has to be the exact pin in its package.json. Walking up to some other node_modules would
+ * label a package this app did not run.
+ */
 export function ssrTargetVersion(target: SsrBenchTarget): string {
   if (target.name.startsWith("nifra")) return NIFRA_VERSION
   const pkg = RIVAL_PACKAGES.find(([prefix]) => target.name.startsWith(prefix))?.[1]
   if (pkg === undefined || target.cwd === undefined) {
     throw new Error(`no package recorded for SSR target ${target.name}`)
   }
-  return packageVersion(pkg, target.cwd)
+  assertInstalledDependencies(target.cwd)
+  const declared = declaredExactVersion(target.cwd, pkg)
+  return installedVersion(target.cwd, pkg, declared)
+}
+
+/** Resolve every target in one run once, so site rows cannot be labelled by a later install. */
+export function ssrTargetVersionMap(targets: readonly SsrBenchTarget[]): SsrTargetVersionMap {
+  const versions: Record<string, string> = {}
+  for (const target of targets) {
+    if (versions[target.name] !== undefined) {
+      throw new Error(`duplicate SSR target name ${target.name}`)
+    }
+    versions[target.name] = ssrTargetVersion(target)
+  }
+  return versions
+}
+
+/** Turn a captured version map into the callback consumed by the site-slice builders. */
+export function ssrVersionOfMap(versions: SsrTargetVersionMap): SsrVersionOf {
+  return (target) => {
+    const version = versions[target.name]
+    if (version === undefined) {
+      throw new Error(`SSR target version map has no entry for ${target.name}`)
+    }
+    return version
+  }
 }
 
 /** nifra Table B rows carry their mode in the bench name ("nifra+react (SSG)" / "(ISR)"). */

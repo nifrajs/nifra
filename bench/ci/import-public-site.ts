@@ -1,7 +1,8 @@
 /**
  * Import a complete `benchmark-accuracy.yml` artifact download into the public site dataset.
- * The artifact source commit must carry the same core version as this checkout, and SSR client
- * payload sizes must come from `BENCH_SSR_RESULTS_JSON` on that same version.
+ * The artifact source commit must carry the same core version as this checkout. SSR client payload
+ * sizes and exact comparator versions must come from `BENCH_SSR_RESULTS_JSON` on that same version;
+ * the importer cross-checks those versions against both SSR CI reports.
  *
  *   bun run bench/ci/import-public-site.ts /tmp/nifra-bench-run /tmp/ssr-payloads.json
  */
@@ -26,8 +27,9 @@ import {
   heroSsrSlice,
   multipliersSlice,
   type SsrRunRow,
+  type SsrTargetVersionMap,
   ssrTablesSlice,
-  ssrTargetVersion,
+  ssrVersionOfMap,
 } from "../ssr/site-slice.ts"
 import { ALL_TABLE_SECTIONS } from "../ssr/targets.ts"
 import { type CiReport, parseCiReport, type Runtime, type Suite } from "./report.ts"
@@ -45,6 +47,8 @@ interface PayloadRow {
 
 interface PayloadArtifact {
   readonly nifraVersion: string
+  readonly sourceCommit: string
+  readonly targetVersions: SsrTargetVersionMap
   readonly tableA: readonly PayloadRow[]
   readonly tableB: readonly PayloadRow[]
 }
@@ -64,10 +68,28 @@ function isPayloadRow(value: unknown): value is PayloadRow {
   )
 }
 
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+const FULL_SHA = /^[0-9a-f]{40}$/i
+
+function targetVersionMap(value: unknown, where: string): SsrTargetVersionMap {
+  if (!isJsonRecord(value)) return fail(`${where} must be an object`)
+  const versions: Record<string, string> = {}
+  for (const [target, version] of Object.entries(value)) {
+    if (typeof version !== "string" || !EXACT_VERSION.test(version)) {
+      return fail(`${where}.${target} must be an exact semantic version`)
+    }
+    versions[target] = version
+  }
+  return versions
+}
+
 function payloadArtifact(value: unknown): PayloadArtifact {
   if (
     !isJsonRecord(value) ||
     typeof value.nifraVersion !== "string" ||
+    typeof value.sourceCommit !== "string" ||
+    !FULL_SHA.test(value.sourceCommit) ||
+    !isJsonRecord(value.targetVersions) ||
     !Array.isArray(value.tableA) ||
     !Array.isArray(value.tableB)
   ) {
@@ -78,7 +100,13 @@ function payloadArtifact(value: unknown): PayloadArtifact {
   if (tableA.length !== value.tableA.length || tableB.length !== value.tableB.length) {
     return fail("SSR payload artifact contains an invalid row")
   }
-  return { nifraVersion: value.nifraVersion, tableA, tableB }
+  return {
+    nifraVersion: value.nifraVersion,
+    sourceCommit: value.sourceCommit,
+    targetVersions: targetVersionMap(value.targetVersions, "SSR payload artifact.targetVersions"),
+    tableA,
+    tableB,
+  }
 }
 
 function metadata(path: string): RunIdentity {
@@ -166,6 +194,73 @@ function runtimeVersions(report: CiReport): ToolVersions {
     node: version("node"),
     deno: version("deno"),
     oha: version("oha"),
+  }
+}
+
+function reportTargetVersions(report: CiReport): SsrTargetVersionMap {
+  const maps = report.runs.map((run, index) => {
+    const raw = run.meta.ssrTargetVersions
+    if (typeof raw !== "string") {
+      return fail(
+        `${report.suite}/${report.runtime} run ${index + 1} has no measured SSR target version map; rerun the accuracy benchmark`,
+      )
+    }
+    return targetVersionMap(
+      parseJson(raw),
+      `${report.suite}/${report.runtime}.runs[${index}].ssrTargetVersions`,
+    )
+  })
+  const first = maps[0]
+  if (first === undefined) return fail(`${report.suite}/${report.runtime} has no benchmark runs`)
+  for (const [index, map] of maps.entries()) {
+    if (index > 0)
+      assertVersionEqual(first, map, `${report.suite}/${report.runtime} run ${index + 1}`)
+  }
+  return first
+}
+
+function assertVersionSubset(
+  expected: SsrTargetVersionMap,
+  actual: SsrTargetVersionMap,
+  where: string,
+): void {
+  for (const [target, version] of Object.entries(actual)) {
+    if (expected[target] !== version) {
+      fail(
+        `${where} disagrees for ${target}: measured ${version}, payload artifact ${String(expected[target])}`,
+      )
+    }
+  }
+}
+
+function assertVersionEqual(
+  expected: SsrTargetVersionMap,
+  actual: SsrTargetVersionMap,
+  where: string,
+): void {
+  assertVersionSubset(expected, actual, where)
+  assertVersionSubset(actual, expected, where)
+}
+
+function assertCompleteTargetVersionMap(versions: SsrTargetVersionMap): void {
+  const names = new Set(ALL_TABLE_SECTIONS.flatMap((section) => section.targets.map((t) => t.name)))
+  for (const name of names) {
+    if (versions[name] === undefined) {
+      fail(`SSR payload artifact has no measured version for ${name}`)
+    }
+  }
+}
+
+function assertRuntimeVersionCoverage(
+  versions: SsrTargetVersionMap,
+  runtime: "bun" | "node",
+): void {
+  for (const section of ALL_TABLE_SECTIONS) {
+    for (const target of forRuntime(section, runtime).targets) {
+      if (versions[target.name] === undefined) {
+        fail(`SSR ${runtime} report has no measured version for ${target.name}`)
+      }
+    }
   }
 }
 
@@ -262,6 +357,21 @@ const payloads = payloadArtifact(readJson(payloadPath))
 if (payloads.nifraVersion !== NIFRA_VERSION) {
   fail(`SSR payload artifact is for ${payloads.nifraVersion}; this checkout is ${NIFRA_VERSION}`)
 }
+if (payloads.sourceCommit.toLowerCase() !== identity.commit.toLowerCase()) {
+  fail(
+    `SSR payload artifact is from ${payloads.sourceCommit}; benchmark artifacts are from ${identity.commit}`,
+  )
+}
+assertCompleteTargetVersionMap(payloads.targetVersions)
+const ssrVersions = {
+  bun: reportTargetVersions(ssrReports.bun),
+  node: reportTargetVersions(ssrReports.node),
+}
+assertRuntimeVersionCoverage(ssrVersions.bun, "bun")
+assertRuntimeVersionCoverage(ssrVersions.node, "node")
+assertVersionSubset(payloads.targetVersions, ssrVersions.bun, "SSR Bun report")
+assertVersionSubset(payloads.targetVersions, ssrVersions.node, "SSR Node report")
+const versionOf = ssrVersionOfMap(payloads.targetVersions)
 const versions = runtimeVersions(httpReports[0]!)
 const httpResults = combined(httpReports)
 const realworldResults = combined(realworldReports)
@@ -296,11 +406,11 @@ const updatedSite: Parameters<typeof writeSiteBench>[0] = {
     node: machine(realworldReports.find((report) => report.runtime === "node")!),
     deno: machine(realworldReports.find((report) => report.runtime === "deno")!),
   }),
-  heroSsr: heroSsrSlice(tableA, ssrTargetVersion),
-  frontend: frontendSlice(tableA, ssrTargetVersion),
-  multipliers: multipliersSlice(tableA, ssrTargetVersion),
-  ssrTables: ssrTablesSlice(tableA, ssrTargetVersion),
-  ssrTablesB: ssrTablesSlice(tableB, ssrTargetVersion),
+  heroSsr: heroSsrSlice(tableA, versionOf),
+  frontend: frontendSlice(tableA, versionOf),
+  multipliers: multipliersSlice(tableA, versionOf),
+  ssrTables: ssrTablesSlice(tableA, versionOf),
+  ssrTablesB: ssrTablesSlice(tableB, versionOf),
   ssrCaptured: captureMeta(identity, ssrSourceLabel, versions, {
     bun: machine(ssrReports.bun),
     node: machine(ssrReports.node),

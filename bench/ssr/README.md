@@ -30,10 +30,11 @@ that route's end-to-end p50 in the same local run to show the guard time in cont
 latency reference, not a throughput uplift. It needs the built `packages/web/dist`; pass `--write` to
 save the capture to `site/shared/data/benchmarks.json`.
 
-Runtime versions are pinned in `.tool-versions`. Comparator apps have isolated installs;
-after changing their dependencies, run `bun install` in each changed app before measuring,
-including when its `node_modules` already exists. SolidStart 2 uses Vite and Nitro;
-SvelteKit 3 configures its adapter in the Vite plugin.
+Runtime versions are pinned in `.tool-versions`. Comparator apps pin the framework, UI library, and
+benchmark build toolchain they use to exact versions, including TypeScript, Vite, and the Svelte
+Vite plugin where applicable. Every build runs `bun install` in that app, so an existing
+`node_modules` cannot keep an older copy. The published version is that install, and it has to match
+the pin. SolidStart 2 uses Vite and Nitro; SvelteKit 3 configures its adapter in the Vite plugin.
 
 ## How a table is measured
 
@@ -47,6 +48,8 @@ in the same rounds. On a busy host the absolute req/s moves with the load, but w
 rows of a pair see the same host, so the ratio holds. Read ratios, not req/s.
 
 Compare Node rows with Node rows. The meta-frameworks run on Node; nifra runs on Bun and on Node.
+Bun Nifra rows, ISR/SSG rows, static-host references, and the raw Preact renderer remain visible in
+their own labeled tables; they are not part of the Node-only hero chart or multiplier headline.
 
 ## Every row is measured uncompressed
 
@@ -130,6 +133,12 @@ demand (a PR labelled `bench` skips them), through `bench/ci/run.ts --suite ssr`
 nifra's app rows on that runtime and every rival app, renderer and static-host row, in 4 interleaved
 rounds. `--json` sends the tables to stderr and prints one result line holding every round; it never
 touches the website's numbers. The rival apps run on Node in both jobs.
+
+Each CI JSON line also records the exact installed comparator version for every measured target. Before
+importing a payload, install every rival comparator at its pinned version (`bun install --frozen-lockfile`
+in each comparator directory). The full-run `BENCH_SSR_RESULTS_JSON` payload artifact carries the same
+map and its source commit; the public-site importer cross-checks both against the benchmark artifacts
+and refuses older artifacts that cannot prove which install was measured.
 
 The job's report divides each row by the table's ceiling where the table has one: the raw renderer in
 Preact's Table A, the static file server in every Table B. Every rival app's row also shows nifra over

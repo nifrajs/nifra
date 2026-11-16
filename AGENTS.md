@@ -186,8 +186,10 @@ does not match `@nifrajs/core`. After npm packages publish, the release workflow
 If the local host cannot pass the benchmark publish guard, download all artifacts from one successful
 `benchmark-accuracy.yml` run and import them with `bun run bench:site:import-ci <artifact-dir>
 <ssr-payloads.json>`. The SSR payload file comes from `BENCH_SSR_RESULTS_JSON`; its build must use the
-same Nifra release as the CI artifacts. The importer checks the artifact commit's core version before
-writing the site tables.
+same Nifra release and source commit as the CI artifacts. Before importing, install every rival
+comparator at its pinned version (`bun install --frozen-lockfile` in each `bench/ssr` comparator
+directory). The importer checks both the source commit and comparator-version map before writing the
+site tables, and stops before writing if a comparator is missing or mismatched.
 
 `release:prepare` also rebuilds and rewrites `packed-files.json`, the list of files each package
 publishes, so the pull request shows every file a package gained or lost since the last release.

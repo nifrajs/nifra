@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { readJsonRecord } from "../../scripts/read-json.ts"
 import {
   assertUncompressed,
   clientScriptUrls,
@@ -12,8 +16,17 @@ import {
   rowKind,
   SSR_BENCH_REQUEST_HEADERS,
   type SsrBenchTarget,
+  validateSsrHtml,
 } from "./harness.ts"
-import { frontendSlice, heroSsrSlice, multipliersSlice, ssrTablesSlice } from "./site-slice.ts"
+import {
+  declaredExactVersion,
+  frontendSlice,
+  heroSsrSlice,
+  multipliersSlice,
+  ssrTablesSlice,
+  ssrTargetVersion,
+  ssrVersionOfMap,
+} from "./site-slice.ts"
 import { staticFileFor } from "./static-path.ts"
 import { ALL_TABLE_SECTIONS } from "./targets.ts"
 
@@ -22,6 +35,14 @@ const tables = (which: "A" | "B") =>
   ALL_TABLE_SECTIONS.filter((section) => section.label.includes(`Table ${which}`))
 const nifraRows = (section: (typeof ALL_TABLE_SECTIONS)[number]) =>
   section.targets.filter((t) => t.name.startsWith("nifra+"))
+const stringMap = (value: unknown): Record<string, string> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(
+        Object.entries(value).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      )
+    : {}
 
 describe("like-for-like rows", () => {
   test("every port is unique and every baseline is a row of its own table", () => {
@@ -60,6 +81,82 @@ describe("like-for-like rows", () => {
       expect(host).toHaveLength(1)
       expect(host[0]?.build.slice(2, 5)).toEqual(["build", "--target", "static"])
     }
+  })
+
+  test("a rival build installs its pin instead of keeping a stale node_modules", () => {
+    const measured: Readonly<Record<string, readonly string[]>> = {
+      next: ["next", "react", "react-dom"],
+      remix: ["react-router", "react", "react-dom"],
+      solidstart: ["@solidjs/start", "solid-js"],
+      nuxt: ["nuxt", "vue"],
+      sveltekit: ["@sveltejs/kit", "svelte"],
+      "preact-ssr": ["preact-render-to-string", "preact"],
+    }
+    const seen = new Set<string>()
+    for (const target of targets) {
+      if (target.cwd === undefined || target.name.startsWith("nifra") || seen.has(target.cwd)) {
+        continue
+      }
+      seen.add(target.cwd)
+      const cmd = target.build.join(" ")
+      expect(cmd).toContain("bun install --silent")
+      expect(cmd).not.toContain("test -d node_modules")
+      const key = Object.keys(measured).find((prefix) => target.name.startsWith(prefix))
+      const pkgs = key === undefined ? undefined : measured[key]
+      expect(pkgs).toBeDefined()
+      const manifest = readJsonRecord(join(target.cwd, "package.json"))
+      const deps = { ...stringMap(manifest.dependencies), ...stringMap(manifest.devDependencies) }
+      const pins = { ...deps, ...stringMap(manifest.overrides) }
+      const nifra = readJsonRecord(join(import.meta.dir, "../../package.json"))
+      for (const pkg of pkgs ?? []) {
+        expect(deps[pkg]).toBe(declaredExactVersion(target.cwd, pkg))
+        const workspace = stringMap(nifra.overrides)[pkg]
+        if (workspace !== undefined) expect(deps[pkg]).toBe(workspace)
+      }
+      for (const [pkg, spec] of Object.entries(pins)) {
+        expect(spec).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+        expect(declaredExactVersion(target.cwd, pkg)).toBe(spec)
+      }
+    }
+    expect(seen.size).toBeGreaterThan(0)
+  })
+
+  test("a rival row refuses an install that is not its pin", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ssr-pin-"))
+    try {
+      writeFileSync(join(cwd, "package.json"), JSON.stringify({ dependencies: { next: "16.4.6" } }))
+      mkdirSync(join(cwd, "node_modules", "next"), { recursive: true })
+      writeFileSync(
+        join(cwd, "node_modules", "next", "package.json"),
+        JSON.stringify({ version: "16.4.2" }),
+      )
+      const target: SsrBenchTarget = {
+        name: "next (dynamic)",
+        runtime: "node",
+        cwd,
+        build: ["bun", "install"],
+        serve: ["node", "server.js"],
+        port: 1,
+      }
+      expect(() => ssrTargetVersion(target)).toThrow("node_modules has 16.4.2")
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  test("a captured target-version map labels only the install it came from", () => {
+    const target: SsrBenchTarget = {
+      name: "next (dynamic)",
+      runtime: "node",
+      build: [],
+      serve: [],
+      port: 1,
+    }
+    const versionOf = ssrVersionOfMap({ [target.name]: "16.4.6" })
+    expect(versionOf(target)).toBe("16.4.6")
+    expect(() => versionOf({ ...target, name: "remix" })).toThrow(
+      "version map has no entry for remix",
+    )
   })
 
   test("React ISR runs the same createWebApp entry on both runtimes, cache-warmed", () => {
@@ -112,6 +209,28 @@ describe("successful SSR samples", () => {
     expect(() => parseOha(sample(1, { "200": 999, "500": 1 }))).toThrow("invalid sample")
     expect(() => parseOha(sample(1, { "200": 0 }))).toThrow("invalid sample")
     expect(() => parseOha(sample(1, {}))).toThrow("unexpected JSON shape")
+  })
+})
+
+describe("rendered catalog validation", () => {
+  const target: SsrBenchTarget = {
+    name: "comparator",
+    runtime: "node",
+    build: [],
+    serve: [],
+    port: 1,
+    validate: { text: "Item 50", texts: ["Items (50)"], liCount: 2 },
+  }
+
+  test("requires the catalog count as well as its last item", () => {
+    const html = "<h1>Items (<!-- -->50)</h1><ul><li>Item 1</li><li>Item 50</li></ul>"
+    expect(() => validateSsrHtml(html, target)).not.toThrow()
+    expect(() => validateSsrHtml(html.replace("<!-- -->50", "<!-- -->0"), target)).toThrow(
+      'missing "Items (50)"',
+    )
+    expect(() => validateSsrHtml(html.replaceAll("<li", "<p"), target)).toThrow(
+      "expected at least 2",
+    )
   })
 })
 
