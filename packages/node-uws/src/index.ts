@@ -21,6 +21,7 @@ import {
   resolveRequestHost,
   resolveRequestTarget,
 } from "@nifrajs/node/transport"
+import { declarativeRoutes, isServerView } from "./generated/declarative-routes.ts"
 import { UwsSource } from "./source.ts"
 import {
   type AppOptions,
@@ -28,8 +29,10 @@ import {
   type HttpResponse,
   type ListenSocket,
   loadUws,
+  type TemplatedApp,
+  type Uws,
 } from "./uws.ts"
-import { writeFailure, writeOutcome } from "./write.ts"
+import { statusLine, writeFailure, writeOutcome } from "./write.ts"
 
 export type { NodeStopOptions } from "@nifrajs/node/transport"
 
@@ -86,6 +89,18 @@ const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
 
 const UNSUPPORTED = ["static", "fastResponse"] as const
+
+type RouteHandler = (res: HttpResponse, req: HttpRequest) => void
+
+/** uWS's precompiled reply: written by the C++ side with no callback into JS. Not in the package's typings. */
+interface DeclarativeBuilder {
+  writeStatus(status: string): DeclarativeBuilder
+  writeHeader(name: string, value: string): DeclarativeBuilder
+  /** The value of the route's named `:parameter`, as sent. */
+  writeParameterValue(name: string): DeclarativeBuilder
+  /** Seals the reply; what comes back is the route handler. */
+  end(body?: string): unknown
+}
 
 export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServer> {
   for (const name of UNSUPPORTED) {
@@ -240,6 +255,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
     answer(res, source, outcome, verb === "HEAD")
   }
 
+  registerDeclarative(app$, uWS, app, policy)
+
   // One route per common method: uWS has already matched the verb, so none of them reads it back
   // across the native boundary. `any` catches the rest (QUERY, PROPFIND, ...).
   app$
@@ -325,6 +342,41 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
     if (options.hostname === undefined) app$.listen(options.port, onListen)
     else app$.listen(options.hostname, options.port, onListen)
   })
+}
+
+/**
+ * Fixed replies (`staticResponse()` routes) are compiled into uWS and answered without entering JS. The
+ * app is sealed by asking, as `listen()` seals it, so no hook or route added later can be skipped. A
+ * Host policy needs every request's Host read, so it keeps these routes on the ordinary path; so does a
+ * malformed Host, which is only screened there.
+ */
+function registerDeclarative(
+  app$: TemplatedApp,
+  uWS: Uws,
+  app: FetchHandler,
+  policy: ReturnType<typeof hostPolicyOf>,
+): void {
+  if (!isServerView(app)) return
+  const routes = declarativeRoutes(app)
+  if (
+    policy.allowedHosts !== undefined ||
+    policy.canonicalHost !== undefined ||
+    policy.normalizeTarget
+  ) {
+    return
+  }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: uWS exports this class; its typings omit it
+  const Declarative = (uWS as unknown as { DeclarativeResponse: new () => DeclarativeBuilder })
+    .DeclarativeResponse
+  for (const route of routes) {
+    const reply = new Declarative().writeStatus(statusLine(route.status))
+    for (const [name, value] of route.headers) reply.writeHeader(name, value)
+    if (route.param !== undefined) reply.writeParameterValue(route.param)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: uWS accepts a sealed DeclarativeResponse wherever a route handler goes
+    const handler = reply.end() as RouteHandler
+    if (route.method === "GET") app$.get(route.path, handler)
+    else app$.post(route.path, handler)
+  }
 }
 
 function sslOptions(tls: UwsTlsOptions): AppOptions {

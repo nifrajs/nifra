@@ -1429,6 +1429,26 @@ export const app = server()
 app.listen(3000)
 ```
 
+### Echoing a path parameter
+
+`echoParam(name)` answers a GET route with its last path parameter as
+`text/plain`, **exactly as the request spelled it**: percent-escapes are left
+in, not decoded. That fixed contract lets a transport that matches paths itself answer the
+route without calling the app: `@nifrajs/node-uws` does, under the same
+conditions as `staticResponse()`. The reply carries
+`X-Content-Type-Options: nosniff`. Where the raw spelling cannot be known the
+decoded value is answered instead: a parameter that is not the last segment, and a segment
+of dots written as escapes (a URL parser reads `%2E` as a dot segment). On
+node-uws a malformed escape such as `%zz` is echoed as sent, where every other
+runtime refuses it with 400.
+
+```ts
+import { echoParam, server } from "@nifrajs/core/server"
+
+export const app = server().get("/user/:id", echoParam("id"))
+// GET /user/%41b answers 200 text/plain with the body %41b
+```
+
 Prefer `c.set` over returning a raw `Response`. A `Response`
 return makes the typed client infer `data: never`, so you silently lose drift
 detection for that route (`nifra check` flags it, NF-C007). `c.set`
@@ -21157,6 +21177,14 @@ do on `@nifrajs/node`.
 
 ## How it differs from `@nifrajs/node`
 
+- **Fixed replies skip the app.** A `staticResponse()` route (`GET` or `POST`, no path parameter, no
+  schema, auth or other route-level stage) is compiled into uWS and answered without calling into
+  JavaScript, as long as the app has no request or response hook, deadline, capacity gate, response
+  headers or Host policy (`allowedHosts`, `canonicalHost`, `normalizeTarget`). An `echoParam()` route (a GET whose only parameter is its last segment)
+  is answered the same way, from the path as sent. A malformed `Host` is screened on every other
+  route and not on these; a malformed percent-escape in an echoed segment is echoed as sent, where
+  the other runtimes answer 400. Serving seals the app, as `listen()` does: a route or
+  hook added afterwards throws `SERVER_SEALED`.
 - **No WebSockets.** A handshake is refused with `501`. Use `@nifrajs/node` for apps with `ws` routes.
 - **Streaming responses** (SSE, streamed SSR) are written chunked with back-pressure; a body whose
   `Content-Length` is declared is sent with that length and cut off, not finished, if the stream ends
@@ -22754,7 +22782,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestLocal`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TopicAdapter`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `carryRequestLocals`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `requestLocal`, `routePatternOverlap`, `routeTemplateOf`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `staticResponse`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `varyOn`, `writableResponse`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestLocal`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TopicAdapter`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `carryRequestLocals`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `echoParam`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `requestLocal`, `routePatternOverlap`, `routeTemplateOf`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `staticResponse`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `varyOn`, `writableResponse`
 
 ## @nifrajs/cron
 

@@ -21131,6 +21131,20 @@
     "doc": "/**\n * Build a real WebSocket URL for an adapter-backed test server. The path uses the same-origin guard as\n * {@link e2eUrl}; `http`/`https` are translated to `ws`/`wss` so callers cannot accidentally dial an\n * HTTP URL with a WebSocket client or escape the test server origin.\n */"
   },
   {
+    "name": "echoParam",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function echoParam<const Name extends string>(name: Name): (context: {\n    readonly params: {\n        readonly [K in Name]: string;\n    };\n    readonly req: Request;\n}) => Response;",
+    "doc": "/**\n * Answer 200 with the route's last path parameter as plain text, exactly as the request spelled it:\n * percent-escapes are left in, not decoded. `get(\"/user/:id\", echoParam(\"id\"))` answers\n * `/user/%41b` with `%41b`.\n *\n * The raw spelling is the contract because a transport can then answer the route itself (uWS fills the\n * body in from the path without calling into JavaScript), and every runtime agrees on the bytes. A\n * parameter that is not the last segment, or a segment of dots written as percent-escapes (a URL\n * parser reads `%2E` as a dot segment), answers with the decoded value.\n */"
+  },
+  {
+    "name": "echoParam",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function echoParam<const Name extends string>(name: Name): (context: {\n    readonly params: {\n        readonly [K in Name]: string;\n    };\n    readonly req: Request;\n}) => Response;",
+    "doc": "/**\n * Answer 200 with the route's last path parameter as plain text, exactly as the request spelled it:\n * percent-escapes are left in, not decoded. `get(\"/user/:id\", echoParam(\"id\"))` answers\n * `/user/%41b` with `%41b`.\n *\n * The raw spelling is the contract because a transport can then answer the route itself (uWS fills the\n * body in from the path without calling into JavaScript), and every runtime agrees on the bytes. A\n * parameter that is not the last segment, or a segment of dots written as percent-escapes (a URL\n * parser reads `%2E` as a dot segment), answers with the decoded value.\n */"
+  },
+  {
     "name": "effect",
     "kind": "function",
     "package": "@nifrajs/web",

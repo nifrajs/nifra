@@ -107,6 +107,11 @@ export const app = server()
   .post("/flush", staticResponse())
 app.listen(3000)`
 
+const ECHO_PARAM = `import { echoParam, server } from "@nifrajs/core/server"
+
+export const app = server().get("/user/:id", echoParam("id"))
+// GET /user/%41b answers 200 text/plain with the body %41b`
+
 const COOKIES = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
@@ -455,6 +460,20 @@ export default function Api() {
         pipeline. <code>app.fetch</code> and other runtimes also produce a fresh response per call.
       </p>
       <CodeBlock code={STATIC_RESPONSE} />
+      <h2>Echoing a path parameter</h2>
+      <p>
+        <code>echoParam(name)</code> answers a GET route with its last path parameter as{" "}
+        <code>text/plain</code>, <b>exactly as the request spelled it</b>: percent-escapes are left
+        in, not decoded. That fixed contract lets a transport that matches paths itself answer the
+        route without calling the app: <code>@nifrajs/node-uws</code> does, under the same
+        conditions as <code>staticResponse()</code>. The reply carries{" "}
+        <code>X-Content-Type-Options: nosniff</code>. Where the raw spelling cannot be known the
+        decoded value is answered instead: a parameter that is not the last segment, and a segment
+        of dots written as escapes (a URL parser reads <code>%2E</code> as a dot segment). On
+        node-uws a malformed escape such as <code>%zz</code> is echoed as sent, where every other
+        runtime refuses it with 400.
+      </p>
+      <CodeBlock code={ECHO_PARAM} />
       <p className="caveat">
         Prefer <code>c.set</code> over returning a raw <code>Response</code>. A <code>Response</code>{" "}
         return makes the typed client infer <code>data: never</code>, so you silently lose drift

@@ -1800,6 +1800,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **echoParam** _(function)_ - `echoParam: <const Name extends string>(name: Name) => (context: { readonly params: { readonly [K in Name]: string; }; readonly req: Request; }) => Response`
+  Answer 200 with the route's last path parameter as plain text, exactly as the request spelled it: percent-escapes are left in, not decoded. `get("/user/:id", echoParam("id"))` answers `/user/%41b` with `%41b`.
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
@@ -3177,6 +3179,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **echoParam** _(function)_ - `echoParam: <const Name extends string>(name: Name) => (context: { readonly params: { readonly [K in Name]: string; }; readonly req: Request; }) => Response`
+  Answer 200 with the route's last path parameter as plain text, exactly as the request spelled it: percent-escapes are left in, not decoded. `get("/user/:id", echoParam("id"))` answers `/user/%41b` with `%41b`.
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
@@ -8528,6 +8532,8 @@ _No named exports (side-effect entrypoint)._
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **echoParam** _(function)_ - `echoParam: <const Name extends string>(name: Name) => (context: { readonly params: { readonly [K in Name]: string; }; readonly req: Request; }) => Response`
+  Answer 200 with the route's last path parameter as plain text, exactly as the request spelled it: percent-escapes are left in, not decoded. `get("/user/:id", echoParam("id"))` answers `/user/%41b` with `%41b`.
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`

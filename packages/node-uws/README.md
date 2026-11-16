@@ -53,6 +53,14 @@ do on `@nifrajs/node`.
 
 ## How it differs from `@nifrajs/node`
 
+- **Fixed replies skip the app.** A `staticResponse()` route (`GET` or `POST`, no path parameter, no
+  schema, auth or other route-level stage) is compiled into uWS and answered without calling into
+  JavaScript, as long as the app has no request or response hook, deadline, capacity gate, response
+  headers or Host policy (`allowedHosts`, `canonicalHost`, `normalizeTarget`). An `echoParam()` route (a GET whose only parameter is its last segment)
+  is answered the same way, from the path as sent. A malformed `Host` is screened on every other
+  route and not on these; a malformed percent-escape in an echoed segment is echoed as sent, where
+  the other runtimes answer 400. Serving seals the app, as `listen()` does: a route or
+  hook added afterwards throws `SERVER_SEALED`.
 - **No WebSockets.** A handshake is refused with `501`. Use `@nifrajs/node` for apps with `ws` routes.
 - **Streaming responses** (SSE, streamed SSR) are written chunked with back-pressure; a body whose
   `Content-Length` is declared is sent with that length and cut off, not finished, if the stream ends
