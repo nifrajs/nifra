@@ -17,6 +17,7 @@ import {
   isReleaseBranch,
   packagesMissingFromRegistry,
   pendingChangesetFiles,
+  publicPackagesForRegistryCheck,
   registryHasPackage,
   releaseCheckBaseRef,
 } from "./release-branch.ts"
@@ -48,6 +49,17 @@ describe("release branch policy", () => {
         { name: "private-tool", version: "3.5.1", private: true },
       ]),
     ).toEqual([{ name: "@nifrajs/core", baseVersion: "3.5.0", releaseVersion: "3.5.1" }])
+  })
+
+  test("includes newly introduced public packages in the registry check", () => {
+    const base = [{ name: "@nifrajs/core", version: "3.5.0" }]
+    expect(
+      publicPackagesForRegistryCheck(base, [
+        { name: "@nifrajs/core", version: "3.5.1" },
+        { name: "@nifrajs/new", version: "1.0.0" },
+        { name: "private-tool", version: "1.0.0", private: true },
+      ]),
+    ).toEqual(["@nifrajs/core", "@nifrajs/new"])
   })
 
   test("requires the associated pull request base SHA for merge checks", () => {

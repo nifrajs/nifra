@@ -39,6 +39,22 @@ export const changedPublicPackageVersions = (
   })
 }
 
+/** Public packages whose release version changed or which are new to the release branch. */
+export const publicPackagesForRegistryCheck = (
+  base: readonly PackageManifest[],
+  release: readonly PackageManifest[],
+): string[] => {
+  const baseByName = new Map(base.map((manifest) => [manifest.name, manifest]))
+  return release
+    .filter((manifest) => manifest.private !== true)
+    .filter((manifest) => {
+      const previous = baseByName.get(manifest.name)
+      return previous === undefined || previous.version !== manifest.version
+    })
+    .map((manifest) => manifest.name)
+    .sort()
+}
+
 export type FetchLike = (
   url: string,
   init: { headers: Record<string, string> },
@@ -48,7 +64,7 @@ export type FetchLike = (
 
 /** Whether npm knows the package at all; any answer but 200 or 404 is an error, not a verdict. */
 export const registryHasPackage = async (name: string, fetchImpl: FetchLike): Promise<boolean> => {
-  const url = `https://registry.npmjs.org/${name.replace("/", "%2f")}`
+  const url = `https://registry.npmjs.org/${name.replaceAll("/", "%2f")}`
   const headers = { accept: "application/vnd.npm.install-v1+json" }
   let status = 0
   for (let attempt = 0; attempt < 3; attempt++) {
