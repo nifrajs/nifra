@@ -15,25 +15,41 @@ const routes = [
   { name: "POST /user", args: ["-m", "POST", "-d", "x"], path: "/user" },
 ]
 
-const start = async (arm, port) => {
+/** Start one server and resolve once that child itself reports it is listening; reject if it exits first. */
+const start = (arm, port) => {
   const [label, file] = arm.includes("=") ? arm.split("=") : [arm, undefined]
   const child = spawn(
     process.execPath,
     file ? [file, port] : [`${dir}dist/workload-serve.mjs`, label, port],
     {
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "inherit"],
       env: { ...process.env, NODE_PATH: `${dir}../../packages/node-uws/node_modules` },
     },
   )
-  for (let i = 0; i < 50; i++) {
-    await new Promise((r) => setTimeout(r, 100))
-    try {
-      if ((await fetch(`http://127.0.0.1:${port}/`)).status === 200) return child
-    } catch {}
-  }
-  child.kill()
-  throw new Error(`${arm} did not start`)
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL")
+      reject(new Error(`${arm} did not report ready`))
+    }, 10_000)
+    child.once("exit", (code) => {
+      clearTimeout(timer)
+      reject(new Error(`${arm} exited (${code}) before it was ready`))
+    })
+    child.stdout.on("data", (chunk) => {
+      if (String(chunk).includes("ready")) {
+        clearTimeout(timer)
+        resolve(child)
+      }
+    })
+  })
 }
+
+const stop = (child) =>
+  new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve()
+    child.once("exit", () => resolve())
+    child.kill("SIGKILL")
+  })
 
 const oha = (port, route) => {
   const out = execFileSync(
@@ -60,12 +76,15 @@ for (let round = 0; round < rounds; round++) {
   for (const [i, arm] of armNames.entries()) {
     const port = 4800 + i
     const child = await start(arm, port)
-    for (const route of routes) {
-      const key = `${arm}|${route.name}`
-      if (!samples[key]) samples[key] = []
-      samples[key].push(oha(port, route))
+    try {
+      for (const route of routes) {
+        const key = `${arm}|${route.name}`
+        if (!samples[key]) samples[key] = []
+        samples[key].push(oha(port, route))
+      }
+    } finally {
+      await stop(child)
     }
-    child.kill("SIGKILL")
     await new Promise((r) => setTimeout(r, 300))
   }
 }

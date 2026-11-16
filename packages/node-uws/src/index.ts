@@ -99,7 +99,7 @@ interface DeclarativeBuilder {
   /** The value of the route's named `:parameter`, as sent. */
   writeParameterValue(name: string): DeclarativeBuilder
   /** Seals the reply; what comes back is the route handler. */
-  end(body?: string): unknown
+  end(body?: string): RouteHandler
 }
 
 export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServer> {
@@ -365,17 +365,15 @@ function registerDeclarative(
   ) {
     return
   }
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: uWS exports this class; its typings omit it
-  const Declarative = (uWS as unknown as { DeclarativeResponse: new () => DeclarativeBuilder })
-    .DeclarativeResponse
+  // uWS exports this class; its typings omit it.
+  const Declarative: unknown = Reflect.get(uWS, "DeclarativeResponse")
+  if (typeof Declarative !== "function") return
   for (const route of routes) {
-    const reply = new Declarative().writeStatus(statusLine(route.status))
+    const reply: DeclarativeBuilder = Reflect.construct(Declarative, [])
+    reply.writeStatus(statusLine(route.status))
     for (const [name, value] of route.headers) reply.writeHeader(name, value)
     if (route.param !== undefined) reply.writeParameterValue(route.param)
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: uWS accepts a sealed DeclarativeResponse wherever a route handler goes
-    const handler = reply.end() as RouteHandler
-    if (route.method === "GET") app$.get(route.path, handler)
-    else app$.post(route.path, handler)
+    app$.get(route.path, reply.end())
   }
 }
 

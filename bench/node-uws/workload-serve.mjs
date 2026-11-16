@@ -14,6 +14,7 @@ if (arm === "nifra") {
     .get("/user/:id", echoParam("id"))
     .post("/user", staticResponse())
   await serve(app, { port })
+  console.log("ready")
 } else {
   const { App, DeclarativeResponse, _cfg } = require("uWebSockets.js")
   _cfg("silent")
@@ -50,5 +51,6 @@ if (arm === "nifra") {
   }
   app.listen("127.0.0.1", port, (t) => {
     if (!t) process.exit(1)
+    console.log("ready")
   })
 }

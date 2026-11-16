@@ -80,12 +80,13 @@ const setups: Array<[string, () => object, boolean]> = [
   ],
 ]
 
-interface Routable {
-  get(path: string, handler: unknown): object
+/** `app.get(path, handler)` without the route registry's types, for handlers the types would refuse. */
+function routeOf(app: object, path: string, handler: unknown): object {
+  return Reflect.apply(Reflect.get(app, "get"), app, [path, handler])
 }
 
 /** A route as the fixed-reply path sees it, and the pattern it is listed under. */
-const fixedRoute = (app: object): object => (app as Routable).get("/health", fixed)
+const fixedRoute = (app: object): object => routeOf(app, "/health", fixed)
 
 describe("fixed-reply routes: uWS and Bun agree on every disqualifier", () => {
   for (const [name, setup, expected] of setups) {
@@ -109,9 +110,7 @@ describe("fixed-reply routes: uWS and Bun agree on every disqualifier", () => {
 
   test("the app-level gate reads the same fields in both places", () => {
     const fields = [...transportMayAnswer.toString().matchAll(/server\.(\w+)/g)].map((m) => m[1])
-    const bun = (
-      Server.prototype as unknown as { buildBunNativeRoutes: () => void }
-    ).buildBunNativeRoutes.toString()
+    const bun = String(Reflect.get(Server.prototype, "buildBunNativeRoutes"))
     expect(fields.length).toBeGreaterThanOrEqual(10)
     for (const field of fields) expect(bun).toContain(`this.${field}`)
   })
@@ -120,7 +119,7 @@ describe("fixed-reply routes: uWS and Bun agree on every disqualifier", () => {
 describe("echoParam routes follow the same app-level disqualifiers", () => {
   for (const [name, setup, expected] of setups) {
     test(name, () => {
-      const app = (setup() as Routable).get("/user/:id", echoParam("id"))
+      const app = routeOf(setup(), "/user/:id", echoParam("id"))
       expect(declarativeRoutes(viewOf(app)).length).toBe(expected ? 1 : 0)
     })
   }
@@ -142,13 +141,14 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
   })
 
   test("only a route whose single parameter is its last segment is listed", () => {
-    const app = server()
+    const typed = server()
       .get("/a/:id/x", echoParam("id"))
       .get("/b/:one/:id", echoParam("id"))
-      .get("/c/:id", echoParam("other" as "id"))
       .get("/d/:id", () => "not an echo")
       .get("/:id", echoParam("id"))
       .post("/e/:id", echoParam("id"))
+    // The name does not match the route's parameter: the types refuse it.
+    const app = routeOf(typed, "/c/:id", echoParam("other"))
     expect(declarativeRoutes(viewOf(app)).map((route) => route.path)).toEqual(["/:id"])
   })
 
@@ -160,6 +160,56 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
       .get("/schema/:id", { query: anything }, echoParam("id"))
       .get("/plain/:id", echoParam("id"))
     expect(declarativeRoutes(viewOf(app)).map((route) => route.path)).toEqual(["/plain/:id"])
+  })
+
+  test("an echo route yields to every route that may take a request it would answer", () => {
+    const anything = server().get("/", () => "x")
+    const cases: Array<[string, object]> = [
+      [
+        "a more specific GET",
+        server()
+          .get("/user/:id", echoParam("id"))
+          .get("/user/me", () => "me"),
+      ],
+      [
+        "a more specific route of another method",
+        server()
+          .get("/user/:id", echoParam("id"))
+          .post("/user/me", () => "me"),
+      ],
+      [
+        "a part-literal route",
+        server()
+          .get("/user/:id", echoParam("id"))
+          .get("/user/:id.json", () => "j"),
+      ],
+      [
+        "a catch-all",
+        server()
+          .get("/user/:id", echoParam("id"))
+          .get("/user/*", () => "all"),
+      ],
+      [
+        "a mount ahead of the routes",
+        server().mount({ path: "/user/me", app: anything }).get("/user/:id", echoParam("id")),
+      ],
+    ]
+    for (const [name, app] of cases) {
+      expect(
+        declarativeRoutes(viewOf(app)).map((route) => route.path),
+        name,
+      ).toEqual([])
+    }
+  })
+
+  test("an echo route is listed beside routes that cannot take its requests", () => {
+    const app = server()
+      .get("/user/:id", echoParam("id"))
+      .post("/user/:id", () => "same pattern, another method")
+      .get("/user", () => "shorter")
+      .get("/user/:id/posts", () => "longer")
+      .get("/other/me", () => "elsewhere")
+    expect(declarativeRoutes(viewOf(app)).map((route) => route.path)).toEqual(["/user/:id"])
   })
 
   test("the marker the module reads is the one echoParam sets", () => {
@@ -179,19 +229,31 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
     expect(await body("/user/caf%C3%A9")).toEqual([200, "caf%C3%A9", "text/plain; charset=utf-8"])
     // The parameter is not the last segment: the decoded value.
     expect(await body("/p/%41/x")).toEqual([200, "A", "text/plain; charset=utf-8"])
+    // Nor is it the route's last parameter when the final segment decodes to the same value.
+    const both = server().get("/q/:id/:tail", echoParam("id"))
+    const answer = await both.fetch(new Request("http://nifra.test/q/A/%41"))
+    expect(await answer.text()).toBe("A")
   })
 })
 
 describe("declarativeRoutes", () => {
-  test("lists GET and POST fixed routes with their status and headers", () => {
+  test("lists GET fixed routes with their status and headers; a POST stays with the router", () => {
     const app = server()
       .get("/", staticResponse())
-      .post("/user", staticResponse({ status: 201, headers: { "x-a": "1" } }))
+      .get("/created", staticResponse({ status: 201, headers: { "x-a": "1" } }))
+      .post("/user", staticResponse())
       .put("/user", staticResponse())
     expect(declarativeRoutes(viewOf(app))).toEqual([
       { method: "GET", path: "/", status: 200, headers: [] },
-      { method: "POST", path: "/user", status: 201, headers: [["x-a", "1"]] },
+      { method: "GET", path: "/created", status: 201, headers: [["x-a", "1"]] },
     ])
+  })
+
+  test("a fixed route stays listed beside a less specific one", () => {
+    const app = server()
+      .get("/ping", fixed)
+      .get("/:anything", () => "x")
+    expect(declarativeRoutes(viewOf(app)).map((route) => route.path)).toEqual(["/ping"])
   })
 
   test("seals the server, as listen() does", () => {

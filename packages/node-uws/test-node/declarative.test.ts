@@ -87,6 +87,14 @@ const cases: Array<[string, string | Buffer]> = [
     "POST with a chunked body",
     `POST /ping HTTP/1.1\r\nHost: example.test\r\ntransfer-encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n`,
   ],
+  [
+    "a cross-site form POST is refused as on every other route",
+    head(
+      "POST",
+      "/ping",
+      "origin: https://evil.test\r\ncontent-type: text/plain\r\ncontent-length: 0\r\n",
+    ),
+  ],
   ["201 status", head("GET", "/created")],
   ["204 stays bodyless", head("GET", "/nothing")],
   ["nested path", head("GET", "/api/v1/health")],
@@ -174,11 +182,27 @@ test("a fixed route is answered without entering the app", async () => {
   const running = await serveUws(app, { port: 0 })
   try {
     await observe(running.port, head("GET", "/ping"))
-    await observe(running.port, head("POST", "/ping", "content-length: 0\r\n"))
     assert.equal((await observe(running.port, head("GET", "/user/abc"))).body, "abc")
     assert.equal(entered, 0)
-    await observe(running.port, head("GET", "/dynamic"))
+    // A POST runs the cross-site form check, so it is not answered natively.
+    await observe(running.port, head("POST", "/ping", "content-length: 0\r\n"))
     assert.equal(entered, 1)
+    await observe(running.port, head("GET", "/dynamic"))
+    assert.equal(entered, 2)
+  } finally {
+    await running.stop()
+  }
+})
+
+test("a more specific route beside an echoParam route still wins", async () => {
+  const app = server()
+    .get("/user/:id", echoParam("id"))
+    .get("/user/me", () => ({ profile: true }))
+    .post("/other/:id", echoParam("id"))
+  const running = await serveUws(app, { port: 0 })
+  try {
+    assert.equal((await observe(running.port, head("GET", "/user/me"))).body, '{"profile":true}')
+    assert.equal((await observe(running.port, head("GET", "/user/abc"))).body, "abc")
   } finally {
     await running.stop()
   }

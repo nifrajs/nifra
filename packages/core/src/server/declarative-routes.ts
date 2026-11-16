@@ -64,7 +64,7 @@ export interface ServerView {
 
 /** One fixed-reply route handed to a transport that answers it natively. */
 export interface DeclarativeRoute {
-  readonly method: "GET" | "POST"
+  readonly method: "GET"
   readonly path: string
   readonly status: number
   readonly headers: readonly (readonly [string, string])[]
@@ -74,13 +74,15 @@ export interface DeclarativeRoute {
 
 /** Whether `app` has the fields of a nifra `Server` that this module reads. */
 export function isServerView(app: object): app is ServerView {
-  const view = app as Partial<Record<keyof ServerView, unknown>>
+  const catalog: unknown = Reflect.get(app, "catalog")
   return (
-    typeof view.sealed === "boolean" &&
-    Array.isArray(view.onRequestHooks) &&
-    Array.isArray(view.wsRoutes) &&
-    Array.isArray(view.fetchMounts) &&
-    typeof (view.catalog as { entries?: unknown } | undefined)?.entries === "function"
+    typeof Reflect.get(app, "sealed") === "boolean" &&
+    Array.isArray(Reflect.get(app, "onRequestHooks")) &&
+    Array.isArray(Reflect.get(app, "wsRoutes")) &&
+    Array.isArray(Reflect.get(app, "fetchMounts")) &&
+    typeof catalog === "object" &&
+    catalog !== null &&
+    typeof Reflect.get(catalog, "entries") === "function"
   )
 }
 
@@ -159,36 +161,59 @@ function plainEchoParam(route: RouteView): string | undefined {
     : undefined
 }
 
-/** Whether a socket route's pattern may match this literal path. Errs toward `true`. */
-function socketMayMatch(pattern: string, path: string): boolean {
-  const want = pattern.split("/")
-  const have = path.split("/")
-  for (let i = 0; i < want.length; i++) {
-    const segment = want[i] as string
-    if (segment === "*" || segment.startsWith("*")) return true
-    if (i >= have.length) return false
-    if (!segment.startsWith(":") && !have[i]?.startsWith(":") && segment !== have[i]) return false
+/** A segment the transport or router reads as more than a literal: a parameter, or part of one. */
+const dynamic = (segment: string): boolean => segment.includes(":") || segment.includes("*")
+
+/**
+ * Whether one request may match both route patterns, written as paths. Errs toward `true`: a segment
+ * that is a parameter, part of one, or a wildcard matches anything.
+ */
+function pathsMayShare(a: string, b: string): boolean {
+  const left = a.split("/")
+  const right = b.split("/")
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    const x = left[i] ?? ""
+    const y = right[i] ?? ""
+    if (x.startsWith("*") || y.startsWith("*")) return true
+    if (!dynamic(x) && !dynamic(y) && x !== y) return false
   }
-  return want.length === have.length
+  return left.length === right.length
+}
+
+/** Whether a mount at `mountPath` may take a request that matches the route pattern `path`. */
+function mountMayTake(mountPath: string, path: string): boolean {
+  if (mountPath === "/") return true
+  const mount = mountPath.split("/")
+  const route = path.split("/")
+  for (let i = 0; i < mount.length; i++) {
+    const segment = route[i]
+    if (segment === undefined) return false
+    if (segment.startsWith("*")) return true
+    if (!dynamic(segment) && segment !== mount[i]) return false
+  }
+  return true
 }
 
 /**
  * The routes a transport that matches exact raw paths itself (uWebSockets.js) can answer natively.
- * A path stays out when anything that route-level or app-level could observe the request applies, when
- * the transport could read it as a pattern or the router would decode it, when a mount ahead of the
- * routes may take it, or when a WebSocket handshake may share it.
+ * Only GET routes: a fixed POST would skip the cross-site form check every bodyless POST runs.
+ * A route stays out when anything that route-level or app-level could observe the request applies,
+ * when the transport could read its path as a pattern or the router would decode it, when a mount ahead
+ * of the routes or a WebSocket handshake may share it, or, for an echoed parameter, when another route
+ * may match a request it would answer: the router would pick the more specific one, the transport
+ * would not.
  */
 export function declarativeRoutes(server: ServerView): DeclarativeRoute[] {
   server.sealed = true
   const routes: DeclarativeRoute[] = []
   if (!transportMayAnswer(server)) return routes
-  for (const route of server.catalog.entries()) {
-    const { method } = route
+  const all = server.catalog.entries()
+  for (const route of all) {
+    if (route.method !== "GET") continue
     const reply = plainStaticResponse(route)
-    const param = reply === undefined && method === "GET" ? plainEchoParam(route) : undefined
+    const param = reply === undefined ? plainEchoParam(route) : undefined
     if (
       (reply === undefined) === (param === undefined) ||
-      (method !== "GET" && method !== "POST") ||
       // A bodyless status carries no Content-Length, which a fixed reply would add.
       (reply !== undefined &&
         (reply.status < 200 ||
@@ -206,21 +231,29 @@ export function declarativeRoutes(server: ServerView): DeclarativeRoute[] {
       !/^(\/[^:*%?#\\/]+)*\/?$/.test(fixedPath) ||
       (param !== undefined && route.path !== `${fixedPath}/:${param}`) ||
       server.fetchMounts.some(
-        (mount) =>
-          mount.beforeRoutes &&
-          (mount.path === "/" ||
-            route.path === mount.path ||
-            route.path.startsWith(`${mount.path}/`)),
+        (mount) => mount.beforeRoutes && mountMayTake(mount.path, route.path),
       ) ||
-      (method === "GET" &&
-        server.wsRoutes.some((socket) => socketMayMatch(socket.path, route.path)))
+      server.wsRoutes.some((socket) => pathsMayShare(socket.path, route.path)) ||
+      (param !== undefined &&
+        all.some((other) => other.path !== route.path && pathsMayShare(other.path, route.path)))
     ) {
       continue
     }
     if (param !== undefined) {
-      routes.push({ method, path: route.path, status: 200, headers: [...ECHO_HEADERS], param })
+      routes.push({
+        method: "GET",
+        path: route.path,
+        status: 200,
+        headers: [...ECHO_HEADERS],
+        param,
+      })
     } else if (reply !== undefined) {
-      routes.push({ method, path: route.path, status: reply.status, headers: [...reply.headers] })
+      routes.push({
+        method: "GET",
+        path: route.path,
+        status: reply.status,
+        headers: [...reply.headers],
+      })
     }
   }
   return routes

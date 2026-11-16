@@ -30,7 +30,10 @@ export function echoParam<const Name extends string>(
     const path = query === -1 ? url : url.slice(0, query)
     const raw = path.slice(path.lastIndexOf("/") + 1)
     const decoded = context.params[name]
-    return new Response(decodePathSegment(raw) === decoded ? raw : decoded, { headers: HEADERS })
+    // The raw spelling is the last segment's, so the parameter must be the route's last one.
+    const keys = Object.keys(context.params)
+    const last = keys[keys.length - 1] === name && decodePathSegment(raw) === decoded
+    return new Response(last ? raw : decoded, { headers: HEADERS })
   }
   Object.defineProperty(handler, Symbol.for("@nifrajs/core/echo-param"), { value: name })
   return Object.freeze(handler)
