@@ -55,7 +55,9 @@ export function renderPackageJson(framework: FrameworkSpec, site: SiteTarget): s
     private: true,
     scripts: {
       dev: "nifra dev",
-      build: "nifra build",
+      // The gate is part of the default build, not an extra command the user has to remember.
+      // Keep these commands identical to the `check` script below so build and check agree.
+      build: "nifra check && nifra assure && nifra build",
       ...(spec.start === undefined ? {} : { start: spec.start }),
       ...(deploy === undefined ? {} : { deploy }),
       check: "nifra check && nifra assure",
