@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test"
 import {
   analyze,
   type Finding,
+  isFailOn,
   normalizeFinding,
+  outputFindings,
+  quarantine,
   renderAnnotations,
   renderComment,
   renderMarkdown,
@@ -173,7 +176,7 @@ describe("renderers", () => {
       ),
     )
     expect(escaped).toContain("::error file=backend/app.ts,line=9,title=NF-C031::")
-    expect(escaped).toContain("a%3A%3Ab 100%25%0Anext")
+    expect(escaped).toContain("a::b 100%25%0Anext")
     expect(
       renderAnnotations(
         analyze(
@@ -230,5 +233,102 @@ describe("renderers", () => {
     )
     expect(comment.length).toBeLessThan(65_536)
     expect(comment).toContain("omitted")
+  })
+
+  test("a newline in finding text cannot break out of the details block", () => {
+    const comment = renderComment(
+      analyze(
+        JSON.stringify({
+          ok: false,
+          diagnostics: [
+            {
+              ...finding,
+              message: "bad\n</details>\n## injected @someone",
+              fix: { recipe: "r\n# heading" },
+            },
+          ],
+        }),
+        "1",
+        "error",
+      ),
+      "<!-- m -->",
+      env,
+    )
+    expect(comment.match(/<\/details>/g)?.length).toBe(1)
+    expect(comment).not.toMatch(/^## injected/m)
+    expect(comment).not.toMatch(/^# heading/m)
+    expect(comment).not.toContain("@someone")
+  })
+
+  test("an HTML entity cannot decode to a mention", () => {
+    const md = renderMarkdown(
+      analyze(
+        JSON.stringify({ ok: false, diagnostics: [{ ...finding, message: "&#64;org/team" }] }),
+        "1",
+        "error",
+      ),
+      env,
+    )
+    expect(md).toContain("\\&#64;org/team")
+  })
+
+  test("a file name cannot break out of the location link", () => {
+    const md = renderMarkdown(
+      analyze(
+        JSON.stringify({
+          ok: false,
+          diagnostics: [{ ...finding, file: "src/a) [x](https://evil.example)#b?c.ts" }],
+        }),
+        "1",
+        "error",
+      ),
+      env,
+    )
+    expect(md).toContain("blob/abc123/src/a%29%20%5Bx%5D%28https%3A//evil.example%29%23b%3Fc.ts#L9")
+  })
+
+  test("annotations keep double colons readable and only skip real parent segments", () => {
+    const run = (file: string) =>
+      renderAnnotations(
+        analyze(JSON.stringify({ ok: false, diagnostics: [{ ...finding, file }] }), "1", "error"),
+      )
+    expect(run("src/a..b.ts")).toContain("file=src/a..b.ts")
+    expect(run("../x.ts")).toBe("")
+    expect(run("src/../x.ts")).toBe("")
+  })
+
+  test("untrusted stderr is wrapped so a :: line is not a workflow command", () => {
+    const out = quarantine("::error::forged\n::add-mask::x")
+    const [open, , , close] = out.split("\n")
+    expect(open).toMatch(/^::stop-commands::[0-9a-f-]{36}$/)
+    expect(close).toBe(`::${open?.slice("::stop-commands::".length)}::`)
+  })
+})
+
+describe("action inputs and outputs", () => {
+  test("fail-on accepts only the documented values", () => {
+    expect(isFailOn("error")).toBe(true)
+    expect(isFailOn("warning")).toBe(true)
+    expect(isFailOn("never")).toBe(true)
+    expect(isFailOn("warn")).toBe(false)
+    expect(isFailOn("")).toBe(false)
+  })
+
+  test("the findings output stays bounded however many findings there are", () => {
+    const diagnostics = Array.from({ length: 3000 }, (_, i) => ({
+      code: `C${i}`,
+      severity: "warning",
+      message: "m".repeat(300),
+      file: "f.ts",
+      evidence: Array(10).fill("e".repeat(300)),
+    }))
+    const { findings } = analyze(JSON.stringify({ ok: false, diagnostics }), "1", "error")
+    const json = outputFindings(findings)
+    expect(Buffer.byteLength(json)).toBeLessThan(100_000)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: outputFindings emits a JSON array of Finding
+    const parsed = JSON.parse(json) as Finding[]
+    expect(parsed.length).toBeGreaterThan(0)
+    expect(parsed.length).toBeLessThanOrEqual(100)
+    expect(parsed[0]?.evidence.length).toBe(3)
   })
 })

@@ -79,17 +79,25 @@ runs:
         NIFRA_VERSION: ${{ inputs.nifra-version }}
       run: |
         cd "$NIFRA_WORKING_DIRECTORY"
+        if [ "$NIFRA_VERSION" = "latest" ]; then
+          echo "::warning title=nifra-version::nifra-version is 'latest': an unpinned CLI runs on every pull request. Pin an exact version."
+        fi
         set +e
         if [ "$NIFRA_VERSION" = "local" ]; then
-          bunx nifra check --json > "$RUNNER_TEMP/nifra-check.json" 2> "$RUNNER_TEMP/nifra-check.err"
+          # --no-install: never fall back to downloading a package that merely shares the bin name.
+          bunx --no-install nifra check --json > "$RUNNER_TEMP/nifra-check.json" 2> "$RUNNER_TEMP/nifra-check.err"
         else
           bunx "@nifrajs/cli@${NIFRA_VERSION}" check --json > "$RUNNER_TEMP/nifra-check.json" 2> "$RUNNER_TEMP/nifra-check.err"
         fi
         code=$?
         set -e
         if [ "$code" -ne 0 ] && [ "$code" -ne 1 ] && [ -s "$RUNNER_TEMP/nifra-check.err" ]; then
+          # The project controls this text; stop-commands keeps a "::" line from running as a workflow command.
+          stop_token=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
           echo "nifra check exited with ${code}; stderr:"
+          echo "::stop-commands::${stop_token}"
           cat "$RUNNER_TEMP/nifra-check.err"
+          echo "::${stop_token}::"
         fi
         echo "exit=${code}" >> "$GITHUB_OUTPUT"
 
@@ -145,8 +153,15 @@ runs:
         NIFRA_COMMENT_PATH: ${{ runner.temp }}/nifra-comment.md
         NIFRA_MARKER: ${{ inputs.marker }}
       run: |
+        # Same trim and fallback as parse.ts, so the lookup finds the comment that step wrote and an
+        # empty marker never matches every comment.
+        marker="${NIFRA_MARKER#"${NIFRA_MARKER%%[![:space:]]*}"}"
+        marker="${marker%"${marker##*[![:space:]]}"}"
+        export NIFRA_MARKER="${marker:-<!-- nifra-check:v1 -->}"
+        # Only our own comment may be updated: a bot, or a repo member. Any other commenter could plant
+        # the marker first and make the PATCH fail forever. sed (not head) reads all input, so gh never gets SIGPIPE.
         existing=$(gh api "repos/$GH_REPO/issues/$PR_NUMBER/comments" --paginate \
-          --jq '[.[] | select(.body | contains(env.NIFRA_MARKER)) | .id][0] // empty' | head -n 1)
+          --jq '.[] | select((.body | startswith(env.NIFRA_MARKER)) and (.user.type == "Bot" or .author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")) | .id' | sed -n '1p')
         if [ -n "$existing" ]; then
           gh api "repos/$GH_REPO/issues/comments/$existing" -X PATCH -F "body=@$NIFRA_COMMENT_PATH"
         else
