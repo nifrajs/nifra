@@ -113,7 +113,7 @@ describe("scaffold - templates", () => {
     )
     expect((await readPkg(dir)).scripts).toEqual({
       dev: "nifra dev",
-      build: "nifra build",
+      build: "nifra check && nifra assure && nifra build",
       start: "NIFRA_ALLOW_MEMORY_RATE_LIMIT=true bun dist/server.js",
       check: "nifra check && nifra assure",
     })
@@ -307,7 +307,7 @@ describe("scaffold - --target and --docker", () => {
         scripts?: Record<string, string>
         dependencies?: Record<string, string>
       }
-      expect(pkg.scripts?.build).toBe("nifra build")
+      expect(pkg.scripts?.build).toBe("nifra check && nifra assure && nifra build")
       expect(pkg.scripts?.start).toBe(want.start)
       expect(pkg.scripts?.deploy).toBe(want.deploy)
       expect(pkg.dependencies?.["@nifrajs/node"] !== undefined).toBe(target === "node")
@@ -581,7 +581,7 @@ describe("scaffold - --framework", () => {
         devDependencies?: Record<string, string>
       }
       expect(pkg.scripts?.dev).toBe("nifra dev")
-      expect(pkg.scripts?.build).toBe("nifra build")
+      expect(pkg.scripts?.build).toBe("nifra check && nifra assure && nifra build")
       expect(pkg.devDependencies?.["@nifrajs/cli"]).toBeTruthy()
       expect(pkg.devDependencies?.vite).toBeTruthy()
     }

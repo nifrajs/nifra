@@ -65,6 +65,11 @@ export const VENDORED: readonly VendoredCopy[] = [
     why: "This file is type-only so each adapter reads core's WebSocket outcome without depending on it.",
   },
   {
+    source: "packages/core/src/server/declarative-routes.ts",
+    targets: ["packages/node-uws/src/generated/declarative-routes.ts"],
+    why: "Copied so @nifrajs/node-uws picks the fixed replies core's Bun table picks, without depending on core.",
+  },
+  {
     source: "packages/core/src/server/request-target.ts",
     targets: ["packages/node/src/generated/request-target.ts"],
     why: "Copied so @nifrajs/node resolves a raw target exactly as core does, without depending on it.",

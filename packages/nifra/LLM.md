@@ -18,14 +18,14 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => Conte…`
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<Adde…`
+- **echoParam** _(function)_ - `echoParam: (path: string) => (context: { readonly params: Readonly<Record<string, string>>; readonly req: Request; }) => Response`
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
 - **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
-- **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
 
-_…and 140 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 141 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

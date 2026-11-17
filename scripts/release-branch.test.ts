@@ -15,7 +15,10 @@ import { releaseGroupNames } from "../packages/cli/src/verification-plan.ts"
 import {
   changedPublicPackageVersions,
   isReleaseBranch,
+  packagesMissingFromRegistry,
   pendingChangesetFiles,
+  publicPackagesForRegistryCheck,
+  registryHasPackage,
   releaseCheckBaseRef,
 } from "./release-branch.ts"
 
@@ -46,6 +49,17 @@ describe("release branch policy", () => {
         { name: "private-tool", version: "3.5.1", private: true },
       ]),
     ).toEqual([{ name: "@nifrajs/core", baseVersion: "3.5.0", releaseVersion: "3.5.1" }])
+  })
+
+  test("includes newly introduced public packages in the registry check", () => {
+    const base = [{ name: "@nifrajs/core", version: "3.5.0" }]
+    expect(
+      publicPackagesForRegistryCheck(base, [
+        { name: "@nifrajs/core", version: "3.5.1" },
+        { name: "@nifrajs/new", version: "1.0.0" },
+        { name: "private-tool", version: "1.0.0", private: true },
+      ]),
+    ).toEqual(["@nifrajs/core", "@nifrajs/new"])
   })
 
   test("requires the associated pull request base SHA for merge checks", () => {
@@ -827,4 +841,34 @@ test("what npm serves is read back after the publish, without installing anythin
   expect(job?.steps?.filter((step) => step.run?.includes("install"))).toEqual([])
   expectValidatedReleaseCheckout(job)
   expect(job?.steps?.at(-1)?.run).toBe("bun scripts/verify-published.ts --wait 900")
+})
+
+describe("packages npm has never seen", () => {
+  test("a package the registry answers 404 for is named, sorted, and the rest pass", async () => {
+    const onNpm = new Set(["@nifrajs/core", "@nifrajs/web"])
+    const missing = await packagesMissingFromRegistry(
+      ["@nifrajs/utils", "@nifrajs/core", "@nifrajs/node-uws", "@nifrajs/web"],
+      async (name) => onNpm.has(name),
+    )
+    expect(missing).toEqual(["@nifrajs/node-uws", "@nifrajs/utils"])
+    expect(await packagesMissingFromRegistry(["@nifrajs/core"], async () => true)).toEqual([])
+  })
+
+  test("the registry lookup escapes the scope, reads 200 and 404, and retries anything else", async () => {
+    const urls: string[] = []
+    const answers = [503, 200]
+    const flaky = async (url: string) => {
+      urls.push(url)
+      return { status: answers.shift() ?? 200 }
+    }
+    expect(await registryHasPackage("@nifrajs/utils", flaky)).toBe(true)
+    expect(urls).toEqual([
+      "https://registry.npmjs.org/@nifrajs%2futils",
+      "https://registry.npmjs.org/@nifrajs%2futils",
+    ])
+    expect(await registryHasPackage("@nifrajs/x", async () => ({ status: 404 }))).toBe(false)
+    await expect(registryHasPackage("@nifrajs/x", async () => ({ status: 500 }))).rejects.toThrow(
+      "npm answered 500 for @nifrajs/x",
+    )
+  })
 })

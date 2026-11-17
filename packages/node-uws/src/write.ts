@@ -12,7 +12,7 @@ const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const BAD_VALUE = /[^\t\x20-\x7e\x80-\xff]/
 
 const STATUS_LINES = new Map<number, string>()
-function statusLine(status: number): string {
+export function statusLine(status: number): string {
   let line = STATUS_LINES.get(status)
   if (line === undefined) {
     if (!Number.isInteger(status) || status < 100 || status > 999) {
@@ -43,7 +43,7 @@ function checkValue(value: string): void {
 }
 
 /** Names uWS frames itself: a copy from the app would double the header on the wire. */
-function owned(name: string): boolean {
+export function owned(name: string): boolean {
   switch (name.length) {
     case 4:
       return name === "date" || name.toLowerCase() === "date"

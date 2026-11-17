@@ -21,6 +21,11 @@ import {
   resolveRequestHost,
   resolveRequestTarget,
 } from "@nifrajs/node/transport"
+import {
+  type DeclarativeRoute,
+  declarativeRoutes,
+  isServerView,
+} from "./generated/declarative-routes.ts"
 import { UwsSource } from "./source.ts"
 import {
   type AppOptions,
@@ -28,8 +33,10 @@ import {
   type HttpResponse,
   type ListenSocket,
   loadUws,
+  type TemplatedApp,
+  type Uws,
 } from "./uws.ts"
-import { writeFailure, writeOutcome } from "./write.ts"
+import { owned, statusLine, writeFailure, writeOutcome } from "./write.ts"
 
 export type { NodeStopOptions } from "@nifrajs/node/transport"
 
@@ -86,6 +93,18 @@ const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
 
 const UNSUPPORTED = ["static", "fastResponse"] as const
+
+type RouteHandler = (res: HttpResponse, req: HttpRequest) => void
+
+/** uWS's precompiled reply: written by the C++ side with no callback into JS. Not in the package's typings. */
+interface DeclarativeBuilder {
+  writeStatus(status: string): DeclarativeBuilder
+  writeHeader(name: string, value: string): DeclarativeBuilder
+  /** The value of the route's named `:parameter`, as sent. */
+  writeParameterValue(name: string): DeclarativeBuilder
+  /** Seals the reply; what comes back is the route handler. */
+  end(body?: string): RouteHandler
+}
 
 export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServer> {
   for (const name of UNSUPPORTED) {
@@ -240,6 +259,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
     answer(res, source, outcome, verb === "HEAD")
   }
 
+  registerDeclarative(app$, uWS, app, policy, handle)
+
   // One route per common method: uWS has already matched the verb, so none of them reads it back
   // across the native boundary. `any` catches the rest (QUERY, PROPFIND, ...).
   app$
@@ -324,6 +345,73 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServ
     }
     if (options.hostname === undefined) app$.listen(options.port, onListen)
     else app$.listen(options.hostname, options.port, onListen)
+  })
+}
+
+/**
+ * Fixed replies (`staticResponse()` routes) are compiled into uWS and answered without entering JS. The
+ * app is sealed by asking, as `listen()` seals it, so no hook or route added later can be skipped. A
+ * Host policy needs every request's Host read, so it keeps these routes on the ordinary path; so does a
+ * malformed Host, which is only screened there.
+ */
+function registerDeclarative(
+  app$: TemplatedApp,
+  uWS: Uws,
+  app: FetchHandler,
+  policy: ReturnType<typeof hostPolicyOf>,
+  ordinary: (method: string) => RouteHandler,
+): void {
+  if (!isServerView(app)) return
+  const routes = declarativeRoutes(app)
+  if (
+    policy.allowedHosts !== undefined ||
+    policy.canonicalHost !== undefined ||
+    policy.normalizeTarget
+  ) {
+    return
+  }
+  // uWS exports this class; its typings omit it.
+  const Declarative: unknown = Reflect.get(uWS, "DeclarativeResponse")
+  if (typeof Declarative !== "function") return
+  for (const route of routes) {
+    // uWS refuses a precompiled header name or value over 255 bytes; such a route stays with the router.
+    if (route.headers.some((pair) => pair.some((text) => Buffer.byteLength(text) > 255))) continue
+    if (route.method === "POST") {
+      registerFixedPost(app$, route, ordinary("POST"))
+      continue
+    }
+    const reply: DeclarativeBuilder = Reflect.construct(Declarative, [])
+    reply.writeStatus(statusLine(route.status))
+    for (const [name, value] of route.headers) if (!owned(name)) reply.writeHeader(name, value)
+    if (route.param !== undefined) reply.writeParameterValue(route.param)
+    app$.get(route.path, reply.end())
+  }
+}
+
+/**
+ * A fixed POST is not a precompiled reply: every bodyless POST runs the cross-site form check, which
+ * refuses a request only when it carries an `Origin` header (a browser always sends one; a script or a
+ * load generator does not). A request with one goes to the ordinary path, which runs the check; one
+ * without is answered here, from uWS's callback, without building a request. The body is left unread,
+ * as the ordinary path leaves it for a route with no body schema.
+ */
+function registerFixedPost(
+  app$: TemplatedApp,
+  route: DeclarativeRoute,
+  ordinary: RouteHandler,
+): void {
+  const line = statusLine(route.status)
+  const headers = route.headers.filter(([name]) => !owned(name))
+  app$.post(route.path, (res, req) => {
+    if (req.getHeader("origin") !== "") {
+      ordinary(res, req)
+      return
+    }
+    res.cork(() => {
+      res.writeStatus(line)
+      for (const [name, value] of headers) res.writeHeader(name, value)
+      res.end()
+    })
   })
 }
 

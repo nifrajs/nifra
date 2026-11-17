@@ -3597,9 +3597,16 @@ export async function scanServerManifestDrift(cwd: string): Promise<ManifestDrif
     "@nifrajs/web/build"
   )
   const findings: ManifestDriftFinding[] = []
+  const manifests: string[] = []
   for await (const rawRel of new Glob("**/server-manifest.ts").scan({ cwd, dot: false })) {
     const rel = normalizeProjectPath(rawRel)
-    if (IGNORED.test(rel)) continue
+    if (!IGNORED.test(rel)) manifests.push(rel)
+  }
+  // A gitignored manifest is a disposable build output the build regenerates (the ISR template), so
+  // it cannot be stale in any way that matters - and flagging it would block the build that fixes it.
+  const ignored = await gitIgnored(cwd, manifests)
+  for (const rel of manifests) {
+    if (ignored.has(rel)) continue
     const source = await Bun.file(join(cwd, rel)).text()
     if (!source.includes(GENERATED_MARKER)) continue // not a generated manifest - skip
     const prefixMatch = ROUTES_PREFIX.exec(source)
