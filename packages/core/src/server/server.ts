@@ -142,6 +142,7 @@ import {
   fusedRespond,
   fusedRespondNoSet,
   handedBackResponse,
+  type ResponseBodyOwner,
   recordResidentTexts,
   toResponse,
   writableResponse,
@@ -1609,7 +1610,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private wrapWebResponse: (response: Response | ResponseResult) => Response
   private webResponseTimeout: () => Response
   /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
-  private responseBodyTag: object | undefined
+  private responseBodyTag: ResponseBodyOwner | undefined
+  /** The response hook whose `renderBody` fast path the owner carries: still first in line, or the
+   * fast path would run ahead of a hook registered before it. */
+  private renderBodyAnchor: RawOnResponse | undefined
   private readonly responseBodyOwners: Set<object>
   // General lifecycles need no extra response bookkeeping when neither controls nor observers
   // use it. Share the fused renderer after the lifecycle, including on body/write routes.
@@ -1741,6 +1745,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.wrapWebResponse = IDENTITY_RESPONSE
     this.webResponseTimeout = RESPONSE_TIMEOUT
     this.responseBodyTag = undefined
+    this.renderBodyAnchor = undefined
     this.responseBodyOwners = new Set()
     this.responseRequests = new WeakMap()
     this.wsHookedPasses = undefined
@@ -2189,9 +2194,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return this
   }
 
-  private enableResponseBodyTagging(): object {
+  private enableResponseBodyTagging(): ResponseBodyOwner {
     if (this.responseBodyTag === undefined) {
-      this.responseBodyTag = Object.freeze({})
+      this.responseBodyTag = {}
       this.responseBodyOwners.add(this.responseBodyTag)
       recordResidentTexts()
     }
@@ -2392,9 +2397,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       throw new TypeError("onNodeResponseHeaders() requires a paired onResponseHeaders() hook")
     }
     if (arg.onResponseBody !== undefined) {
-      this.responseObserverMethods().onResponseBody(arg.onResponseBody, arg.onNodeResponseBody)
+      this.responseObserverMethods().onResponseBody(
+        arg.onResponseBody,
+        arg.onNodeResponseBody,
+        arg.renderBody,
+      )
     } else if (arg.onNodeResponseBody !== undefined) {
       throw new TypeError("onNodeResponseBody() requires a paired onResponseBody() hook")
+    } else if (arg.renderBody !== undefined) {
+      throw new TypeError("renderBody() requires a paired onResponseBody() hook")
     }
     if (arg.onResponseRaw !== undefined)
       this.responseObserverMethods().onResponseRaw(arg.onResponseRaw)
@@ -3063,22 +3074,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.assertConfigurable("responseObserver()")
     const methods = runtime.install({
       assertConfigurable: (operation) => this.assertConfigurable(operation),
-      addResponseHook: (web, node, headerOnly = false) => {
+      addResponseHook: (web, node, headerOnly = false, render) => {
+        const first = this.onResponseHooks.length === 0
         this.onResponseHooks.push(web)
+        if (render !== undefined && first && this.responseBodyTag !== undefined) {
+          this.responseBodyTag.renderJson = render
+          this.renderBodyAnchor = web
+        }
         if (hookAuditRuntime && process.env.NODE_ENV !== "production")
           tagHook(web, headerOnly ? "responseHeaders" : "onResponse", this)
         this.onNodeResponseHooks.push(node)
         if (node === undefined) this.nodeResponseHooksComplete = false
         if (!headerOnly) this.bunNativeResponseHeadersOnly = false
       },
-      enableResponseBodyTagging: () => {
-        if (this.responseBodyTag === undefined) {
-          this.responseBodyTag = Object.freeze({})
-          this.responseBodyOwners.add(this.responseBodyTag)
-          recordResidentTexts()
-        }
-        return this.responseBodyTag
-      },
+      enableResponseBodyTagging: () => this.enableResponseBodyTagging(),
       responseBodyOwners: () => this.responseBodyOwners,
     })
     Object.assign(this, methods)
@@ -3426,6 +3435,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         source.nodeResponseHooksComplete = false
       }
     }
+    // The fast path is the source's only while its hook is still first there (a group's static
+    // headers are put ahead of its hooks just above) and nothing of this server's runs before it.
+    const adoptedRender =
+      source.responseBodyTag?.renderJson !== undefined &&
+      this.onResponseHooks.length === 0 &&
+      source.onResponseHooks[0] === source.renderBodyAnchor
+        ? source.responseBodyTag.renderJson
+        : undefined
     this.onResponseHooks.push(...scopeHooks(source.onResponseHooks, responseScope, 1, true))
     this.onNodeResponseHooks.push(...scopeHooks(source.onNodeResponseHooks, responseScope, 1))
     this.onResponseFinalizedHooks.push(
@@ -3448,6 +3465,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const owner = this.enableResponseBodyTagging()
       this.responseBodyOwners.add(source.responseBodyTag)
       source.responseBodyOwners.add(owner)
+      if (adoptedRender !== undefined) {
+        owner.renderJson =
+          responseScope === undefined
+            ? adoptedRender
+            : (body, status, request, unstamped, tag) =>
+                responseScope(request)
+                  ? adoptedRender(body, status, request, unstamped, tag)
+                  : undefined
+        this.renderBodyAnchor = this.onResponseHooks[0]
+      }
     }
     if (!scoped) this.globalAssurance.push(...ownGlobal)
     // Cleanup the source registered (a pool, a queue consumer) belongs to the server that now runs

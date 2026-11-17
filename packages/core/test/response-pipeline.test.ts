@@ -392,3 +392,202 @@ describe("c.json under a body hook", () => {
     expect(await res.json()).toEqual({ ok: true })
   })
 })
+
+describe("render-time body hook", () => {
+  const encoder = new TextEncoder()
+
+  /** An observer whose body hook marks a reply `x-enc: one` and swaps its body, with a render
+   * fast path that does the same work, and counters for how each ran. */
+  function observer() {
+    const calls = { render: 0, hook: 0 }
+    const finish = (headers: { has(n: string): boolean; set(n: string, v: string): void }) =>
+      headers.set("x-enc", "one")
+    const middleware = withResponseObserver<Middleware>({
+      onResponseBody(body, headers) {
+        calls.hook++
+        if (headers.has("x-enc")) return undefined
+        finish(headers)
+        return encoder.encode(`enc:${typeof body === "string" ? body : "bytes"}`)
+      },
+      renderBody(body, headers) {
+        calls.render++
+        finish(headers)
+        return encoder.encode(`enc:${body}`)
+      },
+    })
+    return { calls, middleware }
+  }
+
+  async function responsesBuilt(
+    run: () => Response | Promise<Response>,
+  ): Promise<[Response, number]> {
+    const NativeResponse = globalThis.Response
+    let built = 0
+    class CountingResponse extends NativeResponse {
+      constructor(body?: BodyInit | null, init?: ResponseInit) {
+        built++
+        super(body, init)
+      }
+    }
+    globalThis.Response = CountingResponse
+    try {
+      return [await run(), built]
+    } finally {
+      globalThis.Response = NativeResponse
+    }
+  }
+
+  test("a returned value is rendered through the fast path as one Response", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .use(middleware)
+      .get("/", () => ({ n: 1 }))
+    const [res, built] = await responsesBuilt(() => app.fetch(new Request("http://x/")))
+
+    expect(await res.text()).toBe('enc:{"n":1}')
+    expect(res.headers.get("x-enc")).toBe("one")
+    expect(res.headers.get("content-type")).toBe(Response.json(1).headers.get("content-type"))
+    expect(calls.render).toBe(1)
+    expect(built).toBe(1)
+  })
+
+  test("the body hook still runs on the rendered response and finds nothing to do", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .use(middleware)
+      .get("/", () => ({ n: 1 }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(calls.hook).toBe(1)
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+
+  test("the status a handler set is kept", async () => {
+    const { middleware } = observer()
+    const app = server()
+      .use(middleware)
+      .get("/", (c) => {
+        c.set.status = 201
+        return { n: 1 }
+      })
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.status).toBe(201)
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+
+  test("a response hook registered first keeps the body hook where it was", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .use(responseObserver())
+      .onResponseHeaders((headers) => headers.set("x-first", "1"))
+      .use(middleware)
+      .get("/", () => ({ n: 1 }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(calls.render).toBe(0)
+    expect(calls.hook).toBe(1)
+    expect(res.headers.get("x-first")).toBe("1")
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+
+  test("a reply with c.set headers or cookies takes the body hook, not the fast path", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .use(middleware)
+      .get("/h", (c) => {
+        c.set.headers["x-a"] = "b"
+        return { n: 1 }
+      })
+    const res = await app.fetch(new Request("http://x/h"))
+    expect(calls.render).toBe(0)
+    expect(res.headers.get("x-a")).toBe("b")
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+
+  test("static response headers keep the body hook in charge", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .responseHeaders({ "x-static": "1" })
+      .use(middleware)
+      .get("/", () => ({ n: 1 }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(calls.render).toBe(0)
+    expect(res.headers.get("x-static")).toBe("1")
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+
+  test("a grouped hook offers the fast path only under its prefix", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .group("/in", (g) => g.use(middleware).get("/", () => ({ n: 1 })))
+      .get("/out", () => ({ n: 2 }))
+    const inside = await app.fetch(new Request("http://x/in"))
+    expect(await inside.text()).toBe('enc:{"n":1}')
+    expect(calls.render).toBe(1)
+
+    const outside = await app.fetch(new Request("http://x/out"))
+    expect(await outside.text()).toBe('{"n":2}')
+    expect(outside.headers.has("x-enc")).toBe(false)
+  })
+
+  test("a group behind another response hook does not take the fast path", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .use(responseObserver())
+      .onResponseHeaders((headers) => headers.set("x-first", "1"))
+      .group("/in", (g) => g.use(middleware).get("/", () => ({ n: 1 })))
+    const res = await app.fetch(new Request("http://x/in"))
+    expect(calls.render).toBe(0)
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+
+  test("a fast path that changes nothing leaves the reply as the plain render builds it", async () => {
+    const calls = { render: 0 }
+    const app = server()
+      .use(
+        withResponseObserver<Middleware>({
+          onResponseBody: () => undefined,
+          renderBody() {
+            calls.render++
+            return undefined
+          },
+        }),
+      )
+      .get("/", () => ({ n: 1 }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(calls.render).toBe(1)
+    expect(await res.json()).toEqual({ n: 1 })
+    expect(res.headers.get("content-type")).toBe(Response.json(1).headers.get("content-type"))
+  })
+
+  test("the header view answers only the names the reply has", async () => {
+    const seen: (string | null)[] = []
+    const app = server()
+      .use(
+        withResponseObserver<Middleware>({
+          onResponseBody: () => undefined,
+          renderBody(_body, headers) {
+            seen.push(headers.get("constructor"), headers.get("Content-Type"))
+            return undefined
+          },
+        }),
+      )
+      .get("/", () => ({ n: 1 }))
+    await app.fetch(new Request("http://x/"))
+    expect(seen).toEqual([null, Response.json(1).headers.get("content-type")])
+  })
+
+  test("a fast path with no body hook is refused at registration", () => {
+    expect(() =>
+      server().use(withResponseObserver<Middleware>({ renderBody: () => undefined })),
+    ).toThrow("renderBody() requires a paired onResponseBody() hook")
+  })
+
+  test("c.json keeps its own reply: the fast path is for returned values", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .use(middleware)
+      .get("/", (c) => c.json({ n: 1 }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(calls.render).toBe(0)
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+})

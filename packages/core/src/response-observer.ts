@@ -13,6 +13,8 @@ export {
 
 export type {
   NodeResponseBodyHook,
+  RenderBodyHook,
+  RenderHeadersView,
   ResponseBodyHook,
   ResponseHeadersHook,
   ResponseObserverMethods,

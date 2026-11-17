@@ -94,6 +94,24 @@ export type ResponseBodyHook = (
   status: number,
 ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>
 
+/** The header view a {@link RenderBodyHook} gets: no `append`, as the headers are one plain record. */
+export type RenderHeadersView = Pick<ResponseHeadersView, "get" | "has" | "set" | "delete">
+
+/**
+ * A synchronous fast path for a body hook, run when the framework renders a returned value: the hook
+ * sees the serialized text before any `Response` exists, so one `Response` is built where the body
+ * tier would build two (the rendered one, then its replacement). It returns replacement bytes, or
+ * `undefined` to leave the body as it is. Provide one only for a hook that is idempotent on its own
+ * output: the full hook still runs on the rendered response afterwards, and must find nothing left to
+ * do. It may write headers, and it must not start asynchronous work.
+ */
+export type RenderBodyHook = (
+  body: string,
+  headers: RenderHeadersView,
+  req: NodeRequestContext,
+  status: number,
+) => Uint8Array | undefined
+
 /**
  * Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what
  * `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes

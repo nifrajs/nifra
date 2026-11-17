@@ -3,10 +3,16 @@ import { randomBytes } from "node:crypto"
 import * as zlib from "node:zlib"
 import { constants, gunzipSync, gzipSync } from "node:zlib"
 import { server } from "@nifrajs/core"
-import { markRepeatedPrefix } from "@nifrajs/core/response-observer"
+import { markRepeatedPrefix, responseObserver } from "@nifrajs/core/response-observer"
 import { compression } from "@nifrajs/middleware"
 import { FIXED_DEFLATE_MAX } from "../src/_fixed-deflate.ts"
-import { type GzipPlan, gzipBuffered, gzipPlanFor, streamedGzip } from "../src/compression.ts"
+import {
+  type GzipPlan,
+  gzipBuffered,
+  gzipInline,
+  gzipPlanFor,
+  streamedGzip,
+} from "../src/compression.ts"
 
 const GZIP = { "accept-encoding": "gzip, deflate, br" }
 const big = "x".repeat(2000) // > default 1024 threshold
@@ -943,5 +949,105 @@ describe("compression()", () => {
       expect(res.headers.get("content-encoding")).toBe("gzip")
       await expect(gunzip(res)).rejects.toThrow()
     })
+  })
+})
+
+describe("gzip of a returned value", () => {
+  const value = { rows: Array.from({ length: 80 }, (_, i) => ({ id: i, name: `row ${i}`, big })) }
+
+  /** The same route with an earlier response hook, which keeps the body hook in charge. */
+  const viaHook = () =>
+    server()
+      .use(responseObserver())
+      .onResponseHeaders((headers) => headers.set("x-first", "1"))
+      .use(compression())
+      .get("/", () => value)
+  const viaRender = () =>
+    server()
+      .use(compression())
+      .get("/", () => value)
+
+  const wire = async (res: Response) => ({
+    status: res.status,
+    encoding: res.headers.get("content-encoding"),
+    vary: res.headers.get("vary"),
+    type: res.headers.get("content-type"),
+    body: res.headers.get("content-encoding") === "gzip" ? await gunzip(res) : await res.text(),
+  })
+
+  test("answers what the body hook answers, byte for byte once decoded", async () => {
+    for (const headers of [
+      GZIP,
+      { "accept-encoding": "identity" },
+      { "accept-encoding": "gzip;q=0" },
+      {},
+    ]) {
+      const fast = await wire(await viaRender().fetch(new Request("http://x/", { headers })))
+      const hooked = await wire(await viaHook().fetch(new Request("http://x/", { headers })))
+      expect(fast).toEqual(hooked)
+    }
+  })
+
+  test("gzips for a client that takes it, and names what the reply varies on for one that does not", async () => {
+    const zipped = await viaRender().fetch(new Request("http://x/", { headers: GZIP }))
+    expect(zipped.headers.get("content-encoding")).toBe("gzip")
+    expect(zipped.headers.get("vary")).toBe("Accept-Encoding")
+    expect(JSON.parse(await gunzip(zipped))).toEqual(value)
+
+    const plain = await viaRender().fetch(new Request("http://x/"))
+    expect(plain.headers.has("content-encoding")).toBe(false)
+    expect(plain.headers.get("vary")).toBe("Accept-Encoding")
+    expect(await plain.json()).toEqual(value)
+  })
+
+  test("leaves a small value alone", async () => {
+    const app = server()
+      .use(compression())
+      .get("/", () => ({ ok: true }))
+    const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
+    expect(res.headers.has("content-encoding")).toBe(false)
+    expect(await res.json()).toEqual({ ok: true })
+  })
+
+  test("honors a handler's own status", async () => {
+    const app = server()
+      .use(compression())
+      .get("/", (c) => {
+        c.set.status = 201
+        return value
+      })
+    const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
+    expect(res.status).toBe(201)
+    expect(res.headers.get("content-encoding")).toBe("gzip")
+  })
+
+  test("is served the same through a real listener", async () => {
+    const app = server().group("/g", (group) => group.use(compression()).get("/", () => value))
+    const listener = app.listen(0)
+    try {
+      const init: RequestInit & { decompress: boolean } = { headers: GZIP, decompress: false }
+      const res = await fetch(`http://127.0.0.1:${listener.port}/g`, init)
+      expect(res.headers.get("content-encoding")).toBe("gzip")
+      expect(JSON.parse(gunzipSync(Buffer.from(await res.arrayBuffer())).toString())).toEqual(value)
+    } finally {
+      listener.stop(true)
+    }
+  })
+})
+
+describe("gzipInline", () => {
+  const sync = { gzipSync }
+  test("gzips inline within the plan and otherwise declines", () => {
+    const inline = gzipInline("abcd", { inlineMax: 4, oneShotMax: 8 }, sync)
+    expect(inline === undefined ? "" : gunzipSync(inline).toString()).toBe("abcd")
+    expect(gzipInline("abcde", { inlineMax: 4, oneShotMax: 8 }, sync)).toBeUndefined()
+    expect(gzipInline("ab", { inlineMax: -1, oneShotMax: 8 }, sync)).toBeUndefined()
+    expect(gzipInline("ab", { inlineMax: 4, oneShotMax: 8 }, undefined)).toBeUndefined()
+  })
+
+  test("counts UTF-8 bytes against the limit", () => {
+    const plan = { inlineMax: 100, oneShotMax: 100 }
+    expect(gzipInline("界".repeat(33), plan, sync)).toBeDefined()
+    expect(gzipInline("界".repeat(34), plan, sync)).toBeUndefined()
   })
 })

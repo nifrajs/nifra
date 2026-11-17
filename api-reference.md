@@ -2882,6 +2882,10 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **NodeResponseBodyHook** _(type)_ - `type NodeResponseBodyHook = ( body: string | Uint8Array, response: NodeResponseContext, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes the portable hook would (never `null` - bodiless renders skip the twin exactly as they skip the portable hook) …
+- **RenderBodyHook** _(type)_ - `type RenderBodyHook = ( body: string, headers: RenderHeadersView, req: NodeRequestContext, status: number, ) => Uint8Array | undefined`
+  A synchronous fast path for a body hook, run when the framework renders a returned value: the hook sees the serialized text before any `Response` exists, so one `Response` is built where the body tier would build two (the rendered one, then its replacement). It returns replacement bytes, or `undefi…
+- **RenderHeadersView** _(type)_ - `type RenderHeadersView = Pick<ResponseHeadersView, "get" | "has" | "set" | "delete">`
+  The header view a {@link RenderBodyHook} gets: no `append`, as the headers are one plain record.
 - **RepeatedPrefix** _(interface)_ - `interface RepeatedPrefix`
   What {@link markRepeatedPrefix} recorded for a chunk.
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
