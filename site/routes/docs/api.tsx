@@ -471,8 +471,10 @@ export default function Api() {
         matches paths itself answer the route without calling the app:{" "}
         <code>@nifrajs/node-uws</code> does, under the same conditions as{" "}
         <code>staticResponse()</code>, and only while no other route can match a request the echo
-        route would answer. The reply carries <code>X-Content-Type-Options: nosniff</code>. A
-        handler registered under another path answers with the decoded value. Two inputs are outside
+        route would answer. The reply carries <code>X-Content-Type-Options: nosniff</code>. 
+        The answer is defined by the path you pass: a request that does not match it (the handler
+        registered elsewhere) gets the decoded value, one that does gets its final segment as sent,
+        whatever route matched it. Two inputs are outside
         the contract: a malformed escape such as <code>%zz</code> is echoed as sent when the node-uws
         native lane answers the route and refused with 400 by ordinary routing (a request hook, for
         one, sends it there), and a segment of only dots written as escapes is read differently by

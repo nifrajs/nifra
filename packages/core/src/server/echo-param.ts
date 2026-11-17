@@ -20,8 +20,9 @@ const pathOf = (url: string): string => {
  *     server().get(USER, echoParam(USER))
  *
  * `/user/%41b` answers `%41b`. The path is a static prefix followed by one `:name` segment; anything
- * else throws, so the parameter is always the last segment. A handler registered under another path
- * answers with the decoded value, as its request does not match the path it was given.
+ * else throws, so the parameter is always the last segment. The answer is defined by the path given
+ * here: a request that does not match it (the handler registered elsewhere) answers with the decoded
+ * value, and one that does gets its final segment as sent, whatever route matched it.
  *
  * The raw spelling is the contract because a transport can then answer the route itself (uWS fills the
  * body in from the path without calling into JavaScript) and the bytes stay the same either way. Two
