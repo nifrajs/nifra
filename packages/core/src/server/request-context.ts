@@ -418,13 +418,17 @@ export class RequestContext implements RawContext {
       // Widened, not asserted: `jsonText` returns nothing for a value with no JSON form.
       const text: string | undefined = jsonText(value)
       if (text !== undefined) {
-        const headers = ownHeaderRecord(i?.headers, responseJsonContentType())
         let built: Response
-        if (headers !== undefined) {
-          built = new Response(text, { ...i, headers })
+        if (i?.headers === undefined) {
+          built = new Response(text, {
+            ...i,
+            headers: { "content-type": responseJsonContentType() },
+          })
         } else {
-          // A `Headers` or entries init: a string body would put its own text type on a reply that
-          // named none, and only a bodyless `Response` shows whether the caller named one.
+          // The caller's own init goes to `Response` untouched, as `Response.json` takes it: a record
+          // naming `Set-Cookie` and `set-cookie` keeps both, which a lowercased copy would collapse. A
+          // string body would put its own text type on a reply that named none, and only a bodyless
+          // `Response` shows whether the caller named one.
           built = new Response(text, i)
           if (!new Response(null, i).headers.has("content-type")) {
             built.headers.set("content-type", responseJsonContentType())

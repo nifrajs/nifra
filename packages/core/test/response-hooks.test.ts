@@ -31,3 +31,20 @@ test("body replacement reuses headers after the old length was removed", async (
     globalThis.Headers = NativeHeaders
   }
 })
+
+test("body replacement drops a stale length from a copy and leaves the original headers alone", async () => {
+  const owner = {}
+  const response = markTaggedResponse(
+    new Response("old", {
+      headers: { "content-type": "application/json", "content-length": "3" },
+    }),
+    "old",
+    owner,
+  )
+  const replaced = withReplacedBody(response, "new body")
+
+  expect(replaced.headers.get("content-length")).toBeNull()
+  expect(replaced.headers.get("content-type")).toBe("application/json")
+  expect(response.headers.get("content-length")).toBe("3")
+  expect(await replaced.text()).toBe("new body")
+})

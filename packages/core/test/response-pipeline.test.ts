@@ -344,6 +344,19 @@ describe("c.json under a body hook", () => {
     expect(await res.text()).toBe('{"ok":true}!')
   })
 
+  test("a record naming a header in two casings keeps both values, as Response.json does", async () => {
+    const headers = { "Set-Cookie": "sid=abc; Path=/", "set-cookie": "csrf=xyz; Path=/" }
+    const app = server()
+      .use(responseObserver())
+      .onResponseBody((body) => body)
+      .get("/", (c) => c.json({ ok: true }, { headers }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.getSetCookie()).toEqual(
+      Response.json({ ok: true }, { headers }).headers.getSetCookie(),
+    )
+    expect(res.headers.getSetCookie()).toHaveLength(2)
+  })
+
   test("an entries init that names a content-type keeps it", async () => {
     const app = server()
       .use(responseObserver())

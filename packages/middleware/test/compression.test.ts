@@ -103,6 +103,29 @@ describe("buffered gzip lanes", () => {
     expect(calls).toEqual(["sync 2", "one-shot 4"])
     expect(results.map((bytes) => gunzipSync(bytes).toString())).toEqual(["ab", "abcd", "abcde"])
     expect(gunzipSync(await gzipBuffered("abc", plan, undefined)).toString()).toBe("abc")
+    // Limits are in bytes: 40 of "界" is 40 UTF-16 units but 120 bytes, and 33 of them is 99.
+    const byteCalls: string[] = []
+    const byteZlib = {
+      gzipSync: (body: string | Uint8Array) => {
+        byteCalls.push("sync")
+        return gzipSync(body)
+      },
+      gzip: (
+        body: string | Uint8Array,
+        done: (error: Error | null, result: Uint8Array) => void,
+      ) => {
+        byteCalls.push("one-shot")
+        done(null, gzipSync(body))
+      },
+    }
+    const bytePlan = { inlineMax: 100, oneShotMax: 200 }
+    for (const text of ["界".repeat(33), "界".repeat(40)]) {
+      const asText = gzipBuffered(text, bytePlan, byteZlib)
+      const asBytes = gzipBuffered(new TextEncoder().encode(text), bytePlan, byteZlib)
+      expect(gunzipSync(await asText).toString()).toBe(text)
+      expect(gunzipSync(await asBytes).toString()).toBe(text)
+    }
+    expect(byteCalls).toEqual(["sync", "sync", "one-shot", "one-shot"])
     const failing = {
       gzip: (_: unknown, done: (error: Error | null, result: Uint8Array) => void) =>
         done(new Error("zlib failed"), new Uint8Array()),

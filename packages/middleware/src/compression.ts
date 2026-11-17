@@ -326,17 +326,31 @@ export function gzipBuffered(
   plan: GzipPlan,
   zlib: Pick<Zlib, "gzipSync" | "gzip"> | undefined,
 ): Uint8Array | Promise<Uint8Array> {
-  const length = typeof body === "string" ? body.length : body.byteLength
+  let input = body
+  let length: number
+  if (typeof body !== "string") {
+    length = body.byteLength
+  } else if (straddles(body.length, plan.inlineMax) || straddles(body.length, plan.oneShotMax)) {
+    // UTF-8 spends 1 to 3 bytes per UTF-16 unit, so the unit count cannot place this body against a
+    // limit it straddles. Encoding settles it once, and the bytes are what gets compressed.
+    input = GZIP_ENCODER.encode(body)
+    length = input.byteLength
+  } else {
+    length = body.length
+  }
   const gzipSync = zlib?.gzipSync
-  if (gzipSync !== undefined && length <= plan.inlineMax) return gzipSync.call(zlib, body)
+  if (gzipSync !== undefined && length <= plan.inlineMax) return gzipSync.call(zlib, input)
   const gzip = zlib?.gzip
   if (gzip !== undefined && length <= plan.oneShotMax) {
     return new Promise((resolve, reject) => {
-      gzip.call(zlib, body, (error, result) => (error === null ? resolve(result) : reject(error)))
+      gzip.call(zlib, input, (error, result) => (error === null ? resolve(result) : reject(error)))
     })
   }
-  return gzipBytes(typeof body === "string" ? GZIP_ENCODER.encode(body) : body)
+  return gzipBytes(typeof input === "string" ? GZIP_ENCODER.encode(input) : input)
 }
+
+/** Whether a string of `units` UTF-16 units may encode to either side of `limit` bytes. */
+const straddles = (units: number, limit: number): boolean => units <= limit && units * 3 > limit
 
 let planLookup: GzipPlan | undefined
 
