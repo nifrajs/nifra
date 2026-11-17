@@ -9,6 +9,7 @@
  * longer the job's current one are ignored, so a worker whose lease was taken over cannot settle the
  * job under the worker that now holds it.
  */
+import { cloneData } from "./generated/clone-data.ts"
 import type { JobCounts, JobStore, StoredJob } from "./types.ts"
 
 interface Record {
@@ -50,7 +51,7 @@ export class MemoryJobStore implements JobStore {
     maxAttempts: number
     traceparent?: string
   }): string {
-    const payload = structuredClone(job.payload)
+    const payload = cloneData(job.payload)
     const id = this.idFor()
     this.jobs.set(id, {
       id,

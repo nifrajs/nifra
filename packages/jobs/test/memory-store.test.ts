@@ -7,6 +7,41 @@ const seqStore = (): MemoryJobStore => {
 }
 
 describe("MemoryJobStore", () => {
+  test("shared buffers and nested shared-backed views are refused before storing a job", () => {
+    const shared = new SharedArrayBuffer(1)
+    for (const payload of [
+      shared,
+      { bytes: new Uint8Array(shared) },
+      new Map([["x", new Set([shared])]]),
+    ]) {
+      const store = seqStore()
+      expect(() => store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 })).toThrow(
+        TypeError,
+      )
+      expect(store.counts(0)).toEqual({ pending: 0, active: 0, dead: 0 })
+    }
+  })
+
+  test("custom payload prototypes are refused instead of silently dropping their methods", () => {
+    class Payload {
+      count = 1
+      read() {
+        return this.count
+      }
+    }
+    for (const payload of [
+      new Payload(),
+      { nested: new Payload() },
+      new Map([[new Payload(), "x"]]),
+    ]) {
+      const store = seqStore()
+      expect(() => store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 })).toThrow(
+        TypeError,
+      )
+      expect(store.counts(0)).toEqual({ pending: 0, active: 0, dead: 0 })
+    }
+  })
+
   test("stored payloads are detached from the caller and every lease", () => {
     const store = seqStore()
     const payload = { nested: { count: 1 }, bytes: new Uint8Array([1]), at: new Date(0) }

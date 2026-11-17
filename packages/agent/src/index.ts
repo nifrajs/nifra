@@ -24,6 +24,7 @@ import {
   type ToolError,
   type ToolIdempotencyStore,
 } from "@nifrajs/core/tool-contract"
+import { cloneData } from "./internal/clone-data.ts"
 import { asRecord } from "./internal/record.ts"
 import { sha256Hex } from "./internal/sha256-hex.ts"
 
@@ -344,7 +345,7 @@ export interface AgentSharedState<State = unknown> {
 }
 
 export function createAgentSharedState<State>(initial: State): AgentSharedState<State> {
-  let document: unknown = structuredClone(initial)
+  let document: unknown = cloneData(initial)
   const listeners = new Set<(ops: readonly AgentStatePatchOp[]) => void>()
   return {
     snapshot() {
@@ -353,9 +354,9 @@ export function createAgentSharedState<State>(initial: State): AgentSharedState<
     patch(ops) {
       let applied: readonly AgentStatePatchOp[]
       try {
-        applied = structuredClone(ops)
+        applied = cloneData(ops)
       } catch (cause) {
-        throw new TypeError("agent: patch values must be structured-cloneable", { cause })
+        throw new TypeError("agent: patch values must support detached data snapshots", { cause })
       }
       // Validate-then-apply on a copy so a mid-batch failure never leaves a half-patched document.
       let next = structuredClone(document)

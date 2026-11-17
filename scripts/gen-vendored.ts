@@ -29,6 +29,11 @@ export interface VendoredCopy {
 
 export const VENDORED: readonly VendoredCopy[] = [
   {
+    source: "packages/agent/src/internal/clone-data.ts",
+    targets: ["packages/jobs/src/generated/clone-data.ts"],
+    why: "Copied so the dependency-free job store snapshots data as shared agent state does.",
+  },
+  {
     source: "packages/core/src/server/node-outcome.ts",
     targets: ["packages/node/src/generated/node-outcome.ts"],
     symbols: ["NodeServeOutcome"],

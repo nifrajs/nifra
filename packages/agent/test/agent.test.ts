@@ -894,6 +894,22 @@ describe("combineAgentDeltaSinks", () => {
 })
 
 describe("createAgentSharedState", () => {
+  test("shared memory is refused at initialization and before a patch commits", () => {
+    const bytes = new Uint8Array(new SharedArrayBuffer(1))
+    expect(() => createAgentSharedState({ nested: new Map([["bytes", bytes]]) })).toThrow(TypeError)
+    const state = createAgentSharedState<Record<string, unknown>>({ count: 1 })
+    let notices = 0
+    state.subscribe(() => notices++)
+    expect(() =>
+      state.patch([
+        { op: "replace", path: "/count", value: 2 },
+        { op: "add", path: "/bytes", value: new Set([bytes]) },
+      ]),
+    ).toThrow(TypeError)
+    expect(state.snapshot()).toEqual({ count: 1 })
+    expect(notices).toBe(0)
+  })
+
   test("detaches values inserted at the root, object fields and array positions", () => {
     const cases: Array<{ initial: unknown; op: "add" | "replace"; path: string }> = [
       { initial: null, op: "add", path: "" },
