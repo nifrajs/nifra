@@ -105,7 +105,7 @@ function serverFor(arm: Arm): { file: string; cwd: string } {
 /** One gzip request through node:http, which does not decode the body behind our back. */
 function fetchGzip(): Promise<{ encoding: string | undefined; body: Buffer }> {
   return new Promise((resolveRequest, reject) => {
-    get(
+    const request = get(
       `http://127.0.0.1:${port}/json/${items}`,
       { headers: { "accept-encoding": "gzip" } },
       (res) => {
@@ -119,7 +119,10 @@ function fetchGzip(): Promise<{ encoding: string | undefined; body: Buffer }> {
           })
         })
       },
-    ).on("error", reject)
+    )
+    request.on("error", reject)
+    // A server that accepts the connection and goes quiet must fail the sample, not hang the job.
+    request.setTimeout(5000, () => request.destroy(new Error("request timed out")))
   })
 }
 
@@ -174,6 +177,11 @@ async function load(duration: number): Promise<number> {
   const success = "successRate" in summary ? summary.successRate : undefined
   if (typeof rps !== "number") throw new Error("oha reported no requestsPerSec")
   if (success !== 1) throw new Error(`oha success rate ${String(success)}`)
+  // oha counts a completed 4xx or 5xx as a success, so the status codes are checked too.
+  const codes = "statusCodeDistribution" in report ? report.statusCodeDistribution : undefined
+  if (typeof codes !== "object" || codes === null) throw new Error("oha reported no status codes")
+  const others = Object.keys(codes).filter((code) => code !== "200")
+  if (others.length > 0) throw new Error(`oha saw status ${others.join(", ")}`)
   return rps
 }
 
@@ -187,11 +195,20 @@ async function measure(arm: Arm): Promise<{ rps: number; gzBytes: number }> {
       stderr: "inherit",
     }),
   )
+  const alive = (): void => {
+    if (servers.some((server) => server.exitCode !== null)) {
+      throw new Error(`${arm.name}: a server process exited during the sample`)
+    }
+  }
   try {
     await ready()
+    alive()
     const gzBytes = await verify(arm)
     await load(warm)
-    return { rps: await load(seconds), gzBytes }
+    alive()
+    const rps = await load(seconds)
+    alive()
+    return { rps, gzBytes }
   } finally {
     for (const server of servers) server.kill()
     await Promise.all(servers.map((server) => server.exited))
