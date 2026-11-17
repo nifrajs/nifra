@@ -370,6 +370,83 @@ describe("judge", () => {
     })
   })
 
+  test("an absolute-form Host mismatch excuses a page that spells the request's authority", () => {
+    const request = get("http://127.0.0.1/pages/meta/%20", [["Host", "[::1]"]])
+    const page = (authority: string) =>
+      response(200, `<link rel="canonical" href="http://${authority}/pages/meta/ ">`, [
+        ["content-type", "text/html; charset=utf-8"],
+      ])
+    const outcomes = new Map<LaneName, Outcome>([
+      ["bun-fetch", page("[::1]")],
+      ["bun-serve", page("[::1]")],
+      ["node", page("[::1]")],
+      ["deno", page("127.0.0.1")],
+    ])
+    expect(judge(caseOf(request, "pageMeta"), outcomes)).toEqual({
+      violations: [],
+      excusedBy: ["absolute-form authority differs from Host"],
+    })
+  })
+
+  test("the authority excuse leaves every other difference in the page standing", () => {
+    const request = get("http://127.0.0.1/pages/meta/%20", [["Host", "[::1]"]])
+    const page = (authority: string, title: string) =>
+      response(200, `<title>${title}</title><a href="http://${authority}/x">`, [
+        ["content-type", "text/html; charset=utf-8"],
+      ])
+    const outcomes = new Map<LaneName, Outcome>([
+      ["bun-fetch", page("[::1]", "Post")],
+      ["deno", page("127.0.0.1", "Other")],
+    ])
+    expect(judge(caseOf(request, "pageMeta"), outcomes).violations).toHaveLength(1)
+  })
+
+  test("the authority excuse covers URL authorities only, not the same text elsewhere", () => {
+    const request = get("http://127.0.0.1/pages/meta/a", [["Host", "[::1]"]])
+    const page = (title: string) =>
+      response(200, `<title>${title}</title>`, [["content-type", "text/html; charset=utf-8"]])
+    const outcomes = new Map<LaneName, Outcome>([
+      ["bun-fetch", page("127.0.0.1")],
+      ["deno", page("[::1]")],
+    ])
+    expect(judge(caseOf(request, "pageMeta"), outcomes).violations).toHaveLength(1)
+  })
+
+  test("authorities where one starts with the other are masked whole, in any case", () => {
+    const page = (authority: string) =>
+      response(200, `<link href="http://${authority}/x"><a href="http://${authority}/y">`, [
+        ["content-type", "text/html; charset=utf-8"],
+      ])
+    for (const [target, host, hostPage, targetPage] of [
+      ["http://127.0.0.1/pages/meta/a", "127.0.0.1:8080", "127.0.0.1:8080", "127.0.0.1"],
+      ["http://example.com/pages/meta/a", "example.com:8080", "example.com:8080", "example.com"],
+      ["http://EXAMPLE.COM/pages/meta/a", "other.test", "other.test", "example.com"],
+    ] as const) {
+      const outcomes = new Map<LaneName, Outcome>([
+        ["bun-fetch", page(hostPage)],
+        ["node", page(hostPage)],
+        ["deno", page(targetPage)],
+      ])
+      expect(judge(caseOf(get(target, [["Host", host]]), "pageMeta"), outcomes)).toEqual({
+        violations: [],
+        excusedBy: ["absolute-form authority differs from Host"],
+      })
+    }
+  })
+
+  test("without a conflicting authority a differing origin is a difference", () => {
+    const request = get("/pages/meta/a", [["Host", "127.0.0.1"]])
+    const page = (authority: string) =>
+      response(200, `<a href="http://${authority}/x">`, [
+        ["content-type", "text/html; charset=utf-8"],
+      ])
+    const outcomes = new Map<LaneName, Outcome>([
+      ["bun-fetch", page("[::1]")],
+      ["deno", page("127.0.0.1")],
+    ])
+    expect(judge(caseOf(request, "pageMeta"), outcomes).violations).toHaveLength(1)
+  })
+
   test("form pages that differ only in what the action read wait on W2, and nothing else does", () => {
     const page = (saved: string, heading = "form") =>
       response(200, `<h1>${heading}</h1><p class="saved">${saved}</p>`, [
