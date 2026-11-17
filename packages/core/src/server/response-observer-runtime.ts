@@ -3,19 +3,24 @@ import type {
   NodeRequestContext,
   NodeResponseBodyHook,
   NodeResponseHook,
+  RenderBodyHook,
+  RenderHeadersView,
   ResponseBodyHook,
   ResponseHeadersHook,
   ResponseHeadersView,
 } from "./node-outcome-hook.ts"
 import { recordHeadersView } from "./node-outcome-hook.ts"
-import { taggedResponseBody, writableResponse } from "./respond.ts"
+import { type RenderJson, tagged, taggedResponseBody, writableResponse } from "./respond.ts"
 import { applyBodyReplacement, withReplacedBody } from "./response-hooks.ts"
+import { JSON_CONTENT_TYPE } from "./runtime-core.ts"
 
 type MaybePromise<T> = T | Promise<T>
 type WebResponseHook = (response: Response, req: Request) => MaybePromise<Response>
 
 export type {
   NodeResponseBodyHook,
+  RenderBodyHook,
+  RenderHeadersView,
   ResponseBodyHook,
   ResponseHeadersHook,
 } from "./node-outcome-hook.ts"
@@ -29,9 +34,12 @@ export interface ResponseObserverHost {
     web: WebResponseHook,
     node: NodeResponseHook | undefined,
     headerOnly?: boolean,
+    render?: RenderJson,
   ): void
   enableResponseBodyTagging(): object
   responseBodyOwners(): ReadonlySet<object>
+  /** A render-time body hook threw: report it. The reply falls back to `onResponseBody`. */
+  renderFailed(error: unknown, request: Request): void
 }
 
 export interface ResponseObserverMethods {
@@ -40,7 +48,7 @@ export interface ResponseObserverMethods {
    * it must preserve the portable hook's observable header semantics.
    */
   onResponseHeaders(fn: ResponseHeadersHook, node?: NodeResponseHook): this
-  onResponseBody(fn: ResponseBodyHook, node?: NodeResponseBodyHook): this
+  onResponseBody(fn: ResponseBodyHook, node?: NodeResponseBodyHook, render?: RenderBodyHook): this
   onResponseRaw(fn: (response: Response, req: Request) => MaybePromise<Response>): this
 }
 
@@ -62,6 +70,82 @@ function webHeadersView(
 } {
   const writable = writableResponse(response, req)
   return { response: writable, headers: writable.headers, request: webRequestView(req) }
+}
+
+/** The header view a {@link RenderBodyHook} writes: the plain record the reply is about to be built
+ * from. Writes are noted so a render that changed nothing can take the plain path. */
+class RenderHeaders implements RenderHeadersView {
+  touched = false
+  constructor(readonly record: Record<string, string>) {}
+  get(name: string): string | null {
+    const lower = name.toLowerCase()
+    // Own names only: a plain record would answer `constructor` with a function.
+    return Object.hasOwn(this.record, lower) ? (this.record[lower] ?? null) : null
+  }
+  has(name: string): boolean {
+    return Object.hasOwn(this.record, name.toLowerCase())
+  }
+  set(name: string, value: string): void {
+    this.touched = true
+    this.record[name.toLowerCase()] = value
+  }
+  delete(name: string): void {
+    this.touched = true
+    delete this.record[name.toLowerCase()]
+  }
+}
+
+/**
+ * A rendered JSON value built through a body hook's render fast path, as ONE `Response`: the hook sees
+ * the text before any `Response` exists, and its bytes and headers go straight into the one built
+ * here, where the body tier builds the rendered response and then a replacement for it. `undefined`
+ * when the hook left both the body and the headers alone.
+ */
+/** Replies sent straight to `onResponseBody` after a render failure before the fast path is tried
+ * again. High enough that a hook that keeps failing costs one throw and one log line per 100,000
+ * replies, low enough that a one-off failure (memory pressure) does not outlive the traffic burst. */
+export const RENDER_RETRY_AFTER = 100_000
+
+function renderThrough(render: RenderBodyHook, host: ResponseObserverHost): RenderJson {
+  // Replies still to hand to `onResponseBody` before the next try, so a failing hook does not throw
+  // and log on every request.
+  let skip = 0
+  return (body, status, request, unstamped, owner) => {
+    if (skip > 0) {
+      skip--
+      return undefined
+    }
+    const record: Record<string, string> = { "content-type": JSON_CONTENT_TYPE }
+    const headers = new RenderHeaders(record)
+    let bytes: Uint8Array | undefined
+    try {
+      bytes = render(
+        body,
+        headers,
+        { method: request.method, url: request.url, header: (name) => request.headers.get(name) },
+        status,
+      )
+    } catch (error) {
+      // The lane's own catch would answer a bare 500 that finalization never hears about. Declining
+      // hands the reply to `onResponseBody`, which fails through the response pipeline as it always has.
+      skip = RENDER_RETRY_AFTER
+      host.renderFailed(error, request)
+      return undefined
+    }
+    if (bytes === undefined && !headers.touched) return undefined
+    const payload = bytes ?? body
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a Uint8Array is a valid BodyInit; only the lib's ArrayBufferLike variance rejects it.
+    const init = payload as ConstructorParameters<typeof Response>[0]
+    // Rendered only when the hook produced the final bytes: one that merely touched the headers
+    // (a `Vary` on a reply it left whole) still has its body hook to run.
+    return tagged(
+      new Response(init, { status, headers: record }),
+      payload,
+      owner,
+      unstamped,
+      bytes !== undefined,
+    )
+  }
 }
 
 export function createResponseObserverRuntime(): ResponseObserverRuntime {
@@ -93,6 +177,7 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
           this: ResponseObserverMethods,
           fn: ResponseBodyHook,
           node?: NodeResponseBodyHook,
+          render?: RenderBodyHook,
         ): ResponseObserverMethods {
           host.assertConfigurable("onResponseBody()")
           host.enableResponseBodyTagging()
@@ -120,6 +205,7 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
               return undefined
             },
             false,
+            render === undefined ? undefined : renderThrough(render, host),
           )
           return this
         },

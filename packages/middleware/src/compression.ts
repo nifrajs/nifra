@@ -1,5 +1,9 @@
-import { repeatedPrefixOf, withResponseObserver } from "@nifrajs/core/response-observer"
-import { defineRouterPlugin, type Middleware, type ResponseHeadersView } from "@nifrajs/core/server"
+import {
+  type RenderHeadersView,
+  repeatedPrefixOf,
+  withResponseObserver,
+} from "@nifrajs/core/response-observer"
+import { defineRouterPlugin, type Middleware } from "@nifrajs/core/server"
 import { concatBytes } from "./_chunks.ts"
 import { FIXED_DEFLATE_MAX, fixedDeflate } from "./_fixed-deflate.ts"
 
@@ -18,6 +22,32 @@ const COMPRESSIBLE =
   /^(?:text\/(?!event-stream\b)|application\/(?:json|[\w.-]+\+json|javascript|xml|[\w.-]+\+xml|wasm|x-ndjson)|image\/svg\+xml)/i
 
 const defaultCompressible = (contentType: string): boolean => COMPRESSIBLE.test(contentType)
+
+/** Whether this reply should be gzipped for this request. A reply that would be gzipped for some client
+ * names the header it varies on here, whether or not this client accepts gzip. */
+function shouldGzip(
+  body: string | Uint8Array,
+  headers: RenderHeadersView,
+  req: { header(name: string): string | null },
+  status: number,
+  threshold: number,
+  isCompressible: (contentType: string) => boolean,
+): boolean {
+  if (headers.has("content-encoding")) return false
+  if (status === 206 || headers.has("content-range")) return false
+  if (hasNoTransform(headers.get("cache-control"))) return false
+  if (!isCompressible(headers.get("content-type") ?? "")) return false
+  if (!reachesThreshold(body, threshold)) return false
+  // Both representations name the header they vary on, so a shared cache keeps them apart.
+  addGzipVary(headers)
+  return acceptsGzip(req.header("accept-encoding"))
+}
+
+function markGzipped(headers: RenderHeadersView): void {
+  headers.set("content-encoding", "gzip")
+  headers.delete("content-length")
+  weakenEtag(headers)
+}
 
 /** Honor explicit q=0 exclusions; a client that says `gzip;q=0` must not receive gzip. */
 function acceptsGzip(value: string | null): boolean {
@@ -56,12 +86,12 @@ const gzipHeaders = (source: Headers): Headers => {
 /** A strong ETag names the identity bytes; the gzip bytes are another representation, so the tag is
  * weakened (as nginx does) rather than shared by both - a cache or range request trusting it to
  * mean byte-identical would otherwise splice one representation into the other. */
-function weakenEtag(headers: ResponseHeadersView): void {
+function weakenEtag(headers: RenderHeadersView): void {
   const etag = headers.get("etag")
   if (etag !== null && !etag.startsWith("W/")) headers.set("etag", `W/${etag}`)
 }
 
-function addGzipVary(headers: ResponseHeadersView): void {
+function addGzipVary(headers: RenderHeadersView): void {
   const vary = headers.get("vary")
   if (vary === null) {
     headers.set("vary", "Accept-Encoding")
@@ -285,9 +315,12 @@ export interface GzipPlan {
 
 /**
  * Where each way of gzipping a buffered JSON body measured fastest over HTTP (16 connections). Inline
- * `gzipSync` skips the hand-off that dominates a small body: on Bun up to 4 KiB (2 KB: 1.32x node:zlib's
- * one-shot `gzip`), past which the one-shot runs on the thread pool in parallel with the loop (32 KB:
- * 2.11x inline). Deno always gzips inline (256 KB: 1.54x `CompressionStream`): its one-shot swells the
+ * `gzipSync` skips the hand-off that dominates a small body: on Bun for macOS up to 4 KiB (2 KB: 1.32x
+ * node:zlib's one-shot `gzip`), past which the one-shot runs on the thread pool in parallel with the
+ * loop (32 KB: 2.11x inline). On Bun for Linux (4 pinned CPUs in Docker Desktop's VM, 8 / 17 / 33 / 67
+ * KB bodies) inline won at every size: one process with 16 connections 1.21x / 1.15x / 1.23x / 1.06x,
+ * two with 64 (not 67 KB) 1.20x / 1.09x / 1.11x, four with 256 1.89x / 1.54x / 1.61x / 1.45x, so it
+ * gzips inline to 64 KiB there; past that is unmeasured. Deno always gzips inline (256 KB: 1.54x `CompressionStream`): its one-shot swells the
  * process by ~250 MB, after which inline calls serve at 0.6x. Node never gzips inline (16 KB: 0.44x),
  * and its one-shot beats `CompressionStream` only up to 8 KiB (2 KB: 1.16x, 16 KB: 0.92x). These bodies
  * compress 4-6x like real pages; a far cheaper one (100x+) loses the hand-off on Bun (33 KB: 0.93x).
@@ -302,14 +335,38 @@ export interface GzipPlan {
 export function gzipPlanFor(runtime: {
   readonly Bun?: unknown
   readonly Deno?: unknown
+  readonly process?: { readonly platform?: string }
 }): GzipPlan {
-  if (runtime.Bun !== undefined)
-    return { inlineMax: 4 * 1024, oneShotMax: Number.POSITIVE_INFINITY }
+  if (runtime.Bun !== undefined) {
+    // Linux gzips inline at every size measured, one process or one per core; macOS keeps the pool.
+    return {
+      inlineMax: runtime.process?.platform === "darwin" ? 4 * 1024 : 64 * 1024,
+      oneShotMax: Number.POSITIVE_INFINITY,
+    }
+  }
   if (runtime.Deno !== undefined) {
     return { inlineMax: Number.POSITIVE_INFINITY, oneShotMax: Number.POSITIVE_INFINITY }
   }
   return { inlineMax: -1, oneShotMax: 8 * 1024 }
 }
+
+/** The input to hand zlib and its size in bytes. A string is measured by its UTF-16 length unless that
+ * cannot place it against a limit: UTF-8 spends 1 to 3 bytes per unit, so a length that straddles one
+ * is settled by encoding once, and the bytes are what gets compressed. */
+function sized(
+  body: string | Uint8Array,
+  plan: GzipPlan,
+): { readonly input: string | Uint8Array; readonly length: number } {
+  if (typeof body !== "string") return { input: body, length: body.byteLength }
+  if (straddles(body.length, plan.inlineMax) || straddles(body.length, plan.oneShotMax)) {
+    const bytes = GZIP_ENCODER.encode(body)
+    return { input: bytes, length: bytes.byteLength }
+  }
+  return { input: body, length: body.length }
+}
+
+/** Whether a string of `units` UTF-16 units may encode to either side of `limit` bytes. */
+const straddles = (units: number, limit: number): boolean => units <= limit && units * 3 > limit
 
 /** Gzip a buffered body by `plan`, through `zlib` where it has the call, else `CompressionStream`. */
 export function gzipBuffered(
@@ -317,16 +374,28 @@ export function gzipBuffered(
   plan: GzipPlan,
   zlib: Pick<Zlib, "gzipSync" | "gzip"> | undefined,
 ): Uint8Array | Promise<Uint8Array> {
-  const length = typeof body === "string" ? body.length : body.byteLength
+  const { input, length } = sized(body, plan)
   const gzipSync = zlib?.gzipSync
-  if (gzipSync !== undefined && length <= plan.inlineMax) return gzipSync.call(zlib, body)
+  if (gzipSync !== undefined && length <= plan.inlineMax) return gzipSync.call(zlib, input)
   const gzip = zlib?.gzip
   if (gzip !== undefined && length <= plan.oneShotMax) {
     return new Promise((resolve, reject) => {
-      gzip.call(zlib, body, (error, result) => (error === null ? resolve(result) : reject(error)))
+      gzip.call(zlib, input, (error, result) => (error === null ? resolve(result) : reject(error)))
     })
   }
-  return gzipBytes(typeof body === "string" ? GZIP_ENCODER.encode(body) : body)
+  return gzipBytes(typeof input === "string" ? GZIP_ENCODER.encode(input) : input)
+}
+
+/** The gzip of a body `plan` runs inline, or `undefined` when it would go off the loop instead. */
+export function gzipInline(
+  body: string,
+  plan: GzipPlan,
+  zlib: Pick<Zlib, "gzipSync"> | undefined,
+): Uint8Array | undefined {
+  const gzipSync = zlib?.gzipSync
+  if (gzipSync === undefined) return undefined
+  const { input, length } = sized(body, plan)
+  return length <= plan.inlineMax ? gzipSync.call(zlib, input) : undefined
 }
 
 let planLookup: GzipPlan | undefined
@@ -621,23 +690,27 @@ export function compression(options: CompressionOptions = {}) {
     app.use(
       withResponseObserver<Middleware>({
         onResponseBody(body, headers, req, status) {
-          if (headers.has("content-encoding")) return undefined
-          if (status === 206 || headers.has("content-range")) return undefined
-          if (hasNoTransform(headers.get("cache-control"))) return undefined
-          if (!isCompressible(headers.get("content-type") ?? "")) return undefined
-          if (!reachesThreshold(body, threshold)) return undefined
-          // Both representations name the header they vary on, so a shared cache keeps them apart.
-          addGzipVary(headers)
-          if (!acceptsGzip(req.header("accept-encoding"))) return undefined
-          const encoded = (compressed: Uint8Array): Uint8Array => {
-            headers.set("content-encoding", "gzip")
-            headers.delete("content-length")
-            weakenEtag(headers)
-            return compressed
-          }
+          if (!shouldGzip(body, headers, req, status, threshold, isCompressible)) return undefined
           planLookup ??= gzipPlanFor(globalThis)
           const compressed = gzipBuffered(body, planLookup, zlibModule())
-          return compressed instanceof Promise ? compressed.then(encoded) : encoded(compressed)
+          if (compressed instanceof Promise) {
+            return compressed.then((result) => {
+              markGzipped(headers)
+              return result
+            })
+          }
+          markGzipped(headers)
+          return compressed
+        },
+        // Taken when a returned value is rendered: the same decision, answered only when gzip runs
+        // inline. The hook above still runs on the rendered response and finds `content-encoding` set.
+        renderBody(body, headers, req, status) {
+          if (!shouldGzip(body, headers, req, status, threshold, isCompressible)) return undefined
+          planLookup ??= gzipPlanFor(globalThis)
+          const compressed = gzipInline(body, planLookup, zlibModule())
+          if (compressed === undefined) return undefined
+          markGzipped(headers)
+          return compressed
         },
         onResponseRaw: (response, req) =>
           compressRawResponse(response, req, threshold, isCompressible),

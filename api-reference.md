@@ -2394,7 +2394,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A copy of `request` whose body errors with the transport cap's `413` once more than `maxBytes` arrive, or as soon as it is read when the declared Content-Length is over the cap (`413`) or malformed (`400`). The compact form of {@link applyTransportCap} for a server that hands the handler its own `R…
 - **crossSiteFormRefused** _(const)_ - `crossSiteFormRefused: (source: RequestSource, formOrigins: FormOrigins | undefined) => boolean`
   Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request with no content type that carries an `Authorization` header other than a browser-managed scheme (Bas…
-- **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined) => void`
+- **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined, message?: string) => void`
   Write an unhandled request error to the log. An error's own text can quote the input that produced it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500 with no message and no stack is an incident nobody can diagnose, and the framework already ships the na…
 - **jsonResponse** _(function)_ - `jsonResponse: (value: unknown, init?: ResponseInit) => Response`
   `Response.json`, with each `bigint` written as its decimal string, as `jsonText` writes it.
@@ -2884,6 +2884,10 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **NodeResponseBodyHook** _(type)_ - `type NodeResponseBodyHook = ( body: string | Uint8Array, response: NodeResponseContext, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes the portable hook would (never `null` - bodiless renders skip the twin exactly as they skip the portable hook) …
+- **RenderBodyHook** _(type)_ - `type RenderBodyHook = ( body: string, headers: RenderHeadersView, req: NodeRequestContext, status: number, ) => Uint8Array | undefined`
+  A synchronous fast path for a body hook, run when the framework renders a returned value: the hook sees the serialized text before any `Response` exists, so one `Response` is built where the body tier would build two (the rendered one, then its replacement). It returns replacement bytes, or `undefi…
+- **RenderHeadersView** _(type)_ - `type RenderHeadersView = Pick<ResponseHeadersView, "get" | "has" | "set" | "delete">`
+  The header view a {@link RenderBodyHook} gets: no `append`, as the headers are one plain record.
 - **RepeatedPrefix** _(interface)_ - `interface RepeatedPrefix`
   What {@link markRepeatedPrefix} recorded for a chunk.
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`

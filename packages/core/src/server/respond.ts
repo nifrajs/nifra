@@ -379,9 +379,27 @@ export function normalizeBodylessResponse(response: Response, request?: Request)
 type TaggedResponseMarker = {
   readonly body: string | Uint8Array
   readonly owner?: object
+  /** Built by the owner's render-time body hook, which is the first response hook and has run. */
+  readonly rendered?: true
 }
 
-type ResponseBodyTagOption = false | true | object | undefined
+/** What an app's body-tier hooks tag their payloads with: the owner a framework body is attributed to,
+ * which also holds the app's render-time fast path while its first response hook offers one. */
+export interface ResponseBodyOwner {
+  renderJson?: RenderJson
+}
+
+/** Builds the one `Response` for a rendered JSON text through an app's render-time body hook, or
+ * answers `undefined` when that hook left the text and the headers alone. */
+export type RenderJson = (
+  body: string,
+  status: number,
+  request: Request,
+  unstamped: boolean,
+  owner: ResponseBodyOwner,
+) => Response | undefined
+
+type ResponseBodyTagOption = boolean | ResponseBodyOwner | undefined
 
 /** The framework-serialized bytes riding a tagged Response, or `undefined` for raw/streamed ones. */
 export function taggedResponseBody(
@@ -427,6 +445,11 @@ let residentTextsRecorded = false
 /** From now on, keep the string of each `c.text()` response for the body tier. */
 export function recordResidentTexts(): void {
   residentTextsRecorded = true
+}
+
+/** Whether a body-tier hook is installed, so a helper that builds its own text should keep it. */
+export function residentTextsOn(): boolean {
+  return residentTextsRecorded
 }
 
 /** `response`, which `c.text()` built from `body`. */
@@ -480,18 +503,25 @@ export function markTaggedResponse(
   response: Response,
   body: string | Uint8Array,
   owner?: object,
+  rendered = false,
 ): Response {
   Object.defineProperty(response, RESPONSE_BODY, {
-    value: owner === undefined ? body : ({ body, owner } satisfies TaggedResponseMarker),
+    value:
+      owner === undefined
+        ? body
+        : rendered
+          ? ({ body, owner, rendered: true } satisfies TaggedResponseMarker)
+          : ({ body, owner } satisfies TaggedResponseMarker),
   })
   return response
 }
 
-function tagged(
+export function tagged(
   response: Response,
-  body: string,
+  body: string | Uint8Array,
   tagResponseBody: ResponseBodyTagOption,
   unstamped = false,
+  rendered = false,
 ): Response {
   withBody(response, unstamped)
   return tagResponseBody === false || tagResponseBody === undefined
@@ -500,7 +530,22 @@ function tagged(
         response,
         body,
         typeof tagResponseBody === "object" ? tagResponseBody : undefined,
+        rendered,
       )
+}
+
+/** Whether `owner`'s render-time body hook built `response`, so the hook pass can start after it. */
+export function renderedFor(response: Response, owner: object | undefined): boolean {
+  const marker: unknown = Reflect.get(response, RESPONSE_BODY)
+  return (
+    owner !== undefined &&
+    typeof marker === "object" &&
+    marker !== null &&
+    "rendered" in marker &&
+    marker.rendered === true &&
+    "owner" in marker &&
+    marker.owner === owner
+  )
 }
 
 /** A plain 200 JSON response. On Bun and Deno the native `Response.json` beats a hand-inlined
@@ -568,6 +613,14 @@ export function fusedRespondNoSet(
     // declaring headers statically instead of writing them per response.
     if (tagResponseBody || statics !== undefined) {
       const body = jsonText(result) as string | undefined
+      const rendered =
+        body !== undefined &&
+        statics === undefined &&
+        request !== undefined &&
+        typeof tagResponseBody === "object"
+          ? tagResponseBody.renderJson?.(body, 200, request, unstamped, tagResponseBody)
+          : undefined
+      if (rendered !== undefined) return rendered
       // Each shape carries the content-type of the lane it stands in for: the framework's own for the
       // tagging path this branch already owned, and `Response.json`'s for the construction below that
       // the static tier replaces. They differ on Deno, and a declared header must not change one.
@@ -758,6 +811,11 @@ function renderValue(
     // result) delegates to Response.json so its TypeError contract stays the single source.
     const body = jsonText(result) as string | undefined
     if (body !== undefined) {
+      const rendered =
+        statics === undefined && request !== undefined && typeof tagResponseBody === "object"
+          ? tagResponseBody.renderJson?.(body, status, request, unstamped, tagResponseBody)
+          : undefined
+      if (rendered !== undefined) return rendered
       const init: ResponseInit =
         status === 200
           ? (statics?.jsonInit200 ?? JSON_INIT_200)

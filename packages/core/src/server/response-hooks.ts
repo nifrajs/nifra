@@ -40,8 +40,13 @@ export function withReplacedBody(
     if (body === (originalBody ?? null) && status === response.status) return response
   }
   if (isBodylessStatus(status)) body = null
-  const headers = new Headers(response.headers)
-  headers.delete("content-length")
+  // A body hook that already removed the old length (compression's common path) can hand the
+  // response's mutable headers straight to `Response`; cloning here would do the same work twice.
+  let headers = response.headers
+  if (headers.has("content-length")) {
+    headers = new Headers(headers)
+    headers.delete("content-length")
+  }
   const next = new Response(body as ConstructorParameters<typeof Response>[0], {
     status,
     headers,

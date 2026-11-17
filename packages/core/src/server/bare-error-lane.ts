@@ -79,8 +79,9 @@ export function emitRequestErrorLog(
   // log through the same policy.
   // Absent for a failure the runtime reports without its request (Bun's serve `error` callback).
   ctx: { readonly req: { readonly method: string; readonly url: string } } | undefined,
+  message = "unhandled request error",
 ): void {
-  logger.error("unhandled request error", {
+  logger.error(message, {
     ...(ctx === undefined ? {} : { method: ctx.req.method, path: pathnameOf(ctx.req.url) }),
     name: err instanceof Error ? err.name : "Error",
     // `detail`, not `message`: the logger uses `message` for its own first argument, so a field of

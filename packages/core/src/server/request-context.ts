@@ -16,7 +16,7 @@ import { jsonResponse } from "./json-response.ts"
 import { jsonText } from "./json-text.ts"
 import type { ProtoPoisoning } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
-import { residentText, responseJsonContentType } from "./respond.ts"
+import { residentText, residentTextsOn, responseJsonContentType } from "./respond.ts"
 import type {
   ResponseContractDefinition,
   ResponseContractRuntime,
@@ -410,6 +410,30 @@ export class RequestContext implements RawContext {
         text === undefined ? undefined : ownHeaderRecord(i?.headers, responseJsonContentType())
       if (defer !== undefined && text !== undefined && headers !== undefined) {
         reply = defer(text, i?.status ?? 200, headers)
+      }
+    }
+    // With a body-tier hook installed, the text is kept as `c.text` keeps its own: a hook then gets
+    // the string, where `Response.json` would leave it only a stream to read back.
+    if (reply === undefined && residentTextsOn()) {
+      // Widened, not asserted: `jsonText` returns nothing for a value with no JSON form.
+      const text: string | undefined = jsonText(value)
+      if (text !== undefined) {
+        let built: Response
+        if (i?.headers === undefined) {
+          built = new Response(text, {
+            ...i,
+            headers: { "content-type": responseJsonContentType() },
+          })
+        } else {
+          // The caller's own init, read once: a record naming `Set-Cookie` and `set-cookie` keeps both,
+          // as `Response.json` keeps them, and a one-shot iterator is not consumed twice. A string body
+          // would put its own text type on a reply that named none, and only a bodyless `Response`
+          // shows whether the caller named one.
+          const named = new Response(null, i).headers
+          if (!named.has("content-type")) named.set("content-type", responseJsonContentType())
+          built = new Response(text, { ...i, headers: named })
+        }
+        reply = markResidentBody(residentText(built, text))
       }
     }
     reply ??= markResidentBody(jsonResponse(value, i))

@@ -13,6 +13,7 @@ import type {
   NodeRequestHook,
   NodeResponseBodyHook,
   NodeResponseHook,
+  RenderBodyHook,
   ResponseBodyHook,
   ResponseHeadersHook,
 } from "./node-outcome-hook.ts"
@@ -462,6 +463,16 @@ export interface Middleware {
   readonly onResponseBody?: ResponseBodyHook
   /** Allocation-light Node-direct twin for a portable body hook; keep its wire semantics identical. */
   readonly onNodeResponseBody?: NodeResponseBodyHook
+  /**
+   * A synchronous fast path for `onResponseBody`, taken when the framework renders a value a handler
+   * returned: one `Response` is built from its result instead of two. Only for a hook that is
+   * idempotent on its own output (a reply it rendered with new bytes skips the hook on the Web
+   * path, and any other pass over it must find nothing left to do). It applies only while this hook is the first response hook of the app, so
+   * nothing registered before it can have run first, and not on a response carrying `c.set` headers,
+   * cookies, static response headers, or the idempotency plugin. A throw is logged and declines the fast path for the next 100,000
+   * replies: `onResponseBody` then handles them and fails through the response pipeline, as it always has.
+   */
+  readonly renderBody?: RenderBodyHook
   /**
    * Response transform for untagged/raw responses (streams, proxied fetches, and framework errors).
    * Framework-serialized payloads use `onResponseBody` and remain on the Node direct lane.
