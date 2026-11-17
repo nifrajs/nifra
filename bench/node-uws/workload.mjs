@@ -31,12 +31,20 @@ const start = (arm, port) => {
       child.kill("SIGKILL")
       reject(new Error(`${arm} did not report ready`))
     }, 10_000)
+    child.once("error", (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
     child.once("exit", (code) => {
       clearTimeout(timer)
       reject(new Error(`${arm} exited (${code}) before it was ready`))
     })
+    let pending = ""
     child.stdout.on("data", (chunk) => {
-      if (String(chunk).includes("ready")) {
+      pending += String(chunk)
+      const lines = pending.split("\n")
+      pending = lines.pop() ?? ""
+      if (lines.includes("ready")) {
         clearTimeout(timer)
         resolve(child)
       }

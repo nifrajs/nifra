@@ -144,23 +144,21 @@ const ECHO_HEADERS: readonly (readonly [string, string])[] = [
 ]
 
 /**
- * The parameter name of an `echoParam()` route that nothing can touch and whose only parameter is its
- * last segment, or `undefined`.
+ * The parameter name of an `echoParam()` route that nothing can touch and is registered under the very
+ * path it was given, or `undefined`.
  */
 function plainEchoParam(route: RouteView): string | undefined {
   const marked: unknown =
     typeof route.entry.handler === "function"
       ? Reflect.get(route.entry.handler, ECHO_PARAM)
       : undefined
-  const { paramNames, segments } = route.pattern
-  const last = segments[segments.length - 1]
-  return typeof marked === "string" &&
+  const name = route.pattern.paramNames[0]
+  return marked === route.path &&
     route.entry.staticResponse === undefined &&
-    paramNames.length === 1 &&
-    paramNames[0] === marked &&
-    last?.kind === "param" &&
+    route.pattern.paramNames.length === 1 &&
+    route.pattern.segments[route.pattern.segments.length - 1]?.kind === "param" &&
     untouched(route)
-    ? marked
+    ? name
     : undefined
 }
 

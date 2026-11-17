@@ -11,7 +11,7 @@ if (arm === "nifra") {
   const { serve } = await import("@nifrajs/node-uws")
   const app = server()
     .get("/", staticResponse())
-    .get("/user/:id", echoParam("id"))
+    .get("/user/:id", echoParam("/user/:id"))
     .post("/user", staticResponse())
   await serve(app, { port })
   console.log("ready")

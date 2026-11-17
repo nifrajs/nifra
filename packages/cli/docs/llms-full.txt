@@ -1431,21 +1431,24 @@ app.listen(3000)
 
 ### Echoing a path parameter
 
-`echoParam(name)` answers a GET route with its last path parameter as
+`echoParam(path)` answers a GET route with its final path parameter as
 `text/plain`, **exactly as the request spelled it**: percent-escapes are left
-in, not decoded. That fixed contract lets a transport that matches paths itself answer the
-route without calling the app: `@nifrajs/node-uws` does, under the same
-conditions as `staticResponse()`. The reply carries
-`X-Content-Type-Options: nosniff`. Where the raw spelling cannot be known the
-decoded value is answered instead: a parameter that is not the last segment, and a segment
-of dots written as escapes (a URL parser reads `%2E` as a dot segment). On
-node-uws a malformed escape such as `%zz` is echoed as sent, where every other
-runtime refuses it with 400.
+in, not decoded. Pass it the route's own path, a static prefix and one final
+`:name` segment; anything else throws. That fixed contract lets a transport that
+matches paths itself answer the route without calling the app:
+`@nifrajs/node-uws` does, under the same conditions as
+`staticResponse()`, and only while no other route can match a request the echo
+route would answer. The reply carries `X-Content-Type-Options: nosniff`. A
+segment of dots written as escapes (a URL parser reads `%2E` as a dot segment)
+answers with the decoded value. On node-uws a malformed escape such as `%zz` is
+echoed as sent, where every other runtime refuses it with 400.
 
 ```ts
 import { echoParam, server } from "@nifrajs/core/server"
 
-export const app = server().get("/user/:id", echoParam("id"))
+const USER = "/user/:id"
+
+export const app = server().get(USER, echoParam(USER))
 // GET /user/%41b answers 200 text/plain with the body %41b
 ```
 

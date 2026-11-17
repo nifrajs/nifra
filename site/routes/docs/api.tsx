@@ -109,7 +109,9 @@ app.listen(3000)`
 
 const ECHO_PARAM = `import { echoParam, server } from "@nifrajs/core/server"
 
-export const app = server().get("/user/:id", echoParam("id"))
+const USER = "/user/:id"
+
+export const app = server().get(USER, echoParam(USER))
 // GET /user/%41b answers 200 text/plain with the body %41b`
 
 const COOKIES = `import { server } from "@nifrajs/core/server"
@@ -462,16 +464,17 @@ export default function Api() {
       <CodeBlock code={STATIC_RESPONSE} />
       <h2>Echoing a path parameter</h2>
       <p>
-        <code>echoParam(name)</code> answers a GET route with its last path parameter as{" "}
+        <code>echoParam(path)</code> answers a GET route with its final path parameter as{" "}
         <code>text/plain</code>, <b>exactly as the request spelled it</b>: percent-escapes are left
-        in, not decoded. That fixed contract lets a transport that matches paths itself answer the
-        route without calling the app: <code>@nifrajs/node-uws</code> does, under the same
-        conditions as <code>staticResponse()</code>. The reply carries{" "}
-        <code>X-Content-Type-Options: nosniff</code>. Where the raw spelling cannot be known the
-        decoded value is answered instead: a parameter that is not the last segment, and a segment
-        of dots written as escapes (a URL parser reads <code>%2E</code> as a dot segment). On
-        node-uws a malformed escape such as <code>%zz</code> is echoed as sent, where every other
-        runtime refuses it with 400.
+        in, not decoded. Pass it the route's own path, a static prefix and one final{" "}
+        <code>:name</code> segment; anything else throws. That fixed contract lets a transport that
+        matches paths itself answer the route without calling the app:{" "}
+        <code>@nifrajs/node-uws</code> does, under the same conditions as{" "}
+        <code>staticResponse()</code>, and only while no other route can match a request the echo
+        route would answer. The reply carries <code>X-Content-Type-Options: nosniff</code>. A
+        segment of dots written as escapes (a URL parser reads <code>%2E</code> as a dot segment)
+        answers with the decoded value. On node-uws a malformed escape such as <code>%zz</code> is
+        echoed as sent, where every other runtime refuses it with 400.
       </p>
       <CodeBlock code={ECHO_PARAM} />
       <p className="caveat">

@@ -33,7 +33,7 @@
     "name": "ECHO_PARAM",
     "topic": "Nifra - API & typed client",
     "slug": "api",
-    "code": "import { echoParam, server } from \"@nifrajs/core/server\"\n\nexport const app = server().get(\"/user/:id\", echoParam(\"id\"))\n// GET /user/%41b answers 200 text/plain with the body %41b"
+    "code": "import { echoParam, server } from \"@nifrajs/core/server\"\n\nconst USER = \"/user/:id\"\n\nexport const app = server().get(USER, echoParam(USER))\n// GET /user/%41b answers 200 text/plain with the body %41b"
   },
   {
     "name": "HEADERS",

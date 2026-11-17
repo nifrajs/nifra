@@ -119,13 +119,13 @@ describe("fixed-reply routes: uWS and Bun agree on every disqualifier", () => {
 describe("echoParam routes follow the same app-level disqualifiers", () => {
   for (const [name, setup, expected] of setups) {
     test(name, () => {
-      const app = routeOf(setup(), "/user/:id", echoParam("id"))
+      const app = routeOf(setup(), "/user/:id", echoParam("/user/:id"))
       expect(declarativeRoutes(viewOf(app)).length).toBe(expected ? 1 : 0)
     })
   }
 
   test("lists the parameter with the text headers", () => {
-    const app = server().get("/user/:id", echoParam("id"))
+    const app = server().get("/user/:id", echoParam("/user/:id"))
     expect(declarativeRoutes(viewOf(app))).toEqual([
       {
         method: "GET",
@@ -140,16 +140,32 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
     ])
   })
 
-  test("only a route whose single parameter is its last segment is listed", () => {
+  test("only a GET route registered under the path it was given is listed", () => {
     const typed = server()
-      .get("/a/:id/x", echoParam("id"))
-      .get("/b/:one/:id", echoParam("id"))
       .get("/d/:id", () => "not an echo")
-      .get("/:id", echoParam("id"))
-      .post("/e/:id", echoParam("id"))
-    // The name does not match the route's parameter: the types refuse it.
-    const app = routeOf(typed, "/c/:id", echoParam("other"))
+      .get("/:id", echoParam("/:id"))
+      .post("/e/:id", echoParam("/e/:id"))
+    // Registered under a path other than the one it was given: the router keeps it.
+    const app = routeOf(typed, "/c/:id", echoParam("/other/:id"))
     expect(declarativeRoutes(viewOf(app)).map((route) => route.path)).toEqual(["/:id"])
+  })
+
+  test("echoParam takes a static prefix and one final parameter, and nothing else", () => {
+    for (const path of [
+      "/a/:id/x",
+      "/a/:one/:two",
+      "/a/:one/%78",
+      "/c/:id?",
+      "/x/*",
+      "/:a.json",
+      "id",
+      "",
+    ]) {
+      expect(() => echoParam(path), path).toThrow(TypeError)
+    }
+    for (const path of ["/:id", "/user/:id", "/a/b/c/:name"]) {
+      expect(() => echoParam(path), path).not.toThrow()
+    }
   })
 
   test("a route with a schema of its own is not listed", () => {
@@ -157,8 +173,8 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
       "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) },
     } as const
     const app = server()
-      .get("/schema/:id", { query: anything }, echoParam("id"))
-      .get("/plain/:id", echoParam("id"))
+      .get("/schema/:id", { query: anything }, echoParam("/schema/:id"))
+      .get("/plain/:id", echoParam("/plain/:id"))
     expect(declarativeRoutes(viewOf(app)).map((route) => route.path)).toEqual(["/plain/:id"])
   })
 
@@ -168,30 +184,32 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
       [
         "a more specific GET",
         server()
-          .get("/user/:id", echoParam("id"))
+          .get("/user/:id", echoParam("/user/:id"))
           .get("/user/me", () => "me"),
       ],
       [
         "a more specific route of another method",
         server()
-          .get("/user/:id", echoParam("id"))
+          .get("/user/:id", echoParam("/user/:id"))
           .post("/user/me", () => "me"),
       ],
       [
         "a part-literal route",
         server()
-          .get("/user/:id", echoParam("id"))
+          .get("/user/:id", echoParam("/user/:id"))
           .get("/user/:id.json", () => "j"),
       ],
       [
         "a catch-all",
         server()
-          .get("/user/:id", echoParam("id"))
+          .get("/user/:id", echoParam("/user/:id"))
           .get("/user/*", () => "all"),
       ],
       [
         "a mount ahead of the routes",
-        server().mount({ path: "/user/me", app: anything }).get("/user/:id", echoParam("id")),
+        server()
+          .mount({ path: "/user/me", app: anything })
+          .get("/user/:id", echoParam("/user/:id")),
       ],
     ]
     for (const [name, app] of cases) {
@@ -204,7 +222,7 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
 
   test("an echo route is listed beside routes that cannot take its requests", () => {
     const app = server()
-      .get("/user/:id", echoParam("id"))
+      .get("/user/:id", echoParam("/user/:id"))
       .post("/user/:id", () => "same pattern, another method")
       .get("/user", () => "shorter")
       .get("/user/:id/posts", () => "longer")
@@ -213,12 +231,13 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
   })
 
   test("the marker the module reads is the one echoParam sets", () => {
-    expect(Reflect.get(echoParam("id"), Symbol.for("@nifrajs/core/echo-param"))).toBe("id")
-    expect(() => echoParam("not a name")).toThrow(TypeError)
+    expect(Reflect.get(echoParam("/user/:id"), Symbol.for("@nifrajs/core/echo-param"))).toBe(
+      "/user/:id",
+    )
   })
 
   test("answers the raw segment, and the decoded value where the raw one cannot be told", async () => {
-    const app = server().get("/user/:id", echoParam("id")).get("/p/:q/x", echoParam("q"))
+    const app = server().get("/user/:id", echoParam("/user/:id"))
     const body = async (path: string) => {
       const response = await app.fetch(new Request(`http://nifra.test${path}`))
       return [response.status, await response.text(), response.headers.get("content-type")]
@@ -227,12 +246,6 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
     expect(await body("/user/%41bc?x=1")).toEqual([200, "%41bc", "text/plain; charset=utf-8"])
     expect(await body("/user/a%2Fb")).toEqual([200, "a%2Fb", "text/plain; charset=utf-8"])
     expect(await body("/user/caf%C3%A9")).toEqual([200, "caf%C3%A9", "text/plain; charset=utf-8"])
-    // The parameter is not the last segment: the decoded value.
-    expect(await body("/p/%41/x")).toEqual([200, "A", "text/plain; charset=utf-8"])
-    // Nor is it the route's last parameter when the final segment decodes to the same value.
-    const both = server().get("/q/:id/:tail", echoParam("id"))
-    const answer = await both.fetch(new Request("http://nifra.test/q/A/%41"))
-    expect(await answer.text()).toBe("A")
   })
 })
 

@@ -20,7 +20,7 @@ function makeApp() {
     .get("/created", staticResponse({ status: 201 }))
     .get("/nothing", staticResponse({ status: 204 }))
     .get("/api/v1/health", staticResponse())
-    .get("/user/:id", echoParam("id"))
+    .get("/user/:id", echoParam("/user/:id"))
     .get("/dynamic", () => new Response("dynamic"))
 }
 
@@ -196,9 +196,9 @@ test("a fixed route is answered without entering the app", async () => {
 
 test("a more specific route beside an echoParam route still wins", async () => {
   const app = server()
-    .get("/user/:id", echoParam("id"))
+    .get("/user/:id", echoParam("/user/:id"))
     .get("/user/me", () => ({ profile: true }))
-    .post("/other/:id", echoParam("id"))
+    .post("/other/:id", echoParam("/other/:id"))
   const running = await serveUws(app, { port: 0 })
   try {
     assert.equal((await observe(running.port, head("GET", "/user/me"))).body, '{"profile":true}')
