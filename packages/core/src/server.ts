@@ -66,6 +66,7 @@ export {
   signValue,
   unsignValue,
 } from "./server/cookies.ts"
+export { echoParam } from "./server/echo-param.ts"
 export {
   type DurableObjectNamespaceLike,
   type ExecutionContext,

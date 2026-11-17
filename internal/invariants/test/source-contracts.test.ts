@@ -180,6 +180,11 @@ const RULES: readonly Rule[] = [
         reason:
           "literal text a route author wrote, so it matches the request spelling; only controls, space and non-ASCII",
       },
+      "packages/core/src/server/echo-param.ts": {
+        count: 1,
+        reason:
+          "the route's literal prefix spelled as pattern.ts registers it, so a request is compared in the same form",
+      },
       "packages/agent/src/events.ts": { count: 1, reason: "a storage key prefix, never a URL" },
       "packages/core/src/durable-adapters.ts": { count: 3, reason: "storage keys, never URLs" },
       "packages/web/src/isr.ts": { count: 1, reason: "a KV key" },

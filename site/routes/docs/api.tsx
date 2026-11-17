@@ -107,6 +107,13 @@ export const app = server()
   .post("/flush", staticResponse())
 app.listen(3000)`
 
+const ECHO_PARAM = `import { echoParam, server } from "@nifrajs/core/server"
+
+const USER = "/user/:id"
+
+export const app = server().get(USER, echoParam(USER))
+// GET /user/%41b answers 200 text/plain with the body %41b`
+
 const COOKIES = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
@@ -455,6 +462,25 @@ export default function Api() {
         pipeline. <code>app.fetch</code> and other runtimes also produce a fresh response per call.
       </p>
       <CodeBlock code={STATIC_RESPONSE} />
+      <h2>Echoing a path parameter</h2>
+      <p>
+        <code>echoParam(path)</code> answers a GET route with its final path parameter as{" "}
+        <code>text/plain</code>, <b>exactly as the request spelled it</b>: percent-escapes are left
+        in, not decoded. Pass it the route's own path, a static prefix and one final{" "}
+        <code>:name</code> segment; anything else throws. That fixed contract lets a transport that
+        matches paths itself answer the route without calling the app:{" "}
+        <code>@nifrajs/node-uws</code> does, under the same conditions as{" "}
+        <code>staticResponse()</code>, and only while no other route can match a request the echo
+        route would answer. The reply carries <code>X-Content-Type-Options: nosniff</code>. 
+        The answer is defined by the path you pass: a request that does not match it (the handler
+        registered elsewhere) gets the decoded value, one that does gets its final segment as sent,
+        whatever route matched it. Two inputs are outside
+        the contract: a malformed escape such as <code>%zz</code> is echoed as sent when the node-uws
+        native lane answers the route and refused with 400 by ordinary routing (a request hook, for
+        one, sends it there), and a segment of only dots written as escapes is read differently by
+        each runtime&apos;s URL parser.
+      </p>
+      <CodeBlock code={ECHO_PARAM} />
       <p className="caveat">
         Prefer <code>c.set</code> over returning a raw <code>Response</code>. A <code>Response</code>{" "}
         return makes the typed client infer <code>data: never</code>, so you silently lose drift

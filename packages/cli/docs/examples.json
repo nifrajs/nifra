@@ -30,6 +30,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const app = server().get(\n  \"/dashboard\",\n  { cookies: t.cookies({ session: t.string(), page: t.optional(t.integer()) }) },\n  (c) => ({\n    session: c.cookies.session, // string - a request without it is a 422 before this runs\n    page: c.cookies.page ?? 1, // number | undefined - coerced from the cookie's text\n  }),\n)"
   },
   {
+    "name": "ECHO_PARAM",
+    "topic": "Nifra - API & typed client",
+    "slug": "api",
+    "code": "import { echoParam, server } from \"@nifrajs/core/server\"\n\nconst USER = \"/user/:id\"\n\nexport const app = server().get(USER, echoParam(USER))\n// GET /user/%41b answers 200 text/plain with the body %41b"
+  },
+  {
     "name": "HEADERS",
     "topic": "Nifra - API & typed client",
     "slug": "api",

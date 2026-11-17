@@ -188,6 +188,7 @@ export type {
 }
 
 import { NIFRA_BACKEND_WS_RUNTIME } from "../mount.ts"
+import { plainStaticResponse } from "./declarative-routes.ts"
 import type { IdempotencyRuntime } from "./idempotency-lane.ts"
 import {
   GET_WS_RUNTIME,
@@ -7568,7 +7569,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // The capacity gate must wrap every request; the fused lane bypasses fetchMatched, so enabling
       // admission drops fusion (native matching stays) and routes through the gated matched lane.
       this.capacityGate === undefined
-    // A response value skips every request callback, so every policy that could inspect it must be absent.
+    // A response value skips every request callback, so every policy that could inspect it must be
+    // absent. `transportMayAnswer` (declarative-routes.ts) states the same gate for uWS; a test keeps
+    // the two equal. It is repeated here because sharing it adds bytes to every app's bundle.
     const mayUseStaticResponse =
       allowStaticResponses &&
       !this.validateHost &&
@@ -7664,7 +7667,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ) {
         continue
       }
-      const staticResponse = entry.staticResponse
+      const staticResponse = plainStaticResponse(route)
       if (
         mayUseStaticResponse &&
         staticResponse !== undefined &&
@@ -7672,21 +7675,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         // Bun 1.3 can misframe null-body status codes in its native static table.
         staticResponse.status !== 204 &&
         staticResponse.status !== 205 &&
-        staticResponse.status !== 304 &&
-        pattern.paramNames.length === 0 &&
-        entry.schema === undefined &&
-        entry.idempotent === undefined &&
-        entry.ledgered === undefined &&
-        entry.responseContract === undefined &&
-        entry.derives.length === 0 &&
-        entry.authStages.length === 0 &&
-        !entry.hasDecorations &&
-        entry.beforeHandle.length === 0 &&
-        entry.afterHandle.length === 0 &&
-        entry.onError.length === 0 &&
-        entry.around.length === 0 &&
-        route.assurance.length === 0 &&
-        (route.descriptor.capabilities?.length ?? 0) === 0
+        staticResponse.status !== 304
       ) {
         tableAt(path, pattern.segments)[method as Method] = createStaticResponse(staticResponse)
         count += 1

@@ -6,6 +6,7 @@ export type AppOptions = UWS.AppOptions
 export type HttpRequest = UWS.HttpRequest
 export type HttpResponse = UWS.HttpResponse
 export type ListenSocket = UWS.us_listen_socket
+export type TemplatedApp = UWS.TemplatedApp
 
 let loaded: Uws | undefined
 

@@ -21131,6 +21131,20 @@
     "doc": "/**\n * Build a real WebSocket URL for an adapter-backed test server. The path uses the same-origin guard as\n * {@link e2eUrl}; `http`/`https` are translated to `ws`/`wss` so callers cannot accidentally dial an\n * HTTP URL with a WebSocket client or escape the test server origin.\n */"
   },
   {
+    "name": "echoParam",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function echoParam(path: string): (context: {\n    readonly params: Readonly<Record<string, string>>;\n    readonly req: Request;\n}) => Response;",
+    "doc": "/**\n * Answer 200 with the route's final path parameter as plain text, exactly as the request spelled it:\n * percent-escapes are left in, not decoded. Pass the route's own path:\n *\n *     const USER = \"/user/:id\"\n *     server().get(USER, echoParam(USER))\n *\n * `/user/%41b` answers `%41b`. The path is a static prefix followed by one `:name` segment; anything\n * else throws, so the parameter is always the last segment. The answer is defined by the path given\n * here: a request that does not match it (the handler registered elsewhere) answers with the decoded\n * value, and one that does gets its final segment as sent, whatever route matched it.\n *\n * The raw spelling is the contract because a transport can then answer the route itself (uWS fills the\n * body in from the path without calling into JavaScript) and the bytes stay the same either way. Two\n * inputs are outside that: a malformed escape such as `%zz` is echoed as sent when the node-uws native\n * lane answers, and refused with 400 by ordinary routing; and a segment of only dots written as escapes\n * is read differently by each runtime's URL parser.\n */"
+  },
+  {
+    "name": "echoParam",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function echoParam(path: string): (context: {\n    readonly params: Readonly<Record<string, string>>;\n    readonly req: Request;\n}) => Response;",
+    "doc": "/**\n * Answer 200 with the route's final path parameter as plain text, exactly as the request spelled it:\n * percent-escapes are left in, not decoded. Pass the route's own path:\n *\n *     const USER = \"/user/:id\"\n *     server().get(USER, echoParam(USER))\n *\n * `/user/%41b` answers `%41b`. The path is a static prefix followed by one `:name` segment; anything\n * else throws, so the parameter is always the last segment. The answer is defined by the path given\n * here: a request that does not match it (the handler registered elsewhere) answers with the decoded\n * value, and one that does gets its final segment as sent, whatever route matched it.\n *\n * The raw spelling is the contract because a transport can then answer the route itself (uWS fills the\n * body in from the path without calling into JavaScript) and the bytes stay the same either way. Two\n * inputs are outside that: a malformed escape such as `%zz` is echoed as sent when the node-uws native\n * lane answers, and refused with 400 by ordinary routing; and a segment of only dots written as escapes\n * is read differently by each runtime's URL parser.\n */"
+  },
+  {
     "name": "effect",
     "kind": "function",
     "package": "@nifrajs/web",
