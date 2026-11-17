@@ -638,15 +638,20 @@ export function compression(options: CompressionOptions = {}) {
           // Both representations name the header they vary on, so a shared cache keeps them apart.
           addGzipVary(headers)
           if (!acceptsGzip(req.header("accept-encoding"))) return undefined
-          const encoded = (compressed: Uint8Array): Uint8Array => {
-            headers.set("content-encoding", "gzip")
-            headers.delete("content-length")
-            weakenEtag(headers)
-            return compressed
-          }
           planLookup ??= gzipPlanFor(globalThis)
           const compressed = gzipBuffered(body, planLookup, zlibModule())
-          return compressed instanceof Promise ? compressed.then(encoded) : encoded(compressed)
+          if (compressed instanceof Promise) {
+            return compressed.then((result) => {
+              headers.set("content-encoding", "gzip")
+              headers.delete("content-length")
+              weakenEtag(headers)
+              return result
+            })
+          }
+          headers.set("content-encoding", "gzip")
+          headers.delete("content-length")
+          weakenEtag(headers)
+          return compressed
         },
         onResponseRaw: (response, req) =>
           compressRawResponse(response, req, threshold, isCompressible),
