@@ -362,8 +362,14 @@ describe("c.json under a body hook", () => {
       yield ["content-type", "application/vnd.api+json"]
       yield ["x-a", "b"]
     }
-    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the type admits records, but a JS caller may pass any HeadersInit iterator
-    const oneShot = once() as unknown as Record<string, string>
+    // An iterable with no string keys: it types as a record, and `Headers` reads it as entries.
+    let reads = 0
+    const oneShot = {
+      [Symbol.iterator]: () => {
+        reads += 1
+        return once()
+      },
+    }
     const app = server()
       .use(responseObserver())
       .onResponseBody((body) => body)
@@ -371,6 +377,7 @@ describe("c.json under a body hook", () => {
     const res = await app.fetch(new Request("http://x/"))
     expect(res.headers.get("content-type")).toBe("application/vnd.api+json")
     expect(res.headers.get("x-a")).toBe("b")
+    expect(reads).toBe(1)
     expect(await res.text()).toBe('{"ok":true}')
   })
 
