@@ -36,7 +36,7 @@ import {
   type TemplatedApp,
   type Uws,
 } from "./uws.ts"
-import { statusLine, writeFailure, writeOutcome } from "./write.ts"
+import { owned, statusLine, writeFailure, writeOutcome } from "./write.ts"
 
 export type { NodeStopOptions } from "@nifrajs/node/transport"
 
@@ -382,7 +382,7 @@ function registerDeclarative(
     }
     const reply: DeclarativeBuilder = Reflect.construct(Declarative, [])
     reply.writeStatus(statusLine(route.status))
-    for (const [name, value] of route.headers) reply.writeHeader(name, value)
+    for (const [name, value] of route.headers) if (!owned(name)) reply.writeHeader(name, value)
     if (route.param !== undefined) reply.writeParameterValue(route.param)
     app$.get(route.path, reply.end())
   }
@@ -401,7 +401,7 @@ function registerFixedPost(
   ordinary: RouteHandler,
 ): void {
   const line = statusLine(route.status)
-  const headers = route.headers
+  const headers = route.headers.filter(([name]) => !owned(name))
   app$.post(route.path, (res, req) => {
     if (req.getHeader("origin") !== "") {
       ordinary(res, req)

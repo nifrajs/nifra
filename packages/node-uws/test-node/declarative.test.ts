@@ -250,6 +250,30 @@ test("a header uWS cannot precompile keeps its route on the ordinary path", asyn
   }
 })
 
+test("a header uWS frames itself is not sent twice, with or without an Origin", async () => {
+  const stale = "Mon, 01 Jan 2001 00:00:00 GMT"
+  const app = server()
+    .get("/dated", staticResponse({ headers: { date: stale } }))
+    .post("/dated", staticResponse({ headers: { date: stale } }))
+  const running = await serveUws(app, { port: 0 })
+  try {
+    for (const [method, extra] of [
+      ["GET", ""],
+      ["POST", "Content-Length: 0\r\n"],
+      ["POST", "Content-Length: 0\r\nOrigin: http://example.test\r\n"],
+    ] as const) {
+      const text = await raw(running.port, head(method, "/dated", extra), (received) =>
+        received.includes("\r\n\r\n"),
+      )
+      const dates = parseHead(text).headers.get("date") ?? []
+      assert.equal(dates.length, 1, `${method} ${extra}`)
+      assert.notEqual(dates[0], stale)
+    }
+  } finally {
+    await running.stop()
+  }
+})
+
 test("HEAD of a fixed GET route keeps its headers and sends no body", async () => {
   const reply = await observe(uwsPort, head("HEAD", "/ping"))
   assert.equal(reply.status, 200)

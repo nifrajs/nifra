@@ -43,7 +43,7 @@ function checkValue(value: string): void {
 }
 
 /** Names uWS frames itself: a copy from the app would double the header on the wire. */
-function owned(name: string): boolean {
+export function owned(name: string): boolean {
   switch (name.length) {
     case 4:
       return name === "date" || name.toLowerCase() === "date"

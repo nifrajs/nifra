@@ -40,7 +40,11 @@ export function echoParam(
       `echoParam: ${JSON.stringify(path)} must be a static prefix and a final :name segment, like "/user/:id"`,
     )
   }
-  const shape = path.split("/")
+  // The router registers literal text as a request spells it (NFC, non-ASCII percent-encoded).
+  const shape = path
+    .normalize("NFC")
+    .replace(/[^!-~]/gu, encodeURIComponent)
+    .split("/")
   const depth = shape.length
   const handler = (context: {
     readonly params: Readonly<Record<string, string>>

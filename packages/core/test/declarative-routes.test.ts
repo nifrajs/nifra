@@ -267,6 +267,14 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
     expect(await answer.text()).toBe("y")
   })
 
+  test("a non-ASCII prefix is matched as the router registers it", async () => {
+    const app = routeOf(server(), "/café/:id", echoParam("/café/:id"))
+    const answer: Response = await Reflect.apply(Reflect.get(app, "fetch"), app, [
+      new Request("http://nifra.test/caf%C3%A9/%41"),
+    ])
+    expect(await answer.text()).toBe("%41")
+  })
+
   test("the marker the module reads is the one echoParam sets", () => {
     expect(Reflect.get(echoParam("/user/:id"), Symbol.for("@nifrajs/core/echo-param"))).toBe(
       "/user/:id",
