@@ -5,3 +5,12 @@
 id = "GHSA-gcqx-w48m-w2h4"
 ignoreUntil = 2026-12-28
 reason = "No patched deepmerge release exists; build-time dependency of the Svelte Vite plugin only."
+
+# picomatch is affected through 4.0.7 (the latest release) and the advisory, published 2026-11-17, lists
+# no patched version. It is reached only through dev and build tooling (changesets, vite, vue-tsc,
+# rollup pluginutils, tinyglobby, @parcel/watcher); no published @nifrajs package depends on it, and
+# none matches a glob against untrusted input. Revisit when a patched release exists.
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2026-12-17
+reason = "No patched picomatch release exists; dev and build tooling only, never fed untrusted patterns."
