@@ -260,6 +260,18 @@ describe("renderers", () => {
     expect(comment).not.toContain("@someone")
   })
 
+  test("an HTML entity cannot decode to a mention", () => {
+    const md = renderMarkdown(
+      analyze(
+        JSON.stringify({ ok: false, diagnostics: [{ ...finding, message: "&#64;org/team" }] }),
+        "1",
+        "error",
+      ),
+      env,
+    )
+    expect(md).toContain("\\&#64;org/team")
+  })
+
   test("a file name cannot break out of the location link", () => {
     const md = renderMarkdown(
       analyze(
@@ -312,10 +324,11 @@ describe("action inputs and outputs", () => {
     }))
     const { findings } = analyze(JSON.stringify({ ok: false, diagnostics }), "1", "error")
     const json = outputFindings(findings)
-    expect(json.length).toBeLessThan(500_000)
+    expect(Buffer.byteLength(json)).toBeLessThan(100_000)
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: outputFindings emits a JSON array of Finding
     const parsed = JSON.parse(json) as Finding[]
-    expect(parsed.length).toBe(100)
+    expect(parsed.length).toBeGreaterThan(0)
+    expect(parsed.length).toBeLessThanOrEqual(100)
     expect(parsed[0]?.evidence.length).toBe(3)
   })
 })

@@ -48,7 +48,7 @@ If you do not want the bot comment, drop `pull-requests: write` and set `comment
 
 ## Outputs
 
-`ok`, `failed`, `errors`, `warnings`, `infos`, and `findings` (a JSON array of normalized findings, capped at 100 findings, 3 evidence entries each, and about 500 KB; the full list is in the summary and annotations).
+`ok`, `failed`, `errors`, `warnings`, `infos`, and `findings` (a JSON array of normalized findings, capped at 100 findings, 3 evidence entries each, and 100 KB, so it fits in one environment variable). It is not the full report: the job summary shows at most 60 findings and may stop earlier to fit its size limit, and annotations cover only findings with a file inside the repository. A run with more findings than fit has no complete list in any output; the CLI's own `nifra check --json` is the source for that.
 
 `findings` contains text from the checked project. Never interpolate it into a `run:` script (`${{ steps.x.outputs.findings }}`); pass it through `env:` and read it as data.
 

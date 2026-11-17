@@ -206,7 +206,7 @@ function clip(value: string, max: number): string {
  */
 function prose(value: string, max: number, newline = " "): string {
   return clip(value, max)
-    .replace(/[\\`*_[\]<>|]/g, "\\$&")
+    .replace(/[\\`*_[\]<>|&]/g, "\\$&")
     .replace(/@/g, "@​")
     .replace(/\r?\n|\r/g, newline)
 }
@@ -394,12 +394,10 @@ function writeOutput(name: string, value: string): void {
 }
 
 const MAX_OUTPUT_FINDINGS = 100
-const MAX_OUTPUT_BYTES = 500_000
+// Under Linux's 128 KiB limit on one environment string, so a later step can take the output via `env:`.
+const MAX_OUTPUT_BYTES = 100_000
 
-/**
- * The `findings` step output: a bounded, compact copy. Outputs are size-limited by GitHub, and the
- * full evidence lists are already in the summary and comment.
- */
+/** The `findings` step output: a bounded, compact copy, not the full report. */
 export function outputFindings(findings: readonly Finding[]): string {
   let kept = findings.slice(0, MAX_OUTPUT_FINDINGS).map((finding) => ({
     ...finding,
@@ -407,7 +405,7 @@ export function outputFindings(findings: readonly Finding[]): string {
     evidence: finding.evidence.slice(0, 3).map((entry) => clip(entry, 300)),
   }))
   let json = JSON.stringify(kept)
-  while (json.length > MAX_OUTPUT_BYTES && kept.length > 0) {
+  while (Buffer.byteLength(json) > MAX_OUTPUT_BYTES && kept.length > 0) {
     kept = kept.slice(0, Math.floor(kept.length / 2))
     json = JSON.stringify(kept)
   }

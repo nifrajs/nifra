@@ -153,8 +153,11 @@ runs:
         NIFRA_COMMENT_PATH: ${{ runner.temp }}/nifra-comment.md
         NIFRA_MARKER: ${{ inputs.marker }}
       run: |
-        # Same fallback as parse.ts, so an empty marker never matches every comment.
-        export NIFRA_MARKER="${NIFRA_MARKER:-<!-- nifra-check:v1 -->}"
+        # Same trim and fallback as parse.ts, so the lookup finds the comment that step wrote and an
+        # empty marker never matches every comment.
+        marker="${NIFRA_MARKER#"${NIFRA_MARKER%%[![:space:]]*}"}"
+        marker="${marker%"${marker##*[![:space:]]}"}"
+        export NIFRA_MARKER="${marker:-<!-- nifra-check:v1 -->}"
         # Only our own comment may be updated: a bot, or a repo member. Any other commenter could plant
         # the marker first and make the PATCH fail forever. sed (not head) reads all input, so gh never gets SIGPIPE.
         existing=$(gh api "repos/$GH_REPO/issues/$PR_NUMBER/comments" --paginate \
