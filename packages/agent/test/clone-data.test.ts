@@ -71,3 +71,12 @@ test("native clone failures use the same TypeError contract as other rejected da
   for (const value of [() => {}, { callback: () => {} }, new WeakMap(), Promise.resolve(1)])
     expect(() => cloneData(value)).toThrow(TypeError)
 })
+
+test("errors are refused even without optional runtime source metadata", () => {
+  const error = new RangeError("data")
+  error.stack = "data"
+  for (const key of Reflect.ownKeys(error))
+    if (key !== "message" && key !== "stack") Reflect.deleteProperty(error, key)
+  for (const value of [error, { error }, new Map([["error", error]])])
+    expect(() => cloneData(value)).toThrow(TypeError)
+})

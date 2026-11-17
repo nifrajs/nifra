@@ -18,6 +18,7 @@ export function cloneData<T>(value: T): T {
     }
     if (seen.has(source)) continue
     seen.add(source)
+    if (source instanceof Error) throw new TypeError("snapshot: Error instances are not data")
     if (
       target === null ||
       typeof target !== "object" ||
