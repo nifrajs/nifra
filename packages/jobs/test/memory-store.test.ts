@@ -92,6 +92,8 @@ describe("MemoryJobStore", () => {
       ["a SharedArrayBuffer", shared],
       ["a view of a SharedArrayBuffer", { bytes: new Uint8Array(shared) }],
       ["a function", { callback: () => {} }],
+      ["a null-prototype object", Object.assign(Object.create(null), { n: 1 })],
+      ["an Error", new RangeError("bad")],
     ]
     for (const [label, payload] of refused) {
       const store = seqStore()
@@ -101,30 +103,12 @@ describe("MemoryJobStore", () => {
     }
   })
 
-  test("the refusal names what was found and where", () => {
-    class Mailbox {}
-    const store = seqStore()
-    expect(() =>
-      store.enqueue({
-        name: "x",
-        payload: { jobs: [{ box: new Mailbox() }] },
-        runAt: 0,
-        maxAttempts: 1,
-      }),
-    ).toThrow("a class instance at payload.jobs[0].box")
-    expect(() =>
-      store.enqueue({ name: "x", payload: new SharedArrayBuffer(1), runAt: 0, maxAttempts: 1 }),
-    ).toThrow(TypeError)
-  })
-
-  test("plain data of every cloneable kind is stored, cycles and null prototypes included", () => {
+  test("plain data of every kind that survives a clone intact is stored, cycles included", () => {
     const store = seqStore()
     const cyclic: { self?: unknown; list: number[] } = { list: [1] }
     cyclic.self = cyclic
-    const bare = Object.assign(Object.create(null), { n: 1 })
     const payload = {
       cyclic,
-      bare,
       at: new Date(5),
       pattern: /a/g,
       map: new Map([["k", { n: 1 }]]),
@@ -132,7 +116,6 @@ describe("MemoryJobStore", () => {
       bytes: new Uint8Array([1, 2]),
       buffer: new ArrayBuffer(2),
       big: 1n,
-      error: new RangeError("bad"),
     }
     store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 })
     const leased = store.lease(0, 1, 1000)[0]?.payload

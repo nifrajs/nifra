@@ -11,9 +11,9 @@
  *
  * Payloads are copied on `enqueue` and again on every lease, so neither the caller nor a handler can
  * change what a later attempt receives. A payload must therefore be plain data that survives a
- * structured clone intact: a function, a class instance (its prototype would be lost), an accessor, or
- * a `SharedArrayBuffer` (its memory would stay shared) is refused with a `TypeError` before anything
- * is stored.
+ * structured clone intact: a function, a class instance or null-prototype object (its prototype would
+ * be lost), an accessor, an `Error` (its fields are not all copied), or a `SharedArrayBuffer` (its
+ * memory would stay shared) is refused with a `TypeError` before anything is stored.
  */
 import { cloneData } from "./generated/clone-data.ts"
 import type { JobCounts, JobStore, StoredJob } from "./types.ts"

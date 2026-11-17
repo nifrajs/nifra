@@ -340,9 +340,9 @@ export interface AgentSharedState<State = unknown> {
   snapshot(): State
   /**
    * Apply ops atomically - on an invalid op the whole batch is rejected with a TypeError. Values are
-   * copied with `structuredClone`, so they must be cloneable (a function is refused with a TypeError
-   * before anything commits), class instances arrive as plain objects, and later changes to a value
-   * the caller passed never reach the document.
+   * copied, so later changes to a value the caller passed never reach the document, and a value a copy
+   * would change or share (a function, a class instance, an accessor, shared memory) is refused with a
+   * TypeError before anything commits.
    */
   patch(ops: readonly AgentStatePatchOp[]): void
   /**
