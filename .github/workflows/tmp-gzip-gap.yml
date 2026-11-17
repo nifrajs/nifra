@@ -45,7 +45,8 @@ jobs:
       - name: Check out the arms
         run: |
           mkdir -p ../arms
-          for spec in "pr-head:$PR_HEAD_SHA:" "seamjson:$PR_HEAD_SHA:seam-json" "seamvalue:$PR_HEAD_SHA:seam-value"; do
+          bun install --ignore-scripts --frozen-lockfile
+          for spec in "pr-head:$PR_HEAD_SHA:"; do
             name="${spec%%:*}"
             rest="${spec#*:}"
             sha="${rest%%:*}"
@@ -72,11 +73,11 @@ jobs:
           } | tee gzip-gap-metadata.txt
           bun run bench/tmp-gzip-gap/harness.ts \
             --arm floor \
-            --arm pr-head=../arms/pr-head \
-            --arm value-style=../arms/pr-head@value \
-            --arm seam-json=../arms/seamjson \
-            --arm seam-value=../arms/seamvalue@value \
-            --arm pr-head-again=../arms/pr-head \
+            --arm old-json=../arms/pr-head \
+            --arm old-value=../arms/pr-head@value \
+            --arm new-json=. \
+            --arm new-value=.@value \
+            --arm new-value-again=.@value \
             --rounds 6 --seconds 8 --warm 2 --conns 256 \
             --out gzip-gap.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
