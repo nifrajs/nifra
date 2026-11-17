@@ -61,8 +61,16 @@ async function firstChunk(response: Response, ms: number): Promise<string> {
 describe("buffered gzip lanes", () => {
   test("each runtime gets the lanes measured fastest for it", () => {
     const unbounded = Number.POSITIVE_INFINITY
-    expect([gzipPlanFor({ Bun: {} }), gzipPlanFor({ Deno: {} }), gzipPlanFor({})]).toEqual([
+    expect([
+      gzipPlanFor({ Bun: {}, process: { platform: "linux" } }),
+      gzipPlanFor({ Bun: {}, process: { platform: "darwin" } }),
+      gzipPlanFor({ Bun: {} }),
+      gzipPlanFor({ Deno: {} }),
+      gzipPlanFor({}),
+    ]).toEqual([
+      { inlineMax: 65536, oneShotMax: unbounded },
       { inlineMax: 4096, oneShotMax: unbounded },
+      { inlineMax: 65536, oneShotMax: unbounded },
       { inlineMax: unbounded, oneShotMax: unbounded },
       { inlineMax: -1, oneShotMax: 8192 },
     ])

@@ -285,9 +285,12 @@ export interface GzipPlan {
 
 /**
  * Where each way of gzipping a buffered JSON body measured fastest over HTTP (16 connections). Inline
- * `gzipSync` skips the hand-off that dominates a small body: on Bun up to 4 KiB (2 KB: 1.32x node:zlib's
- * one-shot `gzip`), past which the one-shot runs on the thread pool in parallel with the loop (32 KB:
- * 2.11x inline). Deno always gzips inline (256 KB: 1.54x `CompressionStream`): its one-shot swells the
+ * `gzipSync` skips the hand-off that dominates a small body: on Bun for macOS up to 4 KiB (2 KB: 1.32x
+ * node:zlib's one-shot `gzip`), past which the one-shot runs on the thread pool in parallel with the
+ * loop (32 KB: 2.11x inline). On Bun for Linux (4 pinned CPUs in Docker Desktop's VM, 8 / 17 / 33 / 67
+ * KB bodies) inline won at every size: one process with 16 connections 1.21x / 1.15x / 1.23x / 1.06x,
+ * two with 64 (not 67 KB) 1.20x / 1.09x / 1.11x, four with 256 1.89x / 1.54x / 1.61x / 1.45x, so it
+ * gzips inline to 64 KiB there; past that is unmeasured. Deno always gzips inline (256 KB: 1.54x `CompressionStream`): its one-shot swells the
  * process by ~250 MB, after which inline calls serve at 0.6x. Node never gzips inline (16 KB: 0.44x),
  * and its one-shot beats `CompressionStream` only up to 8 KiB (2 KB: 1.16x, 16 KB: 0.92x). These bodies
  * compress 4-6x like real pages; a far cheaper one (100x+) loses the hand-off on Bun (33 KB: 0.93x).
@@ -302,9 +305,15 @@ export interface GzipPlan {
 export function gzipPlanFor(runtime: {
   readonly Bun?: unknown
   readonly Deno?: unknown
+  readonly process?: { readonly platform?: string }
 }): GzipPlan {
-  if (runtime.Bun !== undefined)
-    return { inlineMax: 4 * 1024, oneShotMax: Number.POSITIVE_INFINITY }
+  if (runtime.Bun !== undefined) {
+    // Linux gzips inline at every size measured, one process or one per core; macOS keeps the pool.
+    return {
+      inlineMax: runtime.process?.platform === "darwin" ? 4 * 1024 : 64 * 1024,
+      oneShotMax: Number.POSITIVE_INFINITY,
+    }
+  }
   if (runtime.Deno !== undefined) {
     return { inlineMax: Number.POSITIVE_INFINITY, oneShotMax: Number.POSITIVE_INFINITY }
   }

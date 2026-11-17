@@ -361,6 +361,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // A mounted app routing a request no `Request` can be rebuilt from on the target its parent resolved
   // (Deno): bare 41,557 -> 41,586 B, typebox-t 70,958 -> 70,978, typebox-form 75,979 -> 75,985
   // (Bun 1.4.4). The three caps crossed take the next 0.1 KiB step.
+  // `c.json()` keeping its text under a response body hook: bare 41,587 -> 41,650 B, idempotency
+  // 46,432 -> 46,512, effect-ledger 43,603 -> 43,678, mcp 41,860 -> 41,916, sse 42,454 -> 42,522,
+  // typebox-t 70,984 -> 71,076 (Bun 1.4.4). The five caps crossed take the next 0.1 KiB step.
   "nifra-bare": 40.7,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
@@ -391,18 +394,18 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // (Bun 1.4.4), crossing the next 0.1 KiB cap.
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
   // The same `listen()` disposal: idempotency 46,096 B (Bun 1.4.4).
-  "nifra-idempotency": 45.4,
-  "nifra-effect-ledger": 42.6,
+  "nifra-idempotency": 45.5,
+  "nifra-effect-ledger": 42.7,
   // The same `listen()` disposal crossed the mcp and sse caps (41,496 B and 42,097 B on the first cut,
   // Bun 1.4.4). Each takes the next 0.1 KiB step.
-  "nifra-mcp": 40.9,
+  "nifra-mcp": 41,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 41.5,
+  "nifra-sse": 41.6,
   "nifra-valibot": 41.7,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
   // The same `listen()` disposal: typebox-t 70,670 B (Bun 1.4.4).
-  "nifra-typebox-t": 69.4,
+  "nifra-typebox-t": 69.5,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only

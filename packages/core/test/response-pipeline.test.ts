@@ -303,3 +303,79 @@ describe("use(middleware)", () => {
     expect(res.headers.get("content-type")).toBe("application/vnd.api+json")
   })
 })
+
+describe("c.json under a body hook", () => {
+  test("a body hook gets the JSON text, with the status, status text and headers the call gave", async () => {
+    const seen: unknown[] = []
+    const app = server()
+      .use(responseObserver())
+      .onResponseBody((body) => {
+        seen.push(body)
+        return undefined
+      })
+      .get("/", (c) =>
+        c.json({ n: 1 }, { status: 201, statusText: "Made", headers: { "x-a": "b" } }),
+      )
+      .get("/own", (c) =>
+        c.json({ n: 2 }, { headers: { "content-type": "application/vnd.api+json" } }),
+      )
+    const res = await app.fetch(new Request("http://x/"))
+
+    expect(seen).toEqual(['{"n":1}'])
+    expect(res.status).toBe(201)
+    expect(res.statusText).toBe("Made")
+    expect(res.headers.get("x-a")).toBe("b")
+    expect(res.headers.get("content-type")).toBe(Response.json(1).headers.get("content-type"))
+    expect(await res.json()).toEqual({ n: 1 })
+
+    const own = await app.fetch(new Request("http://x/own"))
+    expect(own.headers.get("content-type")).toBe("application/vnd.api+json")
+    expect(await own.text()).toBe('{"n":2}')
+  })
+
+  test("a Headers init is answered too, with the hook still run", async () => {
+    const app = server()
+      .use(responseObserver())
+      .onResponseBody((body) => `${body}!`)
+      .get("/", (c) => c.json({ ok: true }, { headers: new Headers({ "x-a": "b" }) }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.get("x-a")).toBe("b")
+    expect(res.headers.get("content-type")).toBe(Response.json(1).headers.get("content-type"))
+    expect(await res.text()).toBe('{"ok":true}!')
+  })
+
+  test("an entries init that names a content-type keeps it", async () => {
+    const app = server()
+      .use(responseObserver())
+      .onResponseBody((body) => body)
+      .get("/", (c) =>
+        c.json({ ok: true }, { headers: [["content-type", "application/x-custom"]] }),
+      )
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.get("content-type")).toBe("application/x-custom")
+  })
+
+  test("a hook replaces the body of a c.json reply", async () => {
+    const app = server()
+      .use(responseObserver())
+      .onResponseBody((body) => `${body}!`)
+      .get("/", (c) => c.json({ ok: true }))
+    expect(await (await app.fetch(new Request("http://x/"))).text()).toBe('{"ok":true}!')
+  })
+
+  test("a value with no JSON form still throws, as Response.json does", async () => {
+    const app = server({ logger: silentLogger })
+      .use(responseObserver())
+      .onResponseBody((body) => body)
+      .get("/", (c) => c.json(undefined))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.status).toBe(500)
+  })
+
+  test("without a body hook the reply stays the runtime's own", async () => {
+    const app = server().get("/", (c) => c.json({ ok: true }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(taggedResponseBody(res)).toBeUndefined()
+    expect(await res.json()).toEqual({ ok: true })
+  })
+})

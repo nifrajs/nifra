@@ -429,6 +429,11 @@ export function recordResidentTexts(): void {
   residentTextsRecorded = true
 }
 
+/** Whether a body-tier hook is installed, so a helper that builds its own text should keep it. */
+export function residentTextsOn(): boolean {
+  return residentTextsRecorded
+}
+
 /** `response`, which `c.text()` built from `body`. */
 export function residentText(response: Response, body: string): Response {
   if (residentTextsRecorded) RESIDENT_TEXTS.set(response, body)
