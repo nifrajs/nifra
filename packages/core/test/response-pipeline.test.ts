@@ -515,6 +515,38 @@ describe("render-time body hook", () => {
     expect(await res.text()).toBe('enc:{"n":1}')
   })
 
+  test("a throwing render hook fails through the response pipeline like the body hook", async () => {
+    const finalized: unknown[] = []
+    const failing = (render: boolean) =>
+      server()
+        .use(
+          withResponseObserver<Middleware>({
+            onResponseBody() {
+              throw new Error("boom")
+            },
+            renderBody() {
+              if (render) throw new Error("boom")
+              return undefined
+            },
+            onResponseFinalized(outcome) {
+              finalized.push(outcome.error)
+            },
+          }),
+        )
+        .get("/", () => ({ n: 1 }))
+    const outcome = async (render: boolean) => {
+      finalized.length = 0
+      const app = failing(render)
+      const rejected = await (async () => app.fetch(new Request("http://x/")))().then(
+        () => false,
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      )
+      return { rejected, finalized: finalized.map(String) }
+    }
+    expect(await outcome(true)).toEqual(await outcome(false))
+    expect((await outcome(true)).rejected).toBe("boom")
+  })
+
   test("the status a handler set is kept", async () => {
     const { middleware } = observer()
     const app = server()

@@ -103,12 +103,19 @@ function renderThrough(render: RenderBodyHook): RenderJson {
   return (body, status, request, unstamped, owner) => {
     const record: Record<string, string> = { "content-type": JSON_CONTENT_TYPE }
     const headers = new RenderHeaders(record)
-    const bytes = render(
-      body,
-      headers,
-      { method: request.method, url: request.url, header: (name) => request.headers.get(name) },
-      status,
-    )
+    let bytes: Uint8Array | undefined
+    try {
+      bytes = render(
+        body,
+        headers,
+        { method: request.method, url: request.url, header: (name) => request.headers.get(name) },
+        status,
+      )
+    } catch {
+      // The lane's own catch would answer a bare 500 that finalization never hears about. Declining
+      // hands the reply to `onResponseBody`, which fails through the response pipeline as it always has.
+      return undefined
+    }
     if (bytes === undefined && !headers.touched) return undefined
     const payload = bytes ?? body
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a Uint8Array is a valid BodyInit; only the lib's ArrayBufferLike variance rejects it.

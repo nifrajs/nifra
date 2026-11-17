@@ -469,7 +469,8 @@ export interface Middleware {
    * idempotent on its own output (a reply it rendered with new bytes skips the hook on the Web
    * path, and any other pass over it must find nothing left to do). It applies only while this hook is the first response hook of the app, so
    * nothing registered before it can have run first, and not on a response carrying `c.set` headers,
-   * cookies, static response headers, or the idempotency plugin.
+   * cookies, static response headers, or the idempotency plugin. A throw declines the fast path:
+   * `onResponseBody` then runs and fails through the response pipeline, as it always has.
    */
   readonly renderBody?: RenderBodyHook
   /**
