@@ -20,12 +20,14 @@ const pathOf = (url: string): string => {
  *     server().get(USER, echoParam(USER))
  *
  * `/user/%41b` answers `%41b`. The path is a static prefix followed by one `:name` segment; anything
- * else throws, so the parameter is always the last segment.
+ * else throws, so the parameter is always the last segment. A handler registered under another path
+ * answers with the decoded value, as its request does not match the path it was given.
  *
  * The raw spelling is the contract because a transport can then answer the route itself (uWS fills the
- * body in from the path without calling into JavaScript), and every runtime agrees on the bytes. Where
- * the raw spelling cannot be told, a segment of dots written as percent-escapes (a URL parser reads
- * `%2E` as a dot segment) or a route registered under another path, the decoded value is answered.
+ * body in from the path without calling into JavaScript) and the bytes stay the same either way. Two
+ * inputs are outside that: a malformed escape such as `%zz` is echoed as sent when the node-uws native
+ * lane answers, and refused with 400 by ordinary routing; and a segment of only dots written as escapes
+ * is read differently by each runtime's URL parser.
  */
 export function echoParam(
   path: string,
@@ -39,13 +41,17 @@ export function echoParam(
       `echoParam: ${JSON.stringify(path)} must be a static prefix and a final :name segment, like "/user/:id"`,
     )
   }
-  const depth = path.split("/").length
+  const shape = path.split("/")
+  const depth = shape.length
   const handler = (context: {
     readonly params: Readonly<Record<string, string>>
     readonly req: Request
   }): Response => {
     const segments = pathOf(context.req.url).split("/")
-    const raw = segments.length === depth ? segments[depth - 1] : undefined
+    // Only a request for the path this handler was given has a raw segment to answer.
+    const matches =
+      segments.length === depth && shape.every((part, i) => i === depth - 1 || part === segments[i])
+    const raw = matches ? segments[depth - 1] : undefined
     const decoded = context.params[name] ?? ""
     return new Response(raw !== undefined && decodePathSegment(raw) === decoded ? raw : decoded, {
       headers: HEADERS,

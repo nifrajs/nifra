@@ -208,6 +208,30 @@ test("a more specific route beside an echoParam route still wins", async () => {
   }
 })
 
+test("a header uWS cannot precompile keeps its route on the ordinary path", async () => {
+  const app = server()
+    .get("/long", staticResponse({ headers: { "x-long": "a".repeat(256) } }))
+    .get("/edge", staticResponse({ headers: { "x-edge": "a".repeat(255) } }))
+  let entered = 0
+  const resolve = app.resolveNodeSource.bind(app)
+  app.resolveNodeSource = (...args) => {
+    entered += 1
+    return resolve(...args)
+  }
+  const running = await serveUws(app, { port: 0 })
+  try {
+    const edge = await observe(running.port, head("GET", "/edge"))
+    assert.equal(edge.status, 200)
+    assert.equal(entered, 0)
+    const long = await observe(running.port, head("GET", "/long"))
+    assert.equal(long.status, 200)
+    assert.ok(long.headers.some(([name, value]) => name === "x-long" && value.length === 256))
+    assert.equal(entered, 1)
+  } finally {
+    await running.stop()
+  }
+})
+
 test("HEAD of a fixed GET route keeps its headers and sends no body", async () => {
   const reply = await observe(uwsPort, head("HEAD", "/ping"))
   assert.equal(reply.status, 200)

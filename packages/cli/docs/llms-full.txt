@@ -1439,9 +1439,11 @@ matches paths itself answer the route without calling the app:
 `@nifrajs/node-uws` does, under the same conditions as
 `staticResponse()`, and only while no other route can match a request the echo
 route would answer. The reply carries `X-Content-Type-Options: nosniff`. A
-segment of dots written as escapes (a URL parser reads `%2E` as a dot segment)
-answers with the decoded value. On node-uws a malformed escape such as `%zz` is
-echoed as sent, where every other runtime refuses it with 400.
+handler registered under another path answers with the decoded value. Two inputs are outside
+the contract: a malformed escape such as `%zz` is echoed as sent when the node-uws
+native lane answers the route and refused with 400 by ordinary routing (a request hook, for
+one, sends it there), and a segment of only dots written as escapes is read differently by
+each runtime's URL parser.
 
 ```ts
 import { echoParam, server } from "@nifrajs/core/server"

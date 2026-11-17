@@ -369,6 +369,8 @@ function registerDeclarative(
   const Declarative: unknown = Reflect.get(uWS, "DeclarativeResponse")
   if (typeof Declarative !== "function") return
   for (const route of routes) {
+    // uWS refuses a precompiled header name or value over 255 bytes; such a route stays with the router.
+    if (route.headers.some((pair) => pair.some((text) => Buffer.byteLength(text) > 255))) continue
     const reply: DeclarativeBuilder = Reflect.construct(Declarative, [])
     reply.writeStatus(statusLine(route.status))
     for (const [name, value] of route.headers) reply.writeHeader(name, value)

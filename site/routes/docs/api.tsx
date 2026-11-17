@@ -472,9 +472,11 @@ export default function Api() {
         <code>@nifrajs/node-uws</code> does, under the same conditions as{" "}
         <code>staticResponse()</code>, and only while no other route can match a request the echo
         route would answer. The reply carries <code>X-Content-Type-Options: nosniff</code>. A
-        segment of dots written as escapes (a URL parser reads <code>%2E</code> as a dot segment)
-        answers with the decoded value. On node-uws a malformed escape such as <code>%zz</code> is
-        echoed as sent, where every other runtime refuses it with 400.
+        handler registered under another path answers with the decoded value. Two inputs are outside
+        the contract: a malformed escape such as <code>%zz</code> is echoed as sent when the node-uws
+        native lane answers the route and refused with 400 by ordinary routing (a request hook, for
+        one, sends it there), and a segment of only dots written as escapes is read differently by
+        each runtime&apos;s URL parser.
       </p>
       <CodeBlock code={ECHO_PARAM} />
       <p className="caveat">
