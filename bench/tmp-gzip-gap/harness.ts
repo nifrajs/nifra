@@ -19,6 +19,7 @@ import { readCoreSplit, readCpuModel, readCpuTimes, stealShare } from "../ci/hos
 interface Arm {
   readonly name: string
   readonly dir: string | undefined
+  readonly style: string
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -40,10 +41,13 @@ args.forEach((value, at) => {
   if (value !== "--arm") return
   const spec = args[at + 1] ?? ""
   const eq = spec.indexOf("=")
+  const sign = spec.indexOf("@")
+  const style = sign === -1 ? "json" : spec.slice(sign + 1)
+  const end = sign === -1 ? spec.length : sign
   arms.push(
     eq === -1
-      ? { name: spec, dir: undefined }
-      : { name: spec.slice(0, eq), dir: resolve(spec.slice(eq + 1)) },
+      ? { name: spec.slice(0, end), dir: undefined, style }
+      : { name: spec.slice(0, eq), dir: resolve(spec.slice(eq + 1, end)), style },
   )
 })
 if (arms.length < 2) throw new Error("name at least two --arm values")
@@ -57,7 +61,11 @@ function dataset(): string {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
-  const pick = <T>(list: readonly T[]): T => list[Math.floor(next() * list.length)] as T
+  const pick = <T>(list: readonly T[]): T => {
+    const value = list[Math.floor(next() * list.length)]
+    if (value === undefined) throw new Error("pick from an empty list")
+    return value
+  }
   const words = ["Prime", "Nano", "Alpha", "Swift", "Core", "Flex", "Edge", "Ultra", "Pro", "Smart"]
   const kinds = ["Gear", "Gadget", "Widget", "Switch", "Relay", "Module", "Link", "Driver", "Valve"]
   const categories = ["home", "books", "office", "toys", "sports", "auto", "garden", "electronics"]
@@ -174,7 +182,7 @@ async function measure(arm: Arm): Promise<{ rps: number; gzBytes: number }> {
   const servers = Array.from({ length: procs }, () =>
     Bun.spawn(pinned(serverCpus, ["bun", "run", file]), {
       cwd,
-      env,
+      env: { ...env, GZIP_GAP_STYLE: arm.style },
       stdout: "ignore",
       stderr: "inherit",
     }),
@@ -194,16 +202,15 @@ async function measure(arm: Arm): Promise<{ rps: number; gzBytes: number }> {
 const median = (values: readonly number[]): number => {
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 1
-    ? (sorted[mid] as number)
-    : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2
+  const upper = sorted[mid] ?? 0
+  return sorted.length % 2 === 1 ? upper : ((sorted[mid - 1] ?? 0) + upper) / 2
 }
 
 const results = new Map<string, number[]>(arms.map((arm) => [arm.name, []]))
 let gzBytes = 0
 const before = readCpuTimes()
 for (let round = 0; round < rounds; round++) {
-  const order = arms.map((_, at) => arms[(at + round) % arms.length] as Arm)
+  const order = [...arms.slice(round % arms.length), ...arms.slice(0, round % arms.length)]
   const line: string[] = []
   for (const arm of order) {
     const result = await measure(arm)

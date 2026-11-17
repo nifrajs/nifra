@@ -45,7 +45,7 @@ jobs:
       - name: Check out the arms
         run: |
           mkdir -p ../arms
-          for spec in "main:$MAIN_SHA:" "pr-head:$PR_HEAD_SHA:" "fix1:$PR_HEAD_SHA:cum1" "fix12:$PR_HEAD_SHA:cum2" "fix123:$PR_HEAD_SHA:cum3"; do
+          for spec in "pr-head:$PR_HEAD_SHA:" "seamjson:$PR_HEAD_SHA:seam-json" "seamvalue:$PR_HEAD_SHA:seam-value"; do
             name="${spec%%:*}"
             rest="${spec#*:}"
             sha="${rest%%:*}"
@@ -72,11 +72,10 @@ jobs:
           } | tee gzip-gap-metadata.txt
           bun run bench/tmp-gzip-gap/harness.ts \
             --arm floor \
-            --arm main=../arms/main \
             --arm pr-head=../arms/pr-head \
-            --arm fix1=../arms/fix1 \
-            --arm fix12=../arms/fix12 \
-            --arm fix123=../arms/fix123 \
+            --arm value-style=../arms/pr-head@value \
+            --arm seam-json=../arms/seamjson \
+            --arm seam-value=../arms/seamvalue@value \
             --arm pr-head-again=../arms/pr-head \
             --rounds 6 --seconds 8 --warm 2 --conns 256 \
             --out gzip-gap.json

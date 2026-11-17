@@ -1,0 +1,20 @@
+diff --git a/packages/core/src/server/respond.ts b/packages/core/src/server/respond.ts
+index 77b1d3c52..44967f58d 100644
+--- a/packages/core/src/server/respond.ts
++++ b/packages/core/src/server/respond.ts
+@@ -1,3 +1,4 @@
++import { gzipSync as gzipSyncProto } from "node:zlib"
+ /**
+  * Response construction from a handler's return value: the header/cookie init, the fused-lane
+  * responders, the fast JSON path, and cookie append. Imports only the runtime-core primitives + the
+@@ -573,6 +574,10 @@ export function fusedRespondNoSet(
+     // declaring headers statically instead of writing them per response.
+     if (tagResponseBody || statics !== undefined) {
+       const body = jsonText(result) as string | undefined
++      if (body !== undefined && body.length >= 1024 && request !== undefined && (request.headers.get("accept-encoding") ?? "").includes("gzip")) {
++        const bytes = gzipSyncProto(body)
++        return tagged(new Response(bytes, { headers: { "content-type": "application/json;charset=utf-8", "content-encoding": "gzip", vary: "Accept-Encoding" } }), bytes as never, tagResponseBody)
++      }
+       // Each shape carries the content-type of the lane it stands in for: the framework's own for the
+       // tagging path this branch already owned, and `Response.json`'s for the construction below that
+       // the static tier replaces. They differ on Deno, and a declared header must not change one.
