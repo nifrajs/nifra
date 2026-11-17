@@ -7,6 +7,33 @@ const seqStore = (): MemoryJobStore => {
 }
 
 describe("MemoryJobStore", () => {
+  test("stored payloads are detached from the caller and every lease", () => {
+    const store = seqStore()
+    const payload = { nested: { count: 1 }, bytes: new Uint8Array([1]), at: new Date(0) }
+    const expected = structuredClone(payload)
+    const id = store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 3 })
+    payload.nested.count = 2
+    payload.bytes[0] = 2
+    payload.at.setTime(2)
+    const [first] = store.lease(0, 1, 1000)
+    expect(first?.payload).toEqual(expected)
+    if (typeof first?.payload !== "object" || first.payload === null)
+      throw new Error("missing leased payload")
+    Reflect.set(Reflect.get(first.payload, "nested"), "count", 3)
+    Reflect.get(first.payload, "bytes")[0] = 3
+    Reflect.get(first.payload, "at").setTime(3)
+    store.retry(id, 1000, first.lease)
+    expect(store.lease(1000, 1, 1000)[0]?.payload).toEqual(expected)
+  })
+
+  test("a payload that cannot be cloned is refused without storing a job", () => {
+    const store = seqStore()
+    expect(() =>
+      store.enqueue({ name: "x", payload: { callback: () => {} }, runAt: 0, maxAttempts: 1 }),
+    ).toThrow()
+    expect(store.counts(0)).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+
   test("enqueue → lease (due) → complete", () => {
     const s = seqStore()
     const id = s.enqueue({ name: "x", payload: { a: 1 }, runAt: 100, maxAttempts: 3 })

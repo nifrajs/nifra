@@ -351,14 +351,20 @@ export function createAgentSharedState<State>(initial: State): AgentSharedState<
       return structuredClone(document) as State
     },
     patch(ops) {
+      let applied: readonly AgentStatePatchOp[]
+      try {
+        applied = structuredClone(ops)
+      } catch (cause) {
+        throw new TypeError("agent: patch values must be structured-cloneable", { cause })
+      }
       // Validate-then-apply on a copy so a mid-batch failure never leaves a half-patched document.
       let next = structuredClone(document)
-      for (const op of ops) next = applyStatePatchOp(next, op)
+      // Applying a later operation must not rewrite an earlier operation's notification value.
+      for (const op of applied) next = applyStatePatchOp(next, structuredClone(op))
       document = next
-      const applied = Object.freeze([...ops])
       for (const listener of listeners) {
         try {
-          listener(applied)
+          listener(Object.freeze(structuredClone(applied)))
         } catch {
           // Observer failures must not affect the document or the other observers.
         }

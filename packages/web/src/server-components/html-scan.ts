@@ -65,6 +65,7 @@ function scanStartTag(html: string, at: number, tags: ScannedTag[]): number {
   let code = html.charCodeAt(end)
   if (!(isSpace(code) || code === 0x2f || code === 0x3e)) return -1
   const attrs: { name: string; value: string }[] = []
+  let names: Set<string> | undefined
   for (;;) {
     while (isSpace(html.charCodeAt(end))) end++
     code = html.charCodeAt(end)
@@ -76,7 +77,10 @@ function scanStartTag(html: string, at: number, tags: ScannedTag[]): number {
     const nameStart = end
     while (isAttributeCode(html.charCodeAt(end))) end++
     const name = html.slice(nameStart, end).toLowerCase()
-    if (attrs.some((attr) => attr.name === name)) return -1
+    // Small tags avoid allocating a set; cap the array search before it becomes quadratic.
+    if (names === undefined && attrs.length === 8) names = new Set(attrs.map((attr) => attr.name))
+    if (names === undefined ? attrs.some((attr) => attr.name === name) : names.has(name)) return -1
+    names?.add(name)
     code = html.charCodeAt(end)
     let value = ""
     if (code === 0x3d) {

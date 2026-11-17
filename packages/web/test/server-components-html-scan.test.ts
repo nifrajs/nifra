@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { Tokenizer } from "parse5"
 import { createElement, Fragment, type ReactNode, Suspense } from "react"
 import { validateComponentHTML } from "../src/server-components/html.ts"
@@ -235,6 +235,43 @@ test("the scan reads renderer output, so the validator's common case skips the t
     '<div class="x"><!--$--><span>1</span><!--/$--><!-- --></div>',
   ])
     expect(scanComponentHTML(html)).toBeDefined()
+})
+
+test("unique attributes do not require a search of every earlier attribute", () => {
+  const count = 4000
+  const html = `<div ${Array.from({ length: count }, (_, index) => `data-k${index}="x"`).join(" ")}></div>`
+  const originalSome = Array.prototype.some
+  let comparisons = 0
+  let tags: ScannedTag[] | undefined
+  // Count search work instead of elapsed time so shared-runner timing cannot mask the regression.
+  const search = spyOn(Array.prototype, "some").mockImplementation(function (
+    this: unknown[],
+    predicate,
+    thisArg,
+  ) {
+    return originalSome.call(this, (value, index, array) => {
+      comparisons++
+      return predicate.call(thisArg, value, index, array)
+    })
+  })
+  try {
+    tags = scanComponentHTML(html)
+  } finally {
+    search.mockRestore()
+  }
+  expect(tags?.[0]?.attrs).toHaveLength(count)
+  expect(comparisons).toBeLessThanOrEqual(count * 2)
+  expect(() => validateComponentHTML(html)).not.toThrow()
+})
+
+test("attribute names are unique without case, and each tag owns its names", () => {
+  expect(scanComponentHTML('<div data-a="1" DATA-A="2">')).toBeUndefined()
+  const prefix = Array.from({ length: 8 }, (_, index) => `data-k${index}="x"`).join(" ")
+  expect(scanComponentHTML(`<div ${prefix} DATA-K0="duplicate">`)).toBeUndefined()
+  expect(scanComponentHTML('<i id="1"></i><b ID="2"></b>')).toEqual([
+    { tagName: "i", attrs: [{ name: "id", value: "1" }] },
+    { tagName: "b", attrs: [{ name: "id", value: "2" }] },
+  ])
 })
 
 test("the validator refuses the same strings with and without the scan", () => {

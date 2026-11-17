@@ -60,6 +60,42 @@ describe("createQueue - define + enqueue + run", () => {
     await expect(send.enqueue({ to: "ok" })).resolves.toBeString()
   })
 
+  test("caller mutation after validation cannot change the queued payload", async () => {
+    const q = createQueue()
+    const seen: string[] = []
+    const send = q.define("send", {
+      input: toSchema,
+      handler: (payload) => {
+        seen.push(payload.to)
+      },
+    })
+    const payload = { to: "original" }
+    await send.enqueue(payload)
+    // Deliberately replace the validated string with an invalid value after enqueue.
+    Reflect.set(payload, "to", 123)
+    await q.drain()
+    expect(seen).toEqual(["original"])
+  })
+
+  test("each retry receives the stored payload before a previous handler mutated it", async () => {
+    const q = createQueue({ backoff: noBackoff, onError: () => {} })
+    const seen: string[] = []
+    const send = q.define("send", {
+      input: toSchema,
+      retries: 2,
+      handler(payload, ctx) {
+        seen.push(payload.to)
+        payload.to = "changed"
+        if (ctx.attempt === 1) throw new Error("retry")
+      },
+    })
+    const payload = { to: "original" }
+    await send.enqueue(payload)
+    expect(await q.drain()).toBe(2)
+    expect(seen).toEqual(["original", "original"])
+    expect(payload.to).toBe("original")
+  })
+
   test("attempt counts must be whole numbers, so a failing job cannot retry forever", async () => {
     const q = createQueue()
     for (const retries of [Number.NaN, Number.POSITIVE_INFINITY, 2.5]) {

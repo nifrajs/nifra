@@ -50,11 +50,12 @@ export class MemoryJobStore implements JobStore {
     maxAttempts: number
     traceparent?: string
   }): string {
+    const payload = structuredClone(job.payload)
     const id = this.idFor()
     this.jobs.set(id, {
       id,
       name: job.name,
-      payload: job.payload,
+      payload,
       attempt: 0,
       maxAttempts: job.maxAttempts,
       traceparent: job.traceparent,
@@ -70,12 +71,13 @@ export class MemoryJobStore implements JobStore {
     for (const r of this.jobs.values()) {
       if (out.length >= limit) break
       if (r.runAt <= now && r.leaseUntil <= now) {
+        const payload = structuredClone(r.payload)
         r.leaseUntil = now + leaseMs
         r.lease = String(++this.leaseSeq)
         const job: { -readonly [K in keyof StoredJob]: StoredJob[K] } = {
           id: r.id,
           name: r.name,
-          payload: r.payload,
+          payload,
           attempt: r.attempt,
           maxAttempts: r.maxAttempts,
           lease: r.lease,
