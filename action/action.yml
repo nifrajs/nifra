@@ -83,7 +83,7 @@ runs:
         if [ "$NIFRA_VERSION" = "local" ]; then
           bunx nifra check --json > "$RUNNER_TEMP/nifra-check.json" 2> "$RUNNER_TEMP/nifra-check.err"
         else
-          bunx "nifra@${NIFRA_VERSION}" check --json > "$RUNNER_TEMP/nifra-check.json" 2> "$RUNNER_TEMP/nifra-check.err"
+          bunx "@nifrajs/cli@${NIFRA_VERSION}" check --json > "$RUNNER_TEMP/nifra-check.json" 2> "$RUNNER_TEMP/nifra-check.err"
         fi
         code=$?
         set -e
@@ -97,6 +97,7 @@ runs:
       id: parse
       shell: bash
       env:
+        NIFRA_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         NIFRA_JSON_PATH: ${{ runner.temp }}/nifra-check.json
         NIFRA_ERR_PATH: ${{ runner.temp }}/nifra-check.err
         NIFRA_EXIT: ${{ steps.run.outputs.exit }}

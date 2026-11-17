@@ -38,7 +38,7 @@ If you do not want the bot comment, drop `pull-requests: write` and set `comment
 | --- | --- | --- |
 | `github-token` | `github.token` | Token for the comment API. Needs `pull-requests: write`. |
 | `working-directory` | `.` | Directory holding `nifra.config.ts` / `nifra.check.json`. |
-| `nifra-version` | `latest` | `bunx nifra@<version>`. Use `local` to use the project's pinned CLI. |
+| `nifra-version` | `latest` | `bunx @nifrajs/cli@<version>`. Use `local` to use the project's pinned CLI. |
 | `bun-version` | `1.4.4` | Bun used for the CLI and the parser. |
 | `fail-on` | `error` | `error`, `warning`, or `never`. Parse errors and unexpected CLI exits always fail. |
 | `comment` | `true` | Post/update a single PR comment. |

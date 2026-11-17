@@ -6,6 +6,7 @@ import {
   renderAnnotations,
   renderComment,
   renderMarkdown,
+  repoPrefix,
 } from "../src/parse"
 
 const env = {
@@ -122,7 +123,7 @@ describe("analyze", () => {
 
   test("tolerates a preamble before the JSON document", () => {
     const result = analyze(
-      "warning from a loader\n" + JSON.stringify({ ok: true, diagnostics: [] }),
+      `warning from a loader\n${JSON.stringify({ ok: true, diagnostics: [] })}`,
       "0",
       "error",
     )
@@ -182,5 +183,52 @@ describe("renderers", () => {
         ),
       ),
     ).toBe("")
+  })
+  test("a hard CLI failure fails the step whatever fail-on says", () => {
+    const raw = JSON.stringify({ ok: false, error: "missing TypeScript" })
+    expect(analyze(raw, "1", "never").unexpectedFailure).toBe(true)
+    expect(analyze(raw, "1", "never").failed).toBe(true)
+  })
+
+  test("a working directory places findings from the repository root", () => {
+    const raw = JSON.stringify({ ok: false, diagnostics: [finding] })
+    const result = analyze(raw, "1", "error", repoPrefix("apps/web", "/work/repo"))
+    expect(result.findings[0]?.file).toBe("apps/web/backend/app.ts")
+    expect(renderMarkdown(result, env)).toContain("blob/abc123/apps/web/backend/app.ts#L9")
+    expect(renderAnnotations(result)).toContain("file=apps/web/backend/app.ts")
+    expect(repoPrefix("/work/repo/apps/web", "/work/repo")).toBe("apps/web")
+    expect(repoPrefix(".", "/work/repo")).toBe("")
+    expect(repoPrefix("../elsewhere", "/work/repo")).toBeNull()
+    const outside = analyze(raw, "1", "error", null)
+    expect(outside.findings[0]?.file).toBeUndefined()
+    expect(renderAnnotations(outside)).toBe("")
+  })
+
+  test("a backslash in a cell cannot escape the pipe escape", () => {
+    const md = renderMarkdown(
+      analyze(
+        JSON.stringify({ ok: false, diagnostics: [{ ...finding, message: "a\\| b" }] }),
+        "1",
+        "error",
+      ),
+      env,
+    )
+    expect(md).toContain("a\\\\\\| b")
+  })
+
+  test("a huge finding cannot push the comment past GitHub's limit", () => {
+    const huge = {
+      ...finding,
+      message: "m".repeat(200_000),
+      evidence: Array.from({ length: 5000 }, (_, i) => `file-${i}-${"x".repeat(500)}`),
+    }
+    const diagnostics = Array.from({ length: 30 }, (_, i) => ({ ...huge, code: `NF-${i}` }))
+    const comment = renderComment(
+      analyze(JSON.stringify({ ok: false, diagnostics }), "1", "error"),
+      "<!-- nifra-check:v1 -->",
+      env,
+    )
+    expect(comment.length).toBeLessThan(65_536)
+    expect(comment).toContain("omitted")
   })
 })
