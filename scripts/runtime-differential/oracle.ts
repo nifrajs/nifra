@@ -262,17 +262,24 @@ const conflictingAuthorities = (request: Case["request"]): readonly string[] => 
 }
 
 /**
- * `outcome` with each of `authorities` spelled `<authority>` in its body and header values, or
- * `undefined` when none appears. A page that links to itself spells whichever authority the runtime
- * picked for the request URL, so lanes that picked differently differ in that spelling alone.
+ * `outcome` with each of `authorities` spelled `<authority>` where it is the authority of a URL
+ * (`://` before it, no host character after), in its body and header values, or `undefined` when none
+ * appears. A page that links to itself spells whichever authority the runtime picked for the request
+ * URL, so lanes that picked differently differ in that spelling alone; the same text anywhere else
+ * (a title) is still compared. The longest authority wins where one starts with another
+ * (`example.com`, `example.com:8080`), and the match ignores case as a URL host does.
  */
 function withAuthorityMasked(
   outcome: Outcome,
   authorities: readonly string[],
 ): Outcome | undefined {
   if (outcome.kind !== "response") return undefined
-  const mask = (value: string) =>
-    authorities.reduce((text, authority) => text.replaceAll(authority, "<authority>"), value)
+  const alternatives = [...authorities]
+    .sort((x, y) => y.length - x.length)
+    .map((authority) => authority.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|")
+  const urlAuthority = new RegExp(`(?<=://)(?:${alternatives})(?![\\w.:\\-])`, "gi")
+  const mask = (value: string) => value.replace(urlAuthority, "<authority>")
   let changed = false
   const headers = outcome.headers.map(([name, value]): readonly [string, string] => {
     const masked = mask(value)
