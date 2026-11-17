@@ -55,8 +55,8 @@ do on `@nifrajs/node`.
 
 - **Fixed replies skip the app.** A `staticResponse()` GET route (no path parameter, no
   schema, auth or other route-level stage) is compiled into uWS and answered without calling into
-  JavaScript, as long as the app has no request or response hook, deadline, capacity gate, response
-  headers or Host policy (`allowedHosts`, `canonicalHost`, `normalizeTarget`). A POST stays on the ordinary path, which runs the cross-site form check. An `echoParam()` route
+  JavaScript, and a fixed POST is answered from uWS's callback without building a request, as long as the app has no request or response hook, deadline, capacity gate, response
+  headers or Host policy (`allowedHosts`, `canonicalHost`, `normalizeTarget`). A POST carrying an `Origin` header goes to the ordinary path, which runs the cross-site form check; one without cannot fail it. An `echoParam()` route
   (whose only parameter is its last segment, and which no other route can overlap) is answered the
   same way, from the path as sent. A malformed `Host` is screened on every other
   route and not on these; a malformed percent-escape in an echoed segment is echoed as sent, where

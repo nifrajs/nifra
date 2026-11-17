@@ -96,6 +96,17 @@ describe("fixed-reply routes: uWS and Bun agree on every disqualifier", () => {
     })
   }
 
+  test("a fixed POST follows the same disqualifiers", () => {
+    for (const [name, setup, expected] of setups) {
+      const base = setup()
+      const app: object = Reflect.apply(Reflect.get(base, "post"), base, ["/health", fixed])
+      const listed = declarativeRoutes(viewOf(app)).some(
+        (route) => route.method === "POST" && route.path === "/health",
+      )
+      expect(listed, name).toBe(expected)
+    }
+  })
+
   test("a handler that is not fixed", () => {
     const app = server().get("/health", () => "x")
     expect(bunServesFixed(app)).toBe(false)
@@ -276,7 +287,7 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
 })
 
 describe("declarativeRoutes", () => {
-  test("lists GET fixed routes with their status and headers; a POST stays with the router", () => {
+  test("lists GET and POST fixed routes with their status and headers", () => {
     const app = server()
       .get("/", staticResponse())
       .get("/created", staticResponse({ status: 201, headers: { "x-a": "1" } }))
@@ -285,6 +296,7 @@ describe("declarativeRoutes", () => {
     expect(declarativeRoutes(viewOf(app))).toEqual([
       { method: "GET", path: "/", status: 200, headers: [] },
       { method: "GET", path: "/created", status: 201, headers: [["x-a", "1"]] },
+      { method: "POST", path: "/user", status: 200, headers: [] },
     ])
   })
 

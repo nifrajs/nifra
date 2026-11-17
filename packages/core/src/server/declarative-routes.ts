@@ -64,7 +64,8 @@ export interface ServerView {
 
 /** One fixed-reply route handed to a transport that answers it natively. */
 export interface DeclarativeRoute {
-  readonly method: "GET"
+  /** A POST also runs the cross-site form check, so a transport must keep any request carrying an `Origin` header. */
+  readonly method: "GET" | "POST"
   readonly path: string
   readonly status: number
   readonly headers: readonly (readonly [string, string])[]
@@ -194,7 +195,8 @@ function mountMayTake(mountPath: string, path: string): boolean {
 
 /**
  * The routes a transport that matches exact raw paths itself (uWebSockets.js) can answer natively.
- * Only GET routes: a fixed POST would skip the cross-site form check every bodyless POST runs.
+ * A fixed POST is listed too, but the transport must still run that check, which refuses a request
+ * only when it carries an `Origin` header: such a request goes to the router, one without is answered.
  * A route stays out when anything that route-level or app-level could observe the request applies,
  * when the transport could read its path as a pattern or the router would decode it, when a mount ahead
  * of the routes or a WebSocket handshake may share it, or, for an echoed parameter, when another route
@@ -207,9 +209,10 @@ export function declarativeRoutes(server: ServerView): DeclarativeRoute[] {
   if (!transportMayAnswer(server)) return routes
   const all = server.catalog.entries()
   for (const route of all) {
-    if (route.method !== "GET") continue
+    const { method } = route
+    if (method !== "GET" && method !== "POST") continue
     const reply = plainStaticResponse(route)
-    const param = reply === undefined ? plainEchoParam(route) : undefined
+    const param = reply === undefined && method === "GET" ? plainEchoParam(route) : undefined
     if (
       (reply === undefined) === (param === undefined) ||
       // A bodyless status carries no Content-Length, which a fixed reply would add.
@@ -239,7 +242,7 @@ export function declarativeRoutes(server: ServerView): DeclarativeRoute[] {
     }
     if (param !== undefined) {
       routes.push({
-        method: "GET",
+        method,
         path: route.path,
         status: 200,
         headers: [...ECHO_HEADERS],
@@ -247,7 +250,7 @@ export function declarativeRoutes(server: ServerView): DeclarativeRoute[] {
       })
     } else if (reply !== undefined) {
       routes.push({
-        method: "GET",
+        method,
         path: route.path,
         status: reply.status,
         headers: [...reply.headers],

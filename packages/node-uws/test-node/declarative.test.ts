@@ -82,6 +82,13 @@ const cases: Array<[string, string | Buffer]> = [
   ["GET with fixed headers", head("GET", "/ping")],
   ["GET with a query", head("GET", "/ping?a=1&b=%20")],
   ["POST with a body", Buffer.from(head("POST", "/ping", "content-length: 3\r\n") + "abc")],
+  [
+    "POST with a body over the 1 MB cap",
+    Buffer.concat([
+      Buffer.from(head("POST", "/ping", "content-length: 1200000\r\n")),
+      Buffer.alloc(1_200_000, 7),
+    ]),
+  ],
   ["POST without a body", head("POST", "/ping", "content-length: 0\r\n")],
   [
     "POST with a chunked body",
@@ -184,8 +191,19 @@ test("a fixed route is answered without entering the app", async () => {
     await observe(running.port, head("GET", "/ping"))
     assert.equal((await observe(running.port, head("GET", "/user/abc"))).body, "abc")
     assert.equal(entered, 0)
-    // A POST runs the cross-site form check, so it is not answered natively.
+    // A POST with no Origin cannot fail the cross-site form check, so it is answered natively too.
     await observe(running.port, head("POST", "/ping", "content-length: 0\r\n"))
+    assert.equal(entered, 0)
+    // One with an Origin runs the check, on the ordinary path.
+    const crossSite = await observe(
+      running.port,
+      head(
+        "POST",
+        "/ping",
+        "origin: https://evil.test\r\ncontent-type: text/plain\r\ncontent-length: 0\r\n",
+      ),
+    )
+    assert.equal(crossSite.status, 403)
     assert.equal(entered, 1)
     await observe(running.port, head("GET", "/dynamic"))
     assert.equal(entered, 2)
