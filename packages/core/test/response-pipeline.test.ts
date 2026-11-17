@@ -357,6 +357,23 @@ describe("c.json under a body hook", () => {
     expect(res.headers.getSetCookie()).toHaveLength(2)
   })
 
+  test("a one-shot iterator init is read once and its content-type kept", async () => {
+    function* once(): Generator<[string, string]> {
+      yield ["content-type", "application/vnd.api+json"]
+      yield ["x-a", "b"]
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the type admits records, but a JS caller may pass any HeadersInit iterator
+    const oneShot = once() as unknown as Record<string, string>
+    const app = server()
+      .use(responseObserver())
+      .onResponseBody((body) => body)
+      .get("/", (c) => c.json({ ok: true }, { headers: oneShot }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.get("content-type")).toBe("application/vnd.api+json")
+    expect(res.headers.get("x-a")).toBe("b")
+    expect(await res.text()).toBe('{"ok":true}')
+  })
+
   test("an entries init that names a content-type keeps it", async () => {
     const app = server()
       .use(responseObserver())

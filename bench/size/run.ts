@@ -369,7 +369,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 46,735, effect-ledger 43,678 -> 43,901, sse 42,522 -> 42,742, mcp 41,916 -> 42,141, valibot ->
   // 42,900, typebox-t 71,076 -> 71,306, typebox-form -> 76,297 (Bun 1.4.4). Each cap crossed takes the
   // next 0.1 KiB step.
-  "nifra-bare": 40.9,
+  // The same path switched off for an app with the idempotency plugin, whose stored reply must stay
+  // the identity one: bare 41,872 -> 41,921 B, effect-ledger -> 43,957, mcp -> 42,201, valibot ->
+  // 42,950 (Bun 1.4.4); the four caps crossed take the next 0.1 KiB step.
+  "nifra-bare": 41,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -400,13 +403,13 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
   // The same `listen()` disposal: idempotency 46,096 B (Bun 1.4.4).
   "nifra-idempotency": 45.7,
-  "nifra-effect-ledger": 42.9,
+  "nifra-effect-ledger": 43,
   // The same `listen()` disposal crossed the mcp and sse caps (41,496 B and 42,097 B on the first cut,
   // Bun 1.4.4). Each takes the next 0.1 KiB step.
-  "nifra-mcp": 41.2,
+  "nifra-mcp": 41.3,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
   "nifra-sse": 41.8,
-  "nifra-valibot": 41.9,
+  "nifra-valibot": 42,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
   // The same `listen()` disposal: typebox-t 70,670 B (Bun 1.4.4).

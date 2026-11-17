@@ -425,14 +425,13 @@ export class RequestContext implements RawContext {
             headers: { "content-type": responseJsonContentType() },
           })
         } else {
-          // The caller's own init goes to `Response` untouched, as `Response.json` takes it: a record
-          // naming `Set-Cookie` and `set-cookie` keeps both, which a lowercased copy would collapse. A
-          // string body would put its own text type on a reply that named none, and only a bodyless
-          // `Response` shows whether the caller named one.
-          built = new Response(text, i)
-          if (!new Response(null, i).headers.has("content-type")) {
-            built.headers.set("content-type", responseJsonContentType())
-          }
+          // The caller's own init, read once: a record naming `Set-Cookie` and `set-cookie` keeps both,
+          // as `Response.json` keeps them, and a one-shot iterator is not consumed twice. A string body
+          // would put its own text type on a reply that named none, and only a bodyless `Response`
+          // shows whether the caller named one.
+          const named = new Response(null, i).headers
+          if (!named.has("content-type")) named.set("content-type", responseJsonContentType())
+          built = new Response(text, { ...i, headers: named })
         }
         reply = markResidentBody(residentText(built, text))
       }

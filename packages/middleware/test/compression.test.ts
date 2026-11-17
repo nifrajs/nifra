@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto"
 import * as zlib from "node:zlib"
 import { constants, gunzipSync, gzipSync } from "node:zlib"
 import { server } from "@nifrajs/core"
+import { idempotency } from "@nifrajs/core/idempotency-plugin"
 import { markRepeatedPrefix, responseObserver } from "@nifrajs/core/response-observer"
 import { compression } from "@nifrajs/middleware"
 import { FIXED_DEFLATE_MAX } from "../src/_fixed-deflate.ts"
@@ -949,6 +950,28 @@ describe("compression()", () => {
       expect(res.headers.get("content-encoding")).toBe("gzip")
       await expect(gunzip(res)).rejects.toThrow()
     })
+  })
+})
+
+describe("gzip of a returned value on an idempotent route", () => {
+  test("a replay to a client that did not ask for gzip is not gzip bytes", async () => {
+    const app = server()
+      .use(idempotency())
+      .use(compression())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, () => ({ big }))
+    const send = (headers: Record<string, string>) =>
+      app.fetch(
+        new Request("http://x/pay", {
+          method: "POST",
+          headers: { "idempotency-key": "k1", "content-type": "application/json", ...headers },
+          body: "{}",
+        }),
+      )
+    const first = await send(GZIP)
+    expect(first.headers.get("content-encoding")).toBe("gzip")
+    const replay = await send({})
+    expect(replay.headers.get("content-encoding")).toBeNull()
+    expect(await replay.text()).toBe(JSON.stringify({ big }))
   })
 })
 

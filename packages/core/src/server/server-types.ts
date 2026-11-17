@@ -469,7 +469,7 @@ export interface Middleware {
    * idempotent on its own output (the hook still runs on the rendered response and must find
    * nothing left to do). It applies only while this hook is the first response hook of the app, so
    * nothing registered before it can have run first, and not on a response carrying `c.set` headers,
-   * cookies or static response headers.
+   * cookies, static response headers, or the idempotency plugin.
    */
   readonly renderBody?: RenderBodyHook
   /**

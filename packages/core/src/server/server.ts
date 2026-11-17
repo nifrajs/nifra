@@ -3078,7 +3078,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       addResponseHook: (web, node, headerOnly = false, render) => {
         const first = this.onResponseHooks.length === 0
         this.onResponseHooks.push(web)
-        if (render !== undefined && first && this.responseBodyTag !== undefined) {
+        if (
+          render !== undefined &&
+          first &&
+          this.idempotencyRuntime === undefined &&
+          this.responseBodyTag !== undefined
+        ) {
           this.responseBodyTag.renderJson = render
           this.renderBodyAnchor = web
         }
@@ -3099,6 +3104,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_IDEMPOTENCY](runtime: IdempotencyRuntime): void {
     this.assertConfigurable("idempotency()")
     this.idempotencyRuntime = runtime
+    // A stored reply is replayed to any client, so it must be the identity one the hooks then encode.
+    if (this.responseBodyTag !== undefined) delete this.responseBodyTag.renderJson
   }
 
   /** @internal Symbol-keyed install seam for the `mcp()` plugin. Off the public typed surface. */
@@ -3400,6 +3407,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // pinned during registration.
     const runtimes = this as Record<string, unknown>
     for (const key of SERVER_RUNTIMES) runtimes[key] ??= source[key]
+    if (this.idempotencyRuntime !== undefined && this.responseBodyTag !== undefined) {
+      delete this.responseBodyTag.renderJson
+    }
     // Which requests a scoped hook sees: under the prefix for a group; for a merged server with
     // routes, a snapshot of exactly the routes MERGED (not whatever its own catalog grows into later).
     const inScope =
@@ -3441,6 +3451,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const adoptedRender =
       source.responseBodyTag?.renderJson !== undefined &&
       this.onResponseHooks.length === 0 &&
+      this.idempotencyRuntime === undefined &&
       source.onResponseHooks[0] === source.renderBodyAnchor
         ? source.responseBodyTag.renderJson
         : undefined
