@@ -1,0 +1,118 @@
+diff --git a/packages/core/src/server/http.ts b/packages/core/src/server/http.ts
+index 96c3ed147..0b303b078 100644
+--- a/packages/core/src/server/http.ts
++++ b/packages/core/src/server/http.ts
+@@ -119,6 +119,18 @@ export function pathnameOf(url: string): string {
+   return url.slice(start, end)
+ }
+ 
++/** Whether the request target's path is `prefix` or lies under it, without cutting the path out. */
++export function pathUnder(url: string, prefix: string): boolean {
++  const schemeEnd = url.indexOf("://")
++  const start = schemeEnd === -1 ? url.indexOf("/") : url.indexOf("/", schemeEnd + 3)
++  if (start === -1) return prefix === "/"
++  if (!url.startsWith(prefix, start)) return false
++  const next = start + prefix.length
++  if (next === url.length) return true
++  const c = url.charCodeAt(next)
++  return c === 47 /* / */ || c === 63 /* ? */ || c === 35 /* # */
++}
++
+ /**
+  * A `Vary` header value (`null` when the response has none) that names each of `names` once, matched
+  * without regard to case. `Vary: *` already covers every request header, so it comes back unchanged.
+diff --git a/packages/core/src/server/response-observer-runtime.ts b/packages/core/src/server/response-observer-runtime.ts
+index 1429c5c16..6420b04ca 100644
+--- a/packages/core/src/server/response-observer-runtime.ts
++++ b/packages/core/src/server/response-observer-runtime.ts
+@@ -29,6 +29,7 @@ export interface ResponseObserverHost {
+     web: WebResponseHook,
+     node: NodeResponseHook | undefined,
+     headerOnly?: boolean,
++    bodyHook?: boolean,
+   ): void
+   enableResponseBodyTagging(): object
+   responseBodyOwners(): ReadonlySet<object>
+@@ -120,6 +121,7 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
+               return undefined
+             },
+             false,
++            true,
+           )
+           return this
+         },
+@@ -133,6 +135,7 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
+                 : response,
+             () => undefined,
+             false,
++            true,
+           )
+           return this
+         },
+diff --git a/packages/core/src/server/server.ts b/packages/core/src/server/server.ts
+index 4545c71e0..2389de19f 100644
+--- a/packages/core/src/server/server.ts
++++ b/packages/core/src/server/server.ts
+@@ -106,6 +106,7 @@ import {
+   isRoutableMethod,
+   jsonError,
+   pathnameOf,
++  pathUnder,
+   plainError,
+   type UrlParts,
+   urlPartsOf,
+@@ -1090,11 +1091,7 @@ type HookScope = (req: { readonly method: string; readonly url: string }) => boo
+  * byte-exactly and case-sensitively, with the same path scanner used here, so no spelling a group
+  * route answers to can fall outside this test. */
+ const underPrefix = (prefix: string): HookScope => {
+-  const nested = `${prefix}/`
+-  return (req) => {
+-    const path = pathnameOf(req.url)
+-    return path === prefix || path.startsWith(nested)
+-  }
++  return (req) => pathUnder(req.url, prefix)
+ }
+ 
+ /** A merged server's hook scope: exactly the routes MERGED, snapshotted into a dedicated matcher so
+@@ -3063,13 +3060,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
+     this.assertConfigurable("responseObserver()")
+     const methods = runtime.install({
+       assertConfigurable: (operation) => this.assertConfigurable(operation),
+-      addResponseHook: (web, node, headerOnly = false) => {
++      addResponseHook: (web, node, headerOnly = false, bodyHook = false) => {
+         this.onResponseHooks.push(web)
+         if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+           tagHook(web, headerOnly ? "responseHeaders" : "onResponse", this)
+         this.onNodeResponseHooks.push(node)
+         if (node === undefined) this.nodeResponseHooksComplete = false
+-        if (!headerOnly) this.bunNativeResponseHeadersOnly = false
++        if (!headerOnly && !bodyHook) this.bunNativeResponseHeadersOnly = false
+       },
+       enableResponseBodyTagging: () => {
+         if (this.responseBodyTag === undefined) {
+diff --git a/packages/middleware/src/compression.ts b/packages/middleware/src/compression.ts
+index 812e0138c..99263ba6f 100644
+--- a/packages/middleware/src/compression.ts
++++ b/packages/middleware/src/compression.ts
+@@ -19,9 +19,21 @@ const COMPRESSIBLE =
+ 
+ const defaultCompressible = (contentType: string): boolean => COMPRESSIBLE.test(contentType)
+ 
++// A client sends the same `Accept-Encoding` on every request, so the last answer is the next one.
++let lastAccept: string | undefined
++let lastAccepts = false
++
+ /** Honor explicit q=0 exclusions; a client that says `gzip;q=0` must not receive gzip. */
+ function acceptsGzip(value: string | null): boolean {
+   if (value === null) return false
++  if (value === lastAccept) return lastAccepts
++  const accepts = parseAcceptsGzip(value)
++  lastAccept = value
++  lastAccepts = accepts
++  return accepts
++}
++
++function parseAcceptsGzip(value: string): boolean {
+   let wildcard: number | undefined
+   let gzip: number | undefined
+   for (const item of value.split(",")) {

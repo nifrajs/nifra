@@ -1,0 +1,26 @@
+diff --git a/packages/middleware/src/compression.ts b/packages/middleware/src/compression.ts
+index 812e0138c..99263ba6f 100644
+--- a/packages/middleware/src/compression.ts
++++ b/packages/middleware/src/compression.ts
+@@ -19,9 +19,21 @@ const COMPRESSIBLE =
+ 
+ const defaultCompressible = (contentType: string): boolean => COMPRESSIBLE.test(contentType)
+ 
++// A client sends the same `Accept-Encoding` on every request, so the last answer is the next one.
++let lastAccept: string | undefined
++let lastAccepts = false
++
+ /** Honor explicit q=0 exclusions; a client that says `gzip;q=0` must not receive gzip. */
+ function acceptsGzip(value: string | null): boolean {
+   if (value === null) return false
++  if (value === lastAccept) return lastAccepts
++  const accepts = parseAcceptsGzip(value)
++  lastAccept = value
++  lastAccepts = accepts
++  return accepts
++}
++
++function parseAcceptsGzip(value: string): boolean {
+   let wildcard: number | undefined
+   let gzip: number | undefined
+   for (const item of value.split(",")) {

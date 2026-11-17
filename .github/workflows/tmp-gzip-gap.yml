@@ -1,7 +1,7 @@
 name: Temporary gzip comparison
 
-# TEMPORARY. Measures a gzipped JSON route on one ubuntu runner for three checkouts of this repo
-# (before the PR, the PR's first commit, the PR head) and a bare Bun.serve, interleaved. It runs when
+# TEMPORARY. Measures a gzipped JSON route on one ubuntu runner for checkouts of this repo
+# (before the PR, the PR head, and the PR head with candidate patches applied cumulatively) and a bare Bun.serve, interleaved. It runs when
 # this file or its harness changes on the PR branch, and is removed from the PR before it merges.
 on:
   push:
@@ -25,7 +25,6 @@ jobs:
     timeout-minutes: 45
     env:
       MAIN_SHA: f96bcc3e439a7e8dcd5a3a196b5d271ec329c87d
-      PR_FIRST_SHA: e24956f9e55a37ff56b1800954bda777303a4376
       PR_HEAD_SHA: 3393d7d9a362cd536cd706da187050bdafe9bc8d
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,14 +42,24 @@ jobs:
           echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
           chmod +x "$HOME/.local/bin/oha"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Check out the three arms
+      - name: Check out the arms
         run: |
           mkdir -p ../arms
-          for spec in "main:$MAIN_SHA" "pr-first:$PR_FIRST_SHA" "pr-head:$PR_HEAD_SHA"; do
+          for spec in "main:$MAIN_SHA:" "pr-head:$PR_HEAD_SHA:" "fix1:$PR_HEAD_SHA:cum1" "fix12:$PR_HEAD_SHA:cum2" "fix123:$PR_HEAD_SHA:cum3"; do
             name="${spec%%:*}"
-            sha="${spec#*:}"
+            rest="${spec#*:}"
+            sha="${rest%%:*}"
+            patch="${rest#*:}"
             git worktree add --detach "../arms/$name" "$sha"
-            (cd "../arms/$name" && git log --oneline -1 && bun install --ignore-scripts --frozen-lockfile)
+            (
+              cd "../arms/$name"
+              if [ -n "$patch" ]; then
+                git apply "$GITHUB_WORKSPACE/bench/tmp-gzip-gap/patches/$patch.patch"
+              fi
+              git log --oneline -1
+              git diff --stat
+              bun install --ignore-scripts --frozen-lockfile
+            )
           done
       - name: Compare
         run: |
@@ -64,10 +73,12 @@ jobs:
           bun run bench/tmp-gzip-gap/harness.ts \
             --arm floor \
             --arm main=../arms/main \
-            --arm pr-first=../arms/pr-first \
             --arm pr-head=../arms/pr-head \
+            --arm fix1=../arms/fix1 \
+            --arm fix12=../arms/fix12 \
+            --arm fix123=../arms/fix123 \
             --arm pr-head-again=../arms/pr-head \
-            --rounds 5 --seconds 8 --warm 2 --conns 256 \
+            --rounds 6 --seconds 8 --warm 2 --conns 256 \
             --out gzip-gap.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
