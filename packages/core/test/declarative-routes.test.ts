@@ -248,6 +248,14 @@ describe("echoParam routes follow the same app-level disqualifiers", () => {
     expect(await answer.text()).toBe("%78")
   })
 
+  test("a request for the handler's path gets its final segment as sent, whatever the route's other parameters", async () => {
+    const app = routeOf(server(), "/a/:one/:other", echoParam("/a/x/:one"))
+    const answer: Response = await Reflect.apply(Reflect.get(app, "fetch"), app, [
+      new Request("http://nifra.test/a/x/y"),
+    ])
+    expect(await answer.text()).toBe("y")
+  })
+
   test("the marker the module reads is the one echoParam sets", () => {
     expect(Reflect.get(echoParam("/user/:id"), Symbol.for("@nifrajs/core/echo-param"))).toBe(
       "/user/:id",

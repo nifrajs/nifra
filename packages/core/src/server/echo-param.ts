@@ -1,5 +1,3 @@
-import { decodePathSegment } from "../router/path-codec.ts"
-
 const HEADERS = { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" }
 
 /** A static prefix and one final `:name` segment: `/user/:id`, `/:id`. */
@@ -52,9 +50,7 @@ export function echoParam(
     // Only a request for the path this handler was given has a raw segment to answer.
     const matches =
       segments.length === depth && shape.every((part, i) => i === depth - 1 || part === segments[i])
-    const raw = matches ? segments[depth - 1] : undefined
-    const decoded = context.params[name] ?? ""
-    return new Response(raw !== undefined && decodePathSegment(raw) === decoded ? raw : decoded, {
+    return new Response(matches ? segments[depth - 1] : (context.params[name] ?? ""), {
       headers: HEADERS,
     })
   }
