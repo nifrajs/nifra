@@ -69,6 +69,77 @@ describe("MemoryJobStore", () => {
     expect(store.counts(0)).toEqual({ pending: 0, active: 0, dead: 0 })
   })
 
+  test("a payload the copy would change or share is refused without storing a job", () => {
+    class Mailbox {
+      constructor(readonly to: string) {}
+      address(): string {
+        return this.to
+      }
+    }
+    class Pair extends Array<number> {}
+    class Index extends Map<string, number> {}
+    class Seen extends Set<string> {}
+    const shared = new SharedArrayBuffer(4)
+    const refused: Array<[string, unknown]> = [
+      ["a class instance", new Mailbox("a")],
+      ["a nested class instance", { jobs: [{ box: new Mailbox("a") }] }],
+      ["a class instance inside a Map value", new Map([["k", new Mailbox("a")]])],
+      ["a class instance inside a Map key", new Map([[new Mailbox("a"), 1]])],
+      ["a class instance inside a Set", new Set([new Mailbox("a")])],
+      ["an Array subclass", Pair.from([1])],
+      ["a Map subclass", new Index()],
+      ["a Set subclass", new Seen()],
+      ["a SharedArrayBuffer", shared],
+      ["a view of a SharedArrayBuffer", { bytes: new Uint8Array(shared) }],
+      ["a function", { callback: () => {} }],
+    ]
+    for (const [label, payload] of refused) {
+      const store = seqStore()
+      expect(() => store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 }), label).toThrow()
+      expect(store.counts(0), label).toEqual({ pending: 0, active: 0, dead: 0 })
+      expect(store.enqueue({ name: "x", payload: 1, runAt: 0, maxAttempts: 1 }), label).toBe("j1")
+    }
+  })
+
+  test("the refusal names what was found and where", () => {
+    class Mailbox {}
+    const store = seqStore()
+    expect(() =>
+      store.enqueue({
+        name: "x",
+        payload: { jobs: [{ box: new Mailbox() }] },
+        runAt: 0,
+        maxAttempts: 1,
+      }),
+    ).toThrow("a class instance at payload.jobs[0].box")
+    expect(() =>
+      store.enqueue({ name: "x", payload: new SharedArrayBuffer(1), runAt: 0, maxAttempts: 1 }),
+    ).toThrow(TypeError)
+  })
+
+  test("plain data of every cloneable kind is stored, cycles and null prototypes included", () => {
+    const store = seqStore()
+    const cyclic: { self?: unknown; list: number[] } = { list: [1] }
+    cyclic.self = cyclic
+    const bare = Object.assign(Object.create(null), { n: 1 })
+    const payload = {
+      cyclic,
+      bare,
+      at: new Date(5),
+      pattern: /a/g,
+      map: new Map([["k", { n: 1 }]]),
+      set: new Set([1]),
+      bytes: new Uint8Array([1, 2]),
+      buffer: new ArrayBuffer(2),
+      big: 1n,
+      error: new RangeError("bad"),
+    }
+    store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 })
+    const leased = store.lease(0, 1, 1000)[0]?.payload
+    expect(leased).toEqual(payload)
+    expect(leased).not.toBe(payload)
+  })
+
   test("enqueue → lease (due) → complete", () => {
     const s = seqStore()
     const id = s.enqueue({ name: "x", payload: { a: 1 }, runAt: 100, maxAttempts: 3 })

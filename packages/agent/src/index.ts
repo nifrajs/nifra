@@ -338,9 +338,18 @@ export type AgentStatePatchOp =
 export interface AgentSharedState<State = unknown> {
   /** A defensive deep copy of the current document. */
   snapshot(): State
-  /** Apply ops atomically - on an invalid op the whole batch is rejected with a TypeError. */
+  /**
+   * Apply ops atomically - on an invalid op the whole batch is rejected with a TypeError. Values are
+   * copied with `structuredClone`, so they must be cloneable (a function is refused with a TypeError
+   * before anything commits), class instances arrive as plain objects, and later changes to a value
+   * the caller passed never reach the document.
+   */
   patch(ops: readonly AgentStatePatchOp[]): void
-  /** Observe applied patches. Returns the unsubscribe function. Listener failures are isolated. */
+  /**
+   * Observe applied patches. Each listener receives its own copy of the batch, so one observer
+   * cannot change the document or what another observer sees. Returns the unsubscribe function.
+   * Listener failures are isolated.
+   */
   subscribe(listener: (ops: readonly AgentStatePatchOp[]) => void): () => void
 }
 
@@ -363,9 +372,15 @@ export function createAgentSharedState<State>(initial: State): AgentSharedState<
       // Applying a later operation must not rewrite an earlier operation's notification value.
       for (const op of applied) next = applyStatePatchOp(next, structuredClone(op))
       document = next
-      for (const listener of listeners) {
+      // Every listener gets a batch of its own; the last one takes `applied` itself, which nothing else
+      // holds, so a single observer costs no copy. The listeners are fixed first: one subscribed from
+      // inside a callback would otherwise be handed a batch the last observer may already have changed.
+      const targets = [...listeners]
+      for (const [index, listener] of targets.entries()) {
+        if (!listeners.has(listener)) continue
+        const batch = index === targets.length - 1 ? applied : structuredClone(applied)
         try {
-          listener(Object.freeze(structuredClone(applied)))
+          listener(Object.freeze(batch))
         } catch {
           // Observer failures must not affect the document or the other observers.
         }

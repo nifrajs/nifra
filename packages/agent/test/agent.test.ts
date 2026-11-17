@@ -954,6 +954,38 @@ describe("createAgentSharedState", () => {
     expect(retained[0]?.path).toBe("/changed")
   })
 
+  test("the last observer's batch is its own, and a listener added mid-dispatch hears the next patch", () => {
+    const state = createAgentSharedState<Record<string, unknown>>({})
+    const first: (readonly AgentStatePatchOp[])[] = []
+    const late: (readonly AgentStatePatchOp[])[] = []
+    let retained: readonly AgentStatePatchOp[] = []
+    state.subscribe((ops) => first.push(ops))
+    state.subscribe((ops) => {
+      retained = ops
+      state.subscribe((more) => late.push(more))
+      const op = ops[0]
+      if (op === undefined || op.op === "remove") throw new Error("missing value")
+      Reflect.set(Object(op.value), "count", 99)
+    })
+    state.patch([{ op: "add", path: "/item", value: { count: 1 } }])
+    expect(first).toEqual([[{ op: "add", path: "/item", value: { count: 1 } }]])
+    expect(late).toEqual([])
+    expect(state.snapshot()).toEqual({ item: { count: 1 } })
+    expect(retained).toHaveLength(1)
+    state.patch([{ op: "replace", path: "/item/count", value: 2 }])
+    expect(late).toEqual([[{ op: "replace", path: "/item/count", value: 2 }]])
+  })
+
+  test("a listener removed during dispatch is not called", () => {
+    const state = createAgentSharedState({ n: 0 })
+    let removed = 0
+    let off: () => void = () => {}
+    state.subscribe(() => off())
+    off = state.subscribe(() => removed++)
+    state.patch([{ op: "replace", path: "/n", value: 1 }])
+    expect(removed).toBe(0)
+  })
+
   test("later operations do not rewrite earlier values in the caller or notification batch", () => {
     const state = createAgentSharedState<Record<string, unknown>>({})
     const value = { count: 1 }

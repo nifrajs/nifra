@@ -8,6 +8,12 @@
  * Every lease carries a fresh token; `complete`/`retry`/`deadLetter`/`renew` with a token that is no
  * longer the job's current one are ignored, so a worker whose lease was taken over cannot settle the
  * job under the worker that now holds it.
+ *
+ * Payloads are copied on `enqueue` and again on every lease, so neither the caller nor a handler can
+ * change what a later attempt receives. A payload must therefore be plain data that survives a
+ * structured clone intact: a function, a class instance (its prototype would be lost), an accessor, or
+ * a `SharedArrayBuffer` (its memory would stay shared) is refused with a `TypeError` before anything
+ * is stored.
  */
 import { cloneData } from "./generated/clone-data.ts"
 import type { JobCounts, JobStore, StoredJob } from "./types.ts"
