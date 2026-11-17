@@ -40,7 +40,7 @@ If you do not want the bot comment, drop `pull-requests: write` and set `comment
 | `working-directory` | `.` | Directory holding `nifra.config.ts` / `nifra.check.json`. |
 | `nifra-version` | `latest` | `bunx @nifrajs/cli@<version>`. Use `local` to use the project's pinned CLI. |
 | `bun-version` | `1.4.4` | Bun used for the CLI and the parser. |
-| `fail-on` | `error` | `error`, `warning`, or `never`. Parse errors and unexpected CLI exits always fail. |
+| `fail-on` | `error` | `error`, `warning`, or `never`. Any other value fails the step. Parse errors and unexpected CLI exits always fail. |
 | `comment` | `true` | Post/update a single PR comment. |
 | `summary` | `true` | Append the report to `$GITHUB_STEP_SUMMARY`. |
 | `annotations` | `true` | Emit `::error` / `::warning` annotations for findings with a file. |
@@ -48,7 +48,16 @@ If you do not want the bot comment, drop `pull-requests: write` and set `comment
 
 ## Outputs
 
-`ok`, `failed`, `errors`, `warnings`, `infos`, and `findings` (a JSON array of normalized findings).
+`ok`, `failed`, `errors`, `warnings`, `infos`, and `findings` (a JSON array of normalized findings, capped at 100 findings, 3 evidence entries each, and about 500 KB; the full list is in the summary and annotations).
+
+`findings` contains text from the checked project. Never interpolate it into a `run:` script (`${{ steps.x.outputs.findings }}`); pass it through `env:` and read it as data.
+
+## Security notes
+
+- Use this action on `pull_request`, never `pull_request_target`. The CLI loads the project's own config and code, so on `pull_request_target` it would run untrusted PR code with a write token.
+- Pin `nifra-version` to an exact version. `latest` works but logs a warning, because an unpinned CLI runs on every pull request. `local` runs the project's installed CLI and never downloads one.
+- The PR comment is only updated when its author is a bot or a repository owner, member, or collaborator, so a stranger cannot plant the marker to block updates.
+- Finding text is escaped (markup, `@mentions`, newlines) before it reaches the comment, summary, or annotations.
 
 The finding shape mirrors the CLI's stable `Diagnostic` type: `code`, `severity` (`error` / `warn` / `info`), `message`, optional `file`, `line`, `evidence[]`, `fix: { recipe, command? }`, and `verify`.
 

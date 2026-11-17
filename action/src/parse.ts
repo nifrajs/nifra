@@ -51,8 +51,8 @@ function severityOf(value: unknown): Severity | undefined {
   return undefined
 }
 
-function failOnOf(value: string | undefined): FailOn {
-  return value === "warning" || value === "never" ? value : "error"
+export function isFailOn(value: string): value is FailOn {
+  return value === "error" || value === "warning" || value === "never"
 }
 
 function firstObject(raw: string): unknown {
@@ -200,18 +200,46 @@ function clip(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
+/**
+ * Finding text comes from the checked project, so it is untrusted in a bot-authored comment: escape
+ * markup, defuse `@mentions`, and keep it on one line so it cannot open a heading or close `<details>`.
+ */
+function prose(value: string, max: number, newline = " "): string {
+  return clip(value, max)
+    .replace(/[\\`*_[\]<>|]/g, "\\$&")
+    .replace(/@/g, "@​")
+    .replace(/\r?\n|\r/g, newline)
+}
+
+/** Text for a code span: a backtick would end it, a pipe would end a table cell. */
+function code(value: string, max: number, table = false): string {
+  const flat = clip(value, max)
+    .replace(/\r?\n|\r/g, " ")
+    .replaceAll("`", "'")
+  return table ? flat.replaceAll("|", "\\|") : flat
+}
+
 function cell(value: string): string {
-  return clip(value, 400).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>")
+  return prose(value, 400, "<br>")
+}
+
+function fileUrl(file: string): string {
+  // encodeURIComponent leaves ( and ), which end a markdown link destination.
+  const encode = (segment: string) =>
+    encodeURIComponent(segment).replace(
+      /[!'()*]/g,
+      (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+    )
+  return file.split("/").map(encode).join("/")
 }
 
 function location(finding: Finding, env: NodeJS.ProcessEnv): string {
   if (!finding.file) return "-"
   const base = `${env.GITHUB_SERVER_URL ?? "https://github.com"}/${env.GITHUB_REPOSITORY ?? ""}`
   const sha = env.NIFRA_SHA ?? env.GITHUB_SHA
-  const url = sha
-    ? `${base}/blob/${sha}/${encodeURI(finding.file)}${finding.line ? `#L${finding.line}` : ""}`
-    : finding.file
-  return `[\`${finding.file}${finding.line ? `:${finding.line}` : ""}\`](${url})`
+  const label = `\`${code(`${finding.file}${finding.line ? `:${finding.line}` : ""}`, 300, true)}\``
+  if (!sha) return label
+  return `[${label}](${base}/blob/${sha}/${fileUrl(finding.file)}${finding.line ? `#L${finding.line}` : ""})`
 }
 
 const BADGE: Record<Severity, string> = { error: "error", warn: "warning", info: "info" }
@@ -237,9 +265,9 @@ export function renderMarkdown(analysis: Analysis, env: NodeJS.ProcessEnv = proc
   lines.push(
     `- errors: **${analysis.errors}** · warnings: **${analysis.warnings}** · info: **${analysis.infos}**`,
   )
-  if (analysis.typecheck) lines.push(`- typecheck: \`${analysis.typecheck}\``)
-  if (analysis.typecheckNote) lines.push(`- ${clip(analysis.typecheckNote, 400)}`)
-  if (analysis.parseError) lines.push(`- **parse error:** ${analysis.parseError}`)
+  if (analysis.typecheck) lines.push(`- typecheck: \`${code(analysis.typecheck, 100)}\``)
+  if (analysis.typecheckNote) lines.push(`- ${prose(analysis.typecheckNote, 400)}`)
+  if (analysis.parseError) lines.push(`- **parse error:** ${prose(analysis.parseError, 400)}`)
   if (analysis.truncated) {
     lines.push(`- showing ${analysis.truncated.shown} of ${analysis.truncated.total} findings`)
   }
@@ -254,7 +282,7 @@ export function renderMarkdown(analysis: Analysis, env: NodeJS.ProcessEnv = proc
     let shown = 0
     for (const finding of analysis.findings.slice(0, MAX_TABLE_ROWS)) {
       const fix = finding.fix?.recipe ?? finding.verify ?? "-"
-      const row = `| \`${cell(finding.code)}\` | ${BADGE[finding.severity]} | ${location(finding, env)} | ${cell(finding.message)} | ${cell(fix)} |`
+      const row = `| \`${code(finding.code, 100, true)}\` | ${BADGE[finding.severity]} | ${location(finding, env)} | ${cell(finding.message)} | ${cell(fix)} |`
       if (used + row.length > TABLE_BUDGET) break
       used += row.length
       shown += 1
@@ -282,23 +310,25 @@ export function renderComment(
   const sections: string[] = []
   let used = marker.length + report.length + 200
   for (const finding of candidates) {
-    const lines = [`### \`${cell(finding.code)}\` - ${clip(finding.message, 600)}`, ""]
-    if (finding.file)
-      lines.push(`location: \`${finding.file}${finding.line ? `:${finding.line}` : ""}\``)
+    const lines = [`### \`${code(finding.code, 100)}\` - ${prose(finding.message, 600)}`, ""]
+    if (finding.file) {
+      lines.push(
+        `location: \`${code(`${finding.file}${finding.line ? `:${finding.line}` : ""}`, 300)}\``,
+      )
+    }
     for (const entry of finding.evidence.slice(0, MAX_EVIDENCE)) {
-      lines.push(`- evidence: \`${clip(entry, 300).replaceAll("`", "'")}\``)
+      lines.push(`- evidence: \`${code(entry, 300)}\``)
     }
     if (finding.evidence.length > MAX_EVIDENCE) {
       lines.push(`- ${finding.evidence.length - MAX_EVIDENCE} more evidence entries omitted`)
     }
     if (finding.fix) {
-      lines.push(`- fix: ${clip(finding.fix.recipe, 600)}`)
+      lines.push(`- fix: ${prose(finding.fix.recipe, 600)}`)
       if (finding.fix.command) {
-        lines.push(`- command: \`${clip(finding.fix.command, 300).replaceAll("`", "'")}\``)
+        lines.push(`- command: \`${code(finding.fix.command, 300)}\``)
       }
     }
-    if (finding.verify)
-      lines.push(`- verify: \`${clip(finding.verify, 300).replaceAll("`", "'")}\``)
+    if (finding.verify) lines.push(`- verify: \`${code(finding.verify, 300)}\``)
     lines.push("")
     const section = lines.join("\n")
     if (used + section.length > COMMENT_BUDGET) break
@@ -326,8 +356,13 @@ function escapeProperty(value: string): string {
   return escapeData(value).replace(/:/g, "%3A").replace(/,/g, "%2C")
 }
 
-function escapeMessage(value: string): string {
-  return escapeData(value).replace(/::/g, "%3A%3A")
+/**
+ * Print untrusted text without letting a line that starts with `::` run as a workflow command: the
+ * runner ignores commands between a `stop-commands` line and its matching token.
+ */
+export function quarantine(text: string): string {
+  const token = crypto.randomUUID()
+  return `::stop-commands::${token}\n${text}\n::${token}::`
 }
 
 /** GitHub workflow commands, one per line, safe to cat to stdout. */
@@ -336,7 +371,7 @@ export function renderAnnotations(analysis: Analysis): string {
     .filter(
       (finding) =>
         finding.file &&
-        !finding.file.includes("..") &&
+        !finding.file.split("/").includes("..") &&
         !finding.file.startsWith("/") &&
         !/^[A-Za-z]:/.test(finding.file),
     )
@@ -346,7 +381,7 @@ export function renderAnnotations(analysis: Analysis): string {
       if (finding.line) props.push(`line=${finding.line}`)
       props.push(`title=${escapeProperty(finding.code)}`)
       const body = [finding.message, finding.fix?.recipe, finding.verify].filter(Boolean).join(" ")
-      return `::${level} ${props.join(",")}::${escapeMessage(clip(body, 4000))}`
+      return `::${level} ${props.join(",")}::${escapeData(clip(body, 4000))}`
     })
     .join("\n")
 }
@@ -358,38 +393,57 @@ function writeOutput(name: string, value: string): void {
   appendFileSync(output, `${name}=${value.replace(/\r?\n/g, " ")}\n`, "utf8")
 }
 
+const MAX_OUTPUT_FINDINGS = 100
+const MAX_OUTPUT_BYTES = 500_000
+
+/**
+ * The `findings` step output: a bounded, compact copy. Outputs are size-limited by GitHub, and the
+ * full evidence lists are already in the summary and comment.
+ */
+export function outputFindings(findings: readonly Finding[]): string {
+  let kept = findings.slice(0, MAX_OUTPUT_FINDINGS).map((finding) => ({
+    ...finding,
+    message: clip(finding.message, 1000),
+    evidence: finding.evidence.slice(0, 3).map((entry) => clip(entry, 300)),
+  }))
+  let json = JSON.stringify(kept)
+  while (json.length > MAX_OUTPUT_BYTES && kept.length > 0) {
+    kept = kept.slice(0, Math.floor(kept.length / 2))
+    json = JSON.stringify(kept)
+  }
+  return json
+}
+
 async function main(): Promise<void> {
   const jsonPath = process.env.NIFRA_JSON_PATH
   const errPath = process.env.NIFRA_ERR_PATH
   if (!jsonPath) throw new Error("NIFRA_JSON_PATH is required")
+  const failOnInput = process.env.NIFRA_FAIL_ON?.trim() || "error"
+  if (!isFailOn(failOnInput)) {
+    console.log(
+      `::error::${escapeData(`invalid fail-on "${clip(failOnInput, 40)}": use error, warning, or never`)}`,
+    )
+    process.exit(1)
+  }
+  const marker = process.env.NIFRA_MARKER?.trim() || "<!-- nifra-check:v1 -->"
 
   const raw = await Bun.file(jsonPath).text()
   const prefix = repoPrefix(
     process.env.NIFRA_WORKING_DIRECTORY,
     process.env.GITHUB_WORKSPACE ?? process.cwd(),
   )
-  const analysis = analyze(
-    raw,
-    process.env.NIFRA_EXIT ?? "1",
-    failOnOf(process.env.NIFRA_FAIL_ON),
-    prefix,
-  )
+  const analysis = analyze(raw, process.env.NIFRA_EXIT ?? "1", failOnInput, prefix)
 
   if (analysis.parseError && errPath && (await Bun.file(errPath).exists())) {
     const stderr = await Bun.file(errPath).text()
-    if (stderr.trim()) console.error(`nifra check stderr:\n${stderr}`)
+    if (stderr.trim()) console.error(`nifra check stderr:\n${quarantine(stderr)}`)
   }
 
   const summaryPath = process.env.NIFRA_SUMMARY_PATH
   const commentPath = process.env.NIFRA_COMMENT_PATH
   const annotationsPath = process.env.NIFRA_ANNOTATIONS_PATH
   if (summaryPath) await Bun.write(summaryPath, renderMarkdown(analysis))
-  if (commentPath) {
-    await Bun.write(
-      commentPath,
-      renderComment(analysis, process.env.NIFRA_MARKER ?? "<!-- nifra-check:v1 -->"),
-    )
-  }
+  if (commentPath) await Bun.write(commentPath, renderComment(analysis, marker))
   if (annotationsPath) await Bun.write(annotationsPath, renderAnnotations(analysis))
 
   writeOutput("ok", String(analysis.ok))
@@ -397,7 +451,7 @@ async function main(): Promise<void> {
   writeOutput("warnings", String(analysis.warnings))
   writeOutput("infos", String(analysis.infos))
   writeOutput("failed", String(analysis.failed))
-  writeOutput("findings", JSON.stringify(analysis.findings))
+  writeOutput("findings", outputFindings(analysis.findings))
 }
 
 if (import.meta.main) {
