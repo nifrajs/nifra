@@ -466,8 +466,8 @@ export interface Middleware {
   /**
    * A synchronous fast path for `onResponseBody`, taken when the framework renders a value a handler
    * returned: one `Response` is built from its result instead of two. Only for a hook that is
-   * idempotent on its own output (the hook still runs on the rendered response and must find
-   * nothing left to do). It applies only while this hook is the first response hook of the app, so
+   * idempotent on its own output (a reply it rendered with new bytes skips the hook on the Web
+   * path, and any other pass over it must find nothing left to do). It applies only while this hook is the first response hook of the app, so
    * nothing registered before it can have run first, and not on a response carrying `c.set` headers,
    * cookies, static response headers, or the idempotency plugin.
    */

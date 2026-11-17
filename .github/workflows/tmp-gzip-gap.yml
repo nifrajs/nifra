@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 45
     env:
       MAIN_SHA: f96bcc3e439a7e8dcd5a3a196b5d271ec329c87d
-      PR_HEAD_SHA: 3393d7d9a362cd536cd706da187050bdafe9bc8d
+      PR_HEAD_SHA: 3211884847d6f5e3404c8ef22546c00aa07f0236
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,10 +73,9 @@ jobs:
           } | tee gzip-gap-metadata.txt
           bun run bench/tmp-gzip-gap/harness.ts \
             --arm floor \
-            --arm old-json=../arms/pr-head \
             --arm old-value=../arms/pr-head@value \
-            --arm new-json=. \
             --arm new-value=.@value \
+            --arm old-value-again=../arms/pr-head@value \
             --arm new-value-again=.@value \
             --rounds 6 --seconds 8 --warm 2 --conns 256 \
             --out gzip-gap.json

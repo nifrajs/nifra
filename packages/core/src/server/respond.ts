@@ -379,6 +379,8 @@ export function normalizeBodylessResponse(response: Response, request?: Request)
 type TaggedResponseMarker = {
   readonly body: string | Uint8Array
   readonly owner?: object
+  /** Built by the owner's render-time body hook, which is the first response hook and has run. */
+  readonly rendered?: true
 }
 
 /** What an app's body-tier hooks tag their payloads with: the owner a framework body is attributed to,
@@ -501,9 +503,15 @@ export function markTaggedResponse(
   response: Response,
   body: string | Uint8Array,
   owner?: object,
+  rendered = false,
 ): Response {
   Object.defineProperty(response, RESPONSE_BODY, {
-    value: owner === undefined ? body : ({ body, owner } satisfies TaggedResponseMarker),
+    value:
+      owner === undefined
+        ? body
+        : rendered
+          ? ({ body, owner, rendered: true } satisfies TaggedResponseMarker)
+          : ({ body, owner } satisfies TaggedResponseMarker),
   })
   return response
 }
@@ -513,6 +521,7 @@ export function tagged(
   body: string | Uint8Array,
   tagResponseBody: ResponseBodyTagOption,
   unstamped = false,
+  rendered = false,
 ): Response {
   withBody(response, unstamped)
   return tagResponseBody === false || tagResponseBody === undefined
@@ -521,7 +530,22 @@ export function tagged(
         response,
         body,
         typeof tagResponseBody === "object" ? tagResponseBody : undefined,
+        rendered,
       )
+}
+
+/** Whether `owner`'s render-time body hook built `response`, so the hook pass can start after it. */
+export function renderedFor(response: Response, owner: object | undefined): boolean {
+  const marker: unknown = Reflect.get(response, RESPONSE_BODY)
+  return (
+    owner !== undefined &&
+    typeof marker === "object" &&
+    marker !== null &&
+    "rendered" in marker &&
+    marker.rendered === true &&
+    "owner" in marker &&
+    marker.owner === owner
+  )
 }
 
 /** A plain 200 JSON response. On Bun and Deno the native `Response.json` beats a hand-inlined

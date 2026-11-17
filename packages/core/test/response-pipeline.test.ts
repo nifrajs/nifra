@@ -475,13 +475,43 @@ describe("render-time body hook", () => {
     expect(built).toBe(1)
   })
 
-  test("the body hook still runs on the rendered response and finds nothing to do", async () => {
+  test("the pass starts after the body hook on a response it rendered", async () => {
     const { calls, middleware } = observer()
     const app = server()
       .use(middleware)
       .get("/", () => ({ n: 1 }))
     const res = await app.fetch(new Request("http://x/"))
-    expect(calls.hook).toBe(1)
+    expect(calls.hook).toBe(0)
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+
+  test("hooks after the body hook still run on a rendered response", async () => {
+    const { calls, middleware } = observer()
+    const app = server()
+      .use(middleware)
+      .use(responseObserver())
+      .onResponseHeaders((headers) => headers.set("x-after", "1"))
+      .get("/", () => ({ n: 1 }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(calls.render).toBe(1)
+    expect(calls.hook).toBe(0)
+    expect(res.headers.get("x-after")).toBe("1")
+    expect(await res.text()).toBe('enc:{"n":1}')
+  })
+
+  test("a rendered response another app handed back is not taken for this app's own", async () => {
+    const inner = observer()
+    const outer = observer()
+    const innerApp = server()
+      .use(inner.middleware)
+      .get("/", () => ({ n: 1 }))
+    const outerApp = server()
+      .use(outer.middleware)
+      .get("/", () => innerApp.fetch(new Request("http://x/")))
+    const res = await outerApp.fetch(new Request("http://x/"))
+    expect(inner.calls.render).toBe(1)
+    // The outer app's hook pass runs from its first hook and leaves a foreign body alone.
+    expect(outer.calls.hook).toBe(0)
     expect(await res.text()).toBe('enc:{"n":1}')
   })
 

@@ -144,6 +144,7 @@ import {
   handedBackResponse,
   type ResponseBodyOwner,
   recordResidentTexts,
+  renderedFor,
   toResponse,
   writableResponse,
 } from "./respond.ts"
@@ -7017,8 +7018,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const hooks = this.onResponseHooks
     // Hooks write onto the response they are handed (cookies, CORS, request ids), so every response
     // entering the chain - and any other one a hook hands back - is first made this request's own.
+    // The render-time body hook, the first of them, has already run on a response it built.
+    const first =
+      this.renderBodyAnchor !== undefined && renderedFor(response, this.responseBodyTag) ? 1 : 0
     let current = writableResponse(response, req)
-    for (let i = 0; i < hooks.length; i++) {
+    for (let i = first; i < hooks.length; i++) {
       const next = (hooks[i] as RawOnResponse)(current, req)
       if (next instanceof Promise) {
         const handed = current

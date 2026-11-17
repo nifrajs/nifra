@@ -113,7 +113,15 @@ function renderThrough(render: RenderBodyHook): RenderJson {
     const payload = bytes ?? body
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a Uint8Array is a valid BodyInit; only the lib's ArrayBufferLike variance rejects it.
     const init = payload as ConstructorParameters<typeof Response>[0]
-    return tagged(new Response(init, { status, headers: record }), payload, owner, unstamped)
+    // Rendered only when the hook produced the final bytes: one that merely touched the headers
+    // (a `Vary` on a reply it left whole) still has its body hook to run.
+    return tagged(
+      new Response(init, { status, headers: record }),
+      payload,
+      owner,
+      unstamped,
+      bytes !== undefined,
+    )
   }
 }
 
