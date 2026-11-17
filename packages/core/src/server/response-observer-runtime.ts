@@ -38,6 +38,8 @@ export interface ResponseObserverHost {
   ): void
   enableResponseBodyTagging(): object
   responseBodyOwners(): ReadonlySet<object>
+  /** A render-time body hook threw: report it. The reply falls back to `onResponseBody`. */
+  renderFailed(error: unknown, request: Request): void
 }
 
 export interface ResponseObserverMethods {
@@ -99,8 +101,20 @@ class RenderHeaders implements RenderHeadersView {
  * here, where the body tier builds the rendered response and then a replacement for it. `undefined`
  * when the hook left both the body and the headers alone.
  */
-function renderThrough(render: RenderBodyHook): RenderJson {
+/** Replies sent straight to `onResponseBody` after a render failure before the fast path is tried
+ * again. High enough that a hook that keeps failing costs one throw and one log line per 100,000
+ * replies, low enough that a one-off failure (memory pressure) does not outlive the traffic burst. */
+export const RENDER_RETRY_AFTER = 100_000
+
+function renderThrough(render: RenderBodyHook, host: ResponseObserverHost): RenderJson {
+  // Replies still to hand to `onResponseBody` before the next try, so a failing hook does not throw
+  // and log on every request.
+  let skip = 0
   return (body, status, request, unstamped, owner) => {
+    if (skip > 0) {
+      skip--
+      return undefined
+    }
     const record: Record<string, string> = { "content-type": JSON_CONTENT_TYPE }
     const headers = new RenderHeaders(record)
     let bytes: Uint8Array | undefined
@@ -111,9 +125,11 @@ function renderThrough(render: RenderBodyHook): RenderJson {
         { method: request.method, url: request.url, header: (name) => request.headers.get(name) },
         status,
       )
-    } catch {
+    } catch (error) {
       // The lane's own catch would answer a bare 500 that finalization never hears about. Declining
       // hands the reply to `onResponseBody`, which fails through the response pipeline as it always has.
+      skip = RENDER_RETRY_AFTER
+      host.renderFailed(error, request)
       return undefined
     }
     if (bytes === undefined && !headers.touched) return undefined
@@ -189,7 +205,7 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
               return undefined
             },
             false,
-            render === undefined ? undefined : renderThrough(render),
+            render === undefined ? undefined : renderThrough(render, host),
           )
           return this
         },

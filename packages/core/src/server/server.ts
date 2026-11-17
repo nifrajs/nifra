@@ -3096,6 +3096,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       },
       enableResponseBodyTagging: () => this.enableResponseBodyTagging(),
       responseBodyOwners: () => this.responseBodyOwners,
+      renderFailed: (error, request) =>
+        emitRequestErrorLog(
+          this.logger,
+          this.errorLogDetail,
+          error,
+          { req: request },
+          "render-time body hook failed; replies fall back to onResponseBody",
+        ),
     })
     Object.assign(this, methods)
     return methods

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { type Middleware, server, silentLogger } from "../src/index.ts"
 import { responseObserver, withResponseObserver } from "../src/response-observer.ts"
 import { taggedResponseBody } from "../src/server/respond.ts"
+import { RENDER_RETRY_AFTER } from "../src/server/response-observer-runtime.ts"
 import { RESPONSE_RESULT } from "../src/server/runtime-core.ts"
 
 /** Return a copy of `res` with an `x-app` header - onResponse can't mutate in place. */
@@ -517,8 +518,17 @@ describe("render-time body hook", () => {
 
   test("a throwing render hook fails through the response pipeline like the body hook", async () => {
     const finalized: unknown[] = []
+    const logged: string[] = []
+    const logger = {
+      debug() {},
+      info() {},
+      warn() {},
+      error(message: string) {
+        logged.push(message)
+      },
+    }
     const failing = (render: boolean) =>
-      server()
+      server({ logger })
         .use(
           withResponseObserver<Middleware>({
             onResponseBody() {
@@ -545,6 +555,43 @@ describe("render-time body hook", () => {
     }
     expect(await outcome(true)).toEqual(await outcome(false))
     expect((await outcome(true)).rejected).toBe("boom")
+  })
+
+  test("a throwing render hook is logged, left alone for a while, then tried again", async () => {
+    const logged: string[] = []
+    let renders = 0
+    const logger = {
+      debug() {},
+      info() {},
+      warn() {},
+      error(message: string) {
+        logged.push(message)
+      },
+    }
+    const app = server({ logger })
+      .use(
+        withResponseObserver<Middleware>({
+          onResponseBody: (body) => encoder.encode(`hook:${body}`),
+          renderBody() {
+            renders++
+            throw new Error("boom")
+          },
+        }),
+      )
+      .get("/", () => ({ n: 1 }))
+    const reply = async () => {
+      const res = await app.fetch(new Request("http://x/"))
+      expect(await res.text()).toBe('hook:{"n":1}')
+    }
+    await reply()
+    // The failing reply was the first; this many more take the body hook without trying the render.
+    const request = new Request("http://x/")
+    for (let i = 0; i < RENDER_RETRY_AFTER; i++) await app.fetch(request.clone())
+    expect(renders).toBe(1)
+    expect(logged).toHaveLength(1)
+    await reply()
+    expect(renders).toBe(2)
+    expect(logged).toHaveLength(2)
   })
 
   test("the status a handler set is kept", async () => {
