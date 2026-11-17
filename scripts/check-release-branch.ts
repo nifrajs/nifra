@@ -7,7 +7,10 @@ import {
   changedPublicPackageVersions,
   isReleaseBranch,
   type PackageManifest,
+  packagesMissingFromRegistry,
   pendingChangesetFiles,
+  publicPackagesForRegistryCheck,
+  registryHasPackage,
   releaseCheckBaseRef,
 } from "./release-branch.ts"
 
@@ -81,15 +84,19 @@ const packagePaths = changedPaths.filter(
 
 const baseManifests: PackageManifest[] = []
 const releaseManifests: PackageManifest[] = []
+const registryManifests: PackageManifest[] = []
 for (const path of packagePaths) {
   const releaseManifest = readCurrentManifest(path)
+  if (releaseManifest === undefined) continue
+  registryManifests.push(releaseManifest)
   const baseManifest = readManifest(base, path)
-  if (releaseManifest === undefined || baseManifest === undefined) continue
+  if (baseManifest === undefined) continue
   baseManifests.push(baseManifest)
   releaseManifests.push(releaseManifest)
 }
 
 const changedVersions = changedPublicPackageVersions(baseManifests, releaseManifests)
+const registryPackages = publicPackagesForRegistryCheck(baseManifests, registryManifests)
 if (changedVersions.length === 0)
   throw new Error(
     "release:check found no public package version change; run `bun run release:prepare` before opening the release PR",
@@ -100,6 +107,17 @@ if (changesets.length > 0)
   throw new Error(
     `release:check found unconsumed changesets (${changesets.join(", ")}); run \`bun run release:prepare\` first`,
   )
+
+// A pull request is where a missing package can still be fixed before the merge publishes.
+if (!isMergeCheck) {
+  const missing = await packagesMissingFromRegistry(registryPackages, (name) =>
+    registryHasPackage(name, fetch),
+  )
+  if (missing.length > 0)
+    throw new Error(
+      `release:check found public packages npm has never seen: ${missing.join(", ")}.\nTrusted publishing cannot create a package, so the publish would fail with E404. Publish a placeholder by hand and add the trust first (CONTRIBUTING.md, "A new package").`,
+    )
+}
 
 console.log(`Validated ${changedVersions.length} public package version change(s):`)
 for (const change of changedVersions)
