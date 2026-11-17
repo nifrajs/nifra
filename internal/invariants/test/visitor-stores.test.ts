@@ -1510,7 +1510,7 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "waiters@whenReady": LISTENERS,
   },
   "packages/web/src/server-components/html-scan.ts": {
-    "names@scanStartTag": "per-tag attribute names, discarded before scanStartTag returns",
+    "names@scanStartTag": ONE_CALL,
   },
   "packages/web/src/server-components/portal.ts": {
     cleanups: "portal cleanups, weakly keyed by the owner element",

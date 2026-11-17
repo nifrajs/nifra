@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test"
+import { expect, test } from "bun:test"
 import { Tokenizer } from "parse5"
 import { createElement, Fragment, type ReactNode, Suspense } from "react"
 import { validateComponentHTML } from "../src/server-components/html.ts"
@@ -237,31 +237,54 @@ test("the scan reads renderer output, so the validator's common case skips the t
     expect(scanComponentHTML(html)).toBeDefined()
 })
 
-test("unique attributes do not require a search of every earlier attribute", () => {
-  const count = 4000
-  const html = `<div ${Array.from({ length: count }, (_, index) => `data-k${index}="x"`).join(" ")}></div>`
-  const originalSome = Array.prototype.some
-  let comparisons = 0
-  let tags: ScannedTag[] | undefined
-  // Count search work instead of elapsed time so shared-runner timing cannot mask the regression.
-  const search = spyOn(Array.prototype, "some").mockImplementation(function (
-    this: unknown[],
-    predicate,
-    thisArg,
-  ) {
-    return originalSome.call(this, (value, index, array) => {
-      comparisons++
-      return predicate.call(thisArg, value, index, array)
+// Elements an array search visits, over every method that can search one. A search that grows with
+// the attributes already read makes the total grow with the square of the attribute count.
+function arraySearchVisits(run: () => void): number {
+  const methods = [
+    "some",
+    "every",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "includes",
+    "indexOf",
+    "lastIndexOf",
+    "filter",
+  ]
+  let visits = 0
+  const originals = methods.map((method) => Reflect.get(Array.prototype, method))
+  for (const [index, method] of methods.entries()) {
+    const original = originals[index]
+    Reflect.set(Array.prototype, method, function (this: unknown[], ...args: unknown[]) {
+      visits += this.length
+      return Reflect.apply(original, this, args)
     })
-  })
-  try {
-    tags = scanComponentHTML(html)
-  } finally {
-    search.mockRestore()
   }
-  expect(tags?.[0]?.attrs).toHaveLength(count)
-  expect(comparisons).toBeLessThanOrEqual(count * 2)
-  expect(() => validateComponentHTML(html)).not.toThrow()
+  try {
+    run()
+  } finally {
+    for (const [index, method] of methods.entries()) {
+      Reflect.set(Array.prototype, method, originals[index])
+    }
+  }
+  return visits
+}
+
+const manyAttributes = (count: number): string =>
+  `<div ${Array.from({ length: count }, (_, index) => `data-k${index}="x"`).join(" ")}></div>`
+
+test("the work to check attribute names does not grow with the square of the attribute count", () => {
+  let tags: ScannedTag[] | undefined
+  const small = arraySearchVisits(() => scanComponentHTML(manyAttributes(1000)))
+  const large = arraySearchVisits(() => {
+    tags = scanComponentHTML(manyAttributes(4000))
+  })
+  expect(tags?.[0]?.attrs).toHaveLength(4000)
+  // The scan searches an array only for the first few attributes, so the visits stay put as the count
+  // grows; a search of every earlier attribute is sixteen times as much for four times the attributes.
+  expect(large).toBeLessThanOrEqual(small * 2 + 64)
+  expect(() => validateComponentHTML(manyAttributes(4000))).not.toThrow()
 })
 
 test("attribute names are unique without case, and each tag owns its names", () => {

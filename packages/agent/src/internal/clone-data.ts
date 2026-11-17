@@ -1,6 +1,11 @@
 /** Clone data only when the copy preserves its fields and prototypes without shared memory. */
 export function cloneData<T>(value: T): T {
-  const copy = structuredClone(value)
+  let copy: T
+  try {
+    copy = structuredClone(value)
+  } catch (cause) {
+    throw new TypeError("snapshot: value cannot be cloned", { cause })
+  }
   const pending: [unknown, unknown][] = [[value, copy]]
   const seen = new WeakSet<object>()
   while (pending.length > 0) {

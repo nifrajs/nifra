@@ -66,3 +66,8 @@ test("data snapshot primitives retain their exact values", () => {
   for (const value of [undefined, null, true, "data", 1, -0, Number.NaN, 1n])
     expect(Object.is(cloneData(value), value)).toBe(true)
 })
+
+test("native clone failures use the same TypeError contract as other rejected data", () => {
+  for (const value of [() => {}, { callback: () => {} }, new WeakMap(), Promise.resolve(1)])
+    expect(() => cloneData(value)).toThrow(TypeError)
+})
