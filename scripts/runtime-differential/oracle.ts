@@ -254,6 +254,45 @@ const absoluteFormHostConflict = (request: Case["request"]): boolean => {
   }
 }
 
+/** The two spellings a conflicting request carries: the absolute-form target's authority and Host. */
+const conflictingAuthorities = (request: Case["request"]): readonly string[] => {
+  const target = /^[a-z][a-z\d+.-]*:\/\/([^/?#]+)/i.exec(request.target)?.[1]
+  const host = request.headers.find(([name]) => name.toLowerCase() === "host")?.[1]
+  return [target, host].filter((value): value is string => value !== undefined && value !== "")
+}
+
+/**
+ * `outcome` with each of `authorities` spelled `<authority>` in its body and header values, or
+ * `undefined` when none appears. A page that links to itself spells whichever authority the runtime
+ * picked for the request URL, so lanes that picked differently differ in that spelling alone.
+ */
+function withAuthorityMasked(
+  outcome: Outcome,
+  authorities: readonly string[],
+): Outcome | undefined {
+  if (outcome.kind !== "response") return undefined
+  const mask = (value: string) =>
+    authorities.reduce((text, authority) => text.replaceAll(authority, "<authority>"), value)
+  let changed = false
+  const headers = outcome.headers.map(([name, value]): readonly [string, string] => {
+    const masked = mask(value)
+    if (masked !== value) changed = true
+    return [name, masked]
+  })
+  let body = outcome.body
+  try {
+    const text = utf8.decode(outcome.body)
+    const masked = mask(text)
+    if (masked !== text) {
+      changed = true
+      body = new TextEncoder().encode(masked)
+    }
+  } catch {
+    // Not text: nothing in it names an authority.
+  }
+  return changed ? { ...outcome, headers, body } : undefined
+}
+
 const normalizedDavPath = (target: string): string | undefined => {
   try {
     const resolved = resolveDotSegments(target)
@@ -695,6 +734,9 @@ export function judge(
 
   const compared = new Map<LaneName, Outcome>()
   const normalized = new Map<LaneName, Outcome>()
+  const authorities = absoluteFormHostConflict(testCase.request)
+    ? conflictingAuthorities(testCase.request)
+    : []
   for (const [lane, outcome] of outcomes) {
     let current = outcome
     for (const rule of [
@@ -705,6 +747,13 @@ export function judge(
       if (rewritten !== undefined) {
         current = rewritten
         if (!skip.has(lane)) excusedBy.add(rule.id)
+      }
+    }
+    if (authorities.length > 0) {
+      const masked = withAuthorityMasked(current, authorities)
+      if (masked !== undefined) {
+        current = masked
+        if (!skip.has(lane)) excusedBy.add(AUTHORITY_CONFLICT)
       }
     }
     normalized.set(lane, current)
