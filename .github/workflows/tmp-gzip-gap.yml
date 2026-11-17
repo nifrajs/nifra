@@ -1,0 +1,79 @@
+name: Temporary gzip comparison
+
+# TEMPORARY. Measures a gzipped JSON route on one ubuntu runner for three checkouts of this repo
+# (before the PR, the PR's first commit, the PR head) and a bare Bun.serve, interleaved. It runs when
+# this file or its harness changes on the PR branch, and is removed from the PR before it merges.
+on:
+  push:
+    branches:
+      - perf/bun-gzip-inline-json-resident
+    paths:
+      - ".github/workflows/tmp-gzip-gap.yml"
+      - "bench/tmp-gzip-gap/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-gzip-gap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Gzip comparison
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    env:
+      MAIN_SHA: f96bcc3e439a7e8dcd5a3a196b5d271ec329c87d
+      PR_FIRST_SHA: e24956f9e55a37ff56b1800954bda777303a4376
+      PR_HEAD_SHA: 3393d7d9a362cd536cd706da187050bdafe9bc8d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - name: Install oha 1.16.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/oha" \
+            https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64
+          echo "620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716  $HOME/.local/bin/oha" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/oha"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Check out the three arms
+        run: |
+          mkdir -p ../arms
+          for spec in "main:$MAIN_SHA" "pr-first:$PR_FIRST_SHA" "pr-head:$PR_HEAD_SHA"; do
+            name="${spec%%:*}"
+            sha="${spec#*:}"
+            git worktree add --detach "../arms/$name" "$sha"
+            (cd "../arms/$name" && git log --oneline -1 && bun install --ignore-scripts --frozen-lockfile)
+          done
+      - name: Compare
+        run: |
+          {
+            date -u +%FT%TZ
+            bun --version
+            uname -srm
+            lscpu
+            nproc
+          } | tee gzip-gap-metadata.txt
+          bun run bench/tmp-gzip-gap/harness.ts \
+            --arm floor \
+            --arm main=../arms/main \
+            --arm pr-first=../arms/pr-first \
+            --arm pr-head=../arms/pr-head \
+            --arm pr-head-again=../arms/pr-head \
+            --rounds 5 --seconds 8 --warm 2 --conns 256 \
+            --out gzip-gap.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: gzip-gap
+          path: |
+            gzip-gap.json
+            gzip-gap-metadata.txt
+          if-no-files-found: error
+          retention-days: 14
