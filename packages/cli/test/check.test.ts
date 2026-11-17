@@ -1846,6 +1846,15 @@ describe("scanServerManifestDrift", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("a gitignored manifest is a build output the build regenerates, so it is not drift", async () => {
+    const dir = await manifestApp(["index.tsx"], ["index.tsx", "blog.tsx"])
+    expect(Bun.spawnSync(["git", "init", "-q"], { cwd: dir }).exitCode).toBe(0)
+    expect(await scanServerManifestDrift(dir)).toHaveLength(1)
+    await writeFile(join(dir, ".gitignore"), "server-manifest.ts\n")
+    expect(await scanServerManifestDrift(dir)).toEqual([])
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("a route's backend half is a route file too", async () => {
     const dir = await manifestApp(
       ["index.backend.ts", "index.tsx"],

@@ -25,7 +25,7 @@ build compiles them with `vueBunPlugin` (`@nifrajs/web-vue/plugin`). The fronten
 ## Deploy
 
 The app deploys to the `target` in `nifra.config.ts` (chosen with `bun create nifra --target`, switched
-with `nifra target <t>`). `bun run build` runs `nifra build`, which generates that target's server
+with `nifra target <t>`). `bun run build` runs `nifra check` and `nifra assure`, then `nifra build`, which generates that target's server
 entry from `backend/` and `routes/`, so the app carries no per-runtime entry or build script.
 
 | target | `bun run build` emits | then |

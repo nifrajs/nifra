@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "bun run build.ts",
+    "build": "nifra check && nifra assure && bun run build.ts",
     "dev": "bunx wrangler dev --var NIFRA_ALLOW_MEMORY_RATE_LIMIT:true --var REVALIDATE_SECRET:dev-secret --var ISR_STORE_SECRET:dev-isr-store-secret-not-for-production",
     "dev:bun": "bun run backend/dev-server.ts",
     "check": "nifra check && nifra assure"
