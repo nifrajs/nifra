@@ -3,8 +3,7 @@ import { markTaggedResponse } from "../src/server/respond.ts"
 import { withReplacedBody } from "../src/server/response-hooks.ts"
 
 test("body replacement reuses headers after the old length was removed", async () => {
-  const runtime = globalThis as typeof globalThis & { Headers: typeof Headers }
-  const NativeHeaders = runtime.Headers
+  const NativeHeaders = globalThis.Headers
   let copies = 0
   class CountingHeaders extends NativeHeaders {
     constructor(init?: HeadersInit) {
@@ -12,7 +11,7 @@ test("body replacement reuses headers after the old length was removed", async (
       super(init)
     }
   }
-  runtime.Headers = CountingHeaders
+  globalThis.Headers = CountingHeaders
   try {
     const owner = {}
     const response = markTaggedResponse(
@@ -29,6 +28,6 @@ test("body replacement reuses headers after the old length was removed", async (
     expect(replaced.headers.get("content-length")).toBeNull()
     expect([...new Uint8Array(await replaced.arrayBuffer())]).toEqual([1, 2, 3])
   } finally {
-    runtime.Headers = NativeHeaders
+    globalThis.Headers = NativeHeaders
   }
 })

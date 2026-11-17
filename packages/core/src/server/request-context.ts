@@ -415,7 +415,8 @@ export class RequestContext implements RawContext {
     // With a body-tier hook installed, the text is kept as `c.text` keeps its own: a hook then gets
     // the string, where `Response.json` would leave it only a stream to read back.
     if (reply === undefined && residentTextsOn()) {
-      const text = jsonText(value) as string | undefined
+      // Widened, not asserted: `jsonText` returns nothing for a value with no JSON form.
+      const text: string | undefined = jsonText(value)
       if (text !== undefined) {
         const headers = ownHeaderRecord(i?.headers, responseJsonContentType())
         let built: Response
