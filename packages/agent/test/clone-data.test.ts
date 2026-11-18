@@ -184,3 +184,45 @@ test("views and boxed strings without extra fields are copied", () => {
   expect(copy.view.byteLength).toBe(2)
   expect(String(copy.text)).toBe("data")
 })
+
+test("a view over a buffer is refused when the view or the buffer carries fields the clone would drop", () => {
+  const buffer = Object.assign(new ArrayBuffer(2), { jobId: "a" })
+  expect(() => cloneData(new DataView(buffer))).toThrow(TypeError)
+  expect(() => cloneData({ view: new Uint8Array(buffer) })).toThrow(TypeError)
+})
+
+test("a map or set wearing a plain prototype is refused without running a getter inside it", () => {
+  let reads = 0
+  const entry = {
+    get x() {
+      reads += 1
+      return 1
+    },
+  }
+  const map = Object.setPrototypeOf(new Map([["k", entry]]), Object.prototype)
+  const set = Object.setPrototypeOf(new Set([entry]), Object.prototype)
+  expect(() => cloneData(map)).toThrow(TypeError)
+  expect(() => cloneData(set)).toThrow(TypeError)
+  expect(reads).toBe(0)
+})
+
+test("a large map and set are walked without exhausting the stack", () => {
+  const map = new Map<number, number>()
+  const set = new Set<number>()
+  for (let index = 0; index < 150_000; index += 1) {
+    map.set(index, index)
+    set.add(index)
+  }
+  const copy = cloneData({ map, set })
+  expect(copy.map.size).toBe(150_000)
+  expect(copy.set.size).toBe(150_000)
+})
+
+test("shared memory behind a named field of an array or a view is refused, an ordinary buffer is not", () => {
+  const shared: unknown[] = []
+  Object.assign(shared, { bytes: new Uint8Array(new SharedArrayBuffer(1)) })
+  const plain: unknown[] = []
+  Object.assign(plain, { bytes: new Uint8Array(new ArrayBuffer(1)) })
+  expect(() => cloneData(shared)).toThrow(TypeError)
+  expect(cloneData(plain)).toHaveLength(0)
+})

@@ -36,6 +36,18 @@ const typedArrayBuffer = Reflect.getOwnPropertyDescriptor(typedArray, "buffer")?
 const typedArrayLength = Reflect.getOwnPropertyDescriptor(typedArray, "length")?.get
 const dataViewBuffer = Reflect.getOwnPropertyDescriptor(DataView.prototype, "buffer")?.get
 
+/** The built-in getters that only an object holding the real internal slot can answer. */
+const BRANDS: readonly (() => unknown)[] = [
+  Reflect.getOwnPropertyDescriptor(Map.prototype, "size")?.get,
+  Reflect.getOwnPropertyDescriptor(Set.prototype, "size")?.get,
+  typeof SharedArrayBuffer === "undefined"
+    ? undefined
+    : Reflect.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength")?.get,
+].filter((read) => read !== undefined)
+
+const sharedPrototype =
+  typeof SharedArrayBuffer === "undefined" ? undefined : SharedArrayBuffer.prototype
+
 /** Typed arrays up to this many elements are checked for fields the clone drops; a larger one would
  * list a key per element. */
 const VIEW_FIELD_CHECK_LIMIT = 4096
@@ -56,17 +68,34 @@ function elementCount(view: ArrayBufferView): number | undefined {
   }
 }
 
+/**
+ * Whether `source` is a map, a set or a shared buffer whatever its prototype says: each getter throws
+ * unless the object holds the real internal slot, so a prototype swapped to a plain object's hides
+ * nothing. A thrown error per brand, only for an object that already claims a plain prototype.
+ */
+function wearsBrand(source: object): boolean {
+  for (const read of BRANDS) {
+    try {
+      Reflect.apply(read, source, [])
+      return true
+    } catch {}
+  }
+  return false
+}
+
 /** Whether `key` names one of the code units a boxed string of `length` units holds. */
 function isStringIndex(key: string, length: number): boolean {
   return /^(?:0|[1-9]\d*)$/.test(key) && Number(key) < length
 }
 
 /**
- * Refuse, before anything is cloned, a value a structured clone would change: a prototype other than
- * the built-in one, an accessor, a symbol or non-enumerable field, a field the clone would drop, an
- * `Error`, a regular expression with a position. Property descriptors are read, never values, so no
- * caller code runs between this check and the clone. The elements of a typed array are not visited,
- * and a field on one over {@link VIEW_FIELD_CHECK_LIMIT} elements is dropped without being refused.
+ * Refuse, before anything is cloned, a value a structured clone would change or share: a prototype
+ * other than the built-in one, an accessor, a symbol or non-enumerable field, a field the clone would
+ * drop, an `Error`, a regular expression with a position, shared memory. Property descriptors are
+ * read, never values, so no caller code runs between this check and the clone. The elements of a
+ * typed array are not visited, and a field on one over {@link VIEW_FIELD_CHECK_LIMIT} elements is
+ * dropped without being refused. A date, regular expression, buffer or boxed primitive wearing a plain
+ * prototype is not detected.
  */
 function refuseLossy(root: unknown): void {
   const pending: unknown[] = [root]
@@ -76,17 +105,28 @@ function refuseLossy(root: unknown): void {
     if (source === null || typeof source !== "object" || seen.has(source)) continue
     seen.add(source)
     if (source instanceof Error) throw new TypeError("snapshot: Error instances are not data")
-    if (!CLONED_PROTOTYPES.has(Object.getPrototypeOf(source))) {
+    const prototype = Object.getPrototypeOf(source)
+    if (prototype === sharedPrototype && sharedPrototype !== undefined) {
+      throw new TypeError("snapshot: shared memory cannot be detached")
+    }
+    if (!CLONED_PROTOTYPES.has(prototype)) {
       throw new TypeError("snapshot: custom prototypes cannot be preserved")
     }
     if (ArrayBuffer.isView(source)) {
+      if (prototype === Object.prototype) {
+        throw new TypeError("snapshot: custom prototypes cannot be preserved")
+      }
       const elements = elementCount(source)
       if (elements === undefined || elements <= VIEW_FIELD_CHECK_LIMIT) {
         if (Reflect.ownKeys(source).length !== (elements ?? 0)) {
           throw new TypeError("snapshot: accessors or omitted fields cannot be preserved")
         }
       }
+      pending.push(backingBuffer(source))
       continue
+    }
+    if (prototype === Object.prototype && wearsBrand(source)) {
+      throw new TypeError("snapshot: custom prototypes cannot be preserved")
     }
     if (source instanceof Map) {
       for (const [key, item] of Map.prototype.entries.call(source)) pending.push(key, item)
@@ -94,7 +134,7 @@ function refuseLossy(root: unknown): void {
       for (const item of Set.prototype.values.call(source)) pending.push(item)
     }
     const text = source instanceof String ? String.prototype.valueOf.call(source) : undefined
-    const record = Object.getPrototypeOf(source) === Object.prototype || Array.isArray(source)
+    const record = prototype === Object.prototype || Array.isArray(source)
     // Native cloning drops accessors, symbol fields, non-enumerable fields, and every field of a
     // collection, date, buffer or regular expression. Refuse a lossy copy instead of accepting a
     // payload whose validated behavior has changed.
@@ -114,40 +154,12 @@ function refuseLossy(root: unknown): void {
   }
 }
 
-/**
- * Refuse a copy that still shares memory with its source. The copy is searched, not the source: a
- * clone rebuilds every object with its built-in prototype, so `instanceof` cannot be fooled the way
- * it can by a source whose shared buffer had its prototype swapped for a plain object's.
- */
-function refuseShared(copy: unknown): void {
-  if (typeof SharedArrayBuffer === "undefined") return
-  const pending: unknown[] = [copy]
-  const seen = new WeakSet<object>()
-  while (pending.length > 0) {
-    const value = pending.pop()
-    if (value === null || typeof value !== "object" || seen.has(value)) continue
-    seen.add(value)
-    if (value instanceof SharedArrayBuffer) {
-      throw new TypeError("snapshot: shared memory cannot be detached")
-    }
-    if (ArrayBuffer.isView(value)) pending.push(backingBuffer(value))
-    else if (value instanceof Map) pending.push(...value.keys(), ...value.values())
-    else if (value instanceof Set) pending.push(...value)
-    else if (Array.isArray(value)) {
-      for (let index = 0; index < value.length; index++) pending.push(value[index])
-    } else pending.push(...Object.values(value))
-  }
-}
-
 /** Clone data only when the copy preserves its fields and prototypes without shared memory. */
 export function cloneData<T>(value: T): T {
   refuseLossy(value)
-  let copy: T
   try {
-    copy = structuredClone(value)
+    return structuredClone(value)
   } catch (cause) {
     throw new TypeError("snapshot: value cannot be cloned", { cause })
   }
-  refuseShared(copy)
-  return copy
 }
