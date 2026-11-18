@@ -10,6 +10,8 @@ const dir = import.meta.dir
 const client = await buildClient({
   routesDir: `${dir}/routes`,
   outDir: `${dir}/public/assets`,
+  // The example has no hand-authored statics, so the default `./public` (relative to cwd) must not claim the output.
+  publicDir: false,
   clientModule: "@nifrajs/web-solid/client",
   plugins: [solidBunPlugin("dom")],
   conditions: ["bun", "browser"],
