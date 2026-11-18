@@ -18,6 +18,9 @@ test("a patch release may keep the benchmark numbers of its minor, and nothing o
   expect(benchmarkVersionIsCurrent("5.15.2", "5.15.1")).toBe(false)
   expect(benchmarkVersionIsCurrent(undefined, "5.15.1")).toBe(false)
   expect(benchmarkVersionIsCurrent("5.15", "5.15.1")).toBe(false)
+  expect(benchmarkVersionIsCurrent("5.15.00", "5.15.1")).toBe(false)
+  expect(benchmarkVersionIsCurrent("05.15.0", "5.15.1")).toBe(false)
+  expect(benchmarkVersionIsCurrent("5.15.0", "5.15.1")).toBe(true)
 })
 
 test("a minor or major release needs numbers captured at its own version", () => {

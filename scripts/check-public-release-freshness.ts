@@ -19,7 +19,7 @@ function tableRows(value: unknown): VersionedRow[] {
     : []
 }
 
-const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 
 /**
  * Whether benchmark data labelled `version` is current for a release of `expected`. A minor or major
