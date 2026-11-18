@@ -81,7 +81,7 @@ test("errors are refused even without optional runtime source metadata", () => {
     expect(() => cloneData(value)).toThrow(TypeError)
 })
 
-test("an accessor is refused without running it, so it cannot hide shared memory from the check, and one on a view is never run", () => {
+test("an accessor is refused without running it, so it cannot hide shared memory from the check, and neither is one on a view", () => {
   const shared = new SharedArrayBuffer(4)
   let reads = 0
   const hiding = {
@@ -99,8 +99,7 @@ test("an accessor is refused without running it, so it cannot hide shared memory
       return new ArrayBuffer(1)
     },
   })
-  // A getter on a view is never run: the clone reads the view's internal slots, and so does the check.
-  expect(cloneData({ viaView }).viaView).toHaveLength(1)
+  expect(() => cloneData({ viaView })).toThrow(TypeError)
   expect(reads).toBe(0)
 })
 
@@ -150,4 +149,38 @@ test("prototypes a clone would replace are refused, including those of binary vi
 test("a regular expression is accepted when its position is the start", () => {
   const expression = /data/g
   expect(cloneData(expression)).toEqual(expression)
+})
+
+test("shared memory is found whatever prototype its buffer or view was given", () => {
+  const spoofedBuffer = new SharedArrayBuffer(4)
+  Object.setPrototypeOf(spoofedBuffer, Object.prototype)
+  const spoofedView = new Uint8Array(new SharedArrayBuffer(4))
+  Object.setPrototypeOf(spoofedView, Object.prototype)
+  for (const value of [
+    spoofedBuffer,
+    { held: spoofedBuffer },
+    spoofedView,
+    new Set([spoofedBuffer]),
+    new Map([[spoofedBuffer, 1]]),
+  ])
+    expect(() => cloneData(value)).toThrow(TypeError)
+})
+
+test("fields on a binary view or a boxed string are refused, since the clone would drop them", () => {
+  const bytes = Object.assign(new Uint8Array(1), { jobId: "a" })
+  const view = Object.assign(new DataView(new ArrayBuffer(1)), { jobId: "a" })
+  const text = Object.assign(new String("data"), { jobId: "a" })
+  for (const value of [bytes, view, text, { bytes }, new Set([text])])
+    expect(() => cloneData(value)).toThrow(TypeError)
+})
+
+test("views and boxed strings without extra fields are copied", () => {
+  const bytes = new Uint8Array([1, 2, 3])
+  const view = new DataView(new ArrayBuffer(2))
+  const text = new String("data")
+  const copy = cloneData({ bytes, view, text })
+  expect(copy.bytes).toEqual(bytes)
+  expect(copy.bytes).not.toBe(bytes)
+  expect(copy.view.byteLength).toBe(2)
+  expect(String(copy.text)).toBe("data")
 })
