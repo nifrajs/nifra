@@ -708,6 +708,30 @@ describe("render-time body hook", () => {
     expect(seen).toEqual([null, Response.json(1).headers.get("content-type")])
   })
 
+  test("invalid render headers fall back with the original response headers", async () => {
+    const app = server()
+      .use(
+        withResponseObserver<Middleware>({
+          onResponseBody(_body, headers) {
+            headers.set("x-fallback", "ran")
+            return undefined
+          },
+          renderBody(_body, headers) {
+            headers.set("x-draft", "discard")
+            headers.set("invalid header name", "invalid")
+            return encoder.encode("draft")
+          },
+        }),
+      )
+      .get("/", () => ({ n: 1 }))
+
+    const response = await app.fetch(new Request("http://x/"))
+    expect(response.status).toBe(200)
+    expect(response.headers.get("x-fallback")).toBe("ran")
+    expect(response.headers.has("x-draft")).toBe(false)
+    expect(await response.json()).toEqual({ n: 1 })
+  })
+
   test("a fast path with no body hook is refused at registration", () => {
     expect(() =>
       server().use(withResponseObserver<Middleware>({ renderBody: () => undefined })),

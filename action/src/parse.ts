@@ -134,10 +134,19 @@ export function analyze(
   failOn: FailOn,
   prefix: string | null = "",
 ): Analysis {
-  const exit = /^\d+$/.test(exitText.trim()) ? Number(exitText.trim()) : 1
+  const exit = /^\d+$/.test(exitText.trim()) ? Number(exitText.trim()) : -1
   const payload = firstObject(raw)
 
-  if (!isRecord(payload) || typeof payload.ok !== "boolean") {
+  if (
+    !isRecord(payload) ||
+    typeof payload.ok !== "boolean" ||
+    (!Array.isArray(payload.diagnostics) &&
+      !(
+        payload.ok === false &&
+        payload.diagnostics === undefined &&
+        typeof payload.error === "string"
+      ))
+  ) {
     return {
       ok: false,
       exit,
@@ -170,8 +179,12 @@ export function analyze(
 
   // Exit 0 = pass, 1 = findings. Anything else, or an error document, means the CLI itself failed;
   // that never passes, whatever `fail-on` says.
-  const unexpectedFailure = (exit !== 0 && exit !== 1) || hardFailure
-  const ok = payload.ok === true
+  const unexpectedFailure =
+    hardFailure ||
+    exit !== (payload.ok ? 0 : 1) ||
+    findings.length !== source.length ||
+    (payload.ok && errors > 0)
+  const ok = payload.ok && !unexpectedFailure
   const failed =
     unexpectedFailure ||
     (failOn === "never" ? false : failOn === "warning" ? errors + warnings > 0 || !ok : !ok)

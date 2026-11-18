@@ -341,6 +341,23 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     return typeof first === "string" ? index.get(first) : undefined
   }
 
+  const trimEntries = (
+    entries: Map<
+      string,
+      { readonly keyParts: KeyPartHashes | undefined; readonly subscribers: number }
+    >,
+    index: Map<string, Set<string>>,
+  ): void => {
+    if (entries.size <= max) return
+    for (const [hash, entry] of entries) {
+      if (entries.size <= max) break
+      if (entry.subscribers === 0) {
+        removeFromIndex(index, entry.keyParts, hash)
+        entries.delete(hash) // oldest-inserted unsubscribed first (Map order)
+      }
+    }
+  }
+
   // Lazily evict entries whose GC timer has elapsed (no subscribers), then enforce the hard cap by
   // dropping the oldest-inserted unsubscribed entries. Runs from `query()` when `sweepDue()` - no
   // background timer. Returns the earliest GC time still pending, for `sweepAt`.
@@ -364,14 +381,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         entries.delete(h)
       } else if (e.gcAt < next) next = e.gcAt
     }
-    if (entries.size <= max) return next
-    for (const [h, e] of entries) {
-      if (entries.size <= max) break
-      if (e.subscribers === 0) {
-        removeFromIndex(index, e.keyParts, h)
-        entries.delete(h) // oldest-inserted unsubscribed first (Map order)
-      }
-    }
+    trimEntries(entries, index)
     return next
   }
   // The earliest time a GC timer can have elapsed. A read walks the caches only once this has passed,
@@ -643,6 +653,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       undefined,
       h,
     )
+    if (existing === undefined) trimEntries(cache, cacheIndex)
     const prev = entry.state.status === "success" ? (entry.state.data as T) : undefined
     const data =
       typeof updater === "function" ? (updater as (p: T | undefined) => T)(prev) : updater
@@ -730,6 +741,13 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       const existing = infinite.get(h)
       if (existing === undefined) seeded.set(h, q)
       else existing.seed(q.data, q.updatedAt)
+    }
+    trimEntries(cache, cacheIndex)
+    if (seeded.size > max) {
+      for (const hash of seeded.keys()) {
+        if (seeded.size <= max) break
+        seeded.delete(hash)
+      }
     }
   }
 

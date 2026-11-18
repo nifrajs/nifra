@@ -414,11 +414,11 @@ describe("reading a cached query on every render", () => {
     client.query(["live"], async () => 1)
     expect(client.getQueryData(["expiring"])).toBeUndefined()
 
-    // Entries made by writes are never swept until a read finds the cache over its cap.
+    // Imperative writes enforce the cap without a subsequent query() call.
     for (const id of ["a", "b", "c", "d", "e"]) client.setQueryData([id], id)
-    client.query(["live"], async () => 1)
     const kept = ["a", "b", "c", "d", "e"].filter((id) => client.getQueryData([id]) !== undefined)
-    expect(kept.length + 1).toBeLessThanOrEqual(3)
+    expect(kept).toEqual(["d", "e"])
+    expect(client.query(["live"], async () => 1)).toBe(live)
   })
 
   test("a timer a resubscribe cancelled costs one extra walk, not a missed one", () => {

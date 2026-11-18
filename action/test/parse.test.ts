@@ -124,6 +124,19 @@ describe("analyze", () => {
     expect(result.parseError).toBeTruthy()
   })
 
+  test("fails closed on an incomplete or inconsistent CLI report", () => {
+    for (const [payload, exit] of [
+      [{ ok: true }, "0"],
+      [{ ok: true, diagnostics: [] }, "1"],
+      [{ ok: false, diagnostics: [] }, "0"],
+      [{ ok: true, diagnostics: [{ severity: "error", message: "failed" }] }, "0"],
+      [{ ok: true, diagnostics: [{ severity: "error" }] }, "0"],
+      [{ ok: false, diagnostics: [] }, "bad"],
+    ] as const) {
+      expect(analyze(JSON.stringify(payload), exit, "never").failed).toBe(true)
+    }
+  })
+
   test("tolerates a preamble before the JSON document", () => {
     const result = analyze(
       `warning from a loader\n${JSON.stringify({ ok: true, diagnostics: [] })}`,

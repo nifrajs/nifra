@@ -310,7 +310,14 @@ export function cache(options: CacheOptions): Middleware {
         String(age + Math.max(0, Math.floor((Date.now() - entry.storedAt) / 1000))),
       )
       if (cacheStatusHeader !== false) headers.set(cacheStatusHeader, "HIT")
-      return new Response(req.method === "HEAD" ? null : entry.body.slice(), {
+      const body =
+        req.method === "HEAD" ||
+        entry.status === 204 ||
+        entry.status === 205 ||
+        entry.status === 304
+          ? null
+          : entry.body.slice()
+      return new Response(body, {
         status: entry.status,
         statusText: entry.statusText,
         headers,
