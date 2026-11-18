@@ -112,6 +112,20 @@ describe("MemoryJobStore", () => {
     }
   })
 
+  test("a boxed string is stored with its characters, and refused with a field a copy would drop", () => {
+    const store = seqStore()
+    store.enqueue({ name: "x", payload: new String("data"), runAt: 0, maxAttempts: 1 })
+    expect(String(store.lease(0, 1, 1000)[0]?.payload)).toBe("data")
+    expect(() =>
+      store.enqueue({
+        name: "x",
+        payload: Object.assign(new String("data"), { jobId: "a" }),
+        runAt: 0,
+        maxAttempts: 1,
+      }),
+    ).toThrow(TypeError)
+  })
+
   test("plain data of every kind that survives a clone intact is stored, cycles included", () => {
     const store = seqStore()
     const cyclic: { self?: unknown; list: number[] } = { list: [1] }
