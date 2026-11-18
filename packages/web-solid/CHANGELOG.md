@@ -1,5 +1,26 @@
 # @nifrajs/web-solid
 
+## 5.15.0
+
+### Minor Changes
+
+- 09882db: `@nifrajs/web-solid` targets Solid 2.0 (`solid-js` and `@solidjs/web` ^2.0.0) and builds with `@solidjs/compiler`, so `babel-preset-solid`, `solid-refresh` and Babel are no longer dependencies. Solid 1.x is not supported. Apps use `@solidjs/vite-plugin` ^3.0.1 for Vite, set `jsxImportSource` to `@solidjs/web`, and drop the `"solid"` resolve condition. Components that used `createResource`, `Suspense`, `ErrorBoundary`, `onMount`, `Dynamic` or `Context.Provider` move to `createMemo` under `Loading`, `Errored`, `onSettled`, `dynamic()` and the context component.
+  
+  `RouteSlotHooks` takes the Solid 2 `createEffect(compute, effect)` shape and no longer has `onCleanup`. Server render errors reach the client as a bare error in production, with no server path.
+  
+  `create-nifra` scaffolds Solid sites on Solid 2.
+
+### Patch Changes
+
+- Updated dependencies [d3d7b35]
+- Updated dependencies [a04a073]
+- Updated dependencies [e24956f]
+- Updated dependencies [5dfb947]
+- Updated dependencies [1d956e6]
+- Updated dependencies [09882db]
+  - @nifrajs/core@5.15.0
+  - @nifrajs/web@5.15.0
+
 ## 5.14.0
 
 ### Patch Changes

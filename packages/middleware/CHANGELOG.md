@@ -1,5 +1,16 @@
 # @nifrajs/middleware
 
+## 5.15.0
+
+### Patch Changes
+
+- d3d7b35: Fall back to the normal body hook if render-time response construction fails. Preserve bodyless statuses when replaying cached responses. Apply the query cache cap to imperative writes and hydration. Require patched Undici peer versions. Honor promoted diagnostic errors in the CLI verdict and clear evicted query handles when the visitor changes.
+- e24956f: `compression()` on Bun for Linux now gzips a buffered body up to 64 KiB inline instead of sending anything over 4 KiB to the thread pool. In Docker on four pinned CPUs a gzipped 8 KB JSON route served 1.2x as many requests from one process and 1.9x as many from four, and the gain held at 17, 33 and 67 KB. Bun on macOS keeps the 4 KiB cut, where the pool measured faster.
+- a110c6c: `compression()` encodes a buffered string body itself before an inline gzip instead of handing zlib the string, which saves zlib a `Buffer` copy on every compressed reply (0.2 to 0.6 us on an 8 KB JSON body, Bun on Linux). The compressed bytes are unchanged.
+- 5dfb947: A response-observer bundle can now offer `renderBody`, a synchronous fast path for its `onResponseBody` hook. When a handler returns a value, the framework runs it on the serialized JSON before any `Response` exists and builds one `Response` from the result, where the body tier built the rendered response and then a replacement for it. It applies only while the hook is the first response hook of the app (or of its group, under the group's prefix), and not on a reply carrying `c.set` headers or cookies, on an app with static response headers, or on an app with the idempotency plugin, whose stored reply must stay the identity one; those keep the body hook. The body hook is not run again over a response it rendered with new bytes, so it must be idempotent on its own output wherever else it sees one. `compression()` uses it: a returned value that gzips inline is answered as one `Response`. `c.json()` keeps its own reply, as a handler can read it back.
+- @nifrajs/schema@5.15.0
+  - @nifrajs/utils@5.15.0
+
 ## 5.14.0
 
 ### Patch Changes

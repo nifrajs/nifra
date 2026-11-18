@@ -1,5 +1,11 @@
 # @nifrajs/content
 
+## 5.15.0
+
+### Patch Changes
+
+- @nifrajs/utils@5.15.0
+
 ## 5.14.0
 
 ### Minor Changes
