@@ -1,5 +1,21 @@
 # @nifrajs/cli
 
+## 5.15.1
+
+### Patch Changes
+
+- @nifrajs/agent-review@5.15.1
+  - @nifrajs/client@5.15.1
+  - @nifrajs/core@5.15.1
+  - @nifrajs/i18n@5.15.1
+  - @nifrajs/mcp@5.15.1
+  - @nifrajs/mcp-db@5.15.1
+  - @nifrajs/runner@5.15.1
+  - @nifrajs/schema@5.15.1
+  - @nifrajs/testing@5.15.1
+  - @nifrajs/utils@5.15.1
+  - @nifrajs/web@5.15.1
+
 ## 5.15.0
 
 ### Patch Changes

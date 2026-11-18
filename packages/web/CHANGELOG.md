@@ -1,5 +1,13 @@
 # @nifrajs/web
 
+## 5.15.1
+
+### Patch Changes
+
+- @nifrajs/core@5.15.1
+  - @nifrajs/island-trigger@5.15.1
+  - @nifrajs/utils@5.15.1
+
 ## 5.15.0
 
 ### Minor Changes

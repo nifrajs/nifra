@@ -1,5 +1,13 @@
 # @nifrajs/e2e
 
+## 5.15.1
+
+### Patch Changes
+
+- @nifrajs/core@5.15.1
+  - @nifrajs/node@5.15.1
+  - @nifrajs/testing@5.15.1
+
 ## 5.15.0
 
 ### Patch Changes
