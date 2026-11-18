@@ -27,21 +27,31 @@
 export const SOLID_HOT_MODULE = "nifra:solid-hot"
 
 const REFRESH_IMPORT = /import \{ \$\$refresh as ([\w$]+) \} from "solid-js\/refresh";?/
-const REFRESH_CALL = /([\w$]+)\("vite", import\.meta\.hot, ([\w$]+)\);?/
+const REFRESH_CALL = /\("vite", import\.meta\.hot, ([\w$]+)\);?/
+const IDENTIFIER_CHAR = /[\w$]/
 const BARE_ACCEPT = /^[ \t]*import\.meta\.hot\.accept\(\);?[ \t]*\n/m
+
+/** The identifier that ends right before `end`, found by walking back so no pattern is retried per position. */
+function identifierBefore(code: string, end: number): string {
+  let start = end
+  while (start > 0 && IDENTIFIER_CHAR.test(code.charAt(start - 1))) start--
+  return code.slice(start, end)
+}
 
 /** `code` with its refresh call rewritten for Bun. */
 export function rewriteRefreshCall(code: string): string {
   const imported = REFRESH_IMPORT.exec(code)
   const call = REFRESH_CALL.exec(code)
-  if (imported === null || call === null || call[1] !== imported[1])
+  const callee = call === null ? "" : identifierBefore(code, call.index)
+  if (imported === null || call === null || callee === "" || callee !== imported[1])
     throw new Error("[nifra/web-solid] the refresh pass emitted a call this build cannot rewrite")
   const local = imported[1]
-  return code
-    .replace(REFRESH_IMPORT, `import { refresh as ${local} } from "${SOLID_HOT_MODULE}";`)
-    .replace(BARE_ACCEPT, "")
+  const callStart = call.index - callee.length
+  return `${code.slice(0, callStart)}${local}(import.meta.url, (cb) => import.meta.hot.accept(cb), ${call[1]});${code.slice(call.index + call[0].length)}`
     .replace(
-      REFRESH_CALL,
-      `${local}(import.meta.url, (cb) => import.meta.hot.accept(cb), ${call[2]});`,
+      REFRESH_IMPORT,
+      // A function, not a string: `$$` in a replacement string collapses to `$`, and the local name carries it.
+      () => `import { refresh as ${local} } from "${SOLID_HOT_MODULE}";`,
     )
+    .replace(BARE_ACCEPT, "")
 }
