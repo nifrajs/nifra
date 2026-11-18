@@ -248,7 +248,7 @@ test("a map or set wearing another allowed prototype is refused without running 
   for (const prototype of [Date.prototype, Array.prototype, Set.prototype, ArrayBuffer.prototype]) {
     const map = Object.setPrototypeOf(new Map([["k", entry]]), prototype)
     const set = Object.setPrototypeOf(new Set([entry]), prototype)
-    if (prototype !== Set.prototype) expect(() => cloneData(map)).toThrow(TypeError)
+    expect(() => cloneData(map)).toThrow(TypeError)
     expect(() => cloneData(set)).toThrow(TypeError)
   }
   expect(reads).toBe(0)
