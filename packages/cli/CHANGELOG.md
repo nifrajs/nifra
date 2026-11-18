@@ -1,5 +1,30 @@
 # @nifrajs/cli
 
+## 5.15.0
+
+### Patch Changes
+
+- d3d7b35: Fall back to the normal body hook if render-time response construction fails. Preserve bodyless statuses when replaying cached responses. Apply the query cache cap to imperative writes and hydration. Require patched Undici peer versions. Honor promoted diagnostic errors in the CLI verdict and clear evicted query handles when the visitor changes.
+- e557846: `nifra check` no longer reports server-manifest drift for a manifest git ignores. Such a file is a build output the build regenerates, so flagging it blocked the build that would have fixed it (the ISR template runs `nifra check` before its build).
+- 51b7afd: `nifra frontend solid` guidance describes Solid 2.0: `omit` and `merge` replace `splitProps` and `mergeProps`, `<For keyed={false}>` replaces `<Index>`, and `createEffect` takes a compute half and an effect half whose return value is the cleanup.
+- Updated dependencies [d3d7b35]
+- Updated dependencies [a04a073]
+- Updated dependencies [e24956f]
+- Updated dependencies [5dfb947]
+- Updated dependencies [1d956e6]
+- Updated dependencies [09882db]
+  - @nifrajs/core@5.15.0
+  - @nifrajs/web@5.15.0
+  - @nifrajs/client@5.15.0
+  - @nifrajs/i18n@5.15.0
+  - @nifrajs/mcp@5.15.0
+  - @nifrajs/schema@5.15.0
+  - @nifrajs/testing@5.15.0
+  - @nifrajs/agent-review@5.15.0
+  - @nifrajs/mcp-db@5.15.0
+  - @nifrajs/runner@5.15.0
+  - @nifrajs/utils@5.15.0
+
 ## 5.14.0
 
 ### Patch Changes

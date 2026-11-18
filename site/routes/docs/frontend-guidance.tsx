@@ -51,8 +51,8 @@ export default function FrontendGuidance() {
           state identity, compat boundaries, and runtime duplication.
         </li>
         <li>
-          <strong>Solid:</strong> tracked reads, props and stores, <code>For</code> versus{" "}
-          <code>Index</code>, and owner cleanup.
+          <strong>Solid:</strong> tracked reads, props and stores, <code>For</code> keyed versus{" "}
+          unkeyed, and owner cleanup.
         </li>
         <li>
           <strong>Vue:</strong> refs in script, watch sources and traversal, reactive props, and SSR

@@ -1,5 +1,11 @@
 # @nifrajs/proxy
 
+## 5.15.0
+
+### Patch Changes
+
+- d3d7b35: Fall back to the normal body hook if render-time response construction fails. Preserve bodyless statuses when replaying cached responses. Apply the query cache cap to imperative writes and hydration. Require patched Undici peer versions. Honor promoted diagnostic errors in the CLI verdict and clear evicted query handles when the visitor changes.
+
 ## 5.14.0
 
 ### Patch Changes

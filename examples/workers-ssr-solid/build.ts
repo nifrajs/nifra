@@ -1,6 +1,6 @@
 // Build for the disk-less edge (Solid): buildClient → public/assets (Solid `dom` transform), then
 // buildServer → dist-server/worker.js (Solid `ssr` transform; buildServer's shim points
-// `solid-js/web` at its SERVER runtime). `wrangler.toml`'s `main` points at the worker.
+// `solid-js` and `@solidjs/web` at their SERVER runtime). `wrangler.toml`'s `main` points at the worker.
 //   bun run examples/workers-ssr-solid/build.ts && (cd examples/workers-ssr-solid && bunx wrangler dev)
 import { buildClient, buildServer } from "@nifrajs/web/build"
 import { solidBunPlugin } from "@nifrajs/web-solid/plugin"

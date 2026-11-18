@@ -1,5 +1,19 @@
 # @nifrajs/agent
 
+## 5.15.0
+
+### Patch Changes
+
+- a04a073: Detach shared-state patch values and subscriber batches so callers and observers cannot mutate live state without a new patch. Each observer receives its own copy of a batch. Reject values that cannot be faithfully cloned, including shared memory and custom prototypes, before committing a batch.
+  
+  Keep server-component HTML scanning linear when a tag has many attributes while retaining case-insensitive duplicate detection.
+- Updated dependencies [d3d7b35]
+- Updated dependencies [e24956f]
+- Updated dependencies [5dfb947]
+- Updated dependencies [1d956e6]
+  - @nifrajs/core@5.15.0
+  - @nifrajs/utils@5.15.0
+
 ## 5.14.0
 
 ### Patch Changes

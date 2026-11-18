@@ -10,7 +10,7 @@
  * prerendered here at build time and emitted as a generated module the static route reads. The request-
  * time worker (`_worker.ts`) stays React-only - it never loads five framework runtimes.
  *
- * Build-isolation rule (the load-bearing constraint): Solid's Babel plugin and Svelte's compiler plugin
+ * Build-isolation rule (the load-bearing constraint): Solid's compiler plugin and Svelte's compiler plugin
  * each match a broad file filter (`.tsx` / `.svelte`) and WOULD transform the React/Preact `.tsx` if they
  * shared a `Bun.build`. Plugins do not leak across separate `Bun.build` calls, so every framework gets its
  * OWN isolated build with exactly its plugin. The Vue/Solid/Svelte SSR renderers are likewise prebuilt

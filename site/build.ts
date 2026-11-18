@@ -28,7 +28,7 @@ mkdirSync(`${dist}/assets`, { recursive: true })
 // fragments + five real client hydration bundles (dist/assets/fw-*.client.js), and measure each bundle's
 // gzip size. Runs BEFORE the React client/server builds because the /frameworks route imports the JSON
 // artifact this writes (shared/data/frameworks-demo.json). Each framework is its own isolated Bun.build, so
-// Solid's Babel plugin / Svelte's compiler don't leak onto the React/Preact .tsx - see build-frameworks.ts.
+// Solid's compiler plugin / Svelte's compiler don't leak onto the React/Preact .tsx - see build-frameworks.ts.
 await writeFrameworksArtifact({ outDir: `${dist}/assets` })
 
 // (1) Client bundle → dist/assets/* (served by Pages at /assets/*).
