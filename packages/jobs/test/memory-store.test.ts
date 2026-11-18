@@ -91,6 +91,15 @@ describe("MemoryJobStore", () => {
       ["a Set subclass", new Seen()],
       ["a SharedArrayBuffer", shared],
       ["a view of a SharedArrayBuffer", { bytes: new Uint8Array(shared) }],
+      [
+        "an accessor that removes itself and returns shared memory",
+        {
+          get bytes() {
+            Reflect.deleteProperty(this, "bytes")
+            return new Uint8Array(shared)
+          },
+        },
+      ],
       ["a function", { callback: () => {} }],
       ["a null-prototype object", Object.assign(Object.create(null), { n: 1 })],
       ["an Error", new RangeError("bad")],

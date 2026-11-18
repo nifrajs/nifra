@@ -1,60 +1,105 @@
+/** Prototypes whose instances a structured clone rebuilds with the same prototype. */
+const CLONED_PROTOTYPES: ReadonlySet<unknown> = new Set([
+  Object.prototype,
+  Array.prototype,
+  Map.prototype,
+  Set.prototype,
+  Date.prototype,
+  RegExp.prototype,
+  ArrayBuffer.prototype,
+  DataView.prototype,
+  Boolean.prototype,
+  Number.prototype,
+  String.prototype,
+  BigInt.prototype,
+  ...[
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float16Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+  ].flatMap((name) => {
+    const view: unknown = Reflect.get(globalThis, name)
+    return typeof view === "function" ? [Reflect.get(view, "prototype")] : []
+  }),
+])
+
+const typedArrayBuffer = Reflect.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  "buffer",
+)?.get
+const dataViewBuffer = Reflect.getOwnPropertyDescriptor(DataView.prototype, "buffer")?.get
+
+/** A view's backing buffer through the built-in getter, so a getter the caller put on the view never runs. */
+function backingBuffer(view: ArrayBufferView): unknown {
+  const read = view instanceof DataView ? dataViewBuffer : typedArrayBuffer
+  if (read === undefined) throw new TypeError("snapshot: this runtime hides its buffer getters")
+  return Reflect.apply(read, view, [])
+}
+
+/**
+ * Refuse, before anything is cloned, a value a structured clone would change or share: a prototype
+ * other than the built-in one, an accessor, a symbol or non-enumerable field, an `Error`, a regular
+ * expression with a position, shared memory. Property descriptors are read, never values, so no
+ * caller code runs between this check and the clone. The elements of a typed array are not visited;
+ * a field added to a binary view is not copied (and not checked), as the clone itself drops it.
+ */
+function refuseLossy(root: unknown): void {
+  const pending: unknown[] = [root]
+  const seen = new WeakSet<object>()
+  while (pending.length > 0) {
+    const source = pending.pop()
+    if (source === null || typeof source !== "object" || seen.has(source)) continue
+    seen.add(source)
+    if (source instanceof Error) throw new TypeError("snapshot: Error instances are not data")
+    if (!CLONED_PROTOTYPES.has(Object.getPrototypeOf(source))) {
+      throw new TypeError("snapshot: custom prototypes cannot be preserved")
+    }
+    if (typeof SharedArrayBuffer !== "undefined" && source instanceof SharedArrayBuffer) {
+      throw new TypeError("snapshot: shared memory cannot be detached")
+    }
+    if (ArrayBuffer.isView(source)) {
+      pending.push(backingBuffer(source))
+      continue
+    }
+    if (source instanceof Map) {
+      for (const [key, item] of Map.prototype.entries.call(source)) pending.push(key, item)
+    } else if (source instanceof Set) {
+      for (const item of Set.prototype.values.call(source)) pending.push(item)
+    }
+    if (source instanceof String) continue
+    const record = Object.getPrototypeOf(source) === Object.prototype || Array.isArray(source)
+    // Native cloning drops accessors, symbol fields, non-enumerable fields, and every field of a
+    // collection, date, buffer or regular expression. Refuse a lossy copy instead of accepting a
+    // payload whose validated behavior has changed.
+    for (const key of Reflect.ownKeys(source)) {
+      const field = Reflect.getOwnPropertyDescriptor(source, key)
+      if (field === undefined || !("value" in field) || typeof key === "symbol") {
+        throw new TypeError("snapshot: accessors or omitted fields cannot be preserved")
+      }
+      if (key === "length" && Array.isArray(source)) continue
+      if (key === "lastIndex" && source instanceof RegExp && field.value === 0) continue
+      if (!record || !field.enumerable) {
+        throw new TypeError("snapshot: accessors or omitted fields cannot be preserved")
+      }
+      if (field.value !== null && typeof field.value === "object") pending.push(field.value)
+    }
+  }
+}
+
 /** Clone data only when the copy preserves its fields and prototypes without shared memory. */
 export function cloneData<T>(value: T): T {
-  let copy: T
+  refuseLossy(value)
   try {
-    copy = structuredClone(value)
+    return structuredClone(value)
   } catch (cause) {
     throw new TypeError("snapshot: value cannot be cloned", { cause })
   }
-  const pending: [unknown, unknown][] = [[value, copy]]
-  const seen = new WeakSet<object>()
-  while (pending.length > 0) {
-    const pair = pending.pop()
-    if (pair === undefined) break
-    const [source, target] = pair
-    if (source === null || typeof source !== "object") {
-      if (!Object.is(source, target)) throw new TypeError("snapshot: cloning changed a data value")
-      continue
-    }
-    if (seen.has(source)) continue
-    seen.add(source)
-    if (source instanceof Error) throw new TypeError("snapshot: Error instances are not data")
-    if (
-      target === null ||
-      typeof target !== "object" ||
-      Object.getPrototypeOf(source) !== Object.getPrototypeOf(target)
-    )
-      throw new TypeError("snapshot: custom prototypes cannot be preserved")
-    if (typeof SharedArrayBuffer !== "undefined" && source instanceof SharedArrayBuffer)
-      throw new TypeError("snapshot: shared memory cannot be detached")
-    if (ArrayBuffer.isView(source) && ArrayBuffer.isView(target))
-      pending.push([source.buffer, target.buffer])
-    if (source instanceof Map && target instanceof Map) {
-      const entries = Map.prototype.entries.call(target)
-      for (const [key, item] of Map.prototype.entries.call(source)) {
-        const entry = entries.next().value
-        if (entry === undefined) throw new TypeError("snapshot: cloning changed a map entry")
-        pending.push([key, entry[0]], [item, entry[1]])
-      }
-    }
-    if (source instanceof Set && target instanceof Set) {
-      const items = Set.prototype.values.call(target)
-      for (const item of Set.prototype.values.call(source)) pending.push([item, items.next().value])
-    }
-    // Native cloning drops accessors, symbol fields and some non-enumerable or built-in fields.
-    // Refuse a lossy copy instead of accepting a payload whose validated behavior has changed.
-    for (const key of Reflect.ownKeys(source)) {
-      const original = Object.getOwnPropertyDescriptor(source, key)
-      const cloned = Object.getOwnPropertyDescriptor(target, key)
-      if (
-        original === undefined ||
-        cloned === undefined ||
-        !("value" in original) ||
-        !("value" in cloned)
-      )
-        throw new TypeError("snapshot: accessors or omitted fields cannot be preserved")
-      pending.push([original.value, cloned.value])
-    }
-  }
-  return copy
 }

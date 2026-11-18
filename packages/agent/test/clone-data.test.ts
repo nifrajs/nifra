@@ -80,3 +80,74 @@ test("errors are refused even without optional runtime source metadata", () => {
   for (const value of [error, { error }, new Map([["error", error]])])
     expect(() => cloneData(value)).toThrow(TypeError)
 })
+
+test("an accessor is refused without running it, so it cannot hide shared memory from the check, and one on a view is never run", () => {
+  const shared = new SharedArrayBuffer(4)
+  let reads = 0
+  const hiding = {
+    get bytes() {
+      reads++
+      Reflect.deleteProperty(this, "bytes")
+      return new Uint8Array(shared)
+    },
+  }
+  expect(() => cloneData(hiding)).toThrow(TypeError)
+  const viaView = new Uint8Array(new ArrayBuffer(1))
+  Object.defineProperty(viaView, "buffer", {
+    get() {
+      reads++
+      return new ArrayBuffer(1)
+    },
+  })
+  // A getter on a view is never run: the clone reads the view's internal slots, and so does the check.
+  expect(cloneData({ viaView }).viaView).toHaveLength(1)
+  expect(reads).toBe(0)
+})
+
+test("shared memory is refused wherever a view or a collection holds it", () => {
+  const shared = new SharedArrayBuffer(4)
+  for (const value of [
+    shared,
+    new Uint8Array(shared),
+    new DataView(shared),
+    { nested: [new Uint16Array(shared)] },
+    new Map([["k", new Float32Array(shared)]]),
+    new Set([shared]),
+  ])
+    expect(() => cloneData(value)).toThrow(TypeError)
+})
+
+test("a large binary payload is copied without a descriptor lookup per element", () => {
+  const bytes = new Uint8Array(1 << 22).fill(7)
+  const original = Reflect.getOwnPropertyDescriptor
+  let lookups = 0
+  Reflect.getOwnPropertyDescriptor = (...args: Parameters<typeof original>) => {
+    lookups++
+    return original(...args)
+  }
+  let copy: Uint8Array
+  try {
+    copy = cloneData(bytes)
+  } finally {
+    Reflect.getOwnPropertyDescriptor = original
+  }
+  expect(copy).not.toBe(bytes)
+  expect(copy.buffer).not.toBe(bytes.buffer)
+  expect(copy[copy.length - 1]).toBe(7)
+  expect(lookups).toBeLessThan(10)
+})
+
+test("prototypes a clone would replace are refused, including those of binary views", () => {
+  class Mailbox {}
+  class Bytes extends Uint8Array {}
+  class Index extends Map<string, number> {}
+  const bare = Object.assign(Object.create(null), { field: 1 })
+  const map = Object.assign(new Map([["k", 1]]), { extra: 1 })
+  for (const value of [new Mailbox(), new Bytes(1), new Index(), bare, map, [new Mailbox()]])
+    expect(() => cloneData(value)).toThrow(TypeError)
+})
+
+test("a regular expression is accepted when its position is the start", () => {
+  const expression = /data/g
+  expect(cloneData(expression)).toEqual(expression)
+})
