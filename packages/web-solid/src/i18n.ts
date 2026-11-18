@@ -16,18 +16,12 @@ import {
 } from "@nifrajs/i18n"
 import { type RichChunks, type RichRenderer, renderRich } from "@nifrajs/i18n/rich"
 import { localeOfProps } from "@nifrajs/web/client"
-import {
-  type Accessor,
-  createComponent,
-  createContext,
-  createMemo,
-  type JSX,
-  useContext,
-} from "solid-js"
-import { Dynamic } from "solid-js/web"
+import { dynamic, type JSX } from "@solidjs/web"
+import { type Accessor, createComponent, createContext, createMemo, useContext } from "solid-js"
 import { RenderPropsContext } from "./router.ts"
 
-const I18nContext = createContext<Accessor<Formatter>>()
+const I18nContext = createContext<Accessor<Formatter> | null>(null)
+const LineBreak = dynamic(() => "br")
 
 export interface I18nProviderProps extends FormatterOptions {
   /** The locale to format in. Default: the page's locale tag, in an app that registers its locale
@@ -42,7 +36,7 @@ export interface I18nProviderProps extends FormatterOptions {
  * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized
  * on those props, so switching locale rebuilds it. */
 export function I18nProvider(props: I18nProviderProps): JSX.Element {
-  const renderProps = useContext(RenderPropsContext)
+  const renderProps = useContext(RenderPropsContext) ?? undefined
   const formatter = createMemo(() => {
     const locale = props.locale ?? localeOfProps(renderProps)?.lang
     if (locale === undefined) {
@@ -57,7 +51,7 @@ export function I18nProvider(props: I18nProviderProps): JSX.Element {
       numberingSystem: props.numberingSystem,
     })
   })
-  return createComponent(I18nContext.Provider, {
+  return createComponent(I18nContext, {
     value: formatter,
     get children() {
       return props.children
@@ -69,7 +63,7 @@ export function I18nProvider(props: I18nProviderProps): JSX.Element {
  * nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog. */
 export function useT(): Formatter {
   const formatter = useContext(I18nContext)
-  if (formatter === undefined) {
+  if (formatter === null) {
     throw new Error("[nifra/web-solid] useT() must be used within an <I18nProvider>")
   }
   return formatter()
@@ -81,7 +75,7 @@ export function useT(): Formatter {
  * Without one, the nearest `<I18nProvider>`'s locale; with neither, reading it throws.
  */
 export function useLocale(): Accessor<string> {
-  const renderProps = useContext(RenderPropsContext)
+  const renderProps = useContext(RenderPropsContext) ?? undefined
   const formatter = useContext(I18nContext)
   return createMemo(() => {
     const locale = localeOfProps(renderProps)?.key ?? formatter?.().locale
@@ -101,7 +95,7 @@ const join = (chunks: RichChunks<JSX.Element>): JSX.Element =>
   chunks.length === 0 ? undefined : chunks.length === 1 ? chunks[0] : [...chunks]
 const SOLID_RICH: RichRenderer<JSX.Element> = {
   join,
-  lineBreak: () => createComponent(Dynamic, { component: "br" }),
+  lineBreak: () => createComponent(LineBreak, {}),
 }
 
 /**

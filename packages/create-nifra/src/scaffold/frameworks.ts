@@ -69,9 +69,9 @@ export const FRAMEWORK_SPECS: Readonly<Record<string, FrameworkSpec>> = {
     id: "solid",
     adapter: "solidAdapter",
     package: "@nifrajs/web-solid",
-    runtimeDependencies: { "solid-js": "^1.9.0" },
-    devDependencies: { "vite-plugin-solid": "^2.10.0" },
-    typescript: { jsx: "preserve", jsxImportSource: "solid-js" },
+    runtimeDependencies: { "solid-js": "^2.0.0", "@solidjs/web": "^2.0.0" },
+    devDependencies: { "@solidjs/vite-plugin": "^3.0.1" },
+    typescript: { jsx: "preserve", jsxImportSource: "@solidjs/web" },
   },
   svelte: {
     id: "svelte",

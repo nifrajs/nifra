@@ -44,7 +44,6 @@ export const vitePlugins = [react()]          // only if you want Vite's dev pip
 // Vue/Svelte/Solid also export:
 //   clientPlugins = [vueBunPlugin("dom")]     // compile routes for the client build
 //   serverPlugins = [vueBunPlugin("ssr")]     // compile routes into the target's server bundle
-//   conditions    = ["solid"]                 // Solid: resolve solid-js to its source
 //   define        = { __VUE_OPTIONS_API__: "true", ... }   // Vue feature flags`
 
 const STYLEX_INSTALL = `# Install the runtime and the optional compiler peers.

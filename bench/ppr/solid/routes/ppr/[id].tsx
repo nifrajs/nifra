@@ -1,4 +1,4 @@
-/** @jsxImportSource solid-js */
+/** @jsxImportSource @solidjs/web */
 import type { BoundaryStates } from "@nifrajs/web"
 import { Hole } from "@nifrajs/web-solid/ppr"
 import type { Product } from "../../../shared/catalog.ts"

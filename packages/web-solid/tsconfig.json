@@ -6,7 +6,7 @@
     // and is excluded from the root typecheck.
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    "jsxImportSource": "@solidjs/web",
     // Resolve the workspace core to its source so typecheck needs no prior build.
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],

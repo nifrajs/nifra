@@ -7667,7 +7667,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-solid/client`
 
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
-  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` (via Solid's `<ErrorBoundary>`) instead of crashing. …
+  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` (via Solid's `<Errored>`) instead of crashing. DOM-tr…
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void`
   Hydrate a server-rendered Solid layout `chain` (with the loader `props`) inside `container`.
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void`
@@ -7723,7 +7723,7 @@ _No named exports (side-effect entrypoint)._
 - **KeepAliveMountOptions** _(interface)_ - `interface KeepAliveMountOptions`
   `mountRouter`'s options in a keep-alive app: the generated entry adds where the wrappers go.
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
-  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` (via Solid's `<ErrorBoundary>`) instead of crashing. …
+  Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` (via Solid's `<Errored>`) instead of crashing. DOM-tr…
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void`
   Hydrate a server-rendered Solid layout `chain` (with the loader `props`) inside `container`.
 - **mountRouter** _(function)_ - `mountRouter: (options: KeepAliveMountOptions) => void`
@@ -7748,7 +7748,7 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-solid/plugin`
 
 - **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
-  Bun build/runtime plugin that compiles Solid components with Babel - `generate: "ssr"` for the server, `"dom"` for the client, `hydratable` so SSR and hydrate align. Solid's reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at build time, on `.tsx` files only.
+  Bun build/runtime plugin that compiles Solid components with Solid 2.0's native compiler - `generate: "ssr"` for the server, `"dom"` for the client, `hydratable` so SSR and hydrate align. Runs at build time, on `.tsx` files only. The compiler parses TypeScript but keeps its types, so Bun's own `ts`…
 
 ### `@nifrajs/web-solid/ppr`
 
@@ -7789,8 +7789,8 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(type)_ - `type NavigateFunction = (to: Href | number, options?: NavigateOptions) => void`
   A programmatic navigate, shared by every adapter's `useNavigate`. It takes an {@link Href}, built by `href({ to, params, search, hash })` or `rawHref(path)` (push, or replace with `{ replace: true }`), or a history delta (`-1` back, `1` forward). A plain string or a template literal is a compile er…
-- **RenderPropsContext** _(const)_ - `RenderPropsContext: Context<RenderProps | undefined>`
-- **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
+- **RenderPropsContext** _(const)_ - `RenderPropsContext: Context<RenderProps | null>`
+- **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | null>`
 - **UIMatch** _(interface)_ - `interface UIMatch`
   One module of the rendered chain, as `useMatches` returns it.
 - **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>`

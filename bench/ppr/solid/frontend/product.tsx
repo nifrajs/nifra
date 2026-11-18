@@ -1,5 +1,6 @@
-/** @jsxImportSource solid-js */
-import { createSignal, For, type JSX } from "solid-js"
+/** @jsxImportSource @solidjs/web */
+import type { JSX } from "@solidjs/web"
+import { createSignal, For } from "solid-js"
 import type { Product } from "../../shared/catalog.ts"
 
 /** The page every variant renders: the shared product part around the three per-visitor parts. */

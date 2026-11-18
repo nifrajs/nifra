@@ -6,13 +6,14 @@
  * the layouts they share; the DOM half takes a hidden page out of the document. A hidden page keeps
  * running: `onPageHide`, `onPageShow` and `usePageVisibility` (from `@nifrajs/web-solid/router`) let
  * it pause. Unlike the plain mount, a route change does not remount the root: Solid updates the tree
- * in place, synchronously, so the DOM half runs right after each publish.
+ * in place, and a `flush` makes that synchronous, so the DOM half runs right after each publish.
  */
 import type { MountRouterOptions, RouterState } from "@nifrajs/web"
 import { keptMount } from "@nifrajs/web/internal/keep-alive-mount"
 import type { KeepAliveRouter, KeepAliveTable, SlotNode } from "@nifrajs/web/keep-alive"
-import { createMemo, createSignal } from "solid-js"
-import { hydrate as solidHydrate } from "solid-js/web"
+import { hydrate as solidHydrate } from "@solidjs/web"
+import { createSignal, flush } from "solid-js"
+import { clientDerive } from "./client-derive.ts"
 import { setMountedRouter } from "./fetcher.ts"
 import { KeepAliveView, type KeepAliveViewMount } from "./keep-alive-view.ts"
 import { routeProps } from "./route-props.ts"
@@ -41,23 +42,24 @@ export function mountRouter(options: KeepAliveMountOptions): void {
   solidHydrate(() => {
     const [state, setState] = createSignal(router.snapshot())
     publish = (next) => setState(() => next)
-    const tree = createMemo(() => {
+    const tree = clientDerive(() => {
       current = kept.tree(state(), current)
       return current
     })
     const mount: KeepAliveViewMount = {
       ...kept,
-      propsOf: (of) => routeProps(of, searchSchemas, matchChains, (read) => createMemo(read)),
+      propsOf: (of) => routeProps(of, searchSchemas, matchChains, clientDerive),
     }
     return KeepAliveView({ tree, shown: mount.propsOf(state), mount })
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the generated entry passes the element the server rendered the app into
   }, container as Element)
-  // Solid has updated the document by the time a publish returns: park what it hid, restore what it
-  // showed again.
+  // Solid batches a write until the microtask, so `flush` applies it to the document now: park what it
+  // hid, restore what it showed again.
   const after = (): void => kept.after(current)
   after()
   router.subscribe(() => {
     publish?.(router.snapshot())
+    flush()
     after()
   })
 }

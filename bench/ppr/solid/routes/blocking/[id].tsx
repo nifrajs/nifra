@@ -1,4 +1,4 @@
-/** @jsxImportSource solid-js */
+/** @jsxImportSource @solidjs/web */
 import type { Product } from "../../../shared/catalog.ts"
 import { Cart, Greeting, ProductPage, Recs } from "../../frontend/product.tsx"
 

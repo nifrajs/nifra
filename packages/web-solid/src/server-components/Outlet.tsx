@@ -6,7 +6,8 @@ import {
   type ServerComponent as Handle,
   resolveComponentRecord,
 } from "@nifrajs/web/server-components/client"
-import { createEffect, createMemo, type JSX, onCleanup, onMount, Show } from "solid-js"
+import type { JSX } from "@solidjs/web"
+import { createEffect, createMemo, onSettled, Show } from "solid-js"
 export function ServerComponent<Input, Props, View>(props: {
   readonly state: ComponentState
   readonly component: Handle<Input, Props, View>
@@ -47,7 +48,7 @@ function Range(props: {
   const record = props.record
   let host!: HTMLDivElement
   let controller: ComponentController | undefined
-  onMount(() => {
+  onSettled(() => {
     if (props.controller === undefined && props.clientAdapter === undefined)
       throw new Error("component_contract")
     controller =
@@ -56,17 +57,18 @@ function Range(props: {
     void controller.mount(host, record.instance).catch(() => {
       throw new Error("component_failed")
     })
-  })
-  onCleanup(() => {
-    if (controller !== undefined)
+    return () => {
       void (props.controller === undefined
-        ? controller.dispose()
-        : controller.unmount(record.instance, host))
+        ? controller?.dispose()
+        : controller?.unmount(record.instance, host))
+    }
   })
-  createEffect(() => {
-    const state = props.state
-    if (controller !== undefined)
-      void controller.adopt(state).catch(() => controller?.reportError("component_failed"))
-  })
+  createEffect(
+    () => props.state,
+    (state) => {
+      if (controller !== undefined)
+        void controller.adopt(state).catch(() => controller?.reportError("component_failed"))
+    },
+  )
   return <div ref={host} data-nifra-component={record.instance} innerHTML={record.html} />
 }

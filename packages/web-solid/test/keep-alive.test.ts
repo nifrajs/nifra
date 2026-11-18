@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test"
 import type { RenderProps, RouterState } from "@nifrajs/web"
 import type { SlotNode } from "@nifrajs/web/keep-alive"
-import { type Accessor, createComponent, createRoot, type JSX } from "solid-js"
-import { renderToString } from "solid-js/web"
+import type { JSX } from "@solidjs/web"
+import { renderToString } from "@solidjs/web"
+import { type Accessor, createComponent, createRoot } from "solid-js"
 import { solidAdapter } from "../src/index.ts"
 import { documentTree, KeepAliveView } from "../src/keep-alive-view.ts"
 import { onPageHide, onPageShow, PageContext, usePageVisibility } from "../src/page-visibility.ts"
@@ -151,9 +152,10 @@ test("a kept page's visibility and callbacks come from its slot, and nothing out
   let hidden = true
   const slot = { hidden: () => hidden, hide: new Set<() => void>(), show: new Set<() => void>() }
   const seen: boolean[] = []
+  let registered: number[] = []
   const dispose = createRoot((dispose) => {
     renderToString(() =>
-      createComponent(PageContext.Provider, {
+      createComponent(PageContext, {
         value: slot,
         get children() {
           const visible = usePageVisibility()
@@ -162,6 +164,8 @@ test("a kept page's visibility and callbacks come from its slot, and nothing out
           seen.push(visible())
           onPageHide(() => {})
           onPageShow(() => {})
+          // The render disposes its owner when it ends, which removes the callbacks again.
+          registered = [slot.hide.size, slot.show.size]
           return ""
         },
       }),
@@ -169,7 +173,8 @@ test("a kept page's visibility and callbacks come from its slot, and nothing out
     return dispose
   })
   expect(seen).toEqual([false, true])
-  expect([slot.hide.size, slot.show.size]).toEqual([1, 1])
+  expect(registered).toEqual([1, 1])
+  expect([slot.hide.size, slot.show.size]).toEqual([0, 0])
   dispose()
 
   createRoot((dispose) => {

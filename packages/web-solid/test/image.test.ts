@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { cloudflareLoader } from "@nifrajs/image"
+import { renderToString } from "@solidjs/web"
 import { createComponent } from "solid-js"
-import { renderToString } from "solid-js/web"
 import { Image } from "../src/image.ts"
 
 const render = (props: Parameters<typeof Image>[0]): string =>

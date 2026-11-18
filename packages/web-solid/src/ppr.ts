@@ -1,8 +1,10 @@
 import { type HoleState, initialHtml } from "@nifrajs/web/internal/hole-runtime"
-import { createComponent, createMemo, type JSX, untrack } from "solid-js"
-import { Dynamic, isServer } from "solid-js/web"
+import { dynamic, isServer, type JSX } from "@solidjs/web"
+import { createComponent, createMemo, untrack } from "solid-js"
 import { Await } from "./await.ts"
 import { clientHost } from "./ppr-client.ts"
+
+const HostDiv = dynamic(() => "div")
 
 /**
  * The fields of a route's boundary declaration a hole renders from. `fallback` is a function: JSX
@@ -25,11 +27,10 @@ export interface HoleProps<Data> {
 /** An open hole's host: claimed by its hydration key like any element, never given children in the
  * browser. On the server it holds a blocking render's HTML. */
 function openHost<Data>(hole: HoleDefinition<Data>, fill: () => unknown): JSX.Element {
-  const attributes = { "data-nifra-hole": hole.name, "aria-busy": "true" }
+  const attributes = { "data-nifra-hole": hole.name, "aria-busy": "true" } as const
   if (isServer) {
     const initial = initialHtml(fill())
-    return createComponent(Dynamic, {
-      component: "div",
+    return createComponent(HostDiv, {
       ...attributes,
       ...(initial === "" ? {} : { innerHTML: initial }),
     })

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
+import { renderToString } from "@solidjs/web"
 import { createComponent, createUniqueId } from "solid-js"
-import { renderToString } from "solid-js/web"
 import { solidAdapter } from "../src/index.ts"
 import { Hole, type HoleDefinition, type HoleProps } from "../src/ppr.ts"
 import { element, visible } from "./ssr-output.ts"
@@ -52,10 +52,10 @@ test("a hole's fragment renders inside renderFragment, keyed under the hole's pr
     { idPrefix: "nifra-cart-" },
   )
   expect(rendering).toBe(true)
-  expect(html).toBe('<input data-hk="nifra-cart-01" id="nifra-cart-00" name="qty"/>')
+  expect(html).toBe('<input _hk=nifra-cart-1 id="nifra-cart-0" name="qty" />')
   // A fallback is a function, resolved after the render's own call returns.
   expect(renderFragment?.(() => () => createComponent(Field, { name: "wait" }), {})).toBe(
-    '<input id="0" name="wait"/>',
+    '<input id="00" name="wait" />',
   )
 })
 
@@ -118,7 +118,7 @@ test(
         console.log(JSON.stringify({
           failed: app.shellFailures.map(([route]) => route),
           status: response.status,
-          fallbackInShell: at('<p id="cart-fallback">loading cart</p>') !== -1,
+          fallbackInShell: html.includes('id="cart-fallback"') && html.includes("loading cart</p>"),
           framesAfterShell: at('id="nifra-ppr:greeting"') > at("</main>"),
           // Solid marks the inserted name, so the text arrives split by comments.
           greeting: frame("greeting").html.replace(/<!--[^>]*-->/g, "").includes("hello ada"),
@@ -160,7 +160,7 @@ test(
       "ssr",
       `
       const { createComponent } = await import("solid-js");
-      const { renderToString } = await import("solid-js/web");
+      const { renderToString } = await import("@solidjs/web");
       const { solidAdapter } = await import(${asImport("../src/index.ts")});
       const page = await import(${page});
       const cart = page.boundaries.find((hole) => hole.name === "cart");
@@ -182,7 +182,7 @@ test(
       }
       globalThis._$HY = { events: [], completed: new WeakSet(), r: {}, fe() {} };
       const { createComponent } = await import("solid-js");
-      const { hydrate } = await import("solid-js/web");
+      const { hydrate } = await import("@solidjs/web");
       const page = await import(${page});
       const served = ${JSON.stringify(served)};
       const fill = { props: { count: 2 }, error: false };
@@ -213,7 +213,7 @@ test(
       }
       await new Promise((resolve) => queueMicrotask(resolve));
       const button = host.querySelector("button");
-      button.click();
+      button.click(); (await import("solid-js")).flush();
       const clicked = host.textContent;
       const kept = host.querySelector("button") === button;
       dispose();
@@ -237,7 +237,7 @@ test(
       "ssr",
       `
       const { createComponent } = await import("solid-js");
-      const { renderToString } = await import("solid-js/web");
+      const { renderToString } = await import("@solidjs/web");
       const { solidAdapter } = await import(${asImport("../src/index.ts")});
       const page = await import(${page});
       const shell = (interactive) =>
@@ -258,7 +258,7 @@ test(
       }
       globalThis._$HY = { events: [], completed: new WeakSet(), r: {}, fe() {} };
       const { createComponent, createSignal } = await import("solid-js");
-      const { hydrate } = await import("solid-js/web");
+      const { hydrate } = await import("@solidjs/web");
       const page = await import(${page});
       const served = ${JSON.stringify(served)};
       const fills = { cart: { props: { count: 2 }, error: false } };
@@ -290,7 +290,7 @@ test(
       );
       await tick();
       const seen = [];
-      host.querySelector("button").click();
+      host.querySelector("button").click(); (await import("solid-js")).flush();
       seen.push(host.textContent);
       const first = deferred();
       setState({ status: "pending", ppr: true, fill: first.fill });
@@ -314,7 +314,7 @@ test(
       seen.push(host.textContent, host.hasAttribute("data-nifra-hole-error"));
       setState({ status: "pending", ppr: true, fill: { html: served.three, props: { count: 3 } } });
       await tick();
-      host.querySelector("button")?.click();
+      host.querySelector("button")?.click(); (await import("solid-js")).flush();
       seen.push(host.textContent);
       dispose();
       console.log(JSON.stringify(seen));

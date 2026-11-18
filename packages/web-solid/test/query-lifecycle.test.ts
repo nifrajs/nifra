@@ -1,13 +1,14 @@
 import { afterAll, expect, mock, test } from "bun:test"
 import { createQueryClient } from "@nifrajs/web"
 import * as solidRuntime from "solid-js"
+import { observe } from "./fixtures/provider.ts"
 
-// Bun resolves Solid's server runtime in this suite, where onMount is intentionally a no-op.
+// Bun resolves Solid's server runtime in this suite, where onSettled is intentionally a no-op.
 // Run the registered mount callback here; the other query tests cover the real owner/provider APIs.
 const realSolidRuntime = { ...solidRuntime }
 mock.module("solid-js", () => ({
   ...realSolidRuntime,
-  onMount: (callback: () => void) => callback(),
+  onSettled: (callback: () => void) => callback(),
 }))
 afterAll(() => mock.module("solid-js", () => realSolidRuntime))
 
@@ -20,7 +21,7 @@ test("Solid infinite-query mount callback starts the initial page fetch", async 
 
   solidRuntime.createRoot((stop) => {
     dispose = stop
-    solidRuntime.createComponent(QueryClientProvider, {
+    const view = solidRuntime.createComponent(QueryClientProvider, {
       client,
       get children() {
         query = createInfiniteQuery(["solid", "mount-callback"], async (page: number) => page, {
@@ -30,6 +31,7 @@ test("Solid infinite-query mount callback starts the initial page fetch", async 
         return null
       },
     })
+    observe(view)
   })
 
   try {

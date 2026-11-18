@@ -30,9 +30,9 @@ test(
       globalThis.window = browser;
       globalThis.document = browser.document;
       const solid = await import(${JSON.stringify(import.meta.resolve("solid-js").replace(/server\.(?:c?js)$/, "solid.js"))});
-      const web = await import(${JSON.stringify(import.meta.resolve("solid-js/web").replace(/server\.(?:c?js)$/, "web.js"))});
+      const web = await import(${JSON.stringify(import.meta.resolve("@solidjs/web").replace(/server\.(?:c?js)$/, "web.js"))});
       mock.module("solid-js", () => solid);
-      mock.module("solid-js/web", () => web);
+      mock.module("@solidjs/web", () => web);
       const routeSlot = await import(${JSON.stringify(new URL("../src/route-slot.tsx", import.meta.url).href)});
       const router = await import(${JSON.stringify(new URL("../src/router.ts", import.meta.url).href)});
       const { installRouteSlotClientHarness } = await import(${JSON.stringify(new URL("../../web/test/route-slot-client-harness.ts", import.meta.url).href)});
@@ -75,7 +75,7 @@ test(
           return [panel, status];
         }
 
-        const dispose = web.render(() => solid.createComponent(router.RenderPropsContext.Provider, {
+        const dispose = web.render(() => solid.createComponent(router.RenderPropsContext, {
           value: { data: null, path, pending: false },
           get children() { return solid.createComponent(Probe, {}); },
         }), container);

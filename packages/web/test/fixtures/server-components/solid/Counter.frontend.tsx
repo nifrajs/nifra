@@ -1,6 +1,6 @@
 import { componentPortalTarget } from "@nifrajs/web/server-components/portal"
-import { createSignal, onCleanup, onMount } from "solid-js"
-import { Portal } from "solid-js/web"
+import { Portal } from "@solidjs/web"
+import { createSignal, onSettled } from "solid-js"
 export default function Counter(props: {
   title: string
   prefix?: string
@@ -9,11 +9,13 @@ export default function Counter(props: {
   let root!: HTMLElement
   let target!: HTMLDivElement
   const [portal, setPortal] = createSignal<Element>()
-  onMount(() => setPortal(componentPortalTarget(root, target)))
+  onSettled(() => setPortal(componentPortalTarget(root, target)))
   const [count, setCount] = createSignal(0)
-  onMount(() => window.dispatchEvent(new Event("fixture:mounted")))
-  onCleanup(() => {
-    if (typeof window !== "undefined") window.dispatchEvent(new Event("fixture:disposed"))
+  onSettled(() => {
+    window.dispatchEvent(new Event("fixture:mounted"))
+    return () => {
+      if (typeof window !== "undefined") window.dispatchEvent(new Event("fixture:disposed"))
+    }
   })
   return (
     <article ref={root}>

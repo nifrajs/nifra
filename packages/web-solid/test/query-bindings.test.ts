@@ -2,8 +2,9 @@
 import { expect, test } from "bun:test"
 import { fileURLToPath } from "node:url"
 import { createQueryClient } from "@nifrajs/web"
-import { createComponent, createRoot } from "solid-js"
+import { createComponent, createRoot, flush } from "solid-js"
 import { createInfiniteQuery, createMutation, QueryClientProvider } from "../src/query.ts"
+import { observe } from "./fixtures/provider.ts"
 
 const SPAWN_TIMEOUT_MS = 30_000
 
@@ -68,7 +69,7 @@ test("the accessors read the state their handles hold", async () => {
   let mutation: ReturnType<typeof createMutation<number, number>> | undefined
   let failingMutation: ReturnType<typeof createMutation<number, number>> | undefined
   const dispose = createRoot((stop) => {
-    createComponent(QueryClientProvider, {
+    const view = createComponent(QueryClientProvider, {
       client,
       get children() {
         query = createInfiniteQuery(["k"], async (param: number) => param, options)
@@ -86,19 +87,24 @@ test("the accessors read the state their handles hold", async () => {
         return undefined
       },
     })
+    observe(view)
     return stop
   })
   expect([query?.isPending(), query?.isSuccess(), query?.isError()]).toEqual([true, false, false])
 
   await query?.refetch()
+  flush()
   expect([query?.isPending(), query?.isSuccess(), query?.isError()]).toEqual([false, true, false])
   expect([query?.hasNextPage(), query?.hasPreviousPage()]).toEqual([true, false])
   await query?.fetchNextPage()
+  flush()
   expect([query?.hasNextPage(), query?.hasPreviousPage()]).toEqual([false, true])
   await query?.fetchPreviousPage()
+  flush()
   expect(query?.state().data?.pages).toEqual([0, 0, 1])
 
   await failing?.refetch().catch(() => {})
+  flush()
   expect([failing?.isPending(), failing?.isSuccess(), failing?.isError()]).toEqual([
     false,
     false,
@@ -107,6 +113,7 @@ test("the accessors read the state their handles hold", async () => {
 
   expect([mutation?.isIdle(), mutation?.isPending()]).toEqual([true, false])
   await mutation?.mutateAsync(21)
+  flush()
   expect([mutation?.isSuccess(), mutation?.isError(), mutation?.state().data]).toEqual([
     true,
     false,
@@ -114,6 +121,7 @@ test("the accessors read the state their handles hold", async () => {
   ])
   failingMutation?.mutate(1)
   await new Promise((resolve) => setTimeout(resolve, 10))
+  flush()
   expect([failingMutation?.isError(), failingMutation?.isSuccess()]).toEqual([true, false])
   mutation?.reset()
   expect(mutation?.isIdle()).toBe(true)

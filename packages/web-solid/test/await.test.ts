@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
-import { createComponent, ErrorBoundary, type JSX } from "solid-js"
-import { renderToStringAsync } from "solid-js/web"
+import type { JSX } from "@solidjs/web"
+import { renderToStream } from "@solidjs/web"
+import { createComponent, Errored } from "solid-js"
 import { Await } from "../src/await.ts"
 import { element, visible } from "./ssr-output.ts"
 
@@ -9,7 +10,8 @@ test("Await renders a value, a settled deferred, its error fallback, or rethrows
   const failing = Promise.reject(new Error("down"))
   failing.catch(() => {})
   const value = (n: number) => element("p", {}, `n ${n}`)
-  const render = async (ui: () => JSX.Element) => visible(await renderToStringAsync(ui))
+  const render = async (ui: () => JSX.Element) =>
+    visible(await renderToStream(ui, { onError: (error) => error }))
   expect({
     plain: await render(() => createComponent(Await<number>, { resolve: 3, children: value })),
     resolved: await render(() =>
@@ -23,8 +25,11 @@ test("Await renders a value, a settled deferred, its error fallback, or rethrows
       }),
     ),
     rethrown: await render(() =>
-      createComponent(ErrorBoundary, {
-        fallback: (error: Error) => element("p", {}, `caught ${error.message}`),
+      createComponent(Errored, {
+        fallback: (error: () => unknown) => {
+          const caught = error()
+          return element("p", {}, `caught ${caught instanceof Error ? caught.message : caught}`)
+        },
         get children() {
           return createComponent(Await<number>, { resolve: deferred(failing), children: value })
         },

@@ -1,5 +1,5 @@
 import { onPageHide, onPageShow, usePageVisibility } from "@nifrajs/web-solid/router"
-import { createSignal, createUniqueId, For, onCleanup, onMount } from "solid-js"
+import { createSignal, createUniqueId, For, onSettled } from "solid-js"
 
 export const keepAlive = true
 
@@ -27,8 +27,10 @@ export default function List(props: {
       all[instance] = (all[instance] ?? 0) + 1
     }, 10)
   }
-  onMount(start)
-  onCleanup(() => clearInterval(timer))
+  onSettled(() => {
+    start()
+    return () => clearInterval(timer)
+  })
   onPageHide(() => clearInterval(timer))
   onPageShow(start)
   return (

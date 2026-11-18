@@ -281,6 +281,7 @@ export async function serverComponentsConfig(
         "vue",
         "svelte",
         "solid-js",
+        "@solidjs/web",
         "preact",
         "@nifrajs/web",
         "@nifrajs/core",

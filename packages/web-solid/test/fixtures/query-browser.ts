@@ -3,13 +3,14 @@
  * document of what each scenario saw; `query-bindings.test.ts` spawns it with `--conditions=browser`.
  */
 import { createQueryClient } from "@nifrajs/web"
-import { createComponent, createEffect, createRoot } from "solid-js"
+import { createComponent, createEffect, createRoot, flush } from "solid-js"
 import {
   createInfiniteQuery,
   createMutation,
   QueryClientProvider,
   useQueryClient,
 } from "../../src/query.ts"
+import { observe as read } from "./provider.ts"
 
 const settled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 const out: Record<string, unknown> = {}
@@ -38,16 +39,24 @@ const options = {
   let on: ReturnType<typeof createInfiniteQuery<number, number>> | undefined
   let off: ReturnType<typeof createInfiniteQuery<number, number>> | undefined
   const dispose = createRoot((stop) => {
-    createComponent(QueryClientProvider, {
-      client,
-      get children() {
-        on = createInfiniteQuery(["on"], page("on"), options)
-        off = createInfiniteQuery(["off"], page("off"), { ...options, enabled: false })
-        createEffect(() => void nextSeen.push(on?.hasNextPage() ?? false))
-        createEffect(() => void previousSeen.push(on?.hasPreviousPage() ?? false))
-        return undefined
-      },
-    })
+    read(
+      createComponent(QueryClientProvider, {
+        client,
+        get children() {
+          on = createInfiniteQuery(["on"], page("on"), options)
+          off = createInfiniteQuery(["off"], page("off"), { ...options, enabled: false })
+          createEffect(
+            () => on?.hasNextPage() ?? false,
+            (value) => void nextSeen.push(value),
+          )
+          createEffect(
+            () => on?.hasPreviousPage() ?? false,
+            (value) => void previousSeen.push(value),
+          )
+          return undefined
+        },
+      }),
+    )
     return stop
   })
   await settled()
@@ -74,19 +83,21 @@ const options = {
   const client = createQueryClient({ now: () => 0 })
   let failing: ReturnType<typeof createInfiniteQuery<number, number>> | undefined
   const dispose = createRoot((stop) => {
-    createComponent(QueryClientProvider, {
-      client,
-      get children() {
-        failing = createInfiniteQuery(
-          ["fails"],
-          async () => {
-            throw new Error("refused")
-          },
-          { initialPageParam: 0, getNextPageParam: () => undefined },
-        )
-        return undefined
-      },
-    })
+    read(
+      createComponent(QueryClientProvider, {
+        client,
+        get children() {
+          failing = createInfiniteQuery(
+            ["fails"],
+            async () => {
+              throw new Error("refused")
+            },
+            { initialPageParam: 0, getNextPageParam: () => undefined },
+          )
+          return undefined
+        },
+      }),
+    )
     return stop
   })
   await settled()
@@ -113,6 +124,7 @@ const options = {
     )
     flags.push(read())
     m.mutate("a")
+    flush() // a write is read back after the batch flushes
     flags.push(read())
     releases[0]?.("done")
     return stop
@@ -138,24 +150,28 @@ const options = {
   }
   let seen: unknown
   const dispose = createRoot((stop) => {
-    createComponent(QueryClientProvider, {
-      client,
-      get children() {
-        seen = useQueryClient()
-        return undefined
-      },
-    })
+    read(
+      createComponent(QueryClientProvider, {
+        client,
+        get children() {
+          seen = useQueryClient()
+          return undefined
+        },
+      }),
+    )
     return stop
   })
   const withoutState = hydrated
   const dispose2 = createRoot((stop) => {
-    createComponent(QueryClientProvider, {
-      client,
-      state: { queries: [], infiniteQueries: [] },
-      get children() {
-        return undefined
-      },
-    })
+    read(
+      createComponent(QueryClientProvider, {
+        client,
+        state: { queries: [], infiniteQueries: [] },
+        get children() {
+          return undefined
+        },
+      }),
+    )
     return stop
   })
   out.provider = { withoutState, withState: hydrated, sameClient: seen === client }
@@ -196,17 +212,19 @@ const options = {
   })
   let atCreation: readonly number[] | undefined
   const dispose = createRoot((stop) => {
-    createComponent(QueryClientProvider, {
-      client,
-      get children() {
-        const held = createInfiniteQuery(["held"], async (param: number) => param, {
-          ...options,
-          enabled: false,
-        })
-        atCreation = held.state().data?.pages
-        return undefined
-      },
-    })
+    read(
+      createComponent(QueryClientProvider, {
+        client,
+        get children() {
+          const held = createInfiniteQuery(["held"], async (param: number) => param, {
+            ...options,
+            enabled: false,
+          })
+          atCreation = held.state().data?.pages
+          return undefined
+        },
+      }),
+    )
     return stop
   })
   out.held = atCreation

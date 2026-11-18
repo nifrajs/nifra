@@ -6,12 +6,12 @@ renderer differs.
 
 ## What's Solid-specific
 
-- **`buildClient`** uses `solidBunPlugin("dom")` + `conditions: ["bun", "solid", "browser"]` (the
+- **`buildClient`** uses `solidBunPlugin("dom")` + `conditions: ["bun", "browser"]` (the
   hydratable client transform), as on Bun/Node/Deno.
 - **`buildServer`** uses `solidBunPlugin("ssr")` (the SSR transform) + `conditions: ["workerd",
-  "worker", "edge-light", "solid", "browser"]`. The **`worker`** condition makes `solid-js/web`
-  resolve to its **server** runtime (`renderToStream`) rather than the dom one - and since `worker`
-  precedes `browser` in solid's exports map, it wins even with `browser` present. (React needs no
+  "worker", "edge-light", "browser"]`. The **`worker`** condition makes `solid-js` and
+  `@solidjs/web` resolve to their **server** runtime (`renderToStream`) rather than the dom one - and
+  since `worker` precedes `browser` in their exports maps, it wins even with `browser` present. (React needs no
   such plugin - its JSX is Bun-native and `buildServer` pins `react-dom/server` to its edge build.)
 
 Everything else is identical to the React example: `worker.ts` is `createWebApp(...)` +

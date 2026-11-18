@@ -1,4 +1,4 @@
-import type { JSX } from "solid-js"
+import type { JSX } from "@solidjs/web"
 
 export default function Layout(props: { readonly children?: JSX.Element }) {
   return (

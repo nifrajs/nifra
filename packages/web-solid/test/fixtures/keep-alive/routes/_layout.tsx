@@ -1,4 +1,4 @@
-import type { JSX } from "solid-js"
+import type { JSX } from "@solidjs/web"
 
 // The second rule stops matching inside the slot wrappers: the dev client's D10 check reports it.
 const CSS = ".list-page { min-height: 1400px } #main > .list-page { outline: 1px solid }"

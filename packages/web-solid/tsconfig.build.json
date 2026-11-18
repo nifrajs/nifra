@@ -5,7 +5,7 @@
     "rootDir": "src",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "jsx": "preserve",
-    "jsxImportSource": "solid-js"
+    "jsxImportSource": "@solidjs/web"
   },
   "include": ["src/**/*"]
 }

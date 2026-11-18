@@ -9,7 +9,10 @@ test("the Solid binding subscribes and synchronizes through the shared route-slo
   }
   const cleanups: Array<() => void> = []
   const hooks: RouteSlotHooks = {
-    createEffect: (effect) => effect(),
+    createEffect: (compute, effect) => {
+      const cleanup = effect(compute())
+      if (typeof cleanup === "function") cleanups.push(cleanup)
+    },
     createMemo: (read) => read,
     createSignal<T>(initial: T) {
       let value = initial
@@ -21,7 +24,6 @@ test("the Solid binding subscribes and synchronizes through the shared route-slo
         },
       ]
     },
-    onCleanup: (cleanup) => cleanups.push(cleanup),
   }
   const useRouteSlot = createRouteSlotBinding(
     () => props,
@@ -32,6 +34,6 @@ test("the Solid binding subscribes and synchronizes through the shared route-slo
 
   expect(slot.status()).toBe("error")
   expect(slot.error()).toBe("malformed")
-  expect(cleanups).toHaveLength(1)
+  expect(cleanups).toHaveLength(1) // the store subscription, returned from its effect
   for (const cleanup of cleanups) cleanup()
 })

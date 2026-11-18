@@ -277,8 +277,8 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   ],
   "@nifrajs/web-solid": [
     "The optional server-component pipeline uses Solid native hydratable SSR, stable render IDs and reactive props. Use solidServerComponents and solidComponentClient; native contexts are local to each owned root. Declare managed portal targets inside their owning range.",
-    'Solid needs its **Babel build plugin** (and `solid({ ssr: true })` + the `"solid"` resolve condition) - without it, reactivity/SSR breaks.',
-    "Each framework build is isolated so Solid's Babel transform never leaks onto React/Preact `.tsx`.",
+    "Solid needs its **compiler build plugin** (and `solid({ ssr: true })` from `@solidjs/vite-plugin` under Vite) - without it, reactivity/SSR breaks. Solid 2.0 only: `solid-js` and `@solidjs/web` ^2.",
+    "Each framework build is isolated so Solid's compiler transform never leaks onto React/Preact `.tsx`.",
   ],
   "@nifrajs/web-vanilla": [
     "Output is **auto-escaping** tagged-template HTML - interpolated values are escaped; opt into raw HTML explicitly, and only for trusted content.",

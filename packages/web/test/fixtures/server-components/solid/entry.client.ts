@@ -26,8 +26,8 @@ const controller = new ComponentController({
   onError: (code) => window.dispatchEvent(new CustomEvent("fixture:error", { detail: code })),
 })
 
+import { hydrate } from "@solidjs/web"
 import { createComponent } from "solid-js"
-import { hydrate } from "solid-js/web"
 
 hydrate(
   () => createComponent(Page, { state, controller, clientAdapter }),

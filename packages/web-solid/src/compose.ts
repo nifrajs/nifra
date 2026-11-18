@@ -1,5 +1,6 @@
 import type { RenderProps } from "@nifrajs/web"
-import { type Component, createComponent, type JSX } from "solid-js"
+import type { JSX } from "@solidjs/web"
+import { type Component, createComponent } from "solid-js"
 import { RenderPropsContext, SearchContext } from "./router-context.ts"
 
 // Frozen empty search so a render with no search context has a stable provider value.
@@ -39,10 +40,10 @@ export function compose(chain: readonly unknown[], props: RenderProps): () => JS
   // The provider `value` is an ACCESSOR reading `props.search` - a getter over the mount's snapshot on
   // the client (so a same-route search change updates in place), a static value on SSR.
   return () =>
-    createComponent(SearchContext.Provider, {
+    createComponent(SearchContext, {
       value: () => (props.search ?? EMPTY_SEARCH) as Record<string, unknown>,
       get children() {
-        return createComponent(RenderPropsContext.Provider, {
+        return createComponent(RenderPropsContext, {
           value: props,
           get children() {
             return inner()

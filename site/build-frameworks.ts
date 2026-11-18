@@ -67,7 +67,7 @@ interface FrameworkSpec {
   readonly idiom: string
   /** The client hydration entry (under site/frameworks/) Bun.build bundles for the browser. */
   readonly clientEntry: string
-  /** Module-resolution conditions - Solid needs its "solid" export condition. */
+  /** Module-resolution conditions. */
   readonly clientConditions: readonly string[]
   /** Bun build plugins for the client bundle (Solid/Svelte compile their components). */
   readonly clientPlugins: readonly BunPlugin[]
@@ -107,7 +107,7 @@ const SPECS: readonly FrameworkSpec[] = [
     label: "Solid",
     idiom: "fine-grained reactivity",
     clientEntry: `${DIR}/frameworks/solid.client.ts`,
-    clientConditions: ["bun", "solid", "browser"],
+    clientConditions: ["bun", "browser"],
     clientPlugins: [solidBunPlugin("dom")],
     define: PROD_DEFINE,
   },
@@ -197,7 +197,7 @@ const SSR_BUILD: Record<
   { readonly plugin: () => BunPlugin; readonly conditions: string[] }
 > = {
   vue: { plugin: () => vueBunPlugin("ssr"), conditions: ["bun"] },
-  solid: { plugin: () => solidBunPlugin("ssr"), conditions: ["bun", "solid"] },
+  solid: { plugin: () => solidBunPlugin("ssr"), conditions: ["bun"] },
   svelte: { plugin: () => svelteBunPlugin("ssr"), conditions: ["bun", "svelte"] },
 }
 

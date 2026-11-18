@@ -12,7 +12,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra - API & typed client](/docs/api): Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.
 - [Nifra - Loaders & actions](/docs/data): Typed loaders and actions in Nifra: data on the server, mutations, revalidation.
 - [Nifra - Server functions](/docs/server-functions): Write a function on the server and call it from a component. The module never reaches the browser, the arguments are validated, and the mounted function is an ordinary route - so assurance, capabilities and the effect ledger all apply.
-- [Nifra - Server components](/docs/server-components): Server-only views with closed schemas and owner-route authorization: native React RSC/Flight, or explicit server-rendered ranges and client islands for Vue, Svelte, Solid 1.x and Preact.
+- [Nifra - Server components](/docs/server-components): Server-only views with closed schemas and owner-route authorization: native React RSC/Flight, or explicit server-rendered ranges and client islands for Vue, Svelte, Solid and Preact.
 - [Nifra - Optimistic UI & fetchers](/docs/mutations): Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.
 - [Nifra - Rendering: SSR, streaming, SSG & ISR](/docs/rendering): Render critical HTML first, stream deferred data progressively, prerender static routes, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.
 - [Nifra - Hydration & pre-hydration forms](/docs/hydration): SSR pages become interactive after hydration. Nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.
@@ -122,7 +122,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/web` - Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
 - `@nifrajs/web-preact` - Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plugin).
 - `@nifrajs/web-react` - React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babel).
-- `@nifrajs/web-solid` - Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel build plugin (@nifrajs/web-solid/plugin).
+- `@nifrajs/web-solid` - Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid compiler build plugin (@nifrajs/web-solid/plugin).
 - `@nifrajs/web-svelte` - Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte compiler Bun plugin (@nifrajs/web-svelte/plugin).
 - `@nifrajs/web-vanilla` - Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template HTML, ~0 KB client JS, interactivity via @nifrajs/web/islands.
 - `@nifrajs/web-vue` - Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC compiler Bun plugin (@nifrajs/web-vue/plugin).

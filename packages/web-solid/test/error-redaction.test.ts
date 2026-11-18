@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test"
 import type { RenderProps } from "@nifrajs/web"
-import { createComponent, ErrorBoundary, type JSX } from "solid-js"
+import type { JSX } from "@solidjs/web"
+import { createComponent, Errored } from "solid-js"
 import { solidAdapter } from "../src/index.ts"
 
 const SECRET = "password authentication failed for user admin@10.0.3.7"
 const Page = () =>
-  createComponent(ErrorBoundary, {
+  createComponent(Errored, {
     fallback: () => "Something went wrong",
     get children(): JSX.Element {
       throw new Error(SECRET)

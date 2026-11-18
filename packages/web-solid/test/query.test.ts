@@ -47,6 +47,7 @@ import {
   QueryClientProvider,
   useQueryClient,
 } from "../src/query.ts"
+import { observe } from "./fixtures/provider.ts"
 
 test("createQuery passes staleTime and live keys through", () => {
   const seen = recordingOptions(() => {
@@ -72,10 +73,8 @@ test("on the server the accessor stays idle, refetch rejects and the client is a
   Object.defineProperty(globalThis, "window", { value: undefined, configurable: true })
   try {
     await createRoot(async (dispose) => {
+      // Both bindings read context, which needs the owner the root gives only until its first await.
       const query = createQuery(["solid", "server"], async () => 1)
-      expect(query.state().status).toBe("pending")
-      await expect(query.refetch()).rejects.toThrow("no query client")
-
       const infinite = createInfiniteQuery(
         ["solid", "server-pages"],
         async (page: number) => page,
@@ -84,6 +83,8 @@ test("on the server the accessor stays idle, refetch rejects and the client is a
           getNextPageParam: () => undefined,
         },
       )
+      expect(query.state().status).toBe("pending")
+      await expect(query.refetch()).rejects.toThrow("no query client")
       expect(infinite.state().status).toBe("pending")
       expect(infinite.isPending()).toBe(true)
       expect(infinite.isError()).toBe(false)
@@ -207,13 +208,14 @@ test("Solid provider hydrates its request-local cache before child setup", () =>
     return null
   }
   createRoot((dispose) => {
-    createComponent(QueryClientProvider, {
+    const view = createComponent(QueryClientProvider, {
       client,
       state,
       get children() {
         return createComponent(Probe, {})
       },
     })
+    observe(view)
     expect(query.state().data).toBe("request one")
     dispose()
   })

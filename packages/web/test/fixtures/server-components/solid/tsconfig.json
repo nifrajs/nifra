@@ -9,7 +9,7 @@
     "allowImportingTsExtensions": true,
     "types": ["bun", "vite/client"],
     "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    "jsxImportSource": "@solidjs/web",
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitReturns": true,

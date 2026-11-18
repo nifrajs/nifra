@@ -341,9 +341,9 @@ export default function Dev() {
           <tr>
             <td>Solid</td>
             <td>
-              <code>vite-plugin-solid</code> (<code>{`{ ssr: true }`}</code>)
+              <code>@solidjs/vite-plugin</code> (<code>{`{ ssr: true }`}</code>)
             </td>
-            <td>resets (solid-refresh)</td>
+            <td>resets (solid-js/refresh)</td>
           </tr>
           <tr>
             <td>Svelte</td>

@@ -20,10 +20,10 @@ function setup(generate: "dom" | "ssr" = "dom") {
 const fixture = `${new URL("./fixtures/icon.svg", import.meta.url).pathname}?component`
 
 describe("solidSvgComponentBunPlugin", () => {
-  test("compiles a *.svg?component into a Solid component module (real babel)", async () => {
+  test("compiles a *.svg?component into a Solid component module (real compiler)", async () => {
     const out = await setup("dom")({ path: fixture })
-    expect(out.loader).toBe("js")
-    // babel-preset-solid output: a template + a component export. It compiled without throwing.
+    expect(out.loader).toBe("ts")
+    // Compiler output: a template + a component export. It compiled without throwing.
     expect(out.contents.length).toBeGreaterThan(0)
     expect(out.contents).toContain("SvgComponent")
     // Solid keeps `class` (not className) - the source fed to babel used classProp: "class".

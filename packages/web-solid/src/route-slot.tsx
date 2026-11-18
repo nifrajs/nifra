@@ -12,17 +12,15 @@ import {
   syncRouteSlotStore,
 } from "@nifrajs/web/client"
 import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
+import { dynamic, type JSX } from "@solidjs/web"
 import {
   createComponent,
   createEffect,
   createMemo,
   createSignal,
-  type JSX,
-  onCleanup,
   untrack,
   useContext,
 } from "solid-js"
-import { Dynamic } from "solid-js/web"
 import { compose } from "./compose.ts"
 import { RenderPropsContext } from "./router-context.ts"
 
@@ -36,10 +34,11 @@ export interface RouteSlotController {
 }
 
 export interface RouteSlotHooks {
-  createEffect(effect: () => void): void
+  /** `effect` may return its cleanup, which Solid runs before the next run and on disposal. */
+  // biome-ignore lint/suspicious/noConfusingVoidType: this is Solid's own effect signature, which a handler with no cleanup satisfies by returning nothing.
+  createEffect<T>(compute: () => T, effect: (value: T) => void | (() => void)): void
   createMemo<T>(read: () => T): () => T
   createSignal<T>(initial: T): readonly [() => T, (next: T | ((previous: T) => T)) => void]
-  onCleanup(cleanup: () => void): void
 }
 
 export interface RouteSlotProps {
@@ -68,17 +67,17 @@ export function createRouteSlotBinding(
       routeSlotSyncKey(basePath(), name, parsed().target, parsed().error, pending()),
     )
 
-    hooks.createEffect(() => {
-      const currentStore = store()
+    hooks.createEffect(store, (currentStore) => {
       setSnapshot(currentStore.getSnapshot())
-      const unsubscribe = currentStore.subscribe(() => setSnapshot(currentStore.getSnapshot()))
-      hooks.onCleanup(unsubscribe)
+      return currentStore.subscribe(() => setSnapshot(currentStore.getSnapshot()))
     })
 
-    hooks.createEffect(() => {
-      const current = parsed()
-      syncRouteSlotStore(store(), basePath(), name, current.target, current.error, pending())
-    })
+    hooks.createEffect(
+      () => ({ current: parsed(), target: store(), base: basePath(), pending: pending() }),
+      ({ current, target, base, pending }) => {
+        syncRouteSlotStore(target, base, name, current.target, current.error, pending)
+      },
+    )
 
     const current = hooks.createMemo(() => {
       const value = snapshot()
@@ -104,10 +103,12 @@ export function createRouteSlotBinding(
 
 /** Read or navigate one route slot without changing any sibling slot's URL state or component tree. */
 export const useRouteSlot = createRouteSlotBinding(
-  () => useContext(RenderPropsContext),
+  () => useContext(RenderPropsContext) ?? undefined,
   navigateNow,
-  { createEffect, createMemo, createSignal, onCleanup },
+  { createEffect, createMemo, createSignal },
 )
+
+const AlertDiv = dynamic(() => "div")
 
 /** Render the registered route's complete layout and page chain in this independently navigable region. */
 
@@ -122,8 +123,7 @@ export function RouteSlot(props: RouteSlotProps): JSX.Element {
       if (typeof error === "function") return untrack(() => error(code))
       if (error !== undefined) return error
       return untrack(() =>
-        createComponent(Dynamic, {
-          component: "div",
+        createComponent(AlertDiv, {
           role: "alert",
           "data-route-slot-error": code,
           children: "This panel is unavailable.",

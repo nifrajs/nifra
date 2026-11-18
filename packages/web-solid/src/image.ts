@@ -2,9 +2,9 @@
  * `@nifrajs/web-solid/image` - a CLS-safe responsive Solid `<Image>`. A thin wrapper over `resolveImage`
  * from `@nifrajs/image`: it computes the responsive `<img>` attributes (`src`/`srcset`/`sizes`/`width`/
  * `height`/`loading`/`decoding`/`fetchpriority` via `toHtmlAttrs`) and renders an `<img>` through
- * Solid's `<Dynamic>`. Extra DOM props (`class`, `style`, `id`, `data-*`, handlers) pass through
- * reactively (`splitProps`/`mergeProps`). Resizing is delegated to the `loader`; nifra bundles no codec.
- * No JSX (`createComponent`/`Dynamic`), so the package builds with plain `tsc`.
+ * Solid's `dynamic()`. Extra DOM props (`class`, `style`, `id`, `data-*`, handlers) pass through
+ * reactively (`omit`/`merge`). Resizing is delegated to the `loader`; nifra bundles no codec.
+ * No JSX (`createComponent`/`dynamic`), so the package builds with plain `tsc`.
  */
 import {
   type ImageInputProps,
@@ -14,8 +14,10 @@ import {
   type StaticImageProps,
   toHtmlAttrs,
 } from "@nifrajs/image"
-import { createComponent, type JSX, mergeProps, splitProps } from "solid-js"
-import { Dynamic } from "solid-js/web"
+import { dynamic, type JSX } from "@solidjs/web"
+import { createComponent, merge, omit } from "solid-js"
+
+const Img = dynamic(() => "img")
 
 /** Attributes `resolveImage` computes - callers can't override them via DOM passthrough. */
 type ComputedAttrs =
@@ -46,7 +48,8 @@ export type StaticImageComponentProps = StaticImageProps &
 export function Image(props: ImageComponentProps | StaticImageComponentProps): JSX.Element {
   // Separate the nifra-only props (not valid DOM attributes) from the DOM passthrough (`rest`), keeping
   // both reactive. `rest` carries class/style/id/handlers; the computed attrs are layered over it.
-  const [, rest] = splitProps(props, [
+  const rest = omit(
+    props,
     "loader",
     "widths",
     "quality",
@@ -57,7 +60,7 @@ export function Image(props: ImageComponentProps | StaticImageComponentProps): J
     "alt",
     "sizes",
     "loading",
-  ])
+  )
   const attrs = (): ReturnType<typeof toHtmlAttrs> => {
     // Build ImageProps via conditional spreads (exactOptionalPropertyTypes: an unset optional is
     // absent, not `undefined`). resolveImage validates width/height > 0 (CLS contract).
@@ -85,5 +88,5 @@ export function Image(props: ImageComponentProps | StaticImageComponentProps): J
           }
     return toHtmlAttrs(resolveImage(input, props.loader))
   }
-  return createComponent(Dynamic, mergeProps(rest, attrs, { component: "img" }))
+  return createComponent(Img, merge(rest, attrs))
 }

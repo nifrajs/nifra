@@ -1,9 +1,9 @@
 import { resolve } from "node:path"
 import { devServerComponents } from "@nifrajs/web/server-components/build"
 import preact from "@preact/preset-vite"
+import solid from "@solidjs/vite-plugin"
 import { svelte } from "@sveltejs/vite-plugin-svelte"
 import vue from "@vitejs/plugin-vue"
-import solid from "vite-plugin-solid"
 
 const adapter = process.env.NIFRA_COMPONENT_ADAPTER ?? "vue"
 const root =

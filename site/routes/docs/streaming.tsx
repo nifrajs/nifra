@@ -112,7 +112,7 @@ export default function Streaming() {
       <p>
         The same <code>defer()</code> works in actions and across client-side soft navigations (an
         NDJSON stream settles the deferred values), and it's framework-agnostic - React{" "}
-        <code>&lt;Suspense&gt;</code> and Solid's streaming both drive it from one core. See{" "}
+        <code>&lt;Suspense&gt;</code> and Solid's <code>&lt;Loading&gt;</code> streaming both drive it from one core. See{" "}
         <a href={href({ to: "/docs/frameworks" })}>Frameworks</a> for which adapters stream the boundary in the
         server HTML.
       </p>

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { renderToString } from "@solidjs/web"
 import { type Component, createComponent } from "solid-js"
-import { renderToString } from "solid-js/web"
 import { errorBoundary } from "../src/error.ts"
 
 type BoundaryComponent = Component<{ children?: unknown }>
@@ -10,12 +10,15 @@ const Fallback = (props: { data: { name: string; message: string } }) =>
   `ERR ${props.data.name}: ${props.data.message}`
 
 const wrap = (Boundary: BoundaryComponent, child: () => unknown): string =>
-  renderToString(() =>
-    createComponent(Boundary, {
-      get children() {
-        return child()
-      },
-    }),
+  renderToString(
+    () =>
+      createComponent(Boundary, {
+        get children() {
+          return child()
+        },
+      }),
+    // What the adapter's NODE_ENV rule does in development: the fallback sees the real error.
+    { onError: (error) => error },
   )
 
 describe("@nifrajs/web-solid errorBoundary", () => {

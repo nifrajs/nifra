@@ -640,7 +640,7 @@ export default function Contract() {
         React, Preact, Vue, Svelte and Solid. Declare closed input/public-props schemas and authorization
         in <code>*.component.server.ts(x)</code>, register owner instances and export a named
         <code>componentPipeline</code> configuration. React uses native RSC/Flight; Vue, Svelte,
-        Preact and Nifra's current Solid 1.x adapter use schema-checked server-rendered ranges and
+        Preact and Nifra's Solid adapter use schema-checked server-rendered ranges and
         explicitly registered native islands, not a Flight-equivalent protocol. Solid 2 has a
         separate experimental server-component frames protocol that Nifra does not currently target.
         Refresh repeats owner GET admission;

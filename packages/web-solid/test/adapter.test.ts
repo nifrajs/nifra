@@ -6,7 +6,7 @@ import {
   renderPage,
   renderPageResult,
 } from "@nifrajs/web"
-import { createComponent, createResource, ErrorBoundary, Suspense } from "solid-js"
+import { createComponent, createMemo, Errored, Loading } from "solid-js"
 import { solidAdapter } from "../src/index.ts"
 import { solidBunPlugin } from "../src/plugin.ts"
 
@@ -32,19 +32,17 @@ test("solidAdapter conforms to the executable RenderAdapter interface", async ()
   })
 })
 
-// SSR side runs under bun (server build of solid-js/web). Full hydration interactivity is
+// SSR side runs under bun (server build of @solidjs/web). Full hydration interactivity is
 // browser-verified against the real packages (see the example) - bun:test has no DOM.
 
-test("renderToStream streams a Suspense boundary: fallback bytes precede the resolved content", async () => {
+test("renderToStream streams a Loading boundary: fallback bytes precede the resolved content", async () => {
   // No JSX - `createComponent` is what the Solid transform emits; lets this run under bun:test.
   const Slow = () => {
-    const [r] = createResource(
-      () => new Promise<string>((res) => setTimeout(() => res("RESOLVED"), 30)),
-    )
+    const r = createMemo(() => new Promise<string>((res) => setTimeout(() => res("RESOLVED"), 30)))
     return r()
   }
   const App = () =>
-    createComponent(Suspense, {
+    createComponent(Loading, {
       get fallback() {
         return "FALLBACK"
       },
@@ -60,13 +58,11 @@ test("renderToStream streams a Suspense boundary: fallback bytes precede the res
 
 test("renderToStream stamps the nonce on every script Solid streams for a resource", async () => {
   const Slow = () => {
-    const [r] = createResource(
-      () => new Promise<string>((res) => setTimeout(() => res("RESOLVED"), 30)),
-    )
+    const r = createMemo(() => new Promise<string>((res) => setTimeout(() => res("RESOLVED"), 30)))
     return r()
   }
   const App = () =>
-    createComponent(Suspense, {
+    createComponent(Loading, {
       get fallback() {
         return "FALLBACK"
       },
@@ -102,7 +98,7 @@ test("hydrate:false omits Solid's hydration bootstrap from the document", async 
   expect(html).not.toContain("_$HY")
 })
 
-test("solidBunPlugin compiles a .tsx through Solid's Babel transform", async () => {
+test("solidBunPlugin compiles a .tsx through Solid's compiler", async () => {
   const plugin = solidBunPlugin("dom")
   type OnLoad = (args: { path: string }) => Promise<{ contents: string; loader: string }>
   let onLoad: OnLoad | undefined
@@ -120,9 +116,9 @@ test("solidBunPlugin compiles a .tsx through Solid's Babel transform", async () 
   await Bun.write(fixture, "export const C = (p: { n: number }) => <div>{p.n}</div>\n")
   try {
     const out = await (onLoad as OnLoad)({ path: fixture })
-    expect(out.loader).toBe("js")
+    expect(out.loader).toBe("ts") // the compiler keeps types; Bun strips them
     expect(out.contents).toContain("_$template") // JSX compiled into a Solid template call
-    expect(out.contents).toContain("solid-js/web") // pulls in Solid's DOM runtime
+    expect(out.contents).toContain("@solidjs/web") // pulls in Solid's DOM runtime
     expect(out.contents).not.toContain("{p.n}") // the JSX expression was compiled, not left raw
   } finally {
     unlinkSync(fixture)
@@ -136,7 +132,7 @@ test("solidBunPlugin names itself per generate mode", () => {
 
 test("under a hash CSP, the script Solid writes for a caught server error may run", async () => {
   const Page = () =>
-    createComponent(ErrorBoundary, {
+    createComponent(Errored, {
       fallback: () => "Something went wrong",
       get children(): never {
         throw new Error("server error")

@@ -1,15 +1,16 @@
 import { type HoleRoot, holeHost } from "@nifrajs/web/internal/hole-runtime"
+import { dynamic, hydrate, type JSX } from "@solidjs/web"
 import {
   createComponent,
   createEffect,
-  type JSX,
-  on,
-  onCleanup,
-  onMount,
-  sharedConfig,
+  createStore,
+  isHydrating,
+  onSettled,
+  reconcile,
+  untrack,
 } from "solid-js"
-import { createStore, reconcile } from "solid-js/store"
-import { Dynamic, hydrate } from "solid-js/web"
+
+const HostDiv = dynamic(() => "div")
 
 const isObject = (value: unknown): value is object => typeof value === "object" && value !== null
 
@@ -27,14 +28,14 @@ export function clientHost<Data>(
   fill: () => unknown,
 ): JSX.Element {
   let host: HTMLElement | undefined
-  const element = createComponent(Dynamic, {
-    component: "div",
+  let driven: ReturnType<typeof holeHost> | undefined
+  const element = createComponent(HostDiv, {
     ref: (el: HTMLElement) => {
       host = el
     },
     ...attributes,
   })
-  onMount(() => {
+  onSettled(() => {
     const target = host
     if (target === undefined) return
     const root = (into: Element, data: unknown): HoleRoot => {
@@ -51,12 +52,15 @@ export function clientHost<Data>(
         )
       }
       // Solid keeps one hydration context: a fill met while the page hydrates waits for it to end.
-      if (sharedConfig.context) queueMicrotask(start)
+      if (isHydrating()) queueMicrotask(start)
       else start()
       return {
         update: (next) => {
           if (!isObject(next) || !isObject(props.value)) return false
-          setProps("value", reconcile(next))
+          setProps((draft) => {
+            const current = draft.value
+            if (isObject(current)) reconcile(next)(current)
+          })
           return true
         },
         dispose: () => {
@@ -65,13 +69,19 @@ export function clientHost<Data>(
         },
       }
     }
-    const driven = holeHost(name, target, interactive ? root : undefined)
-    createEffect(
-      on(fill, (next) => {
-        if (next !== undefined) driven.refill(next)
-      }),
-    )
-    onCleanup(() => driven.dispose())
+    const mounted = holeHost(name, target, interactive ? root : undefined)
+    driven = mounted
+    const first = untrack(fill)
+    if (first !== undefined) mounted.refill(first)
+    return () => mounted.dispose()
   })
+  // Refills after the first: the mount above takes the fill that was there when the host settled.
+  createEffect(
+    fill,
+    (next) => {
+      if (next !== undefined) driven?.refill(next)
+    },
+    { defer: true },
+  )
   return element
 }
