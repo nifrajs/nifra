@@ -1,5 +1,9 @@
 # @nifrajs/proxy
 
+## 5.15.1
+
+No changes in this release.
+
 ## 5.15.0
 
 ### Patch Changes

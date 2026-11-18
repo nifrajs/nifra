@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/node-uws",
-  "version": "5.15.0",
+  "version": "5.15.1",
   "description": "Serve a nifra app on uWebSockets.js from Node - the node-direct lane over uWS's native HTTP server.",
   "keywords": [
     "nifra",
