@@ -894,6 +894,126 @@ describe("combineAgentDeltaSinks", () => {
 })
 
 describe("createAgentSharedState", () => {
+  test("shared memory is refused at initialization and before a patch commits", () => {
+    const bytes = new Uint8Array(new SharedArrayBuffer(1))
+    expect(() => createAgentSharedState({ nested: new Map([["bytes", bytes]]) })).toThrow(TypeError)
+    const state = createAgentSharedState<Record<string, unknown>>({ count: 1 })
+    let notices = 0
+    state.subscribe(() => notices++)
+    expect(() =>
+      state.patch([
+        { op: "replace", path: "/count", value: 2 },
+        { op: "add", path: "/bytes", value: new Set([bytes]) },
+      ]),
+    ).toThrow(TypeError)
+    expect(state.snapshot()).toEqual({ count: 1 })
+    expect(notices).toBe(0)
+  })
+
+  test("detaches values inserted at the root, object fields and array positions", () => {
+    const cases: Array<{ initial: unknown; op: "add" | "replace"; path: string }> = [
+      { initial: null, op: "add", path: "" },
+      { initial: null, op: "replace", path: "" },
+      { initial: {}, op: "add", path: "/item" },
+      { initial: { item: null }, op: "replace", path: "/item" },
+      { initial: [], op: "add", path: "/-" },
+      { initial: [], op: "add", path: "/0" },
+      { initial: [null], op: "replace", path: "/0" },
+    ]
+    for (const { initial, op, path } of cases) {
+      const state = createAgentSharedState(initial)
+      const value = { nested: { count: 1 } }
+      let notices = 0
+      state.subscribe(() => notices++)
+      state.patch([{ op, path, value }])
+      const committed = state.snapshot()
+      value.nested.count = 2
+      expect(state.snapshot()).toEqual(committed)
+      expect(notices).toBe(1)
+    }
+  })
+
+  test("one subscriber cannot mutate the document or another subscriber's batch", () => {
+    const state = createAgentSharedState({ item: { count: 0 } })
+    const value = { count: 1 }
+    let retained: readonly AgentStatePatchOp[] = []
+    state.subscribe((ops) => {
+      retained = ops
+      const op = ops[0]
+      if (op === undefined || op.op === "remove") throw new Error("missing replacement")
+      if (typeof op.value !== "object" || op.value === null) throw new Error("missing value")
+      Reflect.set(op.value, "count", 99)
+      Reflect.set(op, "path", "/changed")
+    })
+    const seen: (readonly AgentStatePatchOp[])[] = []
+    state.subscribe((ops) => seen.push(ops))
+    state.patch([{ op: "replace", path: "/item", value }])
+    expect(state.snapshot()).toEqual({ item: { count: 1 } })
+    expect(value).toEqual({ count: 1 })
+    expect(seen).toEqual([[{ op: "replace", path: "/item", value: { count: 1 } }]])
+    expect(retained[0]?.path).toBe("/changed")
+  })
+
+  test("the last observer's batch is its own, and a listener added mid-dispatch hears the next patch", () => {
+    const state = createAgentSharedState<Record<string, unknown>>({})
+    const first: (readonly AgentStatePatchOp[])[] = []
+    const late: (readonly AgentStatePatchOp[])[] = []
+    let retained: readonly AgentStatePatchOp[] = []
+    state.subscribe((ops) => first.push(ops))
+    state.subscribe((ops) => {
+      retained = ops
+      state.subscribe((more) => late.push(more))
+      const op = ops[0]
+      if (op === undefined || op.op === "remove") throw new Error("missing value")
+      Reflect.set(Object(op.value), "count", 99)
+    })
+    state.patch([{ op: "add", path: "/item", value: { count: 1 } }])
+    expect(first).toEqual([[{ op: "add", path: "/item", value: { count: 1 } }]])
+    expect(late).toEqual([])
+    expect(state.snapshot()).toEqual({ item: { count: 1 } })
+    expect(retained).toHaveLength(1)
+    state.patch([{ op: "replace", path: "/item/count", value: 2 }])
+    expect(late).toEqual([[{ op: "replace", path: "/item/count", value: 2 }]])
+  })
+
+  test("a listener removed during dispatch is not called", () => {
+    const state = createAgentSharedState({ n: 0 })
+    let removed = 0
+    let off: () => void = () => {}
+    state.subscribe(() => off())
+    off = state.subscribe(() => removed++)
+    state.patch([{ op: "replace", path: "/n", value: 1 }])
+    expect(removed).toBe(0)
+  })
+
+  test("later operations do not rewrite earlier values in the caller or notification batch", () => {
+    const state = createAgentSharedState<Record<string, unknown>>({})
+    const value = { count: 1 }
+    const seen: (readonly AgentStatePatchOp[])[] = []
+    state.subscribe((ops) => seen.push(ops))
+    state.patch([
+      { op: "add", path: "/item", value },
+      { op: "replace", path: "/item/count", value: 2 },
+    ])
+    expect(state.snapshot()).toEqual({ item: { count: 2 } })
+    expect(value).toEqual({ count: 1 })
+    expect(seen[0]?.[0]).toEqual({ op: "add", path: "/item", value: { count: 1 } })
+  })
+
+  test("a value that cannot be cloned rejects the batch before committing or notifying", () => {
+    const state = createAgentSharedState<Record<string, unknown>>({ count: 1 })
+    let notices = 0
+    state.subscribe(() => notices++)
+    expect(() =>
+      state.patch([
+        { op: "replace", path: "/count", value: 2 },
+        { op: "add", path: "/callback", value: () => {} },
+      ]),
+    ).toThrow(TypeError)
+    expect(state.snapshot()).toEqual({ count: 1 })
+    expect(notices).toBe(0)
+  })
+
   test("applies the RFC 6902 subset and snapshots defensively", () => {
     const state = createAgentSharedState<Record<string, unknown>>({ items: ["a"], keep: 1 })
     state.patch([

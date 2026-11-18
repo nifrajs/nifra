@@ -8,7 +8,14 @@
  * Every lease carries a fresh token; `complete`/`retry`/`deadLetter`/`renew` with a token that is no
  * longer the job's current one are ignored, so a worker whose lease was taken over cannot settle the
  * job under the worker that now holds it.
+ *
+ * Payloads are copied on `enqueue` and again on every lease, so neither the caller nor a handler can
+ * change what a later attempt receives. A payload must therefore be plain data that survives a
+ * structured clone intact: a function, a class instance or null-prototype object (its prototype would
+ * be lost), an accessor, an `Error` (its fields are not all copied), or a `SharedArrayBuffer` (its
+ * memory would stay shared) is refused with a `TypeError` before anything is stored.
  */
+import { cloneData } from "./generated/clone-data.ts"
 import type { JobCounts, JobStore, StoredJob } from "./types.ts"
 
 interface Record {
@@ -50,11 +57,12 @@ export class MemoryJobStore implements JobStore {
     maxAttempts: number
     traceparent?: string
   }): string {
+    const payload = cloneData(job.payload)
     const id = this.idFor()
     this.jobs.set(id, {
       id,
       name: job.name,
-      payload: job.payload,
+      payload,
       attempt: 0,
       maxAttempts: job.maxAttempts,
       traceparent: job.traceparent,
@@ -70,12 +78,13 @@ export class MemoryJobStore implements JobStore {
     for (const r of this.jobs.values()) {
       if (out.length >= limit) break
       if (r.runAt <= now && r.leaseUntil <= now) {
+        const payload = structuredClone(r.payload)
         r.leaseUntil = now + leaseMs
         r.lease = String(++this.leaseSeq)
         const job: { -readonly [K in keyof StoredJob]: StoredJob[K] } = {
           id: r.id,
           name: r.name,
-          payload: r.payload,
+          payload,
           attempt: r.attempt,
           maxAttempts: r.maxAttempts,
           lease: r.lease,

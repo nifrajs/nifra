@@ -24,6 +24,7 @@ import {
   type ToolError,
   type ToolIdempotencyStore,
 } from "@nifrajs/core/tool-contract"
+import { cloneData } from "./internal/clone-data.ts"
 import { asRecord } from "./internal/record.ts"
 import { sha256Hex } from "./internal/sha256-hex.ts"
 
@@ -337,28 +338,49 @@ export type AgentStatePatchOp =
 export interface AgentSharedState<State = unknown> {
   /** A defensive deep copy of the current document. */
   snapshot(): State
-  /** Apply ops atomically - on an invalid op the whole batch is rejected with a TypeError. */
+  /**
+   * Apply ops atomically - on an invalid op the whole batch is rejected with a TypeError. Values are
+   * copied, so later changes to a value the caller passed never reach the document, and a value a copy
+   * would change or share (a function, a class instance, an accessor, shared memory) is refused with a
+   * TypeError before anything commits.
+   */
   patch(ops: readonly AgentStatePatchOp[]): void
-  /** Observe applied patches. Returns the unsubscribe function. Listener failures are isolated. */
+  /**
+   * Observe applied patches. Each listener receives its own copy of the batch, so one observer
+   * cannot change the document or what another observer sees. Returns the unsubscribe function.
+   * Listener failures are isolated.
+   */
   subscribe(listener: (ops: readonly AgentStatePatchOp[]) => void): () => void
 }
 
 export function createAgentSharedState<State>(initial: State): AgentSharedState<State> {
-  let document: unknown = structuredClone(initial)
+  let document: unknown = cloneData(initial)
   const listeners = new Set<(ops: readonly AgentStatePatchOp[]) => void>()
   return {
     snapshot() {
       return structuredClone(document) as State
     },
     patch(ops) {
+      let applied: readonly AgentStatePatchOp[]
+      try {
+        applied = cloneData(ops)
+      } catch (cause) {
+        throw new TypeError("agent: patch values must support detached data snapshots", { cause })
+      }
       // Validate-then-apply on a copy so a mid-batch failure never leaves a half-patched document.
       let next = structuredClone(document)
-      for (const op of ops) next = applyStatePatchOp(next, op)
+      // Applying a later operation must not rewrite an earlier operation's notification value.
+      for (const op of applied) next = applyStatePatchOp(next, structuredClone(op))
       document = next
-      const applied = Object.freeze([...ops])
-      for (const listener of listeners) {
+      // Every listener gets a batch of its own; the last one takes `applied` itself, which nothing else
+      // holds, so a single observer costs no copy. The listeners are fixed first: one subscribed from
+      // inside a callback would otherwise be handed a batch the last observer may already have changed.
+      const targets = [...listeners]
+      for (const [index, listener] of targets.entries()) {
+        if (!listeners.has(listener)) continue
+        const batch = index === targets.length - 1 ? applied : structuredClone(applied)
         try {
-          listener(applied)
+          listener(Object.freeze(batch))
         } catch {
           // Observer failures must not affect the document or the other observers.
         }

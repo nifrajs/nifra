@@ -237,6 +237,66 @@ test("the scan reads renderer output, so the validator's common case skips the t
     expect(scanComponentHTML(html)).toBeDefined()
 })
 
+// Elements an array search visits, over every method that can search one. A search that grows with
+// the attributes already read makes the total grow with the square of the attribute count.
+function arraySearchVisits(run: () => void): number {
+  const methods = [
+    "some",
+    "every",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "includes",
+    "indexOf",
+    "lastIndexOf",
+    "filter",
+  ]
+  let visits = 0
+  const originals = methods.map((method) => Reflect.get(Array.prototype, method))
+  for (const [index, method] of methods.entries()) {
+    const original = originals[index]
+    Reflect.set(Array.prototype, method, function (this: unknown[], ...args: unknown[]) {
+      visits += this.length
+      return Reflect.apply(original, this, args)
+    })
+  }
+  try {
+    run()
+  } finally {
+    for (const [index, method] of methods.entries()) {
+      Reflect.set(Array.prototype, method, originals[index])
+    }
+  }
+  return visits
+}
+
+const manyAttributes = (count: number): string =>
+  `<div ${Array.from({ length: count }, (_, index) => `data-k${index}="x"`).join(" ")}></div>`
+
+test("the work to check attribute names does not grow with the square of the attribute count", () => {
+  let tags: ScannedTag[] | undefined
+  const small = arraySearchVisits(() => scanComponentHTML(manyAttributes(1000)))
+  const large = arraySearchVisits(() => {
+    tags = scanComponentHTML(manyAttributes(4000))
+  })
+  expect(tags?.[0]?.attrs).toHaveLength(4000)
+  // The scan searches an array only for the first few attributes, so the visits stay put as the count
+  // grows; a search of every earlier attribute is sixteen times as much for four times the attributes.
+  expect(large).toBeLessThanOrEqual(small * 2 + 64)
+  expect(() => validateComponentHTML(manyAttributes(4000))).not.toThrow()
+})
+
+test("attribute names are unique without case, and each tag owns its names", () => {
+  expect(scanComponentHTML('<div data-a="1" DATA-A="2">')).toBeUndefined()
+  const prefix = Array.from({ length: 8 }, (_, index) => `data-k${index}="x"`).join(" ")
+  expect(scanComponentHTML(`<div ${prefix} DATA-K0="duplicate">`)).toBeUndefined()
+  expect(scanComponentHTML('<i id="1"></i><b ID="2"></b>')).toEqual([
+    { tagName: "i", attrs: [{ name: "id", value: "1" }] },
+    { tagName: "b", attrs: [{ name: "id", value: "2" }] },
+  ])
+})
+
 test("the validator refuses the same strings with and without the scan", () => {
   const outcome = (run: () => void): string => {
     try {

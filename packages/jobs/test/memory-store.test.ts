@@ -7,6 +7,145 @@ const seqStore = (): MemoryJobStore => {
 }
 
 describe("MemoryJobStore", () => {
+  test("shared buffers and nested shared-backed views are refused before storing a job", () => {
+    const shared = new SharedArrayBuffer(1)
+    for (const payload of [
+      shared,
+      { bytes: new Uint8Array(shared) },
+      new Map([["x", new Set([shared])]]),
+    ]) {
+      const store = seqStore()
+      expect(() => store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 })).toThrow(
+        TypeError,
+      )
+      expect(store.counts(0)).toEqual({ pending: 0, active: 0, dead: 0 })
+    }
+  })
+
+  test("custom payload prototypes are refused instead of silently dropping their methods", () => {
+    class Payload {
+      count = 1
+      read() {
+        return this.count
+      }
+    }
+    for (const payload of [
+      new Payload(),
+      { nested: new Payload() },
+      new Map([[new Payload(), "x"]]),
+    ]) {
+      const store = seqStore()
+      expect(() => store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 })).toThrow(
+        TypeError,
+      )
+      expect(store.counts(0)).toEqual({ pending: 0, active: 0, dead: 0 })
+    }
+  })
+
+  test("stored payloads are detached from the caller and every lease", () => {
+    const store = seqStore()
+    const payload = { nested: { count: 1 }, bytes: new Uint8Array([1]), at: new Date(0) }
+    const expected = structuredClone(payload)
+    const id = store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 3 })
+    payload.nested.count = 2
+    payload.bytes[0] = 2
+    payload.at.setTime(2)
+    const [first] = store.lease(0, 1, 1000)
+    expect(first?.payload).toEqual(expected)
+    if (typeof first?.payload !== "object" || first.payload === null)
+      throw new Error("missing leased payload")
+    Reflect.set(Reflect.get(first.payload, "nested"), "count", 3)
+    Reflect.get(first.payload, "bytes")[0] = 3
+    Reflect.get(first.payload, "at").setTime(3)
+    store.retry(id, 1000, first.lease)
+    expect(store.lease(1000, 1, 1000)[0]?.payload).toEqual(expected)
+  })
+
+  test("a payload that cannot be cloned is refused without storing a job", () => {
+    const store = seqStore()
+    expect(() =>
+      store.enqueue({ name: "x", payload: { callback: () => {} }, runAt: 0, maxAttempts: 1 }),
+    ).toThrow()
+    expect(store.counts(0)).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+
+  test("a payload the copy would change or share is refused without storing a job", () => {
+    class Mailbox {
+      constructor(readonly to: string) {}
+      address(): string {
+        return this.to
+      }
+    }
+    class Pair extends Array<number> {}
+    class Index extends Map<string, number> {}
+    class Seen extends Set<string> {}
+    const shared = new SharedArrayBuffer(4)
+    const refused: Array<[string, unknown]> = [
+      ["a class instance", new Mailbox("a")],
+      ["a nested class instance", { jobs: [{ box: new Mailbox("a") }] }],
+      ["a class instance inside a Map value", new Map([["k", new Mailbox("a")]])],
+      ["a class instance inside a Map key", new Map([[new Mailbox("a"), 1]])],
+      ["a class instance inside a Set", new Set([new Mailbox("a")])],
+      ["an Array subclass", Pair.from([1])],
+      ["a Map subclass", new Index()],
+      ["a Set subclass", new Seen()],
+      ["a SharedArrayBuffer", shared],
+      ["a view of a SharedArrayBuffer", { bytes: new Uint8Array(shared) }],
+      [
+        "an accessor that removes itself and returns shared memory",
+        {
+          get bytes() {
+            Reflect.deleteProperty(this, "bytes")
+            return new Uint8Array(shared)
+          },
+        },
+      ],
+      ["a function", { callback: () => {} }],
+      ["a null-prototype object", Object.assign(Object.create(null), { n: 1 })],
+      ["an Error", new RangeError("bad")],
+    ]
+    for (const [label, payload] of refused) {
+      const store = seqStore()
+      expect(() => store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 }), label).toThrow()
+      expect(store.counts(0), label).toEqual({ pending: 0, active: 0, dead: 0 })
+      expect(store.enqueue({ name: "x", payload: 1, runAt: 0, maxAttempts: 1 }), label).toBe("j1")
+    }
+  })
+
+  test("a boxed string is stored with its characters, and refused with a field a copy would drop", () => {
+    const store = seqStore()
+    store.enqueue({ name: "x", payload: new String("data"), runAt: 0, maxAttempts: 1 })
+    expect(String(store.lease(0, 1, 1000)[0]?.payload)).toBe("data")
+    expect(() =>
+      store.enqueue({
+        name: "x",
+        payload: Object.assign(new String("data"), { jobId: "a" }),
+        runAt: 0,
+        maxAttempts: 1,
+      }),
+    ).toThrow(TypeError)
+  })
+
+  test("plain data of every kind that survives a clone intact is stored, cycles included", () => {
+    const store = seqStore()
+    const cyclic: { self?: unknown; list: number[] } = { list: [1] }
+    cyclic.self = cyclic
+    const payload = {
+      cyclic,
+      at: new Date(5),
+      pattern: /a/g,
+      map: new Map([["k", { n: 1 }]]),
+      set: new Set([1]),
+      bytes: new Uint8Array([1, 2]),
+      buffer: new ArrayBuffer(2),
+      big: 1n,
+    }
+    store.enqueue({ name: "x", payload, runAt: 0, maxAttempts: 1 })
+    const leased = store.lease(0, 1, 1000)[0]?.payload
+    expect(leased).toEqual(payload)
+    expect(leased).not.toBe(payload)
+  })
+
   test("enqueue → lease (due) → complete", () => {
     const s = seqStore()
     const id = s.enqueue({ name: "x", payload: { a: 1 }, runAt: 100, maxAttempts: 3 })

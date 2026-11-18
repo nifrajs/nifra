@@ -1509,6 +1509,9 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     reloadedBuilds: "build ids already reloaded for",
     "waiters@whenReady": LISTENERS,
   },
+  "packages/web/src/server-components/html-scan.ts": {
+    "names@scanStartTag": ONE_CALL,
+  },
   "packages/web/src/server-components/portal.ts": {
     cleanups: "portal cleanups, weakly keyed by the owner element",
     "entries@ownComponentPortal": "portal cleanups of one owner element",
