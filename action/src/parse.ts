@@ -134,10 +134,18 @@ export function analyze(
   failOn: FailOn,
   prefix: string | null = "",
 ): Analysis {
-  const exit = /^\d+$/.test(exitText.trim()) ? Number(exitText.trim()) : 1
+  const exit = /^\d+$/.test(exitText.trim()) ? Number(exitText.trim()) : -1
   const payload = firstObject(raw)
 
-  if (!isRecord(payload) || typeof payload.ok !== "boolean") {
+  if (
+    !isRecord(payload) ||
+    typeof payload.ok !== "boolean" ||
+    (Array.isArray(payload.diagnostics)
+      ? payload.error !== undefined
+      : payload.ok !== false ||
+        payload.diagnostics !== undefined ||
+        typeof payload.error !== "string")
+  ) {
     return {
       ok: false,
       exit,
@@ -170,11 +178,16 @@ export function analyze(
 
   // Exit 0 = pass, 1 = findings. Anything else, or an error document, means the CLI itself failed;
   // that never passes, whatever `fail-on` says.
-  const unexpectedFailure = (exit !== 0 && exit !== 1) || hardFailure
-  const ok = payload.ok === true
+  const unexpectedFailure =
+    hardFailure || exit !== (payload.ok ? 0 : 1) || findings.length !== source.length
+  const ok = payload.ok
   const failed =
     unexpectedFailure ||
-    (failOn === "never" ? false : failOn === "warning" ? errors + warnings > 0 || !ok : !ok)
+    (failOn === "never"
+      ? false
+      : failOn === "warning"
+        ? errors + warnings > 0 || !ok
+        : errors > 0 || !ok)
 
   const truncated = isRecord(payload.truncated)
     ? { shown: Number(payload.truncated.shown) || 0, total: Number(payload.truncated.total) || 0 }
@@ -254,13 +267,16 @@ const MAX_EVIDENCE = 10
 
 function headline(analysis: Analysis): string {
   if (analysis.parseError) return "nifra check could not be parsed"
-  return analysis.ok ? "nifra check passed" : "nifra check failed"
+  return analysis.ok && !analysis.unexpectedFailure && analysis.errors === 0
+    ? "nifra check passed"
+    : "nifra check failed"
 }
 
 /** Markdown shared by the job summary and the PR comment. */
 export function renderMarkdown(analysis: Analysis, env: NodeJS.ProcessEnv = process.env): string {
   const lines: string[] = []
-  lines.push(`## ${analysis.ok ? "✅" : "❌"} ${headline(analysis)}`)
+  const passed = analysis.ok && !analysis.unexpectedFailure && analysis.errors === 0
+  lines.push(`## ${passed ? "✅" : "❌"} ${headline(analysis)}`)
   lines.push("")
   lines.push(
     `- errors: **${analysis.errors}** · warnings: **${analysis.warnings}** · info: **${analysis.infos}**`,

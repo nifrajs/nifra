@@ -149,15 +149,27 @@ async function liveHub(origin: string, port: number): Promise<string[]> {
   expectEqual("heartbeat", await socket.next("heartbeat"), "p")
   notes.push("socket, load, watch, publish and heartbeat through the hub")
 
-  const before = await (await fetch(`${origin}/__instance`)).text()
-  await Bun.sleep(HIBERNATE_WAIT_MS)
-  await fetch(`${origin}/__publish?key=post:1`, { method: "POST" })
+  const instance = async (): Promise<string> =>
+    (await fetch(`${origin}/__instance`, { keepalive: false })).text()
+  const before = await instance()
+  // Auto-responses keep the transport alive without running the hub or resetting its idle timer.
+  for (let i = 0; i < 3; i++) {
+    await Bun.sleep(HIBERNATE_WAIT_MS / 3)
+    socket.send("p")
+    expectEqual("heartbeat while idle", await socket.next("heartbeat while idle"), "p")
+  }
+  // After the idle wait the previous HTTP connection may have been closed by workerd.
+  const published = await fetch(`${origin}/__publish?key=post:1`, {
+    method: "POST",
+    keepalive: false,
+  })
+  if (!published.ok) throw new Error(`publish after the quiet returned ${published.status}`)
   expectEqual("changed after the quiet", await socket.next("changed after the quiet"), {
     t: "changed",
     tag,
     spread: 0,
   })
-  const after = await (await fetch(`${origin}/__instance`)).text()
+  const after = await instance()
   if (before === after)
     throw new Error(`the hub was not evicted after ${HIBERNATE_WAIT_MS} ms quiet`)
   notes.push(

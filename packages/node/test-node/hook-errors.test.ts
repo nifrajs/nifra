@@ -9,7 +9,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { type Logger, server, status } from "@nifrajs/core"
-import { rateLimit } from "@nifrajs/middleware"
+import { cache, MemoryResponseCache, rateLimit } from "@nifrajs/middleware"
 import { serve } from "@nifrajs/node"
 
 const recorder = (): { logger: Logger; errors: unknown[] } => {
@@ -36,6 +36,21 @@ test("a hook that throws with no onError answers 500 and reaches the app's logge
     assert.deepEqual(errors, ["hook failed"])
   } finally {
     await running.stop()
+  }
+})
+
+test("a configured bodyless status stays bodyless when replayed from cache", async () => {
+  for (const status of [204, 205, 304]) {
+    const app = server()
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000, status: (s) => s === status }))
+      .get("/x", () => new Response(null, { status }))
+
+    for (const cacheStatus of ["MISS", "HIT"]) {
+      const response = await app.fetch(new Request("http://localhost/x"))
+      assert.equal(response.status, status)
+      assert.equal(response.headers.get("x-nifra-cache"), cacheStatus)
+      assert.equal(response.body, null)
+    }
   }
 })
 

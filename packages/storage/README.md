@@ -43,7 +43,11 @@ private package-not in these mechanical interfaces.
 
 Keys are POSIX-ish relative paths (`avatars/u1.png`). **Every** adapter rejects unsafe keys - absolute
 paths, `..` traversal, NUL bytes, backslashes - via `assertSafeKey`, so a `FileStorage` key can never
-escape its root and a key valid in one adapter is valid in all.
+escape its root through key syntax and a key valid in one adapter is valid in all.
+
+Keep the storage and sidecar directory trees, including all nested directories and ancestors,
+under trusted ownership. On Windows, protect those directories with ACLs that prevent other
+principals from modifying or replacing them. FileStorage cannot verify those ACLs.
 
 ```ts
 import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"

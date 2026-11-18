@@ -635,6 +635,27 @@ describe("SSR bridge: dehydrate / hydrate", () => {
     expect(server.dehydrate({ shouldDehydrateQuery: () => false })).toEqual(empty)
   })
 
+  test("hydration applies the cap to regular entries and pending infinite snapshots", () => {
+    const client = createQueryClient({ now: () => 0, max: 1 })
+    const keys = ["old", "new"]
+    client.hydrate({
+      queries: keys.map((key) => ({ key, data: key, updatedAt: 1 })),
+      infiniteQueries: keys.map((key) => ({
+        key,
+        data: { pages: [key], pageParams: [0] },
+        updatedAt: 1,
+      })),
+    })
+
+    expect(client.getQueryData("old")).toBeUndefined()
+    expect(client.getQueryData("new")).toBe("new")
+    const opts = { initialPageParam: 0, getNextPageParam: () => undefined }
+    expect(client.infiniteQuery("old", async () => "fetch", opts).snapshot().data).toBeUndefined()
+    expect(client.infiniteQuery("new", async () => "fetch", opts).snapshot().data?.pages).toEqual([
+      "new",
+    ])
+  })
+
   test("hydrate does not clobber a client entry that is already fresher", () => {
     const client = createQueryClient({ now: () => 0 })
     client.setQueryData(["k"], "CLIENT") // updatedAt 0

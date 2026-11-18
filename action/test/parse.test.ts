@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   analyze,
   type Finding,
@@ -122,6 +125,61 @@ describe("analyze", () => {
     const result = analyze("not json at all", "1", "error")
     expect(result.failed).toBe(true)
     expect(result.parseError).toBeTruthy()
+  })
+
+  test("fails closed on an incomplete or inconsistent CLI report", () => {
+    for (const [payload, exit] of [
+      [{ ok: true }, "0"],
+      [{ ok: true, diagnostics: [] }, "1"],
+      [{ ok: false, diagnostics: [] }, "0"],
+      [{ ok: false, diagnostics: [], error: "broken" }, "1"],
+      [{ ok: true, diagnostics: [{ severity: "error" }] }, "0"],
+      [{ ok: false, diagnostics: [] }, "bad"],
+    ] as const) {
+      expect(analyze(JSON.stringify(payload), exit, "never").failed).toBe(true)
+    }
+  })
+
+  test("preserves the CLI verdict separately from action and exit policy", () => {
+    const result = analyze('{"ok":true,"diagnostics":[]}', "255", "never")
+    expect(result.ok).toBe(true)
+    expect(result.failed).toBe(true)
+    expect(renderMarkdown(result)).toContain("nifra check failed")
+
+    const legacy = '{"ok":true,"diagnostics":[{"severity":"error","message":"promoted"}]}'
+    expect(analyze(legacy, "0", "never").failed).toBe(false)
+    expect(analyze(legacy, "0", "error").failed).toBe(true)
+  })
+
+  test("an actual CLI report honors a promoted contract diagnostic", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "nifra-action-"))
+    try {
+      await Bun.write(
+        join(directory, "nifra.check.json"),
+        '{"rules":{"NF-K001":{"severity":"error"}}}',
+      )
+      const cli = join(import.meta.dir, "../../packages/cli/src/cli.ts")
+      const child = Bun.spawn([process.execPath, cli, "check", "--json"], {
+        cwd: directory,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [raw, stderr, exit] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      const report = analyze(raw, String(exit), "never")
+      expect(exit, stderr).toBe(1)
+      expect(report.ok).toBe(false)
+      expect(report.unexpectedFailure).toBe(false)
+      expect(report.failed).toBe(false)
+      expect(report.findings).toContainEqual(
+        expect.objectContaining({ code: "NF-K001", severity: "error" }),
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test("tolerates a preamble before the JSON document", () => {
