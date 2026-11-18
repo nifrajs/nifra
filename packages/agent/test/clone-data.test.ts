@@ -226,3 +226,43 @@ test("shared memory behind a named field of an array or a view is refused, an or
   expect(() => cloneData(shared)).toThrow(TypeError)
   expect(cloneData(plain)).toHaveLength(0)
 })
+
+test("shared memory is refused under every prototype the allowlist accepts", () => {
+  for (const prototype of [Array.prototype, ArrayBuffer.prototype, Map.prototype, Date.prototype]) {
+    const shared = Object.setPrototypeOf(new SharedArrayBuffer(1), prototype)
+    const holder: unknown[] = []
+    Object.assign(holder, { extra: shared })
+    expect(() => cloneData(holder)).toThrow(TypeError)
+    expect(() => cloneData(new DataView(shared))).toThrow(TypeError)
+  }
+})
+
+test("a map or set wearing another allowed prototype is refused without running a getter", () => {
+  let reads = 0
+  const entry = {
+    get x() {
+      reads += 1
+      return 1
+    },
+  }
+  for (const prototype of [Date.prototype, Array.prototype, Set.prototype, ArrayBuffer.prototype]) {
+    const map = Object.setPrototypeOf(new Map([["k", entry]]), prototype)
+    const set = Object.setPrototypeOf(new Set([entry]), prototype)
+    if (prototype !== Set.prototype) expect(() => cloneData(map)).toThrow(TypeError)
+    expect(() => cloneData(set)).toThrow(TypeError)
+  }
+  expect(reads).toBe(0)
+})
+
+test("a plain object wearing a built-in prototype or a view prototype is refused", () => {
+  for (const prototype of [Date.prototype, Map.prototype, Array.prototype, Uint8Array.prototype]) {
+    expect(() => cloneData(Object.setPrototypeOf({ a: 1 }, prototype))).toThrow(TypeError)
+  }
+})
+
+test("a sparse array with a huge length is copied without visiting its holes", () => {
+  const sparse = new Array<number>(50_000_000)
+  const copy = cloneData(sparse)
+  expect(copy).toHaveLength(50_000_000)
+  expect(0 in copy).toBe(false)
+})

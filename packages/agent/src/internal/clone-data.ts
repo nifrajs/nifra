@@ -1,17 +1,6 @@
-/** Prototypes whose instances a structured clone rebuilds with the same prototype. */
-const CLONED_PROTOTYPES: ReadonlySet<unknown> = new Set([
-  Object.prototype,
-  Array.prototype,
-  Map.prototype,
-  Set.prototype,
-  Date.prototype,
-  RegExp.prototype,
-  ArrayBuffer.prototype,
+/** Prototypes of the typed arrays and `DataView` this runtime has. */
+const VIEW_PROTOTYPES: ReadonlySet<unknown> = new Set([
   DataView.prototype,
-  Boolean.prototype,
-  Number.prototype,
-  String.prototype,
-  BigInt.prototype,
   ...[
     "Int8Array",
     "Uint8Array",
@@ -31,18 +20,41 @@ const CLONED_PROTOTYPES: ReadonlySet<unknown> = new Set([
   }),
 ])
 
+/** A built-in accessor or method of `prototype` that throws on an object without the real internal slot. */
+function slotCheck(prototype: object, key: string): (() => unknown) | undefined {
+  const own = Reflect.getOwnPropertyDescriptor(prototype, key)
+  const check = own?.get ?? own?.value
+  return typeof check === "function" ? check : undefined
+}
+
 const typedArray = Object.getPrototypeOf(Uint8Array.prototype)
 const typedArrayBuffer = Reflect.getOwnPropertyDescriptor(typedArray, "buffer")?.get
 const typedArrayLength = Reflect.getOwnPropertyDescriptor(typedArray, "length")?.get
 const dataViewBuffer = Reflect.getOwnPropertyDescriptor(DataView.prototype, "buffer")?.get
 
-/** The built-in getters that only an object holding the real internal slot can answer. */
-const BRANDS: readonly (() => unknown)[] = [
-  Reflect.getOwnPropertyDescriptor(Map.prototype, "size")?.get,
-  Reflect.getOwnPropertyDescriptor(Set.prototype, "size")?.get,
+/** Every object whose prototype is not `Object.prototype` must hold the slot that prototype names. */
+const PROTOTYPE_SLOTS: ReadonlyMap<unknown, (() => unknown) | undefined> = new Map<
+  unknown,
+  (() => unknown) | undefined
+>([
+  [Map.prototype, slotCheck(Map.prototype, "size")],
+  [Set.prototype, slotCheck(Set.prototype, "size")],
+  [Date.prototype, slotCheck(Date.prototype, "getTime")],
+  [RegExp.prototype, slotCheck(RegExp.prototype, "source")],
+  [ArrayBuffer.prototype, slotCheck(ArrayBuffer.prototype, "byteLength")],
+  [Boolean.prototype, slotCheck(Boolean.prototype, "valueOf")],
+  [Number.prototype, slotCheck(Number.prototype, "valueOf")],
+  [String.prototype, slotCheck(String.prototype, "valueOf")],
+  [BigInt.prototype, slotCheck(BigInt.prototype, "valueOf")],
+])
+
+/** The slots a plain-prototyped object must not hold: a map, a set or shared memory in disguise. */
+const DISGUISES: readonly (() => unknown)[] = [
+  slotCheck(Map.prototype, "size"),
+  slotCheck(Set.prototype, "size"),
   typeof SharedArrayBuffer === "undefined"
     ? undefined
-    : Reflect.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength")?.get,
+    : slotCheck(SharedArrayBuffer.prototype, "byteLength"),
 ].filter((read) => read !== undefined)
 
 const sharedPrototype =
@@ -68,19 +80,30 @@ function elementCount(view: ArrayBufferView): number | undefined {
   }
 }
 
-/**
- * Whether `source` is a map, a set or a shared buffer whatever its prototype says: each getter throws
- * unless the object holds the real internal slot, so a prototype swapped to a plain object's hides
- * nothing. A thrown error per brand, only for an object that already claims a plain prototype.
- */
-function wearsBrand(source: object): boolean {
-  for (const read of BRANDS) {
-    try {
-      Reflect.apply(read, source, [])
-      return true
-    } catch {}
+/** Whether `read` answers for `source`, which only an object holding the real internal slot allows. */
+function holdsSlot(read: () => unknown, source: object): boolean {
+  try {
+    Reflect.apply(read, source, [])
+    return true
+  } catch {
+    return false
   }
-  return false
+}
+
+/**
+ * Whether `source` matches its prototype: a view has a view prototype, and any other prototype than
+ * `Object.prototype` names a slot `source` really holds. A plain-prototyped object must hold none of
+ * the {@link DISGUISES}. The built-in getters throw without the slot, so a swapped prototype hides
+ * nothing; a thrown error per check, only for an object that is not an array or a view.
+ */
+function matchesPrototype(source: object, prototype: unknown): boolean {
+  if (ArrayBuffer.isView(source) !== VIEW_PROTOTYPES.has(prototype)) return false
+  if (VIEW_PROTOTYPES.has(prototype)) return true
+  if (prototype === Object.prototype) return !DISGUISES.some((read) => holdsSlot(read, source))
+  if (prototype === Array.prototype) return Array.isArray(source)
+  if (!PROTOTYPE_SLOTS.has(prototype)) return false
+  const slot = PROTOTYPE_SLOTS.get(prototype)
+  return slot === undefined || holdsSlot(slot, source)
 }
 
 /** Whether `key` names one of the code units a boxed string of `length` units holds. */
@@ -109,13 +132,10 @@ function refuseLossy(root: unknown): void {
     if (prototype === sharedPrototype && sharedPrototype !== undefined) {
       throw new TypeError("snapshot: shared memory cannot be detached")
     }
-    if (!CLONED_PROTOTYPES.has(prototype)) {
+    if (!matchesPrototype(source, prototype)) {
       throw new TypeError("snapshot: custom prototypes cannot be preserved")
     }
     if (ArrayBuffer.isView(source)) {
-      if (prototype === Object.prototype) {
-        throw new TypeError("snapshot: custom prototypes cannot be preserved")
-      }
       const elements = elementCount(source)
       if (elements === undefined || elements <= VIEW_FIELD_CHECK_LIMIT) {
         if (Reflect.ownKeys(source).length !== (elements ?? 0)) {
@@ -124,9 +144,6 @@ function refuseLossy(root: unknown): void {
       }
       pending.push(backingBuffer(source))
       continue
-    }
-    if (prototype === Object.prototype && wearsBrand(source)) {
-      throw new TypeError("snapshot: custom prototypes cannot be preserved")
     }
     if (source instanceof Map) {
       for (const [key, item] of Map.prototype.entries.call(source)) pending.push(key, item)
