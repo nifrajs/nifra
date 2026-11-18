@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { trustHtml } from "@nifrajs/web"
-import { renderToString } from "solid-js/web"
+import { renderToString } from "@solidjs/web"
 import { Content } from "../src/content.ts"
 
 test("Content injects raw HTML (not escaped)", () => {

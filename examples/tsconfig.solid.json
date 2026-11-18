@@ -2,6 +2,6 @@
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
     "jsx": "preserve",
-    "jsxImportSource": "solid-js"
+    "jsxImportSource": "@solidjs/web"
   }
 }

@@ -7,8 +7,8 @@ import {
   serverComponentInstance,
 } from "@nifrajs/web/server-components"
 import { componentBuild } from "@nifrajs/web/server-components/build-info"
+import { renderToString } from "@solidjs/web"
 import { createComponent } from "solid-js"
-import { renderToString } from "solid-js/web"
 import { componentBenchmark } from "../benchmark.backend"
 import { save } from "./actions.fn"
 import { hydrationHead, serverAdapter } from "./adapter.backend"

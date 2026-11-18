@@ -108,3 +108,5 @@ dv-*/
 packages/deno/test/.tmp-*/
 packages/cli/test/.db-tool-*/
 /bench-logs
+/brag-output
+/brag-output-2026-11-15-194924

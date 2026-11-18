@@ -1,4 +1,4 @@
-/** @jsxImportSource solid-js */
+/** @jsxImportSource @solidjs/web */
 import { For } from "solid-js"
 import type { CatalogPageData } from "../shared/catalog.ts"
 

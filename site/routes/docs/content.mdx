@@ -98,8 +98,8 @@ compiles `.mdx` to *its* component model:
 <CodeBlock code={PER_FRAMEWORK} />
 
 React, Preact, and Vue share one plugin (their JSX runtimes differ only by `jsxImportSource`). Solid
-needs its compile-time transform, so `@nifrajs/web-solid/mdx` runs `babel-preset-solid` over the MDX and
-maps intrinsic tags through `<Dynamic>`. Svelte has no JSX, so `@nifrajs/web-svelte/mdx` routes MDX through
+needs its compile-time transform, so `@nifrajs/web-solid/mdx` runs `@solidjs/compiler` over the MDX and
+maps intrinsic tags through `dynamic()`. Svelte has no JSX, so `@nifrajs/web-svelte/mdx` routes MDX through
 `mdsvex` - Svelte's own Markdown compiler. All five server-render and hydrate.
 
 </div>

@@ -198,7 +198,7 @@ function send(metric: WebVitalsMetric): void {
 
 // Call it from the root layout's mount effect; the stop function it returns is the cleanup.
 //   React, Preact: useEffect(() => reportVitals(), [])
-//   Svelte: onMount(reportVitals)    Solid: onMount(() => onCleanup(reportVitals()))
+//   Svelte: onMount(reportVitals)    Solid: onSettled(reportVitals)
 //   Vue: onMounted(() => (stop = reportVitals())), onUnmounted(() => stop())
 export const reportVitals = () => reportWebVitals(send, { softNavigations: true })`
 

@@ -19,11 +19,11 @@ import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
 import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
 import preact from "@preact/preset-vite"
+import solid from "@solidjs/vite-plugin"
 import { svelte } from "@sveltejs/vite-plugin-svelte"
 import react from "@vitejs/plugin-react"
 import vue from "@vitejs/plugin-vue"
 import type { BunPlugin } from "bun"
-import solid from "vite-plugin-solid"
 
 /**
  * The leak matrix's framework axis: the route-level leak paths in each framework's own syntax, against

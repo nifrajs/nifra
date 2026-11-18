@@ -12,7 +12,7 @@ const manifest = await buildClient({
   outDir: dist,
   clientModule: "@nifrajs/web-solid/client",
   plugins: [solidBunPlugin("dom")],
-  conditions: ["bun", "solid", "browser"],
+  conditions: ["bun", "browser"],
 })
 console.log("built", manifest.entry)
 

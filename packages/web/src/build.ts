@@ -187,7 +187,7 @@ export interface BuildClientOptions {
   readonly resolve?: (file: string) => string
   /** Adapter build plugins (e.g. `solidBunPlugin("dom")`). */
   readonly plugins?: readonly BunPlugin[]
-  /** `Bun.build` export conditions (e.g. `["bun", "solid", "browser"]`). */
+  /** `Bun.build` export conditions (e.g. `["bun", "browser"]`). */
   readonly conditions?: readonly string[]
   /** Compile-time replacements (e.g. `{ "process.env.NODE_ENV": '"production"' }`). */
   readonly define?: Readonly<Record<string, string>>
@@ -1141,21 +1141,20 @@ export const serverFnStubPlugin = (): BunPlugin => ({
 })
 
 /**
- * `solid-js/web` selects its **server** runtime (`renderToStream`) via the `worker` condition, but
- * `Bun.build` 1.3.14 **segfaults** when the `worker` condition is active (https://bun.report). And
- * without `worker`, `browser` (which precedes the other server conditions in solid's exports map)
- * wins → the *dom* runtime, which can't SSR. So this shim pins `solid-js/web` straight to its server
- * build, sidestepping the crashing condition. Lazy (resolved on match) + a no-op when nothing imports
- * `solid-js/web` (e.g. a React worker). Drop it (and use the `worker` condition) once Bun is fixed.
+ * `solid-js` and `@solidjs/web` select their **server** runtime (`renderToStream`) via the `worker`
+ * condition, but `Bun.build` 1.3.14 **segfaults** when the `worker` condition is active
+ * (https://bun.report). And without `worker`, `browser` (which precedes the other server conditions in
+ * their exports maps) wins → the *dom* runtime, which can't SSR. So this shim pins both straight to what
+ * the running Bun resolves them to (their `node` server build), sidestepping the crashing condition.
+ * Lazy (resolved on match) + a no-op when nothing imports them (e.g. a React worker). Drop it (and use
+ * the `worker` condition) once Bun is fixed.
  */
-const solidWebServerPlugin = (from: string): BunPlugin => ({
-  name: "nifra-solid-web-server",
+const solidServerPlugin = (from: string): BunPlugin => ({
+  name: "nifra-solid-server",
   setup(build) {
-    build.onResolve({ filter: /^solid-js\/web$/ }, () => {
-      // solid's `worker`/`node`/`deno` conditions all map to ./web/dist/server.js (its server build).
-      const pkg = Bun.resolveSync("solid-js/package.json", from)
-      return { path: pkg.replace(/package\.json$/, "web/dist/server.js") }
-    })
+    build.onResolve({ filter: /^(?:solid-js|@solidjs\/web)$/ }, (args) => ({
+      path: Bun.resolveSync(args.path, from),
+    }))
   },
 })
 
@@ -1249,7 +1248,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     plugins: [
       ...(provided.size > 0 ? [providedBuiltinsPlugin(provided)] : []),
       ...declaredSingleCopyPlugins(resolvePath(dirname(routesDir))),
-      ...(edge ? [reactDomEdgePlugin(entryDir), solidWebServerPlugin(entryDir)] : []),
+      ...(edge ? [reactDomEdgePlugin(entryDir), solidServerPlugin(entryDir)] : []),
       reactDedupePlugin(entryDir),
       preactDedupePlugin(entryDir),
       ...(options.plugins ?? []),

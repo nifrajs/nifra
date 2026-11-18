@@ -1,4 +1,4 @@
-/** @jsxImportSource solid-js */
+/** @jsxImportSource @solidjs/web */
 import type { Deferred } from "@nifrajs/web"
 import { Await } from "@nifrajs/web-solid/await"
 import type { Product } from "../../../shared/catalog.ts"

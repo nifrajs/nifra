@@ -6,7 +6,7 @@
  * isomorphic component).
  *
  * SCOPE: emits an **automatic-JSX-runtime** component, so it works out of the box for the frameworks
- * whose build supplies a `jsxImportSource` - **React and Preact**. Solid (needs `babel-preset-solid`),
+ * whose build supplies a `jsxImportSource` - **React and Preact**. Solid (needs `@solidjs/compiler`),
  * Svelte, and Vue are not JSX and are intentionally out of v1; a plain `import "./icon.svg"` (asset URL)
  * is untouched - only the `?component` marker is intercepted.
  *

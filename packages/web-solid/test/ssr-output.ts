@@ -1,5 +1,5 @@
-import type { JSX } from "solid-js"
-import { ssrElement } from "solid-js/web"
+import type { JSX } from "@solidjs/web"
+import { ssrElement } from "@solidjs/web"
 
 /** What Solid's compiler emits for server JSX, which its JSX types as an element. */
 export const element = (tag: string, props: Record<string, unknown>, text?: string): JSX.Element =>
@@ -7,12 +7,12 @@ export const element = (tag: string, props: Record<string, unknown>, text?: stri
   ssrElement(tag, props, text, true) as unknown as JSX.Element
 
 /**
- * The markup a reader sees: without Solid's hydration keys, and without the resource state Solid
+ * The markup a reader sees: without Solid's hydration keys (`_hk`), and without the state Solid
  * appends after it as a script.
  */
 export const visible = (html: string): string => {
   const scriptAt = html.indexOf("<script>")
   return (scriptAt === -1 ? html : html.slice(0, scriptAt))
-    .replace(/ data-hk="[^"]*"/g, "")
+    .replace(/ _hk=[^ >]*/g, "")
     .replace(/ >/g, ">")
 }

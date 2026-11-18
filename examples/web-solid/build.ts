@@ -5,9 +5,9 @@ const result = await Bun.build({
   entrypoints: [`${import.meta.dir}/client.ts`],
   outdir: `${import.meta.dir}/dist`,
   target: "browser",
-  // "bun" resolves workspace @nifrajs packages to their src (fresh, no rebuild); "solid" +
-  // "browser" give Solid's dom/hydrate build.
-  conditions: ["bun", "solid", "browser"],
+  // "bun" resolves workspace @nifrajs packages to their src (fresh, no rebuild); "browser"
+  // gives Solid's dom/hydrate build.
+  conditions: ["bun", "browser"],
   plugins: [solidBunPlugin("dom")],
   naming: "client.js",
 })

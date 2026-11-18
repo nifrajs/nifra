@@ -7,11 +7,11 @@ test("the root entry bundles for an edge target with no build-time or node: impo
   const result = await Bun.build({
     entrypoints: [join(import.meta.dir, "../src/index.ts")],
     target: "browser",
-    conditions: ["workerd", "edge-light", "solid", "browser"],
+    conditions: ["workerd", "edge-light", "browser"],
     packages: "external",
   })
   const code = await result.outputs[0]?.text()
-  for (const buildTime of ["@nifrajs/web/plugins/kit", "@babel/core babel-preset-solid"])
+  for (const buildTime of ["@nifrajs/web/plugins/kit", "@solidjs/compiler"])
     expect(code).not.toContain(buildTime)
   expect(code).not.toMatch(/["']node:/)
 })

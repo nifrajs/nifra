@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/web-solid",
   "version": "5.14.0",
-  "description": "Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel build plugin (@nifrajs/web-solid/plugin).",
+  "description": "Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid compiler build plugin (@nifrajs/web-solid/plugin).",
   "keywords": [
     "bun",
     "typescript",
@@ -130,16 +130,14 @@
     "access": "public"
   },
   "dependencies": {
-    "@babel/core": "^7.29.13",
-    "@babel/preset-typescript": "^7.26.0",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/web": "workspace:*",
-    "babel-preset-solid": "^1.9.19",
-    "solid-refresh": "^0.7.8"
+    "@solidjs/compiler": "2.0.0"
   },
   "peerDependencies": {
     "@mdx-js/mdx": "^3",
-    "solid-js": "^1.9.0",
+    "@solidjs/web": "^2.0.0",
+    "solid-js": "^2.0.0",
     "@nifrajs/i18n": "workspace:^",
     "@nifrajs/image": "workspace:^"
   },
@@ -157,9 +155,9 @@
   "devDependencies": {
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/image": "workspace:*",
-    "@types/babel__core": "^7.20.5",
     "happy-dom": "21.0.4",
-    "solid-js": "^1.9.19"
+    "@solidjs/web": "2.0.0",
+    "solid-js": "2.0.0"
   },
   "repository": {
     "type": "git",

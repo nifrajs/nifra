@@ -1,17 +1,13 @@
 /**
  * `solidMdxBunPlugin` - compile `.mdx` routes/files to **Solid** components. MDX is JSX-oriented but
  * Solid's JSX is compile-time, so this: (1) compiles MDX → JSX with `@mdx-js` (keeping JSX), pointing
- * intrinsic elements at `@nifrajs/web-solid/mdx-runtime` (which renders them via Solid's `<Dynamic>`), then
- * (2) runs `babel-preset-solid` - the same transform `solidBunPlugin` applies to `.tsx`. Pass it to
+ * intrinsic elements at `@nifrajs/web-solid/mdx-runtime` (which renders them via Solid's `dynamic()`), then
+ * (2) runs `@solidjs/compiler` - the same transform `solidBunPlugin` applies to `.tsx`. Pass it to
  * `buildClient`/`buildServer`'s `plugins` (`"dom"` for the client, `"ssr"` for the server), like
  * `solidBunPlugin`. `@mdx-js/mdx` is an optional peer (lazy-loaded at build time).
  */
-import { transformAsync } from "@babel/core"
-// @ts-expect-error - no type declarations published
-import presetTypeScript from "@babel/preset-typescript"
 import { normalizeFilePath, requirePeer, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
-// @ts-expect-error - no type declarations published
-import presetSolid from "babel-preset-solid"
+import { transformAsync } from "@solidjs/compiler"
 import type { BunPlugin } from "bun"
 
 // Non-literal so tsc/consumers don't need `@mdx-js/mdx`'s types to typecheck this file (optional peer).
@@ -33,24 +29,20 @@ export function solidMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
       })
       build.onLoad({ filter: /\.mdx(\?|$)/ }, async (args) => {
         const path = normalizeFilePath(args.path)
-        // 1. MDX → JSX, with intrinsics provided by the Solid runtime (rendered via `<Dynamic>`).
+        // 1. MDX → JSX, with intrinsics provided by the Solid runtime (rendered via `dynamic()`).
         const jsx = String(
           await compile(await Bun.file(path).text(), {
             jsx: true,
             providerImportSource: "@nifrajs/web-solid/mdx-runtime",
           }),
         )
-        // 2. babel-preset-solid (TS stripped first), exactly like `solidBunPlugin`.
+        // 2. The Solid compile, exactly like `solidBunPlugin`.
         const result = await transformAsync(jsx, {
           filename: `${path}.tsx`,
-          presets: [
-            [presetSolid, { generate, hydratable: true }],
-            [presetTypeScript, { onlyRemoveTypeImports: true }],
-          ],
-          babelrc: false,
-          configFile: false,
+          generate,
+          hydratable: true,
         })
-        return { contents: rewriteSsrImports(result?.code ?? "", path, generate), loader: "js" }
+        return { contents: rewriteSsrImports(result.code, path, generate), loader: "ts" }
       })
     },
   }

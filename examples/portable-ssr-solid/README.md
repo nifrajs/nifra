@@ -7,7 +7,7 @@ both renderers *and* all five runtimes. `createWebApp` + the entries are identic
 
 ## Solid specifics
 
-- **`buildClient`** uses `solidBunPlugin("dom")` + `conditions: ["bun", "solid", "browser"]`.
+- **`buildClient`** uses `solidBunPlugin("dom")` + `conditions: ["bun", "browser"]`.
 - **`buildServer`** uses `solidBunPlugin("ssr")`; its built-in shim pins `solid-js/web` to its **server**
   build on the edge (`browser`) targets (the `worker` condition would too but segfaults Bun.build), and
   the `node`/`solid` conditions resolve it on the Node target.

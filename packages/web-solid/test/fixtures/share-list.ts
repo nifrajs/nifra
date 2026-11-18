@@ -3,8 +3,8 @@
  * entry holding a checkbox. `?share=0` opts the route out of structural sharing.
  */
 import { createClientRouter } from "@nifrajs/web/client"
-import { createComponent, createEffect, For } from "solid-js"
-import { insert } from "solid-js/web"
+import { insert } from "@solidjs/web"
+import { type Component, createComponent, createEffect, For } from "solid-js"
 import { listData } from "../../../web/test/share-browser.ts"
 import { mountRouter } from "../../src/client.ts"
 
@@ -14,15 +14,24 @@ type List = { readonly items: readonly Row[] }
 const counts = { rows: 0, effects: 0 }
 let labels: Record<number, string> = {}
 
+// `createComponent` cannot pick one of `For`'s overloads: this is the keyed-by-identity one, alone.
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: the same component, typed as its keyed-by-identity overload
+const Rows = For as unknown as Component<{
+  readonly each: readonly Row[]
+  readonly children: (row: Row) => HTMLLIElement
+}>
+
 const Page = (props: { readonly data: List }) => {
-  createEffect(() => {
-    void props.data
-    counts.effects++
-  })
+  createEffect(
+    () => props.data,
+    () => {
+      counts.effects++
+    },
+  )
   const list = document.createElement("ul")
   insert(
     list,
-    createComponent(For<readonly Row[], HTMLLIElement>, {
+    createComponent(Rows, {
       get each() {
         return props.data.items
       },

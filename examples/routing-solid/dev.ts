@@ -19,7 +19,7 @@ const server = await createDevServer({
   outDir: `${import.meta.dir}/dist`,
   clientModule: "@nifrajs/web-solid/client",
   plugins: [solidBunPlugin("dom")],
-  conditions: ["bun", "solid", "browser"],
+  conditions: ["bun", "browser"],
   port: Number(Bun.env.PORT ?? 3000),
   createApp: (clientEntry, importQuery) =>
     createWebApp({

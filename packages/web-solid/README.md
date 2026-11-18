@@ -1,6 +1,6 @@
 # @nifrajs/web-solid
 
-Solid render adapter for @nifrajs/web - SSR + hydration + the Solid Babel build plugin.
+Solid render adapter for @nifrajs/web - SSR + hydration + the Solid compiler build plugin.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 

@@ -7,8 +7,8 @@ import {
   setBlockerController,
   setBrowserNavigate,
 } from "@nifrajs/web"
+import { renderToString } from "@solidjs/web"
 import { createRoot } from "solid-js"
-import { renderToString } from "solid-js/web"
 import { compose } from "../src/compose.ts"
 import { useBlocker, useNavigate, useSearch } from "../src/router.ts"
 

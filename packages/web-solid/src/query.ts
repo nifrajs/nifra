@@ -22,28 +22,31 @@ import {
  * `@nifrajs/web-solid/query` - Solid bindings for the keyed query-cache. `createQuery(key, fn)` bridges a
  * query's `subscribe`/`snapshot` store into a Solid signal and fetches on mount; `useQueryClient`
  * exposes `invalidateQueries` for after a mutation. Imports only `solid-js` + `@nifrajs/web` (never
- * `solid-js/web`), so route components use it on the server *and* client. No JSX.
+ * `@solidjs/web`), so route components use it on the server *and* client. No JSX.
  *
  * Without a provider, the query client is created lazily **client-side only** (`typeof window`) - on
  * the server the accessor returns idle state and route loaders remain the data source. A
  * `QueryClientProvider` can supply a request-scoped hydrated client.
  * The `key` is captured once (Solid setup runs once); a reactive key is a documented future enhancement.
  */
+import type { JSX } from "@solidjs/web"
 import {
   type Accessor,
   createComponent,
   createContext,
   createSignal,
-  type JSX,
+  getOwner,
   onCleanup,
-  onMount,
+  onSettled,
   useContext,
 } from "solid-js"
 
-const QueryClientContext = createContext<QueryClient>()
+// A null default: a context made without one throws outside a provider, and a query works without one.
+const QueryClientContext = createContext<QueryClient | null>(null)
 
 function queryClientForCurrentTree(): QueryClient | undefined {
-  return useContext(QueryClientContext) ?? getQueryClientSingleton()
+  // Reading a context outside an owner throws; a handler that reaches for the client has none.
+  return (getOwner() === null ? null : useContext(QueryClientContext)) ?? getQueryClientSingleton()
 }
 
 /** Provide a request-scoped client and optionally seed it before descendants run. */
@@ -53,7 +56,7 @@ export function QueryClientProvider(props: {
   readonly children?: JSX.Element
 }): JSX.Element {
   if (props.state !== undefined) props.client.hydrate(props.state)
-  return createComponent(QueryClientContext.Provider, {
+  return createComponent(QueryClientContext, {
     value: props.client,
     get children() {
       return props.children
@@ -91,7 +94,7 @@ export function createQuery<T>(
   )
   if (handle !== undefined) {
     onCleanup(handle.subscribe(() => setState(() => handle.snapshot())))
-    onMount(fetchOnMount(handle))
+    onSettled(fetchOnMount(handle))
     return { state, refetch: handle.refetch }
   }
   return {
@@ -171,7 +174,7 @@ export function createInfiniteQuery<T, P>(
   )
   if (handle) {
     onCleanup(handle.subscribe(() => setState(() => handle.snapshot())))
-    onMount(fetchOnMount(enabled ? handle : undefined))
+    onSettled(fetchOnMount(enabled ? handle : undefined))
   }
   const noClientAction = createNoClientRefetch<InfiniteData<T, P>>(
     "[nifra/web-solid]",

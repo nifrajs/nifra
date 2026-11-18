@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { LOCALES_GLOBAL, type RenderProps } from "@nifrajs/web"
-import { createComponent, type JSX } from "solid-js"
-import { Dynamic, renderToString } from "solid-js/web"
+import type { JSX } from "@solidjs/web"
+import { Dynamic, renderToString } from "@solidjs/web"
+import { createComponent } from "solid-js"
 import { I18nProvider, rich, useLocale, useT } from "../src/i18n.ts"
 import { RenderPropsContext } from "../src/router.ts"
 
@@ -103,7 +104,7 @@ test("rich() renders tags as elements and values as text", () => {
   )
   // Hydration keys and markers are Solid's, not part of what renders.
   const visible = html
-    .replace(/ data-hk="[^"]*"/g, "")
+    .replace(/ _hk=[^ >/]*/g, "")
     .split(/<!--[\s\S]*?-->/)
     .join("")
     .replace(/ +(\/?>)/g, "$1")
@@ -144,7 +145,7 @@ describe("the page's locale", () => {
             })
       return renderProps === undefined
         ? provider()
-        : createComponent(RenderPropsContext.Provider, {
+        : createComponent(RenderPropsContext, {
             value: renderProps,
             get children() {
               return provider()

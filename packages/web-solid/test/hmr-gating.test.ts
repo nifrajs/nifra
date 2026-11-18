@@ -67,9 +67,11 @@ test("a dev-server client compile emits the refresh wiring", async () => {
   const code = await compile(path, "dom")
   for (const marker of REFRESH_MARKERS) expect(code).toContain(marker)
   // Rewritten into Bun's dialect: `import.meta.hot` reached only through member expressions the
-  // bundler can see, never handed to `solid-refresh` as a value (Bun substitutes a throwing proxy).
+  // bundler can see, never handed to the refresh runtime as a value (Bun substitutes a throwing proxy).
   expect(code).toContain("import.meta.hot.accept(")
-  expect(code).not.toMatch(/\(\s*"esm"\s*,\s*import\.meta\.hot\s*,/)
+  expect(code).not.toMatch(/\(\s*"vite"\s*,\s*import\.meta\.hot\s*,/)
+  // The bare `accept()` the pass emits first would make the module self-accepting a second time.
+  expect(code).not.toContain("import.meta.hot.accept();")
 })
 
 test("the SSR compile never emits refresh wiring, dev server or not", async () => {
@@ -79,10 +81,10 @@ test("the SSR compile never emits refresh wiring, dev server or not", async () =
   for (const marker of REFRESH_MARKERS) expect(code).not.toContain(marker)
 })
 
-test("both refresh runtimes resolve from this package, not from the app", async () => {
-  // The transform emits `solid-refresh` and `nifra:solid-hot` INTO the app's own files, where a bare
-  // specifier resolves against the app - which depends on neither. The plugin pins both, so what the
-  // resolvers hand back has to be an absolute path inside this install, not the specifier again.
+test("the refresh bridge resolves from this package, not from the app", async () => {
+  // The transform emits `nifra:solid-hot` INTO the app's own files, where a bare specifier resolves
+  // against the app - which does not depend on it. The plugin pins it, so what the resolver hands back
+  // has to be an absolute path inside this install, not the specifier again.
   process.env.NIFRA_DEV_HMR = "1"
   const resolvers: Array<{ filter: RegExp; cb: () => { path: string } }> = []
   solidBunPlugin("dom").setup({
@@ -94,13 +96,9 @@ test("both refresh runtimes resolve from this package, not from the app", async 
   const resolve = (specifier: string): string | undefined =>
     resolvers.find((r) => r.filter.test(specifier))?.cb().path
 
-  const refresh = resolve("solid-refresh")
-  expect(refresh).toBeDefined()
-  expect(isAbsolute(refresh as string)).toBe(true)
-  expect(refresh).toContain("solid-refresh")
-
   const bridge = resolve("nifra:solid-hot")
   expect(bridge).toBeDefined()
+  expect(isAbsolute(bridge as string)).toBe(true)
   expect(bridge).toContain("refresh-hot")
   expect(await Bun.file(bridge as string).exists()).toBe(true)
 })

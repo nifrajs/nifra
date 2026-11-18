@@ -5,11 +5,12 @@ import { setRouteSlotRuntime } from "@nifrajs/web/client"
  * `mountRouter` hydrates the initial route then drives navigation through a Solid signal - so a
  * same-route update (revalidation, a param change, an optimistic submit) updates **in place** via
  * fine-grained reactivity, preserving the layout chain + focus + scroll. Runs against Solid's client
- * build; kept in its own entry so SSR code never ships to the client bundle. No JSX - Solid's package
+ * build; kept in its own entry so SSR code never ships to the client bundle. No JSX - the package
  * build is plain `tsc`, so this uses Solid's runtime functions directly, like `compose`.
  */
-import { createMemo, createSignal } from "solid-js"
-import { hydrate as solidHydrate, render as solidRender } from "solid-js/web"
+import { hydrate as solidHydrate, render as solidRender } from "@solidjs/web"
+import { createSignal } from "solid-js"
+import { clientDerive } from "./client-derive.ts"
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 import { routeProps } from "./route-props.ts"
@@ -60,7 +61,7 @@ export function mountRouter(options: MountRouterOptions): void {
       // and re-mounts below, so the root render fn reads no signal and never re-runs on its own.
       return compose(
         routes[initial.routeId] ?? [],
-        routeProps(snapshot, searchSchemas, matchChains, (read) => createMemo(read)),
+        routeProps(snapshot, searchSchemas, matchChains, clientDerive),
       )()
     }, el)
   }

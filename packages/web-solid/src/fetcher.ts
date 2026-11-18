@@ -8,7 +8,7 @@ import {
  * `@nifrajs/web-solid/fetcher` - Solid bindings for concurrent fetchers. `createFetcher(key)` bridges an
  * independent {@link Fetcher}'s `subscribe`/`snapshot` store into a Solid signal (the pattern the F16
  * spike confirmed) and returns its reactive state accessor plus `load`/`submit`; `useFetchers()`
- * bridges the whole live collection. Imports only `solid-js` (never `solid-js/web`), so route
+ * bridges the whole live collection. Imports only `solid-js` (never `@solidjs/web`), so route
  * components can use it on the server *and* client without pulling server/build code into the wrong
  * bundle. No JSX (the package builds with plain `tsc`).
  *

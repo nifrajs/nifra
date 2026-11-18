@@ -56,8 +56,7 @@ export default function VsNextjs() {
             <td>Server components</td>
             <td>
               Opt-in: native RSC/Flight for React; schema-checked server-rendered ranges with
-              explicit client islands for Vue, Svelte, Preact and the current Solid 1.x adapter (not
-              Flight)
+              explicit client islands for Vue, Svelte, Preact and the Solid adapter (not Flight)
             </td>
             <td>Built in and default for App Router pages and layouts; React only</td>
           </tr>
@@ -88,12 +87,11 @@ export default function VsNextjs() {
         </tbody>
       </table>
       <p>
-        <strong>Solid version caveat.</strong> Solid 2.0 RC has its own experimental
-        server-component path behind <code>serverFunctions: &#123; components: true &#125;</code>.
-        It streams Solid's own HTML/frame updates through server functions; it is not React Flight.
-        Nifra currently certifies Solid 1.x, so its Solid adapter uses Nifra's portable range and
-        native-island boundary. That is a version and protocol distinction, not a claim that Solid
-        has no server-component model.
+        <strong>Solid protocol caveat.</strong> Solid 2.0 has its own server-component path behind{" "}
+        <code>serverFunctions: &#123; components: true &#125;</code>. It streams Solid's own
+        HTML/frame updates through server functions; it is not React Flight. Nifra's Solid adapter
+        uses Nifra's portable range and native-island boundary. That is a protocol distinction, not
+        a claim that Solid has no server-component model.
       </p>
 
       <h2>The {REACT_SSR_MULTIPLIER} number, honestly</h2>

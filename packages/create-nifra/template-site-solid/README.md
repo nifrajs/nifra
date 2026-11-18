@@ -19,7 +19,7 @@ evidence in `nifra.assurance.ts`.
 Routes are Solid function components (JSX, compiled by `solidBunPlugin`) under `routes/` - `index.tsx`
 (landing + a live loader/action counter), `_layout.tsx` (chrome), `_404.tsx`. The frontend adapter is
 one line in `backend/framework.ts`; data lives behind `backend/app.ts`. Each `build*` script wires
-`solidBunPlugin("dom")` for the client and `("ssr")` + the `solid` export condition for the server.
+`solidBunPlugin("dom")` for the client and `("ssr")` for the server.
 
 ## Deploy
 

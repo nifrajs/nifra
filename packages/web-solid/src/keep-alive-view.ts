@@ -10,18 +10,16 @@
  */
 import type { RenderProps, RouterState } from "@nifrajs/web"
 import type { SlotNode } from "@nifrajs/web/keep-alive"
+import { dynamic, type JSX } from "@solidjs/web"
 import {
   type Accessor,
   type Component,
   createComponent,
-  createComputed,
   createMemo,
+  createRenderEffect,
   For,
-  type JSX,
-  on,
   untrack,
 } from "solid-js"
-import { Dynamic } from "solid-js/web"
 import { PageContext, type PageSlot } from "./page-visibility.ts"
 import { RenderPropsContext, SearchContext } from "./router-context.ts"
 
@@ -49,12 +47,15 @@ type LayoutProps = {
 
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 
+// Constant sources, so each is made once: the wrappers are `<slot>` elements, which are display: contents.
+const SlotElement = dynamic(() => "slot")
+
 // The providers `compose` puts around a chain, for one slot's props.
 const withRouteContext = (props: RenderProps, children: () => JSX.Element): JSX.Element =>
-  createComponent(SearchContext.Provider, {
+  createComponent(SearchContext, {
     value: () => props.search ?? EMPTY_SEARCH,
     get children() {
-      return createComponent(RenderPropsContext.Provider, {
+      return createComponent(RenderPropsContext, {
         value: props,
         get children() {
           return children()
@@ -82,6 +83,13 @@ const pageChain = (chain: readonly unknown[], depth: number, props: RenderProps)
   })
 }
 
+// `createComponent` cannot pick one of `For`'s overloads, so this is the keyed-by-identity one, alone.
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: the same component, typed as its keyed-by-identity overload
+const KeyedList = For as unknown as Component<{
+  readonly each: readonly string[]
+  readonly children: (key: string) => JSX.Element
+}>
+
 const sameKeys = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((key, i) => key === b[i])
 
@@ -89,8 +97,8 @@ function Level(props: {
   readonly nodes: Accessor<readonly SlotNode[]>
   readonly mount: KeepAliveViewMount
 }): JSX.Element {
-  const keys = createMemo(() => props.nodes().map((node) => node.key), [], { equals: sameKeys })
-  return createComponent(For, {
+  const keys = createMemo(() => props.nodes().map((node) => node.key), { equals: sameKeys })
+  return createComponent(KeyedList, {
     get each() {
       return keys()
     },
@@ -109,7 +117,7 @@ function Slot(props: {
   const first = untrack(find)
   if (first === undefined) throw new Error(`[nifra/web-solid] no slot node "${key}"`)
   // The last node with this key stays while the slot is being removed with it.
-  const node = createMemo((last: SlotNode) => find() ?? last, first)
+  const node = createMemo((last: SlotNode = first) => find() ?? last)
   const state = createMemo(() => node().state)
   const hidden = createMemo(() => node().hidden)
   const slotProps = mount.propsOf(state)
@@ -135,24 +143,20 @@ function Slot(props: {
   if (!first.wrapped) return content()
 
   const slot: PageSlot = { hidden, hide: new Set(), show: new Set() }
-  // A computation, not an effect: it runs as the tree changes, before the mount parks the page.
-  createComputed(
-    on(hidden, (now, before) => {
-      if (before === undefined || now === before) return
-      for (const callback of [...(now ? slot.hide : slot.show)]) callback()
-    }),
-  )
-  return createComponent(Dynamic, {
-    component: "slot",
+  // A render effect, not an effect: it runs as the tree changes, before the mount parks the page.
+  createRenderEffect(hidden, (now, before) => {
+    if (before === undefined || now === before) return
+    for (const callback of [...(now ? slot.hide : slot.show)]) callback()
+  })
+  return createComponent(SlotElement, {
     "data-nifra-entry": "",
     ref: mount.entry(key),
     get children() {
-      return createComponent(Dynamic, {
-        component: "slot",
+      return createComponent(SlotElement, {
         "data-nifra-page": "",
         ref: mount.page(key),
         get children() {
-          return createComponent(PageContext.Provider, {
+          return createComponent(PageContext, {
             value: slot,
             get children() {
               return withRouteContext(slotProps, content)

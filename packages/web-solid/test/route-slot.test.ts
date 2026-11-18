@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 import { href, type RenderProps, type RouteSlotName, setBrowserNavigate } from "@nifrajs/web"
-import { createComponent, type JSX } from "solid-js"
-import { Dynamic, renderToString } from "solid-js/web"
+import type { JSX } from "@solidjs/web"
+import { Dynamic, renderToString } from "@solidjs/web"
+import { createComponent } from "solid-js"
 import { RouteSlot, type RouteSlotController, useRouteSlot } from "../src/route-slot.tsx"
 import { RenderPropsContext } from "../src/router.ts"
 
@@ -18,7 +19,7 @@ test("RouteSlot renders its fallback while a URL-addressed target loads", () => 
     path: "/dashboard?slot.inspector=%2Fusers%2F7",
   }
   const markup = renderToString(() =>
-    createComponent(RenderPropsContext.Provider, {
+    createComponent(RenderPropsContext, {
       value: props,
       get children() {
         return createComponent(RouteSlot, {
@@ -39,7 +40,7 @@ test("RouteSlot renders the stable error and custom error view for malformed sta
   }
   const render = (error?: (code: string) => JSX.Element): string =>
     renderToString(() =>
-      createComponent(RenderPropsContext.Provider, {
+      createComponent(RenderPropsContext, {
         value: props,
         get children() {
           return createComponent(
@@ -71,7 +72,7 @@ test("useRouteSlot open and close preserve the page and sibling query state", ()
   }
   setBrowserNavigate((to) => calls.push(String(to)))
   renderToString(() =>
-    createComponent(RenderPropsContext.Provider, {
+    createComponent(RenderPropsContext, {
       value: props,
       get children() {
         return createComponent(Capture, {})

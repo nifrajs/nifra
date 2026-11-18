@@ -60,7 +60,7 @@ const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
  */
 export function useMatches(): Accessor<readonly UIMatch[]> {
   const props = useContext(RenderPropsContext)
-  if (props === undefined) return () => NO_MATCHES
+  if (props === null) return () => NO_MATCHES
   return createMemo(() => chainMatches(props))
 }
 

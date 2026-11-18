@@ -3,8 +3,8 @@ import {
   type NativeRangeOptions,
   nativeComponentClient,
 } from "@nifrajs/web/server-components/range"
-import { batch, type Component, createComponent, createSignal } from "solid-js"
-import { hydrate } from "solid-js/web"
+import { hydrate } from "@solidjs/web"
+import { type Component, createComponent, createSignal, flush } from "solid-js"
 export function solidComponentClient(options: Omit<NativeRangeOptions, "adapter" | "runtime">) {
   return nativeComponentClient({
     ...options,
@@ -42,10 +42,10 @@ export function solidComponentClient(options: Omit<NativeRangeOptions, "adapter"
         let disposed = false
         return {
           update(next, current) {
-            if (!disposed && current())
-              batch(() => {
-                if (current()) setProps(() => next)
-              })
+            if (!disposed && current()) {
+              setProps(() => next)
+              flush()
+            }
           },
           async dispose() {
             if (!disposed) {

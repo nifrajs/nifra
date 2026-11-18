@@ -14,8 +14,9 @@ export interface PageSlot {
 // A `globalThis` singleton for the same reason as the router's contexts (see router.ts).
 const PAGE_CONTEXT_SLOT = Symbol.for("nifra.web-solid.page-context")
 // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: only this module writes the registry key, and it writes a page context
-const pageContextSlot = globalThis as { [PAGE_CONTEXT_SLOT]?: Context<PageSlot | undefined> }
-export const PageContext = pageContextSlot[PAGE_CONTEXT_SLOT] ?? createContext<PageSlot>()
+const pageContextSlot = globalThis as { [PAGE_CONTEXT_SLOT]?: Context<PageSlot | null> }
+export const PageContext =
+  pageContextSlot[PAGE_CONTEXT_SLOT] ?? createContext<PageSlot | null>(null)
 pageContextSlot[PAGE_CONTEXT_SLOT] = PageContext
 
 const ALWAYS: Accessor<boolean> = () => true
@@ -27,12 +28,12 @@ const ALWAYS: Accessor<boolean> = () => true
  */
 export function usePageVisibility(): Accessor<boolean> {
   const slot = useContext(PageContext)
-  return slot === undefined ? ALWAYS : () => !slot.hidden()
+  return slot === null ? ALWAYS : () => !slot.hidden()
 }
 
 const onVisibility = (kind: "hide" | "show", callback: () => void): void => {
   const slot = useContext(PageContext)
-  if (slot === undefined) return
+  if (slot === null) return
   slot[kind].add(callback)
   onCleanup(() => slot[kind].delete(callback))
 }
