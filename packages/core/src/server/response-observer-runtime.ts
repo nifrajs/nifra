@@ -141,7 +141,11 @@ function renderThrough(render: RenderBodyHook, host: ResponseObserverHost): Rend
       // The lane's own catch would answer a bare 500 that finalization never hears about. Declining
       // hands the reply to `onResponseBody`, which fails through the response pipeline as it always has.
       skip = RENDER_RETRY_AFTER
-      host.renderFailed(error, request)
+      try {
+        host.renderFailed(error, request)
+      } catch {
+        // A failing diagnostic logger must not keep the reply from reaching the body hook.
+      }
       return undefined
     }
   }

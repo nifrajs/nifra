@@ -357,6 +357,47 @@ describe("a mutation across a visitor change", () => {
   })
 })
 
+test("evicted regular and infinite handles keep only the current visitor's data", async () => {
+  const client = createQueryClient({ now: () => 0, max: 1, staleTime: Infinity })
+  let profile = "first"
+  const handle = client.query("profile", async () => profile)
+  const opts = { initialPageParam: 0, getNextPageParam: () => undefined }
+  const page = client.infiniteQuery("profile", async () => profile, opts)
+  await handle.fetch()
+  await page.fetch()
+  client.setQueryData("draft", "draft")
+  client.infiniteQuery("other", async () => "", opts)
+  client.infiniteQuery("third", async () => "", opts)
+  expect(client.getQueryData("profile")).toBeUndefined()
+  expect(handle.snapshot().data).toBe("first")
+  expect(page.snapshot().data?.pages).toEqual(["first"])
+
+  profile = "second"
+  identityChanged()
+  expect(handle.snapshot().data).toBeUndefined()
+  expect(page.snapshot().data).toBeUndefined()
+  expect(await handle.fetch()).toBe("second")
+  expect((await page.fetch()).pages).toEqual(["second"])
+})
+
+test("failed updaters preserve older data and a write survives pinned entries", () => {
+  const client = createQueryClient({ now: () => 0, max: 1 })
+  client.setQueryData("old", "keep")
+  expect(() =>
+    client.setQueryData("draft", () => {
+      throw new Error("updater failed")
+    }),
+  ).toThrow("updater failed")
+  expect(client.getQueryData("old")).toBe("keep")
+  const unsubscribe = client.query("old", async () => "keep").subscribe(() => {})
+  client.setQueryData("draft", "new")
+  expect(client.getQueryData("draft")).toBe("new")
+  expect(client.getQueryData("old")).toBe("keep")
+  unsubscribe()
+  expect(client.getQueryData("draft")).toBe("new")
+  expect(client.getQueryData("old")).toBeUndefined()
+})
+
 describe("reading a cached query on every render", () => {
   test("walks no cache and reuses an identity-cached hash", () => {
     let clock = 0

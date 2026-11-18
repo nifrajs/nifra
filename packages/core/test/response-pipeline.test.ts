@@ -709,7 +709,19 @@ describe("render-time body hook", () => {
   })
 
   test("invalid render headers fall back with the original response headers", async () => {
-    const app = server()
+    let renders = 0
+    let logs = 0
+    const ignore = () => {}
+    const logger = {
+      debug: ignore,
+      info: ignore,
+      warn: ignore,
+      error() {
+        logs++
+        throw new Error("logger failed")
+      },
+    }
+    const app = server({ logger })
       .use(
         withResponseObserver<Middleware>({
           onResponseBody(_body, headers) {
@@ -717,6 +729,7 @@ describe("render-time body hook", () => {
             return undefined
           },
           renderBody(_body, headers) {
+            renders++
             headers.set("x-draft", "discard")
             headers.set("invalid header name", "invalid")
             return encoder.encode("draft")
@@ -726,6 +739,8 @@ describe("render-time body hook", () => {
       .get("/", () => ({ n: 1 }))
 
     const response = await app.fetch(new Request("http://x/"))
+    expect(renders).toBe(1)
+    expect(logs).toBe(1)
     expect(response.status).toBe(200)
     expect(response.headers.get("x-fallback")).toBe("ran")
     expect(response.headers.has("x-draft")).toBe(false)

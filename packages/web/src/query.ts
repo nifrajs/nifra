@@ -347,11 +347,12 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       { readonly keyParts: KeyPartHashes | undefined; readonly subscribers: number }
     >,
     index: Map<string, Set<string>>,
+    keep?: string,
   ): void => {
     if (entries.size <= max) return
     for (const [hash, entry] of entries) {
       if (entries.size <= max) break
-      if (entry.subscribers === 0) {
+      if (hash !== keep && entry.subscribers === 0) {
         removeFromIndex(index, entry.keyParts, hash)
         entries.delete(hash) // oldest-inserted unsubscribed first (Map order)
       }
@@ -445,6 +446,12 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       run: undefined as unknown as Entry["run"],
       handle: undefined as unknown as QueryHandle,
     }
+    let stateVisitor = visitor
+    const sync = (): void => {
+      checkEpoch()
+      if (stateVisitor !== visitor) resetEntry(entry)
+      stateVisitor = visitor
+    }
     const emit = (): void => {
       // Iterate the live set - no per-emit copy (the common case is 0-1 subscribers). Contract: a
       // listener must not synchronously subscribe/unsubscribe during notification - `useSyncExternalStore`/
@@ -453,6 +460,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       for (const l of entry.listeners) l()
     }
     entry.setState = (next: QueryState): void => {
+      stateVisitor = visitor
       entry.state = Object.freeze(next)
       emit()
     }
@@ -521,7 +529,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     // A handle outlives the call that made it, so its reads check the epoch too.
     entry.handle = {
       snapshot: () => {
-        checkEpoch()
+        sync()
         return entry.state
       },
       subscribe: (listener: () => void) => {
@@ -534,7 +542,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
           entry.subscribers--
           if (entry.subscribers === 0) {
             scheduleGc(entry)
-            markCapSweep(cache.size)
+            trimEntries(cache, cacheIndex)
             querySeam()?.track(lq, false)
           }
         }
@@ -642,6 +650,9 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     checkEpoch()
     const h = hashQueryKey(key)
     const existing = cache.get(h)
+    const prev = existing?.state.status === "success" ? (existing.state.data as T) : undefined
+    const data =
+      typeof updater === "function" ? (updater as (p: T | undefined) => T)(prev) : updater
     // Create a placeholder entry if none exists - its `fn` throws until a real `query(key, fn)` re-binds
     // it, so a `setQueryData` for a key nobody queries yet never triggers a fetch on its own.
     const entry = upsert(
@@ -653,16 +664,13 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       undefined,
       h,
     )
-    if (existing === undefined) trimEntries(cache, cacheIndex)
-    const prev = entry.state.status === "success" ? (entry.state.data as T) : undefined
-    const data =
-      typeof updater === "function" ? (updater as (p: T | undefined) => T)(prev) : updater
     // A direct write is the new truth - bump the generation so any in-flight fetch can't overwrite it,
     // and clear the invalidated flag (the caller just supplied fresh data).
     entry.generation++
     entry.invalidated = false
     entry.dataTick = liveTick()
     entry.setState(successState(data, now()))
+    if (existing === undefined) trimEntries(cache, cacheIndex, h)
   }
 
   const prefetchQuery = async <T>(
@@ -819,6 +827,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       for (const l of listeners) l()
     }
     const setState = (next: QueryState<InfiniteData<T, P>>): void => {
+      stateVisitor = visitor
       state = Object.freeze(next)
       emit()
     }
@@ -919,12 +928,18 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         return { pages, pageParams: [...current.pageParams] }
       }, forChange)
 
+    let stateVisitor = visitor
+    const sync = (): void => {
+      checkEpoch()
+      if (stateVisitor !== visitor) entry.reset(false)
+    }
     const handle: InfiniteQueryHandle<T, P> = {
       snapshot: () => {
-        checkEpoch()
+        sync()
         return state
       },
       subscribe: (listener) => {
+        sync()
         entry.subscribers++
         entry.gcAt = undefined
         listeners.add(listener)
@@ -940,15 +955,15 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         }
       },
       fetch: () => {
-        checkEpoch()
+        sync()
         return fetchFirst(false)
       },
       refetch: () => {
-        checkEpoch()
+        sync()
         return reload(false)
       },
       fetchNextPage: () => {
-        checkEpoch()
+        sync()
         const current = state.data
         if (current === undefined) return fetchFirst(false)
         const param = nextParam(current)
@@ -959,7 +974,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         })
       },
       fetchPreviousPage: () => {
-        checkEpoch()
+        sync()
         const current = state.data
         if (current === undefined) return fetchFirst(false)
         const param = prevParam(current)
@@ -970,12 +985,12 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         })
       },
       hasNextPage: () => {
-        checkEpoch()
+        sync()
         const p = state.data === undefined ? undefined : nextParam(state.data)
         return p !== undefined && p !== null
       },
       hasPreviousPage: () => {
-        checkEpoch()
+        sync()
         const p = state.data === undefined ? undefined : prevParam(state.data)
         return p !== undefined && p !== null
       },
@@ -1003,6 +1018,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
         if (entry.subscribers > 0) void handle.refetch().catch(() => {})
       },
       reset: (forChange) => {
+        stateVisitor = visitor
         invalidated = true
         generation++
         promise = undefined
@@ -1027,6 +1043,13 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     return entry
   }
 
+  function resetEntry(entry: Entry): void {
+    entry.generation++
+    entry.invalidated = true
+    entry.dataTick = 0
+    entry.state = PENDING
+  }
+
   // Every query drops its data at once; the call returned refetches the mounted ones, and the fetch
   // that starts tells their subscribers. One a read started since is joined, and told them already.
   // The refetches for a change seen at a read are counted while they run; those for `clear()` hear a
@@ -1040,10 +1063,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     // is then where the next change reaches it.
     for (const entry of cache.values()) {
       // An in-flight fetch carried the last viewer's credentials: its result may not publish.
-      entry.generation++
-      entry.invalidated = true
-      entry.dataTick = 0
-      entry.state = PENDING
+      resetEntry(entry)
       if (entry.subscribers > 0) mounted.push(() => void entry.run(true, forChange).catch(() => {}))
     }
     for (const entry of infinite.values()) mounted.push(entry.reset(forChange))

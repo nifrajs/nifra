@@ -648,11 +648,33 @@ export async function collectCheckDiagnostics(
     return [Object.freeze({ ...value, severity: override.severity })]
   })
 
+  // A promoted contract note must also appear in the human report when it fails the gate.
+  for (const value of finalStructured) {
+    if (
+      value.severity === "error" &&
+      knownLegacyCodes.has(value.code) &&
+      diagnosticCompatibilityOf(value) === undefined
+    ) {
+      const row: { -readonly [Key in keyof CheckDiagnostic]: CheckDiagnostic[Key] } = {
+        rule: value.code,
+        code: value.code,
+        severity: "error",
+        message: value.message,
+      }
+      if (value.file !== undefined) row.file = value.file
+      if (value.line !== undefined) row.line = value.line
+      finalDiagnostics.push(row)
+    }
+  }
+
   const total = finalDiagnostics.length
   const max = opts.maxDiagnostics
   const shown = max !== undefined && total > max ? finalDiagnostics.slice(0, max) : finalDiagnostics
   const nonLegacyStructuredCount = finalStructured.filter(
-    (value) => knownLegacyCodes.has(value.code) && diagnosticCompatibilityOf(value) === undefined,
+    (value) =>
+      value.severity !== "error" &&
+      knownLegacyCodes.has(value.code) &&
+      diagnosticCompatibilityOf(value) === undefined,
   ).length
   const structuredLimit =
     shown.length < total ? shown.length + nonLegacyStructuredCount : finalStructured.length
@@ -666,7 +688,9 @@ export async function collectCheckDiagnostics(
       ? undefined
       : (await import("@nifrajs/core/reflection")).reflectHooks(hookSource)
   const result: CheckResult = {
-    ok: !finalDiagnostics.some((value) => value.severity === "error"),
+    ok:
+      !finalDiagnostics.some((value) => value.severity === "error") &&
+      !finalStructured.some((value) => value.severity === "error"),
     typecheck: !projectFacts.check.typecheck.ran
       ? "skipped"
       : projectFacts.check.typecheck.ok && outsideProgram === 0
