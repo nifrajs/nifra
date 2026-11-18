@@ -9,7 +9,9 @@ export default function Counter(props: {
   let root!: HTMLElement
   let target!: HTMLDivElement
   const [portal, setPortal] = createSignal<Element>()
-  onSettled(() => setPortal(componentPortalTarget(root, target)))
+  onSettled(() => {
+    setPortal(componentPortalTarget(root, target))
+  })
   const [count, setCount] = createSignal(0)
   onSettled(() => {
     window.dispatchEvent(new Event("fixture:mounted"))
