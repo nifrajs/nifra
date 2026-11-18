@@ -151,7 +151,7 @@ cd examples/workers-ssr-react && bunx wrangler dev   # real workerd
 
 `generateServerManifest` pre-bakes the route manifest as **static imports** (no runtime `node:fs`,
 no dynamic-path import); `buildServer` bundles a self-contained worker with the renderer's **edge**
-build (it pins `react-dom/server` / `solid-js/web` to their edge/server builds); **Workers Assets**
+build (it pins `react-dom/server` / `@solidjs/web` to their edge/server builds); **Workers Assets**
 (`assets = { directory }`) serves the hashed client bundle, and the worker - just `createWebApp(...)`
 + `toFetchHandler(app)` - handles SSR. Loaders, actions, `<head>`, streaming, `defer()`, and soft-nav
 all work on the edge; verified hydrating on real workerd for React and Solid alike.
@@ -175,5 +175,5 @@ runtime was verified on the real runtime or its faithful local emulator.
 
 [`portable-ssr-solid/`](portable-ssr-solid/) is the same app on **Solid**, proving the agnostic seam
 across both renderers. It's verified on Node, Deno (= Deno Deploy), and Cloudflare; Vercel Edge is
-account-gated for Solid (its `solid-js/web` server build needs node-compat, which the strict local
+account-gated for Solid (its `@solidjs/web` server build needs node-compat, which the strict local
 emulator lacks but real Vercel Edge provides - see the example's README).

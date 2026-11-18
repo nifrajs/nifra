@@ -150,11 +150,11 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     symptom: "A prop or store value renders once and never tracks updates in a Solid component.",
     cause:
       "Solid props are getters, evaluated where you read them. Destructuring props (or reading them outside JSX/an effect) reads once and loses tracking.",
-    fix: "Access `props.x` at the point of use inside JSX, or `splitProps`/`mergeProps` when you need to pass a subset on. Never destructure props in the function signature.",
+    fix: "Access `props.x` at the point of use inside JSX, or use `omit`/`merge` when you need to pass a subset on or add defaults. Never destructure props in the function signature.",
     verify:
       "eslint-plugin-solid - the authority on Solid reactivity; nifra routes you to it, not around it.",
-    seeAlso: "eslint-plugin-solid splitProps props getters",
-    versions: ["Solid 1.8-1.9"],
+    seeAlso: "eslint-plugin-solid omit merge props getters",
+    versions: ["Solid 2.0"],
     source: "https://docs.solidjs.com/concepts/components/props",
     category: "reactivity",
   },
@@ -284,12 +284,12 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     symptom:
       "A Solid list displays the wrong row state or does unnecessary work after an item is inserted or reordered.",
     cause:
-      "`Index` tracks positions while `For` tracks item identity. Choosing the wrong primitive changes which values remain attached to a row.",
-    fix: "Use `<For>` for collections whose item identity can move and `<Index>` only when position is the identity. Supply a stable key at the data boundary when persistence matters.",
+      "`<For>` tracks items by identity, while `keyed={false}` tracks them by position and hands each row an item accessor. Choosing the wrong mode changes which values remain attached to a row.",
+    fix: "Use plain `<For>` for collections whose item identity can move, `keyed={false}` only when position is the identity, and `keyed={(item) => item.id}` when a stable id should carry row state.",
     verify:
       "Test insert, remove, and reorder operations while editing one row; assert both rendered identity and preserved local state.",
-    seeAlso: "Solid list rendering For Index",
-    versions: ["Solid 1.8-1.9"],
+    seeAlso: "Solid list rendering For keyed",
+    versions: ["Solid 2.0"],
     source: "https://docs.solidjs.com/concepts/control-flow/list-rendering",
     category: "lists",
   },
@@ -299,12 +299,12 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     symptom:
       "A Solid computation reads a signal once and never updates, or a server-rendered value is captured before the component runs.",
     cause:
-      "The signal is read outside a tracked computation or at module/component setup time instead of inside JSX, `createEffect`, or `createMemo`.",
-    fix: "Read signals where Solid can track them, keep derived work in `createMemo`, and keep side effects in `createEffect`. Do not cache a getter's current value as a plain variable.",
+      "The signal is read outside a tracked computation or at module/component setup time instead of inside JSX, `createMemo`, or the compute half of `createEffect`.",
+    fix: "Read signals where Solid can track them, keep derived work in `createMemo`, and split `createEffect(compute, effect)` so reads happen in `compute` and side effects in `effect`. Do not cache a getter's current value as a plain variable.",
     verify:
       "Change the source signal after mount and assert the derived output changes without manually calling an update function.",
     seeAlso: "Solid reactivity tracking createMemo createEffect",
-    versions: ["Solid 1.8-1.9"],
+    versions: ["Solid 2.0"],
     source: "https://docs.solidjs.com/concepts/reactivity",
     category: "reactivity",
   },
@@ -314,11 +314,11 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     symptom: "A Solid event listener, interval, or resource outlives the owner that created it.",
     cause:
       "The effect allocates an external resource without registering cleanup with the current owner.",
-    fix: "Register teardown with `onCleanup` in the same owner that created the resource. Abort async work when its owner is disposed.",
+    fix: "Return a cleanup function from the `effect` half of `createEffect(compute, effect)`, or register `onCleanup` in the same owner that created the resource. Abort async work when its owner is disposed.",
     verify:
       "Mount and dispose the owner repeatedly, then assert that listener, timer, and request counts return to zero.",
     seeAlso: "Solid onCleanup effects",
-    versions: ["Solid 1.8-1.9"],
+    versions: ["Solid 2.0"],
     source: "https://docs.solidjs.com/reference/lifecycle/on-cleanup",
     category: "effects",
   },

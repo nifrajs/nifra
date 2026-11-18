@@ -358,8 +358,8 @@ export default function Dev() {
         For <strong>React, Preact, and Vue</strong>, an edit hot-swaps with component state preserved.
         For <strong>Solid and Svelte</strong>, the module hot-swaps live (no full reload - scroll,
         route, and other components are kept), but the edited component re-runs, so its own local state
-        resets. For Solid, use <code>{`solid({ ssr: true })`}</code> and the <code>"solid"</code>{" "}
-        resolve condition. Working examples for all five live in <code>examples/hmr-*</code>.
+        resets. For Solid, use <code>{`solid({ ssr: true })`}</code> from{" "}
+        <code>@solidjs/vite-plugin</code>. Working examples for all five live in <code>examples/hmr-*</code>.
       </p>
 
       <h2>The Fast Refresh boundary rule</h2>

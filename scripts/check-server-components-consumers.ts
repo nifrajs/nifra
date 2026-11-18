@@ -153,7 +153,8 @@ try {
     "react-server-dom-webpack": CERTIFIED_COMPONENT_REACT,
     vue: "3.5.45",
     svelte: "5.57.3",
-    "solid-js": "1.9.19",
+    "solid-js": "2.0.0",
+    "@solidjs/web": "2.0.0",
     preact: "10.29.8",
     "preact-render-to-string": "6.8.3",
     "@preact/preset-vite": "2.10.6",
@@ -161,7 +162,7 @@ try {
     "@vitejs/plugin-rsc": "0.5.39",
     "@vitejs/plugin-vue": "6.0.11",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
-    "vite-plugin-solid": "2.11.16",
+    "@solidjs/vite-plugin": "3.0.1",
     typescript: "6.0.3",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
@@ -269,7 +270,7 @@ try {
             ? 'import {svelte as plugin} from "@sveltejs/vite-plugin-svelte";'
             : adapter === "preact"
               ? 'import plugin from "@preact/preset-vite";'
-              : 'import plugin from "vite-plugin-solid";'
+              : 'import plugin from "@solidjs/vite-plugin";'
     await mkdir(resolve(app, "routes"))
     await mkdir(resolve(app, "backend"))
     await writeFile(

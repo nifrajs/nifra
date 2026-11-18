@@ -9707,8 +9707,8 @@ resets (svelte HMR)
 For **React, Preact, and Vue**, an edit hot-swaps with component state preserved.
 For **Solid and Svelte**, the module hot-swaps live (no full reload - scroll,
 route, and other components are kept), but the edited component re-runs, so its own local state
-resets. For Solid, use `solid({ ssr: true })` and the `"solid"`
-resolve condition. Working examples for all five live in `examples/hmr-*`.
+resets. For Solid, use `solid({ ssr: true })` from
+`@solidjs/vite-plugin`. Working examples for all five live in `examples/hmr-*`.
 
 ### The Fast Refresh boundary rule
 
@@ -13359,8 +13359,8 @@ data, duplicate runtimes, and stable list identity.
 state identity, compat boundaries, and runtime duplication.
 
 -
-**Solid:** tracked reads, props and stores, `For` versus
-`Index`, and owner cleanup.
+**Solid:** tracked reads, props and stores, `For` keyed versus
+unkeyed, and owner cleanup.
 
 -
 **Vue:** refs in script, watch sources and traversal, reactive props, and SSR
@@ -22253,7 +22253,7 @@ One package, the same on React, Preact, Vue, Solid and Svelte (pick the renderer
 - [Keep-alive](https://nifra.dev/docs/keep-alive) pages, a query cache, optimistic fetchers, and
   [islands](https://nifra.dev/docs/islands) (`@nifrajs/web/islands`) for pages with no framework runtime.
 - Optional [server components](https://nifra.dev/docs/server-components) on all five adapters:
-  React uses native RSC/Flight. Vue, Svelte, Preact and the current Solid 1.x adapter use
+  React uses native RSC/Flight. Vue, Svelte, Preact and the Solid adapter use
   explicitly registered islands in validated server-rendered ranges; Solid 2's experimental
   frames protocol is not currently targeted. Definitions take closed input and public-props
   schemas and authorization; a refresh runs the owner page's GET with its admission, capabilities,
