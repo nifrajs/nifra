@@ -79,7 +79,7 @@ try {
   }
   await writeFile(join(backend, "app.ts"), merge(mounts, "backend"))
   await check("incremental")
-  const samples = { full: [] as number[], incremental: [] as number[] }
+  const samples: Record<Mode, number[]> = { full: [], incremental: [] }
   const rounds = 20
   for (let round = 0; round < rounds; round++) {
     await writeFile(join(backend, "r0.ts"), route(0, `revision ${round}`))

@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir, stat, utimes, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
+import { fingerprintBuildInputs, recordBuildProvenance } from "../src/build-provenance.ts"
 import {
   buildProjectWorkGraph,
   collectProjectWorkGraph,
@@ -20,6 +20,7 @@ import {
   createFixtureRoot,
   FIXTURE_TSCONFIG,
   removeFixtureRoot,
+  writeAppFile,
 } from "./fixture-root.ts"
 
 const fixtures = createFixtureRoot("nifra-prove-")
@@ -41,6 +42,14 @@ const files: readonly WorkGraphSourceFile[] = [
   { path: "routes/orders.test.ts", kind: "test", content: 'test("POST /orders", ...)' },
   { path: "server-manifest.ts", kind: "manifest", content: 'routes: ["/orders"]' },
 ]
+
+async function buildFixture(root: string, contents: string): Promise<void> {
+  const out = join(root, "dist")
+  await mkdir(out, { recursive: true })
+  const source = await fingerprintBuildInputs(root, out)
+  await writeFile(join(out, "server.js"), contents)
+  expect(await recordBuildProvenance(root, out, source)).toBe(true)
+}
 
 describe("verification work graph", () => {
   test("connects routes to schemas, capabilities, tests, and manifests", async () => {
@@ -218,14 +227,18 @@ describe("verification work graph", () => {
       'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/", () => "ok")\n'
     await writeFile(join(root, "tsconfig.json"), FIXTURE_TSCONFIG)
     await writeFile(app, good + 'export const value: number = "wrong"\n')
-    await writeFile(artifact, "export const build = 1")
     await utimes(app, new Date(0), new Date(0))
+    await buildFixture(root, "export const build = 1")
     const failed = await collectProjectWorkGraph(root, { minLevel: 0, execute: true })
     expect(failed.evidence.stop.done).toBe(false)
     expect(failed.evidence.proofs[0]?.status).toBe("fail")
 
     await writeFile(app, good)
     await utimes(app, new Date(0), new Date(0))
+    await expect(collectProjectWorkGraph(root, { minLevel: 0, execute: true })).rejects.toThrow(
+      "source or build contents changed",
+    )
+    await buildFixture(root, "export const build = 1")
     const passed = await collectProjectWorkGraph(root, { minLevel: 0, execute: true })
     expect(passed.evidence.stop.done).toBe(true)
     expect(passed.evidence.graphDigest).not.toBe(failed.evidence.graphDigest)
@@ -238,29 +251,93 @@ describe("verification work graph", () => {
     expect(recordProof(plan.evidence, proof).stop.done).toBe(true)
 
     await writeFile(artifact, "export const build = 2")
+    await expect(collectProjectWorkGraph(root, { minLevel: 0 })).rejects.toThrow(
+      "source or build contents changed",
+    )
+    await buildFixture(root, "export const build = 2")
     const next = await collectProjectWorkGraph(root, { minLevel: 0 })
     expect(next.evidence.stop.done).toBe(false)
     expect(next.evidence.buildDigest).not.toBe(passed.evidence.buildDigest)
     expect(() => recordProof(next.evidence, proof)).toThrow("different snapshot or gate")
   })
 
-  test("freshness counts framework component and style edits", async () => {
-    const root = await mkdtemp(join(tmpdir(), "nifra-work-graph-"))
-    try {
-      await mkdir(join(root, "routes"), { recursive: true })
-      await mkdir(join(root, "dist"), { recursive: true })
-      await writeFile(join(root, "dist", "server.js"), "export {}\n")
-      const built = new Date(Date.now() - 60_000)
-      await utimes(join(root, "dist", "server.js"), built, built)
-      for (const page of ["index.svelte", "about.vue", "post.mdx", "site.css"]) {
-        await writeFile(join(root, "routes", page), "")
-        expect((await inspectBuildFreshness(root)).ok).toBe(false)
-        await utimes(join(root, "routes", page), built, built)
-      }
-    } finally {
-      await rm(root, { recursive: true, force: true })
+  test("freshness checks component, style and public asset bytes", async () => {
+    const root = createFixtureProject(fixtures, "inputs-")
+    await mkdir(join(root, "routes"), { recursive: true })
+    await mkdir(join(root, "public"), { recursive: true })
+    await buildFixture(root, "export {}")
+    const unchanged = new Date(0)
+    for (const file of [
+      "routes/index.svelte",
+      "routes/about.vue",
+      "routes/post.mdx",
+      "routes/site.css",
+      "public/icon.png",
+    ]) {
+      const path = join(root, file)
+      await writeFile(path, new Uint8Array([0xfe]))
+      await utimes(path, unchanged, unchanged)
+      expect((await inspectBuildFreshness(root)).reason).toContain(
+        "source or build contents changed",
+      )
+      await buildFixture(root, "export {}")
+      expect((await inspectBuildFreshness(root)).ok).toBe(true)
+      await writeFile(path, new Uint8Array([0xff]))
+      await utimes(path, unchanged, unchanged)
+      expect((await inspectBuildFreshness(root)).reason).toContain(
+        "source or build contents changed",
+      )
+      await buildFixture(root, "export {}")
     }
   })
+
+  test("an artifact from an older build is refused without recorded provenance", async () => {
+    const root = createFixtureProject(fixtures, "missing-receipt-")
+    await mkdir(join(root, "dist"))
+    await writeFile(join(root, "dist/server.js"), "export {}")
+    expect((await inspectBuildFreshness(root)).reason).toContain("no build provenance")
+  })
+
+  test("nifra build records the source and artifact bytes it produced", async () => {
+    const root = createFixtureProject(fixtures, "cli-build-")
+    writeAppFile(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "build-provenance-fixture",
+        type: "module",
+        dependencies: { "@nifrajs/core": "workspace:*", "@nifrajs/web-vanilla": "workspace:*" },
+      }),
+    )
+    const backend = writeAppFile(
+      root,
+      "backend/app.ts",
+      'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/api/test", () => "first")\n',
+    )
+    writeAppFile(
+      root,
+      "nifra.config.ts",
+      'export { vanillaAdapter as adapter } from "@nifrajs/web-vanilla"\nexport const clientModule = "./frontend/client.ts"\n',
+    )
+    writeAppFile(root, "frontend/client.ts", "export function mountRouter() {}\n")
+    writeAppFile(root, "routes/index.ts", "export default () => null\n")
+    const command = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "build"], {
+      cwd: root,
+      stderr: "pipe",
+      stdout: "pipe",
+    })
+    const [code, stderr] = await Promise.all([command.exited, new Response(command.stderr).text()])
+    expect({ code, stderr }).toEqual({ code: 0, stderr: "" })
+    expect((await inspectBuildFreshness(root)).ok).toBe(true)
+
+    const before = await stat(backend)
+    await writeFile(
+      backend,
+      'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/api/test", () => "second")\n',
+    )
+    await utimes(backend, before.atime, before.mtime)
+    expect((await inspectBuildFreshness(root)).reason).toContain("source or build contents changed")
+  }, 15_000)
 
   test("a build changed by an invariant run invalidates all of its results", async () => {
     const root = createFixtureProject(fixtures, "changed-build-")
@@ -286,8 +363,8 @@ describe("verification work graph", () => {
         "})",
       ].join("\n"),
     )
-    await writeFile(join(root, "dist/server.js"), "export {}")
     await utimes(app, new Date(0), new Date(0))
+    await buildFixture(root, "export {}")
     await expect(collectProjectWorkGraph(root, { execute: true, minLevel: 4 })).rejects.toThrow(
       "source or build changed during verification",
     )

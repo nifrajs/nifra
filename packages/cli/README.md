@@ -216,9 +216,10 @@ and limits: [Where your code and secrets run](https://nifra.dev/docs/agents#proj
 
 `nifra prove --min 2 --json` plans the same cumulative gates as `nifra levels`. Use
 `nifra prove --run --min 2 --json` to execute the plan and return passing or failing results
-bound to the current source graph and build artifact digests. The command checks build freshness
-by file modification times and exits successfully only after every requested gate passes. Use
-`--file` for impact hints.
+bound to the current source graph and build artifact digests. Run `nifra build` first. It records
+content digests for project source, public assets, and the emitted build. Proofs require the current
+digests to match that record and every requested gate to pass. Use `--file` for impact hints.
+Regenerate saved proofs for the v2 evidence envelope with `nifra prove --run`.
 
 Assurance configs may append application-supplied rule packs. Pack codes must not use the reserved `NF-` prefix. Rules are pure source scans and run after the built-in rules.
 

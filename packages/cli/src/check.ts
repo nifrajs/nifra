@@ -42,6 +42,7 @@ import { createSourceFacts } from "./internal/source-facts.ts"
 import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 import {
   forwardTerminalSignals,
+  inProjectChildProcess,
   OWN_PROCESS_GROUP,
   signalProcessGroup,
   stopGroupAndWait,
@@ -219,21 +220,24 @@ async function runTsc(
       cache = stageTypecheckCache(cwd, tscBin, tsconfig)
       if (cache !== undefined) args.push("--incremental", "--tsBuildInfoFile", cache.path)
     }
+    const detached = OWN_PROCESS_GROUP && !inProjectChildProcess()
     const proc = Bun.spawn(args, {
       cwd,
       stdout,
       stderr,
-      // Its own group lets cancellation also stop a compiler process the tsc entry started.
-      detached: OWN_PROCESS_GROUP,
+      // Reuse the project child's cancellation group when one already exists.
+      detached,
     })
     let cancelled = false
-    const stop = (): void => signalProcessGroup(proc, "SIGTERM")
+    const stop = (): void => signalProcessGroup(proc, "SIGTERM", detached)
     const abort = (): void => {
       cancelled = true
       stop()
     }
     signal?.addEventListener("abort", abort, { once: true })
-    const releaseSignals = forwardTerminalSignals(() => stopGroupAndWait(proc))
+    const releaseSignals = detached
+      ? forwardTerminalSignals(() => stopGroupAndWait(proc))
+      : undefined
     let out = ""
     let err = ""
     let code: number | null = null
@@ -244,7 +248,7 @@ async function runTsc(
       err = result[1]
     } finally {
       signal?.removeEventListener("abort", abort)
-      releaseSignals()
+      releaseSignals?.()
     }
     if (cancelled) return { ran: true, ok: false, output: "cancelled", cancelled: true }
     publishCache = code === 0

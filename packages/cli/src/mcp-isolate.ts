@@ -16,10 +16,12 @@ import type { NifraMonorepoConfig } from "./load.ts"
 import { appFingerprint } from "./mcp-exec.ts"
 import {
   CHILD_TIMEOUT_MS,
+  forwardTerminalSignals,
   OWN_PROCESS_GROUP,
   readBoundedLines,
   readBoundedStream,
   signalProcessGroup,
+  stopGroupAndWait,
   stopGroupOnExit,
 } from "./mcp-io.ts"
 import type {
@@ -135,6 +137,7 @@ export async function askProjectChild(
     )
   }
   stopGroupOnExit(proc)
+  const releaseSignals = forwardTerminalSignals(() => stopGroupAndWait(proc))
   let stopped: "timeout" | "cancel" | undefined
   const stop = (reason: "timeout" | "cancel"): void => {
     if (stopped !== undefined) return
@@ -174,6 +177,7 @@ export async function askProjectChild(
     )
   } finally {
     clearTimeout(timer)
+    releaseSignals()
     context?.signal.removeEventListener("abort", onAbort)
   }
 }

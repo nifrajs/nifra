@@ -43,7 +43,7 @@ interface ToolMeta {
 /** Every project tool by name. The docs tools set their own annotations and are not repeated. */
 export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
   nifra_check: {
-    annotations: READ,
+    annotations: EXECUTE,
     fields: {
       lintsOnly: "Skip tsc and run only the source lints, a near-instant pass.",
       incremental:

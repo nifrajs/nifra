@@ -2382,7 +2382,7 @@
     "name": "BuildFreshness",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface BuildFreshness {\n    readonly ok: boolean;\n    readonly buildDir?: string;\n    readonly newestSourceMs?: number;\n    readonly newestBuildMs?: number;\n    readonly buildDigest?: string | undefined;\n    readonly reason?: string;\n}"
+    "signature": "export interface BuildFreshness {\n    readonly ok: boolean;\n    readonly buildDir?: string;\n    readonly newestSourceMs?: number;\n    readonly newestBuildMs?: number;\n    readonly buildDigest?: string | undefined;\n    readonly sourceDigest?: string;\n    readonly reason?: string;\n}"
   },
   {
     "name": "BuildManifest",

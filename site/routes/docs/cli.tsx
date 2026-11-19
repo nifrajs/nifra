@@ -321,8 +321,9 @@ export default function Cli() {
               <code>nifra prove [--file &lt;path&gt;] [--min &lt;n&gt;] [--run]</code>
             </td>
             <td>
-              Plan cumulative verification gates against a fresh build. Use <code>--run</code> to
-              execute the gates and return results bound to source and build digests.
+              Plan cumulative verification gates against a build with matching source and artifact
+              digests from <code>nifra build</code>. Run <code>nifra prove --run</code> to execute
+              the gates and regenerate saved proofs for the v2 evidence envelope.
             </td>
           </tr>
           <tr>

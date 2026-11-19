@@ -6,7 +6,7 @@
  * manifests. It never probes a running application and never persists payloads.
  */
 
-import { createReadStream, existsSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { readFile, stat } from "node:fs/promises"
 import { basename, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -16,10 +16,17 @@ import {
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
-import { Glob } from "bun"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
+import {
+  buildOutputFiles,
+  fingerprintBuildInputs,
+  fingerprintFiles,
+  projectSourceFiles,
+  readBuildProvenance,
+} from "./build-provenance.ts"
 import { digestRoute } from "./contracts.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { inProjectChildProcess } from "./mcp-io.ts"
 import { VERIFICATION_GATES, type VerificationGate } from "./verification-gates.ts"
 
 export type WorkGraphNodeKind =
@@ -73,6 +80,7 @@ export interface BuildFreshness {
   readonly newestSourceMs?: number
   readonly newestBuildMs?: number
   readonly buildDigest?: string | undefined
+  readonly sourceDigest?: string
   readonly reason?: string
 }
 
@@ -142,13 +150,7 @@ export interface ProjectWorkGraphResult {
   readonly evidence: EvidenceBundle
 }
 
-// Framework component, content, and style files are app source too: an edit to one makes a build stale.
-const SOURCE_GLOB = new Glob(
-  "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json,jsonc,svelte,vue,md,mdx,css,lock,lockb,toml,yaml,yml}",
-)
-const BUILD_FILES = new Glob("**/*")
 const SERVER_ARTIFACT = /\.[cm]?js$/
-const IGNORED = /(^|\/)(node_modules|dist|build|\.nifra|\.git|\.wrangler|coverage)\//
 const APP_SOURCE_DIR = /^(?:routes|frontend|backend|shared)\//
 const BACKEND_SOURCE_DIR = /^(?:backend|shared)\//
 const MANIFEST_NAMES = new Set([
@@ -196,15 +198,14 @@ export async function inspectBuildFreshness(cwd: string): Promise<BuildFreshness
     const path = resolve(cwd, name)
     if (existsSync(path)) sourcePaths.push(path)
   }
-  for await (const rawPath of SOURCE_GLOB.scan({ cwd, dot: false })) {
-    const path = rawPath.replaceAll("\\", "/")
-    if (!IGNORED.test(path) && APP_SOURCE_DIR.test(path)) sourcePaths.push(resolve(cwd, path))
+  for (const file of projectSourceFiles(cwd, resolve(cwd, "dist"))) {
+    if (APP_SOURCE_DIR.test(file)) sourcePaths.push(resolve(cwd, file))
   }
   const sourceTimes = await fileTimes(sourcePaths)
-  for (const buildDirName of ["dist", "build"]) {
+  for (const buildDirName of ["dist", "build", ".vercel/output"]) {
     const buildDir = resolve(cwd, buildDirName)
     if (!existsSync(buildDir)) continue
-    const artifacts = [...BUILD_FILES.scanSync({ cwd: buildDir, dot: true })].sort(codeUnitOrder)
+    const artifacts = buildOutputFiles(buildDir)
     const scripts = artifacts.filter((path) => SERVER_ARTIFACT.test(path))
     if (scripts.length === 0) continue
     const freshness = evaluateBuildFreshness({
@@ -214,13 +215,27 @@ export async function inspectBuildFreshness(cwd: string): Promise<BuildFreshness
       buildDir: buildDirName,
     })
     if (!freshness.ok) return freshness
-    const hasher = new Bun.CryptoHasher("sha256")
-    for (const path of artifacts) {
-      const fileHash = new Bun.CryptoHasher("sha256")
-      for await (const chunk of createReadStream(resolve(buildDir, path))) fileHash.update(chunk)
-      hasher.update(JSON.stringify([path, fileHash.digest("hex")]))
+
+    const receipt = await readBuildProvenance(cwd, buildDir)
+    if (receipt === undefined) {
+      return {
+        ...freshness,
+        ok: false,
+        reason: "nifra prove refused: no build provenance; run `nifra build`",
+      }
     }
-    return { ...freshness, buildDigest: hasher.digest("hex") }
+    const [sourceDigest, buildDigest] = await Promise.all([
+      fingerprintBuildInputs(cwd, buildDir),
+      fingerprintFiles(buildDir, artifacts),
+    ])
+    if (receipt.sourceDigest !== sourceDigest || receipt.buildDigest !== buildDigest) {
+      return {
+        ...freshness,
+        ok: false,
+        reason: "nifra prove refused: source or build contents changed; run `nifra build`",
+      }
+    }
+    return { ...freshness, buildDigest, sourceDigest }
   }
   return evaluateBuildFreshness({
     hasArtifact: false,
@@ -244,7 +259,12 @@ export async function collectProjectWorkGraph(
   if (!freshness.ok) throw new StaleBuildError(freshness)
   const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) throw new Error(`[nifra] no ${BACKEND_APP_FILE} in ${cwd}`)
-  const files = await collectProjectFiles(cwd)
+  const outDir = resolve(cwd, freshness.buildDir ?? "dist")
+  const files = await collectProjectFiles(cwd, outDir)
+  const verification =
+    options.execute === true
+      ? await verifyProofGates(cwd, options.minLevel ?? 1, options.signal)
+      : undefined
   const backendUrl = pathToFileURL(backendPath)
   backendUrl.searchParams.set("nifra-work-graph", crypto.randomUUID())
   const loadedValue: unknown = await import(backendUrl.href)
@@ -252,29 +272,15 @@ export async function collectProjectWorkGraph(
   if (loaded?.backend === undefined)
     throw new Error(`[nifra] ${backendPath} does not export backend`)
   const result = await buildProjectWorkGraph({ source: loaded.backend, files, freshness }, options)
-  if (options.execute !== true) return result
+  if (verification === undefined) return result
 
-  const throughLevel = VERIFICATION_GATES.find(
-    (gate) => gate.level === result.plan.targetLevel,
-  )?.level
-  if (throughLevel === undefined) throw new RangeError("invalid proof target level")
-  // A fresh process gives assurance the current imports and lets it record route sites on first load.
-  const { askProjectChild } = await import("./mcp-isolate.ts")
-  const verification = await askProjectChild(
-    cwd,
-    { op: "proof-gates", level: throughLevel },
-    options.signal === undefined
-      ? {}
-      : { context: { signal: options.signal, requestId: null, reportProgress: () => {} } },
-  )
-  if (!verification.ok || !("proofGates" in verification))
-    throw new Error("nifra prove: verification process did not return gate results")
   const after = await inspectBuildFreshness(cwd)
   if (
     !after.ok ||
     after.buildDigest !== freshness.buildDigest ||
     after.buildDir !== freshness.buildDir ||
-    sourceDigest(await collectProjectFiles(cwd)) !== sourceDigest(files)
+    after.sourceDigest !== freshness.sourceDigest ||
+    sourceDigest(await collectProjectFiles(cwd, outDir)) !== sourceDigest(files)
   ) {
     throw new StaleBuildError({
       ...after,
@@ -284,7 +290,7 @@ export async function collectProjectWorkGraph(
   }
   options.signal?.throwIfAborted()
   const proofs = result.plan.steps.map((step): ProofEvidence => {
-    const level = verification.proofGates.find((status) => status.level === step.level)
+    const level = verification.find((status) => status.level === step.level)
     return {
       ...step,
       graphDigest: result.graph.digest,
@@ -300,6 +306,27 @@ export async function collectProjectWorkGraph(
     ...result,
     evidence: createEvidenceBundle(result.graph, result.impact, result.plan, proofs),
   })
+}
+
+async function verifyProofGates(cwd: string, target: number, signal?: AbortSignal) {
+  const throughLevel = VERIFICATION_GATES.find((gate) => gate.level === target)?.level
+  if (throughLevel === undefined) throw new RangeError("invalid proof target level")
+  signal?.throwIfAborted()
+  // Verify before reflecting the backend so the assurance loader can record route sites.
+  if (inProjectChildProcess()) {
+    const { collectVerificationLevels } = await import("./levels-tool.ts")
+    return (await collectVerificationLevels(cwd, { throughLevel })).levels
+  }
+  const { askProjectChild } = await import("./mcp-isolate.ts")
+  const result = await askProjectChild(
+    cwd,
+    { op: "proof-gates", level: throughLevel },
+    signal === undefined ? {} : { context: { signal, requestId: null, reportProgress: () => {} } },
+  )
+  signal?.throwIfAborted()
+  if (!result.ok || !("proofGates" in result))
+    throw new Error("nifra prove: verification process did not return gate results")
+  return result.proofGates
 }
 
 export async function buildProjectWorkGraph(
@@ -595,11 +622,9 @@ export function renderWorkGraphText(result: ProjectWorkGraphResult): string {
   return lines.join("\n")
 }
 
-async function collectProjectFiles(cwd: string): Promise<WorkGraphSourceFile[]> {
+async function collectProjectFiles(cwd: string, outDir: string): Promise<WorkGraphSourceFile[]> {
   const files: WorkGraphSourceFile[] = []
-  for await (const rawPath of SOURCE_GLOB.scan({ cwd, dot: false })) {
-    const path = rawPath.replaceAll("\\", "/")
-    if (IGNORED.test(path)) continue
+  for (const path of projectSourceFiles(cwd, outDir)) {
     const bytes = await readFile(resolve(cwd, path))
     files.push({
       path,
@@ -613,7 +638,7 @@ async function collectProjectFiles(cwd: string): Promise<WorkGraphSourceFile[]> 
           : {}),
     })
   }
-  return files.sort((a, b) => codeUnitOrder(a.path, b.path))
+  return files
 }
 
 function sourceDigest(files: readonly WorkGraphSourceFile[]): string {
