@@ -26,6 +26,17 @@ import type { CtxSet, RawContext } from "./server.ts"
 /** How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option. */
 export type ErrorLogDetail = "full" | "message" | "none"
 
+/** Resolve the app's request error log policy, falling back safely when env access is denied. */
+export function resolveErrorLogDetail(detail?: ErrorLogDetail): ErrorLogDetail {
+  if (detail !== undefined) return detail
+  try {
+    return typeof process !== "undefined" && process.env.NODE_ENV !== "production" ? "full" : "none"
+  } catch {
+    // Deno can deny process.env reads independently of network access.
+    return "none"
+  }
+}
+
 /**
  * Render a value thrown on the bare lane. Two shapes, in the order the lane means them:
  *   - a `Response` or a `status(...)` is control flow - the app answering directly, or plain data.

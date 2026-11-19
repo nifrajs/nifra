@@ -2,6 +2,7 @@
 "@nifrajs/auth": patch
 "@nifrajs/core": patch
 "@nifrajs/storage": patch
+"@nifrajs/web": patch
 ---
 
 Log request metadata by default in production. Set `errorLogDetail` explicitly to include error text or stacks.

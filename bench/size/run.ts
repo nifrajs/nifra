@@ -377,7 +377,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 71,467, typebox-form -> 76,422 (Bun 1.4.4).
   // Reporting a failed render-time body hook once: idempotency -> 46,925 B, effect-ledger -> 44,106,
   // sse -> 42,954, mcp -> 42,352, typebox-t -> 71,541 (Bun 1.4.4).
-  "nifra-bare": 41.1,
+  // The shared logging policy with env-denial fallback measures 42,102 B (Bun 1.4.4).
+  "nifra-bare": 41.2,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -426,7 +427,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // this cap is crossed. A GET/HEAD native slot skipping the framing mark: typebox-form 74,037 B.
   // Merged ordinary-input and own-only validation measured 74,897 B for TypeBox-form (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox-form variant.
-  "nifra-typebox-form": 74.7,
+  "nifra-typebox-form": 74.8,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:

@@ -190,7 +190,7 @@ export interface ServerOptions {
    *
    * - `"full"` (default with a non-production `process.env`) - `name`, `detail` and `stack`.
    * - `"message"` - `name` and `detail`, no stack.
-   * - `"none"` (default in production or without `process`) - request metadata and a generic error name.
+   * - `"none"` (default in production or when env access is unavailable) - request metadata and a generic error name.
    *
    * An error's text can quote the input that produced it, which is how request data ends up in a log
    * sink. To opt back into detail with redaction, set `errorLogDetail: "full"` and pass

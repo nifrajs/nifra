@@ -76,7 +76,7 @@ import {
   isAuthenticatedRequest,
   markAuthenticatedRequest,
 } from "./auth.ts"
-import { emitRequestErrorLog, renderBareError } from "./bare-error-lane.ts"
+import { emitRequestErrorLog, renderBareError, resolveErrorLogDetail } from "./bare-error-lane.ts"
 import { LAST_BEFORE_HANDLE } from "./before-handler.ts"
 import {
   assertByteLimit,
@@ -1716,9 +1716,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.responseContractRuntime = undefined
     this.idempotencyRuntime = undefined
     this.logger = options.logger ?? jsonLogger()
-    this.errorLogDetail =
-      options.errorLogDetail ??
-      (typeof process === "undefined" || process.env.NODE_ENV === "production" ? "none" : "full")
+    this.errorLogDetail = resolveErrorLogDetail(options.errorLogDetail)
     this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
     this.sealed = false
