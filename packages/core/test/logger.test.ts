@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { resolveErrorLogDetail } from "../src/edge-kit.ts"
 import {
   commonSecretPatterns,
   jsonLogger,
@@ -195,6 +196,22 @@ describe("server error logging", () => {
     const entry = JSON.parse(lines[0] ?? "")
     expect(entry.detail).toBe("just a string")
     expect(entry.stack).toBeUndefined()
+  })
+
+  test("an unavailable environment uses the safe default", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "env")
+    if (descriptor === undefined) throw new Error("Expected a process.env property")
+    Object.defineProperty(process, "env", {
+      get() {
+        throw new Error("environment access denied")
+      },
+    })
+    try {
+      expect(resolveErrorLogDetail()).toBe("none")
+      expect(resolveErrorLogDetail("full")).toBe("full")
+    } finally {
+      Object.defineProperty(process, "env", descriptor)
+    }
   })
 
   test("production logs metadata by default and still honors an explicit detail policy", async () => {
