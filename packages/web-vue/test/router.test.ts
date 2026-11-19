@@ -10,7 +10,7 @@ import {
 import { createSSRApp, defineComponent, effectScope, h } from "vue"
 import { renderToString } from "vue/server-renderer"
 import { compose } from "../src/compose.ts"
-import { useBlocker, useNavigate, useSearch } from "../src/router.ts"
+import { useBlocker, useNavigate, useParams, useSearch } from "../src/router.ts"
 
 /**
  * The interception + restore-then-prompt state machine is tested exhaustively in `@nifrajs/web`'s suite.
@@ -108,4 +108,21 @@ test("useSearch is an empty ref for a render with no search context", async () =
   })
   const html = await renderToString(createSSRApp({ render: () => compose([Page], { data: null }) }))
   expect(html).toContain("<span>0</span>")
+})
+
+test("useParams reads the matched route's params as a ref, and is empty without them", async () => {
+  const Page = defineComponent({
+    setup() {
+      const params = useParams("/test-loose")
+      return () => h("span", null, String(params.value.id ?? "none"))
+    },
+  })
+  const render = (node: () => ReturnType<typeof compose> | ReturnType<typeof h>) =>
+    renderToString(createSSRApp({ render: node }))
+  expect(await render(() => compose([Page], { data: null, params: { id: "7" } }))).toContain(
+    ">7</span>",
+  )
+  expect(await render(() => compose([Page], { data: null }))).toContain(">none</span>")
+  // Outside a route tree there are no render props to inject: a frozen empty record.
+  expect(await render(() => h(Page))).toContain(">none</span>")
 })
