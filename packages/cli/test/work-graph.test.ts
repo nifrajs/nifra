@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, stat, utimes, writeFile } from "node:fs/promises"
+import { mkdir, open, utimes, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
@@ -314,6 +314,8 @@ describe("verification work graph", () => {
       "backend/app.ts",
       'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/api/test", () => "first")\n',
     )
+    const timestamp = new Date(0)
+    await utimes(backend, timestamp, timestamp)
     writeAppFile(
       root,
       "nifra.config.ts",
@@ -330,12 +332,15 @@ describe("verification work graph", () => {
     expect({ code, stderr }).toEqual({ code: 0, stderr: "" })
     expect((await inspectBuildFreshness(root)).ok).toBe(true)
 
-    const before = await stat(backend)
-    await writeFile(
-      backend,
-      'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/api/test", () => "second")\n',
-    )
-    await utimes(backend, before.atime, before.mtime)
+    const changed = await open(backend, "w")
+    try {
+      await changed.writeFile(
+        'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/api/test", () => "second")\n',
+      )
+      await changed.utimes(timestamp, timestamp)
+    } finally {
+      await changed.close()
+    }
     expect((await inspectBuildFreshness(root)).reason).toContain("source or build contents changed")
   }, 15_000)
 
