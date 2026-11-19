@@ -207,7 +207,11 @@ export default function Cli() {
             <td>
               <code>nifra check [--lints-only] [--json] [--sarif]</code>
             </td>
-            <td>Typecheck plus contract lints: a hand-rolled <code>fetch()</code> to your own API, an untyped client, backend code reached from browser code. <code>--lints-only</code> skips tsc; <code>--sarif</code> emits SARIF 2.1.0.</td>
+            <td>
+              Typecheck and contract lints. Use <code>--incremental</code> to reuse TypeScript 5 or 6
+              compiler state and <code>--timings</code> to see where the check spent its time.
+              <code>--lints-only</code> skips tsc. <code>--sarif</code> emits SARIF 2.1.0.
+            </td>
           </tr>
           <tr>
             <td>
@@ -314,9 +318,12 @@ export default function Cli() {
           </tr>
           <tr>
             <td>
-              <code>nifra prove [--file &lt;path&gt;] [--min &lt;n&gt;]</code>
+              <code>nifra prove [--file &lt;path&gt;] [--min &lt;n&gt;] [--run]</code>
             </td>
-            <td>Plan the cheapest proofs for the changed files and report a machine-checkable stop condition. Needs a fresh build.</td>
+            <td>
+              Plan cumulative verification gates against a fresh build. Use <code>--run</code> to
+              execute the gates and return results bound to source and build digests.
+            </td>
           </tr>
           <tr>
             <td>

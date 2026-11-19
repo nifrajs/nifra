@@ -29,7 +29,13 @@ import {
   identityParityBasis,
   resolvedInstalledCopy,
 } from "@nifrajs/web/internal/parity"
-import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
+import {
+  codePositionMask,
+  IGNORED,
+  type SourceFinding,
+  stripComments,
+  walkSource,
+} from "./check-scan.ts"
 import {
   type HandBuiltManifest,
   handBuiltManifestMessage,
@@ -726,12 +732,19 @@ async function linkedReadinessSources(
 async function collectDoctorReadiness(
   cwd: string,
   opts: { readonly target?: string; readonly strict?: boolean },
+  sources?: readonly { file: string; content: string }[],
 ): Promise<DoctorReadiness> {
   const resolved = await resolveTarget(cwd, opts.target)
   const own: ReadinessSource[] = []
-  await walkSource(cwd, (file, source) => {
-    own.push(readinessSource(file, source))
-  })
+  if (sources === undefined) {
+    await walkSource(cwd, (file, source) => {
+      own.push(readinessSource(file, source))
+    })
+  } else {
+    for (const { file, content } of sources) {
+      if (!IGNORED.test(file)) own.push(readinessSource(file, content))
+    }
+  }
   // The app's own files first, so a setting it makes itself is the evidence shown.
   const files = [...own, ...(await linkedReadinessSources(cwd, own))]
   const edgeTarget = /^(?:cloudflare|vercel|workers|edge|static)$/.test(resolved?.target ?? "")
@@ -994,6 +1007,7 @@ function keepAliveRoutes(cwd: string): readonly string[] {
 export async function collectDoctorResult(
   cwd: string,
   opts: { readonly target?: string; readonly strict?: boolean; readonly cliVersion?: string } = {},
+  sources?: Promise<readonly { file: string; content: string }[]>,
 ): Promise<DoctorResult> {
   const pkg = await readJson(join(cwd, "package.json"))
   if (pkg === undefined)
@@ -1028,26 +1042,31 @@ export async function collectDoctorResult(
       rel === "bench" ||
       rel.startsWith("bench/") ||
       rel.startsWith("packages/create-nifra/template"))
-  await walkSource(
-    cwd,
-    (rel, content) => {
-      const scope = scopeForFile(scopes, rel)
-      for (const f of scanUndeclaredImports(rel, content, scope.declared, scope.isAlias)) {
-        findings.push({ file: f.file, line: f.line, package: f.snippet })
-      }
-      manifestLists.push(...manifestListsIn(rel, content))
-      if (!identitySignal && IDENTITY_SIGNAL.test(content)) identitySignal = true
-      if (renamedIn === undefined && RENAMED_SESSION.test(content)) renamedIn = rel
-    },
-    { includeTests: scanScope.includeTests, ignore: workspaceSurface },
-  )
+  const visit = (rel: string, content: string): void => {
+    const scope = scopeForFile(scopes, rel)
+    for (const f of scanUndeclaredImports(rel, content, scope.declared, scope.isAlias)) {
+      findings.push({ file: f.file, line: f.line, package: f.snippet })
+    }
+    manifestLists.push(...manifestListsIn(rel, content))
+    if (!identitySignal && IDENTITY_SIGNAL.test(content)) identitySignal = true
+    if (renamedIn === undefined && RENAMED_SESSION.test(content)) renamedIn = rel
+  }
+  const typedSources = (await sources)?.filter(({ file }) => /\.[cm]?tsx?$/.test(file))
+  if (typedSources === undefined) {
+    await walkSource(cwd, visit, { includeTests: scanScope.includeTests, ignore: workspaceSurface })
+  } else {
+    for (const { file, content } of typedSources) {
+      if (!workspaceSurface(file) && (scanScope.includeTests || !IGNORED.test(file)))
+        visit(file, content)
+    }
+  }
   findings.sort((a, b) => codeUnitOrder(a.file, b.file) || a.line - b.line)
   const identity = await collectAllDuplicateInstalls(cwd, pkg)
   const duplicateInstalls = identity.duplicates
   const staleDists = await collectStaleWorkspaceDists(cwd, pkg)
   const pipeline = await collectPipelineReport(cwd)
   const pipelineErrors = pipeline.findings.filter((f) => f.severity === "error")
-  const readiness = await collectDoctorReadiness(cwd, opts)
+  const readiness = await collectDoctorReadiness(cwd, opts, typedSources)
   // A stale binary answering about a project it does not match is an environment condition, so like
   // `staleDists` it is reported but never folded into `ok`. Skipped entirely when the caller did not
   // pass its own version (e.g. the MCP server, which already annotates every result with the drift).

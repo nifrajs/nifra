@@ -30,6 +30,7 @@ import {
   type RuleOverride,
   safeIgnoreGlobMatch,
 } from "./check-diagnostics.ts"
+import { createCheckTimer } from "./check-timings.ts"
 import { appDirs, clientModuleRoot } from "./client-module.ts"
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
@@ -50,6 +51,7 @@ import {
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { sourceIndex } from "./rules/index.ts"
+import { stageTypecheckCache } from "./typecheck-cache.ts"
 import {
   filesOutsideProgram,
   routeTableOutsideProgram,
@@ -74,6 +76,7 @@ import {
   componentScripts,
   createProjectSqlImports,
   createServerOnlyChains,
+  IGNORED,
   isBrowserSource,
   type ModuleReader,
   type ModuleResolver,
@@ -145,6 +148,7 @@ async function typecheck(
   cwd: string,
   signal?: AbortSignal,
   configured?: readonly string[],
+  incremental = false,
 ): Promise<TypecheckResult> {
   const projects = typecheckProjects(cwd, configured)
   if (projects.missing.length > 0) {
@@ -170,10 +174,10 @@ async function typecheck(
   }
   const runs: TypecheckResult[] = []
   for (const tsconfig of projects.paths) {
-    let run = await runTsc(cwd, tscBin, tsconfig, true, signal)
+    let run = await runTsc(cwd, tscBin, tsconfig, true, signal, incremental)
     // A compiler that rejects `--listFiles` still gets its typecheck; only the coverage check is lost.
     if (!run.ok && !run.cancelled && /TS50(?:23|25)\b[^\n]*listFiles/.test(run.output ?? ""))
-      run = await runTsc(cwd, tscBin, tsconfig, false, signal)
+      run = await runTsc(cwd, tscBin, tsconfig, false, signal, incremental)
     if (run.cancelled === true) return run
     runs.push(run)
   }
@@ -198,6 +202,7 @@ async function runTsc(
   tsconfig: string,
   listFiles: boolean,
   signal?: AbortSignal,
+  incremental = false,
 ): Promise<TypecheckResult> {
   if (signal?.aborted) return { ran: true, ok: false, cancelled: true, output: "cancelled" }
   const args = [process.execPath, tscBin, "--noEmit", "-p", tsconfig]
@@ -207,7 +212,13 @@ async function runTsc(
   const outputDirectory = mkdtempSync(join(tmpdir(), "nifra-tsc-"))
   const stdout = Bun.file(join(outputDirectory, "stdout"))
   const stderr = Bun.file(join(outputDirectory, "stderr"))
+  let cache: ReturnType<typeof stageTypecheckCache>
+  let publishCache = false
   try {
+    if (incremental) {
+      cache = stageTypecheckCache(cwd, tscBin, tsconfig)
+      if (cache !== undefined) args.push("--incremental", "--tsBuildInfoFile", cache.path)
+    }
     const proc = Bun.spawn(args, {
       cwd,
       stdout,
@@ -236,6 +247,7 @@ async function runTsc(
       releaseSignals()
     }
     if (cancelled) return { ran: true, ok: false, output: "cancelled", cancelled: true }
+    publishCache = code === 0
     const listed = listFiles ? splitListedFiles(out) : undefined
     return {
       ran: true,
@@ -249,6 +261,7 @@ async function runTsc(
     rmSync(join(outputDirectory, "stdout"), { force: true })
     rmSync(join(outputDirectory, "stderr"), { force: true })
     rmdirSync(outputDirectory)
+    cache?.finish(publishCache)
   }
 }
 
@@ -347,6 +360,8 @@ async function loadCheckConfig(
 }
 
 interface CheckCollectionOptions {
+  readonly incremental?: boolean
+  readonly timer?: ReturnType<typeof createCheckTimer>
   readonly lintsOnly?: boolean
   readonly signal?: AbortSignal
   readonly maxDiagnostics?: number
@@ -411,10 +426,7 @@ function withProgramCoverage(
 }
 
 /** Build the rule input from one source walk and the other check-wide scans. */
-async function buildProjectScan(
-  cwd: string,
-  opts: Pick<CheckCollectionOptions, "lintsOnly" | "signal" | "loadTypeScript">,
-): Promise<ProjectScan> {
+async function buildProjectScan(cwd: string, opts: CheckCollectionOptions): Promise<ProjectScan> {
   const fetches: TypedClientFinding[] = []
   const streams: TypedClientFinding[] = []
   const staticRoutes: StaticRouteFinding[] = []
@@ -429,33 +441,48 @@ async function buildProjectScan(
   const inNifraProject = createNifraProjectProbe(cwd)
   // An API-only project has no browser bundle for server code to reach.
   const apiOnly = createApiOnlyProbe(cwd)
+  const timer = opts.timer ?? createCheckTimer()
   const {
     config: checkConfig,
     error: checkConfigError,
     warnings: checkConfigWarnings,
-  } = await loadCheckConfig(cwd)
-  const [typecheckRun, _, doctor, manifestDrift, contracts] = await Promise.all([
+  } = await timer.measure("config", () => loadCheckConfig(cwd))
+  const allSources = timer.measure("read-sources", async () => {
+    const files: typeof sourceFiles = []
+    await walkSource(cwd, (file, content) => files.push({ file, content }), {
+      scripts: true,
+      includeTests: true,
+    })
+    return files
+  })
+  const [typecheckRun, , doctor, manifestDrift, contracts] = await Promise.all([
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
-      : typecheck(cwd, opts.signal, checkConfig.tsconfigs),
-    walkSource(
-      cwd,
-      (rel, content) => {
-        sourceFiles.push({ file: rel, content })
-        fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
-        streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
-        untypedClients.push(...scanUntypedClient(rel, content))
-        removedImports.push(...scanRemovedImports(rel, content))
-        const dir = dirname(rel).replace(/^\.$/, "")
-        if (isBrowserSource(rel) && inNifraProject(dir) && !apiOnly(dir))
-          browserModules.push({ rel, content })
-      },
-      { scripts: true },
+      : timer.measure("typecheck", () =>
+          typecheck(cwd, opts.signal, checkConfig.tsconfigs, opts.incremental),
+        ),
+    allSources.then((files) =>
+      timer.measure("source-lints", () => {
+        for (const { file, content } of files) {
+          if (IGNORED.test(file)) continue
+          sourceFiles.push({ file, content })
+          fetches.push(...scanFetchText(file, content, checkConfig.externalMounts))
+          streams.push(...scanStreamText(file, content, checkConfig.externalMounts))
+          untypedClients.push(...scanUntypedClient(file, content))
+          removedImports.push(...scanRemovedImports(file, content))
+          const dir = dirname(file).replace(/^\.$/, "")
+          if (isBrowserSource(file) && inNifraProject(dir) && !apiOnly(dir))
+            browserModules.push({ rel: file, content })
+        }
+      }),
     ),
-    import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
-    scanServerManifestDrift(cwd),
-    collectContractFacts(cwd),
+    timer.measure("doctor", async () =>
+      (await import("./doctor.ts")).collectDoctorResult(cwd, {}, allSources),
+    ),
+    timer.measure("route-manifest", () => scanServerManifestDrift(cwd)),
+    timer.measure("contracts", () => collectContractFacts(cwd)),
   ])
+  const analysisStarted = performance.now()
 
   // tsc compiles TypeScript sources only; the JavaScript and component files the scan reads are no
   // program's to cover.
@@ -493,7 +520,9 @@ async function buildProjectScan(
       routePaths.push(...scanUnresolvedRoutePaths(file, content, project, sourceFacts))
       responseRoutes.push(...scanResponseRoutes(file, content, sourceFacts, project))
       if (sqlCompiler !== undefined)
-        interpolatedSql.push(...scanSqlSites(file, content, sqlCompiler, sqlImports))
+        interpolatedSql.push(
+          ...scanSqlSites(file, content, sqlCompiler, sqlImports, sourceFacts?.parse),
+        )
     }
 
     const projectPath = (path: string): string => {
@@ -508,6 +537,8 @@ async function buildProjectScan(
       return resolved === undefined ? undefined : projectPath(resolved)
     }
     const readModule: ModuleReader = (path) => {
+      const current = project.get(path)
+      if (current !== undefined) return current
       let text: string
       try {
         text = readFileSync(isAbsolute(path) ? path : join(cwd, path), "utf8")
@@ -594,6 +625,7 @@ async function buildProjectScan(
         routePaths,
       },
     }
+    timer.record("source-analysis", analysisStarted)
     return { facts }
   } catch (error) {
     await loadedTypeScript.session?.close()
@@ -612,7 +644,11 @@ export async function collectCheckResult(
   const cwd = resolve(root)
   const scan = await buildProjectScan(cwd, opts)
   try {
-    return await collectCheckDiagnostics(cwd, scan, opts)
+    if (opts.timer === undefined) return await collectCheckDiagnostics(cwd, scan, opts)
+    const result = await opts.timer.measure("diagnostics", () =>
+      collectCheckDiagnostics(cwd, scan, opts),
+    )
+    return Object.assign(result, { timings: opts.timer.snapshot() })
   } finally {
     await scan.facts.check.typescriptSession?.close()
   }
@@ -776,6 +812,11 @@ export function renderCheckReport(result: CheckResult): string[] {
     lines.push(
       `• showing ${result.truncated.shown} of ${result.truncated.total} diagnostics (truncated)`,
     )
+  }
+  if (result.timings !== undefined) {
+    lines.push("", `check took ${result.timings.totalMs} ms (phases may overlap)`)
+    for (const [phase, elapsed] of Object.entries(result.timings.phasesMs))
+      lines.push(`  ${phase} ${elapsed} ms`)
   }
   const errors = result.diagnostics.filter((d) => d.severity === "error").length
   const warnings = result.diagnostics.filter((d) => d.severity === "warning").length

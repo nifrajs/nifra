@@ -19,7 +19,7 @@ The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra
 - **buildWorkGraph** _(function)_ - `buildWorkGraph: (input: WorkGraphBuildInput) => Promise<WorkGraph>` · from `@nifrajs/cli/work-graph`
 - **collectAssuranceReport** _(function)_ - `collectAssuranceReport: (cwd: string, configPath?: string) => Promise<AssuranceReport>` · from `@nifrajs/cli/assure`
 - **collectAssureBundle** _(function)_ - `collectAssureBundle: (cwd: string, options?: { readonly config?: string; readonly strict?: boolean; readonly hydration?: boolean; readonly …` · from `@nifrajs/cli/assure`
-- **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<Pro…` · from `@nifrajs/cli/work-graph`
+- **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: WorkGraphOptions) => Promise<ProjectWorkGraphResult>` · from `@nifrajs/cli/work-graph`
 - **createEvidenceBundle** _(function)_ - `createEvidenceBundle: (graph: WorkGraph, impact: ImpactReport, plan: ProofPlan, proofs?: readonly ProofEvidence[]) => EvidenceBundle` · from `@nifrajs/cli/work-graph`
 - **createMemoryAssureSink** _(function)_ - `createMemoryAssureSink: () => MemoryAssureSink` · from `@nifrajs/cli/assure`
 - **diagnosticCompatibilityOf** _(function)_ - `diagnosticCompatibilityOf: (value: Diagnostic) => DiagnosticCompatibility | undefined` · from `@nifrajs/cli/diagnostics`
@@ -39,7 +39,7 @@ _…and 70 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 
 ## Stable project commands
 
-- nifra check [--lints-only] [--json] [--sarif] - Run the typed-contract, source-lint, and dependency drift gate.
+- nifra check [--lints-only] [--incremental] [--timings] [--json] [--sarif] - Run the typed-contract, source-lint, and dependency drift gate.
 - nifra review [--strict] [--diff <value>] [--sarif <value>] [--fix] [--dry-run] [--write] [--json] - Run the deterministic, evidence-backed Nifra review.
 - nifra assure [--config <value>] [--out <value>] [--json] [--bundle] [--strict] [--hydration] [--interact] - Evaluate route classification and fail-closed enforcement evidence.
 - nifra levels [--config <value>] [--seed <value>] [--min <value>] [--json] - Compute the cumulative L0 typed-contract through L4 invariant verification ladder.
@@ -60,7 +60,7 @@ _…and 70 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra diff <baseline> [--json] - Compare the current backend contract with a baseline and fail on breaking changes.
 - nifra contracts <action> [--out <value>] [--json] - Snapshot or check the deterministic route contract lock.
 - nifra sync-manifest [--json] - Regenerate generated server-manifest route tables without a full build.
-- nifra prove [--file <value>] [--min <value>] [--json] - Build the static verification work graph, plan the cheapest proofs for the changed files, and report a machine-checkable stop condition.
+- nifra prove [--file <value>] [--min <value>] [--run] [--json] - Plan cumulative verification gates and optionally run them against the current source and build.
 - nifra replay <file> - Validate a token-only verification metadata file and dispatch it against its gate.
 - nifra smoke [--fixture <value>] [--in-process] [--json] - Run the declared production SSR, mounted-API, 404, header, auth, contract, and hydration smoke checks.
 - nifra port [--target <value>] [--json] [--ci] [--strict] - Print a feature by deploy-target portability matrix with file:line evidence and gate against an unsupported target.

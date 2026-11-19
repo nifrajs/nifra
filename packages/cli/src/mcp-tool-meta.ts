@@ -46,6 +46,9 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
     annotations: READ,
     fields: {
       lintsOnly: "Skip tsc and run only the source lints, a near-instant pass.",
+      incremental:
+        "Reuse compiler state from .nifra/check/ on TypeScript versions that support it.",
+      timings: "Include total and per-phase wall time in milliseconds.",
       json: JSON_RESULT,
       sarif: "Return the diagnostics as a SARIF 2.1.0 log.",
       maxDiagnostics: "Return at most this many diagnostics.",
@@ -182,6 +185,7 @@ export const PROJECT_TOOL_META: Readonly<Record<string, ToolMeta>> = {
     fields: {
       files: "The changed files to plan proofs for, project-relative.",
       minLevel: "The verification level (0 to 4) the stop condition requires.",
+      run: "Execute the planned gates and return their results for the current source and build.",
       json: JSON_RESULT,
       dir: DIR,
     },

@@ -87,7 +87,7 @@ const ALL_TOOLS: readonly (readonly [string, string, string])[] = [
   ["nifra_routes", "runs project code", "Every route served: a list, a graph, render modes, or the hooks each runs."],
   ["nifra_openapi", "runs project code", "The backend's OpenAPI 3.1 document."],
   ["nifra_diff", "runs project code", "The API contract against its snapshot; fails on a breaking change."],
-  ["nifra_prove", "runs project code", "The cheapest proofs for the changed files, and when to stop."],
+  ["nifra_prove", "runs project code", "Plan cumulative verification gates or run them and return results tied to the source and build."],
   ["nifra_db_schema", "runs project code", "The declared dev database's tables, columns, keys and indexes."],
   ["nifra_db_query", "runs project code", "One read-only SELECT or its plan, rows capped and masked."],
   ["nifra_db_role", "runs project code", "The SQL for a read-only Postgres role. Runs no SQL."],

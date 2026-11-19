@@ -951,7 +951,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ImpactReport** _(interface)_ - `interface ImpactReport`
 - **ProjectWorkGraphResult** _(interface)_ - `interface ProjectWorkGraphResult`
 - **ProofEvidence** _(interface)_ - `interface ProofEvidence`
-- **ProofKind** _(type)_ - `type ProofKind = "typecheck" | "contract" | "assurance" | "suite"`
+- **ProofKind** _(type)_ - `type ProofKind = VerificationGate["kind"]`
 - **ProofPlan** _(interface)_ - `interface ProofPlan`
 - **ProofStatus** _(type)_ - `type ProofStatus = "pass" | "fail" | "skip" | "pending"`
 - **ProofStep** _(interface)_ - `interface ProofStep`
@@ -964,7 +964,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **WorkGraphSourceFile** _(interface)_ - `interface WorkGraphSourceFile`
 - **buildProjectWorkGraph** _(function)_ - `buildProjectWorkGraph: (input: WorkGraphBuildInput, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<ProjectWorkGraphResult>`
 - **buildWorkGraph** _(function)_ - `buildWorkGraph: (input: WorkGraphBuildInput) => Promise<WorkGraph>`
-- **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<ProjectWorkGraphResult>`
+- **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: WorkGraphOptions) => Promise<ProjectWorkGraphResult>`
 - **createEvidenceBundle** _(function)_ - `createEvidenceBundle: (graph: WorkGraph, impact: ImpactReport, plan: ProofPlan, proofs?: readonly ProofEvidence[]) => EvidenceBundle`
 - **evaluateBuildFreshness** _(function)_ - `evaluateBuildFreshness: (input: { readonly hasArtifact: boolean; readonly newestSourceMs: number; readonly newestBuildMs: number; readonly buildDir?: string; }) => BuildFreshness`
 - **inspectBuildFreshness** _(function)_ - `inspectBuildFreshness: (cwd: string) => Promise<BuildFreshness>`
@@ -973,7 +973,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **recordProof** _(function)_ - `recordProof: (bundle: EvidenceBundle, proof: ProofEvidence) => EvidenceBundle`
 - **renderWorkGraphJson** _(function)_ - `renderWorkGraphJson: (result: ProjectWorkGraphResult) => string`
 - **renderWorkGraphText** _(function)_ - `renderWorkGraphText: (result: ProjectWorkGraphResult) => string`
-- **runWorkGraph** _(function)_ - `runWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; readonly json?: boolean; }) => Promise<boolean>`
+- **runWorkGraph** _(function)_ - `runWorkGraph: (cwd: string, options?: WorkGraphOptions & { readonly json?: boolean; }) => Promise<boolean>`
 
 ## @nifrajs/client
 

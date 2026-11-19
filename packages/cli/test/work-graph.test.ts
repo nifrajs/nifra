@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -6,6 +6,7 @@ import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 import {
   buildProjectWorkGraph,
+  collectProjectWorkGraph,
   createEvidenceBundle,
   evaluateBuildFreshness,
   inspectBuildFreshness,
@@ -14,6 +15,15 @@ import {
   type WorkGraphEdge,
   type WorkGraphSourceFile,
 } from "../src/work-graph.ts"
+import {
+  createFixtureProject,
+  createFixtureRoot,
+  FIXTURE_TSCONFIG,
+  removeFixtureRoot,
+} from "./fixture-root.ts"
+
+const fixtures = createFixtureRoot("nifra-prove-")
+afterAll(() => removeFixtureRoot(fixtures))
 
 const backend = server().post(
   "/orders",
@@ -53,27 +63,29 @@ describe("verification work graph", () => {
       relation: "describes",
     })
     expect(result.impact.impactedRoutes).toEqual(["POST /orders"])
-    expect(result.plan.steps.map((step) => step.kind)).toEqual(["typecheck", "contract"])
+    expect(result.plan.steps.map((step) => step.kind)).toEqual(["typecheck", "assurance"])
     expect(result.evidence.stop.done).toBe(false)
-    expect(result.evidence.stop.next?.command).toBe("nifra check --lints-only")
+    expect(result.evidence.stop.next?.command).toBe("nifra prove --run --min 0 --json")
 
     const initial = createEvidenceBundle(result.graph, result.impact, result.plan)
     const typecheck = result.plan.steps[0]!
     const afterTypecheck = recordProof(initial, {
       id: typecheck.id,
       status: "pass",
+      graphDigest: result.graph.digest,
       level: typecheck.level,
       nodeIds: typecheck.nodeIds,
       command: typecheck.command,
     })
-    expect(afterTypecheck.stop.next?.id).toBe("proof:contract")
-    const contract = result.plan.steps[1]!
+    expect(afterTypecheck.stop.next?.id).toBe("proof:assurance")
+    const assurance = result.plan.steps[1]!
     const complete = recordProof(afterTypecheck, {
-      id: contract.id,
+      id: assurance.id,
       status: "pass",
-      level: contract.level,
-      nodeIds: contract.nodeIds,
-      command: contract.command,
+      graphDigest: result.graph.digest,
+      level: assurance.level,
+      nodeIds: assurance.nodeIds,
+      command: assurance.command,
     })
     expect(complete.stop.done).toBe(true)
   })
@@ -115,18 +127,19 @@ describe("verification work graph", () => {
       { source: backend, files, freshness: { ok: true } },
       { changedFiles: ["routes/orders.ts"], minLevel: 1 },
     )
-    const contract = result.plan.steps.find((step) => step.kind === "contract")!
+    const assurance = result.plan.steps.find((step) => step.kind === "assurance")!
     const initial = createEvidenceBundle(result.graph, result.impact, result.plan)
-    const afterContract = recordProof(initial, {
-      id: contract.id,
+    const afterAssurance = recordProof(initial, {
+      id: assurance.id,
       status: "pass",
-      level: contract.level,
-      nodeIds: contract.nodeIds,
-      command: contract.command,
+      graphDigest: result.graph.digest,
+      level: assurance.level,
+      nodeIds: assurance.nodeIds,
+      command: assurance.command,
     })
-    expect(afterContract.stop.done).toBe(false)
-    expect(afterContract.stop.next?.id).toBe("proof:typecheck")
-    expect(afterContract.stop.missing).toContain("nifra check --lints-only")
+    expect(afterAssurance.stop.done).toBe(false)
+    expect(afterAssurance.stop.next?.id).toBe("proof:typecheck")
+    expect(afterAssurance.stop.missing).toContain("nifra prove --run --min 0 --json")
   })
 
   test("backend changes conservatively impact every reflected route", async () => {
@@ -171,6 +184,66 @@ describe("verification work graph", () => {
     expect(queryImpact(result.graph, ["README.md"]).impactedNodes).toEqual([])
   })
 
+  test("proof plans require every rung, even without a changed-file hint", async () => {
+    const result = await buildProjectWorkGraph({ source: backend, files }, { minLevel: 4 })
+    expect(result.evidence.stop.done).toBe(false)
+    expect(result.plan.steps.map((step) => step.kind)).toEqual([
+      "typecheck",
+      "assurance",
+      "capability",
+      "manifest",
+      "invariants",
+    ])
+    const step = result.plan.steps[0]!
+    expect(() =>
+      recordProof(result.evidence, { ...step, graphDigest: "different", status: "pass" }),
+    ).toThrow("different snapshot or gate")
+    expect(() =>
+      recordProof(result.evidence, {
+        ...step,
+        command: "nifra check --lints-only",
+        graphDigest: result.graph.digest,
+        status: "pass",
+      }),
+    ).toThrow("different snapshot or gate")
+  })
+
+  test("an executed proof catches TypeScript errors and rejects receipts for a different build", async () => {
+    const root = createFixtureProject(fixtures, "run-")
+    await mkdir(join(root, "backend"), { recursive: true })
+    await mkdir(join(root, "dist"), { recursive: true })
+    const app = join(root, "backend/app.ts")
+    const artifact = join(root, "dist/server.js")
+    const good =
+      'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/", () => "ok")\n'
+    await writeFile(join(root, "tsconfig.json"), FIXTURE_TSCONFIG)
+    await writeFile(app, good + 'export const value: number = "wrong"\n')
+    await writeFile(artifact, "export const build = 1")
+    await utimes(app, new Date(0), new Date(0))
+    const failed = await collectProjectWorkGraph(root, { minLevel: 0, execute: true })
+    expect(failed.evidence.stop.done).toBe(false)
+    expect(failed.evidence.proofs[0]?.status).toBe("fail")
+
+    await writeFile(app, good)
+    await utimes(app, new Date(0), new Date(0))
+    const passed = await collectProjectWorkGraph(root, { minLevel: 0, execute: true })
+    expect(passed.evidence.stop.done).toBe(true)
+    expect(passed.evidence.graphDigest).not.toBe(failed.evidence.graphDigest)
+    expect(passed.evidence.buildDigest).toBe(failed.evidence.buildDigest)
+    const plan = await collectProjectWorkGraph(root, {
+      minLevel: 0,
+      changedFiles: ["backend/app.ts"],
+    })
+    const proof = passed.evidence.proofs[0]!
+    expect(recordProof(plan.evidence, proof).stop.done).toBe(true)
+
+    await writeFile(artifact, "export const build = 2")
+    const next = await collectProjectWorkGraph(root, { minLevel: 0 })
+    expect(next.evidence.stop.done).toBe(false)
+    expect(next.evidence.buildDigest).not.toBe(passed.evidence.buildDigest)
+    expect(() => recordProof(next.evidence, proof)).toThrow("different snapshot or gate")
+  })
+
   test("freshness counts framework component and style edits", async () => {
     const root = await mkdtemp(join(tmpdir(), "nifra-work-graph-"))
     try {
@@ -187,6 +260,37 @@ describe("verification work graph", () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  test("a build changed by an invariant run invalidates all of its results", async () => {
+    const root = createFixtureProject(fixtures, "changed-build-")
+    await mkdir(join(root, "backend"), { recursive: true })
+    await mkdir(join(root, "dist"), { recursive: true })
+    const app = join(root, "backend/app.ts")
+    await writeFile(join(root, "tsconfig.json"), FIXTURE_TSCONFIG)
+    await writeFile(
+      app,
+      'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/", () => "ok")\n',
+    )
+    await writeFile(
+      join(root, "nifra.assurance.ts"),
+      [
+        'import { defineAssuranceConfig } from "@nifrajs/core/assurance"',
+        'import { backend } from "./backend/app.ts"',
+        "export default defineAssuranceConfig({",
+        '  source: backend, policy: { rules: [{ name: "all", match: {}, require: [] }] },',
+        "  invariants: { async setup() {",
+        '    await Bun.write(new URL("./dist/server.js", import.meta.url), "export const changed = 1")',
+        "    return { executor: (request: Request) => backend.fetch(request) }",
+        "  } },",
+        "})",
+      ].join("\n"),
+    )
+    await writeFile(join(root, "dist/server.js"), "export {}")
+    await utimes(app, new Date(0), new Date(0))
+    await expect(collectProjectWorkGraph(root, { execute: true, minLevel: 4 })).rejects.toThrow(
+      "source or build changed during verification",
+    )
   })
 
   test("freshness refuses missing and stale builds", () => {

@@ -237,11 +237,12 @@ Usage:
   nifra runtime  [<runtime>] [<symptom>] [--json]
                                          Print where Bun, Node, Deno and Workers differ (the human view of
                                          nifra_runtime): cause, fix and how to verify, with measured versions.
-  nifra check   [--json] [--sarif] [--lints-only]
+  nifra check   [--json] [--sarif] [--lints-only] [--incremental] [--timings]
                                          Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          backend code in browser code). Run as "done"; --json for agents;
                                          --sarif emits the same stable diagnostics as SARIF 2.1.0 for external
                                          review tools; --lints-only skips tsc for a near-instant inner-loop pass.
+                                         --incremental reuses local compiler state; --timings reports phase times.
                                          With a contracts.lock.json, both modes import backend/app.ts
                                          (running its top-level code) to compare the routes it serves.
   nifra verify   [--release] [--json]    Run the shared repository verification gate. --release runs the
@@ -288,10 +289,9 @@ Usage:
                                          Compute the verification ladder (L0 typed contract → L1 route
                                          assurance → L2 capability lockfile → L3 route manifest → L4
                                          invariant-tested); --min <n> fails the exit code below level n.
-  nifra prove    [--json] [--file <path>] [--min <n>]
-                                         Build the static verification work graph, plan the cheapest
-                                         proofs for changed files, and report a machine-checkable stop
-                                         condition. Requires a fresh build; never probes a running app.
+  nifra prove    [--json] [--file <path>] [--min <n>] [--run]
+                                         Plan cumulative verification gates. With --run, execute them
+                                         and bind the results to the source and build digests.
   nifra doctor  [--json] [--auto-fix]    Flag undeclared imports and multiple physical copies of
                 [--strict] [--target]     @nifrajs/core/React identity-sensitive dependencies;
                                          print production readiness, with --strict making absent
