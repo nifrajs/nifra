@@ -161,6 +161,8 @@ describe("routeTableOutsideProgram", () => {
       'import { redirect } from "@nifrajs/web"\n',
       'import { Link, NavLink } from "@nifrajs/web-react"\n',
       'import type { Href } from "@nifrajs/web"\nimport { useNavigate as go } from "@nifrajs/web-solid"\n',
+      'import { useSearch } from "@nifrajs/web-react/router"\n',
+      'import { useParams as routeParams } from "@nifrajs/web-vue/router"\n',
     ])
       expect(routeTableOutsideProgram(cwd, [], [{ content }])).toBe(".nifra/types/routes.d.ts")
   })

@@ -7,8 +7,9 @@
  *   import type { backend } from "../backend"
  *   import { formFor } from "@nifrajs/web/forms"
  *
- *   const f = formFor<typeof backend, "/todos">()   // method defaults to "post"
- *   // In the component (any framework - spread the props onto an input):
+ *   const f = formFor<typeof backend>()("/todos")   // a route the app has; method defaults to "post"
+ *   // In the component (any framework - spread the props onto the form and its inputs):
+ *   <form action={f.action} method={f.method}>      // the route's own URL and method, never retyped
  *   <input {...f.field("text")} />                  // "text" ∈ the body's keys, else a compile error
  *   // In the action:
  *   const text = f.read(await request.formData(), "text")   // an orphan key won't compile
@@ -52,7 +53,16 @@ export type FieldKey<App, Path extends string, Method extends string> = [
 /** Extra attributes merged into the returned input props (id, type, defaultValue, placeholder, …). */
 export type FieldProps = Record<string, unknown>
 
+/** The lowercase methods `App` declares for `Path`: what a form for that route may use. */
+export type RouteMethods<App, Path extends string> = Path extends keyof RegistryOf<App>
+  ? Lowercase<keyof RegistryOf<App>[Path] & string>
+  : never
+
 export interface FormHandle<App, Path extends string, Method extends string> {
+  /** The route's URL, for `<form action>`: the path the handle was made for. */
+  readonly action: Path
+  /** The route's method, lowercase, for `<form method>` or a `fetch`. */
+  readonly method: Method
   /** Input props for a schema field. `name` is constrained to the body's keys - a typo, or a field the
    * schema doesn't have, is a COMPILE error. Spread onto an element: `<input {...f.field("text")} />`. */
   field<K extends FieldKey<App, Path, Method>>(
@@ -66,21 +76,28 @@ export interface FormHandle<App, Path extends string, Method extends string> {
 }
 
 /**
- * Bind a form to a backend route's body schema at the type level. `App` is `typeof backend`; `Path` is
- * constrained to the app's real routes (a wrong path is a type error); `Method` defaults to `"post"`.
+ * Bind a form to a backend route at the type level. `App` is `typeof backend`; the path is one of the
+ * app's real routes (a wrong path is a type error), and the method one that route declares (default
+ * `"post"`). The handle carries the route's own `action` and `method`, and checks every field name against
+ * the route's body schema.
  */
-export function formFor<
-  App,
+export function formFor<App>(): <
   Path extends RoutePaths<App>,
-  Method extends string = "post",
->(): FormHandle<App, Path, Method> {
-  const handle = {
-    field: (name: string, props?: FieldProps): FieldProps & { name: string } => ({
-      ...(props ?? {}),
-      name,
-    }),
-    read: (form: FormData, name: string): FormEntry => form.get(name),
-    readAll: (form: FormData, name: string): FormEntries => form.getAll(name),
-  }
-  return handle as FormHandle<App, Path, Method>
+  Method extends RouteMethods<App, Path> = Extract<"post", RouteMethods<App, Path>>,
+>(
+  path: Path,
+  method?: Method,
+) => FormHandle<App, Path, Method> {
+  return (path, method) =>
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the runtime holds a path and a method; the handle's constraints are compile-time only
+    ({
+      action: path,
+      method: method ?? "post",
+      field: (name: string, props?: FieldProps): FieldProps & { name: string } => ({
+        ...(props ?? {}),
+        name,
+      }),
+      read: (form: FormData, name: string): FormEntry => form.get(name),
+      readAll: (form: FormData, name: string): FormEntries => form.getAll(name),
+    }) as FormHandle<App, typeof path, NonNullable<typeof method>>
 }

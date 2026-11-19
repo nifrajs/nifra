@@ -21,7 +21,8 @@ function routeModule(
   kind: "page" | "layout",
   hasBackend: boolean,
 ): string {
-  // Only a script module's exports are visible to TypeScript; a .svelte/.vue one is an ambient shim.
+  // Only a script module's exports are visible to TypeScript. A .svelte/.vue module's `searchSchema` is
+  // visible to svelte-check and vue-tsc, so the search type reads every starter's route file.
   const script = extension === "tsx"
   const lines = [
     header(`routes/${name}.${extension}`),
@@ -31,25 +32,30 @@ function routeModule(
   ]
   lines.push(
     kind === "page"
-      ? 'import type { BoundaryLoadersOf, MetaArgs as WebMetaArgs, RenderProps } from "@nifrajs/web"'
+      ? 'import type { BoundaryLoadersOf, MetaArgs as WebMetaArgs, RenderProps, SearchOf } from "@nifrajs/web"'
       : 'import type { MetaArgs as WebMetaArgs } from "@nifrajs/web"',
   )
   lines.push("")
   if (hasBackend) lines.push(`type Backend = typeof import("../../../../routes/${name}.backend")`)
   if (script) lines.push(`type Frontend = typeof import("../../../../routes/${name}")`)
-  if (hasBackend || script) lines.push("")
+  lines.push(
+    script
+      ? "type SearchModule = Frontend"
+      : `type SearchModule = typeof import("../../../../routes/${name}.${extension}")`,
+    "",
+  )
   const output = (schema: string): string =>
     hasBackend ? `OutputOf<Backend, "${schema}">` : "null"
   lines.push(
     "export namespace Route {",
     "  /** The URL params this route's path carries. */",
-    "  export type Params = Record<string, never>",
+    "  export type Params = Record<never, never>",
     "  /** What the loader sends to the browser: the output type of `loaderOutput`. */",
     `  export type LoaderData = ${output("loaderOutput")}`,
     "  /** What the action sends back: the output type of `actionOutput`. */",
     `  export type ActionData = ${output("actionOutput")}`,
     "  /** The context the backend half's loader receives. */",
-    `  export type LoaderArgs = RouteLoaderArgs<Params${script ? ", SearchSchemaOf<Frontend>" : ""}>`,
+    `  export type LoaderArgs = RouteLoaderArgs<Params, SearchSchemaOf<SearchModule>>`,
     "  /** The context the backend half's action receives. */",
     "  export type ActionArgs = LoaderArgs",
     "  /** The backend half's loader. Annotate it, `export const loader: Route.Loader = ...`, and what it returns is checked against `loaderOutput`. */",
@@ -62,10 +68,12 @@ function routeModule(
   if (kind === "page") {
     lines.push(
       "  /** The page component's props. */",
-      '  export type ComponentProps = Omit<RenderProps, "data" | "actionData" | "params"> & {',
+      '  export type ComponentProps = Omit<RenderProps, "data" | "actionData" | "params" | "search"> & {',
       "    readonly data: LoaderData",
       "    readonly actionData?: ActionData",
       "    readonly params: Params",
+      "    /** The route's `searchSchema` output, the value the loader received as `ctx.search`. */",
+      "    readonly search: SearchOf<SearchModule>",
       "  }",
       "  /** The backend half's `boundaryLoaders`. Check it, `export const boundaryLoaders = { ... } satisfies Route.BoundaryLoaders`, and a key must name a boundary the page declares; with a `shellLoader`, every hole needs one. */",
       `  export type BoundaryLoaders = BoundaryLoadersOf<${script ? "Frontend" : "unknown"}, ${hasBackend ? "Backend" : "unknown"}>`,
@@ -85,22 +93,21 @@ function routeModule(
 
 /** `routes.d.ts` for the starter's one URL pattern, `/`, served by `routes/index`. */
 function routeTable(extension: string): string {
-  // Only a script module's exports are visible to TypeScript; a .svelte/.vue one is an ambient shim.
-  const search =
-    extension === "tsx"
-      ? 'SearchOf<typeof import("../../routes/index")>'
-      : "Record<string, unknown>"
+  // Slots stay script-only: a .svelte/.vue module's exports are visible to svelte-check and vue-tsc alone.
+  const module = `typeof import("../../routes/index${extension === "tsx" ? "" : `.${extension}`}")`
+  const search = `SearchOf<${module}>`
+  const searchIn = `SearchInputOf<${module}>`
   const slots =
     extension === "tsx"
       ? 'RouteSlotPatternsOf<typeof import("../../routes/index")>'
       : "Readonly<Record<never, never>>"
   return [
     header("routes/"),
-    'import type { RouteSlotPatternsOf, SearchOf } from "@nifrajs/web"',
+    'import type { RouteSlotPatternsOf, SearchInputOf, SearchOf } from "@nifrajs/web"',
     "",
     'declare module "@nifrajs/web" {',
     "  interface RouteTable {",
-    `    "/": { readonly params: Record<string, never>; readonly search: ${search}; readonly slots: ${slots} }`,
+    `    "/": { readonly params: Record<never, never>; readonly search: ${search}; readonly searchIn: ${searchIn}; readonly slots: ${slots} }`,
     "  }",
     "}",
     "",

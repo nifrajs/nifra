@@ -1,4 +1,5 @@
 import type * as TSApi from "typescript"
+import { importedNames } from "./named-imports.ts"
 import { scriptKindOf } from "./script-kind.ts"
 import type { TypeScriptApi } from "./typescript-import.ts"
 
@@ -46,6 +47,23 @@ export interface InternalAnchor {
 
 /** Stands for one `${...}` in {@link InternalAnchor.path}. */
 export const ANCHOR_HOLE = "\u0000"
+
+/** A `useSearch(from)` or `useParams(from)` call, from {@link SourceFacts.routeHookCalls}. */
+export interface RouteHookCall {
+  /** The start of the call. */
+  readonly position: number
+  readonly hook: "useSearch" | "useParams"
+  /** The route pattern written as the argument; undefined when there is none or it is not a literal. */
+  readonly pattern: string | undefined
+  /** Whether the call has an argument at all. */
+  readonly hasArgument: boolean
+}
+
+/** A type assertion to `Href` (the `as` form or `<Href>x`), from {@link SourceFacts.hrefCasts}. */
+export interface HrefCast {
+  /** The start of the cast expression. */
+  readonly position: number
+}
 
 /** A `serverFunctions("namespace", module)` mount of a `*.fn.ts` module, from {@link SourceFacts.serverFunctionMounts}. */
 export interface ServerFunctionMount {
@@ -125,6 +143,13 @@ export interface SourceFacts {
    * `#hash` and a `//host` are left out.
    */
   internalAnchors(source: TSApi.SourceFile): readonly InternalAnchor[]
+  /**
+   * The calls of `useSearch` and `useParams` imported from a `@nifrajs/web-<framework>` package
+   * (`/router` or the root), under the name they were imported as.
+   */
+  routeHookCalls(source: TSApi.SourceFile): readonly RouteHookCall[]
+  /** The casts of a value to `Href`, imported from `@nifrajs/web` or a `@nifrajs/web-<framework>` package. */
+  hrefCasts(source: TSApi.SourceFile): readonly HrefCast[]
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -834,6 +859,59 @@ export function createSourceFacts(
     return found
   }
 
+  const WEB_ADAPTER = /^@nifrajs\/web-(?:react|preact|solid|svelte|vue)(?:\/router)?$/
+  const WEB_ANY = /^@nifrajs\/web(?:-(?:react|preact|solid|svelte|vue))?(?:\/(?:router|client))?$/
+  const localNames = (
+    source: TSApi.SourceFile,
+    from: RegExp,
+    imported: readonly string[],
+  ): ReadonlyMap<string, string> => importedNames(ts, source, from, imported)
+
+  const routeHookCalls = (source: TSApi.SourceFile): readonly RouteHookCall[] => {
+    const names = localNames(source, WEB_ADAPTER, ["useSearch", "useParams"])
+    if (names.size === 0) return []
+    const found: RouteHookCall[] = []
+    const visit = (node: TSApi.Node): void => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const hook = names.get(node.expression.text)
+        if (hook === "useSearch" || hook === "useParams") {
+          const [first] = node.arguments
+          found.push({
+            position: node.getStart(source),
+            hook,
+            pattern:
+              first !== undefined &&
+              (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))
+                ? first.text
+                : undefined,
+            hasArgument: first !== undefined,
+          })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return found
+  }
+
+  const hrefCasts = (source: TSApi.SourceFile): readonly HrefCast[] => {
+    const names = new Set(localNames(source, WEB_ANY, ["Href"]).keys())
+    if (names.size === 0) return []
+    const found: HrefCast[] = []
+    const visit = (node: TSApi.Node): void => {
+      if (
+        (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) &&
+        ts.isTypeReferenceNode(node.type) &&
+        ts.isIdentifier(node.type.typeName) &&
+        names.has(node.type.typeName.text)
+      )
+        found.push({ position: node.getStart(source) })
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return found
+  }
+
   const textSlotBooleanCoercions = (
     source: TSApi.SourceFile,
   ): readonly TextSlotBooleanCoercion[] => {
@@ -1017,6 +1095,8 @@ export function createSourceFacts(
     undeclaredResponseRoutes,
     textSlotBooleanCoercions,
     internalAnchors,
+    routeHookCalls,
+    hrefCasts,
     serverFunctionMounts,
     exportReturnsResponse,
     isDynamicImportAt,

@@ -1,6 +1,7 @@
 /** The Svelte query store: its options reach the page's client, and it follows the cache entry. */
 import { expect, test } from "bun:test"
 import type { QueryOptions } from "@nifrajs/web"
+import { queryKey } from "@nifrajs/web"
 import { identityChanged } from "@nifrajs/web/client"
 import { getQueryClientSingleton } from "@nifrajs/web/internal/query-runtime"
 
@@ -38,9 +39,9 @@ function recordingOptions(body: () => void): (QueryOptions | undefined)[] {
   const client = pageClient()
   const original = client.query
   const seen: (QueryOptions | undefined)[] = []
-  client.query = (key, fn, options) => {
+  client.query = <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
     seen.push(options)
-    return original(key, fn, options)
+    return original<T>(key, fn, options)
   }
   try {
     asBrowser(body)
@@ -67,7 +68,7 @@ test("in a browser the store fetches on its first subscriber and follows the cac
   const stop = asBrowser(() => store.subscribe((state) => seen.push(state.data)))
   expect(fetches).toBe(1)
   await Promise.resolve()
-  pageClient().setQueryData(["svelte", "entry"], 7)
+  pageClient().setQueryData(queryKey(["svelte", "entry"]), 7)
   expect(get(store).data).toBe(7)
   expect(seen).toContain(7)
   stop()

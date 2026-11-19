@@ -1,6 +1,6 @@
 /** Solid's createQuery: its options reach the page's client, and it follows the cache entry. */
 import { expect, test } from "bun:test"
-import { createQueryClient, type DehydratedState, type QueryOptions } from "@nifrajs/web"
+import { createQueryClient, type DehydratedState, type QueryOptions, queryKey } from "@nifrajs/web"
 import { identityChanged } from "@nifrajs/web/client"
 import { getQueryClientSingleton } from "@nifrajs/web/internal/query-runtime"
 
@@ -27,9 +27,9 @@ function recordingOptions(body: () => void): (QueryOptions | undefined)[] {
   const client = pageClient()
   const original = client.query
   const seen: (QueryOptions | undefined)[] = []
-  client.query = (key, fn, options) => {
+  client.query = <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
     seen.push(options)
-    return original(key, fn, options)
+    return original<T>(key, fn, options)
   }
   try {
     asBrowser(body)
@@ -62,7 +62,7 @@ test("createQuery passes staleTime and live keys through", () => {
 test("in a browser the accessor follows the cache entry until its owner is disposed", () => {
   createRoot((dispose) => {
     const query = asBrowser(() => createQuery(["solid", "entry"], async () => 1))
-    pageClient().setQueryData(["solid", "entry"], 7)
+    pageClient().setQueryData(queryKey(["solid", "entry"]), 7)
     expect(query.state().data).toBe(7)
     dispose()
   })
@@ -219,5 +219,5 @@ test("Solid provider hydrates its request-local cache before child setup", () =>
     expect(query.state().data).toBe("request one")
     dispose()
   })
-  expect(secondRequestClient.getQueryData(key)).toBeUndefined()
+  expect(secondRequestClient.getQueryData(queryKey(key))).toBeUndefined()
 })

@@ -29,7 +29,7 @@ export interface NavigateOptions {
 
 /**
  * Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the
- * object a link to the route needs (`Record<string, never>` when the pattern has none), `search` the
+ * object a link to the route needs (an empty object type when the pattern has none), `search` the
  * output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types`
  * writes `.nifra/types/routes.d.ts`, which fills it from the route files:
  *
@@ -46,6 +46,49 @@ export interface NavigateOptions {
  */
 // biome-ignore lint/suspicious/noEmptyInterface: augmentation target - empty by design, `nifra types` fills it.
 export interface RouteTable {}
+
+/** A {@link RouteTable} key: the pattern of one route. `never` until `nifra types` fills the table. */
+export type RouteTablePattern = keyof RouteTable & string
+
+/** The params of route `K`, as its pattern declares them (an empty object type when it has none). */
+export type RouteParamsOf<K extends RouteTablePattern> = RouteTable[K] extends {
+  readonly params: infer Params
+}
+  ? Params
+  : never
+
+/** The search of route `K`, as its `searchSchema` outputs it. */
+export type RouteSearchOf<K extends RouteTablePattern> = RouteTable[K] extends {
+  readonly search: infer Search
+}
+  ? Search
+  : never
+
+/**
+ * The search a link to route `K` may carry: the entry's `searchIn` (the schema's input, so a defaulted
+ * field is optional), else its `search`. A hand-written entry with only `search` keeps working.
+ */
+export type RouteSearchInOf<K extends RouteTablePattern> = RouteTable[K] extends {
+  readonly searchIn: infer Input
+}
+  ? Input
+  : RouteSearchOf<K>
+
+/**
+ * What a route hook's argument accepts: a {@link RouteTable} key, or any string while the table is empty
+ * (before `nifra types` has run, or in a program that never loads it), the way `href` does.
+ */
+export type RouteFrom = [RouteTablePattern] extends [never] ? string : RouteTablePattern
+
+/** The params `useParams(from)` gives: the route's, or the loose record for a pattern outside the table. */
+export type ParamsOfFrom<K extends string> = K extends RouteTablePattern
+  ? Readonly<RouteParamsOf<K>>
+  : Readonly<Record<string, string>>
+
+/** The search `useSearch(from)` gives: the route's, or the loose record for a pattern outside the table. */
+export type SearchOfFrom<K extends string> = K extends RouteTablePattern
+  ? RouteSearchOf<K>
+  : Record<string, unknown>
 
 /**
  * An in-app URL: what `href()` builds from a route and `rawHref()` returns for a checked path. A string

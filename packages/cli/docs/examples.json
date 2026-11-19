@@ -855,7 +855,7 @@
     "name": "DECLARE",
     "topic": "Nifra - Server functions",
     "slug": "server-functions",
-    "code": "// todos.fn.ts - the suffix is what tells the build to strip this module from the client.\nimport { serverFn } from \"@nifrajs/web/fn\"\nimport { t } from \"@nifrajs/schema\"\nimport { createTodo } from \"./db/write.ts\"\n\nexport const addTodo = serverFn(\n  { input: t.object({ text: t.string({ minLength: 1 }) }), capabilities: [\"db.write\"] },\n  async ({ text }) => createTodo({ text }),\n)"
+    "code": "// todos.fn.ts - the suffix is what tells the build to strip this module from the client.\nimport { serverFn } from \"@nifrajs/web/fn\"\nimport { t } from \"@nifrajs/schema\"\nimport { createTodo } from \"./db/write.ts\"\n\nexport const addTodo = serverFn(\n  {\n    input: t.object({ text: t.string({ minLength: 1 }) }),\n    output: t.object({ id: t.string() }),\n    capabilities: [\"db.write\"],\n  },\n  async ({ text }) => createTodo({ text }),\n)"
   },
   {
     "name": "MOUNT",

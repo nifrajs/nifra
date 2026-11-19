@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { createMutation, createQueryClient, hashQueryKey } from "../src/index.ts"
+import { queryKey } from "../src/query.ts"
 
 describe("hashQueryKey", () => {
   test("is stable + order-independent for objects, ordered for arrays, nested", () => {
@@ -328,12 +329,12 @@ describe("createQueryClient", () => {
 
     t = 9
     for (let i = 0; i < 100; i++) expect(c.query(["hot"], async () => "rebound")).toBe(hot)
-    expect(c.getQueryData(["expired"])).toBe("old")
+    expect(c.getQueryData(queryKey(["expired"]))).toBe("old")
 
     t = 11
     expect(c.query(["hot"], async () => "rebound")).toBe(hot)
-    expect(c.getQueryData(["expired"])).toBeUndefined()
-    expect(c.getQueryData(["hot"])).toBe("current")
+    expect(c.getQueryData(queryKey(["expired"]))).toBeUndefined()
+    expect(c.getQueryData(queryKey(["hot"]))).toBe("current")
     stopHot()
   })
 
@@ -502,32 +503,32 @@ describe("invalidation epoch (M3) + emit (Perf-6)", () => {
 describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => {
   test("getQueryData is undefined until success, then returns the data", async () => {
     const c = createQueryClient({ now: () => 0 })
-    expect(c.getQueryData(["k"])).toBeUndefined() // no entry
+    expect(c.getQueryData(queryKey(["k"]))).toBeUndefined() // no entry
     c.query(["k"], async () => "v")
-    expect(c.getQueryData(["k"])).toBeUndefined() // entry exists but pending
+    expect(c.getQueryData(queryKey(["k"]))).toBeUndefined() // entry exists but pending
     await c.query(["k"], async () => "v").fetch()
-    expect(c.getQueryData<string>(["k"])).toBe("v")
+    expect(c.getQueryData(queryKey<string>(["k"]))).toBe("v")
   })
 
   test("setQueryData writes a value (and via an updater) without a fetch", () => {
     const c = createQueryClient({ now: () => 5 })
-    c.setQueryData(["count"], 1)
-    expect(c.getQueryData<number>(["count"])).toBe(1)
+    c.setQueryData(queryKey(["count"]), 1)
+    expect(c.getQueryData(queryKey<number>(["count"]))).toBe(1)
     expect(c.query(["count"], async () => 99).snapshot()).toMatchObject({
       status: "success",
       data: 1,
       updatedAt: 5,
     })
-    c.setQueryData<number>(["count"], (prev) => (prev ?? 0) + 10)
-    expect(c.getQueryData<number>(["count"])).toBe(11)
+    c.setQueryData(queryKey<number>(["count"]), (prev) => (prev ?? 0) + 10)
+    expect(c.getQueryData(queryKey<number>(["count"]))).toBe(11)
   })
 
   test("a setQueryData-only key never fetches on its own", async () => {
     const c = createQueryClient({ now: () => 0 })
-    c.setQueryData(["seeded"], "S")
+    c.setQueryData(queryKey(["seeded"]), "S")
     // No fetcher was ever bound; reading the (fresh, staleTime 0 but success) entry via a handle with a
     // real fn now would fetch - but simply reading data must not. The seeded value stands.
-    expect(c.getQueryData<string>(["seeded"])).toBe("S")
+    expect(c.getQueryData(queryKey<string>(["seeded"]))).toBe("S")
   })
 
   test("prefetchQuery caches so a later fetch() is a fresh hit (no second fn call)", async () => {
@@ -540,7 +541,7 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     }
     await c.prefetchQuery(["k"], fn)
     expect(calls).toBe(1)
-    expect(c.getQueryData<string>(["k"])).toBe("P")
+    expect(c.getQueryData(queryKey<string>(["k"]))).toBe("P")
     await c.prefetchQuery(["k"], fn)
     expect(calls).toBe(1) // a fresh prefetch is a no-op too
     t = 500 // still within staleTime
@@ -558,7 +559,7 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     t = 10
 
     await c.prefetchQuery(["new"], async () => "new")
-    expect(c.getQueryData(["old"])).toBeUndefined()
+    expect(c.getQueryData(queryKey(["old"]))).toBeUndefined()
   })
 
   test("setQueryData supersedes an in-flight fetch (optimistic write wins)", async () => {
@@ -567,11 +568,11 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     const c = createQueryClient({ now: () => t })
     const h = c.query(["k"], g.fn)
     const p = h.fetch()
-    c.setQueryData(["k"], "OPTIMISTIC") // write while the fetch is in flight
+    c.setQueryData(queryKey(["k"]), "OPTIMISTIC") // write while the fetch is in flight
     t = 10
     g.resolve(0, "STALE") // the fetch resolves late - must NOT overwrite the optimistic value
     await p
-    expect(c.getQueryData<string>(["k"])).toBe("OPTIMISTIC")
+    expect(c.getQueryData(queryKey<string>(["k"]))).toBe("OPTIMISTIC")
   })
 })
 
@@ -585,7 +586,7 @@ describe("SSR bridge: dehydrate / hydrate", () => {
 
     const client = createQueryClient({ now: () => 200 })
     client.hydrate(state)
-    expect(client.getQueryData<{ name: string }>(["user", 1])).toEqual({ name: "Ada" })
+    expect(client.getQueryData(queryKey<{ name: string }>(["user", 1]))).toEqual({ name: "Ada" })
   })
 
   test("dehydrate filters both query kinds before including browser-visible data", async () => {
@@ -647,8 +648,8 @@ describe("SSR bridge: dehydrate / hydrate", () => {
       })),
     })
 
-    expect(client.getQueryData("old")).toBeUndefined()
-    expect(client.getQueryData("new")).toBe("new")
+    expect(client.getQueryData(queryKey("old"))).toBeUndefined()
+    expect(client.getQueryData(queryKey("new"))).toBe("new")
     const opts = { initialPageParam: 0, getNextPageParam: () => undefined }
     expect(client.infiniteQuery("old", async () => "fetch", opts).snapshot().data).toBeUndefined()
     expect(client.infiniteQuery("new", async () => "fetch", opts).snapshot().data?.pages).toEqual([
@@ -658,11 +659,11 @@ describe("SSR bridge: dehydrate / hydrate", () => {
 
   test("hydrate does not clobber a client entry that is already fresher", () => {
     const client = createQueryClient({ now: () => 0 })
-    client.setQueryData(["k"], "CLIENT") // updatedAt 0
+    client.setQueryData(queryKey(["k"]), "CLIENT") // updatedAt 0
     client.hydrate({ queries: [{ key: ["k"], data: "SERVER", updatedAt: -50 }] }) // older snapshot
-    expect(client.getQueryData<string>(["k"])).toBe("CLIENT")
+    expect(client.getQueryData(queryKey<string>(["k"]))).toBe("CLIENT")
     client.hydrate({ queries: [{ key: ["k"], data: "NEWER", updatedAt: 50 }] }) // newer snapshot wins
-    expect(client.getQueryData<string>(["k"])).toBe("NEWER")
+    expect(client.getQueryData(queryKey<string>(["k"]))).toBe("NEWER")
   })
 })
 

@@ -5617,7 +5617,7 @@ _No named exports (side-effect entrypoint)._
 - **Href** _(type)_ - `type Href<Pattern extends string = string> = string & { readonly "~nifraHref": Pattern }`
   An in-app URL: what `href()` builds from a route and `rawHref()` returns for a checked path. A string at runtime, a branded string to the compiler, so a plain string or a template literal is not assignable to it. `Pattern` is the {@link RouteTable} key it was built for. The brand is a named propert…
 - **HrefOptions** _(type)_ - `type HrefOptions<K extends Pattern> = { readonly to: K; readonly search?: SearchOfRoute<K> | undefined; readonly hash?: string | undefined } & ParamsOption<K> & SlotOptions<K>`
-  What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has any, absent when it has none), the route's `search` as its `searchSchema` outputs it, and the `hash` without its `#`.
+  What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has any, absent when it has none), the route's `search` as its `searchSchema` accepts it (a defaulted field may be left out), and the `hash` without its `#`.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
@@ -5741,8 +5741,12 @@ _No named exports (side-effect entrypoint)._
   A served locale as a page renders in it: from the app's locale registry.
 - **PageLocales** _(interface)_ - `interface PageLocales`
   The served locales, handed to the client so it names a page's locale from its path the way the server does.
+- **ParamsOfFrom** _(type)_ - `type ParamsOfFrom<K extends string> = K extends RouteTablePattern ? Readonly<RouteParamsOf<K>> : Readonly<Record<string, string>>`
+  The params `useParams(from)` gives: the route's, or the loose record for a pattern outside the table.
 - **PendingBoundary** _(interface)_ - `interface PendingBoundary`
   A dynamic load that has started but is not part of the initial render barrier.
+- **PlainQueryKey** _(type)_ - `type PlainQueryKey<K> = K extends { readonly "~nifraQueryData": unknown } ? never : K`
+  A key that is not a {@link QueryKey}: `never` for one, so its overload does not take a typed key.
 - **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
   When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
 - **PrerenderedPageReaderOptions** _(interface)_ - `interface PrerenderedPageReaderOptions`
@@ -5755,6 +5759,8 @@ _No named exports (side-effect entrypoint)._
 - **QueryClientOptions** _(interface)_ - `interface QueryClientOptions`
 - **QueryHandle** _(interface)_ - `interface QueryHandle<T = unknown>`
   A stable per-key handle: subscribe to its state, read a snapshot, trigger a fetch/refetch.
+- **QueryKey** _(type)_ - `type QueryKey<T> = { readonly "~nifraQueryData": T }`
+  What a typed query key adds to the key itself: the type of the data stored under it. Make one with {@link queryKey} - `const todosKey = queryKey<Todo[]>(["todos"])` - and use it everywhere: the fetcher must return that type, and `getQueryData` / `setQueryData` read and write it, so a key and its da…
 - **QueryOptions** _(interface)_ - `interface QueryOptions`
   Per-query overrides passed alongside the fetcher.
 - **QueryState** _(interface)_ - `interface QueryState<T = unknown>`
@@ -5800,14 +5806,22 @@ _No named exports (side-effect entrypoint)._
   What a `revalidateTags` function is given: the URL and route params only, both already public.
 - **RouteEntry** _(interface)_ - `interface RouteEntry`
   One matched route: pattern, nested layout ids (outermost → innermost), source file, loader.
+- **RouteFrom** _(type)_ - `type RouteFrom = [RouteTablePattern] extends [never] ? string : RouteTablePattern`
+  What a route hook's argument accepts: a {@link RouteTable} key, or any string while the table is empty (before `nifra types` has run, or in a program that never loads it), the way `href` does.
 - **RouteMatch** _(interface)_ - `interface RouteMatch`
   A URL matched against the manifest patterns: which route + its extracted params.
 - **RouteMiddleware** _(type)_ - `type RouteMiddleware<Ctx = LoaderContext> = ( ctx: Ctx, ) => MiddlewareOutcome | Promise<MiddlewareOutcome>`
   The `middleware` export of a `_layout.backend.ts` file. It runs on the server before the layouts, loaders and action of every route in its directory and below - on a document request, a client navigation and a form post alike - and before a nested `_404` there. Middleware higher in the tree runs fi…
 - **RouteModule** _(interface)_ - `interface RouteModule`
   A route module - the default component + optional loader / action / meta.
+- **RouteParamsOf** _(type)_ - `type RouteParamsOf<K extends RouteTablePattern> = RouteTable[K] extends { readonly params: infer Params } ? Params : never`
+  The params of route `K`, as its pattern declares them (an empty object type when it has none).
 - **RoutePattern** _(interface)_ - `interface RoutePattern`
   A route id paired with its nifra pattern (e.g. `":id"` segments) - the matcher input.
+- **RouteSearchInOf** _(type)_ - `type RouteSearchInOf<K extends RouteTablePattern> = RouteTable[K] extends { readonly searchIn: infer Input } ? Input : RouteSearchOf<K>`
+  The search a link to route `K` may carry: the entry's `searchIn` (the schema's input, so a defaulted field is optional), else its `search`. A hand-written entry with only `search` keeps working.
+- **RouteSearchOf** _(type)_ - `type RouteSearchOf<K extends RouteTablePattern> = RouteTable[K] extends { readonly search: infer Search } ? Search : never`
+  The search of route `K`, as its `searchSchema` outputs it.
 - **RouteSlotName** _(type)_ - `type RouteSlotName = NamesInRoute<RouteTable[keyof RouteTable]> & string`
   Union of slot names registered by the generated route manifest.
 - **RouteSlotPatternsOf** _(type)_ - `type RouteSlotPatternsOf<T> = T extends { readonly routeSlots: infer Slots } ? Slots extends Readonly<Record<string, readonly string[]>> ? Slots : Readonly<Record<never, never>> : Readonly<Record<never, never>>`
@@ -5816,7 +5830,9 @@ _No named exports (side-effect entrypoint)._
 - **RouteSlotTarget** _(type)_ - `type RouteSlotTarget = Href<keyof RouteTable & string>`
   A typed route URL that a registered route slot may display.
 - **RouteTable** _(interface)_ - `interface RouteTable`
-  Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the object a link to the route needs (`Record<string, never>` when the pattern has none), `search` the output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types…
+  Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the object a link to the route needs (an empty object type when the pattern has none), `search` the output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types` w…
+- **RouteTablePattern** _(type)_ - `type RouteTablePattern = keyof RouteTable & string`
+  A {@link RouteTable} key: the pattern of one route. `never` until `nifra types` fills the table.
 - **RouterState** _(interface)_ - `interface RouterState`
   The router's observable state. A new object is published on every transition.
 - **SERVER_FN_MODULE** _(const)_ - `SERVER_FN_MODULE: RegExp`
@@ -5826,8 +5842,12 @@ _No named exports (side-effect entrypoint)._
 - **SanitizedHtml** _(type)_ - `type SanitizedHtml = TrustedHtml & { readonly [SANITIZED_HTML_BRAND]: "sanitized-html" }`
   HTML returned by an explicit, caller-supplied sanitizer. It is also trusted by the adapters.
 - **ScriptDescriptor** _(interface)_ - `interface ScriptDescriptor`
+- **SearchInputOf** _(type)_ - `type SearchInputOf<Module>`
+  The search INPUT type for a route MODULE - what a link may carry, so a field its `searchSchema` defaults is optional. The schema's input when it is an object, else the {@link SearchOf} output. The route table holds it as `searchIn`, and `href()` reads it, where the hooks and `ctx.search` read the o…
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: `nifra types` maps each route pattern to `SearchOf<typeof import("./routes/<file>")>` in…
+- **SearchOfFrom** _(type)_ - `type SearchOfFrom<K extends string> = K extends RouteTablePattern ? RouteSearchOf<K> : Record<string, unknown>`
+  The search `useSearch(from)` gives: the route's, or the loose record for a pattern outside the table.
 - **SharedBoundary** _(type)_ - `type SharedBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "shared"; readonly load?: (ctx: SharedHoleCtx) => Data | Promise<Data>; readonly interactive?: boolean; readonly timeout?: number }`
   Partial prerendering: a hole that is the same for every visitor, built like the shell from a request-free context and cached on its own `revalidate`, then written right after the shell. Its loader entry in `boundaryLoaders` needs `revalidate`.
 - **SharedHoleCtx** _(interface)_ - `interface SharedHoleCtx`
@@ -5947,6 +5967,8 @@ _No named exports (side-effect entrypoint)._
   Read a self-hosted build's prerendered pages for `createWebApp`'s `prerenderedPages`. Only the build's own files are reachable, each opened only once its real path is inside `dir`, so a link planted in the deployed tree cannot point a page elsewhere. A deploy's files do not change while it runs, so…
 - **previewEndpoint** _(function)_ - `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
   A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
+- **queryKey** _(function)_ - `queryKey: <T = unknown, K = unknown>(key: K) => K & QueryKey<T>`
+  Type a key with the data stored under it. The same key, typed.
 - **rawHref** _(function)_ - `rawHref: (path: string) => Href`
   An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **redirect** _(function)_ - `redirect: { (location: Href, options?: RedirectOptions & { readonly external?: false; }): ResponseResult; (location: string, options: RedirectOptions & { readonly external: true; }): ResponseResult; }`
@@ -6284,6 +6306,8 @@ _No named exports (side-effect entrypoint)._
 - **onRouteSlotIdentityChange** _(function)_ - `onRouteSlotIdentityChange: (listener: () => void) => () => void`
 - **parseRouteSlots** _(function)_ - `parseRouteSlots: (path: string) => RouteSlotTargets`
   Parse and strictly validate flat `slot.<name>=<target>` query values.
+- **queryKey** _(function)_ - `queryKey: <T = unknown, K = unknown>(key: K) => K & QueryKey<T>`
+  Type a key with the data stored under it. The same key, typed.
 - **rawHref** _(function)_ - `rawHref: (path: string) => Href`
   An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
@@ -6504,7 +6528,7 @@ _No named exports (side-effect entrypoint)._
 - **ServerFnReference** _(type)_ - `type ServerFnReference<Input, Output> = | ServerFn<Input, Output> | ClientServerFn<Input, Output>`
   A UI binding boundary: source declarations and generated client stubs are both accepted.
 - **ServerFunctionsOptions** _(interface)_ - `interface ServerFunctionsOptions`
-- **serverFn** _(function)_ - `serverFn: <Input = void, Output = unknown>(config: ServerFnConfig<Input>, fn: (input: Input, context: Context) => MaybePromise<Output>) => ServerFn<Input, Output>`
+- **serverFn** _(function)_ - `serverFn: { <Input = void, Schema extends StandardSchemaV1 = StandardSchemaV1<unknown, unknown>>(config: ServerFnConfig<Input> & { readonly output: Schema; }, fn: (input: Input, context: Context) => MaybePromise<InferIn…`
   Declare a server function.
 - **serverFunctions** _(function)_ - `serverFunctions: (namespace: string, module: ServerFnModule, options?: ServerFunctionsOptions) => IdentityPlugin`
   Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.
@@ -6548,10 +6572,12 @@ _No named exports (side-effect entrypoint)._
 - **FormHandle** _(interface)_ - `interface FormHandle<App, Path extends string, Method extends string>`
 - **RouteBody** _(type)_ - `type RouteBody<App, Path extends string, Method extends string> = Path extends keyof RegistryOf<App> ? Uppercase<Method> extends keyof RegistryOf<App>[Path] ? (RegistryOf<App>[Path][Uppercase<Method>] & RouteInfo)["body…`
   The body object type of `App`'s `Method Path` route (`never` when the route declares no body).
+- **RouteMethods** _(type)_ - `type RouteMethods<App, Path extends string> = Path extends keyof RegistryOf<App> ? Lowercase<keyof RegistryOf<App>[Path] & string> : never`
+  The lowercase methods `App` declares for `Path`: what a form for that route may use.
 - **RoutePaths** _(type)_ - `type RoutePaths<App> = keyof RegistryOf<App> & string`
   Every route path the app declares - constrains `Path`, so a wrong path is itself a type error.
-- **formFor** _(function)_ - `formFor: <App, Path extends RoutePaths<App>, Method extends string = "post">() => FormHandle<App, Path, Method>`
-  Bind a form to a backend route's body schema at the type level. `App` is `typeof backend`; `Path` is constrained to the app's real routes (a wrong path is a type error); `Method` defaults to `"post"`.
+- **formFor** _(function)_ - `formFor: <App>() => <Path extends RoutePaths<App>, Method extends RouteMethods<App, Path> = Extract<"post", RouteMethods<App, Path>>>(path: Path, method?: Method) => FormHandle<App, Path, Method>`
+  Bind a form to a backend route at the type level. `App` is `typeof backend`; the path is one of the app's real routes (a wrong path is a type error), and the method one that route declares (default `"post"`). The handle carries the route's own `action` and `method`, and checks every field name agai…
 
 ### `@nifrajs/web/fs`
 
@@ -7354,7 +7380,7 @@ _No named exports (side-effect entrypoint)._
   A paged query binding that follows Preact's mount and subscription lifecycle.
 - **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
   A mutation binding with Preact state subscriptions and identity-boundary cancellation.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => UseQueryResult<T>`
+- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; }`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle. `options.live`…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
@@ -7392,9 +7418,11 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
   Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page, where its effects keep running: pause timers and listeners on it. Always `true` on the server and on a page that does not keep alive.
+- **useParams** _(function)_ - `useParams: <K extends RouteFrom>(from: K) => ParamsOfFrom<K>`
+  The matched route's decoded path params, typed from the generated route table: `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile error. SSR-correct: the …
 - **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
-- **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
-  The route's typed, validated search params - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hostile input already failed cl…
+- **useSearch** _(function)_ - `useSearch: <K extends RouteFrom>(from: K) => SearchOfFrom<K>`
+  The route's validated search params - the SAME value the loader received as `ctx.search`, typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output. The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern the t…
 
 ### `@nifrajs/web-preact/server-components`
 
@@ -7531,7 +7559,7 @@ _No named exports (side-effect entrypoint)._
   Subscribe to a paged (infinite-scroll) query. Returns the accumulated `data.pages` plus `fetchNextPage`/`fetchPreviousPage`/`hasNextPage`/`hasPreviousPage`. Fetches the first page on mount. SSR-idle unless a `QueryClientProvider` supplies a hydrated client.
 - **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
   A mutation hook (create/update/delete). Returns `{ mutate, mutateAsync, data, error, variables, isIdle, isPending, isError, isSuccess, reset, cancel }`. Invalidate affected queries from `onSuccess` via `useQueryClient().invalidateQueries(...)`. The handle is stable across renders; the latest `fn`/ …
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: UseQueryOptions) => UseQueryResult<T>`
+- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>; }`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, isError, isSuccess, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount and when the key changes; `enabl…
 - **useQueryClient** _(function)_ - `useQueryClient: () => QueryClient`
   The active {@link QueryClient}: a `QueryClientProvider`'s client, else the client-side singleton, else a no-op (server / pre-hydration). Use it to `invalidateQueries`/`setQueryData`/`prefetchQuery`.
@@ -7595,14 +7623,14 @@ _No named exports (side-effect entrypoint)._
   Observe client navigation to drive loading UI (a top-bar spinner, dimmed content, a skeleton). nifra navigates imperatively - it fetches the next route's chunk + loader data while the current route stays on screen, then swaps - so `pending` is the signal for "a transition is in flight," not a Suspe…
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => boolean`
   Whether the page this component renders in is on screen. `false` while it is kept hidden behind another page; its effects have cleaned up by then (`Activity`), and run again when it is shown. Always `true` on the server and on a page that does not keep alive.
-- **useParams** _(function)_ - `useParams: <T extends Record<string, string | undefined> = Record<string, string>>() => Readonly<T>`
-  The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct: `compose` provides the same value server-side (from the request match) and client-side (from router state), so a param rendered into markup doesn't flash on hydration.
+- **useParams** _(function)_ - `useParams: <K extends RouteFrom>(from: K) => ParamsOfFrom<K>`
+  The matched route's decoded path params, typed from the generated route table: `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile error. SSR-correct: the …
 - **usePending** _(function)_ - `usePending: () => boolean`
   Convenience boolean form of {@link useNavigation}: `true` while a client navigation is in flight.
 - **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
   Read or navigate one route slot without changing any sibling slot's URL state or component tree.
-- **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
-  The route's typed, validated search params: the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from `searchOf(searchSchema, url.search)` server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hos…
+- **useSearch** _(function)_ - `useSearch: <K extends RouteFrom>(from: K) => SearchOfFrom<K>`
+  The route's validated search params - the SAME value the loader received as `ctx.search`, typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output. The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern the t…
 - **useSearchParams** _(function)_ - `useSearchParams: () => readonly [URLSearchParams, SetSearchParams]`
   The current query as a `URLSearchParams` (SSR-correct via the router context) plus a setter that navigates to the new query. Mirrors react-router's `useSearchParams` tuple.
 
@@ -7774,7 +7802,7 @@ _No named exports (side-effect entrypoint)._
   Bind a paged query to a Solid owner and fetch its first page on mount.
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => CreateMutationResult<TData, TVariables>`
   Bind a mutation to a Solid owner. Identity changes discard late results and callbacks.
-- **createQuery** _(function)_ - `createQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => CreateQueryResult<T>`
+- **createQuery** _(function)_ - `createQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>; }`
   Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`. Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. Call inside a component (owns the subscription). `options.live` names the…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
@@ -7809,8 +7837,10 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => Accessor<boolean>`
   Whether the page this component renders in is on screen, as an accessor: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
-- **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>`
-  The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Call it to read…
+- **useParams** _(function)_ - `useParams: <K extends RouteFrom>(from: K) => Accessor<ParamsOfFrom<K>>`
+  The matched route's decoded path params as a reactive accessor, typed from the generated route table: `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile e…
+- **useSearch** _(function)_ - `useSearch: <K extends RouteFrom>(from: K) => Accessor<SearchOfFrom<K>>`
+  The route's validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`, typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output. The argument only names the route for the compiler (nothing is read from it at runtim…
 
 ### `@nifrajs/web-solid/server-components`
 
@@ -7944,7 +7974,7 @@ _No named exports (side-effect entrypoint)._
   Bind a paged query as a Svelte readable store. Fetching starts on the first browser subscription.
 - **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationStore<TData, TVariables>`
   Bind a mutation as a Svelte store. Identity changes discard late results and callbacks.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryStore<T>`
+- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>; }`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle. `options.live` names the live keys that refetch it.
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
@@ -7978,10 +8008,12 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => () => boolean`
   Whether the page this component renders in is on screen, as a getter: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive. Call it while the component initializes; read it in markup or a `$derived`.
+- **useParams** _(function)_ - `useParams: <K extends RouteFrom>(from: K) => () => ParamsOfFrom<K>`
+  The matched route's decoded path params as a reactive accessor, typed from the generated route table: `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile e…
 - **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
   Read or update the URL state for one slot while preserving every sibling slot.
-- **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
-  The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a `$…
+- **useSearch** _(function)_ - `useSearch: <K extends RouteFrom>(from: K) => () => SearchOfFrom<K>`
+  The route's validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`, typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output. The argument only names the route for the compiler (nothing is read from it at runtim…
 
 ### `@nifrajs/web-svelte/server-components`
 
@@ -8136,7 +8168,7 @@ _No named exports (side-effect entrypoint)._
   Bind a paged query to Vue's mount and effect-scope lifecycles.
 - **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
   Bind a mutation to Vue's effect scope. Identity changes discard late results and callbacks.
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => UseQueryResult<T>`
+- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; }`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. `options.live` names…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
@@ -8175,10 +8207,12 @@ _No named exports (side-effect entrypoint)._
   Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **usePageVisibility** _(function)_ - `usePageVisibility: () => Readonly<Ref<boolean>>`
   Whether the page this component renders in is on screen, as a ref: `false` while it is kept hidden behind another page, where it keeps running. Always `true` on the server and on a page that does not keep alive.
+- **useParams** _(function)_ - `useParams: <K extends RouteFrom>(from: K) => Readonly<Ref<ParamsOfFrom<K>>>`
+  The matched route's decoded path params as a reactive ref, typed from the generated route table: `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile error.…
 - **useRouteSlot** _(function)_ - `useRouteSlot: (name: RouteSlotName) => RouteSlotController`
   Read or navigate one route slot without changing any sibling slot's URL state or component tree.
-- **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`
-  The route's typed, validated search params as a reactive ref - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value` …
+- **useSearch** _(function)_ - `useSearch: <K extends RouteFrom>(from: K) => Readonly<Ref<SearchOfFrom<K>>>`
+  The route's validated search params as a reactive ref - the SAME value the loader received as `ctx.search`, typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output. The argument only names the route for the compiler (nothing is read from it at runtime), a…
 
 ### `@nifrajs/web-vue/server-components`
 

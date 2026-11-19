@@ -4,18 +4,15 @@ import {
   fillRoutePath,
   isSameOriginPath,
 } from "@nifrajs/core/pattern"
-import type { Href, RouteTable } from "./navigation.ts"
+import type {
+  Href,
+  RouteParamsOf as ParamsOf,
+  RouteTablePattern as Pattern,
+  RouteTable,
+  RouteSearchInOf as SearchOfRoute,
+} from "./navigation.ts"
 import { hasRouteSlotsSearch, ROUTE_SLOT_QUERY_PREFIX, withRouteSlots } from "./route-slots.ts"
 import { serializeSearch } from "./search.ts"
-
-type Pattern = keyof RouteTable & string
-
-type ParamsOf<K extends Pattern> = RouteTable[K] extends { readonly params: infer Params }
-  ? Params
-  : never
-type SearchOfRoute<K extends Pattern> = RouteTable[K] extends { readonly search: infer Search }
-  ? Search
-  : never
 
 type SlotRegistryOf<K extends Pattern> = RouteTable[K] extends { readonly slots: infer Slots }
   ? Slots
@@ -35,15 +32,18 @@ type SlotOptions<K extends Pattern> = [SlotNamesOf<K>] extends [never]
       }>
     }
 
-// A route without params is typed `Record<string, never>`, whose keys are all strings.
-type ParamsOption<K extends Pattern> = string extends keyof ParamsOf<K>
+// A route without params is typed with no keys (the generator) or `Record<string, never>` (a hand-written
+// table), whose keys are all strings.
+type ParamsOption<K extends Pattern> = [keyof ParamsOf<K>] extends [never]
   ? { readonly params?: never }
-  : { readonly params: ParamsOf<K> }
+  : string extends keyof ParamsOf<K>
+    ? { readonly params?: never }
+    : { readonly params: ParamsOf<K> }
 
 /**
  * What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has
- * any, absent when it has none), the route's `search` as its `searchSchema` outputs it, and the `hash`
- * without its `#`.
+ * any, absent when it has none), the route's `search` as its `searchSchema` accepts it (a defaulted field
+ * may be left out), and the `hash` without its `#`.
  */
 export type HrefOptions<K extends Pattern> = {
   readonly to: K

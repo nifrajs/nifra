@@ -73,7 +73,12 @@ export {
   IDLE_BLOCKER,
   registerBlocker,
 } from "./navigation.ts"
-export { createMutation, createQueryClient, MutationCancelledError } from "./query.ts"
+export {
+  createMutation,
+  createQueryClient,
+  MutationCancelledError,
+  queryKey,
+} from "./query.ts"
 export { localeOfProps } from "./render-seam.ts"
 export {
   hasRouteSlotsSearch,

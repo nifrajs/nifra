@@ -141,12 +141,37 @@ export interface DehydratedState {
   }>
 }
 
+/**
+ * What a typed query key adds to the key itself: the type of the data stored under it. Make one with
+ * {@link queryKey} - `const todosKey = queryKey<Todo[]>(["todos"])` - and use it everywhere: the fetcher
+ * must return that type, and `getQueryData` / `setQueryData` read and write it, so a key and its data
+ * cannot drift apart. At run time it is the key itself, so prefix invalidation
+ * (`invalidateQueries(["todos"])`) works unchanged.
+ */
+export type QueryKey<T> = { readonly "~nifraQueryData": T }
+
+/** A key that is not a {@link QueryKey}: `never` for one, so its overload does not take a typed key. */
+export type PlainQueryKey<K> = K extends { readonly "~nifraQueryData": unknown } ? never : K
+
+/** Type a key with the data stored under it. The same key, typed. */
+export function queryKey<T = unknown, K = unknown>(key: K): K & QueryKey<T> {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the brand is a phantom property; the key itself is returned unchanged
+  return key as K & QueryKey<T>
+}
+
 /** The keyed query cache. One per app (a binding registers it like the router). */
 export interface QueryClient {
   /** Get the stable {@link QueryHandle} for `key`, fetched via `fn`. Re-binds the latest `fn` (and
    * `options`) each call (closures change between renders); returns the same handle for the same
    * (hashed) key. */
-  query: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryHandle<T>
+  query: {
+    <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): QueryHandle<T>
+    <T, K = unknown>(
+      key: PlainQueryKey<K>,
+      fn: () => Promise<T>,
+      options?: QueryOptions,
+    ): QueryHandle<T>
+  }
   /** Get the stable {@link InfiniteQueryHandle} for `key`, whose pages are fetched via `fn(pageParam)`. */
   infiniteQuery: <T, P>(
     key: unknown,
@@ -158,13 +183,20 @@ export interface QueryClient {
    * match exactly. */
   invalidateQueries: (keyOrPrefix: unknown) => void
   /** Read a cached query's data (`undefined` if absent or not yet successful). Synchronous, no fetch. */
-  getQueryData: <T>(key: unknown) => T | undefined
+  getQueryData: <T>(key: QueryKey<T>) => T | undefined
   /** Write a query's data directly (optimistic updates, or seeding). Creates the entry if absent; marks
    * it fresh (`updatedAt = now`). `updater` may be a value or a function of the previous data. */
-  setQueryData: <T>(key: unknown, updater: T | ((prev: T | undefined) => T)) => void
+  setQueryData: <T>(key: QueryKey<T>, updater: T | ((prev: T | undefined) => T)) => void
   /** Fetch + cache a query's data WITHOUT subscribing (SSR prefetch, hover warm). Resolves when cached;
    * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */
-  prefetchQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => Promise<void>
+  prefetchQuery: {
+    <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): Promise<void>
+    <T, K = unknown>(
+      key: PlainQueryKey<K>,
+      fn: () => Promise<T>,
+      options?: QueryOptions,
+    ): Promise<void>
+  }
   /** Serialize the successful queries that `options.shouldDehydrateQuery` selects to a transferable
    * snapshot (server → client SSR bridge). Deny by default: with no filter the snapshot is empty. */
   dehydrate: (options?: DehydrateOptions) => DehydratedState

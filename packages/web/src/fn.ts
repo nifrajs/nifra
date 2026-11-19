@@ -49,6 +49,8 @@ import {
   type Context,
   defineIdentityPlugin,
   type IdentityPlugin,
+  type InferInput,
+  type InferOutput,
   isSameOriginRequest,
   type RouteSchema,
   type StandardSchemaV1,
@@ -108,18 +110,35 @@ export const SERVER_FN: unique symbol = Symbol.for("@nifrajs/web/server-fn")
  * Declare a server function.
  *
  *     export const addTodo = serverFn(
- *       { input: t.object({ text: t.string({ minLength: 1 }) }), capabilities: ["db.write"] },
+ *       {
+ *         input: t.object({ text: t.string({ minLength: 1 }) }),
+ *         output: t.object({ id: t.string() }),
+ *         capabilities: ["db.write"],
+ *       },
  *       async ({ text }, c) => db.todos.insert({ text }),
  *     )
  *
  * The second argument receives the validated input and the ordinary nifra `Context` - `c.env`,
  * `c.clientIp`, `c.budget`, cookies, and the capability guard are all present, because this is a route.
+ *
+ * The caller sees what `output` lets through: the function declares an `Output` type of the schema's
+ * OUTPUT, and what it returns must fit the schema's INPUT, so a field the schema drops is not in the
+ * type the browser gets. Without `output` the function may return nothing: any data it returns is
+ * refused at run time ("declares no output schema"), so a data return is a type error here.
  */
-export function serverFn<Input = void, Output = unknown>(
-  config: ServerFnConfig<Input>,
-  fn: (input: Input, context: Context) => MaybePromise<Output>,
-): ServerFn<Input, Output> {
-  return Object.assign(fn, { [SERVER_FN]: config }) as ServerFn<Input, Output>
+export function serverFn<Input = void, Schema extends StandardSchemaV1 = StandardSchemaV1>(
+  config: ServerFnConfig<Input> & { readonly output: Schema },
+  fn: (input: Input, context: Context) => MaybePromise<InferInput<Schema>>,
+): ServerFn<Input, InferOutput<Schema>>
+export function serverFn<Input = void>(
+  config: ServerFnConfig<Input> & { readonly output?: undefined },
+  fn: (input: Input, context: Context) => MaybePromise<void | null | undefined>,
+): ServerFn<Input, void>
+export function serverFn(
+  config: ServerFnConfig<unknown>,
+  fn: (input: unknown, context: Context) => unknown,
+): unknown {
+  return Object.assign(fn, { [SERVER_FN]: config })
 }
 
 const isServerFn = (value: unknown): value is ServerFn<unknown, unknown> =>

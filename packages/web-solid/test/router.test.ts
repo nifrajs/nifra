@@ -87,7 +87,7 @@ test("compose threads RenderProps.search to useSearch (accessor, SSR-correct)", 
   // The value the server puts in RenderProps.search flows through compose's SearchContext to useSearch;
   // the client mount derives the same value via searchOfChain, so the two renders match.
   const Page = () => {
-    const search = useSearch()
+    const search = useSearch("/test-loose")
     return `[${(search() as { page?: number }).page}]`
   }
   const html = renderToString(
@@ -98,7 +98,7 @@ test("compose threads RenderProps.search to useSearch (accessor, SSR-correct)", 
 
 test("useSearch is an empty accessor for a render with no search context", () => {
   const Page = () => {
-    const search = useSearch()
+    const search = useSearch("/test-loose")
     return `[${Object.keys(search()).length}]`
   }
   expect(renderToString(compose([Page], { data: null }))).toContain("[0]")

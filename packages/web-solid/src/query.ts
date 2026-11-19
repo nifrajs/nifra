@@ -6,7 +6,9 @@ import type {
   MutationContext,
   MutationHandle,
   MutationState,
+  PlainQueryKey,
   QueryClient,
+  QueryKey,
   QueryOptions,
   QueryState,
 } from "@nifrajs/web"
@@ -83,6 +85,16 @@ export interface CreateQueryResult<T> {
  * Fetches on mount; SSR-idle. Call inside a component (owns the subscription). `options.live` names
  * the live keys that refetch it.
  */
+export function createQuery<T>(
+  key: QueryKey<T>,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): CreateQueryResult<T>
+export function createQuery<T, K = unknown>(
+  key: PlainQueryKey<K>,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): CreateQueryResult<T>
 export function createQuery<T>(
   key: unknown,
   fn: () => Promise<T>,

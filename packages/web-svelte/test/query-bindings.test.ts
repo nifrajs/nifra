@@ -1,7 +1,7 @@
 /** Svelte's mutation and paged-query stores, and the provider that scopes a client to a component tree. */
 import { expect, test } from "bun:test"
 import { fileURLToPath } from "node:url"
-import { createQueryClient } from "@nifrajs/web"
+import { createQueryClient, queryKey } from "@nifrajs/web"
 import { get } from "svelte/store"
 import { provideQueryClient, useInfiniteQuery, useMutation } from "../src/query.ts"
 
@@ -123,7 +123,7 @@ test("provideQueryClient seeds the client first and then needs a component to ho
   const client = createQueryClient({ now: () => 10 })
   const state = { queries: [{ key: ["svelte", "seed"], data: "seeded", updatedAt: 5 }] }
   expect(() => provideQueryClient(client, state)).toThrow()
-  expect(client.getQueryData(["svelte", "seed"])).toBe("seeded")
+  expect(client.getQueryData(queryKey(["svelte", "seed"]))).toBe("seeded")
 
   const untouched = createQueryClient({ now: () => 10 })
   expect(() => provideQueryClient(untouched)).toThrow()
@@ -149,7 +149,7 @@ test(
   async () => {
     const code = `
     import { plugin } from "bun";
-    import { createQueryClient } from "@nifrajs/web";
+    import { createQueryClient, queryKey } from "@nifrajs/web";
     import { svelteBunPlugin } from ${asImport("../src/plugin.ts")};
     plugin(svelteBunPlugin("ssr"));
     const { render } = await import("svelte/server");
@@ -162,7 +162,7 @@ test(
       client.hydrate = (snapshot) => { hydrated++; return hydrate(snapshot) };
       let fetched = 0;
       const { body } = render(Tree, { props: { client, state, fetcher: async () => { fetched++; return "network" } } });
-      return { html: body.replace(/<!--.*?-->/g, ""), hydrated, fetched, cached: client.getQueryData(["svelte", "request"]) ?? null };
+      return { html: body.replace(/<!--.*?-->/g, ""), hydrated, fetched, cached: client.getQueryData(queryKey(["svelte", "request"])) ?? null };
     };
 
     const seeded = run({ queries: [{ key: ["svelte", "request"], data: "request one", updatedAt: 5 }] });

@@ -118,7 +118,7 @@ test("useSearch and useMatches read the chain's context, and report nothing outs
   const { render } = await import("svelte/server")
   const source = `<script>
   import { useMatches, useSearch } from ${JSON.stringify(join(import.meta.dir, "../src/router.ts"))}
-  const search = useSearch()
+  const search = useSearch("/test-loose")
   const matches = useMatches()
 </script>
 <p>{JSON.stringify(search())}|{JSON.stringify(matches().map((m) => [m.id, m.pathname]))}</p>`

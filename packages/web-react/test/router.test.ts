@@ -1,5 +1,4 @@
 import { afterEach, expect, spyOn, test } from "bun:test"
-import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { rawHref, setBrowserNavigate } from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -44,7 +43,7 @@ afterEach(() => setBrowserNavigate(undefined))
 
 test("compose threads the matched params to useParams (SSR-correct)", () => {
   const Page = () => {
-    const { id } = useParams<{ id: string }>()
+    const { id } = useParams("/test-loose")
     return createElement("span", null, id)
   }
   const html = renderToStaticMarkup(
@@ -55,7 +54,7 @@ test("compose threads the matched params to useParams (SSR-correct)", () => {
 
 test("compose provides an empty context when a render has no routing props", () => {
   const Page = () => {
-    const params = useParams()
+    const params = useParams("/test-loose")
     const loc = useLocation()
     return createElement("span", null, `${Object.keys(params).length}|${loc.pathname}`)
   }
@@ -68,7 +67,7 @@ test("compose threads RenderProps.search to useSearch (SSR-correct)", () => {
   // `searchOf`) flows through compose's RouterContext to `useSearch`. The client mount derives the same
   // value from the URL via the same `searchOf`, so the two renders match.
   const Page = () => {
-    const search = useSearch()
+    const search = useSearch("/test-loose")
     return createElement("span", null, String(search.page))
   }
   const html = renderToStaticMarkup(
@@ -77,14 +76,9 @@ test("compose threads RenderProps.search to useSearch (SSR-correct)", () => {
   expect(html).toContain("<span>2</span>")
 })
 
-test("useSearch<typeof schema>() reads the validated search as the schema output type", () => {
-  // A minimal Standard Schema whose output is `{ page: number }`; the generic threads that type through
-  // `useSearch`, and the runtime reads whatever value the context carries.
-  const schema: StandardSchemaV1<unknown, { page: number }> = {
-    "~standard": { version: 1, vendor: "test", validate: () => ({ value: { page: 1 } }) },
-  }
+test('useSearch("/test-paged") reads the search as the route table types it', () => {
   const Page = () => {
-    const { page } = useSearch<typeof schema>() // typed { page: number }
+    const { page } = useSearch("/test-paged") // typed { page: number }
     return createElement("span", null, String(page * 10))
   }
   const html = withRoute("/r?page=5", createElement(Page), {}, { page: 5 })
@@ -92,7 +86,8 @@ test("useSearch<typeof schema>() reads the validated search as the schema output
 })
 
 test("useSearch is {} for a render with no search context", () => {
-  const Page = () => createElement("span", null, String(Object.keys(useSearch()).length))
+  const Page = () =>
+    createElement("span", null, String(Object.keys(useSearch("/test-loose")).length))
   expect(renderToStaticMarkup(compose([Page], { data: null }))).toContain("<span>0</span>")
 })
 

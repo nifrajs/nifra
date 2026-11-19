@@ -32,6 +32,7 @@ import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legac
 import { mergeAuthGapRule } from "./rules/merge-auth.ts"
 import { pageRules } from "./rules/pages.ts"
 import { pprRules } from "./rules/ppr.ts"
+import { routeHookRules } from "./rules/route-hooks.ts"
 import { routeStatementRule } from "./rules/route-statement.ts"
 import { routeRules } from "./rules/routes.ts"
 import { secretRules } from "./rules/secrets.ts"
@@ -511,6 +512,7 @@ export async function collectCheckDiagnostics(
     undeclaredResponseRule,
     textSlotBooleanRule,
     ...internalLinkRules,
+    ...routeHookRules,
     serverFnNamespaceRule,
     ...zoneRules,
     ...dataGuardRules,

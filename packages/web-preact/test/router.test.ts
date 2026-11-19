@@ -48,7 +48,7 @@ test("compose threads RenderProps.search to useSearch (SSR-correct)", () => {
   // The value the server puts in RenderProps.search flows through compose's SearchContext to useSearch;
   // the client mount derives the same value via searchOfChain, so the two renders match.
   const Page = () => {
-    const search = useSearch()
+    const search = useSearch("/test-loose")
     return h("span", null, String(search.page))
   }
   const html = renderToString(
@@ -58,6 +58,6 @@ test("compose threads RenderProps.search to useSearch (SSR-correct)", () => {
 })
 
 test("useSearch is {} for a render with no search context", () => {
-  const Page = () => h("span", null, String(Object.keys(useSearch()).length))
+  const Page = () => h("span", null, String(Object.keys(useSearch("/test-loose")).length))
   expect(renderToString(compose([Page], { data: null }))).toContain("<span>0</span>")
 })

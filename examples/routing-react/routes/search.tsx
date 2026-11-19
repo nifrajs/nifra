@@ -12,7 +12,7 @@ export const meta = { title: "nifra - Typed search params" }
 // The component reads the SAME value with `useSearch` (SSR-correct), so `page`/`q` render server-side and
 // hydrate with no mismatch. The buttons/link change the query; a soft-nav re-derives search identically.
 export default function Search({ data }: Route.ComponentProps) {
-  const { page, q, view } = useSearch<typeof searchSchema>() // { page: number; q: string; view }
+  const { page, q, view } = useSearch("/search") // { page: number; q: string; view }
   const navigate = useNavigate()
   return (
     <div>

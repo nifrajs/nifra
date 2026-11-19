@@ -57,6 +57,8 @@ export const RULE_CODES = Object.freeze({
   "NF-C056": "serverFunctions namespace differs from its module's filename",
   "NF-C057": "Internal link to a path no page serves",
   "NF-C058": "Internal link written as a path string",
+  "NF-C059": "Route hook names another route than its page's",
+  "NF-C060": "Value cast to Href",
   "NF-D001": "Doctor check",
   "NF-D002": "Mixed nifra versions",
   "NF-D003": "Stale file: dependencies in bun.lock",

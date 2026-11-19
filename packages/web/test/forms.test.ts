@@ -4,9 +4,14 @@ import { t } from "@nifrajs/schema"
 import { formFor } from "../src/forms.ts"
 
 const app = server().post("/notes", { body: t.object({ title: t.string() }) }, () => ({ ok: true }))
-const f = formFor<typeof app, "/notes">()
+const f = formFor<typeof app>()("/notes")
 
 describe("formFor - runtime pass-through", () => {
+  test("the handle carries the route's own action and method", () => {
+    expect(f.action).toBe("/notes")
+    expect(f.method).toBe("post")
+  })
+
   test("field() returns { name } merged with extra props", () => {
     expect(f.field("title")).toEqual({ name: "title" })
     expect(f.field("title", { id: "title", defaultValue: "" })).toEqual({

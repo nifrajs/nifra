@@ -5,6 +5,7 @@ import {
   type DehydratedState,
   type InfiniteData,
   type QueryOptions,
+  queryKey,
 } from "@nifrajs/web"
 import { identityChanged } from "@nifrajs/web/client"
 import { getQueryClientSingleton } from "@nifrajs/web/internal/query-runtime"
@@ -43,9 +44,9 @@ function recordingOptions(body: () => void): (QueryOptions | undefined)[] {
   const client = pageClient()
   const original = client.query
   const seen: (QueryOptions | undefined)[] = []
-  client.query = (key, fn, options) => {
+  client.query = <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
     seen.push(options)
-    return original(key, fn, options)
+    return original<T>(key, fn, options)
   }
   try {
     asBrowser(body)
@@ -93,10 +94,10 @@ test("in a browser the state ref follows the cache entry until its scope stops",
   const { value: query, stop } = asBrowser(() =>
     inScope(() => useQuery(["vue", "entry"], async () => 1)),
   )
-  pageClient().setQueryData(["vue", "entry"], 7)
+  pageClient().setQueryData(queryKey(["vue", "entry"]), 7)
   expect(query.state.value.data).toBe(7)
   stop()
-  pageClient().setQueryData(["vue", "entry"], 8)
+  pageClient().setQueryData(queryKey(["vue", "entry"]), 8)
   expect(query.state.value.data).toBe(7)
 })
 
@@ -210,5 +211,5 @@ test("Vue provider hydrates a request-local cache before child setup", async () 
   const html = await renderToString(createSSRApp(App))
   expect(html).toContain("request one")
   expect(query?.state.value.data).toBe("request one")
-  expect(secondRequestClient.getQueryData(["vue", "request"])).toBeUndefined()
+  expect(secondRequestClient.getQueryData(queryKey(["vue", "request"]))).toBeUndefined()
 })

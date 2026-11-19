@@ -6,8 +6,10 @@ import type {
   MutationContext,
   MutationHandle,
   MutationState,
+  PlainQueryKey,
   QueryClient,
   QueryHandle,
+  QueryKey,
   QueryOptions,
   QueryState,
 } from "@nifrajs/web"
@@ -89,6 +91,16 @@ export interface UseQueryResult<T> extends QueryState<T> {
  * one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle. `options.live`
  * names the live keys that refetch it.
  */
+export function useQuery<T>(
+  key: QueryKey<T>,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): UseQueryResult<T>
+export function useQuery<T, K = unknown>(
+  key: PlainQueryKey<K>,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): UseQueryResult<T>
 export function useQuery<T>(
   key: unknown,
   fn: () => Promise<T>,

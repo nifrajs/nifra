@@ -86,7 +86,7 @@ test("compose threads RenderProps.search to useSearch (reactive ref, SSR-correct
   // the client mount derives the same value via searchOfChain, so the two renders match.
   const Page = defineComponent({
     setup() {
-      const search = useSearch()
+      const search = useSearch("/test-loose")
       return () => h("span", null, String(search.value.page))
     },
   })
@@ -102,7 +102,7 @@ test("compose threads RenderProps.search to useSearch (reactive ref, SSR-correct
 test("useSearch is an empty ref for a render with no search context", async () => {
   const Page = defineComponent({
     setup() {
-      const search = useSearch()
+      const search = useSearch("/test-loose")
       return () => h("span", null, String(Object.keys(search.value).length))
     },
   })

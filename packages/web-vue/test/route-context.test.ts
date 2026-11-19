@@ -16,7 +16,7 @@ import { RenderPropsProvider, SearchProvider, useMatches, useSearch } from "../s
 /** Shows what `useSearch` and `useMatches` read, so a test can see both providers' values. */
 const Reader = defineComponent({
   setup() {
-    const search = useSearch()
+    const search = useSearch("/test-loose")
     const matches = useMatches()
     return () =>
       h("p", null, `${String(search.value.page)} ${matches.value.map((m) => m.pathname).join(",")}`)

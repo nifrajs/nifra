@@ -18,8 +18,10 @@ import type {
   MutationContext,
   MutationHandle,
   MutationState,
+  PlainQueryKey,
   QueryClient,
   QueryHandle,
+  QueryKey,
   QueryOptions,
   QueryState,
 } from "@nifrajs/web"
@@ -127,6 +129,16 @@ export interface UseQueryResult<T> extends QueryState<T> {
  * false` keeps it idle (dependent queries). SSR-idle unless a `QueryClientProvider` supplies a hydrated
  * client.
  */
+export function useQuery<T>(
+  key: QueryKey<T>,
+  fn: () => Promise<T>,
+  options?: UseQueryOptions,
+): UseQueryResult<T>
+export function useQuery<T, K = unknown>(
+  key: PlainQueryKey<K>,
+  fn: () => Promise<T>,
+  options?: UseQueryOptions,
+): UseQueryResult<T>
 export function useQuery<T>(
   key: unknown,
   fn: () => Promise<T>,

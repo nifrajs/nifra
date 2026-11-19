@@ -27,9 +27,9 @@ function recordingOptions(body: () => void): (QueryOptions | undefined)[] {
   const client = pageClient()
   const original = client.query
   const seen: (QueryOptions | undefined)[] = []
-  client.query = (key, fn, options) => {
+  client.query = <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
     seen.push(options)
-    return original(key, fn, options)
+    return original<T>(key, fn, options)
   }
   try {
     asBrowser(body)

@@ -9,6 +9,7 @@ import {
   createQueryClient,
   MutationCancelledError,
   type MutationHandle,
+  queryKey,
 } from "../src/query.ts"
 
 let hadWindow = false
@@ -74,7 +75,7 @@ describe("a visitor change in another tab", () => {
   test("clears this tab's query data once, and this tab's change clears the other's, with no echo", async () => {
     const tab = await otherTab()
     const client = createQueryClient({ now: () => 0 })
-    client.setQueryData(["profile"], "previous visitor")
+    client.setQueryData(queryKey(["profile"]), "previous visitor")
     let heard = 0
     const probe = new BroadcastChannel(IDENTITY_CHANNEL)
     probe.onmessage = () => {
@@ -82,12 +83,12 @@ describe("a visitor change in another tab", () => {
     }
     try {
       identityChanged()
-      expect(client.getQueryData(["profile"])).toBeUndefined()
+      expect(client.getQueryData(queryKey(["profile"]))).toBeUndefined()
       await until(async () => (await tab.report()).profile === null)
 
-      client.setQueryData(["profile"], "next visitor")
+      client.setQueryData(queryKey(["profile"]), "next visitor")
       tab.change()
-      await until(() => client.getQueryData(["profile"]) === undefined)
+      await until(() => client.getQueryData(queryKey(["profile"])) === undefined)
 
       // One message per change on either side (a tab's other channels hear its own post). A tab that
       // rebroadcast what it heard would keep every tab ringing.
@@ -102,18 +103,18 @@ describe("a visitor change in another tab", () => {
 
   test("ignores a message that is not the identity signal", async () => {
     const client = createQueryClient({ now: () => 0 })
-    client.setQueryData(["profile"], "kept")
+    client.setQueryData(queryKey(["profile"]), "kept")
     const sender = new BroadcastChannel(IDENTITY_CHANNEL)
     try {
       for (const data of ["change", "changed ", { type: "changed" }, 1, null, ["changed"]])
         sender.postMessage(data)
       sender.postMessage("changed")
-      await until(() => client.getQueryData(["profile"]) === undefined)
-      client.setQueryData(["profile"], "kept")
+      await until(() => client.getQueryData(queryKey(["profile"])) === undefined)
+      client.setQueryData(queryKey(["profile"]), "kept")
       for (const data of ["change", "CHANGED", { type: "changed" }, 1, null, ["changed"]])
         sender.postMessage(data)
       await pause(50)
-      expect(client.getQueryData(["profile"])).toBe("kept")
+      expect(client.getQueryData(queryKey(["profile"]))).toBe("kept")
     } finally {
       sender.close()
     }
@@ -163,7 +164,7 @@ describe("a visitor change in another tab", () => {
 describe("a mutation across a visitor change", () => {
   test("is cancelled after its component unmounts, and never writes the previous visitor's answer back", async () => {
     const client = createQueryClient({ now: () => 0 })
-    client.setQueryData(["profile"], "previous visitor")
+    client.setQueryData(queryKey(["profile"]), "previous visitor")
     const events: string[] = []
     let answer!: (value: string) => void
     const mutation = createMutation(
@@ -174,7 +175,7 @@ describe("a mutation across a visitor change", () => {
       {
         onSuccess: (data) => {
           events.push("success")
-          client.setQueryData(["profile"], data)
+          client.setQueryData(queryKey(["profile"]), data)
         },
         onSettled: () => {
           events.push("settled")
@@ -190,7 +191,7 @@ describe("a mutation across a visitor change", () => {
     await expect(pending).rejects.toBeInstanceOf(MutationCancelledError)
     await flush()
     expect(events).toEqual([])
-    expect(client.getQueryData(["profile"])).toBeUndefined()
+    expect(client.getQueryData(queryKey(["profile"]))).toBeUndefined()
     expect(mutation.snapshot().status).toBe("idle")
   })
 
@@ -365,10 +366,10 @@ test("evicted regular and infinite handles keep only the current visitor's data"
   const page = client.infiniteQuery("profile", async () => profile, opts)
   await handle.fetch()
   await page.fetch()
-  client.setQueryData("draft", "draft")
+  client.setQueryData(queryKey("draft"), "draft")
   client.infiniteQuery("other", async () => "", opts)
   client.infiniteQuery("third", async () => "", opts)
-  expect(client.getQueryData("profile")).toBeUndefined()
+  expect(client.getQueryData(queryKey("profile"))).toBeUndefined()
   expect(handle.snapshot().data).toBe("first")
   expect(page.snapshot().data?.pages).toEqual(["first"])
 
@@ -382,20 +383,20 @@ test("evicted regular and infinite handles keep only the current visitor's data"
 
 test("failed updaters preserve older data and a write survives pinned entries", () => {
   const client = createQueryClient({ now: () => 0, max: 1 })
-  client.setQueryData("old", "keep")
+  client.setQueryData(queryKey("old"), "keep")
   expect(() =>
-    client.setQueryData("draft", () => {
+    client.setQueryData(queryKey("draft"), () => {
       throw new Error("updater failed")
     }),
   ).toThrow("updater failed")
-  expect(client.getQueryData("old")).toBe("keep")
+  expect(client.getQueryData(queryKey("old"))).toBe("keep")
   const unsubscribe = client.query("old", async () => "keep").subscribe(() => {})
-  client.setQueryData("draft", "new")
-  expect(client.getQueryData("draft")).toBe("new")
-  expect(client.getQueryData("old")).toBe("keep")
+  client.setQueryData(queryKey("draft"), "new")
+  expect(client.getQueryData(queryKey("draft"))).toBe("new")
+  expect(client.getQueryData(queryKey("old"))).toBe("keep")
   unsubscribe()
-  expect(client.getQueryData("draft")).toBe("new")
-  expect(client.getQueryData("old")).toBeUndefined()
+  expect(client.getQueryData(queryKey("draft"))).toBe("new")
+  expect(client.getQueryData(queryKey("old"))).toBeUndefined()
 })
 
 describe("reading a cached query on every render", () => {
@@ -408,7 +409,7 @@ describe("reading a cached query on every render", () => {
         return clock
       },
     })
-    for (let i = 0; i < 50; i++) client.setQueryData(["other", i], i)
+    for (let i = 0; i < 50; i++) client.setQueryData(queryKey(["other", i]), i)
     let hashes = 0
     const key = {
       toJSON() {
@@ -444,20 +445,22 @@ describe("reading a cached query on every render", () => {
     const client = createQueryClient({ now: () => clock, gcTime: 100, max: 3 })
     const expiring = client.query(["expiring"], async () => 1)
     expiring.subscribe(() => {})()
-    client.setQueryData(["expiring"], "old")
+    client.setQueryData(queryKey(["expiring"]), "old")
     const live = client.query(["live"], async () => 1)
     live.subscribe(() => {})
 
     clock = 99
     client.query(["live"], async () => 1)
-    expect(client.getQueryData(["expiring"])).toBe("old")
+    expect(client.getQueryData(queryKey(["expiring"]))).toBe("old")
     clock = 100
     client.query(["live"], async () => 1)
-    expect(client.getQueryData(["expiring"])).toBeUndefined()
+    expect(client.getQueryData(queryKey(["expiring"]))).toBeUndefined()
 
     // Imperative writes enforce the cap without a subsequent query() call.
-    for (const id of ["a", "b", "c", "d", "e"]) client.setQueryData([id], id)
-    const kept = ["a", "b", "c", "d", "e"].filter((id) => client.getQueryData([id]) !== undefined)
+    for (const id of ["a", "b", "c", "d", "e"]) client.setQueryData(queryKey([id]), id)
+    const kept = ["a", "b", "c", "d", "e"].filter(
+      (id) => client.getQueryData(queryKey([id])) !== undefined,
+    )
     expect(kept).toEqual(["d", "e"])
     expect(client.query(["live"], async () => 1)).toBe(live)
   })
@@ -928,23 +931,23 @@ describe("cache collection", () => {
     const client = createQueryClient({ now: () => clock, gcTime: 100 })
     const first = client.query(["first"], async () => 1)
     first.subscribe(() => {})()
-    client.setQueryData(["first"], "first")
+    client.setQueryData(queryKey(["first"]), "first")
     clock = 50
     const second = client.query(["second"], async () => 1)
     second.subscribe(() => {})()
-    client.setQueryData(["second"], "second")
+    client.setQueryData(queryKey(["second"]), "second")
 
     clock = 120
     client.query(["probe"], async () => 1)
-    expect(client.getQueryData(["first"])).toBeUndefined()
-    expect(client.getQueryData(["second"])).toBe("second")
+    expect(client.getQueryData(queryKey(["first"]))).toBeUndefined()
+    expect(client.getQueryData(queryKey(["second"]))).toBe("second")
 
     clock = 149
     client.query(["probe"], async () => 1)
-    expect(client.getQueryData(["second"])).toBe("second")
+    expect(client.getQueryData(queryKey(["second"]))).toBe("second")
     clock = 150
     client.query(["probe"], async () => 1)
-    expect(client.getQueryData(["second"])).toBeUndefined()
+    expect(client.getQueryData(queryKey(["second"]))).toBeUndefined()
   })
 
   test("after a collection the next one is due at the earliest timer left", () => {
@@ -954,7 +957,7 @@ describe("cache collection", () => {
       clock = at
       const handle = client.query([id], async () => 1)
       handle.subscribe(() => {})()
-      client.setQueryData([id], id)
+      client.setQueryData(queryKey([id]), id)
     }
     leave("first", 0) // due at 100
     leave("second", 10) // due at 110
@@ -962,18 +965,18 @@ describe("cache collection", () => {
 
     clock = 100
     client.query(["probe"], async () => 1)
-    expect(client.getQueryData(["first"])).toBeUndefined()
-    expect(client.getQueryData(["second"])).toBe("second")
+    expect(client.getQueryData(queryKey(["first"]))).toBeUndefined()
+    expect(client.getQueryData(queryKey(["second"]))).toBe("second")
 
     clock = 115
     client.query(["probe"], async () => 1)
-    expect(client.getQueryData(["second"])).toBeUndefined()
-    expect(client.getQueryData(["third"])).toBe("third")
+    expect(client.getQueryData(queryKey(["second"]))).toBeUndefined()
+    expect(client.getQueryData(queryKey(["third"]))).toBe("third")
   })
 
   test("a cache holding exactly its cap, of either kind, is never walked on a read", () => {
     const client = createQueryClient({ now: () => 0, max: 3 })
-    for (const id of ["a", "b", "c"]) client.setQueryData([id], id)
+    for (const id of ["a", "b", "c"]) client.setQueryData(queryKey([id]), id)
     const open = { initialPageParam: 0, getNextPageParam: () => undefined }
     const feed = client.infiniteQuery(["feed"], async (page: number) => page, open)
     client.infiniteQuery(["feed", 2], async (page: number) => page, open)

@@ -14,7 +14,7 @@ const app = server().post(
 )
 type App = typeof app
 
-const f = formFor<App, "/todos">() // method defaults to "post"
+const f = formFor<App>()("/todos") // method defaults to "post"
 
 // Valid field names compile.
 f.field("text")
@@ -32,4 +32,11 @@ f.readAll(fd, "count")
 f.read(fd, "userId")
 
 // @ts-expect-error - "/nope" is not a route the app declares
-formFor<App, "/nope">()
+formFor<App>()("/nope")
+
+// The handle's action and method are the route's own.
+export const action: "/todos" = f.action
+export const method: "post" = f.method
+
+// @ts-expect-error - /todos declares POST only, so a form for it cannot use "delete"
+formFor<App>()("/todos", "delete")

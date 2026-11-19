@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 
-import { href, useNavigate, useSearch } from "@nifrajs/web-preact/router"
+import { href, useNavigate } from "@nifrajs/web-preact/router"
 import { searchSchema } from "../shared/search.ts"
 import type { Route } from "./+types/search"
 
@@ -8,10 +8,10 @@ export { searchSchema }
 
 export const meta = { title: "nifra + Preact - Typed search" }
 
-// Preact's useSearch returns the validated search VALUE directly (SSR-correct), so `page`/`q` render
-// server-side and hydrate with no mismatch, and a soft-nav re-derives search identically.
-export default function Search({ data }: Route.ComponentProps) {
-  const { page, q } = useSearch<typeof searchSchema>() // { page: number; q: string }
+// A page gets its validated search as the `search` prop, typed by `searchSchema` (SSR-correct), so
+// `page`/`q` render server-side and hydrate with no mismatch, and a soft-nav re-derives it identically.
+export default function Search({ data, search }: Route.ComponentProps) {
+  const { page, q } = search // { page: number; q: string }
   const navigate = useNavigate()
   return (
     <div>
