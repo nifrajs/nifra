@@ -1233,6 +1233,7 @@ describe("session - identity names the data that says who the visitor is", () =>
         const next = await visit(signedIn, act)
         expect(tagOf(signedIn)).toBeString()
         expect({ change, tag: tagOf(next) }).toEqual({ change, tag: tagOf(signedIn) })
+        if (store) expect(idOf(next)).toBe(idOf(signedIn))
       }
     })
 
@@ -1249,6 +1250,17 @@ describe("session - identity names the data that says who the visitor is", () =>
       }
     })
   }
+
+  test("store mode: signing in rotates the loaded anonymous session without regenerate", async () => {
+    const { sessions, visit } = setup(true, ["userId"])
+    const anonymous = await visit(undefined, (session) => session.set("cart", 1))
+    const signedIn = await visit(anonymous, (session) => session.set("userId", "ada"))
+    expect(idOf(signedIn)).not.toBe(idOf(anonymous))
+    expect((await sessions.get(ctx({ nifra_session: anonymous }).context)).isEmpty).toBe(true)
+    const session = await sessions.get(ctx({ nifra_session: signedIn }).context)
+    expect(session.get("userId")).toBe("ada")
+    expect(session.get("cart")).toBe(1)
+  })
 
   for (const store of [true, false]) {
     test(`${store ? "store" : "cookie"} mode: each commit of one session object compares with what it last wrote`, async () => {

@@ -188,15 +188,14 @@ export interface ServerOptions {
    * How much of an unhandled error reaches the log for a 500. Never reaches the client either way -
    * the response is always a bare `internal_error`.
    *
-   * - `"full"` (default) - `name`, the error's own text as `detail`, and `stack`.
+   * - `"full"` (default with a non-production `process.env`) - `name`, `detail` and `stack`.
    * - `"message"` - `name` and `detail`, no stack.
-   * - `"none"` - `name` only.
+   * - `"none"` (default in production or without `process`) - request metadata and a generic error name.
    *
    * An error's text can quote the input that produced it, which is how request data ends up in a log
-   * sink. The framework's answer is the redacting logger rather than blanket suppression: pass
+   * sink. To opt back into detail with redaction, set `errorLogDetail: "full"` and pass
    * `logger: jsonLogger({ valuePatterns: commonSecretPatterns })` to scrub tokens, JWTs, and emails
-   * out of `detail` and `stack` while keeping the diagnosis. Reach for `"none"` when the sink itself
-   * is the thing you don't trust.
+   * out of `detail` and `stack` while keeping the diagnosis.
    */
   readonly errorLogDetail?: "full" | "message" | "none"
   /**

@@ -2395,7 +2395,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **crossSiteFormRefused** _(const)_ - `crossSiteFormRefused: (source: RequestSource, formOrigins: FormOrigins | undefined) => boolean`
   Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request with no content type that carries an `Authorization` header other than a browser-managed scheme (Bas…
 - **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined, message?: string) => void`
-  Write an unhandled request error to the log. An error's own text can quote the input that produced it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500 with no message and no stack is an incident nobody can diagnose, and the framework already ships the na…
+  Write an unhandled request error to the log. An error's own text can quote the input that produced it. The `"none"` policy keeps thrown values out of the sink, including custom error names.
 - **jsonResponse** _(function)_ - `jsonResponse: (value: unknown, init?: ResponseInit) => Response`
   `Response.json`, with each `bigint` written as its decimal string, as `jsonText` writes it.
 - **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`

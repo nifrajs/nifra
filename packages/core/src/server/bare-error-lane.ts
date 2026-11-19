@@ -66,10 +66,7 @@ export function renderBareError<T>(
 
 /**
  * Write an unhandled request error to the log. An error's own text can quote the input that produced
- * it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500
- * with no message and no stack is an incident nobody can diagnose, and the framework already ships
- * the narrower instrument for the leak - a redacting logger with `valuePatterns`. `"none"` is there
- * for an untrusted sink.
+ * it. The `"none"` policy keeps thrown values out of the sink, including custom error names.
  */
 export function emitRequestErrorLog(
   logger: Logger,
@@ -83,7 +80,7 @@ export function emitRequestErrorLog(
 ): void {
   logger.error(message, {
     ...(ctx === undefined ? {} : { method: ctx.req.method, path: pathnameOf(ctx.req.url) }),
-    name: err instanceof Error ? err.name : "Error",
+    name: detail !== "none" && err instanceof Error ? err.name : "Error",
     // `detail`, not `message`: the logger uses `message` for its own first argument, so a field of
     // that name is silently overwritten and the thrown error's own text never reaches the sink. It
     // survived only incidentally inside `stack`, and was lost outright for a non-Error throw.
