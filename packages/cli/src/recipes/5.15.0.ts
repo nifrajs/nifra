@@ -3,11 +3,11 @@ import type { UpgradeRecipe } from "./index.ts"
 /**
  * Upgrade recipe for Nifra 5.15.
  *
- * No import or dependency moves. The route hooks, the query cache's reads and writes, `serverFn` and
- * `formFor` are typed from the generated route table and the backend, which retires the old call shapes:
- * the `route-hooks`, `query-keys` and `form-for` source rewrites move the sites whose new form the call
- * decides, and `nifra upgrade` lists the rest by line. The runtime of every one is unchanged; what an
- * app sees is `tsc` failing on the old shapes.
+ * This release has no import moves. A Solid app moves to Solid 2.0, which changes its dependencies and
+ * its build plugin. The notes cover that move, copied job and shared-state payloads, serving an app on
+ * `@nifrajs/node-uws` (which now seals it and answers fixed routes natively), the response body hook's
+ * render fast path, `c.json()` on Bun and Deno under a body hook, and where `compression()` gzips on
+ * Bun for Linux.
  */
 export const recipe: UpgradeRecipe = {
   version: "5.15.0",
@@ -17,25 +17,24 @@ export const recipe: UpgradeRecipe = {
     { match: "nifra", to: "5.15.0" },
   ],
   importMoves: [],
-  sourceRewrites: ["route-hooks", "query-keys", "form-for"],
   affects: [
-    "@nifrajs/cli",
-    "@nifrajs/web",
-    "@nifrajs/web-react",
-    "@nifrajs/web-preact",
+    "@nifrajs/agent",
+    "@nifrajs/core",
+    "@nifrajs/jobs",
+    "@nifrajs/middleware",
+    "@nifrajs/node-uws",
+    "@nifrajs/proxy",
     "@nifrajs/web-solid",
-    "@nifrajs/web-svelte",
-    "@nifrajs/web-vue",
-    "create-nifra",
   ],
   notes: [
-    '`useSearch` and `useParams` take the route they read: `useSearch("/reports")` is that route\'s `searchSchema` output, `useParams("/users/:id")` its params, from `.nifra/types/routes.d.ts`. `useSearch<typeof searchSchema>()`, `useParams<{ id: string }>()` and the bare calls are removed, and `useParams` is new in `@nifrajs/web-preact`, `-solid`, `-svelte` and `-vue` (an accessor in Solid and Svelte, a ref in Vue). The argument is read only by the compiler; nothing changes at run time. The `route-hooks` rewrite writes the pattern of the page file the call is in; a call in a layout, a shared component or a `.svelte` or `.vue` file is listed by line, because only its author knows the route it renders in. A component shared by several pages takes the pattern as a prop typed as the union of their routes and passes it on. A pattern the table does not hold is a compile error, and `nifra check` warns (NF-C059) when a page names another page\'s route.',
-    'A Vue page reads its search with `useSearch("/reports")`, not `defineProps<Route.ComponentProps>()`: `vue-tsc` accepts that type but `@vue/compiler-sfc` cannot resolve `./+types/<name>` or its conditional types, so the component does not compile. React, Preact, Solid and Svelte pages get `search` as a prop typed by `Route.ComponentProps`.',
-    '`QueryClient.getQueryData` and `setQueryData` take a typed key: `queryKey<User>(["user", id])` carries the data type, and a plain array no longer compiles. `query`, `prefetchQuery`, `useQuery` and `createQuery` still take a plain key; given a typed one, its fetcher must return that type. The `query-keys` rewrite wraps the key at each call in a file that imports from `@nifrajs/web` (a file with a TanStack import is skipped) and moves a call\'s type argument onto the key: `qc.getQueryData<User>(KEY)` becomes `qc.getQueryData(queryKey<User>(KEY))`. A key shared by several calls reads better typed once where it is defined: `const USER = queryKey<User>(["user"])`, then `qc.getQueryData(USER)`.',
-    "`serverFn` ties its result to its `output` schema: the caller's type is the schema's output, and the function must return what the schema accepts. A function that returns data without an `output` schema no longer compiles; it was already refused when the app started, so no app that ran is affected. Add the `output` schema, or return nothing.",
-    "`formFor<App>()(path, method?)` replaces `formFor<App, Path, Method>()`: the path is checked against the app's routes, the method against the ones that route declares, and the handle carries the route's own `action` and `method` for `<form action={f.action} method={f.method}>`. The `form-for` rewrite moves a literal path and method from the type arguments to the call; a path or method written as a type alias is listed by line.",
-    "A route with no params has `Route.Params` of `Record<never, never>`, so reading `props.params.anything` is a compile error (any key was accepted, typed `never`). `href({ to })` of a route with no params takes no `params`, and a search field the route's schema defaults may be left out of `href({ to, search })`. A `.svelte` or `.vue` route's `searchSchema` reaches the table under `svelte-check` and `vue-tsc`; plain `tsc` sees only the file's default export, and `.mdx` routes stay loosely typed.",
-    "`nifra check` adds NF-C059 (a page's hook names another route) and NF-C060 (a value cast to `Href`, which skips the route check `href()` and `rawHref()` make), and warns when a source imports `useSearch` or `useParams` and no program loads the route table. `create-nifra` scaffolds a `nifra.check.json` that makes dead internal links (NF-C057), NF-C059 and NF-C060 errors; add the same `rules` to an existing app to hold them.",
-    "After `nifra upgrade 5.15.0 --write`, run `nifra types` and then `tsc`: whatever the rewrites listed or left shows as a compile error at its line. The Linux or CI build needs `.nifra/types/routes.d.ts` generated before `tsc`, as it did for `href()`.",
+    '`@nifrajs/web-solid` targets Solid 2.0 and Solid 1.x is no longer supported. Depend on `solid-js` and `@solidjs/web` ^2.0.0, use `@solidjs/vite-plugin` ^3.0.1 under Vite (replacing `vite-plugin-solid`), set `jsxImportSource` to `@solidjs/web`, and drop the `"solid"` resolve condition from `conditions`. `babel-preset-solid`, `solid-refresh` and Babel are no longer dependencies of the adapter. Components using `createResource`, `Suspense`, `ErrorBoundary`, `onMount`, `Dynamic` or `Context.Provider` move to `createMemo` under `Loading`, `Errored`, `onSettled`, `dynamic()` and the context component; `splitProps` and `mergeProps` become `omit` and `merge`. `RouteSlotHooks` takes the Solid 2 `createEffect(compute, effect)` shape and no longer has `onCleanup`. In production a server render error reaches the client as a bare error with no server path.',
+    "`MemoryJobStore` copies a job's payload when it is enqueued and again when it is leased, and refuses with a `TypeError` a payload a structured clone would change: a function, a class instance or null-prototype object, an accessor, an `Error`, or a `SharedArrayBuffer`. Pass such values as an identifier and rebuild them in the handler.",
+    "Shared-state patch values and subscriber batches are copied, so each observer receives its own batch and a caller cannot change live state without a new patch. A value that cannot be cloned faithfully, including shared memory and custom prototypes, is rejected before the batch commits.",
+    "`@nifrajs/proxy` requires a patched Undici as its peer: `^7.30.2 || >=8.12.4`. Update `undici` if your lockfile pins an older 7.x. `nifra check` now honors promoted diagnostic errors in its exit verdict, so a diagnostic you promoted to an error fails the run.",
+    "`@nifrajs/node-uws` answers `staticResponse()` GET routes inside uWebSockets.js, without a call into JavaScript, and fixed POST routes without building a Web `Request`, whenever nothing in the app can observe the request (no request or response hook, deadline, capacity gate, Host policy, schema, auth or other route-level stage). A POST carrying an `Origin` header still goes through the cross-site form check. New `echoParam(path)` answers a GET route with its final path parameter as text, exactly as sent.",
+    "Serving an app on `@nifrajs/node-uws` now seals it, as `listen()` does, so a hook or route added after `serve()` throws `SERVER_SEALED` instead of being skipped on the native paths. Register everything before serving.",
+    "A response-observer bundle can offer `renderBody`, a synchronous fast path for its `onResponseBody` hook that builds one `Response` from a handler's returned value. The body hook is not run again over a response it rendered with new bytes, so a custom body hook that is also used as a renderer must be idempotent on its own output. `compression()` uses it; nothing changes for an app that does not write its own response-observer bundle.",
+    "On Bun and Deno, `c.json()` keeps the JSON text it wrote when the app has a response body hook, as `c.text()` already did, so a gzipped `c.json()` reply goes out with a `Content-Length` instead of chunked. An app with no body hook builds its reply as before.",
+    "`compression()` on Bun for Linux gzips a buffered body up to 64 KiB inline on the event loop, where bodies over 4 KiB went to the thread pool. Bun on macOS keeps the 4 KiB cut.",
   ],
 }

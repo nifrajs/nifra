@@ -485,7 +485,7 @@ export default function Routing() {
         cannot resolve <code>Route.ComponentProps</code> for <code>defineProps</code>.
       </p>
       <p>
-        Coming from 5.14 or earlier, <code>nifra upgrade 5.15.0 --write</code> rewrites{" "}
+        Coming from 5.15 or earlier, <code>nifra upgrade 5.16.0 --write</code> rewrites{" "}
         <code>useSearch&lt;typeof searchSchema&gt;()</code>, <code>useParams&lt;T&gt;()</code> and the
         bare calls in a page file to name that page&apos;s route. A hook in a layout, a component shared
         by several pages or a <code>.svelte</code> or <code>.vue</code> file is listed by line instead:

@@ -1,5 +1,37 @@
 # @nifrajs/web
 
+## 5.15.1
+
+### Patch Changes
+
+- @nifrajs/core@5.15.1
+  - @nifrajs/island-trigger@5.15.1
+  - @nifrajs/utils@5.15.1
+
+## 5.15.0
+
+### Minor Changes
+
+- 09882db: `@nifrajs/web-solid` targets Solid 2.0 (`solid-js` and `@solidjs/web` ^2.0.0) and builds with `@solidjs/compiler`, so `babel-preset-solid`, `solid-refresh` and Babel are no longer dependencies. Solid 1.x is not supported. Apps use `@solidjs/vite-plugin` ^3.0.1 for Vite, set `jsxImportSource` to `@solidjs/web`, and drop the `"solid"` resolve condition. Components that used `createResource`, `Suspense`, `ErrorBoundary`, `onMount`, `Dynamic` or `Context.Provider` move to `createMemo` under `Loading`, `Errored`, `onSettled`, `dynamic()` and the context component.
+  
+  `RouteSlotHooks` takes the Solid 2 `createEffect(compute, effect)` shape and no longer has `onCleanup`. Server render errors reach the client as a bare error in production, with no server path.
+  
+  `create-nifra` scaffolds Solid sites on Solid 2.
+
+### Patch Changes
+
+- d3d7b35: Fall back to the normal body hook if render-time response construction fails. Preserve bodyless statuses when replaying cached responses. Apply the query cache cap to imperative writes and hydration. Require patched Undici peer versions. Honor promoted diagnostic errors in the CLI verdict and clear evicted query handles when the visitor changes.
+- a04a073: Detach shared-state patch values and subscriber batches so callers and observers cannot mutate live state without a new patch. Each observer receives its own copy of a batch. Reject values that cannot be faithfully cloned, including shared memory and custom prototypes, before committing a batch.
+  
+  Keep server-component HTML scanning linear when a tag has many attributes while retaining case-insensitive duplicate detection.
+- Updated dependencies [d3d7b35]
+- Updated dependencies [e24956f]
+- Updated dependencies [5dfb947]
+- Updated dependencies [1d956e6]
+  - @nifrajs/core@5.15.0
+  - @nifrajs/island-trigger@5.15.0
+  - @nifrajs/utils@5.15.0
+
 ## 5.14.0
 
 ### Minor Changes

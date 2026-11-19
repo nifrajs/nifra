@@ -19,6 +19,23 @@ function tableRows(value: unknown): VersionedRow[] {
     : []
 }
 
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+
+/**
+ * Whether benchmark data labelled `version` is current for a release of `expected`. A minor or major
+ * release must carry numbers captured at its own version. A patch release may keep the numbers of
+ * its minor (5.15.0 data for 5.15.1), since a patch changes behaviour without a new capture; data
+ * from an older minor, or from a version newer than the release, is stale.
+ */
+export function benchmarkVersionIsCurrent(version: unknown, expected: string): boolean {
+  if (version === expected) return true
+  if (typeof version !== "string") return false
+  const have = SEMVER.exec(version)
+  const want = SEMVER.exec(expected)
+  if (have === null || want === null || Number(want[3]) === 0) return false
+  return have[1] === want[1] && have[2] === want[2] && Number(have[3]) < Number(want[3])
+}
+
 export function checkPublicReleaseFreshness(root = process.cwd()): string[] {
   const failures: string[] = []
   const core = readJsonRecord(join(root, "packages/core/package.json"))
@@ -86,9 +103,9 @@ export function checkPublicReleaseFreshness(root = process.cwd()): string[] {
       for (const [index, row] of versionRows(value).entries()) {
         if (row.nifra !== true && row.you !== true) continue
         checked += 1
-        if (row.version !== expected) {
+        if (!benchmarkVersionIsCurrent(row.version, expected)) {
           failures.push(
-            `site/shared/data/benchmarks.json ${slice}[${index}] ${String(row.name)} is ${String(row.version)}, expected ${expected}; refresh it with \`bun run bench:site:update\``,
+            `site/shared/data/benchmarks.json ${slice}[${index}] ${String(row.name)} is ${String(row.version)}, expected ${expected}; refresh it with \`bun run bench:site:update\` (a patch release may keep its minor's numbers)`,
           )
         }
       }
@@ -103,10 +120,10 @@ export function checkPublicReleaseFreshness(root = process.cwd()): string[] {
       typeof capture.date !== "string" ||
       typeof capture.source !== "string" ||
       typeof capture.sourceUrl !== "string" ||
-      capture.nifraVersion !== expected
+      !(expected !== undefined && benchmarkVersionIsCurrent(capture.nifraVersion, expected))
     ) {
       failures.push(
-        `site/shared/data/benchmarks.json ${key} must include its source, capture date, and nifraVersion ${String(expected)}`,
+        `site/shared/data/benchmarks.json ${key} must include its source, capture date, and nifraVersion ${String(expected)} (a patch release may keep its minor's capture)`,
       )
     }
   }

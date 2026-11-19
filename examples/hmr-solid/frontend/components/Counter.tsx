@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 
 /**
- * Component-only module → a Solid HMR boundary (solid-refresh). Editing this file's JSX hot-swaps it
+ * Component-only module → a Solid HMR boundary (the Solid refresh runtime). Editing this file's JSX hot-swaps it
  * with the `count` signal preserved (no reload) - keep a route's view here; the route file
  * (loader/meta) full-reloads on save.
  */

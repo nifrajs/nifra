@@ -1,5 +1,21 @@
 # @nifrajs/workers
 
+## 5.15.1
+
+### Patch Changes
+
+- @nifrajs/core@5.15.1
+
+## 5.15.0
+
+### Patch Changes
+
+- Updated dependencies [d3d7b35]
+- Updated dependencies [e24956f]
+- Updated dependencies [5dfb947]
+- Updated dependencies [1d956e6]
+  - @nifrajs/core@5.15.0
+
 ## 5.14.0
 
 ### Patch Changes

@@ -1,5 +1,5 @@
 /**
- * The 5.15 source rewrites. Three APIs became typed from the generated route table and the backend, and
+ * The 5.16 source rewrites. Three APIs became typed from the generated route table and the backend, and
  * each old call shape stopped compiling; these rewrite the shapes whose new form is decided by the call
  * alone, and list every other site by line:
  *

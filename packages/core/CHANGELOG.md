@@ -1,5 +1,21 @@
 # @nifrajs/core
 
+## 5.15.1
+
+No changes in this release.
+
+## 5.15.0
+
+### Minor Changes
+
+- 5dfb947: A response-observer bundle can now offer `renderBody`, a synchronous fast path for its `onResponseBody` hook. When a handler returns a value, the framework runs it on the serialized JSON before any `Response` exists and builds one `Response` from the result, where the body tier built the rendered response and then a replacement for it. It applies only while the hook is the first response hook of the app (or of its group, under the group's prefix), and not on a reply carrying `c.set` headers or cookies, on an app with static response headers, or on an app with the idempotency plugin, whose stored reply must stay the identity one; those keep the body hook. The body hook is not run again over a response it rendered with new bytes, so it must be idempotent on its own output wherever else it sees one. `compression()` uses it: a returned value that gzips inline is answered as one `Response`. `c.json()` keeps its own reply, as a handler can read it back.
+- 1d956e6: `staticResponse()` GET routes are answered by uWS itself, without a call into JavaScript, and fixed POST routes without building a request (a POST carrying an `Origin` header still goes through the cross-site form check), whenever nothing in the app can observe the request (no request or response hook, deadline, capacity gate, Host policy, schema, auth or other route-level stage). New `echoParam(path)` answers a GET route with its final path parameter as text, exactly as sent (percent-escapes kept), so node-uws can answer that route natively too when no other route can overlap it. Serving an app now seals it, as `listen()` does, so a hook or route added afterwards throws `SERVER_SEALED` instead of being skipped on those paths.
+
+### Patch Changes
+
+- d3d7b35: Fall back to the normal body hook if render-time response construction fails. Preserve bodyless statuses when replaying cached responses. Apply the query cache cap to imperative writes and hydration. Require patched Undici peer versions. Honor promoted diagnostic errors in the CLI verdict and clear evicted query handles when the visitor changes.
+- e24956f: On Bun and Deno, `c.json()` keeps the JSON text it wrote when the app has a response body hook, as `c.text()` already does. A body hook such as `compression()` now receives that string instead of reading the reply back as a stream, so a gzipped `c.json()` reply goes out with a `Content-Length` rather than chunked. In Docker on four pinned CPUs a gzipped 8 KB `c.json()` route served about 9% more requests on Bun. An app with no body hook builds its `c.json()` reply as before.
+
 ## 5.14.0
 
 ### Patch Changes

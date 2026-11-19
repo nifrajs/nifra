@@ -210,17 +210,17 @@ export const target = "bun"
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^5.14.0",
-    "@nifrajs/core": "^5.14.0",
-    "@nifrajs/middleware": "^5.14.0",
-    "@nifrajs/schema": "^5.14.0",
-    "@nifrajs/web": "^5.14.0",
-    "@nifrajs/web-react": "^5.14.0",
+    "@nifrajs/client": "^5.15.1",
+    "@nifrajs/core": "^5.15.1",
+    "@nifrajs/middleware": "^5.15.1",
+    "@nifrajs/schema": "^5.15.1",
+    "@nifrajs/web": "^5.15.1",
+    "@nifrajs/web-react": "^5.15.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^5.14.0",
+    "@nifrajs/cli": "^5.15.1",
     "@types/bun": "^1.4.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -483,16 +483,16 @@ export const target = "bun"
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^5.14.0",
-    "@nifrajs/core": "^5.14.0",
-    "@nifrajs/middleware": "^5.14.0",
-    "@nifrajs/schema": "^5.14.0",
-    "@nifrajs/web": "^5.14.0",
-    "@nifrajs/web-preact": "^5.14.0",
+    "@nifrajs/client": "^5.15.1",
+    "@nifrajs/core": "^5.15.1",
+    "@nifrajs/middleware": "^5.15.1",
+    "@nifrajs/schema": "^5.15.1",
+    "@nifrajs/web": "^5.15.1",
+    "@nifrajs/web-preact": "^5.15.1",
     "preact": "^10.25.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^5.14.0",
+    "@nifrajs/cli": "^5.15.1",
     "@types/bun": "^1.4.2",
     "typescript": "^6.0.3",
     "vite": "^8.3.4"
@@ -758,17 +758,17 @@ export const target = "bun"
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^5.14.0",
-    "@nifrajs/core": "^5.14.0",
-    "@nifrajs/middleware": "^5.14.0",
-    "@nifrajs/schema": "^5.14.0",
-    "@nifrajs/web": "^5.14.0",
-    "@nifrajs/web-solid": "^5.14.0",
+    "@nifrajs/client": "^5.15.1",
+    "@nifrajs/core": "^5.15.1",
+    "@nifrajs/middleware": "^5.15.1",
+    "@nifrajs/schema": "^5.15.1",
+    "@nifrajs/web": "^5.15.1",
+    "@nifrajs/web-solid": "^5.15.1",
     "solid-js": "^2.0.0",
     "@solidjs/web": "^2.0.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^5.14.0",
+    "@nifrajs/cli": "^5.15.1",
     "@types/bun": "^1.4.2",
     "@solidjs/vite-plugin": "^3.0.1",
     "typescript": "^6.0.3",
@@ -1033,16 +1033,16 @@ export const target = "bun"
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^5.14.0",
-    "@nifrajs/core": "^5.14.0",
-    "@nifrajs/middleware": "^5.14.0",
-    "@nifrajs/schema": "^5.14.0",
-    "@nifrajs/web": "^5.14.0",
-    "@nifrajs/web-svelte": "^5.14.0",
+    "@nifrajs/client": "^5.15.1",
+    "@nifrajs/core": "^5.15.1",
+    "@nifrajs/middleware": "^5.15.1",
+    "@nifrajs/schema": "^5.15.1",
+    "@nifrajs/web": "^5.15.1",
+    "@nifrajs/web-svelte": "^5.15.1",
     "svelte": "^5.3.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^5.14.0",
+    "@nifrajs/cli": "^5.15.1",
     "@types/bun": "^1.4.2",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "typescript": "^6.0.3",
@@ -1312,16 +1312,16 @@ export const target = "bun"
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^5.14.0",
-    "@nifrajs/core": "^5.14.0",
-    "@nifrajs/middleware": "^5.14.0",
-    "@nifrajs/schema": "^5.14.0",
-    "@nifrajs/web": "^5.14.0",
-    "@nifrajs/web-vue": "^5.14.0",
+    "@nifrajs/client": "^5.15.1",
+    "@nifrajs/core": "^5.15.1",
+    "@nifrajs/middleware": "^5.15.1",
+    "@nifrajs/schema": "^5.15.1",
+    "@nifrajs/web": "^5.15.1",
+    "@nifrajs/web-vue": "^5.15.1",
     "vue": "^3.5.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^5.14.0",
+    "@nifrajs/cli": "^5.15.1",
     "@types/bun": "^1.4.2",
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/compiler-sfc": "^3.5.0",

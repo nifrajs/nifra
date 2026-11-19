@@ -44,12 +44,21 @@ export function clientHost<Data>(
       let left = false
       const start = (): void => {
         if (left) return
-        dispose = hydrate(
-          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
-          () => render(props.value as Data),
-          into,
-          { renderId: `nifra-${name}-` },
-        )
+        const hy: unknown = Reflect.get(globalThis, "_$HY")
+        const finished = isObject(hy) && Reflect.get(hy, "done") === true
+        // Once the page's own hydration is done, `hydrate` client-renders over the server HTML and
+        // replaces its nodes. A hole filled after that must still claim the HTML the fill brought.
+        if (finished) Reflect.set(hy, "done", false)
+        try {
+          dispose = hydrate(
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the server framed these props from this hole's own loader, through its output guard.
+            () => render(props.value as Data),
+            into,
+            { renderId: `nifra-${name}-` },
+          )
+        } finally {
+          if (finished) Reflect.set(hy, "done", true)
+        }
       }
       // Solid keeps one hydration context: a fill met while the page hydrates waits for it to end.
       if (isHydrating()) queueMicrotask(start)

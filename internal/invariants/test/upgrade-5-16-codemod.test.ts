@@ -1,5 +1,5 @@
 /**
- * The 5.15 upgrade codemod, end to end. A small app is written in the shapes 5.14 accepted (type-argument
+ * The 5.16 upgrade codemod, end to end. A small app is written in the shapes 5.15 accepted (type-argument
  * hooks, plain query keys, `formFor<App, Path>()`), the real route table is generated for it, and the
  * program is compiled before and after the recipe's source rewrites. Before, each shape is an error;
  * after, the only errors left are the sites the rewrites list for a person (a hook in a shared component),
@@ -80,8 +80,8 @@ beforeAll(() => {
 
 afterAll(() => rmSync(APP, { recursive: true, force: true }))
 
-test("every legacy shape fails the 5.15 types, the rewrites fix them, and only the listed site stays", () => {
-  const recipe = getRecipe("5.15.0")
+test("every legacy shape fails the 5.16 types, the rewrites fix them, and only the listed site stays", () => {
+  const recipe = getRecipe("5.16.0")
   expect(recipe?.sourceRewrites).toEqual(["route-hooks", "query-keys", "form-for"])
 
   const before = new Set(compile().map((reading) => reading.file))

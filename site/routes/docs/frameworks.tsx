@@ -24,7 +24,7 @@ const FRAMEWORKS: ReadonlyArray<{
     plugin: "none",
     bundle: "0 KB",
   },
-  { name: "Solid", pkg: "@nifrajs/web-solid", idiom: "primitives", plugin: "Babel", bundle: "~17 KB" },
+  { name: "Solid", pkg: "@nifrajs/web-solid", idiom: "primitives", plugin: "Solid compiler", bundle: "~17 KB" },
   { name: "Preact", pkg: "@nifrajs/web-preact", idiom: "hooks (React-compat)", plugin: "none", bundle: "~18 KB" },
   { name: "Svelte 5", pkg: "@nifrajs/web-svelte", idiom: "stores + runes", plugin: ".svelte compiler", bundle: "~52 KB" },
   { name: "Vue 3", pkg: "@nifrajs/web-vue", idiom: "composables", plugin: ".vue SFC (or render fns)", bundle: "~71 KB" },

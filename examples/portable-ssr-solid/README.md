@@ -8,9 +8,9 @@ both renderers *and* all five runtimes. `createWebApp` + the entries are identic
 ## Solid specifics
 
 - **`buildClient`** uses `solidBunPlugin("dom")` + `conditions: ["bun", "browser"]`.
-- **`buildServer`** uses `solidBunPlugin("ssr")`; its built-in shim pins `solid-js/web` to its **server**
-  build on the edge (`browser`) targets (the `worker` condition would too but segfaults Bun.build), and
-  the `node`/`solid` conditions resolve it on the Node target.
+- **`buildServer`** uses `solidBunPlugin("ssr")`; its built-in shim pins `solid-js` and `@solidjs/web` to their **server**
+  builds on the edge (`browser`) targets (the `worker` condition would too but segfaults Bun.build), and
+  the `node` condition resolves them on the Node target.
 
 Everything else mirrors the React example: a shared `backend/web-app.ts` + `cloudflare`/`node`/`deno`/`vercel`
 entries + one `build.ts`; assets served by the platform on edge, from disk on Node/Deno.
@@ -33,7 +33,7 @@ is a pure fetch-event worker (the runtime flag goes in `vercel.json`). Build art
 (`server-manifest.ts`, `public/`, `dist/`) are git-ignored.
 
 > **Verified locally:** Node, Deno (= Deno Deploy), and Cloudflare Workers (`wrangler dev`) - SSR +
-> hydration. **Vercel Edge note:** Solid's `solid-js/web` *server* build imports `node:*` (`Buffer`,
+> hydration. **Vercel Edge note:** Solid's `@solidjs/web` *server* build imports `node:*` (`Buffer`,
 > streams), so it needs a node-compat layer - Node, Deno, and Cloudflare (`nodejs_compat`) all provide
 > one, but the strict local **`edge-runtime` emulator does not**, so it crashes there. Real Vercel Edge
 > *does* offer node-compat, so the same bundle is expected to run there (not locally verifiable without

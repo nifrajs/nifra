@@ -301,12 +301,12 @@ regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
 100% of Elysia on `GET /users/:id` and
 100% on the validated `POST` - and
-**level with Fastify on Node** (104% of Fastify on GET,
-104% on the validated `POST`), with Elysia, Hono,
-and Express behind. On **Deno** it runs at 106% of Elysia on
-GET and 130% on the validated `POST`. In the realistic shape (security headers + CORS +
+**level with Fastify on Node** (107% of Fastify on GET,
+105% on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at 107% of Elysia on
+GET and 127% on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured on
-**Bun** with `oha`) Nifra runs at **111% of Elysia on GET and 113% on POST**. Treat benchmark
+**Bun** with `oha`) Nifra runs at **110% of Elysia on GET and 114% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -719,7 +719,7 @@ files and falls back to the raw query. A Svelte page takes `search` from its pro
 Vue page reads it with `useSearch("/reports")`: `@vue/compiler-sfc`
 cannot resolve `Route.ComponentProps` for `defineProps`.
 
-Coming from 5.14 or earlier, `nifra upgrade 5.15.0 --write` rewrites
+Coming from 5.15 or earlier, `nifra upgrade 5.16.0 --write` rewrites
 `useSearch<typeof searchSchema>()`, `useParams<T>()` and the
 bare calls in a page file to name that page's route. A hook in a layout, a component shared
 by several pages or a `.svelte` or `.vue` file is listed by line instead:
@@ -8672,8 +8672,8 @@ starts from unless nothing else, installed or declared, names one.
 
 ```bash
 nifra upgrade --list                # the release targets this CLI knows
-nifra upgrade 5.14.0              # dry-run: every planned edit, nothing written
-nifra upgrade 5.14.0 --write      # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.15.1              # dry-run: every planned edit, nothing written
+nifra upgrade 5.15.1 --write      # apply; it verifies with nifra check once the target is installed
 # if pins were already bumped by hand, add --from <installed-version>
 bun install                         # install the new pins
 nifra check                         # verify against them
@@ -8718,7 +8718,7 @@ again (see stale file: links).
 A recipe can also rewrite source on the syntax tree, with the project's own TypeScript, for
 a call shape an import move cannot express. A rewrite changes only a shape it recognizes
 whole and lists every other site by file and line under "to edit by hand"; it never
-guesses. The 5.15 recipe carries three, for APIs the route table and the backend now type:
+guesses. The 5.16 recipe carries three, for APIs the route table and the backend now type:
 `route-hooks` writes the page's own route into `useSearch` and
 `useParams` (the type-argument and bare forms are removed), `query-keys`
 wraps the key in `getQueryData` and `setQueryData` in
@@ -9764,8 +9764,8 @@ resets (svelte HMR)
 For **React, Preact, and Vue**, an edit hot-swaps with component state preserved.
 For **Solid and Svelte**, the module hot-swaps live (no full reload - scroll,
 route, and other components are kept), but the edited component re-runs, so its own local state
-resets. For Solid, use `solid({ ssr: true })` and the `"solid"`
-resolve condition. Working examples for all five live in `examples/hmr-*`.
+resets. For Solid, use `solid({ ssr: true })` from
+`@solidjs/vite-plugin`. Working examples for all five live in `examples/hmr-*`.
 
 ### The Fast Refresh boundary rule
 
@@ -13416,8 +13416,8 @@ data, duplicate runtimes, and stable list identity.
 state identity, compat boundaries, and runtime duplication.
 
 -
-**Solid:** tracked reads, props and stores, `For` versus
-`Index`, and owner cleanup.
+**Solid:** tracked reads, props and stores, `For` keyed versus
+unkeyed, and owner cleanup.
 
 -
 **Vue:** refs in script, watch sources and traversal, reactive props, and SSR
@@ -14692,7 +14692,7 @@ the command below, which runs every recipe since its installed version. The 5.6 
 its imports and dependencies; the follow-up changes below need a hand.
 
 ```sh
-nifra upgrade 5.14.0
+nifra upgrade 5.15.1
 ```
 
 -
@@ -15124,8 +15124,8 @@ rendering and route model, see Loaders & actions
 and Routing.
 
 The current dynamic SSR snapshot reports Nifra at 15× the throughput
-of Next.js, 7× Nuxt, 3.9× SvelteKit, and
-2.4× SolidStart on the measured pages. See the
+of Next.js, 6.9× Nuxt, 4× SvelteKit, and
+2× SolidStart on the measured pages. See the
 benchmark methodology and full results.
 
 ## Nifra - Migrate route by route
@@ -22310,7 +22310,7 @@ One package, the same on React, Preact, Vue, Solid and Svelte (pick the renderer
 - [Keep-alive](https://nifra.dev/docs/keep-alive) pages, a query cache, optimistic fetchers, and
   [islands](https://nifra.dev/docs/islands) (`@nifrajs/web/islands`) for pages with no framework runtime.
 - Optional [server components](https://nifra.dev/docs/server-components) on all five adapters:
-  React uses native RSC/Flight. Vue, Svelte, Preact and the current Solid 1.x adapter use
+  React uses native RSC/Flight. Vue, Svelte, Preact and the Solid adapter use
   explicitly registered islands in validated server-rendered ranges; Solid 2's experimental
   frames protocol is not currently targeted. Definitions take closed input and public-props
   schemas and authorization; a refresh runs the owner page's GET with its admission, capabilities,

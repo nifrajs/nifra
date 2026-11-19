@@ -1,5 +1,70 @@
 # @nifrajs/examples
 
+## 5.15.1
+
+### Patch Changes
+
+- Updated dependencies [5c77fbe]
+  - @nifrajs/web-solid@5.15.1
+  - @nifrajs/auth@5.15.1
+  - @nifrajs/cli@5.15.1
+  - @nifrajs/client@5.15.1
+  - @nifrajs/content@5.15.1
+  - @nifrajs/core@5.15.1
+  - @nifrajs/deno@5.15.1
+  - @nifrajs/e2e@5.15.1
+  - @nifrajs/i18n@5.15.1
+  - @nifrajs/image@5.15.1
+  - @nifrajs/mcp@5.15.1
+  - @nifrajs/middleware@5.15.1
+  - @nifrajs/node@5.15.1
+  - @nifrajs/schema@5.15.1
+  - @nifrajs/web@5.15.1
+  - @nifrajs/web-preact@5.15.1
+  - @nifrajs/web-react@5.15.1
+  - @nifrajs/web-svelte@5.15.1
+  - @nifrajs/web-vanilla@5.15.1
+  - @nifrajs/web-vue@5.15.1
+  - @nifrajs/webmcp@5.15.1
+  - @nifrajs/workers@5.15.1
+
+## 5.15.0
+
+### Patch Changes
+
+- Updated dependencies [d3d7b35]
+- Updated dependencies [e24956f]
+- Updated dependencies [a110c6c]
+- Updated dependencies [a04a073]
+- Updated dependencies [e557846]
+- Updated dependencies [e24956f]
+- Updated dependencies [5dfb947]
+- Updated dependencies [51b7afd]
+- Updated dependencies [1d956e6]
+- Updated dependencies [09882db]
+  - @nifrajs/core@5.15.0
+  - @nifrajs/cli@5.15.0
+  - @nifrajs/middleware@5.15.0
+  - @nifrajs/web@5.15.0
+  - @nifrajs/web-solid@5.15.0
+  - @nifrajs/auth@5.15.0
+  - @nifrajs/client@5.15.0
+  - @nifrajs/deno@5.15.0
+  - @nifrajs/e2e@5.15.0
+  - @nifrajs/i18n@5.15.0
+  - @nifrajs/mcp@5.15.0
+  - @nifrajs/schema@5.15.0
+  - @nifrajs/web-preact@5.15.0
+  - @nifrajs/web-react@5.15.0
+  - @nifrajs/web-svelte@5.15.0
+  - @nifrajs/web-vue@5.15.0
+  - @nifrajs/webmcp@5.15.0
+  - @nifrajs/workers@5.15.0
+  - @nifrajs/content@5.15.0
+  - @nifrajs/image@5.15.0
+  - @nifrajs/node@5.15.0
+  - @nifrajs/web-vanilla@5.15.0
+
 ## 5.14.0
 
 ### Patch Changes

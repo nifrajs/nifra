@@ -2,7 +2,7 @@ import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
 import { href } from "@nifrajs/web-react/router"
 
-const NIFRA_VERSION = "5.14.0"
+const NIFRA_VERSION = "5.15.1"
 
 export const meta = docsMeta(
   "/docs/cli",
@@ -580,7 +580,7 @@ nifra migrate --from tailwind --to stylex --dir src`}
         A recipe can also rewrite source on the syntax tree, with the project&apos;s own TypeScript, for
         a call shape an import move cannot express. A rewrite changes only a shape it recognizes
         whole and lists every other site by file and line under &quot;to edit by hand&quot;; it never
-        guesses. The 5.15 recipe carries three, for APIs the route table and the backend now type:{" "}
+        guesses. The 5.16 recipe carries three, for APIs the route table and the backend now type:{" "}
         <code>route-hooks</code> writes the page&apos;s own route into <code>useSearch</code> and{" "}
         <code>useParams</code> (the type-argument and bare forms are removed), <code>query-keys</code>{" "}
         wraps the key in <code>getQueryData</code> and <code>setQueryData</code> in{" "}
