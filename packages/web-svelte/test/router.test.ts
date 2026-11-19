@@ -111,17 +111,18 @@ test("a kept page's blocker blocks nothing, and its visibility reads false, whil
   }
 })
 
-test("useSearch and useMatches read the chain's context, and report nothing outside one", async () => {
+test("useSearch, useParams and useMatches read the chain's context, and report nothing outside one", async () => {
   // Compiled here rather than through the Bun plugin, which registers process-wide: this runs in the
   // test process, so the accessors count toward coverage.
   const { compile } = await import("svelte/compiler")
   const { render } = await import("svelte/server")
   const source = `<script>
-  import { useMatches, useSearch } from ${JSON.stringify(join(import.meta.dir, "../src/router.ts"))}
+  import { useMatches, useParams, useSearch } from ${JSON.stringify(join(import.meta.dir, "../src/router.ts"))}
   const search = useSearch("/test-loose")
+  const params = useParams("/test-loose")
   const matches = useMatches()
 </script>
-<p>{JSON.stringify(search())}|{JSON.stringify(matches().map((m) => [m.id, m.pathname]))}</p>`
+<p>{JSON.stringify(search())}|{JSON.stringify(params())}|{JSON.stringify(matches().map((m) => [m.id, m.pathname]))}</p>`
   // `.tmp-nifra-*` directories are outside the coverage gate.
   const dir = await mkdtemp(join(import.meta.dir, ".tmp-nifra-router-probe-"))
   try {
@@ -139,8 +140,10 @@ test("useSearch and useMatches read the chain's context, and report nothing outs
       ["@nifrajs/web-svelte:props", () => props],
     ])
     const inside = render(Probe, { context }).body
-    expect(inside).toContain('{"page":2}|[["_layout","/"],["orgs/[org]","/orgs/acme"]]')
-    expect(render(Probe).body).toContain("{}|[]")
+    expect(inside).toContain(
+      '{"page":2}|{"org":"acme"}|[["_layout","/"],["orgs/[org]","/orgs/acme"]]',
+    )
+    expect(render(Probe).body).toContain("{}|{}|[]")
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

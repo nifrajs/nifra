@@ -3,6 +3,7 @@ import {
   createQueryClient,
   type DehydratedState,
   type QueryClient,
+  type QueryKey,
   type QueryOptions,
   queryKey,
 } from "@nifrajs/web"
@@ -199,7 +200,8 @@ test("useQuery hands staleTime, live keys and enabled to the client as given", (
     ...client,
     query: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
       seen.push(options)
-      return client.query<T>(key, fn, options)
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the recording wrapper forwards a key it does not inspect
+      return client.query<T>(key as QueryKey<T>, fn, options)
     },
   }
   const Probe = () => {

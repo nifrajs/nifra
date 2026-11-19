@@ -6830,10 +6830,16 @@
     "signature": "export interface ForkSessionResult {\n    readonly sessionId: string;\n    readonly parentSessionId: string;\n}"
   },
   {
+    "name": "FormFor",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface FormFor<App> {\n    <Path extends PostPaths<App>>(path: Path, ...params: ParamsArgument<Path>): FormHandle<App, Path, \"post\">;\n    <Path extends RoutePaths<App>, Method extends RouteMethods<App, Path>>(path: Path, method: Method, ...params: ParamsArgument<Path>): FormHandle<App, Path, Method>;\n}"
+  },
+  {
     "name": "FormHandle",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface FormHandle<App, Path extends string, Method extends string> {\n    /** The route's URL, for `<form action>`: the path the handle was made for. */\n    readonly action: Path;\n    /** The route's method, lowercase, for `<form method>` or a `fetch`. */\n    readonly method: Method;\n    /** Input props for a schema field. `name` is constrained to the body's keys - a typo, or a field the\n     * schema doesn't have, is a COMPILE error. Spread onto an element: `<input {...f.field(\"text\")} />`. */\n    field<K extends FieldKey<App, Path, Method>>(name: K, props?: FieldProps): FieldProps & {\n        name: K;\n    };\n    /** `formData.get`, key-constrained to the body's fields - reading an orphan key won't compile. */\n    read<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntry;\n    /** `formData.getAll`, key-checked the same way. */\n    readAll<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntries;\n}"
+    "signature": "export interface FormHandle<App, Path extends string, Method extends string> {\n    /** The route's URL, for `<form action>`: the path with its params filled in. */\n    readonly action: string;\n    /** The route's method, lowercase, for `<form method>` or a `fetch`. */\n    readonly method: Method;\n    /** Input props for a schema field. `name` is constrained to the body's keys - a typo, or a field the\n     * schema doesn't have, is a COMPILE error. Spread onto an element: `<input {...f.field(\"text\")} />`. */\n    field<K extends FieldKey<App, Path, Method>>(name: K, props?: FieldProps): FieldProps & {\n        name: K;\n    };\n    /** `formData.get`, key-constrained to the body's fields - reading an orphan key won't compile. */\n    read<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntry;\n    /** `formData.getAll`, key-checked the same way. */\n    readAll<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntries;\n}"
   },
   {
     "name": "FormOptions",
@@ -11696,11 +11702,18 @@
     "signature": "export interface PiBackendOptions {\n    /** Defaults to `pi`, resolved through PATH. */\n    readonly command?: string;\n    /** Extra arguments appended after `--mode rpc`. */\n    readonly args?: readonly string[];\n    /**\n     * Variables Pi runs with, on top of the base set (`PATH`, `HOME`, locale, terminal, and the\n     * model-provider credentials Pi reads, such as `ANTHROPIC_API_KEY`). Nothing else from the parent\n     * environment passes; a key mapped to `undefined` is withheld even when the parent has it.\n     */\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly sessionDir?: string;\n    readonly noSession?: boolean;\n    /** Override the generated Pi flags for a test double or a compatible RPC executable. */\n    readonly rpcArgs?: readonly string[];\n    /**\n     * Reload transport. Pi's documented RPC protocol uses a slash command bridged by a tiny\n     * extension; compatible RPC implementations may opt into their legacy top-level command.\n     */\n    readonly reloadCommand?: \"restart\" | \"prompt\" | \"rpc\";\n    /** Load the tiny public-API reload bridge. Defaults to true for generated Pi processes. */\n    readonly enableReloadBridge?: boolean;\n    readonly maxEventQueueSize?: number;\n    /** Maximum UTF-8 bytes accepted for one Pi JSONL record. Defaults to 1 MiB. */\n    readonly maxRecordBytes?: number;\n    /** Maximum prompt characters accepted by the adapter. Defaults to 64 KiB. */\n    readonly maxMessageChars?: number;\n    /** Optional project instructions passed through Pi's documented append-system-prompt flag. */\n    readonly appendSystemPrompt?: string;\n    /** Opt-in loading of the separately packaged Nifra verification tools extension. */\n    readonly enableNifraTools?: boolean;\n}"
   },
   {
+    "name": "PlainKeyDefault",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type PlainKeyDefault = string | number | readonly unknown[] | Record<string, unknown>;",
+    "doc": "/**\n * The key type a plain-key overload assumes when its caller names only the data type\n * (`useQuery<Todo>(...)`). A fallback to `unknown` would let a typed key of another data type through.\n */"
+  },
+  {
     "name": "PlainQueryKey",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type PlainQueryKey<K> = K extends {\n    readonly \"~nifraQueryData\": unknown;\n} ? never : K;",
-    "doc": "/** A key that is not a {@link QueryKey}: `never` for one, so its overload does not take a typed key. */"
+    "signature": "export type PlainQueryKey<K> = K & {\n    readonly \"~nifraQueryData\"?: undefined;\n};",
+    "doc": "/**\n * A key that is not a {@link QueryKey}. A typed key does not fit it, so the plain-key overload of `query`\n * / `useQuery` cannot take one: a typed key goes through the overload that checks its data type.\n */"
   },
   {
     "name": "PlainRender",
@@ -12473,7 +12486,7 @@
     "name": "QueryClient",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface QueryClient {\n    /** Get the stable {@link QueryHandle} for `key`, fetched via `fn`. Re-binds the latest `fn` (and\n     * `options`) each call (closures change between renders); returns the same handle for the same\n     * (hashed) key. */\n    query: {\n        <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): QueryHandle<T>;\n        <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryHandle<T>;\n    };\n    /** Get the stable {@link InfiniteQueryHandle} for `key`, whose pages are fetched via `fn(pageParam)`. */\n    infiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: InfiniteQueryOptions<T, P>) => InfiniteQueryHandle<T, P>;\n    /** Mark matching cached queries, infinite ones included, stale and refetch the **mounted** ones\n     * (subscribers > 0). Array keys match by **prefix** (`[\"todo\"]` ⇒ every `[\"todo\", …]`); other keys\n     * match exactly. */\n    invalidateQueries: (keyOrPrefix: unknown) => void;\n    /** Read a cached query's data (`undefined` if absent or not yet successful). Synchronous, no fetch. */\n    getQueryData: <T>(key: QueryKey<T>) => T | undefined;\n    /** Write a query's data directly (optimistic updates, or seeding). Creates the entry if absent; marks\n     * it fresh (`updatedAt = now`). `updater` may be a value or a function of the previous data. */\n    setQueryData: <T>(key: QueryKey<T>, updater: T | ((prev: T | undefined) => T)) => void;\n    /** Fetch + cache a query's data WITHOUT subscribing (SSR prefetch, hover warm). Resolves when cached;\n     * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */\n    prefetchQuery: {\n        <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): Promise<void>;\n        <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): Promise<void>;\n    };\n    /** Serialize the successful queries that `options.shouldDehydrateQuery` selects to a transferable\n     * snapshot (server → client SSR bridge). Deny by default: with no filter the snapshot is empty. */\n    dehydrate: (options?: DehydrateOptions) => DehydratedState;\n    /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */\n    hydrate: (state: DehydratedState) => void;\n    /** Drop every cached query: mounted ones go back to pending and refetch, the rest are removed. Every\n     * client in the page runs it when the visitor changes: `identityChanged()` in this tab, a live\n     * account switch, or, on the client's next read, a new identity epoch cookie. */\n    clear: () => void;\n}",
+    "signature": "export interface QueryClient {\n    /** Get the stable {@link QueryHandle} for `key`, fetched via `fn`. Re-binds the latest `fn` (and\n     * `options`) each call (closures change between renders); returns the same handle for the same\n     * (hashed) key. */\n    query: {\n        <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): QueryHandle<T>;\n        <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryHandle<T>;\n    };\n    /** Get the stable {@link InfiniteQueryHandle} for `key`, whose pages are fetched via `fn(pageParam)`. */\n    infiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: InfiniteQueryOptions<T, P>) => InfiniteQueryHandle<T, P>;\n    /** Mark matching cached queries, infinite ones included, stale and refetch the **mounted** ones\n     * (subscribers > 0). Array keys match by **prefix** (`[\"todo\"]` ⇒ every `[\"todo\", …]`); other keys\n     * match exactly. */\n    invalidateQueries: (keyOrPrefix: unknown) => void;\n    /** Read a cached query's data (`undefined` if absent or not yet successful). Synchronous, no fetch. */\n    getQueryData: <T>(key: QueryKey<T>) => T | undefined;\n    /** Write a query's data directly (optimistic updates, or seeding). Creates the entry if absent; marks\n     * it fresh (`updatedAt = now`). `updater` may be a value or a function of the previous data. */\n    setQueryData: <T>(key: QueryKey<T>, updater: T | ((prev: T | undefined) => T)) => void;\n    /** Fetch + cache a query's data WITHOUT subscribing (SSR prefetch, hover warm). Resolves when cached;\n     * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */\n    prefetchQuery: {\n        <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): Promise<void>;\n        <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): Promise<void>;\n    };\n    /** Serialize the successful queries that `options.shouldDehydrateQuery` selects to a transferable\n     * snapshot (server → client SSR bridge). Deny by default: with no filter the snapshot is empty. */\n    dehydrate: (options?: DehydrateOptions) => DehydratedState;\n    /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */\n    hydrate: (state: DehydratedState) => void;\n    /** Drop every cached query: mounted ones go back to pending and refetch, the rest are removed. Every\n     * client in the page runs it when the visitor changes: `identityChanged()` in this tab, a live\n     * account switch, or, on the client's next read, a new identity epoch cookie. */\n    clear: () => void;\n}",
     "doc": "/** The keyed query cache. One per app (a binding registers it like the router). */"
   },
   {
@@ -15882,8 +15895,8 @@
     "name": "ServerFn",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
-    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); in a client build, this module becomes typed stubs that POST under its\n * file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it\n * under that name.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n */"
+    "signature": "export interface ServerFn<Input, Output, Direct = Output> {\n    (input: Input, context: Context): MaybePromise<Direct>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n    /** Type-only: the browser's view of the result. Never present at run time. */\n    readonly \"~nifraOutput\"?: Output;\n}",
+    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); in a client build, this module becomes typed stubs that POST under its\n * file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it\n * under that name.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n *\n * `Output` is what the browser receives, after the `output` schema ran over the return. `Direct` is\n * what a direct server call returns: the function's own return, which the schema has not touched.\n */"
   },
   {
     "name": "ServerFnConfig",
@@ -15945,7 +15958,7 @@
     "name": "ServerFnReference",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type ServerFnReference<Input, Output> = ServerFn<Input, Output> | ClientServerFn<Input, Output>;",
+    "signature": "export type ServerFnReference<Input, Output> = ServerFn<Input, Output, unknown> | ClientServerFn<Input, Output>;",
     "doc": "/** A UI binding boundary: source declarations and generated client stubs are both accepted. */"
   },
   {
@@ -20364,7 +20377,7 @@
     "name": "createQuery",
     "kind": "function",
     "package": "@nifrajs/web-solid",
-    "signature": "export declare function createQuery<T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>;"
+    "signature": "export declare function createQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>;"
   },
   {
     "name": "createQueryClient",
@@ -21674,8 +21687,8 @@
     "name": "formFor",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function formFor<App>(): <Path extends RoutePaths<App>, Method extends RouteMethods<App, Path> = Extract<\"post\", RouteMethods<App, Path>>>(path: Path, method?: Method) => FormHandle<App, Path, Method>;",
-    "doc": "/**\n * Bind a form to a backend route at the type level. `App` is `typeof backend`; the path is one of the\n * app's real routes (a wrong path is a type error), and the method one that route declares (default\n * `\"post\"`). The handle carries the route's own `action` and `method`, and checks every field name against\n * the route's body schema.\n */"
+    "signature": "export declare function formFor<App>(): FormFor<App>;",
+    "doc": "/**\n * Bind a form to a backend route at the type level. `App` is `typeof backend`; the path is one of the\n * app's real routes (a wrong path is a type error), and the method one that route declares: left out, it\n * is `\"post\"`, and a route with no POST handler needs its method named. A path with params takes them\n * after the method, `formFor<App>()(\"/users/:id\", \"post\", { id })`, and `action` is the URL they fill. The\n * handle carries the route's own `action` and `method`, and checks every field name against the route's\n * body schema.\n */"
   },
   {
     "name": "formatAssuranceReport",
@@ -24290,8 +24303,7 @@
     "name": "queryKey",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function queryKey<T = unknown, K = unknown>(key: K): K & QueryKey<T>;",
-    "doc": "/** Type a key with the data stored under it. The same key, typed. */"
+    "signature": "export declare function queryKey<T = unknown, K = unknown>(key: K): K & QueryKey<T>;"
   },
   {
     "name": "queryObjectOf",
@@ -25808,7 +25820,7 @@
     "name": "serverFn",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function serverFn<Input = void>(config: ServerFnConfig<Input> & {\n    readonly output?: undefined;\n}, fn: (input: Input, context: Context) => MaybePromise<void | null | undefined>): ServerFn<Input, void>;"
+    "signature": "export declare function serverFn<Input = void>(config: ServerFnConfig<Input> & {\n    readonly output?: undefined;\n}, fn: (input: Input, context: Context) => MaybePromise<void | null | undefined | ServerFnControl>): ServerFn<Input, void>;"
   },
   {
     "name": "serverFnStubPlugin",
@@ -27321,25 +27333,25 @@
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-preact",
-    "signature": "export declare function useQuery<T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>;"
+    "signature": "export declare function useQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>;"
   },
   {
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function useQuery<T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>;"
+    "signature": "export declare function useQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>;"
   },
   {
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
-    "signature": "export declare function useQuery<T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>;"
+    "signature": "export declare function useQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>;"
   },
   {
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-vue",
-    "signature": "export declare function useQuery<T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>;"
+    "signature": "export declare function useQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>;"
   },
   {
     "name": "useQueryClient",

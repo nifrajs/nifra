@@ -121,6 +121,8 @@ test("svelte-check types a .svelte route's search, on the page, in the hook and 
     bin("svelte-check"),
     "--tsconfig",
     join(SVELTE, "tsconfig.json"),
+    "--output",
+    "machine",
     "--threshold",
     "error",
   ])

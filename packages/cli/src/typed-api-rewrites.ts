@@ -99,29 +99,29 @@ function rewriteRouteHooks(ts: typeof TS, file: string, text: string): RewriteRe
 
 const QUERY_KEY = "queryKey"
 const KEYED = new Set(["getQueryData", "setQueryData"])
+const QUERY_CALL = /\.(?:get|set)QueryData(?:<[^<>()]*>)?\(/g
 
-function rewriteQueryKeys(ts: typeof TS, file: string, text: string): RewriteResult {
-  if (SFC.test(file)) return { text, count: 0, manual: [] }
-  const { tree } = parseSource(ts, file, text)
-  const fromWeb = tree.statements.filter(
-    (statement): statement is TS.ImportDeclaration =>
-      ts.isImportDeclaration(statement) &&
-      ts.isStringLiteral(statement.moduleSpecifier) &&
-      WEB_QUERY.test(statement.moduleSpecifier.text),
-  )
-  // The calls are unqualified in name (`qc.setQueryData`), so only a file that holds a Nifra query
-  // client is read: TanStack's client has the same method names and a different key type.
-  const tanstack = tree.statements.some(
-    (statement) =>
-      ts.isImportDeclaration(statement) &&
-      ts.isStringLiteral(statement.moduleSpecifier) &&
-      statement.moduleSpecifier.text.startsWith("@tanstack/"),
-  )
-  if (fromWeb.length === 0 || tanstack) return { text, count: 0, manual: [] }
-  const local = importedNames(ts, tree, WEB_QUERY, [QUERY_KEY]).keys().next().value ?? QUERY_KEY
+/** The local name for the helper a rewrite writes: the file's own import, else one no identifier in the file uses. */
+function helperName(imported: string | undefined, text: string): string {
+  if (imported !== undefined) return imported
+  for (let n = 0; ; n++) {
+    const candidate = n === 0 ? QUERY_KEY : `nifraQueryKey${n === 1 ? "" : n}`
+    if (!new RegExp(`\\b${candidate}\\b`).test(text)) return candidate
+  }
+}
+
+const MAX_QUERY_KEY_PASSES = 8
+
+/** One walk of `tree`: wraps the key of every `getQueryData`/`setQueryData` call that is not wrapped yet. */
+function queryKeyPass(
+  ts: typeof TS,
+  tree: TS.SourceFile,
+  local: string,
+): { readonly edits: Edit[]; readonly sites: number } {
   const edits: Edit[] = []
   let sites = 0
-  const visit = (node: TS.Node): void => {
+  const visit = (node: TS.Node, skip?: TS.Node): void => {
+    let skipped: TS.Node | undefined
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
@@ -145,28 +145,95 @@ function rewriteQueryKeys(ts: typeof TS, file: string, text: string): RewriteRes
           end: key.end,
           text: `${local}${generic}(${key.getText(tree)})`,
         })
+        // A call inside the key is rewritten by the next pass, once this key is wrapped: two edits
+        // over one range would corrupt the source.
+        skipped = key
       }
     }
-    ts.forEachChild(node, visit)
+    ts.forEachChild(node, (child) => {
+      if (child !== skipped && child !== skip) visit(child)
+    })
   }
   visit(tree)
-  if (edits.length === 0) return { text, count: 0, manual: [] }
-  const needsImport = importedNames(ts, tree, WEB_QUERY, [QUERY_KEY]).size === 0
-  if (needsImport) {
-    const quote = quoteOf(text)
+  return { edits, sites }
+}
+
+function rewriteQueryKeys(ts: typeof TS, file: string, text: string): RewriteResult {
+  if (SFC.test(file)) {
+    if (!/@nifrajs\/web/.test(text) || /@tanstack\//.test(text))
+      return { text, count: 0, manual: [] }
+    const manual: ManualSite[] = []
+    for (const match of text.matchAll(QUERY_CALL)) {
+      if (
+        text
+          .slice(match.index + match[0].length)
+          .trimStart()
+          .startsWith(QUERY_KEY)
+      )
+        continue
+      manual.push({
+        line: lineAt(text, match.index),
+        reason: `${match[0].slice(1, -1)} takes a typed key: wrap the key in queryKey(...), from "@nifrajs/web/client"`,
+      })
+    }
+    return { text, count: 0, manual }
+  }
+  const first = parseSource(ts, file, text).tree
+  const fromWeb = first.statements.some(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      WEB_QUERY.test(statement.moduleSpecifier.text),
+  )
+  // The calls are unqualified in name (`qc.setQueryData`), so only a file that holds a Nifra query
+  // client is read: TanStack's client has the same method names and a different key type.
+  const tanstack = first.statements.some(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text.startsWith("@tanstack/"),
+  )
+  if (!fromWeb || tanstack) return { text, count: 0, manual: [] }
+  const imported = importedNames(ts, first, WEB_QUERY, [QUERY_KEY]).keys().next().value
+  const local = helperName(imported, text)
+  let current = text
+  let sites = 0
+  for (let pass = 0; pass < MAX_QUERY_KEY_PASSES; pass++) {
+    const { tree } = parseSource(ts, file, current)
+    const found = queryKeyPass(ts, tree, local)
+    if (found.edits.length === 0) break
+    sites += found.sites
+    current = applyEdits(current, found.edits)
+  }
+  if (sites === 0) return { text, count: 0, manual: [] }
+  if (imported === undefined) {
+    const tree = parseSource(ts, file, current).tree
+    const quote = quoteOf(current)
     const last = tree.statements.filter(ts.isImportDeclaration).at(-1)
-    const line = `import { ${QUERY_KEY} } from ${quote}@nifrajs/web/client${quote}`
-    edits.push(
+    const names = local === QUERY_KEY ? QUERY_KEY : `${QUERY_KEY} as ${local}`
+    const line = `import { ${names} } from ${quote}@nifrajs/web/client${quote}`
+    current = applyEdits(current, [
       last === undefined
         ? { start: 0, end: 0, text: `${line}\n` }
         : { start: last.end, end: last.end, text: `\n${line}` },
-    )
+    ])
   }
-  return { text: applyEdits(text, edits), count: sites, manual: [] }
+  return { text: current, count: sites, manual: [] }
 }
 
+const FORM_FOR_TYPES = /\bformFor<[^<>(),]*,[^<>()]*>\(\s*\)/g
+
 function rewriteFormFor(ts: typeof TS, file: string, text: string): RewriteResult {
-  if (SFC.test(file)) return { text, count: 0, manual: [] }
+  if (SFC.test(file)) {
+    if (!/@nifrajs\/web/.test(text)) return { text, count: 0, manual: [] }
+    const manual: ManualSite[] = []
+    for (const match of text.matchAll(FORM_FOR_TYPES))
+      manual.push({
+        line: lineAt(text, match.index),
+        reason: `${match[0]} is now formFor<App>()("/path", "method"): the path and method are values`,
+      })
+    return { text, count: 0, manual }
+  }
   const { tree, lineOf } = parseSource(ts, file, text)
   const names = importedNames(ts, tree, FORMS, ["formFor"])
   if (names.size === 0) return { text, count: 0, manual: [] }
@@ -215,18 +282,21 @@ export const TYPED_API_REWRITES: readonly SourceRewrite[] = [
     description:
       'useSearch<T>() / useParams<T>() and the bare calls → useSearch("/pattern") / useParams("/pattern") in a page file',
     mentions: (text) => /\buse(?:Search|Params)\b/.test(text) && /@nifrajs\/web-/.test(text),
+    components: true,
     rewrite: rewriteRouteHooks,
   },
   {
     id: "query-keys",
     description: "getQueryData(key) / setQueryData(key, v) → the same with queryKey(key)",
     mentions: (text) => /\b(?:get|set)QueryData\b/.test(text) && /@nifrajs\/web/.test(text),
+    components: true,
     rewrite: rewriteQueryKeys,
   },
   {
     id: "form-for",
     description: 'formFor<App, "/path">() → formFor<App>()("/path")',
     mentions: (text) => /\bformFor\b/.test(text) && /@nifrajs\/web/.test(text),
+    components: true,
     rewrite: rewriteFormFor,
   },
 ]

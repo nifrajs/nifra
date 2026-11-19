@@ -271,6 +271,7 @@ export {
   type MutationHandle,
   type MutationState,
   type MutationStatus,
+  type PlainKeyDefault,
   type PlainQueryKey,
   type QueryClient,
   type QueryClientOptions,

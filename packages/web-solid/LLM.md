@@ -24,7 +24,7 @@ Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid compiler
 - **createFetcher** _(function)_ - `createFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-solid/fetcher`
 - **createInfiniteQuery** _(function)_ - `createInfiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: CreateInfiniteQueryOptions<T, P>) => CreateInfiniteQue…` · from `@nifrajs/web-solid/query`
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCal…` · from `@nifrajs/web-solid/query`
-- **createQuery** _(function)_ - `createQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>; <T, K = unknown>(key: PlainQueryK…` · from `@nifrajs/web-solid/query`
+- **createQuery** _(function)_ - `createQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>; <T, K = PlainKeyDefault>(key: Pla…` · from `@nifrajs/web-solid/query`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-solid/client`
 - **href** _(function)_ - `href: <K extends Pattern>(options: HrefOptions<K>) => Href<K>` · from `@nifrajs/web-solid/router`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-solid/client`

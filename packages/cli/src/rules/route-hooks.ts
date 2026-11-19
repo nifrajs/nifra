@@ -49,6 +49,7 @@ export const routeHookRule: CheckRule = {
     if (pages.size === 0) return []
     return scanSources(ctx, {
       expectation: ["NF-C059", "route-hook"],
+      components: true,
       mayMatch: (text) => text.includes("useSearch") || text.includes("useParams"),
       find: (facts, tree) => {
         const own = pages.get(tree.fileName)
@@ -84,6 +85,7 @@ export const hrefCastRule: CheckRule = {
   async scan(ctx) {
     return scanSources(ctx, {
       expectation: ["NF-C060", "href-cast"],
+      components: true,
       mayMatch: (text) => text.includes("Href"),
       find: (facts, tree) =>
         TEST_DIR.test(tree.fileName)

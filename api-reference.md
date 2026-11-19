@@ -5745,8 +5745,10 @@ _No named exports (side-effect entrypoint)._
   The params `useParams(from)` gives: the route's, or the loose record for a pattern outside the table.
 - **PendingBoundary** _(interface)_ - `interface PendingBoundary`
   A dynamic load that has started but is not part of the initial render barrier.
-- **PlainQueryKey** _(type)_ - `type PlainQueryKey<K> = K extends { readonly "~nifraQueryData": unknown } ? never : K`
-  A key that is not a {@link QueryKey}: `never` for one, so its overload does not take a typed key.
+- **PlainKeyDefault** _(type)_ - `type PlainKeyDefault = string | number | readonly unknown[] | Record<string, unknown>`
+  The key type a plain-key overload assumes when its caller names only the data type (`useQuery<Todo>(...)`). A fallback to `unknown` would let a typed key of another data type through.
+- **PlainQueryKey** _(type)_ - `type PlainQueryKey<K> = K & { readonly "~nifraQueryData"?: undefined }`
+  A key that is not a {@link QueryKey}. A typed key does not fit it, so the plain-key overload of `query` / `useQuery` cannot take one: a typed key goes through the overload that checks its data type.
 - **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
   When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
 - **PrerenderedPageReaderOptions** _(interface)_ - `interface PrerenderedPageReaderOptions`
@@ -5967,8 +5969,8 @@ _No named exports (side-effect entrypoint)._
   Read a self-hosted build's prerendered pages for `createWebApp`'s `prerenderedPages`. Only the build's own files are reachable, each opened only once its real path is inside `dir`, so a link planted in the deployed tree cannot point a page elsewhere. A deploy's files do not change while it runs, so…
 - **previewEndpoint** _(function)_ - `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
   A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
-- **queryKey** _(function)_ - `queryKey: <T = unknown, K = unknown>(key: K) => K & QueryKey<T>`
-  Type a key with the data stored under it. The same key, typed.
+- **queryKey** _(function)_ - `queryKey: { <T = unknown, K extends readonly unknown[] = readonly unknown[]>(key: K): K & QueryKey<T>; <T = unknown, K = unknown>(key: K): K & QueryKey<T>; }`
+  Type a key with the data stored under it. The same key, typed. Name the data type and the key keeps its array type, so `queryKey<Todo[]>(["todos"])` can still be spread or indexed.
 - **rawHref** _(function)_ - `rawHref: (path: string) => Href`
   An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **redirect** _(function)_ - `redirect: { (location: Href, options?: RedirectOptions & { readonly external?: false; }): ResponseResult; (location: string, options: RedirectOptions & { readonly external: true; }): ResponseResult; }`
@@ -6306,8 +6308,8 @@ _No named exports (side-effect entrypoint)._
 - **onRouteSlotIdentityChange** _(function)_ - `onRouteSlotIdentityChange: (listener: () => void) => () => void`
 - **parseRouteSlots** _(function)_ - `parseRouteSlots: (path: string) => RouteSlotTargets`
   Parse and strictly validate flat `slot.<name>=<target>` query values.
-- **queryKey** _(function)_ - `queryKey: <T = unknown, K = unknown>(key: K) => K & QueryKey<T>`
-  Type a key with the data stored under it. The same key, typed.
+- **queryKey** _(function)_ - `queryKey: { <T = unknown, K extends readonly unknown[] = readonly unknown[]>(key: K): K & QueryKey<T>; <T = unknown, K = unknown>(key: K): K & QueryKey<T>; }`
+  Type a key with the data stored under it. The same key, typed. Name the data type and the key keeps its array type, so `queryKey<Todo[]>(["todos"])` can still be spread or indexed.
 - **rawHref** _(function)_ - `rawHref: (path: string) => Href`
   An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath` (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no contro…
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
@@ -6517,7 +6519,7 @@ _No named exports (side-effect entrypoint)._
   Brand identifying a value produced by {@link serverFn}, so mounting cannot pick up stray exports.
 - **SERVER_FN_PREFIX** _(const)_ - `SERVER_FN_PREFIX: "/_nifra/fn"`
   The URL prefix every mounted function lives under. Namespaced per mount, then by export name.
-- **ServerFn** _(interface)_ - `interface ServerFn<Input, Output>`
+- **ServerFn** _(interface)_ - `interface ServerFn<Input, Output, Direct = Output>`
   A declared server function. Callable directly on the server (the same value your own server-side code can await); in a client build, this module becomes typed stubs that POST under its file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it under that name.
 - **ServerFnConfig** _(interface)_ - `interface ServerFnConfig<Input>`
   What a server function declares about itself.
@@ -6525,7 +6527,7 @@ _No named exports (side-effect entrypoint)._
   The minimum a server needs to expose for functions to be mounted onto it.
 - **ServerFnModule** _(type)_ - `type ServerFnModule = Readonly<Record<string, unknown>>`
   Every server function a module exports, keyed by export name.
-- **ServerFnReference** _(type)_ - `type ServerFnReference<Input, Output> = | ServerFn<Input, Output> | ClientServerFn<Input, Output>`
+- **ServerFnReference** _(type)_ - `type ServerFnReference<Input, Output> = | ServerFn<Input, Output, unknown> | ClientServerFn<Input, Output>`
   A UI binding boundary: source declarations and generated client stubs are both accepted.
 - **ServerFunctionsOptions** _(interface)_ - `interface ServerFunctionsOptions`
 - **serverFn** _(function)_ - `serverFn: { <Input = void, Schema extends StandardSchemaV1 = StandardSchemaV1<unknown, unknown>>(config: ServerFnConfig<Input> & { readonly output: Schema; }, fn: (input: Input, context: Context) => MaybePromise<InferIn…`
@@ -6569,6 +6571,7 @@ _No named exports (side-effect entrypoint)._
   The valid field names for that route's body - the schema's keys as a string union.
 - **FieldProps** _(type)_ - `type FieldProps = Record<string, unknown>`
   Extra attributes merged into the returned input props (id, type, defaultValue, placeholder, …).
+- **FormFor** _(interface)_ - `interface FormFor<App>`
 - **FormHandle** _(interface)_ - `interface FormHandle<App, Path extends string, Method extends string>`
 - **RouteBody** _(type)_ - `type RouteBody<App, Path extends string, Method extends string> = Path extends keyof RegistryOf<App> ? Uppercase<Method> extends keyof RegistryOf<App>[Path] ? (RegistryOf<App>[Path][Uppercase<Method>] & RouteInfo)["body…`
   The body object type of `App`'s `Method Path` route (`never` when the route declares no body).
@@ -6576,8 +6579,8 @@ _No named exports (side-effect entrypoint)._
   The lowercase methods `App` declares for `Path`: what a form for that route may use.
 - **RoutePaths** _(type)_ - `type RoutePaths<App> = keyof RegistryOf<App> & string`
   Every route path the app declares - constrains `Path`, so a wrong path is itself a type error.
-- **formFor** _(function)_ - `formFor: <App>() => <Path extends RoutePaths<App>, Method extends RouteMethods<App, Path> = Extract<"post", RouteMethods<App, Path>>>(path: Path, method?: Method) => FormHandle<App, Path, Method>`
-  Bind a form to a backend route at the type level. `App` is `typeof backend`; the path is one of the app's real routes (a wrong path is a type error), and the method one that route declares (default `"post"`). The handle carries the route's own `action` and `method`, and checks every field name agai…
+- **formFor** _(function)_ - `formFor: <App>() => FormFor<App>`
+  Bind a form to a backend route at the type level. `App` is `typeof backend`; the path is one of the app's real routes (a wrong path is a type error), and the method one that route declares: left out, it is `"post"`, and a route with no POST handler needs its method named. A path with params takes t…
 
 ### `@nifrajs/web/fs`
 
@@ -7380,7 +7383,7 @@ _No named exports (side-effect entrypoint)._
   A paged query binding that follows Preact's mount and subscription lifecycle.
 - **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
   A mutation binding with Preact state subscriptions and identity-boundary cancellation.
-- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; }`
+- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; }`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle. `options.live`…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
@@ -7559,7 +7562,7 @@ _No named exports (side-effect entrypoint)._
   Subscribe to a paged (infinite-scroll) query. Returns the accumulated `data.pages` plus `fetchNextPage`/`fetchPreviousPage`/`hasNextPage`/`hasPreviousPage`. Fetches the first page on mount. SSR-idle unless a `QueryClientProvider` supplies a hydrated client.
 - **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
   A mutation hook (create/update/delete). Returns `{ mutate, mutateAsync, data, error, variables, isIdle, isPending, isError, isSuccess, reset, cancel }`. Invalidate affected queries from `onSuccess` via `useQueryClient().invalidateQueries(...)`. The handle is stable across renders; the latest `fn`/ …
-- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>; }`
+- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>; <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>;…`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching, updatedAt, isPending, isError, isSuccess, refetch }`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount and when the key changes; `enabl…
 - **useQueryClient** _(function)_ - `useQueryClient: () => QueryClient`
   The active {@link QueryClient}: a `QueryClientProvider`'s client, else the client-side singleton, else a no-op (server / pre-hydration). Use it to `invalidateQueries`/`setQueryData`/`prefetchQuery`.
@@ -7802,7 +7805,7 @@ _No named exports (side-effect entrypoint)._
   Bind a paged query to a Solid owner and fetch its first page on mount.
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => CreateMutationResult<TData, TVariables>`
   Bind a mutation to a Solid owner. Identity changes discard late results and callbacks.
-- **createQuery** _(function)_ - `createQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>; }`
+- **createQuery** _(function)_ - `createQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>; <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<…`
   Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`. Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. Call inside a component (owns the subscription). `options.live` names the…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
@@ -7974,7 +7977,7 @@ _No named exports (side-effect entrypoint)._
   Bind a paged query as a Svelte readable store. Fetching starts on the first browser subscription.
 - **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationStore<TData, TVariables>`
   Bind a mutation as a Svelte store. Identity changes discard late results and callbacks.
-- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>; }`
+- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>; <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>; }`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle. `options.live` names the live keys that refetch it.
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
@@ -8168,7 +8171,7 @@ _No named exports (side-effect entrypoint)._
   Bind a paged query to Vue's mount and effect-scope lifecycles.
 - **useMutation** _(function)_ - `useMutation: <TData, TVariables = void>(fn: (variables: TVariables, context: MutationContext) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => UseMutationResult<TData, TVariables>`
   Bind a mutation to Vue's effect scope. Identity changes discard late results and callbacks.
-- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; <T, K = unknown>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; }`
+- **useQuery** _(function)_ - `useQuery: { <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>; }`
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. `options.live` names…
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).

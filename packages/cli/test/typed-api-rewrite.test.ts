@@ -118,6 +118,53 @@ export const f = (qc: ReturnType<typeof useQueryClient>) => {
     expect(result.count).toBe(1)
   })
 
+  test("a read inside another key is wrapped too, in as many passes as the nesting takes", () => {
+    const result = run(
+      "query-keys",
+      "data/nested.ts",
+      withClient(
+        'const x = qc.getQueryData(["detail", qc.getQueryData<string>(["selected", qc.getQueryData(["deep"])])])',
+      ),
+    )
+    expect(result.text).toBe(
+      `import { useQueryClient } from "@nifrajs/web-react/query"
+import { queryKey } from "@nifrajs/web/client"
+export const f = (qc: ReturnType<typeof useQueryClient>) => {
+  const x = qc.getQueryData(queryKey(["detail", qc.getQueryData(queryKey<string>(["selected", qc.getQueryData(queryKey(["deep"]))]))]))
+}
+`,
+    )
+    expect(result.count).toBe(3)
+  })
+
+  test("a file that already has a queryKey of its own gets the helper under another name", () => {
+    const result = run(
+      "query-keys",
+      "data/clash.ts",
+      `import { useQueryClient } from "@nifrajs/web-react/query"\nconst queryKey = ["todos"]\nexport const f = (qc: ReturnType<typeof useQueryClient>) => qc.getQueryData(queryKey)\n`,
+    )
+    expect(result.text).toBe(
+      `import { useQueryClient } from "@nifrajs/web-react/query"\nimport { queryKey as nifraQueryKey } from "@nifrajs/web/client"\nconst queryKey = ["todos"]\nexport const f = (qc: ReturnType<typeof useQueryClient>) => qc.getQueryData(nifraQueryKey(queryKey))\n`,
+    )
+    expect(result.count).toBe(1)
+  })
+
+  test("a .svelte or .vue file lists its untyped keys, and leaves a wrapped one", () => {
+    const result = run(
+      "query-keys",
+      "routes/a.svelte",
+      '<script lang="ts">\n  import { useQueryClient } from "@nifrajs/web-svelte/query"\n  const qc = useQueryClient()\n  qc.setQueryData(["a"], 1)\n  qc.getQueryData<number>(queryKey(["b"]))\n</script>\n',
+    )
+    expect(result.count).toBe(0)
+    expect(result.manual).toEqual([
+      {
+        line: 4,
+        reason:
+          'setQueryData takes a typed key: wrap the key in queryKey(...), from "@nifrajs/web/client"',
+      },
+    ])
+  })
+
   test("a file with TanStack's client, or no Nifra import, is not touched", () => {
     for (const text of [
       `import { useQueryClient } from "@tanstack/react-query"\nimport { x } from "@nifrajs/web"\nuseQueryClient().setQueryData(["a"], 1)\n`,
@@ -141,6 +188,17 @@ describe("form-for rewrite", () => {
       `${head}const a = formFor<typeof backend>()("/todos")\nconst b = formFor<typeof backend>()("/todos", "delete")\n`,
     )
     expect(result.count).toBe(2)
+  })
+
+  test("a .svelte or .vue file lists the old form with its line", () => {
+    const result = run(
+      "form-for",
+      "routes/a.vue",
+      '<script setup lang="ts">\nimport { formFor } from "@nifrajs/web/forms"\nconst f = formFor<typeof backend, "/todos">()\n</script>\n',
+    )
+    expect(result.count).toBe(0)
+    expect(result.manual).toHaveLength(1)
+    expect(result.manual[0]?.line).toBe(3)
   })
 
   test("a path that is not a literal, and the new form, are not rewritten", () => {

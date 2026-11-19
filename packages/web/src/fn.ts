@@ -52,6 +52,7 @@ import {
   type InferInput,
   type InferOutput,
   isSameOriginRequest,
+  type ResponseResult,
   type RouteSchema,
   type StandardSchemaV1,
 } from "@nifrajs/core/server"
@@ -89,18 +90,26 @@ export interface ServerFnConfig<Input> {
  * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.
  * Keeping the types separate prevents a direct server call from type-checking while handing the
  * declaration `undefined` for a context its implementation requires.
+ *
+ * `Output` is what the browser receives, after the `output` schema ran over the return. `Direct` is
+ * what a direct server call returns: the function's own return, which the schema has not touched.
  */
-export interface ServerFn<Input, Output> {
-  (input: Input, context: Context): MaybePromise<Output>
+export interface ServerFn<Input, Output, Direct = Output> {
+  (input: Input, context: Context): MaybePromise<Direct>
   readonly [SERVER_FN]: ServerFnConfig<Input>
+  /** Type-only: the browser's view of the result. Never present at run time. */
+  readonly "~nifraOutput"?: Output
 }
+
+/** A redirect or an error response: control flow, not data, so no output schema applies to it. */
+type ServerFnControl = Response | ResponseResult
 
 /** The one-argument callable emitted into a client bundle for a {@link ServerFn}. */
 export type ClientServerFn<Input, Output> = (input: Input) => MaybePromise<Output>
 
 /** A UI binding boundary: source declarations and generated client stubs are both accepted. */
 export type ServerFnReference<Input, Output> =
-  | ServerFn<Input, Output>
+  | ServerFn<Input, Output, unknown>
   | ClientServerFn<Input, Output>
 
 /** Brand identifying a value produced by {@link serverFn}, so mounting cannot pick up stray exports. */
@@ -123,16 +132,18 @@ export const SERVER_FN: unique symbol = Symbol.for("@nifrajs/web/server-fn")
  *
  * The caller sees what `output` lets through: the function declares an `Output` type of the schema's
  * OUTPUT, and what it returns must fit the schema's INPUT, so a field the schema drops is not in the
- * type the browser gets. Without `output` the function may return nothing: any data it returns is
- * refused at run time ("declares no output schema"), so a data return is a type error here.
+ * type the browser gets. A direct server call returns what the function returned, not the schema's
+ * output. Without `output` the function may return nothing: any data it returns is refused at run time
+ * ("declares no output schema"), so a data return is a type error here. A redirect or an error
+ * `Response` may be returned either way.
  */
 export function serverFn<Input = void, Schema extends StandardSchemaV1 = StandardSchemaV1>(
   config: ServerFnConfig<Input> & { readonly output: Schema },
-  fn: (input: Input, context: Context) => MaybePromise<InferInput<Schema>>,
-): ServerFn<Input, InferOutput<Schema>>
+  fn: (input: Input, context: Context) => MaybePromise<InferInput<Schema> | ServerFnControl>,
+): ServerFn<Input, InferOutput<Schema>, InferInput<Schema>>
 export function serverFn<Input = void>(
   config: ServerFnConfig<Input> & { readonly output?: undefined },
-  fn: (input: Input, context: Context) => MaybePromise<void | null | undefined>,
+  fn: (input: Input, context: Context) => MaybePromise<void | null | undefined | ServerFnControl>,
 ): ServerFn<Input, void>
 export function serverFn(
   config: ServerFnConfig<unknown>,

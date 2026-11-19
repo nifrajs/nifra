@@ -1,6 +1,6 @@
 /** The Svelte query store: its options reach the page's client, and it follows the cache entry. */
 import { expect, test } from "bun:test"
-import type { QueryOptions } from "@nifrajs/web"
+import type { QueryKey, QueryOptions } from "@nifrajs/web"
 import { queryKey } from "@nifrajs/web"
 import { identityChanged } from "@nifrajs/web/client"
 import { getQueryClientSingleton } from "@nifrajs/web/internal/query-runtime"
@@ -41,7 +41,8 @@ function recordingOptions(body: () => void): (QueryOptions | undefined)[] {
   const seen: (QueryOptions | undefined)[] = []
   client.query = <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
     seen.push(options)
-    return original<T>(key, fn, options)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the wrapper forwards a key it does not inspect
+    return original<T>(key as QueryKey<T>, fn, options)
   }
   try {
     asBrowser(body)

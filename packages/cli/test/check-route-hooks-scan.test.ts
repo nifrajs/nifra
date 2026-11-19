@@ -106,6 +106,23 @@ test("a nifra-expect comment with a reason accepts the call", async () => {
   expect(await scan("NF-C059")).toEqual([])
 })
 
+test("a .svelte or .vue page is held to its route, at the line of its own file", async () => {
+  writeAppFile(
+    root,
+    "routes/reports.svelte",
+    `<script lang="ts">\n  import { useSearch } from "@nifrajs/web-svelte/router"\n  const search = useSearch("/other")\n</script>\n<p>{search().page}</p>\n`,
+  )
+  writeAppFile(
+    root,
+    "routes/users/[id].vue",
+    `<template><p /></template>\n<script setup lang="ts">\nimport { useParams } from "@nifrajs/web-vue/router"\nuseParams("/users/:id")\nuseParams("/nope")\n</script>\n`,
+  )
+  expect((await scan("NF-C059")).map((item) => `${item.file}:${item.line}`).sort()).toEqual([
+    "routes/reports.svelte:3",
+    "routes/users/[id].vue:5",
+  ])
+})
+
 const CAST_IMPORT = 'import { type Href, rawHref } from "@nifrajs/web-react/router"'
 
 test("a cast to Href is reported, in either syntax", async () => {

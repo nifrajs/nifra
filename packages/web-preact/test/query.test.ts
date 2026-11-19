@@ -1,6 +1,11 @@
 /** Preact's useQuery: its options reach the page's client; on the server it renders idle. */
 import { expect, spyOn, test } from "bun:test"
-import { createQueryClient, type DehydratedState, type QueryOptions } from "@nifrajs/web"
+import {
+  createQueryClient,
+  type DehydratedState,
+  type QueryKey,
+  type QueryOptions,
+} from "@nifrajs/web"
 import { getQueryClientSingleton } from "@nifrajs/web/internal/query-runtime"
 import { GlobalWindow } from "happy-dom"
 
@@ -29,7 +34,8 @@ function recordingOptions(body: () => void): (QueryOptions | undefined)[] {
   const seen: (QueryOptions | undefined)[] = []
   client.query = <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
     seen.push(options)
-    return original<T>(key, fn, options)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the wrapper forwards a key it does not inspect
+    return original<T>(key as QueryKey<T>, fn, options)
   }
   try {
     asBrowser(body)

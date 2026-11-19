@@ -4,6 +4,7 @@ import {
   createQueryClient,
   type DehydratedState,
   type InfiniteData,
+  type QueryKey,
   type QueryOptions,
   queryKey,
 } from "@nifrajs/web"
@@ -46,7 +47,8 @@ function recordingOptions(body: () => void): (QueryOptions | undefined)[] {
   const seen: (QueryOptions | undefined)[] = []
   client.query = <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
     seen.push(options)
-    return original<T>(key, fn, options)
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the wrapper forwards a key it does not inspect
+    return original<T>(key as QueryKey<T>, fn, options)
   }
   try {
     asBrowser(body)

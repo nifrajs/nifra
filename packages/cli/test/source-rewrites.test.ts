@@ -238,6 +238,27 @@ describe("an upgrade with a source rewrite", () => {
     expect(plan.dependencyAdds.map(({ name }) => name)).toEqual(["@nifrajs/core"])
   })
 
+  test("the 5.16 recipe reaches component files, which only its own rewrites read", async () => {
+    const root = join(FIXTURES, "components")
+    await mkdir(join(root, "routes"), { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "@nifrajs/web": "^5.15.0" } }, null, 2),
+    )
+    await writeFile(
+      join(root, "routes/index.svelte"),
+      '<script lang="ts">\n  import { useSearch } from "@nifrajs/web-svelte/router"\n  const search = useSearch<{ page: number }>()\n</script>\n',
+    )
+    const plan = computeUpgrade(root, chainRecipes("5.16.0", "5.15.0"), true, false, false, [], ts)
+    expect(plan.sourceRewrites).toEqual([])
+    expect(plan.manualRewrites.map(({ file, line }) => `${file}:${line}`)).toEqual([
+      "routes/index.svelte:3",
+    ])
+    expect(await readFile(join(root, "routes/index.svelte"), "utf8")).toContain(
+      "useSearch<{ page: number }>()",
+    )
+  })
+
   test("the 5.10 recipe selects ppr-option and moves experimental.ppr", async () => {
     const root = join(FIXTURES, "ppr-option")
     await mkdir(join(root, "src"), { recursive: true })

@@ -150,13 +150,28 @@ export interface DehydratedState {
  */
 export type QueryKey<T> = { readonly "~nifraQueryData": T }
 
-/** A key that is not a {@link QueryKey}: `never` for one, so its overload does not take a typed key. */
-export type PlainQueryKey<K> = K extends { readonly "~nifraQueryData": unknown } ? never : K
+/**
+ * A key that is not a {@link QueryKey}. A typed key does not fit it, so the plain-key overload of `query`
+ * / `useQuery` cannot take one: a typed key goes through the overload that checks its data type.
+ */
+export type PlainQueryKey<K> = K & { readonly "~nifraQueryData"?: undefined }
 
-/** Type a key with the data stored under it. The same key, typed. */
-export function queryKey<T = unknown, K = unknown>(key: K): K & QueryKey<T> {
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the brand is a phantom property; the key itself is returned unchanged
-  return key as K & QueryKey<T>
+/**
+ * The key type a plain-key overload assumes when its caller names only the data type
+ * (`useQuery<Todo>(...)`). A fallback to `unknown` would let a typed key of another data type through.
+ */
+export type PlainKeyDefault = string | number | readonly unknown[] | Record<string, unknown>
+
+/**
+ * Type a key with the data stored under it. The same key, typed. Name the data type and the key keeps
+ * its array type, so `queryKey<Todo[]>(["todos"])` can still be spread or indexed.
+ */
+export function queryKey<T = unknown, K extends readonly unknown[] = readonly unknown[]>(
+  key: K,
+): K & QueryKey<T>
+export function queryKey<T = unknown, K = unknown>(key: K): K & QueryKey<T>
+export function queryKey(key: unknown): unknown {
+  return key
 }
 
 /** The keyed query cache. One per app (a binding registers it like the router). */
@@ -166,7 +181,7 @@ export interface QueryClient {
    * (hashed) key. */
   query: {
     <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): QueryHandle<T>
-    <T, K = unknown>(
+    <T, K = PlainKeyDefault>(
       key: PlainQueryKey<K>,
       fn: () => Promise<T>,
       options?: QueryOptions,
@@ -191,7 +206,7 @@ export interface QueryClient {
    * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */
   prefetchQuery: {
     <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): Promise<void>
-    <T, K = unknown>(
+    <T, K = PlainKeyDefault>(
       key: PlainQueryKey<K>,
       fn: () => Promise<T>,
       options?: QueryOptions,

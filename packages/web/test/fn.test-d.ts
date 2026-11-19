@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 import { type ServerFnReference, serverFn } from "../src/fn.ts"
 
@@ -55,3 +56,20 @@ export const undeclared = serverFn({}, async () => ({ ok: true }))
 
 // 7. Nothing to return needs no schema.
 export const fireAndForget = serverFn({ input: t.object({ id: t.string() }) }, async () => {})
+
+// 8. A direct call returns what the function returned; the browser gets what the schema makes of it.
+const toNumber: StandardSchemaV1<string, number> = {
+  "~standard": { version: 1, vendor: "test", validate: (value) => ({ value: Number(value) }) },
+}
+const counted = serverFn({ output: toNumber }, async () => "7")
+export const directResult: Awaited<ReturnType<typeof counted>> = "7"
+export const browserView: ServerFnReference<void, number> = counted
+// @ts-expect-error the browser gets a number, not the string the function returned
+export const wrongView: ServerFnReference<void, string> = counted
+
+// 9. A redirect or an error response is control flow, so it needs no schema and passes one.
+export const refused = serverFn({}, async () => new Response(null, { status: 403 }))
+export const refusedWithOutput = serverFn(
+  { output: idSchema },
+  async () => new Response(null, { status: 403 }),
+)

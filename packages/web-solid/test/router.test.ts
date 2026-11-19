@@ -10,7 +10,7 @@ import {
 import { renderToString } from "@solidjs/web"
 import { createRoot } from "solid-js"
 import { compose } from "../src/compose.ts"
-import { useBlocker, useNavigate, useSearch } from "../src/router.ts"
+import { useBlocker, useNavigate, useParams, useSearch } from "../src/router.ts"
 
 /**
  * The interception + restore-then-prompt state machine is tested exhaustively in `@nifrajs/web`'s suite.
@@ -102,4 +102,15 @@ test("useSearch is an empty accessor for a render with no search context", () =>
     return `[${Object.keys(search()).length}]`
   }
   expect(renderToString(compose([Page], { data: null }))).toContain("[0]")
+})
+
+test("useParams reads the matched route's params as an accessor, and is empty without them", () => {
+  const Page = () => {
+    const params = useParams("/test-loose")
+    return `[${params().id ?? "none"}]`
+  }
+  expect(renderToString(compose([Page], { data: null, params: { id: "7" } }))).toContain("[7]")
+  expect(renderToString(compose([Page], { data: null }))).toContain("[none]")
+  // Outside a route tree there is no render props context: a frozen empty record.
+  expect(renderToString(Page)).toContain("[none]")
 })

@@ -6,6 +6,7 @@ import type {
   MutationContext,
   MutationHandle,
   MutationState,
+  PlainKeyDefault,
   PlainQueryKey,
   QueryClient,
   QueryKey,
@@ -90,7 +91,7 @@ export function createQuery<T>(
   fn: () => Promise<T>,
   options?: QueryOptions,
 ): CreateQueryResult<T>
-export function createQuery<T, K = unknown>(
+export function createQuery<T, K = PlainKeyDefault>(
   key: PlainQueryKey<K>,
   fn: () => Promise<T>,
   options?: QueryOptions,
@@ -100,7 +101,8 @@ export function createQuery<T>(
   fn: () => Promise<T>,
   options?: QueryOptions,
 ): CreateQueryResult<T> {
-  const handle = queryClientForCurrentTree()?.query<T>(key, fn, options)
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the public overloads checked the key against the data type; this signature has erased it to `unknown`
+  const handle = queryClientForCurrentTree()?.query<T>(key as QueryKey<T>, fn, options)
   const [state, setState] = createSignal<QueryState<T>>(
     handle ? handle.snapshot() : IDLE_QUERY_STATE,
   )

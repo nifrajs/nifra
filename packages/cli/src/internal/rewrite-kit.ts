@@ -20,6 +20,8 @@ export interface SourceRewrite {
   readonly description: string
   /** Whether `text` may hold a site: a file it refuses is never parsed. */
   readonly mentions: (text: string) => boolean
+  /** Whether `.svelte` and `.vue` files are read too. Left out, they are skipped: a rewrite parses a TypeScript source. */
+  readonly components?: boolean
   readonly rewrite: (ts: typeof TS, file: string, text: string) => RewriteResult
 }
 

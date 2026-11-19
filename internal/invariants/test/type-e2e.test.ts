@@ -229,7 +229,7 @@ function consumerSource(adapter: Adapter): Source {
     'import { t } from "@nifrajs/schema"',
     `import * as R from "@nifrajs/web-${adapter.id}/router"`,
     `import * as Q from "@nifrajs/web-${adapter.id}/query"`,
-    'const app = server().post("/todos", { body: t.object({ text: t.string() }) }, () => ({ ok: true }))',
+    'const app = server().post("/todos", { body: t.object({ text: t.string() }) }, () => ({ ok: true })).get("/reports", () => ({ ok: true })).post("/todos/:id", { body: t.object({ text: t.string() }) }, () => ({ ok: true }))',
     "const client = createQueryClient({ now: () => 0 })",
     "void R",
     "void Q",
@@ -377,7 +377,7 @@ function consumerSource(adapter: Adapter): Source {
     `${at}: formFor binds a route the app declares`,
     4,
     false,
-    '  { const f = formFor<typeof app>()("/todos"); const a: "/todos" = f.action; void a; f.field("text") }',
+    '  { const f = formFor<typeof app>()("/todos"); const a: string = f.action; const m: "post" = f.method; void a; void m; f.field("text") }',
   )
   source.add(
     `${at}: formFor refuses a route the app does not declare`,
@@ -390,6 +390,24 @@ function consumerSource(adapter: Adapter): Source {
     4,
     true,
     '  void formFor<typeof app>()("/todos", "delete")',
+  )
+  source.add(
+    `${at}: formFor needs the method of a route with no POST handler`,
+    4,
+    true,
+    '  void formFor<typeof app>()("/reports")',
+  )
+  source.add(
+    `${at}: formFor binds a route with params once they are given`,
+    4,
+    false,
+    '  { const f = formFor<typeof app>()("/todos/:id", { id: "7" }); const a: string = f.action; void a }',
+  )
+  source.add(
+    `${at}: formFor refuses a route with params and none given`,
+    4,
+    true,
+    '  void formFor<typeof app>()("/todos/:id")',
   )
   source.add(
     `${at}: formFor refuses a field the body does not have`,
