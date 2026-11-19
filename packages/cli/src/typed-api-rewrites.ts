@@ -102,11 +102,17 @@ const KEYED = new Set(["getQueryData", "setQueryData"])
 const QUERY_CALL = /\.(?:get|set)QueryData(?:<[^<>()]*>)?\(/g
 
 /** The local name for the helper a rewrite writes: the file's own import, else one no identifier in the file uses. */
-function helperName(imported: string | undefined, text: string): string {
+function helperName(ts: typeof TS, tree: TS.SourceFile, imported: string | undefined): string {
   if (imported !== undefined) return imported
+  const used = new Set<string>()
+  const collect = (node: TS.Node): void => {
+    if (ts.isIdentifier(node)) used.add(node.text)
+    ts.forEachChild(node, collect)
+  }
+  collect(tree)
   for (let n = 0; ; n++) {
     const candidate = n === 0 ? QUERY_KEY : `nifraQueryKey${n === 1 ? "" : n}`
-    if (!new RegExp(`\\b${candidate}\\b`).test(text)) return candidate
+    if (!used.has(candidate)) return candidate
   }
 }
 
@@ -195,7 +201,7 @@ function rewriteQueryKeys(ts: typeof TS, file: string, text: string): RewriteRes
   )
   if (!fromWeb || tanstack) return { text, count: 0, manual: [] }
   const imported = importedNames(ts, first, WEB_QUERY, [QUERY_KEY]).keys().next().value
-  const local = helperName(imported, text)
+  const local = helperName(ts, first, imported)
   let current = text
   let sites = 0
   for (let pass = 0; pass < MAX_QUERY_KEY_PASSES; pass++) {

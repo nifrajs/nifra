@@ -240,6 +240,9 @@ describe("vite-import helpers", () => {
 
   test("relaxCaptureStackTrace still decorates a real Error, and is idempotent", async () => {
     const { relaxCaptureStackTrace } = await import("../src/internal/vite-import.ts")
+    // Another test file may have installed the shim and put the original back, leaving the marker set:
+    // clear it, so this test installs the shim itself whatever ran before it.
+    Reflect.deleteProperty(Error, Symbol.for("@nifrajs/web/relaxed-capture-stack-trace"))
     relaxCaptureStackTrace()
     const first = Error.captureStackTrace
     relaxCaptureStackTrace() // second call must not wrap the wrapper
