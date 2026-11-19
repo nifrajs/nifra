@@ -34,6 +34,7 @@ import {
   parseCapabilityLockfile,
 } from "./capabilities-tool.ts"
 import { DEFAULT_MANIFEST_FILE } from "./manifest-tool.ts"
+import { VERIFICATION_GATES, type VerificationGate } from "./verification-gates.ts"
 
 export interface VerificationLevelStatus {
   readonly level: number
@@ -66,6 +67,9 @@ export interface CollectLevelsOptions {
   readonly config?: string
   /** Deterministic seed for the L4 invariant run. Default 1. */
   readonly seed?: number
+  /** Run the requested prefix when collecting evidence for a proof plan. */
+  readonly throughLevel?: VerificationGate["level"]
+  readonly signal?: AbortSignal
 }
 
 /** Compute the ladder. Each level is evaluated independently, then gated on the levels below. */
@@ -79,18 +83,21 @@ export async function collectVerificationLevels(
   const { collectProjectVerification } = await import("./verification.ts")
   const verification = await collectProjectVerification(cwd, {
     ...(options.config !== undefined ? { config: options.config } : {}),
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
     maxDiagnostics: 5,
   })
+  const [typed, route, capabilities, manifest, invariants] = VERIFICATION_GATES
+  const through = options.throughLevel ?? invariants.level
   const statuses: LevelStatusDraft[] = []
 
   // L0 - typed contract (`nifra check`).
   const check = await verification.check()
   statuses.push({
-    level: 0,
-    name: "typed contract",
+    ...typed,
     ok: check.ok,
     reasons: check.ok ? [] : check.diagnostics.map((d) => `${d.rule}: ${d.message}`).slice(0, 5),
   })
+  if (through === typed.level) return finalize(statuses, verification.routeAssurance?.routes ?? [])
 
   // L1-L4 all hang off the assurance config; without it the ladder stops at L0 by definition.
   if (verification.config === undefined) {
@@ -98,12 +105,7 @@ export async function collectVerificationLevels(
       verification.configError instanceof Error
         ? verification.configError.message
         : String(verification.configError)
-    for (const [level, name] of [
-      [1, "route assurance"],
-      [2, "capability lockfile"],
-      [3, "route manifest"],
-      [4, "invariant-tested"],
-    ] as const) {
+    for (const { level, name } of VERIFICATION_GATES.slice(1, through + 1)) {
       statuses.push({ level, name, ok: false, reasons: [reason] })
     }
     return finalize(statuses, [])
@@ -113,11 +115,12 @@ export async function collectVerificationLevels(
   // L1 - route assurance.
   const assurance = verification.routeAssurance as AssuranceReport
   statuses.push({
-    level: 1,
-    name: "route assurance",
+    level: route.level,
+    name: route.name,
     ok: assurance.ok,
     reasons: assurance.findings.map((f) => f.message).slice(0, 5),
   })
+  if (through === route.level) return finalize(statuses, assurance.routes)
 
   // L2 - capability assurance + lockfile in sync.
   const l2Reasons: string[] = []
@@ -139,11 +142,12 @@ export async function collectVerificationLevels(
     }
   }
   statuses.push({
-    level: 2,
-    name: "capability lockfile",
+    level: capabilities.level,
+    name: capabilities.name,
     ok: l2Reasons.length === 0,
     reasons: l2Reasons,
   })
+  if (through === capabilities.level) return finalize(statuses, assurance.routes)
 
   // L3 - emitted manifest hash-verifies AND matches the current app.
   const l3Reasons: string[] = []
@@ -176,11 +180,13 @@ export async function collectVerificationLevels(
     }
   }
   statuses.push({
-    level: 3,
-    name: "route manifest",
+    level: manifest.level,
+    name: manifest.name,
     ok: l3Reasons.length === 0,
     reasons: l3Reasons,
   })
+  if (through === manifest.level || options.signal?.aborted === true)
+    return finalize(statuses, assurance.routes)
 
   // L4 - contract-generated invariants against an explicitly isolated executor.
   const l4 =
@@ -193,8 +199,8 @@ export async function collectVerificationLevels(
         }
       : await runInvariants(config.source, config.invariants, options.seed ?? 1)
   const l4Status: LevelStatusDraft = {
-    level: 4,
-    name: "invariant-tested",
+    level: invariants.level,
+    name: invariants.name,
     ok: l4.reasons.length === 0,
     reasons: l4.reasons,
   }

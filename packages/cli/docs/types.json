@@ -11705,7 +11705,7 @@
     "name": "PlainKeyDefault",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type PlainKeyDefault = string | number | readonly unknown[] | Record<string, unknown>;",
+    "signature": "export type PlainKeyDefault = string | number | readonly unknown[] | Record<string, unknown> | object;",
     "doc": "/**\n * The key type a plain-key overload assumes when its caller names only the data type\n * (`useQuery<Todo>(...)`). A fallback to `unknown` would let a typed key of another data type through.\n */"
   },
   {

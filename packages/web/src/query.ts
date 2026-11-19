@@ -160,7 +160,13 @@ export type PlainQueryKey<K> = K & { readonly "~nifraQueryData"?: undefined }
  * The key type a plain-key overload assumes when its caller names only the data type
  * (`useQuery<Todo>(...)`). A fallback to `unknown` would let a typed key of another data type through.
  */
-export type PlainKeyDefault = string | number | readonly unknown[] | Record<string, unknown>
+export type PlainKeyDefault =
+  | string
+  | number
+  | readonly unknown[]
+  | Record<string, unknown>
+  // An interface has no index signature, so it does not fit the record above.
+  | object
 
 /**
  * Type a key with the data stored under it. The same key, typed. Name the data type and the key keeps

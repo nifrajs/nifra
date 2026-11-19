@@ -5745,7 +5745,7 @@ _No named exports (side-effect entrypoint)._
   The params `useParams(from)` gives: the route's, or the loose record for a pattern outside the table.
 - **PendingBoundary** _(interface)_ - `interface PendingBoundary`
   A dynamic load that has started but is not part of the initial render barrier.
-- **PlainKeyDefault** _(type)_ - `type PlainKeyDefault = string | number | readonly unknown[] | Record<string, unknown>`
+- **PlainKeyDefault** _(type)_ - `type PlainKeyDefault = | string | number | readonly unknown[] | Record<string, unknown> | object`
   The key type a plain-key overload assumes when its caller names only the data type (`useQuery<Todo>(...)`). A fallback to `unknown` would let a typed key of another data type through.
 - **PlainQueryKey** _(type)_ - `type PlainQueryKey<K> = K & { readonly "~nifraQueryData"?: undefined }`
   A key that is not a {@link QueryKey}. A typed key does not fit it, so the plain-key overload of `query` / `useQuery` cannot take one: a typed key goes through the overload that checks its data type.

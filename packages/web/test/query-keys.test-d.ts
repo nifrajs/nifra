@@ -17,6 +17,17 @@ client.query<string>("k", strings)
 client.query<string>({ scope: "a" }, strings)
 client.prefetchQuery<string>(["k"], strings)
 
+// A key declared as an interface or a type alias is a plain key too.
+interface InterfaceKey {
+  readonly scope: string
+}
+type AliasKey = { readonly scope: string }
+declare const interfaceKey: InterfaceKey
+declare const aliasKey: AliasKey
+client.query<number>(interfaceKey, numbers)
+client.query<number>(aliasKey, numbers)
+client.prefetchQuery<number>(interfaceKey, numbers)
+
 // A typed key takes its own data type, inferred or named.
 client.query(queryKey<string>(["n"]), strings)
 client.query<number>(queryKey<number>(["n"]), numbers)
