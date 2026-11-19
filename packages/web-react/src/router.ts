@@ -11,7 +11,6 @@
  * (the package builds with plain `tsc`), so everything is `createElement`.
  */
 
-import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 // `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
 // bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
 // Vite's dev server. Sourced from the ROOT so the generated `RouteTable` augmentation applies.
@@ -22,8 +21,11 @@ import type {
   Href,
   NavigateFunction,
   NavigateOptions,
+  ParamsOfFrom,
   PrefetchMode,
   RenderProps,
+  RouteFrom,
+  SearchOfFrom,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
@@ -129,37 +131,35 @@ function checkedHref(value: string, where: string): Href | undefined {
 }
 
 /**
- * The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct:
- * `compose` provides the same value server-side (from the request match) and client-side (from router
- * state), so a param rendered into markup doesn't flash on hydration.
+ * The matched route's decoded path params, typed from the generated route table:
+ * `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the
+ * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile
+ * error. SSR-correct: the same value on the server render and the client mount.
+ *
+ * ```tsx
+ * const { id } = useParams("/users/:id") // id: string
+ * ```
  */
-export function useParams<
-  T extends Record<string, string | undefined> = Record<string, string>,
->(): Readonly<T> {
-  return useContext(RouterContext).params as Readonly<T>
+export function useParams<K extends RouteFrom>(from: K): ParamsOfFrom<K>
+export function useParams(): unknown {
+  return useContext(RouterContext).params
 }
 
 /**
- * The route's typed, validated search params: the SAME value the loader received as `ctx.search`.
- * SSR-correct: `compose` provides it from `searchOf(searchSchema, url.search)` server-side and from the
- * identical derivation on the client mount, so a value rendered from it doesn't flash on hydration.
- * Hostile input already failed closed to the schema's defaults at match time, so a component never
- * parses `window.location.search` or guards against a bad query.
- *
- * Pass the route's `searchSchema` as the type argument to get its output type; bare, it's the raw parsed
- * query (`Record<string, unknown>`), which is also what a route without a `searchSchema` yields.
+ * The route's validated search params - the SAME value the loader received as `ctx.search`,
+ * typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output.
+ * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern
+ * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically
+ * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.
+ * Hostile input already failed closed to the schema's defaults at match time.
  *
  * ```tsx
- * export const searchSchema = v.object({ page: v.optional(v.fallback(v.number(), 1), 1) })
- * const { page } = useSearch<typeof searchSchema>() // page: number
+ * const { page } = useSearch("/reports") // page: number
  * ```
  */
-export function useSearch<
-  Schema extends StandardSchemaV1 | undefined = undefined,
->(): Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown> {
-  return useContext(RouterContext).search as Schema extends StandardSchemaV1
-    ? InferOutput<Schema>
-    : Record<string, unknown>
+export function useSearch<K extends RouteFrom>(from: K): SearchOfFrom<K>
+export function useSearch(): unknown {
+  return useContext(RouterContext).search
 }
 
 const NO_MATCHES: readonly UIMatch[] = Object.freeze([])

@@ -9,7 +9,7 @@
  * phases) build on. The public surface (`searchSchema` on a route, `useSearch`, typed `navigate`) lands
  * with that wiring.
  */
-import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
+import type { InferInput, InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import { isRecord } from "./internal/record.ts"
 import { stripRouteSlotsSearch } from "./route-slots.ts"
 
@@ -259,6 +259,19 @@ export type SearchOf<Module> = Module extends { searchSchema: infer S }
     ? InferOutput<S> extends Record<string, unknown>
       ? InferOutput<S>
       : never
+    : Record<string, unknown>
+  : Record<string, unknown>
+
+/**
+ * The search INPUT type for a route MODULE - what a link may carry, so a field its `searchSchema` defaults
+ * is optional. The schema's input when it is an object, else the {@link SearchOf} output. The route table
+ * holds it as `searchIn`, and `href()` reads it, where the hooks and `ctx.search` read the output.
+ */
+export type SearchInputOf<Module> = Module extends { searchSchema: infer S }
+  ? S extends StandardSchemaV1
+    ? InferInput<S> extends Record<string, unknown>
+      ? InferInput<S>
+      : SearchOf<Module>
     : Record<string, unknown>
   : Record<string, unknown>
 

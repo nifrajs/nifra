@@ -8,7 +8,7 @@ import { liveQueries } from "../src/internal/live-queries.ts"
 import { queryDigester, querySalt } from "../src/internal/query-digest.ts"
 import { keepAliveClient } from "../src/keep-alive.ts"
 import { liveClient } from "../src/live-client.ts"
-import { createQueryClient, type QueryHandle } from "../src/query.ts"
+import { createQueryClient, type QueryHandle, queryKey } from "../src/query.ts"
 import { type ClientRouter, createClientRouter, type RouterState } from "../src/router.ts"
 
 const SID = "a".repeat(32)
@@ -1181,12 +1181,12 @@ test("another viewer: every query client the page made drops what it held", asyn
   try {
     const r = await connectedWithQueries()
     const client = createQueryClient({ now: () => Date.now() })
-    client.setQueryData(["account"], "viewer-1's")
+    client.setQueryData(queryKey(["account"]), "viewer-1's")
     const query = mounted(["key:/posts/1"], client)
     await settle()
     r.server.control.subject = "viewer-2"
     changed(r, "tag:/posts/1")
-    await until(() => client.getQueryData(["account"]) === undefined, "cleared")
+    await until(() => client.getQueryData(queryKey(["account"])) === undefined, "cleared")
     // The mounted query loads again, for the new viewer.
     await until(() => query.fetches() >= 3, "refetched")
     query.off()

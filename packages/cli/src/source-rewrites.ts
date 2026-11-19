@@ -6,44 +6,15 @@
 import { isSameOriginPath } from "@nifrajs/core/pattern"
 import type * as TS from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
-import { scriptKindOf } from "./internal/script-kind.ts"
-
-/** A site a rewrite found and left alone, with what to write instead. */
-export interface ManualSite {
-  readonly line: number
-  readonly reason: string
-}
-
-export interface RewriteResult {
-  readonly text: string
-  /** Sites rewritten. */
-  readonly count: number
-  readonly manual: readonly ManualSite[]
-}
-
-export interface SourceRewrite {
-  readonly id: string
-  /** What it rewrites, for the plan. */
-  readonly description: string
-  /** Whether `text` may hold a site: a file it refuses is never parsed. */
-  readonly mentions: (text: string) => boolean
-  readonly rewrite: (ts: typeof TS, file: string, text: string) => RewriteResult
-}
-
-interface Edit {
-  readonly start: number
-  readonly end: number
-  readonly text: string
-}
-
-/** Apply `edits` (disjoint ranges) to `text`, from the end so earlier offsets stay valid. */
-function applyEdits(text: string, edits: readonly Edit[]): string {
-  let out = text
-  for (const edit of edits.toSorted((a, b) => b.start - a.start)) {
-    out = `${out.slice(0, edit.start)}${edit.text}${out.slice(edit.end)}`
-  }
-  return out
-}
+import {
+  applyEdits,
+  type Edit,
+  type ManualSite,
+  parseSource,
+  type RewriteResult,
+  type SourceRewrite,
+} from "./internal/rewrite-kit.ts"
+import { TYPED_API_REWRITES } from "./typed-api-rewrites.ts"
 
 const WEB = "@nifrajs/web"
 const NODE = "@nifrajs/node"
@@ -66,20 +37,6 @@ interface ModuleImport {
 
 function propertyName(ts: typeof TS, name: TS.PropertyName): string | undefined {
   return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined
-}
-
-/**
- * 5.9: `servePublicDir` (removed from `@nifrajs/web`) becomes the runtime's `serveStatic` with the
- * options that keep its answers; `@nifrajs/node`'s `static` mount objects are wrapped in
- * `serveStatic()`; and `signals` on `@nifrajs/node`'s and `@nifrajs/deno`'s `serve()` becomes
- * `gracefulSignals`.
- */
-/** Parse `text` as `file`, with the line lookup a rewrite lists its manual sites by. */
-function parseSource(ts: typeof TS, file: string, text: string) {
-  const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKindOf(ts, file))
-  const lineOf = (node: TS.Node): number =>
-    tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
-  return { tree, lineOf }
 }
 
 /** Named-import order: by the imported name, a `type` modifier aside. */
@@ -107,6 +64,12 @@ function quoteOf(ts: typeof TS, tree: TS.SourceFile, fallback: "'" | '"'): "'" |
   return single === double ? fallback : single > double ? "'" : '"'
 }
 
+/**
+ * 5.9: `servePublicDir` (removed from `@nifrajs/web`) becomes the runtime's `serveStatic` with the
+ * options that keep its answers; `@nifrajs/node`'s `static` mount objects are wrapped in
+ * `serveStatic()`; and `signals` on `@nifrajs/node`'s and `@nifrajs/deno`'s `serve()` becomes
+ * `gracefulSignals`.
+ */
 function rewriteServeStatic(ts: typeof TS, file: string, text: string): RewriteResult {
   const { tree, lineOf } = parseSource(ts, file, text)
   const importQuote = /from\s*'/.test(text) ? "'" : '"'
@@ -827,7 +790,10 @@ const REWRITES: Readonly<Record<string, SourceRewrite>> = {
   [SERVE_STATIC.id]: SERVE_STATIC,
   [PPR_OPTION.id]: PPR_OPTION,
   [HREF_NAVIGATION.id]: HREF_NAVIGATION,
+  ...Object.fromEntries(TYPED_API_REWRITES.map((rewrite) => [rewrite.id, rewrite])),
 }
+
+export type { ManualSite, RewriteResult, SourceRewrite }
 
 export function getSourceRewrite(id: string): SourceRewrite | undefined {
   return REWRITES[id]

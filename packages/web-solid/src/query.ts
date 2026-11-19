@@ -6,7 +6,10 @@ import type {
   MutationContext,
   MutationHandle,
   MutationState,
+  PlainKeyDefault,
+  PlainQueryKey,
   QueryClient,
+  QueryKey,
   QueryOptions,
   QueryState,
 } from "@nifrajs/web"
@@ -84,11 +87,22 @@ export interface CreateQueryResult<T> {
  * the live keys that refetch it.
  */
 export function createQuery<T>(
+  key: QueryKey<T>,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): CreateQueryResult<T>
+export function createQuery<T, K = PlainKeyDefault>(
+  key: PlainQueryKey<K>,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): CreateQueryResult<T>
+export function createQuery<T>(
   key: unknown,
   fn: () => Promise<T>,
   options?: QueryOptions,
 ): CreateQueryResult<T> {
-  const handle = queryClientForCurrentTree()?.query<T>(key, fn, options)
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the public overloads checked the key against the data type; this signature has erased it to `unknown`
+  const handle = queryClientForCurrentTree()?.query<T>(key as QueryKey<T>, fn, options)
   const [state, setState] = createSignal<QueryState<T>>(
     handle ? handle.snapshot() : IDLE_QUERY_STATE,
   )

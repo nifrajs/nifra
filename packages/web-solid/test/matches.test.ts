@@ -73,7 +73,7 @@ test("a render without a chain reports nothing", () => {
 test("outside a nifra route tree, useMatches and useSearch report nothing", () => {
   const html = renderToString(() => {
     const matches = useMatches()
-    const search = useSearch()
+    const search = useSearch("/test-loose")
     return `<${matches().length}|${JSON.stringify(search())}>` as unknown as JSX.Element
   })
   expect(decode(html)).toContain("<0|{}>")

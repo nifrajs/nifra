@@ -16,7 +16,7 @@ const LINES = Array.from({ length: 40 }, (_, i) => i)
 export default function List({ data }: { readonly data: Data }) {
   const instance = useId()
   const [count, setCount] = useState(0)
-  const params = useParams()
+  const params = useParams("/list/:id")
   const visible = usePageVisibility()
   useEffect(() => {
     const timer = setInterval(() => {

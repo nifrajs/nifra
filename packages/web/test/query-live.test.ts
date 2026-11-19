@@ -11,7 +11,7 @@ import {
   watchLiveQueries,
 } from "../src/internal/live-queries.ts"
 import { installQuerySeam, queryClients, querySeam } from "../src/internal/query-seam.ts"
-import { createMutation, createQueryClient } from "../src/query.ts"
+import { createMutation, createQueryClient, queryKey } from "../src/query.ts"
 
 function gated() {
   const resolvers: ((value: unknown) => void)[] = []
@@ -91,7 +91,7 @@ test("new keys on a re-bind tell the live client; the same keys in a new array d
   expect([...liveQueries()].length).toBe(0)
   // A write or prefetch that names none keeps what the last render named.
   c.query(["post", 1], async () => 1, { live: ["post:1"] })
-  c.setQueryData(["post", 1], 2)
+  c.setQueryData(queryKey(["post", 1]), 2)
   expect([...liveQueries()].length).toBe(1)
   off()
   unwatch()
@@ -147,7 +147,7 @@ test("hydrated data counts as read before any live load", () => {
   c.hydrate({ queries: [{ key: ["k"], data: 1, updatedAt: 1 }] })
   const off = c.query(["k"], async () => 1, { live: ["k:1"] }).subscribe(() => {})
   expect(only().tick()).toBe(0)
-  c.setQueryData(["k"], 2)
+  c.setQueryData(queryKey(["k"]), 2)
   expect(only().tick()).toBe(liveTick())
   off()
 })
@@ -155,7 +155,7 @@ test("hydrated data counts as read before any live load", () => {
 test("clear drops unmounted queries and sends mounted ones back to pending, refetching", async () => {
   const g = gated()
   const c = createQueryClient({ now: () => 0 })
-  c.setQueryData(["gone"], "theirs")
+  c.setQueryData(queryKey(["gone"]), "theirs")
   const handle = c.query(["shown"], g.fn)
   const seen: unknown[] = []
   const off = handle.subscribe(() => seen.push(handle.snapshot().status))
@@ -164,7 +164,7 @@ test("clear drops unmounted queries and sends mounted ones back to pending, refe
   await flush()
   void handle.refetch()
   c.clear()
-  expect(c.getQueryData(["gone"])).toBeUndefined()
+  expect(c.getQueryData(queryKey(["gone"]))).toBeUndefined()
   expect(handle.snapshot().data).toBeUndefined()
   expect(handle.snapshot().isFetching).toBe(true)
   expect(g.calls()).toBe(3)
@@ -247,31 +247,31 @@ test("an infinite query with live keys registers while mounted and refreshes eve
 
 test("a viewer switch clears every query client the page made, and no server-side one", async () => {
   const mine = createQueryClient({ now: () => 0 })
-  mine.setQueryData(["k"], "theirs")
+  mine.setQueryData(queryKey(["k"]), "theirs")
   Reflect.deleteProperty(globalThis, "window")
   const serverSide = createQueryClient({ now: () => 0 })
-  serverSide.setQueryData(["k"], "request-scoped")
+  serverSide.setQueryData(queryKey(["k"]), "request-scoped")
   Reflect.set(globalThis, "window", globalThis)
   clearQueryClients()
-  expect(mine.getQueryData(["k"])).toBeUndefined()
-  expect(serverSide.getQueryData(["k"])).toBe("request-scoped")
+  expect(mine.getQueryData(queryKey(["k"]))).toBeUndefined()
+  expect(serverSide.getQueryData(queryKey(["k"]))).toBe("request-scoped")
 })
 
 test("identityChanged() clears every query client the page made, and no server-side one", () => {
   const mine = createQueryClient({ now: () => 0 })
-  mine.setQueryData(["k"], "theirs")
+  mine.setQueryData(queryKey(["k"]), "theirs")
   Reflect.deleteProperty(globalThis, "window")
   const serverSide = createQueryClient({ now: () => 0 })
-  serverSide.setQueryData(["k"], "request-scoped")
+  serverSide.setQueryData(queryKey(["k"]), "request-scoped")
   Reflect.set(globalThis, "window", globalThis)
   identityChanged()
-  expect(mine.getQueryData(["k"])).toBeUndefined()
-  expect(serverSide.getQueryData(["k"])).toBe("request-scoped")
+  expect(mine.getQueryData(queryKey(["k"]))).toBeUndefined()
+  expect(serverSide.getQueryData(queryKey(["k"]))).toBe("request-scoped")
 })
 
 test("a remote identity broadcast clears query data and cancels a pending mutation", async () => {
   const client = createQueryClient({ now: () => 0 })
-  client.setQueryData(["profile"], { name: "Previous visitor" })
+  client.setQueryData(queryKey(["profile"]), { name: "Previous visitor" })
 
   let resolveMutation!: (value: string) => void
   let signal: AbortSignal | undefined
@@ -296,7 +296,7 @@ test("a remote identity broadcast clears query data and cancels a pending mutati
   const otherTab = new BroadcastChannel(IDENTITY_CHANNEL)
   try {
     otherTab.postMessage("changed")
-    await waitFor(() => client.getQueryData(["profile"]) === undefined)
+    await waitFor(() => client.getQueryData(queryKey(["profile"])) === undefined)
     expect(signal?.aborted).toBe(true)
 
     await expect(pending).rejects.toMatchObject({ name: "MutationCancelledError" })
@@ -428,7 +428,7 @@ test("a new identity epoch drops a client's data on its next read, and mounted q
     who = "second"
     await rotate("two")
     // Read while a component renders: its subscribers hear once the render is over.
-    expect(c.getQueryData(["me"])).toBeUndefined()
+    expect(c.getQueryData(queryKey(["me"]))).toBeUndefined()
     expect([one.snapshot().status, feed.snapshot().status, told]).toEqual(["pending", "pending", 0])
     expect(c.infiniteQuery(["seeded"], async () => who, firstPage).snapshot().status).toBe(
       "pending",
@@ -554,15 +554,15 @@ test("a handle kept past its last subscriber reads nothing of the previous visit
 })
 
 test("the registry lets go of query clients the page dropped", async () => {
-  for (let i = 0; i < 40; i++) createQueryClient({ now: () => 0 }).setQueryData(["k"], i)
+  for (let i = 0; i < 40; i++) createQueryClient({ now: () => 0 }).setQueryData(queryKey(["k"]), i)
   // A WeakRef holds its target until the job that made it ends.
   await new Promise((resolve) => setImmediate(resolve))
   Bun.gc(true)
   const kept = createQueryClient({ now: () => 0 })
   expect([...queryClients()].filter((ref) => ref.deref() === undefined)).toEqual([])
-  kept.setQueryData(["k"], 1)
+  kept.setQueryData(queryKey(["k"]), 1)
   clearQueryClients()
-  expect(kept.getQueryData(["k"])).toBeUndefined()
+  expect(kept.getQueryData(queryKey(["k"]))).toBeUndefined()
 })
 
 test("a refetch that fails after clear is let go: the query shows the error", async () => {
@@ -680,12 +680,15 @@ test("clients the page made before its live client loaded, and never used again,
   await beforeLiveClient(() => {
     for (const viewer of ["viewer-1's", "viewer-1's other"]) {
       const client = createQueryClient({ now: () => 0 })
-      client.setQueryData(["account"], viewer)
+      client.setQueryData(queryKey(["account"]), viewer)
       early.push(client)
     }
   })
   clearQueryClients()
-  expect(early.map((client) => client.getQueryData(["account"]))).toEqual([undefined, undefined])
+  expect(early.map((client) => client.getQueryData(queryKey(["account"])))).toEqual([
+    undefined,
+    undefined,
+  ])
 })
 
 test("a server-side client made before the live client loaded is never held", async () => {
@@ -694,11 +697,11 @@ test("a server-side client made before the live client loaded is never held", as
     Reflect.deleteProperty(globalThis, "window")
     try {
       serverSide = createQueryClient({ now: () => 0 })
-      serverSide.setQueryData(["k"], "request-scoped")
+      serverSide.setQueryData(queryKey(["k"]), "request-scoped")
     } finally {
       Reflect.set(globalThis, "window", globalThis)
     }
   })
   clearQueryClients()
-  expect(serverSide?.getQueryData(["k"])).toBe("request-scoped")
+  expect(serverSide?.getQueryData(queryKey(["k"]))).toBe("request-scoped")
 })

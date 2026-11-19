@@ -226,9 +226,16 @@ export {
   IDLE_BLOCKER,
   type NavigateFunction,
   type NavigateOptions,
+  type ParamsOfFrom,
   type PrefetchMode,
+  type RouteFrom,
+  type RouteParamsOf,
+  type RouteSearchInOf,
+  type RouteSearchOf,
   type RouteTable,
+  type RouteTablePattern,
   registerBlocker,
+  type SearchOfFrom,
   setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
@@ -264,12 +271,16 @@ export {
   type MutationHandle,
   type MutationState,
   type MutationStatus,
+  type PlainKeyDefault,
+  type PlainQueryKey,
   type QueryClient,
   type QueryClientOptions,
   type QueryHandle,
+  type QueryKey,
   type QueryOptions,
   type QueryState,
   type QueryStatus,
+  queryKey,
 } from "./query.ts"
 export {
   ACTION_GLOBAL,
@@ -331,7 +342,13 @@ export {
 // (fail-closed to defaults), or return the raw parsed query when there is none. Both the server (loader
 // ctx + `renderPage`) and a client adapter mount call this with the same URL + schema, so the two sides
 // produce the identical value by construction. An adapter's `useSearch` binding reads its result.
-export { type SearchOf, searchOf, searchOfChain, serializeSearch } from "./search.ts"
+export {
+  type SearchInputOf,
+  type SearchOf,
+  searchOf,
+  searchOfChain,
+  serializeSearch,
+} from "./search.ts"
 export { canonical, jsonLd, type OpenGraphInput, openGraph } from "./seo.ts"
 export {
   type HtmlSanitizer,

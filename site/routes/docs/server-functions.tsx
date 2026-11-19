@@ -14,7 +14,11 @@ import { t } from "@nifrajs/schema"
 import { createTodo } from "./db/write.ts"
 
 export const addTodo = serverFn(
-  { input: t.object({ text: t.string({ minLength: 1 }) }), capabilities: ["db.write"] },
+  {
+    input: t.object({ text: t.string({ minLength: 1 }) }),
+    output: t.object({ id: t.string() }),
+    capabilities: ["db.write"],
+  },
   async ({ text }) => createTodo({ text }),
 )`
 
@@ -113,6 +117,12 @@ export default function ServerFunctions() {
         The second argument receives the validated input and the ordinary Nifra <code>Context</code>:{" "}
         <code>c.env</code>, <code>c.clientIp</code>, <code>c.budget</code>, cookies and the capability
         guard are all there, because this is a route.
+      </p>
+      <p>
+        The caller sees what <code>output</code> lets through: its type is the schema&apos;s output, and
+        what the function returns must fit the schema&apos;s input, so a field the schema drops is not in
+        the type the browser gets. A function that returns data without an <code>output</code> schema is
+        refused at run time, so it is a compile error too; one that returns nothing needs no schema.
       </p>
 
       <h2>Mounting</h2>

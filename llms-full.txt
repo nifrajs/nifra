@@ -661,15 +661,16 @@ combined with `hydrate = false`: nothing would ever render the page.
 
 Export a `searchSchema` - any Standard Schema (valibot, zod, arktype) - and the URL
 query becomes typed and validated on both sides: the loader receives it as
-`ctx.search` and the component reads the same value with
-`useSearch<typeof searchSchema>()`. Invalid or hostile input fails closed to the
-schema's defaults (never a 500), and the value is derived identically on the server and on each
-client navigation - so a query-reading page hydrates with no mismatch and never touches
+`ctx.search` and the page receives the same value as its `search` prop,
+typed by the schema. A nested component reads it with `useSearch("/reports")`;
+the argument names the route, and a pattern the generated route table does not hold is a
+compile error. Invalid or hostile input fails closed to the schema's defaults (never a 500),
+and the value is derived identically on the server and on each client navigation - so a
+query-reading page hydrates with no mismatch and never touches
 `window.location.search` by hand.
 
 ```tsx
 // routes/reports.tsx - a typed, validated ?page=&sort= query.
-import { useSearch } from "@nifrajs/web-react/router"
 import * as v from "valibot" // any Standard Schema works (valibot, zod, arktype)
 import type { Route } from "./+types/reports"
 
@@ -679,10 +680,11 @@ export const searchSchema = v.object({
   sort: v.optional(v.picklist(["new", "top"]), "new"),
 })
 
-// The component reads the SAME value - SSR-correct, so page/sort hydrate with no mismatch and you
-// never parse window.location.search by hand.
-export default function Reports({ data }: Route.ComponentProps) {
-  const { page, sort } = useSearch<typeof searchSchema>() // { page: number; sort: "new" | "top" }
+// The page gets the SAME value as the search prop - SSR-correct, so page/sort hydrate with no mismatch
+// and you never parse window.location.search by hand. A nested component reads it with
+// useSearch("/reports").
+export default function Reports({ data, search }: Route.ComponentProps) {
+  const { page, sort } = search // { page: number; sort: "new" | "top" }
   return <Pager page={page} sort={sort} rows={data.rows} />
 }
 
@@ -695,12 +697,36 @@ export async function loader({ search, api }: Route.LoaderArgs) {
 }
 ```
 
-Without a `searchSchema`, `ctx.search` and `useSearch()` are
-the raw parsed query (`Record<string, unknown>`). `useSearch` ships on
-every adapter (React, Preact, Vue, Solid, Svelte), each in that framework's shape - a value on
-React/Preact, a `Ref` on Vue, an accessor on Solid/Svelte. For imperative reads and
-writes of the raw query, `useSearchParams()` mirrors react-router's
+Without a `searchSchema`, `ctx.search`, the `search` prop and
+`useSearch` are the raw parsed query (`Record<string, unknown>`).
+`useSearch` and `useParams` ship on every adapter (React, Preact, Vue,
+Solid, Svelte), each in that framework's shape - a value on React/Preact, a `Ref` on
+Vue, an accessor on Solid/Svelte. `useParams("/users/:id")` is that route's
+params. For imperative reads and writes of the raw query, `useSearchParams()` mirrors
+react-router's
 `[params, setParams]` tuple.
+
+A link may leave out a field the schema defaults: `href` takes the schema's
+_input_, where the page and the hooks read its _output_. A route without params
+types `props.params` with no keys, so reading one is a compile error. Under
+`nifra check`, `NF-C059` flags a hook that names another page's route
+and `NF-C060` a cast to `Href`; a project made by
+`create-nifra` also fails on `NF-C057`, a dead path string.
+
+`.svelte` and `.vue` routes get their `searchSchema` typed too,
+under `svelte-check` and `vue-tsc`; plain `tsc` cannot read those
+files and falls back to the raw query. A Svelte page takes `search` from its props. A
+Vue page reads it with `useSearch("/reports")`: `@vue/compiler-sfc`
+cannot resolve `Route.ComponentProps` for `defineProps`.
+
+Coming from 5.15 or earlier, `nifra upgrade 5.16.0 --write` rewrites
+`useSearch<typeof searchSchema>()`, `useParams<T>()` and the
+bare calls in a page file to name that page's route. A hook in a layout, a component shared
+by several pages or a `.svelte` or `.vue` file is listed by line instead:
+only its author knows the route it renders in, and a shared component takes the pattern as a
+prop typed as the union of its routes. The same run rewrites the query cache and
+`formFor` calls; see
+upgrading nifra.
 
 To WRITE search, build the link with `href` and hand it to `useNavigate`:
 `navigate(href({ to: "/reports", search: { page: 2 } }))`. `href` and
@@ -2090,7 +2116,11 @@ import { t } from "@nifrajs/schema"
 import { createTodo } from "./db/write.ts"
 
 export const addTodo = serverFn(
-  { input: t.object({ text: t.string({ minLength: 1 }) }), capabilities: ["db.write"] },
+  {
+    input: t.object({ text: t.string({ minLength: 1 }) }),
+    output: t.object({ id: t.string() }),
+    capabilities: ["db.write"],
+  },
   async ({ text }) => createTodo({ text }),
 )
 ```
@@ -2098,6 +2128,11 @@ export const addTodo = serverFn(
 The second argument receives the validated input and the ordinary Nifra `Context`:
 `c.env`, `c.clientIp`, `c.budget`, cookies and the capability
 guard are all there, because this is a route.
+
+The caller sees what `output` lets through: its type is the schema's output, and
+what the function returns must fit the schema's input, so a field the schema drops is not in
+the type the browser gets. A function that returns data without an `output` schema is
+refused at run time, so it is a compile error too; one that returns nothing needs no schema.
 
 ### Mounting
 
@@ -3691,6 +3726,15 @@ const queryState = queryClient.dehydrate({
 // Return queryState through the route's normal loader-data serializer.
 // On the client, seed the app's client before query components mount.
 ```
+
+### Typed keys
+
+`getQueryData` and `setQueryData` take a key made with
+`queryKey<T>(key)`, which carries the type of the data stored under it:
+`const todosKey = queryKey<Todo[]>(["todos"])`. The fetcher must return that type,
+the read gives `Todo[] | undefined`, and a write of another type is a compile error, so a
+key and its data cannot drift apart. At run time the key is the array itself, so prefix
+invalidation works unchanged. A plain key still takes the type of its fetcher.
 
 ### Invalidation
 
@@ -8670,6 +8714,19 @@ see mixed nifra versions. A
 `bun.lock`, where Bun never refreshes them; the plan lists each, and
 `--write` drops those entries so the next `bun install` records them
 again (see stale file: links).
+
+A recipe can also rewrite source on the syntax tree, with the project's own TypeScript, for
+a call shape an import move cannot express. A rewrite changes only a shape it recognizes
+whole and lists every other site by file and line under "to edit by hand"; it never
+guesses. The 5.16 recipe carries three, for APIs the route table and the backend now type:
+`route-hooks` writes the page's own route into `useSearch` and
+`useParams` (the type-argument and bare forms are removed), `query-keys`
+wraps the key in `getQueryData` and `setQueryData` in
+`queryKey(...)`, and `form-for` turns
+`formFor<App, "/path">()` into
+`formFor<App>()("/path")`. None changes what runs: afterwards, run
+`nifra types` and `tsc`, and whatever is left shows as an error at its
+line.
 
 A `link:` or `file:` dependency outside the root that installs its own
 `@nifrajs/*` at another version stops the upgrade before anything is written: its
@@ -22917,7 +22974,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydrateOptions`, `DehydratedQueryInfo`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `Href`, `HrefOptions`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationCancelledError`, `MutationContext`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `PendingBoundary`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouteSlotName`, `RouteSlotPatternsOf`, `RouteSlotRegistry`, `RouteSlotTarget`, `RouteTable`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchOf`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `href`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `rawHref`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
+`ACTION_GLOBAL`, `Action`, `BOUNDARY_GLOBAL`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BoundaryDescriptor`, `BoundaryError`, `BoundaryLoaderEntry`, `BoundaryLoadersOf`, `BoundaryMode`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `BuildAssetSet`, `CacheStore`, `CachedResponse`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `CreateCspPolicyOptions`, `CreateNonceResolverOptions`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `DRAFT_COOKIE`, `DataText`, `Deferred`, `DehydrateOptions`, `DehydratedQueryInfo`, `DehydratedState`, `DocumentParts`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `EnableDraftOptions`, `FetchRouteData`, `Fetcher`, `FetcherState`, `FontDisplay`, `FontFace`, `FontPreloadInput`, `FontSource`, `GenerateClientEntryOptions`, `GenerateServerManifestOptions`, `GetStaticPaths`, `HANDOVER_ID`, `HostPolicy`, `HostPolicyOptions`, `HostPolicyRule`, `Href`, `HrefOptions`, `HtmlSanitizer`, `IDLE_BLOCKER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `ISRStoreOp`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `IdentityEpochContext`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `Intercepted`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `KeepAliveOptions`, `KeepAliveServerOptions`, `KeptPage`, `LAYOUT_DATA_GLOBAL`, `LOCALES_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `LiveClientEntry`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationCancelledError`, `MutationContext`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `NotFoundEntry`, `NotFoundScope`, `OpenGraphInput`, `PREFETCH_HEADER`, `PRE_HYDRATION_GUARD`, `PageLocale`, `PageLocales`, `ParamsOfFrom`, `PendingBoundary`, `PlainKeyDefault`, `PlainQueryKey`, `PrefetchMode`, `PrerenderedPageReaderOptions`, `PrerenderedPages`, `PreviewEndpointOptions`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryKey`, `QueryOptions`, `QueryState`, `QueryStatus`, `REDIRECT_HEADER`, `RETAIN_HEADER`, `REVALIDATE_HEADER`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderPageInput`, `RenderPageOptions`, `RenderProps`, `RenderStreamOptions`, `RenderedPage`, `RevalidateEndpointOptions`, `RevalidateOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `RouteEntry`, `RouteFrom`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RouteParamsOf`, `RoutePattern`, `RouteSearchInOf`, `RouteSearchOf`, `RouteSlotName`, `RouteSlotPatternsOf`, `RouteSlotRegistry`, `RouteSlotTarget`, `RouteTable`, `RouteTablePattern`, `RouterState`, `SERVER_FN_MODULE`, `STATUS_HEADER`, `SanitizedHtml`, `ScriptDescriptor`, `SearchInputOf`, `SearchOf`, `SearchOfFrom`, `SharedBoundary`, `SharedHoleCtx`, `ShellCtx`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `SsrModuleLoader`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `UIMatch`, `UnsafeScriptDescriptor`, `WebAppI18n`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `boundaryDescriptors`, `boundaryModeKey`, `buildManifest`, `canonical`, `closeBoundary`, `createClientRouter`, `createCspPolicy`, `createHostPolicy`, `createMatcher`, `createMutation`, `createNonceResolver`, `createQueryClient`, `createWebApp`, `defer`, `disableDraft`, `enableDraft`, `enumerateStaticRoutes`, `filePathToPattern`, `filePathToPatterns`, `fontFace`, `fontPreload`, `generateClientEntry`, `generateServerManifest`, `getBrowserNavigate`, `gone`, `hashQueryKey`, `href`, `isCacheablePage`, `isDraftEnabled`, `isHostPolicy`, `jsonLd`, `localeOfProps`, `mergeHeads`, `nifraScriptHashes`, `normalizeCssLoading`, `notFound`, `openGraph`, `pageLocaleIn`, `prerenderedPageReader`, `previewEndpoint`, `queryKey`, `rawHref`, `redirect`, `registerBlocker`, `renderPage`, `renderPageResult`, `resolveChainMeta`, `resolveDynamicBoundaries`, `resolveMeta`, `resolvePublicPath`, `resolveStaticBoundaries`, `revalidate`, `revalidateEndpoint`, `rotateIdentityEpoch`, `sanitizeHtml`, `sanitizedHtml`, `searchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `startDynamicBoundaries`, `statusPage`, `trustHtml`, `unsafeInlineScript`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

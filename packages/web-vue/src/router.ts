@@ -1,4 +1,3 @@
-import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 // `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
 // bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
 // Vite's dev server. Sourced from the ROOT so the generated `RouteTable` augmentation applies.
@@ -7,7 +6,10 @@ import type {
   BlockerFunction,
   BlockerState,
   NavigateFunction,
+  ParamsOfFrom,
   RenderProps,
+  RouteFrom,
+  SearchOfFrom,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
@@ -98,23 +100,42 @@ export function useMatches(): Readonly<Ref<readonly UIMatch[]>> {
   return computed(() => (props === undefined ? NO_MATCHES : chainMatches(props.value)))
 }
 
+// Frozen empty params for a `useParams` used outside a nifra route tree.
+const EMPTY_PARAMS: Readonly<Record<string, string>> = Object.freeze({})
+
 /**
- * The route's typed, validated search params as a reactive ref - the SAME value the loader received as
- * `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical
- * client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value`
- * (reactive across navigation). Pass the route's `searchSchema` as the type argument for its output type.
+ * The matched route's decoded path params as a reactive ref, typed from the generated route table:
+ * `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the
+ * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile
+ * error. SSR-correct: the same value on the server render and the client mount.
  *
  * ```vue
- * const search = useSearch<typeof searchSchema>() // Ref<{ page: number }>
+ * const params = useParams("/users/:id") // Ref<{ id: string }>
+ * // template: {{ params.id }}
+ * ```
+ */
+export function useParams<K extends RouteFrom>(from: K): Readonly<Ref<ParamsOfFrom<K>>>
+export function useParams(): unknown {
+  const props = inject(PROPS_KEY, undefined)
+  return computed(() => props?.value.params ?? EMPTY_PARAMS)
+}
+
+/**
+ * The route's validated search params as a reactive ref - the SAME value the loader received as `ctx.search`,
+ * typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output.
+ * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern
+ * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically
+ * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.
+ * Hostile input already failed closed to the schema's defaults at match time.
+ *
+ * ```vue
+ * const search = useSearch("/reports") // Ref<{ page: number }>
  * // template: {{ search.page }}
  * ```
  */
-export function useSearch<Schema extends StandardSchemaV1 | undefined = undefined>(): Readonly<
-  Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>
-> {
-  return inject(SEARCH_KEY, EMPTY_SEARCH_REF) as Readonly<
-    Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>
-  >
+export function useSearch<K extends RouteFrom>(from: K): Readonly<Ref<SearchOfFrom<K>>>
+export function useSearch(): unknown {
+  return inject(SEARCH_KEY, EMPTY_SEARCH_REF)
 }
 
 /** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta).

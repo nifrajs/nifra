@@ -93,7 +93,6 @@ export async function loader({ api }: Route.LoaderArgs) {
 }`
 
 const SEARCH = `// routes/reports.tsx - a typed, validated ?page=&sort= query.
-import { useSearch } from "@nifrajs/web-react/router"
 import * as v from "valibot" // any Standard Schema works (valibot, zod, arktype)
 import type { Route } from "./+types/reports"
 
@@ -103,10 +102,11 @@ export const searchSchema = v.object({
   sort: v.optional(v.picklist(["new", "top"]), "new"),
 })
 
-// The component reads the SAME value - SSR-correct, so page/sort hydrate with no mismatch and you
-// never parse window.location.search by hand.
-export default function Reports({ data }: Route.ComponentProps) {
-  const { page, sort } = useSearch<typeof searchSchema>() // { page: number; sort: "new" | "top" }
+// The page gets the SAME value as the search prop - SSR-correct, so page/sort hydrate with no mismatch
+// and you never parse window.location.search by hand. A nested component reads it with
+// useSearch("/reports").
+export default function Reports({ data, search }: Route.ComponentProps) {
+  const { page, sort } = search // { page: number; sort: "new" | "top" }
   return <Pager page={page} sort={sort} rows={data.rows} />
 }
 
@@ -450,20 +450,49 @@ export default function Routing() {
       <p>
         Export a <code>searchSchema</code> - any Standard Schema (valibot, zod, arktype) - and the URL
         query becomes typed and validated on both sides: the loader receives it as{" "}
-        <code>ctx.search</code> and the component reads the same value with{" "}
-        <code>{`useSearch<typeof searchSchema>()`}</code>. Invalid or hostile input fails closed to the
-        schema's defaults (never a 500), and the value is derived identically on the server and on each
-        client navigation - so a query-reading page hydrates with no mismatch and never touches{" "}
+        <code>ctx.search</code> and the page receives the same value as its <code>search</code> prop,
+        typed by the schema. A nested component reads it with <code>{`useSearch("/reports")`}</code>;
+        the argument names the route, and a pattern the generated route table does not hold is a
+        compile error. Invalid or hostile input fails closed to the schema's defaults (never a 500),
+        and the value is derived identically on the server and on each client navigation - so a
+        query-reading page hydrates with no mismatch and never touches{" "}
         <code>window.location.search</code> by hand.
       </p>
       <CodeBlock code={SEARCH} lang="tsx" />
       <p>
-        Without a <code>searchSchema</code>, <code>ctx.search</code> and <code>useSearch()</code> are
-        the raw parsed query (<code>{`Record<string, unknown>`}</code>). <code>useSearch</code> ships on
-        every adapter (React, Preact, Vue, Solid, Svelte), each in that framework's shape - a value on
-        React/Preact, a <code>Ref</code> on Vue, an accessor on Solid/Svelte. For imperative reads and
-        writes of the raw query, <code>useSearchParams()</code> mirrors react-router's{" "}
+        Without a <code>searchSchema</code>, <code>ctx.search</code>, the <code>search</code> prop and{" "}
+        <code>useSearch</code> are the raw parsed query (<code>{`Record<string, unknown>`}</code>).{" "}
+        <code>useSearch</code> and <code>useParams</code> ship on every adapter (React, Preact, Vue,
+        Solid, Svelte), each in that framework's shape - a value on React/Preact, a <code>Ref</code> on
+        Vue, an accessor on Solid/Svelte. <code>{`useParams("/users/:id")`}</code> is that route's
+        params. For imperative reads and writes of the raw query, <code>useSearchParams()</code> mirrors
+        react-router's{" "}
         <code>[params, setParams]</code> tuple.
+      </p>
+      <p>
+        A link may leave out a field the schema defaults: <code>href</code> takes the schema&apos;s{" "}
+        <em>input</em>, where the page and the hooks read its <em>output</em>. A route without params
+        types <code>props.params</code> with no keys, so reading one is a compile error. Under{" "}
+        <code>nifra check</code>, <code>NF-C059</code> flags a hook that names another page&apos;s route
+        and <code>NF-C060</code> a cast to <code>Href</code>; a project made by{" "}
+        <code>create-nifra</code> also fails on <code>NF-C057</code>, a dead path string.
+      </p>
+      <p>
+        <code>.svelte</code> and <code>.vue</code> routes get their <code>searchSchema</code> typed too,
+        under <code>svelte-check</code> and <code>vue-tsc</code>; plain <code>tsc</code> cannot read those
+        files and falls back to the raw query. A Svelte page takes <code>search</code> from its props. A
+        Vue page reads it with <code>{`useSearch("/reports")`}</code>: <code>@vue/compiler-sfc</code>{" "}
+        cannot resolve <code>Route.ComponentProps</code> for <code>defineProps</code>.
+      </p>
+      <p>
+        Coming from 5.15 or earlier, <code>nifra upgrade 5.16.0 --write</code> rewrites{" "}
+        <code>useSearch&lt;typeof searchSchema&gt;()</code>, <code>useParams&lt;T&gt;()</code> and the
+        bare calls in a page file to name that page&apos;s route. A hook in a layout, a component shared
+        by several pages or a <code>.svelte</code> or <code>.vue</code> file is listed by line instead:
+        only its author knows the route it renders in, and a shared component takes the pattern as a
+        prop typed as the union of its routes. The same run rewrites the query cache and{" "}
+        <code>formFor</code> calls; see{" "}
+        <a href={href({ to: "/docs/cli", hash: "upgrade" })}>upgrading nifra</a>.
       </p>
       <p>
         To WRITE search, build the link with <code>href</code> and hand it to <code>useNavigate</code>:{" "}

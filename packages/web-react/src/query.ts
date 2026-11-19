@@ -18,8 +18,11 @@ import type {
   MutationContext,
   MutationHandle,
   MutationState,
+  PlainKeyDefault,
+  PlainQueryKey,
   QueryClient,
   QueryHandle,
+  QueryKey,
   QueryOptions,
   QueryState,
 } from "@nifrajs/web"
@@ -128,6 +131,16 @@ export interface UseQueryResult<T> extends QueryState<T> {
  * client.
  */
 export function useQuery<T>(
+  key: QueryKey<T>,
+  fn: () => Promise<T>,
+  options?: UseQueryOptions,
+): UseQueryResult<T>
+export function useQuery<T, K = PlainKeyDefault>(
+  key: PlainQueryKey<K>,
+  fn: () => Promise<T>,
+  options?: UseQueryOptions,
+): UseQueryResult<T>
+export function useQuery<T>(
   key: unknown,
   fn: () => Promise<T>,
   options?: UseQueryOptions,
@@ -135,7 +148,8 @@ export function useQuery<T>(
   const client = useQueryClient()
   const enabled = options?.enabled !== false
   // A disabled query still binds a handle (so it re-renders when re-enabled), but never fetches.
-  const handle: QueryHandle<T> = client.query<T>(key, fn, options)
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the public overloads checked the key against the data type; this signature has erased it to `unknown`
+  const handle: QueryHandle<T> = client.query<T>(key as QueryKey<T>, fn, options)
   // Server snapshot = the handle's own snapshot: without a provider the client is the NOOP one (idle),
   // but WITH a hydrated provider client it returns the server-seeded data - so a HydrationBoundary-fed
   // query renders its data during SSR and the first client render matches (no loading flash, no drift).

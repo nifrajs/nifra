@@ -1,4 +1,3 @@
-import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 // `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
 // bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
 // Vite's dev server. Sourced from the ROOT so the generated `RouteTable` augmentation applies.
@@ -7,7 +6,10 @@ import type {
   BlockerFunction,
   BlockerState,
   NavigateFunction,
+  ParamsOfFrom,
   RenderProps,
+  RouteFrom,
+  SearchOfFrom,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
@@ -38,27 +40,48 @@ const SEARCH_KEY = "@nifrajs/web-svelte:search"
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 const EMPTY_SEARCH_ACCESSOR = (): Record<string, unknown> => EMPTY_SEARCH
 
+// Frozen empty params + a stable accessor for a `useParams` used outside a nifra route tree.
+const EMPTY_PARAMS: Readonly<Record<string, string>> = Object.freeze({})
+const EMPTY_PARAMS_ACCESSOR = (): Readonly<Record<string, string>> => EMPTY_PARAMS
+
 /**
- * The route's typed, validated search params as a reactive accessor - the SAME value the loader received
- * as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the
- * identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a
- * `$derived` or the template) to read the current search - it updates on navigation. Pass the route's
- * `searchSchema` as the type argument for its output type.
+ * The matched route's decoded path params as a reactive accessor, typed from the generated route table:
+ * `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the
+ * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile
+ * error. SSR-correct: the same value on the server render and the client mount.
  *
  * ```svelte
  * <script>
- *   const search = useSearch() // () => { page: number, ... }
+ *   const params = useParams("/users/:id") // () => { id: string }
+ * </script>
+ * <span>{params().id}</span>
+ * ```
+ */
+export function useParams<K extends RouteFrom>(from: K): () => ParamsOfFrom<K>
+export function useParams(): unknown {
+  const get = getContext<(() => RenderProps) | undefined>(PROPS_KEY)
+  return get === undefined ? EMPTY_PARAMS_ACCESSOR : () => get().params ?? EMPTY_PARAMS
+}
+
+/**
+ * The route's validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`,
+ * typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output.
+ * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern
+ * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically
+ * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.
+ * Hostile input already failed closed to the schema's defaults at match time.
+ *
+ * ```svelte
+ * <script>
+ *   const search = useSearch("/reports") // () => { page: number }
  * </script>
  * <span>{search().page}</span>
  * ```
  */
-export function useSearch<
-  Schema extends StandardSchemaV1 | undefined = undefined,
->(): () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown> {
+export function useSearch<K extends RouteFrom>(from: K): () => SearchOfFrom<K>
+export function useSearch(): unknown {
   const get = getContext<(() => Record<string, unknown>) | undefined>(SEARCH_KEY)
-  return (get ?? EMPTY_SEARCH_ACCESSOR) as () => Schema extends StandardSchemaV1
-    ? InferOutput<Schema>
-    : Record<string, unknown>
+  return get ?? EMPTY_SEARCH_ACCESSOR
 }
 
 // Must match the string key the outermost `Chain.svelte` provides its props under.

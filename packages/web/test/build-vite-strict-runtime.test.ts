@@ -240,6 +240,9 @@ describe("vite-import helpers", () => {
 
   test("relaxCaptureStackTrace still decorates a real Error, and is idempotent", async () => {
     const { relaxCaptureStackTrace } = await import("../src/internal/vite-import.ts")
+    // Another test file may have installed the shim and put the original back, leaving the marker set:
+    // clear it, so this test installs the shim itself whatever ran before it.
+    Reflect.deleteProperty(Error, Symbol.for("@nifrajs/web/relaxed-capture-stack-trace"))
     relaxCaptureStackTrace()
     const first = Error.captureStackTrace
     relaxCaptureStackTrace() // second call must not wrap the wrapper
@@ -252,5 +255,40 @@ describe("vite-import helpers", () => {
 
     // And it swallows a refusal rather than propagating it - the entire point.
     expect(() => Error.captureStackTrace(Object.create(Error.prototype))).not.toThrow()
+  })
+  test("the shim swallows a refusal from the runtime's own captureStackTrace, and leaves a locked one alone", async () => {
+    const { relaxCaptureStackTrace } = await import("../src/internal/vite-import.ts")
+    const marker = Symbol.for("@nifrajs/web/relaxed-capture-stack-trace")
+    const savedStack = Object.getOwnPropertyDescriptor(Error, "captureStackTrace")
+    const savedMarker = Object.getOwnPropertyDescriptor(Error, marker)
+    try {
+      // A runtime whose own captureStackTrace refuses an object: the shim swallows it. Whether the
+      // runtime running these tests refuses anything varies, so the refusal is made here.
+      Reflect.deleteProperty(Error, marker)
+      Object.defineProperty(Error, "captureStackTrace", {
+        value: () => {
+          throw new TypeError("refused")
+        },
+        writable: true,
+        configurable: true,
+      })
+      relaxCaptureStackTrace()
+      expect(() => Error.captureStackTrace({})).not.toThrow()
+
+      // A property that cannot be assigned: the install fails quietly and the property stays as it was.
+      Reflect.deleteProperty(Error, marker)
+      const locked = Error.captureStackTrace
+      Object.defineProperty(Error, "captureStackTrace", {
+        value: locked,
+        writable: false,
+        configurable: true,
+      })
+      expect(() => relaxCaptureStackTrace()).not.toThrow()
+      expect(Error.captureStackTrace).toBe(locked)
+    } finally {
+      Reflect.deleteProperty(Error, marker)
+      if (savedMarker !== undefined) Object.defineProperty(Error, marker, savedMarker)
+      if (savedStack !== undefined) Object.defineProperty(Error, "captureStackTrace", savedStack)
+    }
   })
 })

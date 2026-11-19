@@ -577,6 +577,20 @@ nifra migrate --from tailwind --to stylex --dir src`}
         again (see <a href={href({ to: "/docs/troubleshooting", hash: "stale-file-links" })}>stale file: links</a>).
       </p>
       <p>
+        A recipe can also rewrite source on the syntax tree, with the project&apos;s own TypeScript, for
+        a call shape an import move cannot express. A rewrite changes only a shape it recognizes
+        whole and lists every other site by file and line under &quot;to edit by hand&quot;; it never
+        guesses. The 5.16 recipe carries three, for APIs the route table and the backend now type:{" "}
+        <code>route-hooks</code> writes the page&apos;s own route into <code>useSearch</code> and{" "}
+        <code>useParams</code> (the type-argument and bare forms are removed), <code>query-keys</code>{" "}
+        wraps the key in <code>getQueryData</code> and <code>setQueryData</code> in{" "}
+        <code>queryKey(...)</code>, and <code>form-for</code> turns{" "}
+        <code>formFor&lt;App, &quot;/path&quot;&gt;()</code> into{" "}
+        <code>formFor&lt;App&gt;()(&quot;/path&quot;)</code>. None changes what runs: afterwards, run{" "}
+        <code>nifra types</code> and <code>tsc</code>, and whatever is left shows as an error at its
+        line.
+      </p>
+      <p>
         A <code>link:</code> or <code>file:</code> dependency outside the root that installs its own{" "}
         <code>@nifrajs/*</code> at another version stops the upgrade before anything is written: its
         imports resolve from its own <code>node_modules</code>, so after the upgrade a{" "}

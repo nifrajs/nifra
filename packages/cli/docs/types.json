@@ -6830,10 +6830,16 @@
     "signature": "export interface ForkSessionResult {\n    readonly sessionId: string;\n    readonly parentSessionId: string;\n}"
   },
   {
+    "name": "FormFor",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface FormFor<App> {\n    <Path extends PostPaths<App>>(path: Path, ...params: ParamsArgument<Path>): FormHandle<App, Path, \"post\">;\n    <Path extends RoutePaths<App>, Method extends RouteMethods<App, Path>>(path: Path, method: Method, ...params: ParamsArgument<Path>): FormHandle<App, Path, Method>;\n}"
+  },
+  {
     "name": "FormHandle",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface FormHandle<App, Path extends string, Method extends string> {\n    /** Input props for a schema field. `name` is constrained to the body's keys - a typo, or a field the\n     * schema doesn't have, is a COMPILE error. Spread onto an element: `<input {...f.field(\"text\")} />`. */\n    field<K extends FieldKey<App, Path, Method>>(name: K, props?: FieldProps): FieldProps & {\n        name: K;\n    };\n    /** `formData.get`, key-constrained to the body's fields - reading an orphan key won't compile. */\n    read<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntry;\n    /** `formData.getAll`, key-checked the same way. */\n    readAll<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntries;\n}"
+    "signature": "export interface FormHandle<App, Path extends string, Method extends string> {\n    /** The route's URL, for `<form action>`: the path with its params filled in. */\n    readonly action: string;\n    /** The route's method, lowercase, for `<form method>` or a `fetch`. */\n    readonly method: Method;\n    /** Input props for a schema field. `name` is constrained to the body's keys - a typo, or a field the\n     * schema doesn't have, is a COMPILE error. Spread onto an element: `<input {...f.field(\"text\")} />`. */\n    field<K extends FieldKey<App, Path, Method>>(name: K, props?: FieldProps): FieldProps & {\n        name: K;\n    };\n    /** `formData.get`, key-constrained to the body's fields - reading an orphan key won't compile. */\n    read<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntry;\n    /** `formData.getAll`, key-checked the same way. */\n    readAll<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntries;\n}"
   },
   {
     "name": "FormOptions",
@@ -7335,7 +7341,7 @@
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type HrefOptions<K extends Pattern> = {\n    readonly to: K;\n    readonly search?: SearchOfRoute<K> | undefined;\n    readonly hash?: string | undefined;\n} & ParamsOption<K> & SlotOptions<K>;",
-    "doc": "/**\n * What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has\n * any, absent when it has none), the route's `search` as its `searchSchema` outputs it, and the `hash`\n * without its `#`.\n */"
+    "doc": "/**\n * What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has\n * any, absent when it has none), the route's `search` as its `searchSchema` accepts it (a defaulted field\n * may be left out), and the `hash` without its `#`.\n */"
   },
   {
     "name": "HreflangLink",
@@ -11596,6 +11602,13 @@
     "doc": "/**\n * The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since\n * the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.\n */"
   },
   {
+    "name": "ParamsOfFrom",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type ParamsOfFrom<K extends string> = K extends RouteTablePattern ? Readonly<RouteParamsOf<K>> : Readonly<Record<string, string>>;",
+    "doc": "/** The params `useParams(from)` gives: the route's, or the loose record for a pattern outside the table. */"
+  },
+  {
     "name": "ParseEntryOptions",
     "kind": "interface",
     "package": "@nifrajs/content",
@@ -11687,6 +11700,20 @@
     "kind": "interface",
     "package": "@nifrajs/pi",
     "signature": "export interface PiBackendOptions {\n    /** Defaults to `pi`, resolved through PATH. */\n    readonly command?: string;\n    /** Extra arguments appended after `--mode rpc`. */\n    readonly args?: readonly string[];\n    /**\n     * Variables Pi runs with, on top of the base set (`PATH`, `HOME`, locale, terminal, and the\n     * model-provider credentials Pi reads, such as `ANTHROPIC_API_KEY`). Nothing else from the parent\n     * environment passes; a key mapped to `undefined` is withheld even when the parent has it.\n     */\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly sessionDir?: string;\n    readonly noSession?: boolean;\n    /** Override the generated Pi flags for a test double or a compatible RPC executable. */\n    readonly rpcArgs?: readonly string[];\n    /**\n     * Reload transport. Pi's documented RPC protocol uses a slash command bridged by a tiny\n     * extension; compatible RPC implementations may opt into their legacy top-level command.\n     */\n    readonly reloadCommand?: \"restart\" | \"prompt\" | \"rpc\";\n    /** Load the tiny public-API reload bridge. Defaults to true for generated Pi processes. */\n    readonly enableReloadBridge?: boolean;\n    readonly maxEventQueueSize?: number;\n    /** Maximum UTF-8 bytes accepted for one Pi JSONL record. Defaults to 1 MiB. */\n    readonly maxRecordBytes?: number;\n    /** Maximum prompt characters accepted by the adapter. Defaults to 64 KiB. */\n    readonly maxMessageChars?: number;\n    /** Optional project instructions passed through Pi's documented append-system-prompt flag. */\n    readonly appendSystemPrompt?: string;\n    /** Opt-in loading of the separately packaged Nifra verification tools extension. */\n    readonly enableNifraTools?: boolean;\n}"
+  },
+  {
+    "name": "PlainKeyDefault",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type PlainKeyDefault = string | number | readonly unknown[] | Record<string, unknown> | object;",
+    "doc": "/**\n * The key type a plain-key overload assumes when its caller names only the data type\n * (`useQuery<Todo>(...)`). A fallback to `unknown` would let a typed key of another data type through.\n */"
+  },
+  {
+    "name": "PlainQueryKey",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type PlainQueryKey<K> = K & {\n    readonly \"~nifraQueryData\"?: undefined;\n};",
+    "doc": "/**\n * A key that is not a {@link QueryKey}. A typed key does not fit it, so the plain-key overload of `query`\n * / `useQuery` cannot take one: a typed key goes through the overload that checks its data type.\n */"
   },
   {
     "name": "PlainRender",
@@ -12459,7 +12486,7 @@
     "name": "QueryClient",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface QueryClient {\n    /** Get the stable {@link QueryHandle} for `key`, fetched via `fn`. Re-binds the latest `fn` (and\n     * `options`) each call (closures change between renders); returns the same handle for the same\n     * (hashed) key. */\n    query: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryHandle<T>;\n    /** Get the stable {@link InfiniteQueryHandle} for `key`, whose pages are fetched via `fn(pageParam)`. */\n    infiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: InfiniteQueryOptions<T, P>) => InfiniteQueryHandle<T, P>;\n    /** Mark matching cached queries, infinite ones included, stale and refetch the **mounted** ones\n     * (subscribers > 0). Array keys match by **prefix** (`[\"todo\"]` ⇒ every `[\"todo\", …]`); other keys\n     * match exactly. */\n    invalidateQueries: (keyOrPrefix: unknown) => void;\n    /** Read a cached query's data (`undefined` if absent or not yet successful). Synchronous, no fetch. */\n    getQueryData: <T>(key: unknown) => T | undefined;\n    /** Write a query's data directly (optimistic updates, or seeding). Creates the entry if absent; marks\n     * it fresh (`updatedAt = now`). `updater` may be a value or a function of the previous data. */\n    setQueryData: <T>(key: unknown, updater: T | ((prev: T | undefined) => T)) => void;\n    /** Fetch + cache a query's data WITHOUT subscribing (SSR prefetch, hover warm). Resolves when cached;\n     * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */\n    prefetchQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => Promise<void>;\n    /** Serialize the successful queries that `options.shouldDehydrateQuery` selects to a transferable\n     * snapshot (server → client SSR bridge). Deny by default: with no filter the snapshot is empty. */\n    dehydrate: (options?: DehydrateOptions) => DehydratedState;\n    /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */\n    hydrate: (state: DehydratedState) => void;\n    /** Drop every cached query: mounted ones go back to pending and refetch, the rest are removed. Every\n     * client in the page runs it when the visitor changes: `identityChanged()` in this tab, a live\n     * account switch, or, on the client's next read, a new identity epoch cookie. */\n    clear: () => void;\n}",
+    "signature": "export interface QueryClient {\n    /** Get the stable {@link QueryHandle} for `key`, fetched via `fn`. Re-binds the latest `fn` (and\n     * `options`) each call (closures change between renders); returns the same handle for the same\n     * (hashed) key. */\n    query: {\n        <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): QueryHandle<T>;\n        <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryHandle<T>;\n    };\n    /** Get the stable {@link InfiniteQueryHandle} for `key`, whose pages are fetched via `fn(pageParam)`. */\n    infiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: InfiniteQueryOptions<T, P>) => InfiniteQueryHandle<T, P>;\n    /** Mark matching cached queries, infinite ones included, stale and refetch the **mounted** ones\n     * (subscribers > 0). Array keys match by **prefix** (`[\"todo\"]` ⇒ every `[\"todo\", …]`); other keys\n     * match exactly. */\n    invalidateQueries: (keyOrPrefix: unknown) => void;\n    /** Read a cached query's data (`undefined` if absent or not yet successful). Synchronous, no fetch. */\n    getQueryData: <T>(key: QueryKey<T>) => T | undefined;\n    /** Write a query's data directly (optimistic updates, or seeding). Creates the entry if absent; marks\n     * it fresh (`updatedAt = now`). `updater` may be a value or a function of the previous data. */\n    setQueryData: <T>(key: QueryKey<T>, updater: T | ((prev: T | undefined) => T)) => void;\n    /** Fetch + cache a query's data WITHOUT subscribing (SSR prefetch, hover warm). Resolves when cached;\n     * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */\n    prefetchQuery: {\n        <T>(key: QueryKey<T>, fn: () => Promise<T>, options?: QueryOptions): Promise<void>;\n        <T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): Promise<void>;\n    };\n    /** Serialize the successful queries that `options.shouldDehydrateQuery` selects to a transferable\n     * snapshot (server → client SSR bridge). Deny by default: with no filter the snapshot is empty. */\n    dehydrate: (options?: DehydrateOptions) => DehydratedState;\n    /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */\n    hydrate: (state: DehydratedState) => void;\n    /** Drop every cached query: mounted ones go back to pending and refetch, the rest are removed. Every\n     * client in the page runs it when the visitor changes: `identityChanged()` in this tab, a live\n     * account switch, or, on the client's next read, a new identity epoch cookie. */\n    clear: () => void;\n}",
     "doc": "/** The keyed query cache. One per app (a binding registers it like the router). */"
   },
   {
@@ -12495,6 +12522,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface QueryHandle<T = unknown> {\n    snapshot: () => QueryState<T>;\n    subscribe: (listener: () => void) => () => void;\n    /** Fetch when stale or absent (fresh ⇒ no-op); joins an in-flight fetch (dedup). Resolves to the\n     * data, or rejects if the fetch threw. */\n    fetch: () => Promise<T>;\n    /** Refetch regardless of staleness (still joins an in-flight fetch). */\n    refetch: () => Promise<T>;\n}",
     "doc": "/** A stable per-key handle: subscribe to its state, read a snapshot, trigger a fetch/refetch. */"
+  },
+  {
+    "name": "QueryKey",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type QueryKey<T> = {\n    readonly \"~nifraQueryData\": T;\n};",
+    "doc": "/**\n * What a typed query key adds to the key itself: the type of the data stored under it. Make one with\n * {@link queryKey} - `const todosKey = queryKey<Todo[]>([\"todos\"])` - and use it everywhere: the fetcher\n * must return that type, and `getQueryData` / `setQueryData` read and write it, so a key and its data\n * cannot drift apart. At run time it is the key itself, so prefix invalidation\n * (`invalidateQueries([\"todos\"])`) works unchanged.\n */"
   },
   {
     "name": "QueryOptions",
@@ -14181,6 +14215,13 @@
     "doc": "/** One matched route: pattern, nested layout ids (outermost → innermost), source file, loader. */"
   },
   {
+    "name": "RouteFrom",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteFrom = [RouteTablePattern] extends [never] ? string : RouteTablePattern;",
+    "doc": "/**\n * What a route hook's argument accepts: a {@link RouteTable} key, or any string while the table is empty\n * (before `nifra types` has run, or in a program that never loads it), the way `href` does.\n */"
+  },
+  {
     "name": "RouteInfo",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -14279,6 +14320,13 @@
     "doc": "/**\n * A method a route is registered under: a standard {@link Method}, or another token that\n * {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).\n */"
   },
   {
+    "name": "RouteMethods",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteMethods<App, Path extends string> = Path extends keyof RegistryOf<App> ? Lowercase<keyof RegistryOf<App>[Path] & string> : never;",
+    "doc": "/** The lowercase methods `App` declares for `Path`: what a form for that route may use. */"
+  },
+  {
     "name": "RouteMiddleware",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -14291,6 +14339,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    /**\n     * Named, independently navigable route regions. Each name is bound to route patterns from the\n     * generated route table; URL state selects only one of these registered identities.\n     */\n    readonly routeSlots?: Readonly<Record<string, readonly string[]>>;\n    /** Layout loader that must run before actions and is not retained across the action's render. */\n    readonly gate?: boolean;\n    readonly action?: Action;\n    /**\n     * Backend half only: which browser origins may POST to {@link action}. When omitted, a request\n     * whose `Origin` is another site's is refused with 403 before middleware, gates or the action run;\n     * requests without an `Origin` (non-browser clients) pass. An array allows exactly those origins\n     * (and refuses a request without one); a function decides, receiving `null` when there is none and,\n     * as its second argument, whether the default same-origin check would admit the request, so a route\n     * can accept its own site and one more origin: `(origin, sameOrigin) => sameOrigin || origin === shell`.\n     * Use it for a callback a third party posts to, such as an identity provider's `form_post`.\n     * `Origin` is browser-enforced, not authentication: keep the action's own auth checks.\n     */\n    readonly allowedOrigins?: ReadonlyArray<string> | ((origin: string | null, sameOrigin: boolean) => boolean);\n    /**\n     * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the\n     * loader returns data. Keys it does not declare are dropped before the page renders; a declared\n     * field of the wrong shape fails the request with a 500 naming the field's path.\n     */\n    readonly loaderOutput?: StandardSchemaV1;\n    /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */\n    readonly actionOutput?: StandardSchemaV1;\n    /**\n     * Backend half only: the loader of a partially prerendered page's shared shell. It\n     * receives no request, so its output is the same for every visitor and the shell is cached.\n     */\n    readonly shellLoader?: (ctx: ShellCtx) => unknown;\n    /** Backend half only: the schema of what {@link shellLoader} returns. */\n    readonly shellOutput?: StandardSchemaV1;\n    /**\n     * Backend half only: query parameters that select a different shell, each with its\n     * closed set of values (`{ search: { color: [\"red\", \"blue\"] } }`). Any other parameter, or a value\n     * outside its set, builds the default shell; holes still read the whole query.\n     */\n    readonly shellVariations?: ShellVariations;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** Named async boundaries owned by this route. The adapter renders their neutral state seam. A\n     * boundary's `load` comes from {@link boundaryLoaders} in the route's backend half; the frontend\n     * file declares only how it renders. */\n    readonly boundaries?: readonly BoundaryRegistration[];\n    /** Backend half only: each boundary's server loader, keyed by boundary name. */\n    readonly boundaryLoaders?: Readonly<Record<string, BoundaryLoaderEntry>>;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    /**\n     * `false` gives every client reload of this page (an action's revalidation, `invalidate()`, a live\n     * refresh) fresh data. By default a reload keeps the identity of the parts of `data` and the layouts'\n     * data that it did not change, so an unchanged row keeps its DOM and component state, and a renderer\n     * that memoizes on identity skips it. Not every unchanged row, though: an array whose first 32\n     * elements all changed is taken whole, later unchanged elements included, so code that needs a row's\n     * identity must not count on it. Opt out for a page whose code compares `data` against its value\n     * from before the reload, or whose rows re-render whatever their identity, which then pay the\n     * comparison for nothing. Client-only.\n     */\n    readonly shareData?: boolean;\n    /**\n     * Keep this page mounted after the visitor leaves it, so back and forward show it again as it was\n     * left: its component state, form fields, inner scroll offsets and focus. At most three pages are\n     * kept per tab, each for at most 10 minutes; a kept page is shown again only by a back or forward to\n     * its own history entry, and its data reloads in place. A sign-in or sign-out drops every kept page.\n     * Client-only.\n     */\n    readonly keepAlive?: true | KeepAliveOptions;\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * `false` renders this route's component in the browser only. The server still matches the route,\n     * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the\n     * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser\n     * hydrates against that, then renders the component. For a component that cannot render on a\n     * server: one that reads `window` or a browser-only API while it renders.\n     *\n     * The module itself is still imported on the server, for its loader and options - so an import\n     * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the\n     * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.\n     */\n    readonly ssr?: boolean;\n    /**\n     * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates\n     * before the component takes over - a skeleton, a spinner. Receives the same props as the\n     * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.\n     */\n    readonly HydrateFallback?: unknown;\n    /**\n     * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout\n     * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from\n     * the module on the server and in the browser, so it must be the same value on both.\n     */\n    readonly handle?: unknown;\n    /**\n     * On a root status page (`_404.tsx`, `_<status>.tsx`) or an `_error.tsx`. By default (`true`) the\n     * page renders inside the layouts above it with their loader data and `meta`, as a nested `_404`\n     * renders. When those layouts cannot render it - a loader throws, a gate or the middleware refuses -\n     * a root status page renders alone and an `_error` inside its layouts without their data, with the\n     * same status. `false` always renders them that way, and runs no layout loader for them.\n     */\n    readonly inLayouts?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /**\n     * Bounded tags ISR on-demand invalidation (`?tag=...`) and a CDN purge reach this page by. A list, or\n     * a function of the route's params and URL (`({ params }) => [\\`product:${params.id}\\`]`) for tags\n     * per page. Tags travel to the CDN and reach anyone reading the origin: never put personal data in one.\n     */\n    readonly revalidateTags?: RevalidateTags;\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
     "doc": "/** A route module - the default component + optional loader / action / meta. */"
+  },
+  {
+    "name": "RouteParamsOf",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteParamsOf<K extends RouteTablePattern> = RouteTable[K] extends {\n    readonly params: infer Params;\n} ? Params : never;",
+    "doc": "/** The params of route `K`, as its pattern declares them (an empty object type when it has none). */"
   },
   {
     "name": "RoutePaths",
@@ -14343,6 +14398,20 @@
     "package": "nifra",
     "signature": "export interface RouteSchema {\n    /** Explicit external-protocol mode. The handler owns raw `c.req` parsing/streaming; no JSON body\n     * parser or schema-driven 422 path is installed. A finite transport cap still applies by default. */\n    readonly wire?: \"raw\";\n    /**\n     * Choose trust-boundary order for sensitive routes. Public routes validate first by default;\n     * routes with `authenticate()` default to auth first. `validate-before-auth` is an explicit\n     * compatibility escape hatch, while `auth-before-validation` can reject without parsing the body.\n     */\n    readonly validationOrder?: \"validate-before-auth\" | \"auth-before-validation\";\n    /** Transport body cap for this route. Defaults to the server's maxBodyBytes. Use a finite\n     * smaller/larger limit for a specific endpoint. The 'unlimited' value is an explicit\n     * streaming/upload exemption and requires a non-empty bodyLimitReason for auditability.\n     *\n     * 'unlimited' is legal only for schema-less streaming/upload routes. It is rejected with `body` or\n     * `idempotency`, because those lanes buffer the body before user code can apply a protocol-specific\n     * bound. Read an unlimited route from `c.req.body` as a stream and bound it by the protocol it speaks;\n     * `nifra.body-bounded` is deliberately NOT published for an unlimited route. */\n    readonly bodyLimit?: number | \"unlimited\";\n    /** Required explanation when bodyLimit is 'unlimited' (for example, a streaming upload is\n     * bounded by an upstream object-store protocol). */\n    readonly bodyLimitReason?: string;\n    /** Declared effect tokens. Reflected for assurance; never read by validation or serialization. */\n    readonly capabilities?: readonly string[];\n    /**\n     * Dedupe retries of this (mutating) route on an `Idempotency-Key` header. The first request runs and\n     * its response is stored; a retry with the same key replays that response without re-running the\n     * handler, and a key reused with a different body is rejected (409). A missing key on an\n     * idempotency-required route fails closed (400). Off the hot path - routes without it are unchanged.\n     */\n    readonly idempotency?: IdempotencyConfig;\n    /**\n     * Highest data-sensitivity this route's response body carries (`public` | `pii` | `secret`). A\n     * declarative, compile-time + introspection fact - never validated at runtime. Reflected for tooling,\n     * recorded in the capability lockfile (so a route that starts returning PII is a reviewable change),\n     * and read by downstream policy (e.g. a partner-API surface refusing to expose `pii`/`secret`).\n     */\n    readonly classification?: DataClassification;\n    /**\n     * Inline **route-assurance evidence**: the enforcement posture this route carries, declared adjacent to\n     * the handler (e.g. `[NIFRA_ASSURANCE.AUTHENTICATED]`). Each id becomes route-scoped `declared` evidence\n     * in reflection, so a `nifra.assurance.ts` policy `require:` clause is satisfiable WITHOUT rewriting an\n     * in-handler guard into a `withRouteAssurance`-marked middleware. Ids are lowercase dot/dash segments\n     * (invalid ids throw at registration). Reflected for the assurance gate; never read on the hot path.\n     *\n     * This is an author ASSERTION (recorded as `source: \"declared\"`), not runtime proof - like every\n     * assurance marker it is trusted by the static gate, which matches on the evidence id, not its source.\n     * Declare an id only on a route whose guard actually enforces it; a false declaration silently satisfies\n     * the policy. (`source` is retained in reflection, so a stricter policy or reviewer can still tell\n     * declared evidence from enforcement-module evidence.)\n     */\n    readonly assurance?: readonly string[];\n    /**\n     * Mark this route a **dynamic route family**: a template (`/api/:slug/:resource`) whose concrete\n     * resources are resolved at runtime (auto-CRUD over tenant-defined tables, a catch-all dispatcher).\n     * Purely declarative - it does not change dispatch. It surfaces in reflection so the assurance gate and\n     * tooling treat the one templated route as a deliberate family whose evidence covers every runtime-\n     * resolved resource, instead of reading it as a single forgotten route.\n     */\n    readonly family?: boolean;\n    /** Optional **path-params schema**. Path params arrive as strings (`/users/:id` -> `c.params.id`);\n     * declaring a schema validates them at the boundary (a malformed `:id` is a `422` before the handler,\n     * like `body`/`query`) and can coerce them (use `t.query({ id: t.integer() })` for a numeric param).\n     * The schema must cover every path param; with the strict default an undeclared path param is rejected.\n     * When omitted, `c.params` stays the path-inferred `Record<name, string>`. */\n    readonly params?: StandardSchemaV1;\n    /** Optional request-header schema; the validated output is `c.headers` and a failure is a `422`.\n     * Every client sends headers a route never declares (`host`, `user-agent`, `accept`), so a closed\n     * object schema (`t.object`) validates only the names it declares, each read case-insensitively and\n     * keyed as declared. `t.headers` is the open form: it receives every header, names lower-cased,\n     * and coerces values like `t.query`. A schema that does not expose its JSON Schema (a zod\n     * `.strict()` or valibot `strictObject`) receives every header, so declare it open. */\n    readonly headers?: StandardSchemaV1;\n    /** Optional request-cookie schema. It validates the cookies parsed from the `Cookie` header -\n     * names as sent, values URL-decoded strings, the first of a repeated name - before the handler\n     * runs, and the validated output is `c.cookies`. A failure is a `422`, like `headers`. A browser\n     * sends every cookie the site has set, so declare the ones the route reads with an open schema\n     * (`t.cookies`, `t.looseObject`) rather than rejecting the rest. */\n    readonly cookies?: StandardSchemaV1;\n    readonly body?: StandardSchemaV1;\n    readonly query?: StandardSchemaV1;\n    /** Optional **response contract**. When declared: the handler's return is type-checked against it\n     * (the implementation can't drift from the contract), the typed client sees THIS as the response type\n     * (the contract - not the handler's incidental return), and it's emitted into OpenAPI/JSON-Schema so\n     * tooling and coding agents can read the exact shape. It is **not** validated at runtime (zero\n     * hot-path cost) - purely a compile-time + introspection contract. */\n    readonly response?: StandardSchemaV1;\n    /**\n     * Optional **error-response contract**: a map of HTTP status code → the Standard Schema of that error's\n     * body. Declares a route's failure modes so they flow into OpenAPI (as non-2xx `responses`), the\n     * `/llms.txt` context, and other introspection - the whole contract, not just the happy path, is legible\n     * to tooling and coding agents. Like `response`, it is **not** validated at runtime (zero hot-path cost);\n     * it's a compile-time + introspection contract. Example: `{ 404: NotFound, 409: Conflict }`. */\n    readonly errors?: Readonly<Record<number, StandardSchemaV1>>;\n    /**\n     * Optional **SSE event contract**: the Standard Schema of each event's `data` payload on a\n     * streaming route (declared via `app.sse()`). Marks the route as a typed event stream - the\n     * typed client grows a `.subscribe()` for it, and the schema flows into reflection. Like\n     * `response`, it is **not** validated at runtime (zero hot-path cost); the server-side\n     * `stream.send()` is compile-time-checked against it instead.\n     */\n    readonly sse?: StandardSchemaV1;\n    /**\n     * Hook fired when the request fails `headers`/`cookies`/`params`/`body`/`query` validation, before the handler\n     * runs. `kind` says which input failed. Its return value selects one of three outcomes (may be async):\n     *   - a **`Response`** → returned as-is, short-circuiting the route (custom error envelope, redirect, …).\n     *   - **any other value** → treated as a repaired payload and **re-validated once** against the same\n     *     schema. If it now passes, the handler runs with it; if it still fails, the original `422` stands.\n     *     Re-validation means a bad return can't bypass the schema - the trust boundary holds.\n     *   - **`undefined`** → give up; the original validation `422` is returned unchanged.\n     * A route hook **overrides** the app-wide default set via `server({ onValidationError })`; return\n     * `undefined` to fall through to the plain `422` even when an app default exists. Typical uses: a custom\n     * error envelope, coercing the input, or prompting an LLM to repair the payload (re-validated, so it can't\n     * bypass the schema).\n     */\n    readonly onValidationError?: (issues: ReadonlyArray<StandardIssue>, ctx: Context, kind: \"body\" | \"query\" | \"params\" | \"headers\" | \"cookies\") => Response | unknown | Promise<Response | unknown>;\n}",
     "doc": "/** Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…). */"
+  },
+  {
+    "name": "RouteSearchInOf",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteSearchInOf<K extends RouteTablePattern> = RouteTable[K] extends {\n    readonly searchIn: infer Input;\n} ? Input : RouteSearchOf<K>;",
+    "doc": "/**\n * The search a link to route `K` may carry: the entry's `searchIn` (the schema's input, so a defaulted\n * field is optional), else its `search`. A hand-written entry with only `search` keeps working.\n */"
+  },
+  {
+    "name": "RouteSearchOf",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteSearchOf<K extends RouteTablePattern> = RouteTable[K] extends {\n    readonly search: infer Search;\n} ? Search : never;",
+    "doc": "/** The search of route `K`, as its `searchSchema` outputs it. */"
   },
   {
     "name": "RouteSlot",
@@ -14487,7 +14556,14 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface RouteTable {\n}",
-    "doc": "/**\n * Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the\n * object a link to the route needs (`Record<string, never>` when the pattern has none), `search` the\n * output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types`\n * writes `.nifra/types/routes.d.ts`, which fills it from the route files:\n *\n * ```ts\n * declare module \"@nifrajs/web\" {\n *   interface RouteTable {\n *     \"/users/:id\": { readonly params: { readonly id: string }; readonly search: { tab: string } }\n *   }\n * }\n * ```\n *\n * There is one key per pattern, so an optional segment (`[[lang]]`) is two keys with exact params each.\n * With an empty table every `to` is accepted and `search` is loose.\n */"
+    "doc": "/**\n * Every route the app serves, keyed by URL pattern. An entry is `{ params, search }`: `params` is the\n * object a link to the route needs (an empty object type when the pattern has none), `search` the\n * output of the route's `searchSchema` (the raw query when it declares none). Empty here; `nifra types`\n * writes `.nifra/types/routes.d.ts`, which fills it from the route files:\n *\n * ```ts\n * declare module \"@nifrajs/web\" {\n *   interface RouteTable {\n *     \"/users/:id\": { readonly params: { readonly id: string }; readonly search: { tab: string } }\n *   }\n * }\n * ```\n *\n * There is one key per pattern, so an optional segment (`[[lang]]`) is two keys with exact params each.\n * With an empty table every `to` is accepted and `search` is loose.\n */"
+  },
+  {
+    "name": "RouteTablePattern",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteTablePattern = keyof RouteTable & string;",
+    "doc": "/** A {@link RouteTable} key: the pattern of one route. `never` until `nifra types` fills the table. */"
   },
   {
     "name": "RouteTypesOptions",
@@ -15437,11 +15513,25 @@
     "signature": "export declare const SearchContext: Context<Accessor<Record<string, unknown>> | null>;"
   },
   {
+    "name": "SearchInputOf",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type SearchInputOf<Module> = Module extends {\n    searchSchema: infer S;\n} ? S extends StandardSchemaV1 ? InferInput<S> extends Record<string, unknown> ? InferInput<S> : SearchOf<Module> : Record<string, unknown> : Record<string, unknown>;",
+    "doc": "/**\n * The search INPUT type for a route MODULE - what a link may carry, so a field its `searchSchema` defaults\n * is optional. The schema's input when it is an object, else the {@link SearchOf} output. The route table\n * holds it as `searchIn`, and `href()` reads it, where the hooks and `ctx.search` read the output.\n */"
+  },
+  {
     "name": "SearchOf",
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type SearchOf<Module> = Module extends {\n    searchSchema: infer S;\n} ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>;",
     "doc": "/**\n * The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed\n * query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route\n * navigation: `nifra types` maps each route pattern to\n * `SearchOf<typeof import(\"./routes/<file>\")>` in `.nifra/types/routes.d.ts`, populating the augmentable\n * `RouteTable` interface.\n */"
+  },
+  {
+    "name": "SearchOfFrom",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type SearchOfFrom<K extends string> = K extends RouteTablePattern ? RouteSearchOf<K> : Record<string, unknown>;",
+    "doc": "/** The search `useSearch(from)` gives: the route's, or the loose record for a pattern outside the table. */"
   },
   {
     "name": "SearchParamsInit",
@@ -15805,8 +15895,8 @@
     "name": "ServerFn",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
-    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); in a client build, this module becomes typed stubs that POST under its\n * file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it\n * under that name.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n */"
+    "signature": "export interface ServerFn<Input, Output, Direct = Output> {\n    (input: Input, context: Context): MaybePromise<Direct>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n    /** Type-only: the browser's view of the result. Never present at run time. */\n    readonly \"~nifraOutput\"?: Output;\n}",
+    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); in a client build, this module becomes typed stubs that POST under its\n * file's name (`todos.fn.ts` posts under `todos`), so {@link serverFunctions} must mount it\n * under that name.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n *\n * `Output` is what the browser receives, after the `output` schema ran over the return. `Direct` is\n * what a direct server call returns: the function's own return, which the schema has not touched.\n */"
   },
   {
     "name": "ServerFnConfig",
@@ -15868,7 +15958,7 @@
     "name": "ServerFnReference",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type ServerFnReference<Input, Output> = ServerFn<Input, Output> | ClientServerFn<Input, Output>;",
+    "signature": "export type ServerFnReference<Input, Output> = ServerFn<Input, Output, unknown> | ClientServerFn<Input, Output>;",
     "doc": "/** A UI binding boundary: source declarations and generated client stubs are both accepted. */"
   },
   {
@@ -20287,8 +20377,7 @@
     "name": "createQuery",
     "kind": "function",
     "package": "@nifrajs/web-solid",
-    "signature": "export declare function createQuery<T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>;",
-    "doc": "/**\n * Bind the keyed query for `key`, fetched via `fn`. Returns a reactive `state()` accessor + `refetch`.\n * Concurrent `createQuery`s with the same key share one cache entry + one in-flight fetch (dedup).\n * Fetches on mount; SSR-idle. Call inside a component (owns the subscription). `options.live` names\n * the live keys that refetch it.\n */"
+    "signature": "export declare function createQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): CreateQueryResult<T>;"
   },
   {
     "name": "createQueryClient",
@@ -21598,8 +21687,8 @@
     "name": "formFor",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function formFor<App, Path extends RoutePaths<App>, Method extends string = \"post\">(): FormHandle<App, Path, Method>;",
-    "doc": "/**\n * Bind a form to a backend route's body schema at the type level. `App` is `typeof backend`; `Path` is\n * constrained to the app's real routes (a wrong path is a type error); `Method` defaults to `\"post\"`.\n */"
+    "signature": "export declare function formFor<App>(): FormFor<App>;",
+    "doc": "/**\n * Bind a form to a backend route at the type level. `App` is `typeof backend`; the path is one of the\n * app's real routes (a wrong path is a type error), and the method one that route declares: left out, it\n * is `\"post\"`, and a route with no POST handler needs its method named. A path with params takes them\n * after the method, `formFor<App>()(\"/users/:id\", \"post\", { id })`, and `action` is the URL they fill. The\n * handle carries the route's own `action` and `method`, and checks every field name against the route's\n * body schema.\n */"
   },
   {
     "name": "formatAssuranceReport",
@@ -24211,6 +24300,12 @@
     "signature": "export declare function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): ImpactReport;"
   },
   {
+    "name": "queryKey",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function queryKey<T = unknown, K = unknown>(key: K): K & QueryKey<T>;"
+  },
+  {
     "name": "queryObjectOf",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -25725,8 +25820,7 @@
     "name": "serverFn",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function serverFn<Input = void, Output = unknown>(config: ServerFnConfig<Input>, fn: (input: Input, context: Context) => MaybePromise<Output>): ServerFn<Input, Output>;",
-    "doc": "/**\n * Declare a server function.\n *\n *     export const addTodo = serverFn(\n *       { input: t.object({ text: t.string({ minLength: 1 }) }), capabilities: [\"db.write\"] },\n *       async ({ text }, c) => db.todos.insert({ text }),\n *     )\n *\n * The second argument receives the validated input and the ordinary nifra `Context` - `c.env`,\n * `c.clientIp`, `c.budget`, cookies, and the capability guard are all present, because this is a route.\n */"
+    "signature": "export declare function serverFn<Input = void>(config: ServerFnConfig<Input> & {\n    readonly output?: undefined;\n}, fn: (input: Input, context: Context) => MaybePromise<void | null | undefined | ServerFnControl>): ServerFn<Input, void>;"
   },
   {
     "name": "serverFnStubPlugin",
@@ -27196,9 +27290,37 @@
   {
     "name": "useParams",
     "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function useParams<K extends RouteFrom>(from: K): ParamsOfFrom<K>;",
+    "doc": "/**\n * The matched route's decoded path params, typed from the generated route table:\n * `useParams(\"/users/:id\")` is `{ readonly id: string }`. The argument only names the route for the\n * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile\n * error. SSR-correct: the same value on the server render and the client mount.\n *\n * ```tsx\n * const { id } = useParams(\"/users/:id\") // id: string\n * ```\n */"
+  },
+  {
+    "name": "useParams",
+    "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function useParams<T extends Record<string, string | undefined> = Record<string, string>>(): Readonly<T>;",
-    "doc": "/**\n * The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: \"7\" }`. SSR-correct:\n * `compose` provides the same value server-side (from the request match) and client-side (from router\n * state), so a param rendered into markup doesn't flash on hydration.\n */"
+    "signature": "export declare function useParams<K extends RouteFrom>(from: K): ParamsOfFrom<K>;",
+    "doc": "/**\n * The matched route's decoded path params, typed from the generated route table:\n * `useParams(\"/users/:id\")` is `{ readonly id: string }`. The argument only names the route for the\n * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile\n * error. SSR-correct: the same value on the server render and the client mount.\n *\n * ```tsx\n * const { id } = useParams(\"/users/:id\") // id: string\n * ```\n */"
+  },
+  {
+    "name": "useParams",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function useParams<K extends RouteFrom>(from: K): Accessor<ParamsOfFrom<K>>;",
+    "doc": "/**\n * The matched route's decoded path params as a reactive accessor, typed from the generated route table:\n * `useParams(\"/users/:id\")` is `{ readonly id: string }`. The argument only names the route for the\n * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile\n * error. SSR-correct: the same value on the server render and the client mount.\n *\n * ```tsx\n * const params = useParams(\"/users/:id\") // Accessor<{ id: string }>\n * return <span>{params().id}</span>\n * ```\n */"
+  },
+  {
+    "name": "useParams",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function useParams<K extends RouteFrom>(from: K): () => ParamsOfFrom<K>;",
+    "doc": "/**\n * The matched route's decoded path params as a reactive accessor, typed from the generated route table:\n * `useParams(\"/users/:id\")` is `{ readonly id: string }`. The argument only names the route for the\n * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile\n * error. SSR-correct: the same value on the server render and the client mount.\n *\n * ```svelte\n * <script>\n *   const params = useParams(\"/users/:id\") // () => { id: string }\n * </script>\n * <span>{params().id}</span>\n * ```\n */"
+  },
+  {
+    "name": "useParams",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function useParams<K extends RouteFrom>(from: K): Readonly<Ref<ParamsOfFrom<K>>>;",
+    "doc": "/**\n * The matched route's decoded path params as a reactive ref, typed from the generated route table:\n * `useParams(\"/users/:id\")` is `{ readonly id: string }`. The argument only names the route for the\n * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile\n * error. SSR-correct: the same value on the server render and the client mount.\n *\n * ```vue\n * const params = useParams(\"/users/:id\") // Ref<{ id: string }>\n * // template: {{ params.id }}\n * ```\n */"
   },
   {
     "name": "usePending",
@@ -27211,29 +27333,25 @@
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-preact",
-    "signature": "export declare function useQuery<T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>;",
-    "doc": "/**\n * Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching,\n * updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry +\n * one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle. `options.live`\n * names the live keys that refetch it.\n */"
+    "signature": "export declare function useQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>;"
   },
   {
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function useQuery<T>(key: unknown, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>;",
-    "doc": "/**\n * Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching,\n * updatedAt, isPending, isError, isSuccess, refetch }`. Concurrent `useQuery`s with the same key share\n * one cache entry + one in-flight fetch (dedup). Fetches on mount and when the key changes; `enabled:\n * false` keeps it idle (dependent queries). SSR-idle unless a `QueryClientProvider` supplies a hydrated\n * client.\n */"
+    "signature": "export declare function useQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>;"
   },
   {
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
-    "signature": "export declare function useQuery<T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>;",
-    "doc": "/**\n * Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error,\n * isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle.\n * `options.live` names the live keys that refetch it.\n */"
+    "signature": "export declare function useQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): QueryStore<T>;"
   },
   {
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-vue",
-    "signature": "export declare function useQuery<T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>;",
-    "doc": "/**\n * Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`,\n * `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key\n * share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle. `options.live`\n * names the live keys that refetch it.\n */"
+    "signature": "export declare function useQuery<T, K = PlainKeyDefault>(key: PlainQueryKey<K>, fn: () => Promise<T>, options?: QueryOptions): UseQueryResult<T>;"
   },
   {
     "name": "useQueryClient",
@@ -27301,36 +27419,36 @@
     "name": "useSearch",
     "kind": "function",
     "package": "@nifrajs/web-preact",
-    "signature": "export declare function useSearch<Schema extends StandardSchemaV1 | undefined = undefined>(): Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>;",
-    "doc": "/**\n * The route's typed, validated search params - the SAME value the loader received as `ctx.search`.\n * SSR-correct: `compose` provides it from the URL server-side and from the identical derivation on the\n * client mount, so a value rendered from it doesn't flash on hydration. Hostile input already failed\n * closed to the schema's defaults at match time. Pass the route's `searchSchema` as the type argument to\n * get its output type; bare, it's the raw parsed query (`Record<string, unknown>`).\n *\n * ```tsx\n * export const searchSchema = v.object({ page: v.optional(v.fallback(v.number(), 1), 1) })\n * const { page } = useSearch<typeof searchSchema>() // page: number\n * ```\n */"
+    "signature": "export declare function useSearch<K extends RouteFrom>(from: K): SearchOfFrom<K>;",
+    "doc": "/**\n * The route's validated search params - the SAME value the loader received as `ctx.search`,\n * typed from the generated route table: `useSearch(\"/reports\")` is that route's `searchSchema` output.\n * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern\n * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically\n * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.\n * Hostile input already failed closed to the schema's defaults at match time.\n *\n * ```tsx\n * const { page } = useSearch(\"/reports\") // page: number\n * ```\n */"
   },
   {
     "name": "useSearch",
     "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function useSearch<Schema extends StandardSchemaV1 | undefined = undefined>(): Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>;",
-    "doc": "/**\n * The route's typed, validated search params: the SAME value the loader received as `ctx.search`.\n * SSR-correct: `compose` provides it from `searchOf(searchSchema, url.search)` server-side and from the\n * identical derivation on the client mount, so a value rendered from it doesn't flash on hydration.\n * Hostile input already failed closed to the schema's defaults at match time, so a component never\n * parses `window.location.search` or guards against a bad query.\n *\n * Pass the route's `searchSchema` as the type argument to get its output type; bare, it's the raw parsed\n * query (`Record<string, unknown>`), which is also what a route without a `searchSchema` yields.\n *\n * ```tsx\n * export const searchSchema = v.object({ page: v.optional(v.fallback(v.number(), 1), 1) })\n * const { page } = useSearch<typeof searchSchema>() // page: number\n * ```\n */"
+    "signature": "export declare function useSearch<K extends RouteFrom>(from: K): SearchOfFrom<K>;",
+    "doc": "/**\n * The route's validated search params - the SAME value the loader received as `ctx.search`,\n * typed from the generated route table: `useSearch(\"/reports\")` is that route's `searchSchema` output.\n * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern\n * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically\n * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.\n * Hostile input already failed closed to the schema's defaults at match time.\n *\n * ```tsx\n * const { page } = useSearch(\"/reports\") // page: number\n * ```\n */"
   },
   {
     "name": "useSearch",
     "kind": "function",
     "package": "@nifrajs/web-solid",
-    "signature": "export declare function useSearch<Schema extends StandardSchemaV1 | undefined = undefined>(): Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>;",
-    "doc": "/**\n * The route's typed, validated search params as a reactive accessor - the SAME value the loader received\n * as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical\n * client-mount derivation, so a value rendered from it doesn't flash on hydration. Call it to read the\n * current search (`useSearch()().page`); it updates in place on a same-route navigation. Pass the route's\n * `searchSchema` as the type argument for its output type.\n *\n * ```tsx\n * const search = useSearch<typeof searchSchema>() // Accessor<{ page: number }>\n * return <span>{search().page}</span>\n * ```\n */"
+    "signature": "export declare function useSearch<K extends RouteFrom>(from: K): Accessor<SearchOfFrom<K>>;",
+    "doc": "/**\n * The route's validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`,\n * typed from the generated route table: `useSearch(\"/reports\")` is that route's `searchSchema` output.\n * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern\n * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically\n * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.\n * Hostile input already failed closed to the schema's defaults at match time.\n *\n * ```tsx\n * const search = useSearch(\"/reports\") // Accessor<{ page: number }>\n * return <span>{search().page}</span>\n * ```\n */"
   },
   {
     "name": "useSearch",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
-    "signature": "export declare function useSearch<Schema extends StandardSchemaV1 | undefined = undefined>(): () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>;",
-    "doc": "/**\n * The route's typed, validated search params as a reactive accessor - the SAME value the loader received\n * as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the\n * identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a\n * `$derived` or the template) to read the current search - it updates on navigation. Pass the route's\n * `searchSchema` as the type argument for its output type.\n *\n * ```svelte\n * <script>\n *   const search = useSearch() // () => { page: number, ... }\n * </script>\n * <span>{search().page}</span>\n * ```\n */"
+    "signature": "export declare function useSearch<K extends RouteFrom>(from: K): () => SearchOfFrom<K>;",
+    "doc": "/**\n * The route's validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`,\n * typed from the generated route table: `useSearch(\"/reports\")` is that route's `searchSchema` output.\n * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern\n * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically\n * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.\n * Hostile input already failed closed to the schema's defaults at match time.\n *\n * ```svelte\n * <script>\n *   const search = useSearch(\"/reports\") // () => { page: number }\n * </script>\n * <span>{search().page}</span>\n * ```\n */"
   },
   {
     "name": "useSearch",
     "kind": "function",
     "package": "@nifrajs/web-vue",
-    "signature": "export declare function useSearch<Schema extends StandardSchemaV1 | undefined = undefined>(): Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>;",
-    "doc": "/**\n * The route's typed, validated search params as a reactive ref - the SAME value the loader received as\n * `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical\n * client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value`\n * (reactive across navigation). Pass the route's `searchSchema` as the type argument for its output type.\n *\n * ```vue\n * const search = useSearch<typeof searchSchema>() // Ref<{ page: number }>\n * // template: {{ search.page }}\n * ```\n */"
+    "signature": "export declare function useSearch<K extends RouteFrom>(from: K): Readonly<Ref<SearchOfFrom<K>>>;",
+    "doc": "/**\n * The route's validated search params as a reactive ref - the SAME value the loader received as `ctx.search`,\n * typed from the generated route table: `useSearch(\"/reports\")` is that route's `searchSchema` output.\n * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern\n * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically\n * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.\n * Hostile input already failed closed to the schema's defaults at match time.\n *\n * ```vue\n * const search = useSearch(\"/reports\") // Ref<{ page: number }>\n * // template: {{ search.page }}\n * ```\n */"
   },
   {
     "name": "useSearchParams",

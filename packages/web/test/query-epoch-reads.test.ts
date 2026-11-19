@@ -3,7 +3,7 @@
  * hears it as the page reads, so nothing the previous visitor loaded is served to the next.
  */
 import { describe, expect, test } from "bun:test"
-import { createQueryClient, type QueryClient, type QueryHandle } from "../src/query.ts"
+import { createQueryClient, type QueryClient, type QueryHandle, queryKey } from "../src/query.ts"
 
 // The epoch is read once per synchronous run, so a rotation takes a task of its own to be seen.
 async function afterRotation(
@@ -32,8 +32,8 @@ const ways: Record<string, Way> = {
   "fetch()": (_, held) => held.fetch(),
   "refetch()": (_, held) => held.refetch(),
   "invalidateQueries()": (client) => client.invalidateQueries(["nothing", "matches"]),
-  "getQueryData()": (client) => client.getQueryData(["new"]),
-  "setQueryData()": (client) => client.setQueryData(["new"], "set"),
+  "getQueryData(queryKey())": (client) => client.getQueryData(queryKey(["new"])),
+  "setQueryData(queryKey())": (client) => client.setQueryData(queryKey(["new"]), "set"),
   "prefetchQuery()": (client, _, load) => client.prefetchQuery(["new"], load),
   "dehydrate()": (client) => client.dehydrate({ shouldDehydrateQuery: () => true }),
   "hydrate()": (client) => client.hydrate({ queries: [] }),

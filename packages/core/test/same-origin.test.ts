@@ -76,7 +76,11 @@ describe("both browser-facing seams share it", () => {
     const app = server()
       .use(websocket())
       .ws("/live", { message: () => {} })
-      .use(serverFunctions("app", { echo: serverFn({ input: t.object({}) }, async () => ({})) }))
+      .use(
+        serverFunctions("app", {
+          echo: serverFn({ input: t.object({}), output: t.object({}) }, async () => ({})),
+        }),
+      )
 
     // The shape a terminating proxy produces. Both seams must admit it.
     const proxied = (path: string, init?: RequestInit): Request =>

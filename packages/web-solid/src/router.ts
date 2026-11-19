@@ -1,4 +1,3 @@
-import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 // `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
 // bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
 // Vite's dev server. Sourced from the ROOT so the generated `RouteTable` augmentation applies.
@@ -7,6 +6,9 @@ import type {
   BlockerFunction,
   BlockerState,
   NavigateFunction,
+  ParamsOfFrom,
+  RouteFrom,
+  SearchOfFrom,
   UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
@@ -64,24 +66,43 @@ export function useMatches(): Accessor<readonly UIMatch[]> {
   return createMemo(() => chainMatches(props))
 }
 
+// Frozen empty params + a stable accessor for a `useParams` used outside a nifra route tree.
+const EMPTY_PARAMS: Readonly<Record<string, string>> = Object.freeze({})
+const EMPTY_PARAMS_ACCESSOR: Accessor<Readonly<Record<string, string>>> = () => EMPTY_PARAMS
+
 /**
- * The route's typed, validated search params as a reactive accessor - the SAME value the loader received
- * as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical
- * client-mount derivation, so a value rendered from it doesn't flash on hydration. Call it to read the
- * current search (`useSearch()().page`); it updates in place on a same-route navigation. Pass the route's
- * `searchSchema` as the type argument for its output type.
+ * The matched route's decoded path params as a reactive accessor, typed from the generated route table:
+ * `useParams("/users/:id")` is `{ readonly id: string }`. The argument only names the route for the
+ * compiler (nothing is read from it at runtime), and a pattern the table does not hold is a compile
+ * error. SSR-correct: the same value on the server render and the client mount.
  *
  * ```tsx
- * const search = useSearch<typeof searchSchema>() // Accessor<{ page: number }>
+ * const params = useParams("/users/:id") // Accessor<{ id: string }>
+ * return <span>{params().id}</span>
+ * ```
+ */
+export function useParams<K extends RouteFrom>(from: K): Accessor<ParamsOfFrom<K>>
+export function useParams(): unknown {
+  const props = useContext(RenderPropsContext)
+  return props === null ? EMPTY_PARAMS_ACCESSOR : () => props.params ?? EMPTY_PARAMS
+}
+
+/**
+ * The route's validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`,
+ * typed from the generated route table: `useSearch("/reports")` is that route's `searchSchema` output.
+ * The argument only names the route for the compiler (nothing is read from it at runtime), and a pattern
+ * the table does not hold is a compile error. SSR-correct: the value is derived from the URL identically
+ * on the server and on each client navigation, so a value rendered from it doesn't flash on hydration.
+ * Hostile input already failed closed to the schema's defaults at match time.
+ *
+ * ```tsx
+ * const search = useSearch("/reports") // Accessor<{ page: number }>
  * return <span>{search().page}</span>
  * ```
  */
-export function useSearch<Schema extends StandardSchemaV1 | undefined = undefined>(): Accessor<
-  Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>
-> {
-  return (useContext(SearchContext) ?? EMPTY_SEARCH_ACCESSOR) as Accessor<
-    Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>
-  >
+export function useSearch<K extends RouteFrom>(from: K): Accessor<SearchOfFrom<K>>
+export function useSearch(): unknown {
+  return useContext(SearchContext) ?? EMPTY_SEARCH_ACCESSOR
 }
 
 /** Get the {@link NavigateFunction} (an `Href` from `href()` or `rawHref()`, or a history delta).

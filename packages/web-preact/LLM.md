@@ -29,7 +29,7 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-preact/client`
 - **onPageHide** _(function)_ - `onPageHide: (callback: () => void) => void` · from `@nifrajs/web-preact/keep-alive`
 
-_…and 48 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 49 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

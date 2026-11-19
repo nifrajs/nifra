@@ -132,6 +132,16 @@ export default function Query() {
       </p>
       <CodeBlock code={SSR_QUERY_CACHE} />
 
+      <h2>Typed keys</h2>
+      <p>
+        <code>getQueryData</code> and <code>setQueryData</code> take a key made with{" "}
+        <code>queryKey&lt;T&gt;(key)</code>, which carries the type of the data stored under it:{" "}
+        <code>{`const todosKey = queryKey<Todo[]>(["todos"])`}</code>. The fetcher must return that type,
+        the read gives <code>Todo[] | undefined</code>, and a write of another type is a compile error, so a
+        key and its data cannot drift apart. At run time the key is the array itself, so prefix
+        invalidation works unchanged. A plain key still takes the type of its fetcher.
+      </p>
+
       <h2>Invalidation</h2>
       <p>
         After a mutation, <code>useQueryClient().invalidateQueries(key)</code> marks matching entries

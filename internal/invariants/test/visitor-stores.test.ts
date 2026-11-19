@@ -17,7 +17,12 @@
 import { expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, join, relative, resolve } from "node:path"
-import { createClientRouter, createQueryClient, identityChanged } from "@nifrajs/web/client"
+import {
+  createClientRouter,
+  createQueryClient,
+  identityChanged,
+  queryKey,
+} from "@nifrajs/web/client"
 import ts from "typescript"
 
 const ROOT = join(import.meta.dir, "..", "..", "..")
@@ -683,7 +688,7 @@ const SURFACES: readonly Surface[] = [
         },
         ends: {
           "client.prefetchQuery": () =>
-            [["hydrated"], ["cold"]].map((key) => queries.getQueryData(key)),
+            [["hydrated"], ["cold"]].map((key) => queries.getQueryData(queryKey(key))),
         },
         settled: () => ({
           handles: handles.map((handle) => handle.snapshot()),

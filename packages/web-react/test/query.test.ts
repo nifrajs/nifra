@@ -1,5 +1,12 @@
 import { afterEach, expect, test } from "bun:test"
-import { createQueryClient, type DehydratedState, type QueryClient } from "@nifrajs/web"
+import {
+  createQueryClient,
+  type DehydratedState,
+  type QueryClient,
+  type QueryKey,
+  type QueryOptions,
+  queryKey,
+} from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import {
@@ -41,7 +48,7 @@ test("useQuery renders idle on the server with no provider", async () => {
 
 test("useQuery reads a hydrated provider client's data during SSR (no loading flash)", () => {
   const client = createQueryClient({ now: () => 0 })
-  client.setQueryData(["k"], "SEEDED")
+  client.setQueryData(queryKey(["k"]), "SEEDED")
   let result: ReturnType<typeof useQuery<string>> | undefined
   const Probe = () => {
     result = useQuery(["k"], async () => "SEEDED")
@@ -94,8 +101,8 @@ test("useQueryClient returns the provided client; without one, a safe no-op", as
   }
   render(createElement(NoProvider), () => noop)
   // Every method is a safe no-op on the server (no throw, empty reads).
-  expect(noop?.getQueryData(["x"])).toBeUndefined()
-  noop?.setQueryData(["x"], 1)
+  expect(noop?.getQueryData(queryKey(["x"]))).toBeUndefined()
+  noop?.setQueryData(queryKey(["x"]), 1)
   noop?.invalidateQueries(["x"])
   expect(noop?.dehydrate()).toEqual({ queries: [] })
   noop?.hydrate({ queries: [] })
@@ -164,8 +171,8 @@ test("without a provider on the client, useQueryClient lazily creates one shared
     renderToStaticMarkup(createElement(B))
     expect(a).toBeDefined()
     expect(a).toBe(b) // same lazily-created singleton across renders
-    a?.setQueryData(["n"], 7)
-    expect(a?.getQueryData<number>(["n"])).toBe(7) // a real, usable client
+    a?.setQueryData(queryKey(["n"]), 7)
+    expect(a?.getQueryData(queryKey<number>(["n"]))).toBe(7) // a real, usable client
   } finally {
     if (!hadWindow) delete g.window
   }
@@ -191,9 +198,10 @@ test("useQuery hands staleTime, live keys and enabled to the client as given", (
   const seen: unknown[] = []
   const recording: QueryClient = {
     ...client,
-    query: (key, fn, options) => {
+    query: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => {
       seen.push(options)
-      return client.query(key, fn, options)
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the recording wrapper forwards a key it does not inspect
+      return client.query<T>(key as QueryKey<T>, fn, options)
     },
   }
   const Probe = () => {

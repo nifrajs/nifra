@@ -40,7 +40,7 @@ describe("generated route types", () => {
       "export type Params = { readonly id: string }",
     )
     expect(generated("routes/+types/index.d.ts")).toContain(
-      "export type Params = Record<string, never>",
+      "export type Params = Record<never, never>",
     )
     expect(generated("routes/+types/_layout.d.ts")).toContain(
       "export type ComponentProps<Children = unknown> = {",
@@ -57,7 +57,7 @@ describe("generated route types", () => {
     expect(generated("routes/[[lang]]/blog/[slug]/+types/_layout.d.ts")).toContain(params)
     expect(generated("routes/[[lang]]/blog/[slug]/+types/_404.d.ts")).toContain(params)
     expect(generated("routes/+types/_layout.d.ts")).toContain(
-      "export type Params = Record<string, never>",
+      "export type Params = Record<never, never>",
     )
   })
 
@@ -333,7 +333,7 @@ describe("generated route types", () => {
       ...table.matchAll(/^ {4}("[^"]+"): \{ readonly params: (.+?); readonly search:/gm),
     ]
     expect(entries.map((entry) => [entry[1], entry[2]])).toEqual([
-      ['"/"', "Record<string, never>"],
+      ['"/"', "Record<never, never>"],
       [
         '"/:lang-feed/:year-:month.xml"',
         "{ readonly lang: string; readonly year: string; readonly month: string }",
@@ -344,12 +344,12 @@ describe("generated route types", () => {
       ['"/post-:id"', "{ readonly id: string }"],
       ['"/raw/files/*path"', "{ readonly path: string }"],
     ])
-    // A script module's search comes from its `searchSchema`; a .svelte/.vue/.mdx one has no exports to read.
+    // A script, .svelte or .vue module's search comes from its `searchSchema` (the last two are visible to svelte-check and vue-tsc only); slots stay script-only.
     expect(table).toContain(
-      '"/post-:id": { readonly params: { readonly id: string }; readonly search: SearchOf<typeof import("../../routes/post-[id]")>; readonly slots: RouteSlotPatternsOf<typeof import("../../routes/post-[id]")> }',
+      '"/post-:id": { readonly params: { readonly id: string }; readonly search: SearchOf<typeof import("../../routes/post-[id]")>; readonly searchIn: SearchInputOf<typeof import("../../routes/post-[id]")>; readonly slots: RouteSlotPatternsOf<typeof import("../../routes/post-[id]")> }',
     )
     expect(table).toContain(
-      '"/items/:id": { readonly params: { readonly id: string }; readonly search: Record<string, unknown>; readonly slots: Readonly<Record<never, never>> }',
+      '"/items/:id": { readonly params: { readonly id: string }; readonly search: SearchOf<typeof import("../../routes/(shop)/items/[id].svelte")>; readonly searchIn: SearchInputOf<typeof import("../../routes/(shop)/items/[id].svelte")>; readonly slots: Readonly<Record<never, never>> }',
     )
     // Every route module loads the table, so importing any one of them is enough.
     expect(generated("routes/+types/index.d.ts")).toContain(

@@ -304,6 +304,16 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Build the link with `href({ to, params, search, hash })`, which `nifra check` and `tsc` hold to the app's routes. A path built elsewhere, such as a CMS link, takes `rawHref(path)`; a link kept on purpose takes `// nifra-expect NF-C058: <reason>` above the attribute. Silence the code for the project with `rules` in `nifra.config`.",
     docs: "/docs/routing",
   },
+  "NF-C059": {
+    why: "`useSearch(from)` and `useParams(from)` type the page from the route they name. A page that names another route is typed with that route's search or params, and `tsc` cannot tell: both patterns exist. The values read at run time are the page's own.",
+    fix: 'Name the page\'s own route: `useSearch("/reports")` in `routes/reports.tsx`. A component shared by several pages names the route of the page it renders in. A pattern kept on purpose takes `// nifra-expect NF-C059: <reason>` above the call.',
+    docs: "/docs/routing",
+  },
+  "NF-C060": {
+    why: "An `Href` is what `href()` and `rawHref()` return, the two places a link is checked: `href()` against the app's routes at compile time, `rawHref()` against same-origin rules at run time. A cast to `Href` skips both, so a dead or hostile path compiles.",
+    fix: "Build the link with `href({ to, params, search })`. A path built elsewhere, such as a CMS link, goes through `rawHref(path)`. A cast kept on purpose takes `// nifra-expect NF-C060: <reason>` above it.",
+    docs: "/docs/routing",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",

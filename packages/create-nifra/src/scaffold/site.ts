@@ -61,6 +61,23 @@ export function overlayDir(framework: FrameworkSpec): string {
     : join(here, "..", "..", `template-site-${framework.id}`)
 }
 
+/**
+ * The starter holds its links and route hooks to the route table from the first commit: a dead path
+ * string, a hook naming another page's route and a cast to `Href` fail `nifra check`, where a default
+ * project only warns. `nifra.check.json` takes any rule's severity.
+ */
+const CHECK_CONFIG = `${JSON.stringify(
+  {
+    rules: {
+      "NF-C057": { severity: "error" },
+      "NF-C059": { severity: "error" },
+      "NF-C060": { severity: "error" },
+    },
+  },
+  null,
+  2,
+)}\n`
+
 /** Every file a site scaffold generates, and the text it holds. */
 export function generatedSiteFiles(
   framework: FrameworkSpec,
@@ -70,6 +87,7 @@ export function generatedSiteFiles(
   files.set("backend/framework.ts", renderFrameworkModule(framework))
   files.set("package.json", renderPackageJson(framework, site))
   files.set("tsconfig.json", renderTsconfig(framework))
+  files.set("nifra.check.json", CHECK_CONFIG)
   for (const [file, text] of targetFiles(site.target, site.name, site.docker)) files.set(file, text)
   for (const [file, text] of starterRouteTypes(routeExtension(framework))) files.set(file, text)
   return files

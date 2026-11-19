@@ -6,8 +6,11 @@ import type {
   MutationContext,
   MutationHandle,
   MutationState,
+  PlainKeyDefault,
+  PlainQueryKey,
   QueryClient,
   QueryHandle,
+  QueryKey,
   QueryOptions,
   QueryState,
 } from "@nifrajs/web"
@@ -90,12 +93,23 @@ export interface UseQueryResult<T> extends QueryState<T> {
  * names the live keys that refetch it.
  */
 export function useQuery<T>(
+  key: QueryKey<T>,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): UseQueryResult<T>
+export function useQuery<T, K = PlainKeyDefault>(
+  key: PlainQueryKey<K>,
+  fn: () => Promise<T>,
+  options?: QueryOptions,
+): UseQueryResult<T>
+export function useQuery<T>(
   key: unknown,
   fn: () => Promise<T>,
   options?: QueryOptions,
 ): UseQueryResult<T> {
   const handle: QueryHandle<T> | undefined = useQueryClientForCurrentTree()?.query<T>(
-    key,
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the public overloads checked the key against the data type; this signature has erased it to `unknown`
+    key as QueryKey<T>,
     fn,
     options,
   )

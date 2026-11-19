@@ -24,7 +24,7 @@ const Boundary = (props: ChainProps): JSX.Element => [
 ]
 const Page = (props: { data: unknown }): JSX.Element => {
   const visible = usePageVisibility()
-  const search = useSearch()
+  const search = useSearch("/test-loose")
   onPageHide(() => {})
   return `page:${String(props.data)}:${String(visible())}:${String(search().q)}`
 }

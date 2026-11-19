@@ -143,7 +143,7 @@ const excludedBy = (patterns: readonly string[], file: string): boolean =>
 
 // A named import of a navigation API from `@nifrajs/web` or an adapter: what the route table types.
 const NAVIGATION_IMPORT =
-  /\bimport\s+(?:type\s+)?\{[^}]*\b(?:useNavigate|Link|NavLink|Navigate|redirect|href|rawHref)\b[^}]*\}\s*from\s*["']@nifrajs\/web(?:-[a-z]+)?(?:\/(?:router|client))?["']/
+  /\bimport\s+(?:type\s+)?\{[^}]*\b(?:useNavigate|Link|NavLink|Navigate|redirect|href|rawHref|useSearch|useParams)\b[^}]*\}\s*from\s*["']@nifrajs\/web(?:-[a-z]+)?(?:\/(?:router|client))?["']/
 
 /**
  * `.nifra/types/routes.d.ts` (project-relative) when a source file uses a navigation API, the table

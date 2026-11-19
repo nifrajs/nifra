@@ -102,7 +102,9 @@ describe("mounting", () => {
   test("an export name that is not a safe path segment is refused", () => {
     // Reachable: a module can export an arbitrary string name (`export { x as "odd/name" }`), and an
     // object literal can carry one directly. Refusing at mount keeps the URL a plain identifier.
-    const mount = serverFunctions("todos", { "odd/name": serverFn({}, () => ({ ok: true })) })
+    const mount = serverFunctions("todos", {
+      "odd/name": serverFn({ output: t.object({ ok: t.boolean() }) }, () => ({ ok: true })),
+    })
     expect(() => mount(server())).toThrow(/not a valid identifier/)
   })
 
@@ -113,7 +115,7 @@ describe("mounting", () => {
 
   test("a module no app uses any more is not kept alive by its namespace", async () => {
     const register = (): WeakRef<object> => {
-      const module = { probe: serverFn({}, () => ({})) }
+      const module = { probe: serverFn({ output: t.object({}) }, () => ({})) }
       serverFunctions("gc-probe", module)
       return new WeakRef(module)
     }
@@ -147,7 +149,9 @@ describe("mounting", () => {
     }
     expect(await call("add")).toBe('200 {"by":"admin"}')
     expect(await call("remove")).toBe('200 {"by":"user"}')
-    const clash = { add: serverFn({}, () => ({ by: "clash" })) }
+    const clash = {
+      add: serverFn({ output: t.object({ by: t.string() }) }, () => ({ by: "clash" })),
+    }
     expect(() =>
       server().use(serverFunctions("shared", admin)).use(serverFunctions("shared", clash)),
     ).toThrow(/duplicate route: POST \/_nifra\/fn\/shared\/add/)

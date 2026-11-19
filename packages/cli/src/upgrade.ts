@@ -1406,10 +1406,11 @@ export function computeUpgrade(
   const rewritesNeedTypeScript: string[] = []
   const rewrites = (recipe.sourceRewrites ?? []).flatMap((id) => getSourceRewrite(id) ?? [])
   if (rewrites.length > 0) {
-    for (const rel of scan(cwd, SOURCE_GLOB)) {
+    for (const rel of scan(cwd, ADD_SOURCE_GLOB)) {
       const original = movedSources.get(rel) ?? readFileSync(join(cwd, rel), "utf8")
       let text = original
       for (const rewrite of rewrites) {
+        if (rewrite.components !== true && /\.(?:svelte|vue)$/.test(rel)) continue
         if (!rewrite.mentions(text)) continue
         if (compiler === undefined) {
           if (!rewritesNeedTypeScript.includes(rel)) rewritesNeedTypeScript.push(rel)
