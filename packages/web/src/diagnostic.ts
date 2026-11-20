@@ -22,6 +22,7 @@ export {
   type FixOption,
   isConsoleDiagnostic,
   isHydrationMismatch,
+  SOLID_ERROR_CODES,
 } from "./diagnostic-catalog.ts"
 export {
   buildFixPrompt,
@@ -115,6 +116,8 @@ export interface Diagnostic {
   readonly docsAnchor?: string | undefined
   /** The distinct ways to fix it, when more than one is right; `fix` covers them all in one line. */
   readonly fixOptions?: readonly FixOption[] | undefined
+  /** Present as "warning" for a framework development warning; absent means an error. */
+  readonly severity?: "warning" | undefined
 }
 
 /** Reads a source file's text, or returns undefined if it cannot (missing, binary, permission). */
@@ -205,6 +208,15 @@ function canonicalPath(path: string): string {
   } catch {
     return lexical
   }
+}
+
+/**
+ * True when the error was thrown from inside an installed nifra package (the innermost located frame
+ * sits under `node_modules/@nifrajs/`), as opposed to app code that happens to word a message alike.
+ */
+export function thrownByNifra(frames: readonly DiagnosticFrame[]): boolean {
+  const origin = frames.find((f) => f.file !== undefined)?.file
+  return origin !== undefined && /[\\/]node_modules[\\/]@nifrajs[\\/]/.test(origin)
 }
 
 /** The first frame that points at the user's own source - what the codeframe should show. */
@@ -299,7 +311,7 @@ function remapFrames(
 export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = {}): Diagnostic {
   const error = err instanceof Error ? err : new Error(String(err))
   const root = options.root ?? safeCwd()
-  const { message } = messageAndStack(error)
+  const { message, stack } = messageAndStack(error)
   const frames = remapFrames(parseFrames(error.stack ?? ""), options.remap)
   const top = topUserFrame(frames, root)
   // The gate sees the path that will be read: a frame's text can come from a browser.
@@ -313,7 +325,14 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
     source !== undefined && top?.line !== undefined && (options.showSource?.(source) ?? true)
       ? buildCodeframe(source, top.line, top.column, options.read)
       : undefined
-  const { code, cause, fix, docsAnchor, fixOptions } = classify(error.name || "Error", message)
+  // A framed stack's first line is "Name: message"; the catalog's anchored patterns match the bare
+  // message. A stackless error (a console report) keeps its message as written, `Warning: ` included.
+  const heading = `${error.name}: `
+  const { code, cause, fix, docsAnchor, fixOptions, severity } = classify(
+    error.name || "Error",
+    stack !== "" && message.startsWith(heading) ? message.slice(heading.length) : message,
+    thrownByNifra(frames),
+  )
   return {
     code,
     name: error.name || "Error",
@@ -325,6 +344,7 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
     fix,
     docsAnchor,
     fixOptions,
+    severity,
   }
 }
 

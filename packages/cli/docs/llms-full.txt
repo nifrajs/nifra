@@ -13084,6 +13084,414 @@ patched the server HTML. In development the page reports it to the dev server as
 installed in the project, `nifra_hydrate` reproduces it with a stable diagnostic.
 See hydration.
 
+### Server components
+
+#### NIFRA_COMPONENT_REQUEST
+
+A server component request failed. The error carries a `code` and no further
+detail, so look on the server for the cause.
+
+-
+`component_input` (422): the props the page sent failed the component's input
+schema.
+
+-
+`component_denied` (401, 403 or 404): the request was not same-origin (call components from
+your own pages), or the component's `authorize` callback refused it with a 401, 403
+or 404.
+
+-
+`component_version` (409): the browser's build differs from the server's, usually
+after a deploy. Reload the page.
+
+-
+`component_busy` (429): every render slot is busy and the waiting queue is full. Reduce how
+many components render at once, or the work each one does.
+
+-
+`component_timeout` or `component_cancelled`: the component outran its
+deadline, or the request was aborted first, for example by the visitor navigating away. For a
+timeout, speed up the data the component waits on.
+
+#### NIFRA_COMPONENT_BUILD
+
+The server component build refused the project: a component module, a build entry, or the
+source graph breaks a rule the compiler relies on. The message names the rule.
+
+**Fix:** fix the one thing the message names and rebuild. The build never ships a
+bundle it refused.
+
+### Rendering and deployment
+
+#### NIFRA_PPR_CONTRACT
+
+A partially prerendered route broke the contract that lets its shell be shared between
+visitors: a visitor-specific loader, a dynamic hole set up wrongly, a nonce in the shell, or an
+invalid `ppr` option.
+
+**Fix:** keep per-visitor data out of the shell (move it into a dynamic boundary,
+or mark a layout loader `gate`), give every hole a `boundaryLoaders`
+entry, and use `csp: createCspPolicy(...)` instead of a per-request nonce.
+
+#### NIFRA_DEPLOYMENT_OUTPUT
+
+A deployment adapter or the build output it was given broke a deployment rule: an unsafe or
+oversized output tree, a path collision, or an adapter that does not implement the interface
+this Nifra build supports.
+
+**Fix:** emit additions only through the returned `files` array, keep
+paths relative and distinct, and match the adapter API version this Nifra build supports.
+
+#### NIFRA_CLIENT_BUILD_NO_GRAPH
+
+The client build's result had no metafile (or one without inputs or outputs), so Nifra cannot
+prove which modules reached the browser. It refuses to write the bundle rather than guess.
+
+**Fix:** build the client through Nifra's build, which keeps the bundler's
+metafile. A custom build step must request the metafile and pass it through.
+
+#### NIFRA_ROUTE_SLOT_UNAVAILABLE
+
+A route slot named a parent route, a slot name, or a target route that is not registered, so
+the slot cannot render.
+
+**Fix:** register the route the slot points at, and spell the slot name as the
+parent route declares it.
+
+### Middleware, stores and sessions
+
+#### NIFRA_MEMORY_STORE_IN_PRODUCTION
+
+An in-memory store (rate-limit MemoryStore, MemoryIdempotencyStore, MemoryResponseCache, MemorySessionStore) was created in production. Each instance keeps its own copy, so limits, de-duplication, cached responses or sessions differ per instance and are lost on restart.
+
+- Use a shared store: Give the middleware or session manager a store every instance reads and writes (Redis or another shared backend) instead of the Memory* default.
+
+- Single instance only: Pass { allowInProduction: true } when exactly one instance serves traffic and losing state on restart is acceptable.
+
+#### NIFRA_CORS_CREDENTIALS_WILDCARD
+
+cors() was given `credentials: true` with `origin: "*"`. Browsers refuse a wildcard origin on a credentialed request, so the combination can never work.
+
+**Fix:** List the explicit origin(s) that may send credentials instead of the wildcard.
+
+#### NIFRA_SECRET_TOO_SHORT
+
+A signing secret is shorter than the 32 bytes (256 bits) nifra requires, so it is refused instead of used.
+
+**Fix:** Generate one with `openssl rand -base64 32` and load it from the environment.
+
+#### NIFRA_MIDDLEWARE_ORDER
+
+A middleware that protects routes was installed after the routes it should guard, so those routes were registered without it.
+
+**Fix:** Call app.use(...) for it before registering the routes it protects.
+
+#### NIFRA_CONTEXT_STORAGE_MISSING
+
+getContext() ran outside a request that went through contextStorage(): the middleware was not installed before the route, or the code ran outside any request (a partially prerendered shell is built outside every request).
+
+**Fix:** Add app.use(contextStorage()) before the route and call getContext() during that request. For a PPR shell, read the request in a dynamic boundary's loader instead.
+
+#### NIFRA_SESSION_STORE_CONSISTENCY
+
+The session manager was given an eventually consistent store such as KVSessionStore. Logout and rotation need a read to see the write that revoked a session, which that kind of store does not promise.
+
+**Fix:** Use a strongly consistent shared SessionStore.
+
+### Routes, wire and data
+
+#### NIFRA_ROUTE_CONFIG
+
+A route is misconfigured, and registration refuses it at boot rather than failing on the first request. The error's `code` names the rule (DUPLICATE_ROUTE, INVALID_PATH, INVALID_METHOD, WILDCARD_NOT_LAST, INVALID_IDEMPOTENCY, ...).
+
+**Fix:** Read the `code` and the message, then correct the route definition they name. The server does not start until the route is valid.
+
+#### NIFRA_ROUTE_FILES
+
+The file routes, or a route's exports, break a convention the router relies on: two files map to one URL, two `_404` files answer the same URLs, an optional segment is mixed with literal text, a layout exports an `action`, or a route turns off both server rendering and hydration.
+
+**Fix:** The message names the files and the rule. Keep one file per URL, one `_404` per scope, and put actions in route files, not layouts.
+
+#### NIFRA_WIRE_INVALID
+
+A value could not be encoded or decoded on the typed wire: a malformed frame, an unsupported codec or content type, a payload over maxBytes, or a value that is not JSON serializable.
+
+**Fix:** Send values the wire can carry, from a client built against this server's contract. For an oversized payload, send less or raise maxBytes on purpose.
+
+#### NIFRA_STORAGE_KEY
+
+A storage key was refused before any read or write: it is empty or over 1024 characters, is absolute, has a backslash, NUL, "..", or an empty or "." segment, escapes the storage root, or reaches the file through a symbolic link, a moved root directory or an untrusted writable directory.
+
+**Fix:** Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key. For a symbolic link, a moved root or an untrusted directory, the message names what to check on the filesystem.
+
+#### NIFRA_STORAGE_READ_LIMIT
+
+An R2 object is larger than maxReadBytes (or reports invalid size metadata), so R2Storage refuses to buffer it. The key itself was valid.
+
+**Fix:** Raise maxReadBytes on the R2Storage if objects of that size are expected; otherwise find why the object is larger than the limit.
+
+#### NIFRA_OPENAPI_IMPORT
+
+The OpenAPI document cannot be imported: it is malformed, uses a version outside 3.0.x, 3.1.x and 3.2.x, exceeds an import limit, or holds a construct Nifra cannot represent (a parameter $ref, an unsupported path template).
+
+**Fix:** The message names the path in the document. Fix that part, and inline parameter $refs before importing: refs are never resolved.
+
+#### NIFRA_SCHEMA_DECLARATION
+
+A schema declaration uses something the schema builder cannot accept: a file list nested in a list, a file field outside t.form(), a header name that is not lower-cased, a declassified field with no reason, or a feature precompile refuses (custom registry kinds, runtime-only metadata).
+
+**Fix:** The message names the declaration and what it expects. Declare file fields in t.form(), give declassified a reason, and keep precompiled schemas to plain, compilable shapes.
+
+#### NIFRA_ASSURANCE_INPUT
+
+An assurance, capability, manifest or evidence declaration is malformed: an id, path glob, scope, provenance, method or policy field outside what the registry accepts.
+
+**Fix:** The message names the field and the accepted form (lowercase dot/dash ids, absolute path globs, a known scope). Correct the declaration; `nifra check` reports the same project-wide.
+
+#### NIFRA_EFFECT_INVALID
+
+An effect, saga or durable-journal declaration, or the store behind it, broke its contract: a value out of range, a missing step, or a store that is not durable where durability is required.
+
+**Fix:** The message names the part. Where it says `store.durability === "durable"`, back the journal with a durable store; otherwise correct the id, cost or limit it names.
+
+#### NIFRA_CONTENT_INVALID
+
+A content collection, its baked index, or an MDX extension is malformed or out of range.
+
+**Fix:** The message names the index, bucket or extension. Correct the collection definition it names.
+
+#### NIFRA_JOBS_INVALID
+
+A job, its payload, or a dead-letter record cannot be stored as data: a duplicate job name, an Error instance, a custom prototype, an accessor, or a record the dead-letter view cannot read.
+
+**Fix:** Make the payload plain data (objects, arrays, strings, numbers, booleans), and give each job one name.
+
+#### NIFRA_I18N_CONFIG
+
+The locale, copy-table or localized-path configuration breaks a rule: a duplicate id or canonical pathname, two locales sharing an hreflang, a draft default locale, or a copy value of the wrong kind.
+
+**Fix:** The message names the locale, table or pathname. Make the ids and pathnames unique and give each locale its own hreflang.
+
+### Build and assets
+
+#### NIFRA_BUILD_PLUGIN
+
+A build plugin (CSS Modules, SCSS, StyleX, a Vue single-file component, Svelte MDX) failed on a file or is missing a compiler dependency.
+
+**Fix:** The message names the file and the compiler's own reason. Fix that source, or install the compiler package it says is missing or incompatible.
+
+#### NIFRA_BUILD_OUTPUT
+
+The client or server build, or the directory it writes to, broke a rule: no entry-point output, an output or public directory that is a symlink, escapes its root or overlaps the other, a build target the chosen option does not fit, or a glob pattern the bundler cannot read.
+
+**Fix:** The message names the path, target or option. Move the output or public directory, drop the option the target does not support, or give the bundler a literal pattern.
+
+#### NIFRA_ASSET_INVALID
+
+A font, web manifest or service-worker asset was refused: a download from a non-allowed host or over its size limit, a stylesheet with no usable font files, an unknown manifest value, or a path with characters an asset path cannot hold.
+
+**Fix:** The message names the family, URL or field. Request only Google-hosted fonts within the limits, and use the manifest values and path characters it lists.
+
+### Framework warnings
+
+#### NIFRA_VUE_WARNING
+
+Vue's development build warned about a component. The text after `[Vue warn]:` names the problem, and Vue's component trace names the component it happened in.
+
+**Fix:** Fix the component the trace names. Do not silence Vue's warn handler: each warning is raised for a real mistake in that component.
+
+#### NIFRA_SVELTE_DIAGNOSTIC
+
+Svelte's development build reported a mistake. The identifier after `[svelte]` (or at the end of the https://svelte.dev/e/ link) is Svelte's own stable code.
+
+**Fix:** Open https://svelte.dev/e/<code> for the cause and the repair, then fix the component the message locates.
+
+#### NIFRA_REACT_WARNING
+
+React reported a mistake: a development warning that links to react.dev/link/..., or an error whose message links to react.dev/errors/... (a minified production error).
+
+**Fix:** Open the link in the message for the cause and the repair, then fix the component React's trace names. A react.dev/errors message is a thrown error, not a warning.
+
+### More framework warnings
+
+#### NIFRA_PREACT_DIAGNOSTIC
+
+Preact's debug build reported a mistake in a component: invalid nesting, a duplicate key, an invalid element type, a hook outside render, a render loop, or a prop of the wrong type. Preact has no stable code, so the message text is the identifier.
+
+**Fix:** Fix the component the message names; Preact appends its component stack. Do not remove preact/debug to quiet it: each message is raised for a real mistake.
+
+### Configuration and runtime
+
+#### NIFRA_HEADER_VALUE_INVALID
+
+A response header or cookie value was refused: a control character, a newline, a leading or trailing space, an illegal character in a cookie Domain or Path, a `__Host-` cookie with a Domain, a cookie over its size limit, or a framing header set statically.
+
+**Fix:** The message names the header or cookie. Remove the character it names, and set per-response headers with c.set.headers (cookies with c.set.cookie) instead of statically.
+
+#### NIFRA_CSP_CONFIG
+
+The Content-Security-Policy or inline-script setup conflicts: a cspHeader and a nonce resolver both writing the header, an executable inline script without a nonce, content the inert head.script slot refuses, or a policy used before it was prepared.
+
+**Fix:** The message names the conflict. Use either `nonce` or `csp: createCspPolicy(...)`, give executable scripts a non-empty nonce, and use unsafeInlineScript() only where the message says to.
+
+#### NIFRA_CDN_CONFIG
+
+A CDN adapter was given a missing binding or a store that cannot do what was asked (for example invalidate by tag), or an option outside what it accepts.
+
+**Fix:** The message names the adapter and what to pass (the `cache` binding, the @vercel/functions helper, a store that supports tags). Pass it where the CDN is configured.
+
+#### NIFRA_PARITY_FAILED
+
+The development/production parity check failed (identity parity or manifest parity), or its scan hit the limit before it could decide.
+
+**Fix:** Read the differences the message lists and make development and production agree. When the scan limit was reached, narrow the scan by running from the app or workspace root.
+
+#### NIFRA_API_MISUSE
+
+An API was called in a state it does not allow: next() called twice, a request body read as a stream after it was consumed, a response body sent twice, headers written after the response was committed, notFound() applied twice or inside a group, or a query used with no query client.
+
+**Fix:** The message names the call. Call it once, before the response is committed, and on the object it belongs to (read bodies with c.req.bytes() in a hook; apply notFound() to the parent server).
+
+#### NIFRA_WEBSOCKET_INVALID
+
+A WebSocket was opened or closed in a way the protocol or the client does not allow: a close reason over 123 UTF-8 bytes, a close code a server may not send, a path with a dot segment, or an in-process client that has no socket.
+
+**Fix:** Close with a reason of at most 123 bytes and a code in 1000-1003, 1007-1014 or 3000-4999. Open sockets against a listening app, at a path without `.` or `..` segments.
+
+#### NIFRA_VALUE_NOT_SERIALIZABLE
+
+A value could not be turned into JSON or the typed wire: a circular reference, a BigInt, a non-finite number, a class instance, an undefined field or array item, or a type the wire has no encoding for.
+
+**Fix:** Send plain data: objects, arrays, strings, finite numbers and booleans. Convert BigInt and class instances to plain values before they cross the boundary.
+
+#### NIFRA_CRON_INVALID
+
+A cron schedule or job registration is invalid: not five space-separated fields, an empty, out-of-range or malformed term, or two jobs with the same name.
+
+**Fix:** Write the schedule as five space-separated fields with each value in its range, and register each job name once.
+
+#### NIFRA_GRAPHQL_REQUEST
+
+A GraphQL request was malformed (no `query`, a body that is not a JSON object, variables that are not a JSON object), or mountGraphql was configured in a way it refuses.
+
+**Fix:** For a request, send a JSON object with a `query` string and an object for `variables`. For mountGraphql, call `.use(websocket())` before enabling subscriptions, and guard sockets with the same authorization as the HTTP endpoint.
+
+#### NIFRA_IMAGE_INVALID
+
+An image could not be processed or generated: a source that failed to decode or changed while it was being opened, variants without positive dimensions, or generated output over its size limit.
+
+**Fix:** The message names the step. Give the image a valid source and positive dimensions, and keep generated output within maxBytes.
+
+#### NIFRA_HTTP_RESPONSE_INVALID
+
+The server adapter could not write or read the HTTP message: a status code outside the valid range, a body whose length disagrees with its Content-Length, an invalid header character, or a request that closed early.
+
+**Fix:** Return a valid status, send a body that matches the Content-Length you set (or omit it), and keep header names and values to legal characters.
+
+#### NIFRA_OPTION_RENAMED
+
+An option was renamed in this version, and the old name is no longer read.
+
+**Fix:** The message gives the new name. Rename the option where you pass it.
+
+#### NIFRA_CLIENT_REFUSED
+
+The typed client refused a response or a request: a response that breaks the route's declared contract, a server-sent event over its size limit, or a form field that is neither text nor a file.
+
+**Fix:** For a contract violation, make the server return what its route declares (or update the declaration). For a form body, send strings and files only.
+
+#### NIFRA_TOOL_INVALID
+
+A tool declaration, its adapter, or its approval or budget settings break a rule: an option of the wrong type, a limit exceeded, a missing approval, or a duplicate tool name.
+
+**Fix:** The message names the tool and the field. Correct the declaration; `nifra check` reports the same project-wide.
+
+#### NIFRA_JWKS_UNAVAILABLE
+
+The JWKS endpoint used to verify tokens could not be used: the fetch failed, the response could not be read or was over its size limit, the key set was invalid, or the URL is not https.
+
+**Fix:** The message gives the status or reason. Check that the JWKS URL is reachable over https (localhost is allowed) and returns a valid key set within maxBytes.
+
+#### NIFRA_BODY_PARSER_REFUSED
+
+bodyParser was given a media type nifra already handles (JSON, a form, multipart) or one a browser can send from any site without a preflight request.
+
+**Fix:** The message names the media type and what to do instead: body schemas already read JSON and forms, multipart uses multipartBody from @nifrajs/core/multipart, and a no-preflight type must be read in the handler.
+
+#### NIFRA_IDEMPOTENCY_STORE_CORRUPT
+
+A stored idempotency record could not be replayed: its body or status is not in the form the middleware wrote.
+
+**Fix:** First confirm whether the original operation completed: deleting the record lets the next retry with that key run the handler again, which repeats any side effect already done (a charge, an email). Delete the record only once the operation is known not to have completed, or reconcile its effect by hand. If it recurs, check that nothing else writes to the idempotency store and that the store does not alter values.
+
+#### NIFRA_AUTHJS_REQUEST_FAILED
+
+The Auth.js bridge called an Auth.js endpoint (sign in, sign out, CSRF token) and it failed or did not answer.
+
+**Fix:** The message gives the HTTP status. Check that the Auth.js endpoint is mounted and answering.
+
+#### NIFRA_ACTION_FAILED
+
+A route action request answered with a non-OK status, so the router threw instead of returning a result.
+
+**Fix:** The message gives the status and the action URL. Look at the response and logs for that status on the server.
+
+#### NIFRA_STRICT_MODE
+
+A startup check failed while strict mode is on, so the process refuses to start instead of running with the problem.
+
+**Fix:** Fix the problems the message lists above that line. Strict mode is meant to turn them into a startup failure.
+
+#### NIFRA_LIBRARY_RESOLUTION
+
+A UI library or optional peer did not resolve to one working copy: two copies of React reached server rendering (react-dom renders with a different React than your components import), or an optional peer is missing or failed to load.
+
+**Fix:** For two copies, dedupe the library in your package manager so react-dom and your components import the same React. For a peer, the message names it and the underlying error: install it, or use the default build.
+
+### Configuration and runtime
+
+#### NIFRA_RUNTIME_MISSING
+
+A feature was used without its opt-in runtime installed: WebSocket routes, server-sent events, MCP declarations or the Node-direct renderer ship as separate plugins so apps that do not use them stay small.
+
+**Fix:** The message names the plugin. Add the `.use(...)` it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) on the app that declares the routes, before those routes are declared. A child app that declares its own routes needs its own `.use(...)`; for WebSocket routes mounted from a child, install it where the message says (the parent or the child).
+
+#### NIFRA_SERVER_LIFECYCLE
+
+The server was configured at the wrong time or on the wrong runtime: a hook added after the page routes were declared (no page runs it), configuration changed after listen() sealed the server, or listen() called outside Bun.
+
+**Fix:** Move the call before listen(). For a late hook, apply it in createWebApp({ use }) to cover the pages, or inside app.group(prefix, ...). Off Bun, serve with @nifrajs/node or @nifrajs/deno, or hand app.fetch to a fetch-compatible runtime.
+
+### Options
+
+#### NIFRA_LIVE_CONFIG
+
+The live (real-time) options are invalid: a missing or short secret, a hub and bus configured
+together, a path that is not absolute, or a subject that does not return a string.
+
+**Fix:** the message names the option. A secret must be at least 32 bytes (
+`openssl rand -base64 32`), and `hub` and `bus` are exclusive.
+
+#### NIFRA_OPTION_INVALID
+
+An option passed to a Nifra function (`createWebApp`, a route, the CDN, ISR, a
+manifest) has a value outside what it accepts.
+
+**Fix:** the message names the option and the shape it accepts. Correct the value
+at the call that sets it; nothing is silently coerced.
+
+#### NIFRA_SOLID_DIAGNOSTIC
+
+Solid 2.0's development build reported a reactivity mistake. The message opens with Solid's own
+stable code in square brackets (`[STRICT_READ_UNTRACKED]`), then names the owner path,
+the source location, and the guide for that code. Nifra records it in the dev feed so
+`nifra explain` and `nifra_explain` return it with the rest of your errors.
+
+**Fix:** open the repair guide the message names (
+`node_modules/solid-js/skills/reactivity-diagnostics/SKILL.md`, anchored by the
+lower-cased code) and apply its repair at the reported location. Do not silence the report:
+Solid raises each one for a real defect or a real cost.
+
 #### NIFRA_SCHEMA_PARSE
 
 Data crossing a boundary did not match its declared schema.
@@ -21843,6 +22251,7 @@ skills/
   nifra-api/SKILL.md     typed routes, schemas, middleware, WebSockets, the never-throwing client
   nifra-web/SKILL.md     file routing, loaders/actions, SSR, islands, the client/server boundary
   nifra-verify/SKILL.md  check, assure, capabilities, manifest diff, the verification ladder
+  nifra-errors/SKILL.md  every stable error and `nifra check` code, with its cause and repair (generated)
 ```
 
 ## Install

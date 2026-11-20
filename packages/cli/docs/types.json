@@ -5536,7 +5536,7 @@
     "name": "Diagnostic",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface Diagnostic {\n    /** Stable, greppable identifier, e.g. `NIFRA_BACKEND_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */\n    readonly code: string;\n    readonly name: string;\n    readonly message: string;\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    } | undefined;\n    readonly frames: readonly DiagnosticFrame[];\n    readonly codeframe?: Codeframe | undefined;\n    /** Plain-language \"why this happened\", when the failure is recognised. */\n    readonly cause?: string | undefined;\n    /** Plain-language \"do this\", when the failure is recognised. */\n    readonly fix?: string | undefined;\n    /** Docs section anchor for the code, e.g. `errors#backend-in-client`. */\n    readonly docsAnchor?: string | undefined;\n    /** The distinct ways to fix it, when more than one is right; `fix` covers them all in one line. */\n    readonly fixOptions?: readonly FixOption[] | undefined;\n}",
+    "signature": "export interface Diagnostic {\n    /** Stable, greppable identifier, e.g. `NIFRA_BACKEND_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */\n    readonly code: string;\n    readonly name: string;\n    readonly message: string;\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    } | undefined;\n    readonly frames: readonly DiagnosticFrame[];\n    readonly codeframe?: Codeframe | undefined;\n    /** Plain-language \"why this happened\", when the failure is recognised. */\n    readonly cause?: string | undefined;\n    /** Plain-language \"do this\", when the failure is recognised. */\n    readonly fix?: string | undefined;\n    /** Docs section anchor for the code, e.g. `errors#backend-in-client`. */\n    readonly docsAnchor?: string | undefined;\n    /** The distinct ways to fix it, when more than one is right; `fix` covers them all in one line. */\n    readonly fixOptions?: readonly FixOption[] | undefined;\n    /** Present as \"warning\" for a framework development warning; absent means an error. */\n    readonly severity?: \"warning\" | undefined;\n}",
     "doc": "/** The structured failure. Serialisable as-is to JSON for the agent surfaces. */"
   },
   {
@@ -15136,6 +15136,13 @@
     "doc": "/** Environment switch for strict mode when the declaration does not set it: `1` or `true`. */"
   },
   {
+    "name": "SOLID_ERROR_CODES",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const SOLID_ERROR_CODES: readonly string[];",
+    "doc": "/** The codes Solid 2.0 raises at error severity (the rest are warnings), from its diagnostics.json. */"
+  },
+  {
     "name": "SQLiteClient",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -19492,7 +19499,7 @@
     "name": "classify",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function classify(name: string, message: string): {\n    code: string;\n    cause?: string;\n    fix?: string;\n    docsAnchor?: string;\n    fixOptions?: readonly FixOption[] | undefined;\n};",
+    "signature": "export declare function classify(name: string, message: string, fromNifra?: boolean): {\n    code: string;\n    cause?: string;\n    fix?: string;\n    docsAnchor?: string;\n    fixOptions?: readonly FixOption[] | undefined;\n    severity?: \"warning\" | undefined;\n};",
     "doc": "/** Classify an error name+message against the catalog; falls back to the generic unhandled code. */"
   },
   {
@@ -26545,6 +26552,13 @@
     "kind": "function",
     "package": "@nifrajs/testing",
     "signature": "export declare function testToolAdapter<Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions): ToolAdapter;"
+  },
+  {
+    "name": "thrownByNifra",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function thrownByNifra(frames: readonly DiagnosticFrame[]): boolean;",
+    "doc": "/**\n * True when the error was thrown from inside an installed nifra package (the innermost located frame\n * sits under `node_modules/@nifrajs/`), as opposed to app code that happens to word a message alike.\n */"
   },
   {
     "name": "timing",
