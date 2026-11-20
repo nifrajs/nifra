@@ -378,6 +378,30 @@ describe("boundary-answered failures reach the server log", () => {
     expect(entries[0]?.fields).toEqual({ method: "GET", path: "/boom", name: "Error" })
   })
 
+  test("production page boundaries default to request metadata", async () => {
+    const { entries, logger } = capture()
+    const previous = process.env.NODE_ENV
+    process.env.NODE_ENV = "production"
+    const app = (() => {
+      try {
+        return createWebApp({
+          adapter: stub,
+          manifest: errorManifest(new Error("private detail")),
+          clientEntry: "/c.js",
+          server: { logger },
+        })
+      } finally {
+        if (previous === undefined) delete process.env.NODE_ENV
+        else process.env.NODE_ENV = previous
+      }
+    })()
+    const response = await app.fetch(new Request("http://x/boom"))
+    expect(response.status).toBe(500)
+    expect(entries.map((entry) => entry.fields)).toEqual([
+      { method: "GET", path: "/boom", name: "Error" },
+    ])
+  })
+
   test("a rejected defer() is written to the server log, never the console", async () => {
     const { entries, logger } = capture()
     const manifest: Manifest = {

@@ -2395,7 +2395,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **crossSiteFormRefused** _(const)_ - `crossSiteFormRefused: (source: RequestSource, formOrigins: FormOrigins | undefined) => boolean`
   Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request with no content type that carries an `Authorization` header other than a browser-managed scheme (Bas…
 - **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined, message?: string) => void`
-  Write an unhandled request error to the log. An error's own text can quote the input that produced it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500 with no message and no stack is an incident nobody can diagnose, and the framework already ships the na…
+  Write an unhandled request error to the log. An error's own text can quote the input that produced it. The `"none"` policy keeps thrown values out of the sink, including custom error names.
 - **jsonResponse** _(function)_ - `jsonResponse: (value: unknown, init?: ResponseInit) => Response`
   `Response.json`, with each `bigint` written as its decimal string, as `jsonText` writes it.
 - **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`
@@ -2408,6 +2408,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and not one of `…
 - **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
   Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
+- **resolveErrorLogDetail** _(function)_ - `resolveErrorLogDetail: (detail?: ErrorLogDetail) => ErrorLogDetail`
+  Resolve the app's request error log policy, falling back safely when env access is denied.
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
 - **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request, unstamped?: boolean) => Response`
   Render a handler's result. `request` is the request being answered, given when response hooks will write next: a copy or body-less response built here is then recorded as that request's own, so the hooks write it in place instead of copying it again. `unstamped` is the caller's proof that no respon…

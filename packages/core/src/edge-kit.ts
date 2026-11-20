@@ -22,7 +22,11 @@
  * or app state. It is the interface, not the framework.
  */
 
-export { type ErrorLogDetail, emitRequestErrorLog } from "./server/bare-error-lane.ts"
+export {
+  type ErrorLogDetail,
+  emitRequestErrorLog,
+  resolveErrorLogDetail,
+} from "./server/bare-error-lane.ts"
 export { assertByteLimit, capBodyBytes, DEFAULT_MAX_BODY_BYTES } from "./server/body.ts"
 export { crossSiteFormRefused, type FormOrigins, readBodyFramed } from "./server/body-lane.ts"
 export { plainError } from "./server/http.ts"

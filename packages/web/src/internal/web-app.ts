@@ -1,4 +1,4 @@
-import { emitRequestErrorLog } from "@nifrajs/core/edge-kit"
+import { emitRequestErrorLog, resolveErrorLogDetail } from "@nifrajs/core/edge-kit"
 import { jsonLogger } from "@nifrajs/core/logger"
 import {
   type BackendEvidenceProvider,
@@ -464,7 +464,7 @@ function boundaryErrorLog(
   options: ServerOptions | undefined,
 ): (error: unknown, request: Request) => void {
   const logger = options?.logger ?? jsonLogger()
-  const detail = options?.errorLogDetail ?? "full"
+  const detail = resolveErrorLogDetail(options?.errorLogDetail)
   return (error, request) => emitRequestErrorLog(logger, detail, error, { req: request })
 }
 

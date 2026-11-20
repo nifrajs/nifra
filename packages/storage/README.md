@@ -55,9 +55,10 @@ import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
 
 ## API
 
-- `new MemoryStorage()` · `new FileStorage(root)` · `new R2Storage(bucket)`.
+- `new MemoryStorage()` · `new FileStorage(root)` · `new R2Storage(bucket, { maxReadBytes? })`.
 - `put(key, data, { contentType?, metadata? })` - `data` is `Uint8Array | ArrayBuffer | string`.
 - `get(key)` → `{ body, size, contentType?, metadata? } | null` · `delete(key)` · `exists(key)` · `list({ prefix?, limit? })`.
+  `R2Storage.get` defaults to a 16 MiB read limit and throws a `RangeError` for oversized objects.
   `FileStorage.list` reads and sorts each directory it enters, so even `limit: 1` costs time in
   proportion to those directories' entries; split a very large store across key prefixes.
 - `assertSafeKey(key)` / `StorageKeyError` · `toBytes(data)`.

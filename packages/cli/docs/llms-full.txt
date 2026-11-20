@@ -6190,8 +6190,10 @@ export const getSessions = () => (manager ??= createSessions({
 ### Log in & out
 
 A loader can _read_ the session but can't write cookies - so login/logout live in plain
-Nifra routes that have the full `Context`. `regenerate()` rotates the
-session id on login to defend against fixation; the `Set-Cookie` rides the redirect.
+Nifra routes that have the full `Context`. Store-backed sessions rotate their ID
+when a configured `identity` key changes. Call `regenerate()` to rotate
+explicitly, including on login when `identity` is omitted. The
+`Set-Cookie` rides the redirect.
 
 ```ts
 // backend/app.ts - login/logout are plain nifra routes (full Context → they can WRITE the cookie).
@@ -21954,9 +21956,10 @@ import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
 
 ## API
 
-- `new MemoryStorage()` · `new FileStorage(root)` · `new R2Storage(bucket)`.
+- `new MemoryStorage()` · `new FileStorage(root)` · `new R2Storage(bucket, { maxReadBytes? })`.
 - `put(key, data, { contentType?, metadata? })` - `data` is `Uint8Array | ArrayBuffer | string`.
 - `get(key)` → `{ body, size, contentType?, metadata? } | null` · `delete(key)` · `exists(key)` · `list({ prefix?, limit? })`.
+  `R2Storage.get` defaults to a 16 MiB read limit and throws a `RangeError` for oversized objects.
   `FileStorage.list` reads and sorts each directory it enters, so even `limit: 1` costs time in
   proportion to those directories' entries; split a very large store across key prefixes.
 - `assertSafeKey(key)` / `StorageKeyError` · `toBytes(data)`.

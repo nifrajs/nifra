@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import {
   existsSync,
   mkdirSync,
@@ -515,15 +515,18 @@ const ROWS: readonly LeakPath[] = [
 // ---------------------------------------------------------------------------------------------------
 
 const TMP = `${import.meta.dir}/.tmp-leak-matrix-`
-const roots: string[] = []
-afterAll(() => {
-  for (const root of roots) rmSync(root, { recursive: true, force: true })
-})
+
+async function withFixture<T>(row: LeakPath, run: (app: string) => T | Promise<T>): Promise<T> {
+  const root = mkdtempSync(TMP)
+  try {
+    return await run(fixture(root, row))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
 
 /** A fresh app for one row: `<tmp>/app`, with workspace packages beside it. */
-function fixture(row: LeakPath): string {
-  const root = mkdtempSync(TMP)
-  roots.push(root)
+function fixture(root: string, row: LeakPath): string {
   const app = join(root, "app")
   const put = (base: string, files: Readonly<Record<string, string>>): void => {
     for (const [path, text] of Object.entries(files)) {
@@ -686,7 +689,7 @@ describe.each(ROWS.map((row) => [row.name, row] as const))("%s", (_name, row) =>
     const expected = row.expect[pipeline]
     if (expected === undefined) continue
     test(expected === null ? `${pipeline} passes` : `${pipeline} refuses`, async () => {
-      const outcome = await RUN[pipeline](fixture(row), row)
+      const outcome = await withFixture(row, (app) => RUN[pipeline](app, row))
       if (expected === null) {
         if (!outcome.ok) throw new Error(`expected ${pipeline} to pass:\n${outcome.message}`)
         if (BROWSER_PIPELINES.has(pipeline)) {
@@ -711,21 +714,25 @@ describe("dev error overlay", () => {
     return error
   }
 
-  test("shows the code frame of browser code, never of backend code", () => {
-    const app = fixture({
-      name: "overlay",
-      files: {
-        "routes/index.tsx":
-          "export default function Page() {\n  throw new Error('frontend-frame')\n}\n",
-        "routes/index.backend.ts": `export const loader = () => {\n  throw new Error("${BACKEND_MARKER}")\n}\n`,
+  test("shows the code frame of browser code, never of backend code", async () => {
+    await withFixture(
+      {
+        name: "overlay",
+        files: {
+          "routes/index.tsx":
+            "export default function Page() {\n  throw new Error('frontend-frame')\n}\n",
+          "routes/index.backend.ts": `export const loader = () => {\n  throw new Error("${BACKEND_MARKER}")\n}\n`,
+        },
+        expect: {},
       },
-      expect: {},
-    })
-    const diagnostics = createDevDiagnostics(app)
-    const request = { method: "GET", url: "/" }
-    const backend = diagnostics.capture(throwIn(join(app, "routes/index.backend.ts")), request)
-    expect(backend).not.toContain(BACKEND_MARKER)
-    const frontend = diagnostics.capture(throwIn(join(app, "routes/index.tsx")), request)
-    expect(frontend).toContain("frontend-frame")
+      (app) => {
+        const diagnostics = createDevDiagnostics(app)
+        const request = { method: "GET", url: "/" }
+        const backend = diagnostics.capture(throwIn(join(app, "routes/index.backend.ts")), request)
+        expect(backend).not.toContain(BACKEND_MARKER)
+        const frontend = diagnostics.capture(throwIn(join(app, "routes/index.tsx")), request)
+        expect(frontend).toContain("frontend-frame")
+      },
+    )
   })
 })

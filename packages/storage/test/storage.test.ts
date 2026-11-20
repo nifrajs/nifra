@@ -102,6 +102,43 @@ class FakeR2 implements R2BucketLike {
   }
 }
 
+test("R2Storage bounds buffered reads before consuming oversized objects", async () => {
+  let buffered = false
+  let cancelled = false
+  class OversizedR2 extends FakeR2 {
+    override async get(key: string) {
+      return {
+        size: key === "wrong-size" ? 1 : 16 * 1024 * 1024 + 1,
+        body: new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled = true
+            if (key === "cancel-fails") throw new Error("stream already closed")
+          },
+        }),
+        async arrayBuffer() {
+          buffered = true
+          return new ArrayBuffer(4)
+        },
+      }
+    }
+  }
+  await expect(new R2Storage(new OversizedR2()).get("large")).rejects.toThrow(RangeError)
+  expect(buffered).toBe(false)
+  expect(cancelled).toBe(true)
+  const bounded = new R2Storage(new OversizedR2(), { maxReadBytes: 3 })
+  await expect(bounded.get("cancel-fails")).rejects.toThrow(RangeError)
+  expect(buffered).toBe(false)
+  await expect(bounded.get("wrong-size")).rejects.toThrow(RangeError)
+  expect(buffered).toBe(true)
+
+  const storage = new R2Storage(new FakeR2(), { maxReadBytes: 3 })
+  await storage.put("fits", "abc")
+  await storage.put("large", "abcd")
+  expect((await storage.get("fits"))?.body.byteLength).toBe(3)
+  await expect(storage.get("large")).rejects.toThrow(RangeError)
+  expect(() => new R2Storage(new FakeR2(), { maxReadBytes: NaN })).toThrow(RangeError)
+})
+
 const tmpDirs: string[] = []
 afterAll(() => Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true }))))
 async function freshFileStorage(): Promise<FileStorage> {
