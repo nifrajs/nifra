@@ -30,7 +30,13 @@ export interface R2BucketLike {
     value: ArrayBuffer | ArrayBufferView,
     options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> },
   ): Promise<unknown>
-  get(key: string): Promise<(R2ObjectLike & { arrayBuffer(): Promise<ArrayBuffer> }) | null>
+  get(key: string): Promise<
+    | (R2ObjectLike & {
+        readonly body?: ReadableStream<Uint8Array>
+        arrayBuffer(): Promise<ArrayBuffer>
+      })
+    | null
+  >
   head(key: string): Promise<R2ObjectLike | null>
   delete(key: string): Promise<void>
   list(options?: {
@@ -44,7 +50,17 @@ export interface R2BucketLike {
 const R2_PAGE = 1000
 
 export class R2Storage implements StorageAdapter {
-  constructor(private readonly bucket: R2BucketLike) {}
+  private readonly maxReadBytes: number
+
+  constructor(
+    private readonly bucket: R2BucketLike,
+    options: { readonly maxReadBytes?: number } = {},
+  ) {
+    this.maxReadBytes = options.maxReadBytes ?? 16 * 1024 * 1024
+    if (!Number.isSafeInteger(this.maxReadBytes) || this.maxReadBytes < 0) {
+      throw new RangeError("R2Storage maxReadBytes must be a non-negative safe integer")
+    }
+  }
 
   async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
     assertSafeKey(key)
@@ -58,11 +74,21 @@ export class R2Storage implements StorageAdapter {
     await this.bucket.put(key, toBytes(data).slice().buffer, put)
   }
 
+  /** Read up to `maxReadBytes` (16 MiB by default). An oversized object throws a RangeError. */
   async get(key: string): Promise<StorageObject | null> {
     assertSafeKey(key)
     const object = await this.bucket.get(key)
     if (object === null) return null
+    if (!Number.isSafeInteger(object.size) || object.size < 0 || object.size > this.maxReadBytes) {
+      await object.body?.cancel().catch(() => {
+        // Preserve the size error if the platform already closed the body.
+      })
+      throw new RangeError("R2Storage object exceeds maxReadBytes or has invalid size metadata")
+    }
     const body = new Uint8Array(await object.arrayBuffer())
+    if (body.byteLength > this.maxReadBytes) {
+      throw new RangeError("R2Storage object exceeds maxReadBytes")
+    }
     return {
       body,
       size: object.size,

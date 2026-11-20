@@ -194,7 +194,13 @@ async function compressRawBody(
     while (total < threshold) {
       const { done, value } = await reader.read()
       if (done) {
-        return new Response(concatBytes(buffered, total).slice(), {
+        const bytes = concatBytes(buffered, total)
+        const responseBody =
+          bytes.buffer instanceof ArrayBuffer
+            ? // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: narrowed above via instanceof ArrayBuffer so BodyInit accepts the view without copying.
+              (bytes as Uint8Array<ArrayBuffer>)
+            : bytes.slice()
+        return new Response(responseBody, {
           status: response.status,
           statusText: response.statusText,
           headers: response.headers,

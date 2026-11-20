@@ -93,3 +93,38 @@ describe("bounded reference pubsub", () => {
     )
   })
 })
+
+describe("pubsub queue", () => {
+  test("a long backlog is read back in order, including undefined payloads", async () => {
+    const pubsub = createPubSub<number | undefined>({ maxQueuedEvents: 1000 })
+    const source = pubsub.subscribe("count")
+    for (let value = 0; value < 300; value++)
+      pubsub.publish("count", value === 5 ? undefined : value)
+    for (let value = 0; value < 300; value++) {
+      expect(await source.next()).toEqual({ value: value === 5 ? undefined : value, done: false })
+    }
+    await source.return?.()
+  })
+
+  test("drop-oldest keeps the newest events in order", async () => {
+    const pubsub = createPubSub<number>({ maxQueuedEvents: 70, overflow: "drop-oldest" })
+    const source = pubsub.subscribe("count")
+    for (let value = 0; value < 200; value++) pubsub.publish("count", value)
+    for (let value = 130; value < 200; value++) {
+      expect(await source.next()).toEqual({ value, done: false })
+    }
+    await source.return?.()
+  })
+
+  test("many waiting pulls are answered in order and released when the source returns", async () => {
+    const pubsub = createPubSub<number>()
+    const source = pubsub.subscribe("count")
+    const pulls = Array.from({ length: 200 }, () => source.next())
+    for (let value = 0; value < 150; value++) pubsub.publish("count", value)
+    const answered = await Promise.all(pulls.slice(0, 150))
+    expect(answered.map((r) => r.value)).toEqual(Array.from({ length: 150 }, (_, i) => i))
+    await source.return?.()
+    const rest = await Promise.all(pulls.slice(150))
+    expect(rest.every((r) => r.done === true)).toBe(true)
+  })
+})

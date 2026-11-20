@@ -29,6 +29,33 @@ const stub: RenderAdapter = {
   hydrationHead: () => "<!--hydration-head-->",
 }
 
+test("route timing includes streaming render readiness", async () => {
+  const phases: string[] = []
+  const response = await renderPage({
+    adapter: stub,
+    chain: [],
+    data: {},
+    clientEntry: "/entry.js",
+    timing: (phase) => phases.push(phase),
+  })
+  expect(phases.filter((phase) => phase === "render")).toHaveLength(1)
+  expect(await response.text()).toContain("<p>chain=0:{}</p>")
+})
+
+test("route timing includes a slot swap's render", async () => {
+  const phases: string[] = []
+  const response = await renderPage({
+    adapter: { ...stub, renderSlot: async () => "<p>Swapped</p>" },
+    chain: [],
+    data: {},
+    clientEntry: "/entry.js",
+    swapSlot: "section",
+    timing: (phase) => phases.push(phase),
+  })
+  expect(phases.filter((phase) => phase === "render")).toHaveLength(1)
+  expect(await response.text()).toBe("<p>Swapped</p>")
+})
+
 test("cancelling the document body cancels the renderer's stream and reads no further", async () => {
   let pulls = 0
   let cancelled: unknown = "never"

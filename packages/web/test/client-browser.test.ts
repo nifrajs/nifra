@@ -832,6 +832,17 @@ test("a click on an anchor holding the refused Href is swallowed, so no adapter'
     expect(click.defaultPrevented).toBe(true)
     expect(navigated).toEqual([])
     expect(fallback).toEqual([])
+    // A modified click would open the refused path in a new tab, and a middle click does the same.
+    for (const modifier of ["metaKey", "ctrlKey", "shiftKey", "altKey"] as const) {
+      const modified = fakeEvent(anchor)
+      Object.assign(modified, { [modifier]: true })
+      document.emit("click", modified)
+      expect(modified.defaultPrevented).toBe(true)
+    }
+    const middle = fakeEvent(anchor)
+    Object.assign(middle, { button: 1 })
+    document.emit("auxclick", middle)
+    expect(middle.defaultPrevented).toBe(true)
     // Any other anchor still goes through the router.
     const real = fakeAnchor("http://example.test/settings")
     real.attrs.set("href", "/settings")
@@ -840,6 +851,15 @@ test("a click on an anchor holding the refused Href is swallowed, so no adapter'
     await Bun.sleep(0)
     expect(realClick.defaultPrevented).toBe(true)
     expect(navigated).toEqual(["/settings"])
+    // A valid anchor keeps the browser's own modified-click and middle-click behavior.
+    const modifiedReal = fakeEvent(real)
+    Object.assign(modifiedReal, { ctrlKey: true })
+    document.emit("click", modifiedReal)
+    const middleReal = fakeEvent(real)
+    Object.assign(middleReal, { button: 1 })
+    document.emit("auxclick", middleReal)
+    expect(modifiedReal.defaultPrevented).toBe(false)
+    expect(middleReal.defaultPrevented).toBe(false)
   } finally {
     stop()
   }

@@ -951,3 +951,38 @@ test("a frame from a socket refused at open is ignored", async () => {
   expect(refused.topics.size).toBe(0)
   expect(readies(refused)).toEqual([])
 })
+
+test("the tag cache forgets a derivation that failed, so the next ask derives it again", async () => {
+  const ring = await createKeyring({ secrets: [SECRET], appId: APP_ID, ttl: 600 })
+  const real = ring.tag.bind(ring)
+  let attempt = 0
+  const sign = spyOn(ring, "tag").mockImplementation((key, secret) => {
+    attempt++
+    return attempt === 1 ? Promise.reject(new Error("no key")) : real(key, secret)
+  })
+  const tagOf = tagCache(ring, 4)
+  await expect(tagOf("post:1", 0)).rejects.toThrow("no key")
+  expect(await tagOf("post:1", 0)).toBe(await real("post:1", 0))
+  expect(sign).toHaveBeenCalledTimes(2)
+})
+
+test("a failure that lands after its entry was pushed out does not remove the entry that replaced it", async () => {
+  const ring = await createKeyring({ secrets: [SECRET], appId: APP_ID, ttl: 600 })
+  const real = ring.tag.bind(ring)
+  let fail: (error: Error) => void = () => {}
+  let first = true
+  spyOn(ring, "tag").mockImplementation((key, secret) => {
+    if (!first) return real(key, secret)
+    first = false
+    return new Promise<string>((_, reject) => {
+      fail = reject
+    })
+  })
+  const tagOf = tagCache(ring, 1)
+  const failing = tagOf("post:1", 0)
+  failing.catch(() => {})
+  const replacement = tagOf("post:2", 0) // pushes "post:1" out of the size-1 cache
+  fail(new Error("late"))
+  await expect(failing).rejects.toThrow("late")
+  expect(tagOf("post:2", 0)).toBe(replacement)
+})

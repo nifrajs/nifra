@@ -877,7 +877,10 @@ function scanRouteArguments(
   const routes: StaticRouteFinding[] = []
   const unresolved: UnresolvedRoutePathFinding[] = []
   const code = stripComments(content)
-  if (!isPotentialBackendSource(code, file, project)) return { routes, unresolved }
+  ROUTE_ARGUMENT.lastIndex = 0
+  const first = ROUTE_ARGUMENT.exec(code)
+  if (first === null || !isPotentialBackendSource(code, file, project))
+    return { routes, unresolved }
   const lines = content.split("\n")
   const constants = moduleConstants(code, content)
   const imports = namedImports(code)
@@ -894,8 +897,7 @@ function scanRouteArguments(
     const constant = found.get(name)
     return constant?.exported === true ? constant : undefined
   }
-  ROUTE_ARGUMENT.lastIndex = 0
-  for (let m = ROUTE_ARGUMENT.exec(code); m !== null; m = ROUTE_ARGUMENT.exec(code)) {
+  for (let m: RegExpExecArray | null = first; m !== null; m = ROUTE_ARGUMENT.exec(code)) {
     const method = (m[1] ?? "").toUpperCase()
     if (!verbs.has(method)) continue
     const at = m.index + m[0].lastIndexOf(m[2] ?? "")
@@ -2619,12 +2621,13 @@ export function scanSqlSites(
   content: string,
   ts: TypeScriptApi,
   imports?: SqlImports,
+  parse = (path: string, text: string) => parseSqlSource(ts, path, text),
 ): SqlFinding[] {
   const out: SqlFinding[] = []
   const lines = content.split("\n")
   // Malformed source is already a typecheck failure. Do not turn parser recovery nodes into a second,
   // misleading SQL diagnostic (notably an unterminated template recovered as an interpolation).
-  const source = parseSqlSource(ts, file, content)
+  const source = parse(file, content)
   if (source === undefined) return out
   // Module-scope bindings, read once per file: an interpolated `const` that resolves to compile-time
   // text cannot carry request data, so the shared-projection idiom (`const COLS = "id, name"` …

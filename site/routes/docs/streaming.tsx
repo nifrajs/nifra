@@ -137,8 +137,12 @@ export default function Streaming() {
         stripped from <code>event</code>/<code>id</code> to prevent frame injection); multi-line{" "}
         <code>data</code> is split into multiple <code>data:</code> lines per the spec; and{" "}
         <code>keepAlive</code> emits comment pings so idle proxies don't drop the connection. Bun also
-        closes a connection that sends nothing for 10 seconds, so keep the interval well under that,
-        or wrap the producer in <code>withIdleTimeout</code>.
+        closes a connection that sends nothing for its idle timeout (10 seconds by default), so keep
+        the interval well under the timeout you run with: <code>idleTimeoutSec</code> on{" "}
+        <code>listen()</code>, <code>idleTimeout</code> on <code>Bun.serve()</code>. Under{" "}
+        <code>listen()</code>, wrapping the producer in <code>withIdleTimeout</code> holds one
+        stream's connection open instead; under a hand-written <code>Bun.serve</code> it changes
+        nothing, so set <code>idleTimeout</code> there, above the slowest quiet period (0 to 255).
       </p>
       <p>
         A client that stops reading is dropped once it has <code>maxBufferedBytes</code> (default 1

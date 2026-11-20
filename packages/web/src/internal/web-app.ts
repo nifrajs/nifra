@@ -1,4 +1,4 @@
-import { emitRequestErrorLog } from "@nifrajs/core/edge-kit"
+import { emitRequestErrorLog, resolveErrorLogDetail } from "@nifrajs/core/edge-kit"
 import { jsonLogger } from "@nifrajs/core/logger"
 import {
   type BackendEvidenceProvider,
@@ -66,6 +66,7 @@ import {
   requestHeadersWereRead,
   trackRequestHeaderReadsInPlace,
 } from "./request-header-tracker.ts"
+import type { RouteTimingFor } from "./route-timing.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 
@@ -372,6 +373,8 @@ export interface CreateWebAppOptions<Env = unknown> {
   /** In-memory reference cache for explicitly `static` boundary values. It never persists payloads
    * across processes; operated/durable cache implementations stay outside the public framework. */
   readonly staticBoundaryCache?: import("../boundary.ts").StaticBoundaryCache
+  /** Collect matched page GET timing before the initial response. */
+  readonly routeTiming?: RouteTimingFor | undefined
   /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for
    * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`
    * boundary renders / a soft-nav 500 / a rethrow. A failure a boundary answers is also written to the
@@ -464,7 +467,7 @@ function boundaryErrorLog(
   options: ServerOptions | undefined,
 ): (error: unknown, request: Request) => void {
   const logger = options?.logger ?? jsonLogger()
-  const detail = options?.errorLogDetail ?? "full"
+  const detail = resolveErrorLogDetail(options?.errorLogDetail)
   return (error, request) => emitRequestErrorLog(logger, detail, error, { req: request })
 }
 
@@ -800,6 +803,7 @@ export function createWebApp<Env = unknown>(
     ...(options.csp === undefined
       ? {}
       : { nonce: cspNonceResolver(options.csp) as NonceResolver<Env>, csp: options.csp }),
+    routeTiming: options.routeTiming,
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
     logBoundaryError: boundaryErrorLog(options.server),
     cacheChannel,

@@ -107,6 +107,18 @@ test("argv binding produces the same typed input shape MCP receives", () => {
     json: true,
   })
   expect(bindCommandArgv(spec, ["--sarif"])).toMatchObject({ sarif: true })
+  expect(bindCommandArgv(spec, ["--incremental", "--timings"])).toMatchObject({
+    incremental: true,
+    timings: true,
+  })
+  const prove = findCommandSpec("prove")!
+  expect(bindCommandArgv(prove, ["--run", "--min", "4", "--file", "backend/app.ts"])).toMatchObject(
+    {
+      run: true,
+      minLevel: 4,
+      files: ["backend/app.ts"],
+    },
+  )
   const levels = findCommandSpec("levels")!
   expect(bindCommandArgv(levels, ["--min", "2", "--seed=7"])).toMatchObject({
     min: 2,

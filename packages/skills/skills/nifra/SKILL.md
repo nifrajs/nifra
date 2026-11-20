@@ -93,6 +93,7 @@ agent-edited codebase correct.
 - Typed JSON APIs, schemas, contracts, middleware, the client -> load `nifra-api`.
 - File routes, loaders, actions, SSR, islands, React/Vue/Solid/Svelte/Preact -> load `nifra-web`.
 - `nifra check`, `nifra assure`, capabilities, the manifest, CI gates -> load `nifra-verify`.
+- An error, overlay diagnostic or finding with a code (`NIFRA_*`, `NF-C031`) -> load `nifra-errors`.
 
 ## Starting from scratch
 

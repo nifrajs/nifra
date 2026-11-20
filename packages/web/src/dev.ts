@@ -354,7 +354,10 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
     record: options.record,
     indicator: options.indicator,
   })
-  const devHooks: DevAppHooks = { onLoaderError: session.onLoaderError }
+  const devHooks: DevAppHooks = {
+    onLoaderError: session.onLoaderError,
+    routeTiming: session.routeTiming,
+  }
   // SSR freshness BELOW the route module. The route-level `importQuery` only ever reloaded the route
   // itself; everything it imports is tracked here and re-keyed when it changes. Registered now because a
   // Bun runtime plugin only affects modules loaded after it, and the first route import is `appFor`

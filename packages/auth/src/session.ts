@@ -87,9 +87,10 @@ export interface SessionOptions<Data extends Record<string, unknown> = Record<st
    * The data keys that say who the visitor is: a user id, and any key that changes what a page may
    * show, such as an organization or a role. The session cookie carries a tag that changes only when
    * one of them does, so `@nifrajs/web` keep-alive keeps the pages it holds across a commit that
-   * writes other data, a cart say. Unset, every key counts and any change to the data changes the
-   * tag. Leaving out a key that decides what a page shows lets the next visitor of a browser see the
-   * pages kept for the previous one.
+   * writes other data, a cart say. In store mode, changes to these keys also rotate an existing
+   * session ID. Without configured keys, every data change updates the tag and ID rotation is
+   * explicit via `regenerate()`. Leaving out a key that decides what a page shows lets the next
+   * visitor of a browser see the pages kept for the previous one.
    */
   readonly identity?: readonly (keyof Data & string)[]
 }
@@ -227,9 +228,9 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   // What says who the visitor is: the keys `identity` names, or all of the data.
   const identityOf = (data: Readonly<Record<string, unknown>> | undefined): unknown => {
     if (identity === undefined || data === undefined) return data
-    const picked: Record<string, unknown> = {}
-    for (const key of identity) if (Object.hasOwn(data, key)) picked[key] = data[key]
-    return picked
+    const entries: [string, unknown][] = []
+    for (const key of identity) if (Object.hasOwn(data, key)) entries.push([key, data[key]])
+    return Object.fromEntries(entries)
   }
 
   interface State {
@@ -406,7 +407,10 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
           return
       }
       const record = { data, expiresAt } satisfies SessionRecord
-      const previousId = state.regenerate ? state.id : undefined
+      const visitor = snapshot(identityOf(data))
+      const identityChanged =
+        identity !== undefined && (visitor === undefined || visitor !== state.visitor)
+      const previousId = state.regenerate || identityChanged ? state.id : undefined
       const loaded = state.id !== undefined && previousId === undefined
       if (previousId !== undefined) {
         const nextId = `${sessionFamily(previousId)}~${randomId()}`
@@ -451,7 +455,6 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
         await store.delete(state.id)
         return
       }
-      const visitor = snapshot(identityOf(data))
       const tag = tagFor(state, visitor)
       const signed = await sign(tag === undefined ? state.id : `${state.id}*${tag}`)
       if (

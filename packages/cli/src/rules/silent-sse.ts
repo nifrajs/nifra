@@ -1,6 +1,7 @@
 import type * as TSApi from "typescript"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { createSourceFacts } from "../internal/source-facts.ts"
+import type { TypeScriptApi } from "../internal/typescript-import.ts"
 import { commentBlockExpectation } from "./comment-markers.ts"
 import type { CheckRule } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
@@ -9,13 +10,28 @@ const SILENT_SSE_EXPECTATION = ["NF-C061", "silent-sse"]
 /** Bun's `idleTimeoutSec` default: a connection that moves no bytes for this long is closed. */
 const BUN_IDLE_SECONDS = 10
 const BUN_LISTENER = /\.listen\s*\(|\bBun\.serve\s*\(/
-const IDLE_TUNING = /\bwithIdleTimeout\b|\bidleTimeoutSec\b/
+/** What sets a listener's idle timeout: `withIdleTimeout`, `listen()`'s `idleTimeoutSec`, `Bun.serve()`'s `idleTimeout`. */
+const IDLE_TUNING_NAMES: ReadonlySet<string> = new Set([
+  "withIdleTimeout",
+  "idleTimeoutSec",
+  "idleTimeout",
+])
+const IDLE_TUNING_HINT = /\bwithIdleTimeout\b|\bidleTimeoutSec\b|\bidleTimeout\b/
+
+/** Whether code in `tree` names one of {@link IDLE_TUNING_NAMES}: a comment or a string that says so tunes nothing. */
+function tunesIdleTimeout(ts: TypeScriptApi, tree: TSApi.SourceFile): boolean {
+  const visit = (node: TSApi.Node): boolean => {
+    if (ts.isIdentifier(node) && IDLE_TUNING_NAMES.has(node.text)) return true
+    return ts.forEachChild(node, visit) === true
+  }
+  return visit(tree)
+}
 
 /**
  * NF-C061: in a project served by a Bun `listen()` or `Bun.serve()`, an SSE stream that sends no ping
  * inside the listener's idle timeout. Bun closes a connection that moves no bytes for 10 seconds, so
  * a stream that stays silent that long is cut, and `app.fetch` in a test never shows it. A project
- * that tunes the timeout anywhere (`withIdleTimeout`, `idleTimeoutSec`) is left alone.
+ * that tunes the timeout in code anywhere (`withIdleTimeout`, `idleTimeoutSec`, `idleTimeout`) is left alone.
  */
 export const silentSseRule: CheckRule = {
   code: "NF-C061",
@@ -32,11 +48,15 @@ export const silentSseRule: CheckRule = {
       if (!/\.[cm]?[jt]sx?$/.test(file)) continue
       const text = ctx.project.source.read(file)
       if (text === undefined) continue
-      if (IDLE_TUNING.test(text)) return []
-      bunListener ||= BUN_LISTENER.test(text)
-      if (!/\bsse\b/.test(text)) continue
+      const tuned = IDLE_TUNING_HINT.test(text)
+      const serves = BUN_LISTENER.test(text)
+      const streams = /\bsse\b/.test(text)
+      if (!tuned && !serves && !streams) continue
       const tree = facts.parse(file, text)
-      if (tree !== undefined) candidates.push({ file, text, tree })
+      if (tree === undefined) continue
+      if (tuned && tunesIdleTimeout(ts, tree)) return []
+      bunListener ||= serves
+      if (streams) candidates.push({ file, text, tree })
     }
     if (!bunListener) return []
     const findings: Diagnostic[] = []
@@ -53,10 +73,10 @@ export const silentSseRule: CheckRule = {
             line,
             message:
               stream.keepAlive === undefined
-                ? `This SSE stream sends no keep-alive ping, so on a Bun \`listen()\` server it is closed after ${BUN_IDLE_SECONDS} seconds without an event. Pass \`{ keepAlive: 5_000 }\`, or wrap the producer in \`withIdleTimeout\` from \`@nifrajs/core/idle-timeout\`.`
-                : `This SSE stream pings every ${stream.keepAlive} ms, which is not inside Bun's ${BUN_IDLE_SECONDS}-second idle timeout, so a quiet stream is closed. Ping more often than every ${BUN_IDLE_SECONDS * 1000} ms, or wrap the producer in \`withIdleTimeout\`.`,
+                ? `This SSE stream sends no keep-alive ping, so on a Bun server it is closed after ${BUN_IDLE_SECONDS} seconds without an event. Pass \`{ keepAlive: 5_000 }\`, or raise the timeout: \`withIdleTimeout\` from \`@nifrajs/core/idle-timeout\` under \`listen()\`, or the \`idleTimeout\` option of \`Bun.serve()\`.`
+                : `This SSE stream pings every ${stream.keepAlive} ms, which is not inside Bun's default ${BUN_IDLE_SECONDS}-second idle timeout, so a quiet stream is closed. Ping more often than every ${BUN_IDLE_SECONDS * 1000} ms, or raise the timeout with \`withIdleTimeout\` under \`listen()\` or the \`idleTimeout\` option of \`Bun.serve()\`.`,
             evidence: [
-              "the project serves with a Bun listener and sets no idleTimeoutSec or withIdleTimeout",
+              "the project serves with a Bun listener and sets no idleTimeoutSec, idleTimeout or withIdleTimeout",
               `Bun closes a connection that moves no bytes for ${BUN_IDLE_SECONDS} seconds by default`,
               "a stream kept on purpose: `// nifra-expect NF-C061: <reason>` above the registration",
             ],

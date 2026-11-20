@@ -21,6 +21,13 @@
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import { markDeferredFree } from "./deferred-free.ts"
+import {
+  type LoaderPhase,
+  measureRoutePhase,
+  type RouteTiming,
+  TIMED_LOADER,
+  timedLoaderResult,
+} from "./route-timing.ts"
 import { wireDate } from "./wire-date.ts"
 
 // Registry symbols shared with core and `@nifrajs/schema`, so two copies of either still agree.
@@ -950,18 +957,21 @@ export function guardValue(contract: ChannelContract, value: unknown): unknown {
 export function guardChannel<Args extends unknown[]>(
   fn: (...args: Args) => unknown,
   contract: ChannelContract,
+  trackLoader = false,
 ): (...args: Args) => unknown {
   const check = (value: unknown): unknown => guardValue(contract, value)
-  const checkThrown = (error: unknown): never => {
+  const checkThrown = (error: unknown, timing?: RouteTiming): never => {
     if (
       typeof error === "object" &&
       error !== null &&
       (error instanceof Response || isResponseResult(error))
-    )
-      guardValue(contract, error)
+    ) {
+      if (timing === undefined) guardValue(contract, error)
+      else measureRoutePhase(timing, "validation", () => guardValue(contract, error))
+    }
     throw error
   }
-  return (...args) => {
+  const guarded = (...args: Args): unknown => {
     let value: unknown
     try {
       value = fn(...args)
@@ -972,4 +982,20 @@ export function guardChannel<Args extends unknown[]>(
       ? Promise.resolve(value).then(check, checkThrown)
       : check(value)
   }
+  if (trackLoader) {
+    const timed = (timing: RouteTiming, phase: LoaderPhase, ...args: Args): unknown => {
+      const validate = (value: unknown) =>
+        measureRoutePhase(timing, "validation", () => timedLoaderResult(() => check(value)))
+      const rejected = (error: unknown): never => checkThrown(error, timing)
+      let value: unknown
+      try {
+        value = measureRoutePhase(timing, phase, () => timedLoaderResult(() => fn(...args)))
+      } catch (error) {
+        return rejected(error)
+      }
+      return value instanceof Promise ? value.then(validate, rejected) : validate(value)
+    }
+    Object.defineProperty(guarded, TIMED_LOADER, { value: timed })
+  }
+  return guarded
 }

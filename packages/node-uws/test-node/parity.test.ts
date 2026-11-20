@@ -75,7 +75,7 @@ after(async () => {
   for (const stop of stops) await stop()
 })
 
-const SKIP = new Set(["date", "connection", "keep-alive", "uwebsockets", "x-request-id"])
+const SKIP = new Set(["date", "connection", "keep-alive", "x-request-id"])
 
 interface Observed {
   status: number

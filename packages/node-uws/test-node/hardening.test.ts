@@ -753,3 +753,18 @@ test("a lifted upload that a response reads whole is not cut at the high-water m
   push(10, true)
   assert.equal((await whole).byteLength, 3 * BODY_HIGH_WATER + 10)
 })
+
+test("a long upload streams its chunks back in order", async () => {
+  const { res, push } = fakeUpload()
+  const channel = new BodyChannel(res)
+  const reader = channel.stream().getReader()
+  for (let size = 1; size <= 200; size++) push(size, size === 200)
+  const sizes: number[] = []
+  for (let next = await reader.read(); !next.done; next = await reader.read()) {
+    sizes.push(next.value.byteLength)
+  }
+  assert.deepEqual(
+    sizes,
+    Array.from({ length: 200 }, (_, i) => i + 1),
+  )
+})

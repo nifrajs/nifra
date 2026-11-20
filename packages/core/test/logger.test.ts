@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { resolveErrorLogDetail } from "../src/edge-kit.ts"
 import {
   commonSecretPatterns,
   jsonLogger,
@@ -197,8 +198,56 @@ describe("server error logging", () => {
     expect(entry.stack).toBeUndefined()
   })
 
-  // What reaches the sink is the app's call. The default diagnoses; the narrower tiers exist for an
-  // operator who does not trust the sink with an error's own text.
+  test("an unavailable environment uses the safe default", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "env")
+    if (descriptor === undefined) throw new Error("Expected a process.env property")
+    Object.defineProperty(process, "env", {
+      get() {
+        throw new Error("environment access denied")
+      },
+    })
+    try {
+      expect(resolveErrorLogDetail()).toBe("none")
+      expect(resolveErrorLogDetail("full")).toBe("full")
+    } finally {
+      Object.defineProperty(process, "env", descriptor)
+    }
+  })
+
+  test("production logs metadata by default and still honors an explicit detail policy", async () => {
+    const lines: string[] = []
+    const logger = jsonLogger((line) => lines.push(line))
+    const fail = () => {
+      const error = new Error("private detail")
+      error.name = "private name"
+      throw error
+    }
+    const previous = process.env.NODE_ENV
+    process.env.NODE_ENV = "production"
+    const { app, verbose } = (() => {
+      try {
+        return {
+          app: server({ logger }).get("/boom", fail),
+          verbose: server({ logger, errorLogDetail: "full" }).get("/boom", fail),
+        }
+      } finally {
+        if (previous === undefined) delete process.env.NODE_ENV
+        else process.env.NODE_ENV = previous
+      }
+    })()
+
+    expect((await app.fetch(new Request("http://x/boom"))).status).toBe(500)
+    expect((await verbose.fetch(new Request("http://x/boom"))).status).toBe(500)
+    const entry = JSON.parse(lines[0] ?? "")
+    expect(entry).toMatchObject({ method: "GET", path: "/boom", name: "Error" })
+    expect(entry.detail).toBeUndefined()
+    expect(entry.stack).toBeUndefined()
+    expect(JSON.parse(lines[1] ?? "")).toMatchObject({
+      name: "private name",
+      detail: "private detail",
+    })
+  })
+
   test("errorLogDetail: 'message' keeps the text and drops the stack", async () => {
     const lines: string[] = []
     const app = server({

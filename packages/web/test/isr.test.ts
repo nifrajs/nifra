@@ -2297,3 +2297,44 @@ describe("pages a shared store holds are signed", () => {
     }
   })
 })
+
+describe("MemoryCacheStore tag index", () => {
+  test("re-setting a key with other tags unlinks the tags it left", async () => {
+    const store = new MemoryCacheStore()
+    await store.set("/a", { ...entry("a1"), tags: ["x"] })
+    await store.set("/a", { ...entry("a2"), tags: ["y"] })
+    await store.invalidateTag("x")
+    expect((await store.get("/a"))?.body).toBe("a2")
+    await store.invalidateTag("y")
+    expect(await store.get("/a")).toBeUndefined()
+  })
+
+  test("an entry pushed out by the cap leaves its tags behind cleanly", async () => {
+    const store = new MemoryCacheStore({ max: 1 })
+    await store.set("/1", { ...entry("one"), tags: ["t"] })
+    await store.set("/2", { ...entry("two"), tags: ["t"] })
+    expect(await store.get("/1")).toBeUndefined()
+    await store.invalidateTag("t")
+    expect(await store.get("/2")).toBeUndefined()
+  })
+
+  test("invalidating a tag no entry carries, or deleting a missing key, changes nothing", async () => {
+    const store = new MemoryCacheStore()
+    await store.invalidateTag("nobody")
+    await store.set("/z", { ...entry("z"), tags: ["nobody"] })
+    expect((await store.get("/z"))?.body).toBe("z")
+    await store.delete("/missing")
+    await store.delete("/z")
+    expect(await store.get("/z")).toBeUndefined()
+  })
+
+  test("invalidating a shared tag drops every key that carries it and none that do not", async () => {
+    const store = new MemoryCacheStore()
+    for (let i = 0; i < 50; i++)
+      await store.set(`/p/${i}`, { ...entry(`p${i}`), tags: ["p", `n${i}`] })
+    await store.set("/other", { ...entry("other"), tags: ["o"] })
+    await store.invalidateTag("p")
+    for (let i = 0; i < 50; i++) expect(await store.get(`/p/${i}`)).toBeUndefined()
+    expect((await store.get("/other"))?.body).toBe("other")
+  })
+})

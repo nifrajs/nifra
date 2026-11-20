@@ -9,16 +9,25 @@
 import { existsSync } from "node:fs"
 import { readFile, stat } from "node:fs/promises"
 import { basename, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import {
   type ProjectEvidenceSnapshot,
   reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
-import { Glob } from "bun"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
+import {
+  buildOutputFiles,
+  fingerprintBuildInputs,
+  fingerprintFiles,
+  projectSourceFiles,
+  readBuildProvenance,
+} from "./build-provenance.ts"
 import { digestRoute } from "./contracts.ts"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { inProjectChildProcess } from "./mcp-io.ts"
+import { VERIFICATION_GATES, type VerificationGate } from "./verification-gates.ts"
 
 export type WorkGraphNodeKind =
   | "route"
@@ -70,6 +79,8 @@ export interface BuildFreshness {
   readonly buildDir?: string
   readonly newestSourceMs?: number
   readonly newestBuildMs?: number
+  readonly buildDigest?: string | undefined
+  readonly sourceDigest?: string
   readonly reason?: string
 }
 
@@ -86,7 +97,7 @@ export interface ImpactReport {
   readonly impactedRoutes: readonly string[]
 }
 
-export type ProofKind = "typecheck" | "contract" | "assurance" | "suite"
+export type ProofKind = VerificationGate["kind"]
 
 export interface ProofStep {
   readonly id: string
@@ -94,6 +105,7 @@ export interface ProofStep {
   readonly level: number
   readonly cost: number
   readonly command: string
+  /** Impact hints. Every ladder gate verifies the project as a whole. */
   readonly nodeIds: readonly string[]
   readonly fix?: string
 }
@@ -106,17 +118,20 @@ export interface ProofPlan {
 export type ProofStatus = "pass" | "fail" | "skip" | "pending"
 
 export interface ProofEvidence {
+  readonly graphDigest: string
+  readonly buildDigest?: string | undefined
   readonly id: string
   readonly status: ProofStatus
   readonly level: number
   readonly nodeIds: readonly string[]
   readonly command: string
-  readonly fix?: string
+  readonly fix?: string | undefined
 }
 
 export interface EvidenceBundle {
-  readonly version: 1
+  readonly version: 2
   readonly graphDigest: string
+  readonly buildDigest?: string | undefined
   readonly changedFiles: readonly string[]
   readonly targetLevel: number
   readonly plan: ProofPlan
@@ -135,9 +150,7 @@ export interface ProjectWorkGraphResult {
   readonly evidence: EvidenceBundle
 }
 
-// Framework component, content, and style files are app source too: an edit to one makes a build stale.
-const SOURCE_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json,svelte,vue,mdx,css}")
-const IGNORED = /(^|\/)(node_modules|dist|build|\.nifra|\.git|\.wrangler|coverage)\//
+const SERVER_ARTIFACT = /\.[cm]?js$/
 const APP_SOURCE_DIR = /^(?:routes|frontend|backend|shared)\//
 const BACKEND_SOURCE_DIR = /^(?:backend|shared)\//
 const MANIFEST_NAMES = new Set([
@@ -185,27 +198,44 @@ export async function inspectBuildFreshness(cwd: string): Promise<BuildFreshness
     const path = resolve(cwd, name)
     if (existsSync(path)) sourcePaths.push(path)
   }
-  for await (const rawPath of SOURCE_GLOB.scan({ cwd, dot: false })) {
-    const path = rawPath.replaceAll("\\", "/")
-    if (!IGNORED.test(path) && APP_SOURCE_DIR.test(path)) sourcePaths.push(resolve(cwd, path))
+  for (const file of projectSourceFiles(cwd, resolve(cwd, "dist"))) {
+    if (APP_SOURCE_DIR.test(file)) sourcePaths.push(resolve(cwd, file))
   }
   const sourceTimes = await fileTimes(sourcePaths)
-  for (const buildDirName of ["dist", "build"]) {
+  for (const buildDirName of ["dist", "build", ".vercel/output"]) {
     const buildDir = resolve(cwd, buildDirName)
     if (!existsSync(buildDir)) continue
-    const artifacts: string[] = []
-    for await (const rawPath of new Glob("**/*.{js,mjs,cjs}").scan({ cwd: buildDir, dot: false })) {
-      const path = rawPath.replaceAll("\\", "/")
-      artifacts.push(resolve(buildDir, path))
-    }
-    if (artifacts.length === 0) continue
-    const buildTimes = await fileTimes(artifacts)
-    return evaluateBuildFreshness({
+    const artifacts = buildOutputFiles(buildDir)
+    const scripts = artifacts.filter((path) => SERVER_ARTIFACT.test(path))
+    if (scripts.length === 0) continue
+    const freshness = evaluateBuildFreshness({
       hasArtifact: true,
       newestSourceMs: sourceTimes,
-      newestBuildMs: buildTimes,
+      newestBuildMs: await fileTimes(scripts.map((path) => resolve(buildDir, path))),
       buildDir: buildDirName,
     })
+    if (!freshness.ok) return freshness
+
+    const receipt = await readBuildProvenance(cwd, buildDir)
+    if (receipt === undefined) {
+      return {
+        ...freshness,
+        ok: false,
+        reason: "nifra prove refused: no build provenance; run `nifra build`",
+      }
+    }
+    const [sourceDigest, buildDigest] = await Promise.all([
+      fingerprintBuildInputs(cwd, buildDir),
+      fingerprintFiles(buildDir, artifacts),
+    ])
+    if (receipt.sourceDigest !== sourceDigest || receipt.buildDigest !== buildDigest) {
+      return {
+        ...freshness,
+        ok: false,
+        reason: "nifra prove refused: source or build contents changed; run `nifra build`",
+      }
+    }
+    return { ...freshness, buildDigest, sourceDigest }
   }
   return evaluateBuildFreshness({
     hasArtifact: false,
@@ -214,20 +244,89 @@ export async function inspectBuildFreshness(cwd: string): Promise<BuildFreshness
   })
 }
 
+interface WorkGraphOptions {
+  readonly changedFiles?: readonly string[]
+  readonly minLevel?: number
+  readonly execute?: boolean
+  readonly signal?: AbortSignal
+}
+
 export async function collectProjectWorkGraph(
   cwd: string,
-  options: { readonly changedFiles?: readonly string[]; readonly minLevel?: number } = {},
+  options: WorkGraphOptions = {},
 ): Promise<ProjectWorkGraphResult> {
   const freshness = await inspectBuildFreshness(cwd)
   if (!freshness.ok) throw new StaleBuildError(freshness)
   const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) throw new Error(`[nifra] no ${BACKEND_APP_FILE} in ${cwd}`)
-  const loadedValue: unknown = await import(`${backendPath}?nifra-work-graph=${Date.now()}`)
+  const outDir = resolve(cwd, freshness.buildDir ?? "dist")
+  const files = await collectProjectFiles(cwd, outDir)
+  const verification =
+    options.execute === true
+      ? await verifyProofGates(cwd, options.minLevel ?? 1, options.signal)
+      : undefined
+  const backendUrl = pathToFileURL(backendPath)
+  backendUrl.searchParams.set("nifra-work-graph", crypto.randomUUID())
+  const loadedValue: unknown = await import(backendUrl.href)
   const loaded = recordOf(loadedValue)
   if (loaded?.backend === undefined)
     throw new Error(`[nifra] ${backendPath} does not export backend`)
-  const files = await collectProjectFiles(cwd)
-  return buildProjectWorkGraph({ source: loaded.backend, files, freshness }, options)
+  const result = await buildProjectWorkGraph({ source: loaded.backend, files, freshness }, options)
+  if (verification === undefined) return result
+
+  const after = await inspectBuildFreshness(cwd)
+  if (
+    !after.ok ||
+    after.buildDigest !== freshness.buildDigest ||
+    after.buildDir !== freshness.buildDir ||
+    after.sourceDigest !== freshness.sourceDigest ||
+    sourceDigest(await collectProjectFiles(cwd, outDir)) !== sourceDigest(files)
+  ) {
+    throw new StaleBuildError({
+      ...after,
+      ok: false,
+      reason: "nifra prove refused: source or build changed during verification; rerun the proof",
+    })
+  }
+  options.signal?.throwIfAborted()
+  const proofs = result.plan.steps.map((step): ProofEvidence => {
+    const level = verification.find((status) => status.level === step.level)
+    return {
+      ...step,
+      graphDigest: result.graph.digest,
+      buildDigest: freshness.buildDigest,
+      status: level === undefined ? "skip" : level.ok ? "pass" : "fail",
+      fix:
+        level?.ok === false
+          ? `Run nifra ${step.level === 0 ? "check" : "levels"} for diagnostics`
+          : undefined,
+    }
+  })
+  return Object.freeze({
+    ...result,
+    evidence: createEvidenceBundle(result.graph, result.impact, result.plan, proofs),
+  })
+}
+
+async function verifyProofGates(cwd: string, target: number, signal?: AbortSignal) {
+  const throughLevel = VERIFICATION_GATES.find((gate) => gate.level === target)?.level
+  if (throughLevel === undefined) throw new RangeError("invalid proof target level")
+  signal?.throwIfAborted()
+  // Verify before reflecting the backend so the assurance loader can record route sites.
+  if (inProjectChildProcess()) {
+    const { collectVerificationLevels } = await import("./levels-tool.ts")
+    return (await collectVerificationLevels(cwd, { throughLevel })).levels
+  }
+  const { askProjectChild } = await import("./mcp-isolate.ts")
+  const result = await askProjectChild(
+    cwd,
+    { op: "proof-gates", level: throughLevel },
+    signal === undefined ? {} : { context: { signal, requestId: null, reportProgress: () => {} } },
+  )
+  signal?.throwIfAborted()
+  if (!result.ok || !("proofGates" in result))
+    throw new Error("nifra prove: verification process did not return gate results")
+  return result.proofGates
 }
 
 export async function buildProjectWorkGraph(
@@ -342,7 +441,11 @@ export async function buildWorkGraph(input: WorkGraphBuildInput): Promise<WorkGr
   const sortedEdges = edges.sort((a, b) =>
     codeUnitOrder(`${a.from}\n${a.to}\n${a.relation}`, `${b.from}\n${b.to}\n${b.relation}`),
   )
-  const digest = await digestJson({ nodes: sortedNodes, edges: sortedEdges })
+  const digest = await digestJson({
+    nodes: sortedNodes,
+    edges: sortedEdges,
+    build: input.freshness?.buildDigest,
+  })
   return Object.freeze({
     version: 1,
     digest,
@@ -414,47 +517,17 @@ export function planProofs(graph: WorkGraph, impact: ImpactReport, targetLevel =
   const routeIds = graph.nodes
     .filter((node) => node.kind === "route" && nodeIds.includes(node.id))
     .map((node) => node.id)
-  const steps: ProofStep[] = []
-  if (nodeIds.length > 0) {
-    steps.push({
-      id: "proof:typecheck",
-      kind: "typecheck",
-      level: 0,
-      cost: 1,
-      command: "nifra check --lints-only",
-      nodeIds,
-    })
-    steps.push({
-      id: "proof:contract",
-      kind: "contract",
-      level: 1,
-      cost: 2,
-      command: "nifra contracts check --json",
-      nodeIds: routeIds,
-    })
-    steps.push({
-      id: "proof:assurance",
-      kind: "assurance",
-      level: 2,
-      cost: 3,
-      command: "nifra assure --json --strict",
-      nodeIds: routeIds,
-    })
-    steps.push({
-      id: "proof:suite",
-      kind: "suite",
-      level: 3,
-      cost: 4,
-      command: "nifra test",
-      nodeIds,
-    })
-  }
-  return Object.freeze({
-    steps: Object.freeze(
-      steps.filter((step) => step.level <= Math.max(targetLevel, 0) || targetLevel > 3),
-    ),
-    targetLevel,
-  })
+  const steps = VERIFICATION_GATES.filter((gate) => gate.level <= targetLevel).map(
+    (gate): ProofStep => ({
+      id: `proof:${gate.kind}`,
+      kind: gate.kind,
+      level: gate.level,
+      cost: gate.level + 1,
+      command: `nifra prove --run --min ${gate.level} --json`,
+      nodeIds: gate.kind === "typecheck" ? nodeIds : routeIds,
+    }),
+  )
+  return Object.freeze({ steps: Object.freeze(steps), targetLevel })
 }
 
 export function createEvidenceBundle(
@@ -463,56 +536,62 @@ export function createEvidenceBundle(
   plan: ProofPlan,
   proofs: readonly ProofEvidence[] = [],
 ): EvidenceBundle {
-  const evidence = [...proofs].sort((a, b) => codeUnitOrder(a.id, b.id))
-  // Levels are not cumulative (assure does not typecheck), so every planned step needs its own
-  // passing proof; a higher-level pass never subsumes a lower one.
-  const done =
-    impact.impactedNodes.length === 0 ||
-    plan.steps.every((step) =>
-      evidence.some((item) => item.id === step.id && item.status === "pass"),
-    )
-  const missing = done
-    ? []
-    : plan.steps
-        .filter((step) => !evidence.some((item) => item.id === step.id && item.status === "pass"))
-        .map((step) => step.command)
-  const next = done
-    ? undefined
-    : plan.steps.find(
-        (step) => !evidence.some((item) => item.id === step.id && item.status === "pass"),
-      )
+  const byGate = new Map<string, ProofEvidence>()
+  for (const proof of proofs) {
+    if (proof.graphDigest !== graph.digest || proof.buildDigest !== graph.freshness.buildDigest)
+      continue
+    const step = plan.steps.find((candidate) => matchesStep(proof, candidate))
+    if (step !== undefined) byGate.set(proof.id, { ...proof, nodeIds: step.nodeIds })
+  }
+  const evidence = [...byGate.values()].sort((a, b) => codeUnitOrder(a.id, b.id))
+  const pending = plan.steps.filter(
+    (step) => !evidence.some((item) => item.id === step.id && item.status === "pass"),
+  )
+  const next = pending[0]
   return Object.freeze({
-    version: 1,
+    version: 2,
     graphDigest: graph.digest,
+    buildDigest: graph.freshness.buildDigest,
     changedFiles: impact.changedFiles,
     targetLevel: plan.targetLevel,
     plan,
     proofs: Object.freeze(evidence),
     stop: Object.freeze({
-      done,
-      missing: Object.freeze(missing),
+      done: next === undefined,
+      missing: Object.freeze(pending.map((step) => step.command)),
       ...(next === undefined ? {} : { next }),
     }),
   })
 }
 
+function matchesStep(proof: ProofEvidence, step: ProofStep): boolean {
+  return proof.id === step.id && proof.level === step.level && proof.command === step.command
+}
+
 export function recordProof(bundle: EvidenceBundle, proof: ProofEvidence): EvidenceBundle {
+  if (
+    proof.graphDigest !== bundle.graphDigest ||
+    proof.buildDigest !== bundle.buildDigest ||
+    !bundle.plan.steps.some((step) => matchesStep(proof, step))
+  ) {
+    throw new Error("nifra prove refused: proof belongs to a different snapshot or gate")
+  }
   const graph: WorkGraph = {
     version: 1,
     digest: bundle.graphDigest,
     nodes: [],
     edges: [],
-    freshness: { ok: true },
+    freshness: {
+      ok: true,
+      buildDigest: bundle.buildDigest,
+    },
   }
-  const impact: ImpactReport = {
-    changedFiles: bundle.changedFiles,
-    impactedNodes: bundle.stop.done ? [] : ["pending"],
-    impactedRoutes: [],
-  }
-  return createEvidenceBundle(graph, impact, bundle.plan, [
-    ...bundle.proofs.filter((item) => item.id !== proof.id),
-    proof,
-  ])
+  return createEvidenceBundle(
+    graph,
+    { changedFiles: bundle.changedFiles, impactedNodes: [], impactedRoutes: [] },
+    bundle.plan,
+    [...bundle.proofs.filter((item) => item.id !== proof.id), proof],
+  )
 }
 
 export function renderWorkGraphJson(result: ProjectWorkGraphResult): string {
@@ -521,11 +600,7 @@ export function renderWorkGraphJson(result: ProjectWorkGraphResult): string {
 
 export async function runWorkGraph(
   cwd: string,
-  options: {
-    readonly changedFiles?: readonly string[]
-    readonly minLevel?: number
-    readonly json?: boolean
-  } = {},
+  options: WorkGraphOptions & { readonly json?: boolean } = {},
 ): Promise<boolean> {
   const result = await collectProjectWorkGraph(cwd, options)
   console.log(options.json === false ? renderWorkGraphText(result) : renderWorkGraphJson(result))
@@ -539,33 +614,37 @@ export function renderWorkGraphText(result: ProjectWorkGraphResult): string {
     `impacted routes: ${result.impact.impactedRoutes.length === 0 ? "none" : result.impact.impactedRoutes.join(", ")}`,
     `stop: ${result.evidence.stop.done ? "done" : "pending"}`,
   ]
+  for (const proof of result.evidence.proofs) {
+    lines.push(`L${proof.level} ${proof.status}${proof.fix === undefined ? "" : ` - ${proof.fix}`}`)
+  }
   if (!result.evidence.stop.done)
     lines.push(`next: ${result.evidence.stop.next?.command ?? "no proof available"}`)
   return lines.join("\n")
 }
 
-async function collectProjectFiles(cwd: string): Promise<WorkGraphSourceFile[]> {
+async function collectProjectFiles(cwd: string, outDir: string): Promise<WorkGraphSourceFile[]> {
   const files: WorkGraphSourceFile[] = []
-  for await (const rawPath of SOURCE_GLOB.scan({ cwd, dot: false })) {
-    const path = rawPath.replaceAll("\\", "/")
-    if (IGNORED.test(path)) continue
-    const full = resolve(cwd, path)
-    try {
-      const content = await readFile(full, "utf8")
-      files.push({
-        path,
-        content,
-        ...(isTestFile(path)
-          ? { kind: "test" as const }
-          : MANIFEST_NAMES.has(basename(path))
-            ? { kind: "manifest" as const }
-            : {}),
-      })
-    } catch {
-      // A file can disappear while an agent is editing. The next graph run sees the settled tree.
-    }
+  for (const path of projectSourceFiles(cwd, outDir)) {
+    const bytes = await readFile(resolve(cwd, path))
+    files.push({
+      path,
+      content: path.endsWith(".lockb")
+        ? Bun.CryptoHasher.hash("sha256", bytes, "hex")
+        : bytes.toString("utf8"),
+      ...(isTestFile(path)
+        ? { kind: "test" as const }
+        : MANIFEST_NAMES.has(basename(path))
+          ? { kind: "manifest" as const }
+          : {}),
+    })
   }
   return files
+}
+
+function sourceDigest(files: readonly WorkGraphSourceFile[]): string {
+  const hash = new Bun.CryptoHasher("sha256")
+  for (const { path, content } of files) hash.update(JSON.stringify([path, content]))
+  return hash.digest("hex")
 }
 
 async function fileTimes(paths: readonly string[]): Promise<number> {

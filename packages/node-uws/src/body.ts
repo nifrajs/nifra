@@ -18,6 +18,7 @@ const UNREAD = "Body is unusable: the response was already being sent"
 export class BodyChannel {
   private readonly res: HttpResponse
   private chunks: Buffer[] = []
+  private head = 0
   private queued = 0
   private ended = false
   private failure: unknown
@@ -48,6 +49,7 @@ export class BodyChannel {
         if (this.lifted && this.queued >= BODY_HIGH_WATER) {
           this.discarded = true
           this.chunks = []
+          this.head = 0
           this.queued = 0
         }
         if (
@@ -76,6 +78,7 @@ export class BodyChannel {
     this.gone = true
     this.paused = false
     this.chunks = []
+    this.head = 0
     this.queued = 0
     this.wakeAll()
   }
@@ -95,6 +98,7 @@ export class BodyChannel {
     if (this.streamValue === undefined) {
       this.discarded = true
       this.chunks = []
+      this.head = 0
       this.queued = 0
     } else this.lifted = true
     if (this.paused) {
@@ -160,9 +164,25 @@ export class BodyChannel {
           ? only
           : Buffer.concat(this.chunks, this.queued)
     this.chunks = []
+    this.head = 0
     this.queued = 0
     this.release()
     return body
+  }
+
+  private shiftChunk(): Buffer | undefined {
+    if (this.head >= this.chunks.length) return undefined
+    const next = this.chunks[this.head]
+    this.chunks[this.head] = EMPTY
+    this.head++
+    if (this.head >= this.chunks.length) {
+      this.chunks.length = 0
+      this.head = 0
+    } else if (this.head >= 64 && this.head * 2 >= this.chunks.length) {
+      this.chunks = this.chunks.slice(this.head)
+      this.head = 0
+    }
+    return next
   }
 
   /** The body as a pull-driven stream; cancelling it drops the rest of the upload. */
@@ -188,7 +208,7 @@ export class BodyChannel {
           this.pulled = true
           this.lifted = false
           for (;;) {
-            const next = this.chunks.shift()
+            const next = this.shiftChunk()
             if (next !== undefined) {
               this.queued -= next.byteLength
               this.release()
@@ -211,6 +231,7 @@ export class BodyChannel {
         cancel: () => {
           this.discarded = true
           this.chunks = []
+          this.head = 0
           this.queued = 0
           this.release()
         },

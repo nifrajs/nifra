@@ -513,10 +513,13 @@ export default function Routing() {
         <code>//evil.com</code> stays inside the segment and never changes where the link goes. A
         param that is missing, empty, <code>.</code>, <code>..</code> or an unpaired surrogate does not{" "}
         throw, since it usually comes from data and one bad row should not fail the page:{" "}
-        <code>href</code> logs a <code>console.error</code> once per distinct message, naming the route
-        and the param and never the value, and returns an inert link that <code>Link</code>,{" "}
-        <code>Navigate</code>, <code>navigate</code> and a click on a plain anchor ignore, in every
-        adapter. <code>onHrefRefused(report)</code> takes over the logging: it hears every refusal, in
+        <code>href</code> logs a <code>console.error</code> once per distinct message (it remembers the
+        last 64, then starts over), naming the route and the param and never the value, and returns
+        an inert link that <code>Link</code>, <code>Navigate</code>, <code>navigate</code> and a
+        click, modified click or middle click on a plain anchor ignore, in every adapter. Before
+        hydration, or without scripts, a plain anchor holding it loads a path no route serves (a 404);
+        an anchor that must never navigate leaves its <code>href</code> off with{" "}
+        <code>{`href={isInertHref(link) ? undefined : link}`}</code>. <code>onHrefRefused(report)</code> takes over the logging: it hears every refusal, in
         place of the default, so an app can send them to its error tracker. <code>navigate</code> takes only an <code>href</code> result,
         or a history delta such as <code>navigate(-1)</code>; a string or a template literal is a
         compile error. So do React's <code>Link</code>, <code>NavLink</code> and <code>Navigate</code>{" "}

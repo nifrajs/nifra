@@ -84,9 +84,11 @@ type UntypedHrefOptions = {
 /**
  * What `href()` and `rawHref()` return for input they refuse. It starts with a control character, so
  * `isSameOriginPath` rejects it: `Link`, `Navigate`, `navigate` and `redirect` all treat it as no
- * destination. Spread into a plain `<a>` in any adapter's template, the click handler of `installHistory`
- * swallows the click once the page is hydrated; before that, or without scripts, it percent-encodes to a
- * path no route serves, so the failure is a 404 and never another page's link.
+ * destination. Held by a plain `<a>` in any adapter's template, a click, a modified click and a middle
+ * click are cancelled by the click handler of `installHistory` once the page is hydrated. Before that,
+ * or without scripts, it percent-encodes to a path no route serves, so the failure is a 404 and never
+ * another page's link. An anchor that must never navigate leaves its `href` off:
+ * `href={isInertHref(link) ? undefined : link}`.
  */
 export const INERT_HREF: Href = brand("/\u0001nifra-invalid-href")
 
@@ -125,8 +127,10 @@ const logged = new Set<string>()
 
 /**
  * Refuse input without throwing: a param, hash or path that comes from data (a database row, a CMS
- * link) must cost its own link, never the render. The default log writes each distinct message once,
- * so a page of rows with the same bad param is one line; a {@link onHrefRefused} reporter hears them all.
+ * link) must cost its own link, never the render. The default log remembers the last 64 distinct
+ * messages and writes each once, so a page of rows with the same bad param is one line; past 64 it
+ * starts over, so a longer cycle of messages can repeat. A {@link onHrefRefused} reporter hears every
+ * refusal.
  */
 function refuse<Pattern extends string = string>(
   call: HrefRefusal["call"],
@@ -166,11 +170,11 @@ function fragment(hash: string): string | undefined {
  * ```
  *
  * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired
- * surrogate), a `hash` with an unpaired surrogate, and a `search` key reserved for route-slot state
- * come from data, so they do not throw: the result is the inert `Href`, which every consumer
- * (`Link`, `Navigate`, `navigate`, and a plain `<a>` click) ignores, and a `console.error` (once per
- * distinct message; see {@link onHrefRefused} to take over) names the route and the param,
- * never the value. A link built from such a value would go somewhere else, so no link is built.
+ * surrogate), a `hash` with an unpaired surrogate, a `search` key reserved for route-slot state, and a
+ * slot target that was itself refused come from data, so they do not throw: the result is the inert
+ * `Href`, which every consumer (`Link`, `Navigate`, `navigate`, and a click on a plain `<a>`) ignores,
+ * and a `console.error` (once per distinct message, within a bounded memory; see {@link onHrefRefused}
+ * to take over) names the route and the param, never the value. A link built from such a value would go somewhere else, so no link is built.
  * The result is a pure function of its input, so the server and the browser build the same string. A
  * link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.
  */
@@ -203,6 +207,16 @@ export function href<K extends Pattern>(options: HrefOptions<K>): Href<K> {
     )
   }
   if (slots !== undefined) {
+    // A target the child `href()` refused has nowhere to go, so neither does the parent.
+    for (const target of Object.values(slots)) {
+      if (target !== null && isInertHref(target)) {
+        return refuse(
+          "href",
+          to,
+          `[nifra/web] href({ to: ${JSON.stringify(to)} }): a slot target is a link that was refused`,
+        )
+      }
+    }
     const targets = Object.fromEntries(
       Object.entries(slots).filter((entry): entry is [string, string] => entry[1] !== null),
     )

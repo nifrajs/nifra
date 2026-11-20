@@ -39,6 +39,7 @@ bun run bench:ppr               # partial prerendering's server cost and TTFB, w
 bun run bench:ppr:gzip          # the same with compression() on
 bun run bench:ppr:saturation    # every loader reading a backend pushed past its capacity
 bun run bench:size              # server bundle size
+bun bench/check.ts              # full vs incremental check after one handler edit in a 400-route app
 bun run bench:coldboot          # cold-start time
 bun run bench/keep-alive/run.ts # keepAlive restore, latency and memory (React + Svelte, Chromium)
 ```
@@ -143,3 +144,18 @@ bun run bench/ci/run.ts --suite http --runtime bun --pin   # one job, Linux only
 bun run bench/ci/run.ts --suite ssr --runtime node         # an SSR job, unpinned
 bun run bench/ci/summary.ts bench-ci                       # combine downloaded reports
 ```
+
+## Route performance in Chromium
+
+`bun bench/route-performance/run.ts` builds a synthetic catalog and its product detail route for
+Bun. Pass `--vite` to use the Vite production build. Install Chromium with
+`bun bench/node_modules/playwright/cli.js install chromium` or set `NIFRA_TEST_CHROME` to an
+installed Chrome executable.
+
+Each sample uses a fresh browser context with 150 ms added latency, 200 kB/s download, 90 kB/s
+upload, and 4× CPU slowdown. After one warm-up, the script reports the median of ten samples
+(`BENCH_BROWSER_SAMPLES` overrides ten). It measures navigation start to an enabled filter button
+with a paint opportunity, verifies the click handler, then measures a real click to the first
+client-side detail page with a paint opportunity. It verifies the JSON data request and compares
+the initial JavaScript URLs in the build report with the browser's resource timings. Gzip totals
+come from the build and transfer bytes come from Chromium.

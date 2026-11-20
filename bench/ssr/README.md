@@ -12,6 +12,13 @@ BENCH_ROUNDS=3 BENCH_SSR_JSON=out.json bun run bench/ssr/run.ts svelte
 bun run bench/ssr/run.ts --runtime node vue  # nifra's Vue rows on Node only, with every rival
 ```
 
+`bun bench/ssr/profile-preact.ts` runs two interleaved HTTP rounds of the Node + Preact catalog
+and the raw Preact renderer, then profiles the same catalog with 1,000 warmed, sequential
+`app.fetch` calls on Node. Loader, validation, serialization, and render percentiles describe
+work through initial response creation. The HTTP rows also include transport and concurrent load.
+The raw renderer row provides a rendering baseline. The application also runs routing, its output
+contract, and Nifra's hydration handover.
+
 Knobs: `BENCH_ROUNDS` (default 5), `BENCH_DURATION_S` (5), `BENCH_WARMUP_S` (3), `BENCH_CONNS` (50).
 `BENCH_SSR_JSON` writes every round's req/s per row.
 `BENCH_SSR_RESULTS_JSON` preserves the complete measured rows, including latency and client bytes.

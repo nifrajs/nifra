@@ -84,6 +84,7 @@ export type CheckSuggestion = DiagnosticSuggestion
 /** The structured result of a full check - what `--json` prints and the `nifra_check` MCP tool returns. */
 export interface CheckResult {
   readonly ok: boolean
+  readonly timings?: import("./check-timings.ts").CheckTimings
   readonly typecheck: "pass" | "fail" | "skipped"
   /** Why `typecheck` is `"skipped"` (no tsconfig.json, typescript not installed, lints-only mode), or
    * why it failed when the compiler itself passed (zoned files outside its program). Echoed in the

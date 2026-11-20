@@ -74,6 +74,50 @@ export const long = withIdleTimeout
   expect(await findings()).toEqual([])
 })
 
+test("a computed keepAlive key is read when spelled out and skipped when it is not", async () => {
+  writeAppFile(
+    root,
+    "backend/routes.ts",
+    `import { server } from "@nifrajs/core/server"
+import { streaming } from "@nifrajs/core/sse"
+import { t } from "@nifrajs/schema"
+const feed = { sse: t.object({ id: t.string() }) }
+const run = () => {}
+const key = "keepAlive"
+export const app = server()
+  .use(streaming())
+  .sse("/spelled", feed, run, { ["keepAlive"]: 5_000 })
+  .sse("/spelled-slow", feed, run, { ["keepAlive"]: 15_000 })
+  .sse("/unknown", feed, run, { [key]: 5_000 })
+  .sse("/other", feed, run, { ["maxBufferedBytes"]: 10 })
+`,
+  )
+  writeAppFile(root, "backend/main.ts", LISTEN)
+  expect(await findings()).toEqual(["backend/routes.ts:10 info", "backend/routes.ts:12 info"])
+})
+
+test("a comment or string that names withIdleTimeout tunes nothing, and Bun.serve's idleTimeout does", async () => {
+  writeAppFile(root, "backend/routes.ts", ROUTES)
+  writeAppFile(
+    root,
+    "backend/main.ts",
+    `import { app } from "./routes.ts"
+// TODO: add withIdleTimeout and idleTimeoutSec here
+const note = "idleTimeout"
+app.listen(3000)
+`,
+  )
+  expect((await findings()).length).toBe(5)
+  writeAppFile(
+    root,
+    "backend/main.ts",
+    `import { app } from "./routes.ts"
+Bun.serve({ idleTimeout: 0, fetch: app.fetch })
+`,
+  )
+  expect(await findings()).toEqual([])
+})
+
 test("an sse call that is not from nifra is left alone", async () => {
   writeAppFile(
     root,

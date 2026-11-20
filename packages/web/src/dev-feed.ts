@@ -17,6 +17,7 @@
  *
  * Dev-only by construction: no production entry imports this module.
  */
+
 import { AsyncLocalStorage } from "node:async_hooks"
 import { randomBytes } from "node:crypto"
 import {
@@ -39,6 +40,7 @@ import {
   isConsoleDiagnostic,
 } from "./diagnostic.ts"
 import { isRecord } from "./internal/record.ts"
+import type { RoutePhase, RouteTimingFor } from "./internal/route-timing.ts"
 import { createRedactor } from "./internal/secret-scan.ts"
 import { originalPosition, ssrSourceMaps } from "./internal/source-map.ts"
 
@@ -145,6 +147,12 @@ export interface DevLogEntry {
   readonly page?: string
 }
 
+export interface DevRouteTiming {
+  readonly pattern: string
+  /** Sum of completed phase samples, in milliseconds. Parallel loader times can overlap. */
+  readonly phases: Readonly<Partial<Record<RoutePhase, number>>>
+}
+
 export interface DevRequestTrace {
   readonly seq: number
   readonly requestId: string
@@ -157,6 +165,7 @@ export interface DevRequestTrace {
   readonly durationMs?: number
   readonly bytes?: number
   readonly isr?: string
+  readonly routeTiming?: DevRouteTiming
   readonly errorIds: readonly string[]
   readonly logCount: number
 }
@@ -283,6 +292,7 @@ export interface DevFeed {
       readonly status: number
       readonly bytes?: number | undefined
       readonly isr?: string | undefined
+      readonly routeTiming?: DevRouteTiming | undefined
     },
     durationMs: number,
   ): void
@@ -312,6 +322,7 @@ export interface DevRequestContext {
   readonly requestId: string
   readonly method: string
   readonly path: string
+  readonly routeTiming?: RouteTimingFor
 }
 
 // One store per process: a second copy of this module (a dual install) must still see the request the
@@ -373,6 +384,7 @@ interface TraceRecord {
   durationMs: number | undefined
   bytes: number | undefined
   isr: string | undefined
+  routeTiming: DevRouteTiming | undefined
   readonly errorIds: string[]
   logCount: number
 }
@@ -455,6 +467,7 @@ function snapshotTrace(trace: TraceRecord): DevRequestTrace {
   if (trace.durationMs !== undefined) entry.durationMs = trace.durationMs
   if (trace.bytes !== undefined) entry.bytes = trace.bytes
   if (trace.isr !== undefined) entry.isr = trace.isr
+  if (trace.routeTiming !== undefined) entry.routeTiming = trace.routeTiming
   return entry
 }
 
@@ -634,6 +647,7 @@ export function createDevFeed(options: DevFeedOptions): DevFeed {
         durationMs: undefined,
         bytes: undefined,
         isr: undefined,
+        routeTiming: undefined,
         errorIds: [],
         logCount: 0,
       })
@@ -646,6 +660,7 @@ export function createDevFeed(options: DevFeedOptions): DevFeed {
       trace.durationMs = Math.round(durationMs * 100) / 100
       trace.bytes = response.bytes
       trace.isr = response.isr
+      trace.routeTiming = response.routeTiming
     },
     markChange() {
       generation += 1

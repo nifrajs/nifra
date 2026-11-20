@@ -377,7 +377,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // 71,467, typebox-form -> 76,422 (Bun 1.4.4).
   // Reporting a failed render-time body hook once: idempotency -> 46,925 B, effect-ledger -> 44,106,
   // sse -> 42,954, mcp -> 42,352, typebox-t -> 71,541 (Bun 1.4.4).
-  "nifra-bare": 41.1,
+  // The shared logging policy with env-denial fallback measures 42,102 B (Bun 1.4.4).
+  "nifra-bare": 41.2,
   // Owned request-body cancellation and the gate's error boundary: 40,086 -> 40,337 B (Bun 1.4.3).
   // Resident-text single-use guard: measured 40,868 / 36,694 / 37,287 B for idempotency / MCP / SSE.
   // Add 0.05 KiB only to the three caps the security fix crosses.
@@ -408,24 +409,27 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
   // The same `listen()` disposal: idempotency 46,096 B (Bun 1.4.4).
   "nifra-idempotency": 45.9,
-  "nifra-effect-ledger": 43.1,
+  // The router's dynamic-match admission window: effect-ledger 44,167 B, mcp 42,403 B, sse 43,010 B and
+  // typebox-t 71,587 B (Bun 1.4.4), each the next 0.1 KiB step. Interleaved hot dynamic paths: 10 -> 33 M finds/s.
+  "nifra-effect-ledger": 43.2,
   // The same `listen()` disposal crossed the mcp and sse caps (41,496 B and 42,097 B on the first cut,
   // Bun 1.4.4). Each takes the next 0.1 KiB step.
-  "nifra-mcp": 41.4,
+  "nifra-mcp": 41.5,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 42,
-  "nifra-valibot": 42.1,
+  "nifra-sse": 42.1,
+  // Suppressing custom error names in production brings this row to 43,113 B (Bun 1.4.4).
+  "nifra-valibot": 42.2,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
   // The same `listen()` disposal: typebox-t 70,670 B (Bun 1.4.4).
-  "nifra-typebox-t": 69.9,
+  "nifra-typebox-t": 70,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only
   // this cap is crossed. A GET/HEAD native slot skipping the framing mark: typebox-form 74,037 B.
   // Merged ordinary-input and own-only validation measured 74,897 B for TypeBox-form (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox-form variant.
-  "nifra-typebox-form": 74.7,
+  "nifra-typebox-form": 74.8,
   "nifra-agent-review": 5.2,
   // An intercept boundary keeps the page and its target apart (reloads, cache, actions, form owner,
   // closeBoundary): 16,559 -> 17,437 B; a revalidation's terminal status renders its status route:
@@ -465,11 +469,12 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Route slots add 4,177 B gzip to the 23,476 B href/rawHref baseline (Bun 1.4.4).
   // Identity-cached query hashes, first-component invalidation indexes and amortized cache-cap
   // sweeps measured 28,019 B gzip on Bun 1.4.4. Bounding imperative writes and clearing retained
-  // handles across visitor changes brings the measured bundle to 28,195 B gzip. `href` and `rawHref`
-  // refusing data with a log and an inert link instead of a throw, `isInertHref`, and `navigate`
-  // ignoring it: 28,195 -> 28,236 B (Bun 1.4.4). A refusal reporter, a log written once per message, and the
-  // click handler swallowing an anchor that holds the inert link: 28,236 -> 28,387 B (Bun 1.4.4).
-  "nifra-web-client": 27.73,
+  // handles across visitor changes brings the measured bundle to 28,195 B gzip. The router's
+  // dynamic-match admission window reaches the client router: 28,244 B on CI (Bun 1.4.4).
+  // `href` and `rawHref` refusing data with a log and an inert link instead of a throw, a refusal
+  // reporter, a log written once per message, `isInertHref`, and `navigate` and the click handler
+  // ignoring the inert link, modified and middle clicks included: 28,244 -> 28,531 B (Bun 1.4.4).
+  "nifra-web-client": 27.87,
   "nifra-i18n": 4.3,
 }
 

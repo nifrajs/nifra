@@ -176,7 +176,7 @@ export default function Cli() {
             <td>
               <code>nifra build [--target &lt;t&gt;] [--out &lt;dir&gt;] [--transport &lt;module&gt;] [--prerender &lt;paths&gt;] [--report]</code>
             </td>
-            <td>A complete deploy directory for <code>bun</code>, <code>node</code>, <code>deno</code>, <code>cloudflare</code>, <code>vercel</code> or <code>static</code>. The server entry is generated from <code>backend/framework.ts</code>, <code>backend/app.ts</code> and <code>routes/</code>. <code>--report</code> prints each chunk&apos;s size. <code>--transport</code> builds the client to reach its server through that module&apos;s <code>fetch</code>, for a native shell. <code>--prerender</code> (static target) also prerenders the named pages, comma-separated, whether or not their route exports <code>prerender</code>.</td>
+            <td>A complete deploy directory for <code>bun</code>, <code>node</code>, <code>deno</code>, <code>cloudflare</code>, <code>vercel</code> or <code>static</code>. The server entry is generated from <code>backend/framework.ts</code>, <code>backend/app.ts</code> and <code>routes/</code>. <code>--report</code> prints chunk sizes and initial framework JavaScript and CSS by route. <code>--transport</code> builds the client to reach its server through that module&apos;s <code>fetch</code>, for a native shell. <code>--prerender</code> (static target) also prerenders the named pages, comma-separated, whether or not their route exports <code>prerender</code>.</td>
           </tr>
           <tr>
             <td>
@@ -207,7 +207,11 @@ export default function Cli() {
             <td>
               <code>nifra check [--lints-only] [--json] [--sarif]</code>
             </td>
-            <td>Typecheck plus contract lints: a hand-rolled <code>fetch()</code> to your own API, an untyped client, backend code reached from browser code. <code>--lints-only</code> skips tsc; <code>--sarif</code> emits SARIF 2.1.0.</td>
+            <td>
+              Typecheck and contract lints. Use <code>--incremental</code> to reuse TypeScript 5 or 6
+              compiler state and <code>--timings</code> to see where the check spent its time.
+              <code>--lints-only</code> skips tsc. <code>--sarif</code> emits SARIF 2.1.0.
+            </td>
           </tr>
           <tr>
             <td>
@@ -314,9 +318,13 @@ export default function Cli() {
           </tr>
           <tr>
             <td>
-              <code>nifra prove [--file &lt;path&gt;] [--min &lt;n&gt;]</code>
+              <code>nifra prove [--file &lt;path&gt;] [--min &lt;n&gt;] [--run]</code>
             </td>
-            <td>Plan the cheapest proofs for the changed files and report a machine-checkable stop condition. Needs a fresh build.</td>
+            <td>
+              Plan cumulative verification gates against a build with matching source and artifact
+              digests from <code>nifra build</code>. Run <code>nifra prove --run</code> to execute
+              the gates and regenerate saved proofs for the v2 evidence envelope.
+            </td>
           </tr>
           <tr>
             <td>

@@ -951,7 +951,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ImpactReport** _(interface)_ - `interface ImpactReport`
 - **ProjectWorkGraphResult** _(interface)_ - `interface ProjectWorkGraphResult`
 - **ProofEvidence** _(interface)_ - `interface ProofEvidence`
-- **ProofKind** _(type)_ - `type ProofKind = "typecheck" | "contract" | "assurance" | "suite"`
+- **ProofKind** _(type)_ - `type ProofKind = VerificationGate["kind"]`
 - **ProofPlan** _(interface)_ - `interface ProofPlan`
 - **ProofStatus** _(type)_ - `type ProofStatus = "pass" | "fail" | "skip" | "pending"`
 - **ProofStep** _(interface)_ - `interface ProofStep`
@@ -964,7 +964,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **WorkGraphSourceFile** _(interface)_ - `interface WorkGraphSourceFile`
 - **buildProjectWorkGraph** _(function)_ - `buildProjectWorkGraph: (input: WorkGraphBuildInput, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<ProjectWorkGraphResult>`
 - **buildWorkGraph** _(function)_ - `buildWorkGraph: (input: WorkGraphBuildInput) => Promise<WorkGraph>`
-- **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<ProjectWorkGraphResult>`
+- **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: WorkGraphOptions) => Promise<ProjectWorkGraphResult>`
 - **createEvidenceBundle** _(function)_ - `createEvidenceBundle: (graph: WorkGraph, impact: ImpactReport, plan: ProofPlan, proofs?: readonly ProofEvidence[]) => EvidenceBundle`
 - **evaluateBuildFreshness** _(function)_ - `evaluateBuildFreshness: (input: { readonly hasArtifact: boolean; readonly newestSourceMs: number; readonly newestBuildMs: number; readonly buildDir?: string; }) => BuildFreshness`
 - **inspectBuildFreshness** _(function)_ - `inspectBuildFreshness: (cwd: string) => Promise<BuildFreshness>`
@@ -973,7 +973,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **recordProof** _(function)_ - `recordProof: (bundle: EvidenceBundle, proof: ProofEvidence) => EvidenceBundle`
 - **renderWorkGraphJson** _(function)_ - `renderWorkGraphJson: (result: ProjectWorkGraphResult) => string`
 - **renderWorkGraphText** _(function)_ - `renderWorkGraphText: (result: ProjectWorkGraphResult) => string`
-- **runWorkGraph** _(function)_ - `runWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; readonly json?: boolean; }) => Promise<boolean>`
+- **runWorkGraph** _(function)_ - `runWorkGraph: (cwd: string, options?: WorkGraphOptions & { readonly json?: boolean; }) => Promise<boolean>`
 
 ## @nifrajs/client
 
@@ -2395,7 +2395,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **crossSiteFormRefused** _(const)_ - `crossSiteFormRefused: (source: RequestSource, formOrigins: FormOrigins | undefined) => boolean`
   Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request with no content type that carries an `Authorization` header other than a browser-managed scheme (Bas…
 - **emitRequestErrorLog** _(function)_ - `emitRequestErrorLog: (logger: Logger, detail: ErrorLogDetail, err: unknown, ctx: { readonly req: { readonly method: string; readonly url: string; }; } | undefined, message?: string) => void`
-  Write an unhandled request error to the log. An error's own text can quote the input that produced it, so how much of it reaches the sink is the app's call (`detail`). The default keeps it: a 500 with no message and no stack is an incident nobody can diagnose, and the framework already ships the na…
+  Write an unhandled request error to the log. An error's own text can quote the input that produced it. The `"none"` policy keeps thrown values out of the sink, including custom error names.
 - **jsonResponse** _(function)_ - `jsonResponse: (value: unknown, init?: ResponseInit) => Response`
   `Response.json`, with each `bigint` written as its decimal string, as `jsonText` writes it.
 - **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`
@@ -2408,6 +2408,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and not one of `…
 - **renderResult** _(function)_ - `renderResult: (result: ResponseResult) => Response`
   Render a framework {@link ResponseResult} - a rejection such as a `413`, `415` or `422` - with no request controls, byte-identical to `toResponse(result, EMPTY_RESPONSE_CONTROLS)`. It never takes a handler's `Response`, so a compact server rendering only its own rejections ships none of the code th…
+- **resolveErrorLogDetail** _(function)_ - `resolveErrorLogDetail: (detail?: ErrorLogDetail) => ErrorLogDetail`
+  Resolve the app's request error log policy, falling back safely when env access is denied.
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
 - **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders, request?: Request, unstamped?: boolean) => Response`
   Render a handler's result. `request` is the request being answered, given when response hooks will write next: a copy or body-less response built here is then recorded as that request's own, so the hooks write it in place instead of copying it again. `unstamped` is the caller's proof that no respon…
@@ -4602,7 +4604,7 @@ _No named exports (side-effect entrypoint)._
 - **createAdmissionController** _(function)_ - `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
   Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.
 - **createCsrfToken** _(function)_ - `createCsrfToken: (secret: CsrfSecret, nonce?: string) => Promise<string>`
-- **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
+- **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => EventLoopLagSampler`
   Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. A read retur…
 - **csrf** _(function)_ - `csrf: (options: CsrfOptions) => Middleware`
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and in a header (or, for a plain HTML form, the {@link CsrfOptions.field} form field), and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
@@ -6055,6 +6057,8 @@ _No named exports (side-effect entrypoint)._
   A build-tool STRATEGY for {@link buildTargetWith} - the two bundling steps, and nothing else. Everything around them (server-entry codegen, deploy assembly, prerender, size report) is bundler-agnostic and lives in `buildTargetWith`, so a second bundler (Vite) is this interface, not a second orchest…
 - **ChunkSize** _(interface)_ - `interface ChunkSize`
   One emitted chunk's measured size, in raw bytes + gzipped bytes (over-the-wire weight).
+- **ClientRouteAssets** _(interface)_ - `interface ClientRouteAssets`
+- **ClientRouteSize** _(interface)_ - `interface ClientRouteSize`
 - **CloudflarePagesRoutes** _(interface)_ - `interface CloudflarePagesRoutes`
   A Cloudflare Pages `_routes.json` document. `exclude`d paths are served straight from the CDN (the Function/worker is NOT invoked); everything else in `include` hits the worker.
 - **CloudflarePagesRoutesOptions** _(interface)_ - `interface CloudflarePagesRoutesOptions`
@@ -6130,6 +6134,8 @@ _No named exports (side-effect entrypoint)._
   The default (Bun) strategy - `buildClient`/`buildServer` from this module.
 - **checkHostReach** _(function)_ - `checkHostReach: (options: HostReachOptions) => Promise<HostReachReport>`
   Render each page on `host`, then fetch every same-origin file each page references, following scripts' imports and stylesheets' `url()`s, and expect 200 for all of them; then expect each `refused` path to answer `refusedStatus`. Cross-origin references are skipped: they are not this app's to serve.
+- **clientRouteAssets** _(function)_ - `clientRouteAssets: (manifest: BuildManifest, routes: readonly (Pick<RouteEntry, "id" | "pattern"> & { readonly hydrate?: boolean | "unknown"; })[], imports: ReadonlyMap<string, readonly string[]>) => readonly ClientRout…`
+  The client entry plus the matched page and layout chunks and their eager dependencies.
 - **cloudflarePagesRoutes** _(function)_ - `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
 - **cloudflareRouteRules** _(function)_ - `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
@@ -6421,6 +6427,7 @@ _No named exports (side-effect entrypoint)._
 - **DevRequestTrace** _(interface)_ - `interface DevRequestTrace`
 - **DevRequestsQuery** _(interface)_ - `interface DevRequestsQuery`
 - **DevRequestsResult** _(interface)_ - `interface DevRequestsResult`
+- **DevRouteTiming** _(interface)_ - `interface DevRouteTiming`
 - **DevServerIdentity** _(interface)_ - `interface DevServerIdentity`
   The identity a dev server reports at {@link DEV_FEED_PATHS.identity}.
 - **DevServerRecord** _(interface)_ - `interface DevServerRecord`
@@ -6481,6 +6488,8 @@ _No named exports (side-effect entrypoint)._
   Where the prompt is shown; it decides how the agent is told to reproduce and verify.
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
+- **SOLID_ERROR_CODES** _(const)_ - `SOLID_ERROR_CODES: readonly string[]`
+  The codes Solid 2.0 raises at error severity (the rest are warnings), from its diagnostics.json.
 - **SourceReader** _(type)_ - `type SourceReader = (file: string) => string | undefined`
   Reads a source file's text, or returns undefined if it cannot (missing, binary, permission).
 - **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined`
@@ -6489,7 +6498,7 @@ _No named exports (side-effect entrypoint)._
   Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible for running Vite's `ssrFixStacktrace` first so the frames point at real source.
 - **buildFixPrompt** _(function)_ - `buildFixPrompt: (diagnostic: Diagnostic, context: FixPromptContext, option?: FixOption) => string`
   The prompt for one way of fixing `diagnostic` (its default `fix` when `option` is left out).
-- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; fixOptions?: readonly FixOption[] | undefined; }`
+- **classify** _(function)_ - `classify: (name: string, message: string, fromNifra?: boolean) => { code: string; cause?: string; fix?: string; docsAnchor?: string; fixOptions?: readonly FixOption[] | undefined; severity?: "warning" | undefined; }`
   Classify an error name+message against the catalog; falls back to the generic unhandled code.
 - **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
   One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
@@ -6503,6 +6512,8 @@ _No named exports (side-effect entrypoint)._
   Parse a V8/Node stack into structured frames. Handles the `at fn (path:line:col)`, bare `at path:line:col`, and `at async fn (...)` shapes; a frame that doesn't match keeps its raw text with no location (so nothing is silently dropped).
 - **promptPath** _(function)_ - `promptPath: (file: string, root: string | undefined) => string`
   A path a reader of the prompt may see: project-relative, package-relative, or a base name.
+- **thrownByNifra** _(function)_ - `thrownByNifra: (frames: readonly DiagnosticFrame[]) => boolean`
+  True when the error was thrown from inside an installed nifra package (the innermost located frame sits under `node_modules/@nifrajs/`), as opposed to app code that happens to word a message alike.
 - **topUserFrame** _(function)_ - `topUserFrame: (frames: readonly DiagnosticFrame[], root: string | undefined) => DiagnosticFrame | undefined`
   The first frame that points at the user's own source - what the codeframe should show.
 

@@ -19,6 +19,34 @@ import {
   parseTraceparent,
 } from "./traceparent.ts"
 
+const STABLE_ERROR_CODE = /^(?:NIFRA_[A-Z0-9_]{1,80}|NF-[A-Z]\d{3})$/
+
+/** The error's `code` when it is one of nifra's stable codes; anything else could carry request data. */
+function stableErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined
+  // An error is application data: a getter or Proxy trap on it may throw, and recording must not.
+  try {
+    const code: unknown = Reflect.get(error, "code")
+    if (typeof code !== "string") return undefined
+    if (STABLE_ERROR_CODE.test(code)) return code
+    // Nifra's own error classes carry a closed code vocabulary (INVALID_PATH, component_busy). Only
+    // those classes qualify: a driver or app error may put request data in `code`.
+    const name: unknown = Reflect.get(error, "name")
+    return typeof name === "string" && FRAMEWORK_ERROR_CLASSES.has(name) && CLASS_CODE.test(code)
+      ? code
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const FRAMEWORK_ERROR_CLASSES: ReadonlySet<string> = new Set([
+  "FrameworkError",
+  "RouteConfigError",
+  "ServerComponentError",
+])
+const CLASS_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
+
 export interface ObservationContext {
   readonly traceId: string
   readonly spanId: string
@@ -269,13 +297,16 @@ export function createObservationLifecycle(
         if (ended) return
         Object.assign(span.attributes, attributes)
       },
-      recordError(_error) {
+      recordError(error) {
         if (ended) return
         recordedError = true
         // Error text is deliberately excluded: exception messages routinely contain credentials,
         // URLs, customer data, and query values. Integrations that own an explicit redaction policy
         // may add sanitized detail through their own adapter.
         span.attributes["error.recorded"] = true
+        // A stable nifra code is a constant, never request data, so it is safe to export.
+        const code = stableErrorCode(error)
+        if (code !== undefined) span.attributes["nifra.error.code"] = code
       },
       end(endInput = {}) {
         if (ended) return span

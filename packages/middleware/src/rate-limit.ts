@@ -54,6 +54,7 @@ const MAX_EVICTION_SCAN = 64
 export class MemoryStore implements RateLimitStore {
   private readonly windows = new Map<string, { count: number; resetAt: number }>()
   private scan: Iterator<[string, { count: number; resetAt: number }]> | undefined
+  private sweepScan: Iterator<[string, { count: number; resetAt: number }]> | undefined
   private readonly maxKeys: number
   private readonly sweepIntervalMs: number
   private lastSweep = 0
@@ -85,11 +86,15 @@ export class MemoryStore implements RateLimitStore {
 
   hit(key: string, windowMs: number): Promise<RateLimitResult> {
     const now = Date.now()
-    // Amortized GC: at most once per sweepIntervalMs, drop every window whose reset has passed. This
-    // bounds memory to ~the active key set instead of leaking an entry per distinct key ever seen.
-    if (now - this.lastSweep >= this.sweepIntervalMs) {
-      this.sweepExpired(now)
+    // Incremental amortized GC: once sweepIntervalMs has elapsed, advance a bounded cursor
+    // (<= MAX_EVICTION_SCAN entries per hit) until one pass completes, avoiding a full O(n)
+    // stop-the-world scan of up to 100k keys inside a single request.
+    if (this.sweepScan !== undefined) {
+      this.stepSweep(now)
+    } else if (now - this.lastSweep >= this.sweepIntervalMs) {
+      this.sweepScan = this.windows.entries()
       this.lastSweep = now
+      this.stepSweep(now)
     }
     const current = this.windows.get(key)
     if (current === undefined || now >= current.resetAt) {
@@ -104,8 +109,18 @@ export class MemoryStore implements RateLimitStore {
     return Promise.resolve({ count: current.count, resetAt: current.resetAt })
   }
 
-  private sweepExpired(now: number): void {
-    for (const [k, v] of this.windows) if (now >= v.resetAt) this.windows.delete(k)
+  private stepSweep(now: number): void {
+    const cursor = this.sweepScan
+    if (cursor === undefined) return
+    for (let scanned = 0; scanned < MAX_EVICTION_SCAN; scanned++) {
+      const next = cursor.next()
+      if (next.done === true) {
+        this.sweepScan = undefined
+        return
+      }
+      const [k, v] = next.value
+      if (now >= v.resetAt) this.windows.delete(k)
+    }
   }
 
   private reclaimExpired(now: number): boolean {

@@ -2,6 +2,7 @@ import type { BuildManifest, ServerBuild } from "../build-plan.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
 import type { LiveClientEntry } from "./codegen.ts"
 import type { SecretExemption } from "./secret-scan.ts"
+import type { ClientRouteAssets } from "./size-report.ts"
 
 /** A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server). */
 export const BUILD_TARGETS = ["bun", "node", "deno", "cloudflare", "vercel", "static"] as const
@@ -145,6 +146,7 @@ export interface Bundler {
     readonly define?: Readonly<Record<string, string>>
     readonly publicDir?: string | false
     readonly publicEnvPrefix?: string
+    readonly onRouteAssets?: ((routes: readonly ClientRouteAssets[]) => void) | undefined
     /** Vite CSS splitting policy; the Bun strategy rejects `false` and otherwise preserves its native behavior. */
     readonly cssCodeSplit?: boolean
     /** Framework-owned stylesheet activation policy; supported by both server strategies. */

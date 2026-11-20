@@ -25,13 +25,25 @@ export const LOCAL_TOOL_MAX_RESPONSE_BYTES = 1_048_576
  */
 export const OWN_PROCESS_GROUP = process.platform !== "win32"
 
+// The MCP server cancels the whole project child group. Its subprocesses must stay in that group.
+let projectChildProcess = false
+
+export function enterProjectChildProcess(): void {
+  projectChildProcess = true
+}
+
+export function inProjectChildProcess(): boolean {
+  return projectChildProcess
+}
+
 /** Signal a child spawned with `detached: OWN_PROCESS_GROUP`: its whole group on POSIX. */
 export function signalProcessGroup(
   proc: { readonly pid: number; kill(signal?: NodeJS.Signals): void },
   signal: NodeJS.Signals,
+  detached = OWN_PROCESS_GROUP,
 ): void {
   try {
-    if (OWN_PROCESS_GROUP) process.kill(-proc.pid, signal)
+    if (detached) process.kill(-proc.pid, signal)
     else proc.kill(signal)
   } catch {
     // The group has already exited.

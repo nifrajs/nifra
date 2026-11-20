@@ -51,6 +51,7 @@ import { PRERENDERED_GLOBAL } from "../router.ts"
 import { trustedHeadAttributes } from "./head-attributes.ts"
 import { isStaticMeta, mergeHeads } from "./head-merge.ts"
 import { reportDeferredRejection } from "./request-abort.ts"
+import { measureRoutePhase, type RouteTiming } from "./route-timing.ts"
 import { PRE_HYDRATION_GUARD } from "./runtime-contract.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./script-types.ts"
 import type { HeadersLike } from "./status-page.ts"
@@ -108,6 +109,9 @@ export interface RenderedPage {
 }
 
 export interface RenderPageOptions {
+  /** Initial response timing, when an inspector is attached. */
+  readonly timing?: RouteTiming
+
   readonly serverComponents?: import("../server-components/types.ts").ComponentState
   readonly adapter: RenderAdapter
   /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */
@@ -348,6 +352,12 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // data carries `{__nifra_deferred: id}` placeholders (promises don't serialize). `actionData` may
   // also `defer()` - split it too, continuing the id space so a single registry settles both. The
   // inline registry runtime is emitted only when something defers, so non-deferred output is unchanged.
+  const timing = options.timing
+  const preparationStarted = timing === undefined ? 0 : performance.now()
+  const serialize =
+    timing === undefined
+      ? serializeData
+      : (value: unknown) => measureRoutePhase(timing, "serialization", () => serializeData(value))
   const { forComponent, forClient, deferred } = prepareDeferred(data)
   // Each layout's data is split in turn, each continuing the id space, so a `defer()` in a layout
   // settles through the SAME registry as the page's rather than colliding on ids.
@@ -383,6 +393,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
           ...(actionSplit ? actionSplit.deferred : []),
           ...(boundarySplit ? boundarySplit.deferred : []),
         ]
+  if (timing !== undefined) timing("serialization", performance.now() - preparationStarted)
   // Under a CSP policy a document carries a nonce only when it has a script specific to this request:
   // each settled deferred value streams one, and an executable head tag names the nonce. Every other
   // document is nonce-free - its inline scripts are the constant ones the policy lists by hash - so its
@@ -402,21 +413,18 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   const layoutTail =
     options.layoutData === undefined
       ? ""
-      : `,"${LAYOUT_DATA_GLOBAL}":${serializeData(layoutSplits.map((split) => split.forClient))}`
+      : `,"${LAYOUT_DATA_GLOBAL}":${serialize(layoutSplits.map((split) => split.forClient))}`
 
   // Only emit the action global when an action actually ran, so plain GET output is unchanged.
   const action =
-    actionSplit === undefined ? "" : `,"${ACTION_GLOBAL}":${serializeData(actionSplit.forClient)}`
+    actionSplit === undefined ? "" : `,"${ACTION_GLOBAL}":${serialize(actionSplit.forClient)}`
   const boundaryTail =
-    boundarySplit === undefined
-      ? ""
-      : `,"${BOUNDARY_GLOBAL}":${serializeData(boundarySplit.forClient)}`
+    boundarySplit === undefined ? "" : `,"${BOUNDARY_GLOBAL}":${serialize(boundarySplit.forClient)}`
   const componentTail =
     options.serverComponents === undefined
       ? ""
-      : `,"__NIFRA_COMPONENTS__":${serializeData(options.serverComponents)}`
-  const liveTail =
-    options.live === undefined ? "" : `,"${LIVE_GLOBAL}":${serializeData(options.live)}`
+      : `,"__NIFRA_COMPONENTS__":${serialize(options.serverComponents)}`
+  const liveTail = options.live === undefined ? "" : `,"${LIVE_GLOBAL}":${serialize(options.live)}`
   const deferredRuntime =
     allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
   // The regex only injects the CSP nonce into the (constant) hydration head; with no nonce it's a
@@ -503,21 +511,19 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       // Each handover entry after the data is `,"<global>":<json>`; the data opens the object, so it always
       // has a first member and every other entry is a plain suffix. Built here, with the cached tail they
       // end up in, so a cached route does not serialize them again.
-      const route = routeId === undefined ? "" : `,"${ROUTE_GLOBAL}":${serializeData(routeId)}`
+      const route = routeId === undefined ? "" : `,"${ROUTE_GLOBAL}":${serialize(routeId)}`
       // The SSG prerendered-path set (when an app declares it) - the client reads it to fetch a static
       // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
       const prerendered =
         prerenderedListUrl !== undefined
-          ? `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedListUrl)}`
+          ? `,"${PRERENDERED_GLOBAL}":${serialize(prerenderedListUrl)}`
           : prerenderedPaths.length === 0
             ? ""
-            : `,"${PRERENDERED_GLOBAL}":${serializeData(prerenderedPaths)}`
+            : `,"${PRERENDERED_GLOBAL}":${serialize(prerenderedPaths)}`
       const copyHandover =
-        copyChunks === undefined ? "" : `,"${COPY_CHUNKS_GLOBAL}":${serializeData(copyChunks)}`
+        copyChunks === undefined ? "" : `,"${COPY_CHUNKS_GLOBAL}":${serialize(copyChunks)}`
       const localesHandover =
-        options.locales === undefined
-          ? ""
-          : `,"${LOCALES_GLOBAL}":${serializeData(options.locales)}`
+        options.locales === undefined ? "" : `,"${LOCALES_GLOBAL}":${serialize(options.locales)}`
       // Inert JSON, never executed: the page state needs no nonce and no hash under any CSP.
       slot.tailPre = `<script type="application/json" id="${HANDOVER_ID}">{"${DATA_GLOBAL}":`
       slot.tailPost = `${route}${prerendered}${copyHandover}${localesHandover}}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>${islandTags}</body></html>`
@@ -547,7 +553,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // Tail - the page-state handover + the client module. Module scripts defer (run after parse), so
   // the handover + every streamed deferred resolution are in the document before the entry hydrates.
   const tailHtml = hydrate
-    ? `${slot.tailPre}${serializeData(forClient)}${action}${layoutTail}${boundaryTail}${componentTail}${liveTail}${slot.tailPost}`
+    ? `${slot.tailPre}${serialize(forClient)}${action}${layoutTail}${boundaryTail}${componentTail}${liveTail}${slot.tailPost}`
     : (slot.tailPost as string)
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
   if (locale !== undefined) headers["content-language"] = lang
@@ -608,7 +614,13 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       const { swapSlot: _swapSlot, ...documentOptions } = options
       return renderPageResult(documentOptions)
     }
-    const out = adapter.renderSlot(chain, renderProps, swapSlot)
+    const renderSlot = adapter.renderSlot
+    const out =
+      timing === undefined
+        ? renderSlot.call(adapter, chain, renderProps, swapSlot)
+        : measureRoutePhase(timing, "render", () =>
+            renderSlot.call(adapter, chain, renderProps, swapSlot),
+          )
     return out instanceof Promise ? out.then(slotPage) : slotPage(out)
   }
 
@@ -618,7 +630,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // streaming renderer are pure overhead vs a single sync render + concat. A buffered string body also
   // gets an automatic Content-Length. A render throw surfaces here exactly as the streaming path's
   // shell-readiness `await` does, so the `_error` boundary still maps it to a status.
-  const streamed = (streamNonce: string | undefined): Promise<RenderedPage> =>
+  const renderStream = (streamNonce: string | undefined): Promise<RenderedPage> =>
     renderStreamedPage(
       adapter,
       chain,
@@ -636,9 +648,15 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       options.slots,
       options.logError,
     ).then((response) => new ResponseRenderedPage(response))
+  const streamed =
+    timing === undefined
+      ? renderStream
+      : (streamNonce: string | undefined) =>
+          measureRoutePhase(timing, "render", () => renderStream(streamNonce))
   const last = chain[chain.length - 1]
   const leaf = isWeakKey(last) ? last : undefined
-  if (allDeferred.length === 0 && adapter.renderToString !== undefined) {
+  const renderToString = adapter.renderToString
+  if (allDeferred.length === 0 && renderToString !== undefined) {
     // Under a CSP a render can still write a script for this request alone (Solid's serialized
     // error boundary, React's streamed Suspense reveal): it is handed a nonce, which the document
     // keeps only when the render used it, so every other document stays nonce-free and cacheable.
@@ -659,18 +677,21 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       adoptNonce()
       return streamed(renderNonce)
     }
-    const out =
+    const renderString = () =>
       slots !== undefined
-        ? adapter.renderToString(chain, renderProps, streamOptions(renderNonce, parts, slots))
+        ? renderToString.call(adapter, chain, renderProps, streamOptions(renderNonce, parts, slots))
         : parts !== undefined
-          ? adapter.renderToString(
+          ? renderToString.call(
+              adapter,
               chain,
               renderProps,
               renderNonce === undefined ? { parts } : { nonce: renderNonce, parts },
             )
           : renderNonce === undefined
-            ? adapter.renderToString(chain, renderProps)
-            : adapter.renderToString(chain, renderProps, { nonce: renderNonce })
+            ? renderToString.call(adapter, chain, renderProps)
+            : renderToString.call(adapter, chain, renderProps, { nonce: renderNonce })
+    const out =
+      timing === undefined ? renderString() : measureRoutePhase(timing, "render", renderString)
     const page = (bodyHtml: string | undefined): MaybePromise<RenderedPage> => {
       if (bodyHtml === undefined) {
         // The render suspended on something only the streaming renderer waits for (React's `use`

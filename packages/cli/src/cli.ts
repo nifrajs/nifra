@@ -169,7 +169,7 @@ Usage:
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
                                          backend/framework.ts (adapter) + backend/app.ts + routes/.
-                                         --report prints a per-chunk size + gzip table (biggest first).
+                                         --report prints chunk sizes and initial client assets by route.
                                          Vercel defaults to Edge; export vercelRuntime = "node" from
                                          nifra.config.ts for ordinary Node.js 22 serverless SSR.
                 [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
@@ -237,11 +237,12 @@ Usage:
   nifra runtime  [<runtime>] [<symptom>] [--json]
                                          Print where Bun, Node, Deno and Workers differ (the human view of
                                          nifra_runtime): cause, fix and how to verify, with measured versions.
-  nifra check   [--json] [--sarif] [--lints-only]
+  nifra check   [--json] [--sarif] [--lints-only] [--incremental] [--timings]
                                          Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          backend code in browser code). Run as "done"; --json for agents;
                                          --sarif emits the same stable diagnostics as SARIF 2.1.0 for external
                                          review tools; --lints-only skips tsc for a near-instant inner-loop pass.
+                                         --incremental reuses local compiler state; --timings reports phase times.
                                          With a contracts.lock.json, both modes import backend/app.ts
                                          (running its top-level code) to compare the routes it serves.
   nifra verify   [--release] [--json]    Run the shared repository verification gate. --release runs the
@@ -288,10 +289,9 @@ Usage:
                                          Compute the verification ladder (L0 typed contract → L1 route
                                          assurance → L2 capability lockfile → L3 route manifest → L4
                                          invariant-tested); --min <n> fails the exit code below level n.
-  nifra prove    [--json] [--file <path>] [--min <n>]
-                                         Build the static verification work graph, plan the cheapest
-                                         proofs for changed files, and report a machine-checkable stop
-                                         condition. Requires a fresh build; never probes a running app.
+  nifra prove    [--json] [--file <path>] [--min <n>] [--run]
+                                         Plan cumulative verification gates. With --run, execute them
+                                         and bind the results to the source and build digests.
   nifra doctor  [--json] [--auto-fix]    Flag undeclared imports and multiple physical copies of
                 [--strict] [--target]     @nifrajs/core/React identity-sensitive dependencies;
                                          print production readiness, with --strict making absent
@@ -646,6 +646,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           clientEntry,
           ...frameworkWebAppOptions(fw, backend),
           onLoaderError: dev.onLoaderError,
+          routeTiming: dev.routeTiming,
         }),
     })
     console.log(`nifra dev (bun) → http://localhost:${server.port}`)
@@ -710,6 +711,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         clientEntry,
         ...frameworkWebAppOptions(fw, backend),
         onLoaderError: dev.onLoaderError,
+        routeTiming: dev.routeTiming,
       }),
   })
   console.log(`nifra dev (vite) → http://localhost:${server.port}`)
@@ -848,7 +850,7 @@ async function buildForTarget(
   app: LoadedApp,
   flag: string | undefined,
   flags: Flags,
-): Promise<void> {
+): Promise<string> {
   const {
     buildWithDeploymentAdapter,
     isBuildTarget,
@@ -967,7 +969,7 @@ async function buildForTarget(
         ? `[nifra/components] Built ${fw.componentPipeline.adapter} for ${target} (${result.build}) in ${outDir}`
         : `[nifra/components] Built ${componentPipeline.adapter} for ${adapter!.id} (base ${target}, ${result.build}) in ${outDir}\n  from output directory: ${adapterRun}`,
     )
-    return
+    return outDir
   }
   const cssCodeSplitRequested = fw.cssCodeSplit === false
   const hasBunTransforms =
@@ -1052,6 +1054,7 @@ async function buildForTarget(
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
     ...(fw.vercelRuntime !== undefined ? { vercelRuntime: fw.vercelRuntime } : {}),
     ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
+    reportRouteAssets: flags.report,
     live: fw.live?.clientEntry,
     ...transportOption(flags, fw, cwd),
     prerenderPaths: prerenderPaths(flags, target),
@@ -1103,6 +1106,7 @@ async function buildForTarget(
   // must never look like the default, and a default Bun build must not leave the question open either.
   console.log(`  ${describePipeline(decision)}`)
   if (flags.report) console.log(`\n${renderSizeReport(result.size)}`)
+  return outDir
 }
 
 /** Build the app FACTORY for the prerender pass of the `static`, `bun` and `node` targets. Registers the
@@ -1635,7 +1639,16 @@ async function main(): Promise<void> {
   }
   const flags = parseFlags(argv.slice(1))
   try {
-    const app = await loadApp(process.cwd(), flags.out)
+    const cwd = process.cwd()
+    const provenance =
+      command === "build" && existsSync(resolve(cwd, BACKEND_APP_FILE))
+        ? await import("./build-provenance.ts")
+        : undefined
+    const buildInputs = await provenance?.fingerprintBuildInputs(
+      cwd,
+      resolve(cwd, flags.out ?? "dist"),
+    )
+    const app = await loadApp(cwd, flags.out)
     if (command !== "start" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) {
       const { unservedRoutesWarning } = await import("./introspect.ts")
       const unserved = unservedRoutesWarning(app)
@@ -1649,8 +1662,16 @@ async function main(): Promise<void> {
         watchRouteTypes(app.cwd)
     }
     if (command === "dev") await dev(app, flags)
-    else if (command === "build") await buildForTarget(app, flags.target, flags)
-    else await start(app, flags)
+    else if (command === "build") {
+      const outDir = await buildForTarget(app, flags.target, flags)
+      if (
+        provenance !== undefined &&
+        buildInputs !== undefined &&
+        !(await provenance.recordBuildProvenance(cwd, outDir, buildInputs))
+      ) {
+        console.warn("[nifra] source changed during the build. Rebuild before running nifra prove.")
+      }
+    } else await start(app, flags)
   } finally {
     // `dev` and `start` keep serving after they return; a build is over.
     if (command === "build") exitIfHeldOpen(command)

@@ -34,6 +34,24 @@ function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg)
 }
 
+Deno.test({
+  name: "server starts and logs metadata without environment access",
+  permissions: { env: false },
+  async fn() {
+    const logs: unknown[] = []
+    const log = (_message: string, fields?: unknown) => logs.push(fields)
+    const app = server({ logger: { debug: log, info: log, warn: log, error: log } }).get(
+      "/boom",
+      () => {
+        throw new Error("private detail")
+      },
+    )
+    const response = await app.fetch(new Request("http://x/boom"))
+    assertEquals(response.status, 500)
+    assertEquals(logs, [{ method: "GET", path: "/boom", name: "Error" }])
+  },
+})
+
 Deno.test("serves GET (JSON) + POST (body), resolves the bound port", async () => {
   const app = server()
     .use(responseObserver())

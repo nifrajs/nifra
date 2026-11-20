@@ -584,17 +584,25 @@ export function installHistory(
     return url.pathname + url.search + url.hash
   }
 
-  const onClick = (event: MouseEvent): void => {
-    // Let the browser handle anything that isn't a plain left-click (modifiers = new tab/window).
-    if (event.defaultPrevented || event.button !== 0) return
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-    // An anchor holding what `href()` returns for refused input (already reported) goes nowhere,
-    // in every adapter's templates, not only the ones with a `Link`.
+  // An anchor holding what `href()` returns for refused input (already reported) goes nowhere: a plain
+  // click, a modified one (new tab or window) and a middle click all end here, in every adapter's
+  // templates, not only the ones with a `Link`.
+  const swallowInert = (event: MouseEvent): boolean => {
     const clicked = event.target instanceof Element ? event.target.closest("a") : null
-    if (clicked !== null && isInertHref(clicked.getAttribute("href") ?? "")) {
-      event.preventDefault()
-      return
-    }
+    if (clicked === null || !isInertHref(clicked.getAttribute("href") ?? "")) return false
+    event.preventDefault()
+    return true
+  }
+  const onAuxClick = (event: MouseEvent): void => {
+    if (!event.defaultPrevented) swallowInert(event)
+  }
+
+  const onClick = (event: MouseEvent): void => {
+    if (event.defaultPrevented) return
+    if (swallowInert(event)) return
+    // Let the browser handle anything that isn't a plain left-click (modifiers = new tab/window).
+    if (event.button !== 0) return
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const href = inAppHref(event.target)
     if (href === null) return
     event.preventDefault()
@@ -745,6 +753,7 @@ export function installHistory(
   scan()
 
   document.addEventListener("click", onClick)
+  document.addEventListener("auxclick", onAuxClick)
   document.addEventListener("pointerover", onPrefetch)
   document.addEventListener("focusin", onPrefetch)
   window.addEventListener("popstate", onPopState)
@@ -758,6 +767,7 @@ export function installHistory(
     setBlockerController(undefined) // stop routing `useBlocker` to a torn-down registry
     setPresenter(undefined)
     document.removeEventListener("click", onClick)
+    document.removeEventListener("auxclick", onAuxClick)
     document.removeEventListener("pointerover", onPrefetch)
     document.removeEventListener("focusin", onPrefetch)
     window.removeEventListener("popstate", onPopState)

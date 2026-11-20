@@ -13,7 +13,12 @@ import { isRecord } from "./internal/record.ts"
 import { detectMonorepo } from "./load.ts"
 import { projectResources } from "./mcp-context.ts"
 import { createCachedAppLoader, projectTools } from "./mcp-exec.ts"
-import { CHILD_INPUT_MAX_BYTES, protocolStdout, readBoundedStream } from "./mcp-io.ts"
+import {
+  CHILD_INPUT_MAX_BYTES,
+  enterProjectChildProcess,
+  protocolStdout,
+  readBoundedStream,
+} from "./mcp-io.ts"
 import type {
   McpPrompt,
   McpPromptMessage,
@@ -26,10 +31,12 @@ import {
   extractBackendResources,
   extractBackendTools,
 } from "./mcp-reflect.ts"
+import { VERIFICATION_GATES, type VerificationGate } from "./verification-gates.ts"
 
 export type ProjectChildRequest =
   | { readonly op: "monorepo" }
   | { readonly op: "surface" }
+  | { readonly op: "proof-gates"; readonly level: VerificationGate["level"] }
   | { readonly op: "tool"; readonly name: string; readonly args: Record<string, unknown> }
   | { readonly op: "resource"; readonly uri: string }
   | { readonly op: "prompt"; readonly name: string; readonly args: Record<string, unknown> }
@@ -44,6 +51,7 @@ export interface AppSurface {
 export type ProjectChildAnswer =
   | { readonly ok: true; readonly apps: Readonly<Record<string, string>> | null }
   | { readonly ok: true; readonly surface: AppSurface }
+  | { readonly ok: true; readonly proofGates: readonly { level: number; ok: boolean }[] }
   | { readonly ok: true; readonly result: string | McpToolResult }
   | { readonly ok: true; readonly resource: { readonly text: string; readonly mimeType?: string } }
   | { readonly ok: true; readonly messages: readonly McpPromptMessage[] }
@@ -65,6 +73,11 @@ export async function answerProjectRequest(
   try {
     if (request.op === "monorepo") {
       return { ok: true, apps: (await detectMonorepo(cwd))?.apps ?? null }
+    }
+    if (request.op === "proof-gates") {
+      const { collectVerificationLevels } = await import("./levels-tool.ts")
+      const { levels } = await collectVerificationLevels(cwd, { throughLevel: request.level })
+      return { ok: true, proofGates: levels.map(({ level, ok }) => ({ level, ok })) }
     }
     const loadAppCached = createCachedAppLoader(cwd)
     const backend = (): Promise<unknown> =>
@@ -121,6 +134,10 @@ function parseRequest(text: string): { token: string; request: ProjectChildReque
   const { token, op, name, uri, args } = value
   if (typeof token !== "string" || !/^[0-9a-f-]{16,64}$/.test(token)) return undefined
   if (op === "monorepo" || op === "surface") return { token, request: { op } }
+  if (op === "proof-gates") {
+    const gate = VERIFICATION_GATES.find(({ level }) => level === value.level)
+    return gate === undefined ? undefined : { token, request: { op, level: gate.level } }
+  }
   if (op === "resource" && typeof uri === "string") return { token, request: { op, uri } }
   if ((op === "tool" || op === "prompt") && typeof name === "string" && isRecord(args)) {
     return { token, request: { op, name, args } }
@@ -161,6 +178,7 @@ export async function serveProjectChild(
 }
 
 if (import.meta.main) {
+  enterProjectChildProcess()
   const stdout = protocolStdout()
   const served = await serveProjectChild(
     process.argv[2] ?? process.cwd(),

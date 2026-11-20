@@ -37,6 +37,7 @@ import {
 } from "./render-document.ts"
 import { originFor, urlPartsFor } from "./request-url.ts"
 import { DATA_RESPONSE_HEADERS } from "./response-controls.ts"
+import { measureRoutePhase, type RouteTiming } from "./route-timing.ts"
 import { isStatusSignal } from "./status-page.ts"
 
 export function createDocumentRenderer<Env = unknown>(
@@ -62,6 +63,62 @@ export function createDocumentRenderer<Env = unknown>(
   } = base
   const { renderError, renderStatusSignal, reportLoaderError } = status
 
+  const navigationData = (
+    req: Request,
+    data: unknown,
+    layoutData: readonly unknown[] | undefined,
+    layoutRetained: readonly number[],
+    boundaryStates: BoundaryStates | undefined,
+    serverComponents: import("../server-components/types.ts").ComponentState | undefined,
+    live: LiveEnvelope | Deferred<LiveEnvelope> | undefined,
+  ): Response => {
+    const pageSplit = prepareDeferred(data)
+    const layoutSplits: Array<ReturnType<typeof prepareDeferred>> = []
+    let offset = pageSplit.deferred.length
+    for (const entry of layoutData ?? []) {
+      const split = prepareDeferred(entry, offset)
+      layoutSplits.push(split)
+      offset += split.deferred.length
+    }
+    const deferred = [...pageSplit.deferred, ...layoutSplits.flatMap((split) => split.deferred)]
+    const boundarySplit =
+      boundaryStates === undefined ? undefined : prepareDeferred(boundaryStates, deferred.length)
+    const allDeferred = [
+      ...deferred,
+      ...(boundarySplit === undefined ? [] : boundarySplit.deferred),
+    ]
+    // Deferred when holes run: their owners are known only once the last one settles.
+    const liveSplit = live === undefined ? undefined : prepareDeferred(live, allDeferred.length)
+    if (liveSplit !== undefined) allDeferred.push(...liveSplit.deferred)
+    const payload =
+      layoutData === undefined &&
+      boundarySplit === undefined &&
+      serverComponents === undefined &&
+      live === undefined
+        ? pageSplit.forClient
+        : {
+            v: 1 as const,
+            data: pageSplit.forClient,
+            layoutData: layoutSplits.map((split) => split.forClient),
+            retained: layoutRetained,
+            ...(boundarySplit === undefined ? {} : { boundaries: boundarySplit.forClient }),
+            ...(serverComponents === undefined ? {} : { serverComponents }),
+            ...(liveSplit === undefined ? {} : { live: liveSplit.forClient }),
+          }
+    if (allDeferred.length === 0) {
+      return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
+    }
+    return new Response(
+      ndjsonStream(payload, allDeferred, undefined, req.signal, deferredLogOf(req)),
+      {
+        headers: {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          ...DATA_RESPONSE_HEADERS,
+        },
+      },
+    )
+  }
+
   const handleDataOrDocument = async (
     req: Request,
     isData: boolean,
@@ -80,6 +137,7 @@ export function createDocumentRenderer<Env = unknown>(
     serverComponents?: import("../server-components/types.ts").ComponentState,
     live?: LiveEnvelope | Deferred<LiveEnvelope>,
     liveSeed?: LiveEnvelope,
+    timing?: RouteTiming,
   ): Promise<PageResponse> => {
     // Every layout loader settled before the page rendered, so a status or error page can reuse them.
     const settled: LayoutChainSource = async (_page, count) =>
@@ -87,51 +145,27 @@ export function createDocumentRenderer<Env = unknown>(
     if (isStatusSignal(data)) return renderStatusSignal(req, env, data, personalized, settled)
     if (isControlFlow(data)) return data
     if (isData) {
-      const pageSplit = prepareDeferred(data)
-      const layoutSplits: Array<ReturnType<typeof prepareDeferred>> = []
-      let offset = pageSplit.deferred.length
-      for (const entry of layoutData ?? []) {
-        const split = prepareDeferred(entry, offset)
-        layoutSplits.push(split)
-        offset += split.deferred.length
-      }
-      const deferred = [...pageSplit.deferred, ...layoutSplits.flatMap((split) => split.deferred)]
-      const boundarySplit =
-        boundaryStates === undefined ? undefined : prepareDeferred(boundaryStates, deferred.length)
-      const allDeferred = [
-        ...deferred,
-        ...(boundarySplit === undefined ? [] : boundarySplit.deferred),
-      ]
-      // Deferred when holes run: their owners are known only once the last one settles.
-      const liveSplit = live === undefined ? undefined : prepareDeferred(live, allDeferred.length)
-      if (liveSplit !== undefined) allDeferred.push(...liveSplit.deferred)
-      const payload =
-        layoutData === undefined &&
-        boundarySplit === undefined &&
-        serverComponents === undefined &&
-        live === undefined
-          ? pageSplit.forClient
-          : {
-              v: 1 as const,
-              data: pageSplit.forClient,
-              layoutData: layoutSplits.map((split) => split.forClient),
-              retained: layoutRetained,
-              ...(boundarySplit === undefined ? {} : { boundaries: boundarySplit.forClient }),
-              ...(serverComponents === undefined ? {} : { serverComponents }),
-              ...(liveSplit === undefined ? {} : { live: liveSplit.forClient }),
-            }
-      if (allDeferred.length === 0) {
-        return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
-      }
-      return new Response(
-        ndjsonStream(payload, allDeferred, undefined, req.signal, deferredLogOf(req)),
-        {
-          headers: {
-            "content-type": "application/x-ndjson; charset=utf-8",
-            ...DATA_RESPONSE_HEADERS,
-          },
-        },
-      )
+      return timing === undefined
+        ? navigationData(
+            req,
+            data,
+            layoutData,
+            layoutRetained,
+            boundaryStates,
+            serverComponents,
+            live,
+          )
+        : measureRoutePhase(timing, "serialization", () =>
+            navigationData(
+              req,
+              data,
+              layoutData,
+              layoutRetained,
+              boundaryStates,
+              serverComponents,
+              live,
+            ),
+          )
     }
 
     const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
@@ -193,6 +227,7 @@ export function createDocumentRenderer<Env = unknown>(
       if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
       if (nonce !== undefined) page.nonce = nonce
       if (assemblyCache !== undefined) page.assemblyCache = assemblyCache
+      if (timing !== undefined) page.timing = timing
       return await renderPageResult(page)
     } catch (err) {
       if (isStatusSignal(err)) return renderStatusSignal(req, env, err, personalized, settled)

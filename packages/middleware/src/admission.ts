@@ -100,6 +100,13 @@ export type LoopDelayMonitor = (resolutionMs: number) => LoopDelayHistogram | un
 /** Shared no-op sampler - the fallback when an explicitly supplied monitor has no histogram. */
 const NO_LAG: () => number = () => 0
 
+/** An event-loop-lag reader; `stop()` (or disposing it) ends its timer. */
+export interface EventLoopLagSampler {
+  (): number
+  stop(): void
+  [Symbol.dispose](): void
+}
+
 /**
  * Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so
  * it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An
@@ -111,7 +118,7 @@ const NO_LAG: () => number = () => 0
 export function createEventLoopLagSampler(
   resolutionMs = 20,
   monitor?: LoopDelayMonitor,
-): () => number {
+): EventLoopLagSampler {
   if (!Number.isFinite(resolutionMs) || resolutionMs <= 0) {
     throw new RangeError("admission: resolutionMs must be a finite positive number")
   }
@@ -119,7 +126,7 @@ export function createEventLoopLagSampler(
     let expected = performance.now() + resolutionMs
     let totalLagMs = 0
     let samples = 0
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setInterval> | undefined = setInterval(() => {
       const now = performance.now()
       totalLagMs += Math.max(0, now - expected)
       samples++
@@ -130,7 +137,13 @@ export function createEventLoopLagSampler(
     // handles simply do not expose `unref`.
     ;(timer as ReturnType<typeof setInterval> & { unref?: () => void }).unref?.()
     let latest = 0
-    return () => {
+    const stop = (): void => {
+      if (timer !== undefined) {
+        clearInterval(timer)
+        timer = undefined
+      }
+    }
+    const sample = (): number => {
       // An empty window is not a healthy loop: a burst of requests reads between two ticks.
       if (samples === 0) return latest
       const mean = totalLagMs / samples
@@ -139,17 +152,20 @@ export function createEventLoopLagSampler(
       latest = Number.isFinite(mean) ? mean : 0
       return latest
     }
+    return Object.assign(sample, { stop, [Symbol.dispose]: stop })
   }
+  const noop = (): void => {}
   let histogram: LoopDelayHistogram | undefined
   try {
     histogram = monitor(resolutionMs)
   } catch {
-    return NO_LAG
+    return Object.assign(() => NO_LAG(), { stop: noop, [Symbol.dispose]: noop })
   }
-  if (histogram === undefined) return NO_LAG
+  if (histogram === undefined)
+    return Object.assign(() => NO_LAG(), { stop: noop, [Symbol.dispose]: noop })
   histogram.enable()
   let latest = 0
-  return () => {
+  const sample = (): number => {
     const meanNs = histogram.mean
     // A histogram reads NaN until it records a sample after a reset: the window is still open.
     if (!Number.isFinite(meanNs)) return latest
@@ -157,6 +173,7 @@ export function createEventLoopLagSampler(
     latest = Math.max(0, meanNs / 1e6 - resolutionMs)
     return latest
   }
+  return Object.assign(sample, { stop: noop, [Symbol.dispose]: noop })
 }
 
 /**
@@ -197,7 +214,8 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
     })
 
   let inFlight = 0
-  const queue: Waiter[] = []
+  // Insertion-ordered Set gives O(1) enqueue, O(1) head dequeue, and O(1) timeout/abort removal.
+  const queue = new Set<Waiter>()
   const stats = { fastPathAdmits: 0, slowPathEntries: 0, everQueued: 0, shed: 0 }
 
   const shedResponse = (
@@ -242,8 +260,9 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
         if (released) return
         released = true
         inFlight--
-        while (inFlight < maxInFlight && queue.length > 0) {
-          const next = queue.shift() as Waiter
+        while (inFlight < maxInFlight && queue.size > 0) {
+          const next = queue.values().next().value as Waiter
+          queue.delete(next)
           if (next.settled) continue
           next.settled = true
           next.cleanup()
@@ -271,7 +290,7 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
       maxInFlight,
       lagMs: lag,
       maxLagMs,
-      queued: queue.length,
+      queued: queue.size,
     }
 
     // Policy hook first: may force-admit (reserved headroom) or force-shed.
@@ -295,13 +314,9 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
 
     // SLOW PATH: saturated. Briefly queue, else shed.
     stats.slowPathEntries++
-    if (maxQueue <= 0 || queue.length >= maxQueue) return shedResponse("inflight")
+    if (maxQueue <= 0 || queue.size >= maxQueue) return shedResponse("inflight")
     stats.everQueued++
     return new Promise<AdmissionDecision>((resolve) => {
-      const remove = (waiter: Waiter): void => {
-        const i = queue.indexOf(waiter)
-        if (i >= 0) queue.splice(i, 1)
-      }
       const waiter: Waiter = {
         settled: false,
         transfer: () => resolve(makeHandle()),
@@ -314,7 +329,7 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
         timer: setTimer(() => {
           if (waiter.settled) return
           waiter.settled = true
-          remove(waiter)
+          queue.delete(waiter)
           waiter.cleanup()
           waiter.shed()
         }, queueTimeoutMs),
@@ -322,11 +337,11 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
       const onAbort = (): void => {
         if (waiter.settled) return
         waiter.settled = true
-        remove(waiter)
+        queue.delete(waiter)
         waiter.cleanup()
         waiter.cancel()
       }
-      queue.push(waiter)
+      queue.add(waiter)
       req.signal.addEventListener("abort", onAbort, { once: true })
       if (req.signal.aborted) onAbort()
     })
@@ -334,6 +349,6 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
 
   return {
     admit,
-    snapshot: () => ({ inFlight, queued: queue.length, ...stats }),
+    snapshot: () => ({ inFlight, queued: queue.size, ...stats }),
   }
 }

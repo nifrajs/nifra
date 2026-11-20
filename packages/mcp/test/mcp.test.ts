@@ -1295,3 +1295,48 @@ describe("2026-07-28 modern transport (dual-era)", () => {
     expect(((await res.json()) as RpcErr).error.code).toBe(MCP_ERROR.UNSUPPORTED_VERSION)
   })
 })
+
+describe("respondMcpHttp reply encoding", () => {
+  const tool = (value: unknown): McpTool => ({
+    name: "t",
+    description: "d",
+    inputSchema: { type: "object" },
+    handler: async () => ({ structuredContent: { value } }),
+  })
+  const call = (accept: string): Request =>
+    new Request("http://x/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "t" } }),
+    })
+  const tooLarge = { jsonrpc: "2.0", id: 7, error: { code: -32000, message: "response too large" } }
+
+  test("a JSON reply carries its status, headers and content type", async () => {
+    const res = await respondMcpHttp(call("application/json"), [tool("ok")], INFO)
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8")
+    expect(JSON.stringify(await res.json())).toContain('"ok"')
+  })
+
+  test("a JSON reply that cannot be serialized becomes the generic error", async () => {
+    const res = await respondMcpHttp(call("application/json"), [tool(1n)], INFO)
+    expect(await res.json()).toEqual(tooLarge)
+  })
+
+  test("an SSE reply over the frame cap, or one that cannot be serialized, becomes the generic error", async () => {
+    for (const value of ["x".repeat(20_000), 1n]) {
+      const res = await respondMcpHttp(call("text/event-stream"), [tool(value)], INFO, {
+        maxResponseBytes: 1_024,
+      })
+      expect(await res.text()).toBe(`data: ${JSON.stringify(tooLarge)}\n\n`)
+    }
+  })
+
+  test("an SSE reply within the cap is sent as one data frame", async () => {
+    const res = await respondMcpHttp(call("text/event-stream"), [tool("ok")], INFO)
+    const text = await res.text()
+    expect(text.startsWith("data: ")).toBe(true)
+    expect(text.endsWith("\n\n")).toBe(true)
+    expect(text).toContain('"ok"')
+  })
+})

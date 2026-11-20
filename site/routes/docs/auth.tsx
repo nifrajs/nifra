@@ -242,8 +242,10 @@ export default function Auth() {
       <h2>Log in &amp; out</h2>
       <p>
         A loader can <i>read</i> the session but can't write cookies - so login/logout live in plain
-        Nifra routes that have the full <code>Context</code>. <code>regenerate()</code> rotates the
-        session id on login to defend against fixation; the <code>Set-Cookie</code> rides the redirect.
+        Nifra routes that have the full <code>Context</code>. Store-backed sessions rotate their ID
+        when a configured <code>identity</code> key changes. Call <code>regenerate()</code> to rotate
+        explicitly, including on login when <code>identity</code> is omitted. The{" "}
+        <code>Set-Cookie</code> rides the redirect.
       </p>
       <CodeBlock code={LOGIN} />
 

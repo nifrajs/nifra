@@ -230,7 +230,7 @@ export class LiveHub {
   /** A revocation, already stored. `tags` are the key's tags for a `revokeKey`. */
   revoke(event: LiveRevocation, tags: readonly string[]): void {
     if (event.key === null) {
-      for (const ws of [...this.sockets]) {
+      for (const ws of this.sockets) {
         if (event.sub === null || ws.data.sub === event.sub) this.drop(ws, CLOSE_REVOKED, "revoked")
       }
       return
@@ -512,7 +512,7 @@ export class LiveHub {
     const now = Date.now()
     const store = this.options.store
     let next = Number.POSITIVE_INFINITY
-    for (const ws of [...this.sockets]) {
+    for (const ws of this.sockets) {
       const state = ws.data
       const seen =
         store === undefined ? state.lastSeen : Math.max(state.lastSeen, store.lastBeat(ws))
@@ -550,6 +550,9 @@ export function tagCache(ring: Keyring, size = TAG_CACHE_SIZE): TagOf {
     }
     const tag = ring.tag(key, secret)
     cache.set(name, tag)
+    void tag.catch(() => {
+      if (cache.get(name) === tag) cache.delete(name)
+    })
     return tag
   }
 }

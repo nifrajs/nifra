@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { t } from "@nifrajs/schema"
 import {
   DEV_FEED_PATHS,
   DEV_REQUEST_ID_HEADER,
@@ -18,6 +19,9 @@ import {
   isLoopbackHost,
 } from "../src/dev-session.ts"
 import { LAST_ERROR_PATH } from "../src/diagnostic.ts"
+import { buildManifest, createWebApp, type RouteModule } from "../src/index.ts"
+import { MemoryCacheStore, withISR } from "../src/isr.ts"
+import { DATA_HEADER } from "../src/router.ts"
 
 const roots: string[] = []
 const sessions: DevSession[] = []
@@ -397,4 +401,79 @@ test("record: false writes nothing to disk", () => {
   session.listening(4567)
   session.feed.recordError(new Error("x"), { category: "page" })
   expect(existsSync(join(root, ".nifra"))).toBe(false)
+})
+
+test("page timing follows the request through the layout, guarded loader and ISR", async () => {
+  const { session } = open()
+  const modules: Record<string, Partial<RouteModule>> = {
+    "_layout.tsx": { default: "layout" },
+    "_layout.backend.ts": {
+      loaderOutput: t.object({ layout: t.string() }),
+      loader: async () => ({ layout: "workspace" }),
+    },
+    "[item].tsx": { default: "item" },
+    "[item].backend.ts": {
+      loaderOutput: t.object({ name: t.string() }),
+      loader: async () => {
+        await Bun.sleep(2)
+        return { name: "item" }
+      },
+    },
+  }
+  const app = createWebApp({
+    adapter: {
+      hydrationHead: () => "",
+      renderToString: () => "<p>item</p>",
+      renderToStream: () => new Blob(["<p>item</p>"]).stream(),
+    },
+    manifest: buildManifest(Object.keys(modules), (file) => async () => {
+      const half = modules[file]
+      if (half === undefined) throw new Error(`Missing fixture module ${file}`)
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: The manifest merges each backend half with its frontend default.
+      return half as RouteModule
+    }),
+    clientEntry: "/client.js",
+    routeTiming: session.routeTiming,
+  })
+  let now = 0
+  const fetch = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => now })
+  const load = (path: string, data = false): Promise<Response> => {
+    const req = new Request(`http://127.0.0.1:4000${path}`, {
+      headers: data ? { [DATA_HEADER]: "1" } : {},
+    })
+    return session.track(req, () => fetch(req))
+  }
+  const [document, navigation] = await Promise.all([load("/example"), load("/another", true)])
+  const cached = await load("/example")
+  const traceOf = (response: Response) =>
+    session.feed
+      .requests()
+      .requests.find((trace) => trace.requestId === response.headers.get(DEV_REQUEST_ID_HEADER))
+  expect(document.status).toBe(200)
+  expect(navigation.status).toBe(200)
+  expect(traceOf(document)).toMatchObject({
+    isr: "miss",
+    routeTiming: {
+      pattern: "/:item",
+      phases: {
+        layoutLoaders: expect.any(Number),
+        pageLoader: expect.any(Number),
+        validation: expect.any(Number),
+        serialization: expect.any(Number),
+        render: expect.any(Number),
+      },
+    },
+  })
+  expect(traceOf(navigation)?.routeTiming?.phases).toMatchObject({
+    pageLoader: expect.any(Number),
+    validation: expect.any(Number),
+    serialization: expect.any(Number),
+  })
+  expect(traceOf(navigation)?.routeTiming?.phases.render).toBeUndefined()
+  expect(traceOf(cached)?.isr).toBe("hit")
+  expect(traceOf(cached)?.routeTiming).toBeUndefined()
+  now = 61_000
+  const stale = await load("/example")
+  expect(traceOf(stale)?.isr).toBe("stale")
+  expect(traceOf(stale)?.routeTiming).toBeUndefined()
 })

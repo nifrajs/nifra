@@ -203,6 +203,21 @@ test("a second reporter replaces the first, a stale remover leaves it alone, a t
   }
 })
 
+test("a slot target that was itself refused refuses the parent, and a null slot still closes", () => {
+  const child = logged(() => build({ to: "/users/:id", params: { id: "" } })).result
+  const parent = logged(() =>
+    Reflect.apply(href, undefined, [{ to: "/dashboard", slots: { side: child } }]),
+  )
+  expect(parent.result).toBe(INERT_HREF)
+  expect(parent.lines).toHaveLength(1)
+  expect(parent.lines[0]).toContain("a slot target is a link that was refused")
+  const closed = logged(() =>
+    Reflect.apply(href, undefined, [{ to: "/dashboard", slots: { side: null } }]),
+  )
+  expect(closed.result).not.toBe(INERT_HREF)
+  expect(closed.lines).toEqual([])
+})
+
 test("the refused value is a same-origin check failure, and a plain anchor resolves to no route", () => {
   expect(isSameOriginPath(INERT_HREF)).toBe(false)
   const url = new URL(INERT_HREF, ORIGIN)

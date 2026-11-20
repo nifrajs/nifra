@@ -964,8 +964,18 @@ export function createSourceFacts(
         for (const property of value.properties) {
           if (ts.isSpreadAssignment(property)) return
           const key = property.name
-          if (key === undefined || !(ts.isIdentifier(key) || ts.isStringLiteralLike(key))) continue
-          if (key.text !== "keepAlive") continue
+          if (key === undefined) continue
+          // A computed key the file does not spell out may be `keepAlive`: the interval is unknown.
+          if (ts.isComputedPropertyName(key)) {
+            const spelled = unwrapExpression(ts, key.expression)
+            if (!ts.isStringLiteralLike(spelled)) return
+            if (spelled.text !== "keepAlive") continue
+          } else if (
+            !(ts.isIdentifier(key) || ts.isStringLiteralLike(key)) ||
+            key.text !== "keepAlive"
+          ) {
+            continue
+          }
           if (!ts.isPropertyAssignment(property)) return
           const written = unwrapExpression(ts, property.initializer)
           if (!ts.isNumericLiteral(written)) return

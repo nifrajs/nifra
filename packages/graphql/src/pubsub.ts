@@ -83,36 +83,77 @@ function createSink<Event>(
   overflow: NonNullable<GraphqlPubSubOptions["overflow"]>,
   onClose: () => void,
 ): Sink<Event> {
-  const queue: Event[] = []
-  const pulls: Array<(result: IteratorResult<Event>) => void> = []
+  let queue: (Event | undefined)[] = []
+  let queueHead = 0
+  let queueSize = 0
+  let pulls: (((result: IteratorResult<Event>) => void) | undefined)[] = []
+  let pullsHead = 0
   let done = false
   let failure: GraphqlPubSubOverflowError | undefined
 
+  const shiftQueue = (): Event => {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: callers shift only while queueSize > 0, so the head slot holds an Event (undefined is itself a valid payload).
+    const value = queue[queueHead] as Event
+    queue[queueHead] = undefined
+    queueHead++
+    queueSize--
+    if (queueSize === 0) {
+      queue.length = 0
+      queueHead = 0
+    } else if (queueHead >= 64 && queueHead * 2 >= queue.length) {
+      queue = queue.slice(queueHead)
+      queueHead = 0
+    }
+    return value
+  }
+
+  const shiftPull = (): ((result: IteratorResult<Event>) => void) | undefined => {
+    if (pullsHead >= pulls.length) return undefined
+    const pull = pulls[pullsHead]
+    pulls[pullsHead] = undefined
+    pullsHead++
+    if (pullsHead >= pulls.length) {
+      pulls.length = 0
+      pullsHead = 0
+    } else if (pullsHead >= 64 && pullsHead * 2 >= pulls.length) {
+      pulls = pulls.slice(pullsHead)
+      pullsHead = 0
+    }
+    return pull
+  }
+
   const push = (payload: Event): void => {
     if (done) return
-    const pull = pulls.shift()
+    const pull = shiftPull()
     if (pull !== undefined) {
       pull({ value: payload, done: false })
       return
     }
-    if (queue.length >= maxQueuedEvents) {
+    if (queueSize >= maxQueuedEvents) {
       if (overflow === "drop-newest") return
       if (overflow === "error") {
         failure = new GraphqlPubSubOverflowError()
         finish()
         return
       }
-      queue.shift()
+      shiftQueue()
     }
     queue.push(payload)
+    queueSize++
   }
 
   const finish = (): IteratorResult<Event> => {
     if (!done) {
       done = true
       queue.length = 0
+      queueHead = 0
+      queueSize = 0
       onClose()
-      for (const pull of pulls.splice(0)) pull({ value: undefined, done: true })
+      for (let i = pullsHead; i < pulls.length; i++) {
+        pulls[i]?.({ value: undefined, done: true })
+      }
+      pulls.length = 0
+      pullsHead = 0
     }
     return { value: undefined, done: true }
   }
@@ -125,8 +166,7 @@ function createSink<Event>(
         return Promise.reject(error)
       }
       if (done) return Promise.resolve({ value: undefined, done: true })
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a nonempty queue owns one Event; undefined is itself a valid Event payload.
-      if (queue.length > 0) return Promise.resolve({ value: queue.shift() as Event, done: false })
+      if (queueSize > 0) return Promise.resolve({ value: shiftQueue(), done: false })
       return new Promise((resolve) => pulls.push(resolve))
     },
     return(): Promise<IteratorResult<Event>> {

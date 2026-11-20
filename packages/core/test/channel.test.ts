@@ -118,3 +118,75 @@ describe("typed channel seam", () => {
     )
   })
 })
+
+describe("memoryChannelHub maxChannels", () => {
+  const channelNamed = (name: string) => defineChannel<string, string>(name)
+
+  test("rejects a cap that is not a positive safe integer", () => {
+    expect(() => memoryChannelHub({ maxChannels: 0 })).toThrow(/maxChannels/)
+    expect(() => memoryChannelHub({ maxChannels: 1.5 })).toThrow(/maxChannels/)
+  })
+
+  test("an evicted channel returns above every sequence it gave out, so an old token cannot resume", () => {
+    const hub = memoryChannelHub({ maxChannels: 2, historySize: 4 })
+    const a = channelNamed("a")
+    hub.publish(a, "1")
+    const second = hub.publish(a, "2")
+    hub.publish(channelNamed("b"), "x")
+    hub.publish(channelNamed("c"), "x") // over the cap: idle "a" goes
+    const returned = hub.publish(a, "3")
+    expect(returned.sequence).toBeGreaterThan(second.sequence)
+    expect(() => hub.subscribe(a, { resumeFrom: second.resumeToken })).toThrow(
+      ChannelResumeUnavailableError,
+    )
+  })
+
+  test("a channel with a subscriber keeps its sequence however many idle channels follow", () => {
+    const hub = memoryChannelHub({ maxChannels: 2 })
+    const watched = channelNamed("watched")
+    const subscription = hub.subscribe(watched)
+    hub.publish(watched, "1")
+    for (let i = 0; i < 5; i++) hub.publish(channelNamed(`idle${i}`), "x")
+    expect(hub.publish(watched, "2").sequence).toBe(2)
+    subscription.close()
+  })
+
+  test("many subscribed channels never block eviction of the idle ones that follow", () => {
+    const hub = memoryChannelHub({ maxChannels: 2 })
+    const subscriptions = Array.from({ length: 10 }, (_, i) => {
+      const channel = channelNamed(`live${i}`)
+      const subscription = hub.subscribe(channel)
+      hub.publish(channel, "x")
+      return subscription
+    })
+    const idle = channelNamed("idle0")
+    const first = hub.publish(idle, "x")
+    for (let i = 1; i < 20; i++) hub.publish(channelNamed(`idle${i}`), "x")
+    expect(() => hub.subscribe(idle, { resumeFrom: first.resumeToken })).toThrow(
+      ChannelResumeUnavailableError,
+    )
+    for (const subscription of subscriptions) subscription.close()
+  })
+
+  test("after a burst of disconnects one publish evicts only a bounded number of channels", () => {
+    const hub = memoryChannelHub({ maxChannels: 2 })
+    const open = Array.from({ length: 100 }, (_, i) => {
+      const channel = channelNamed(`gone${i}`)
+      const subscription = hub.subscribe(channel)
+      return { channel, subscription, token: hub.publish(channel, "x").resumeToken }
+    })
+    for (const { subscription } of open) subscription.close()
+    const tokens = open
+    hub.publish(channelNamed("fresh"), "x")
+    const forgotten = tokens.filter(({ channel, token }) => {
+      try {
+        hub.subscribe(channel, { resumeFrom: token }).close()
+        return false
+      } catch {
+        return true
+      }
+    })
+    expect(forgotten.length).toBeGreaterThan(0)
+    expect(forgotten.length).toBeLessThanOrEqual(8)
+  })
+})
