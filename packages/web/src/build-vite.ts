@@ -458,13 +458,12 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   if (options.onRouteAssets !== undefined) {
     const imports = new Map<string, string[]>()
     for (const entry of Object.values(viteManifest)) {
-      imports.set(
-        url(entry.file),
-        (entry.imports ?? []).flatMap((key) => {
-          const dependency = viteManifest[key]
-          return dependency === undefined ? [] : [url(dependency.file)]
-        }),
-      )
+      const dependencies: string[] = []
+      for (const key of entry.imports ?? []) {
+        const dependency = viteManifest[key]
+        if (dependency !== undefined) dependencies.push(url(dependency.file))
+      }
+      imports.set(url(entry.file), dependencies)
     }
     options.onRouteAssets(
       clientRouteAssets(manifest, clientReportRoutes(routesDir, routeManifest.routes), imports),

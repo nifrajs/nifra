@@ -76,11 +76,20 @@ test.each([buildTarget, buildTargetVite])(
       writeFileSync(join(routesDir, `${name}.tsx`), front)
       writeFileSync(join(routesDir, `${name}.backend.ts`), source)
     }
-    writeFileSync(join(routesDir, "plain.tsx"), front)
     writeFileSync(join(routesDir, "server-only.tsx"), `import "./server-only.css"\n${front}`)
     writeFileSync(join(routesDir, "server-only.css"), "body { margin: 0 }")
     mkdirSync(join(projectRoot, "shared"))
     writeFileSync(join(projectRoot, "shared/hydration.ts"), "export const hydrate = false\n")
+    writeFileSync(
+      join(projectRoot, "shared/label.ts"),
+      "export const label = (name: string) => name.toUpperCase()\n",
+    )
+    for (const name of ["index", "plain"]) {
+      writeFileSync(
+        join(routesDir, `${name}.tsx`),
+        `import { label } from "../shared/label.ts"\nexport default function Page() { return label(${JSON.stringify(name)}) }\n`,
+      )
+    }
 
     const result = await build("bun", {
       routesDir,
@@ -96,8 +105,11 @@ test.each([buildTarget, buildTargetVite])(
     for (const pattern of ["/computed", "/dependent", "/forwarded", "/alias"]) {
       expect(route(pattern)).toMatchObject({ javascript: [], javascriptGzip: null })
     }
-    expect(route("/")?.javascript).toContain(result.client.entry)
-    expect(route("/plain")?.javascript).toContain(result.client.entry)
+    const homeJs = route("/")?.javascript ?? []
+    const plainJs = route("/plain")?.javascript ?? []
+    expect(homeJs).toContain(result.client.entry)
+    expect(plainJs).toContain(result.client.entry)
+    expect(plainJs.some((url) => url !== result.client.entry && homeJs.includes(url))).toBe(true)
     expect(renderSizeReport(result.size)).toContain("/computed  JS unknown (hydrate export)")
   },
 )
