@@ -2,7 +2,7 @@ import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
 import { href } from "@nifrajs/web-react/router"
 
-const NIFRA_VERSION = "5.15.1"
+const NIFRA_VERSION = "5.16.0"
 
 export const meta = docsMeta(
   "/docs/cli",

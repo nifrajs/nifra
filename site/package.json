@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/site",
-  "version": "5.15.1",
+  "version": "5.16.0",
   "private": true,
   "type": "module",
   "scripts": {

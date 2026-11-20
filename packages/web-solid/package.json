@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-solid",
-  "version": "5.15.1",
+  "version": "5.16.0",
   "description": "Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid compiler build plugin (@nifrajs/web-solid/plugin).",
   "keywords": [
     "bun",

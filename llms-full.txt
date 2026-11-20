@@ -300,13 +300,13 @@ to full-stack later without a rewrite.
 regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix Nifra runs **level with Elysia on Bun** -
 100% of Elysia on `GET /users/:id` and
-100% on the validated `POST` - and
-**level with Fastify on Node** (107% of Fastify on GET,
-105% on the validated `POST`), with Elysia, Hono,
-and Express behind. On **Deno** it runs at 107% of Elysia on
-GET and 127% on the validated `POST`. In the realistic shape (security headers + CORS +
+103% on the validated `POST` - and
+**level with Fastify on Node** (105% of Fastify on GET,
+102% on the validated `POST`), with Elysia, Hono,
+and Express behind. On **Deno** it runs at 117% of Elysia on
+GET and 139% on the validated `POST`. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured on
-**Bun** with `oha`) Nifra runs at **110% of Elysia on GET and 114% on POST**. Treat benchmark
+**Bun** with `oha`) Nifra runs at **123% of Elysia on GET and 121% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -8695,8 +8695,8 @@ starts from unless nothing else, installed or declared, names one.
 
 ```bash
 nifra upgrade --list                # the release targets this CLI knows
-nifra upgrade 5.15.1              # dry-run: every planned edit, nothing written
-nifra upgrade 5.15.1 --write      # apply; it verifies with nifra check once the target is installed
+nifra upgrade 5.16.0              # dry-run: every planned edit, nothing written
+nifra upgrade 5.16.0 --write      # apply; it verifies with nifra check once the target is installed
 # if pins were already bumped by hand, add --from <installed-version>
 bun install                         # install the new pins
 nifra check                         # verify against them
@@ -15123,7 +15123,7 @@ the command below, which runs every recipe since its installed version. The 5.6 
 its imports and dependencies; the follow-up changes below need a hand.
 
 ```sh
-nifra upgrade 5.15.1
+nifra upgrade 5.16.0
 ```
 
 -
@@ -15554,9 +15554,9 @@ Migrate a backend. For the full
 rendering and route model, see Loaders & actions
 and Routing.
 
-The current dynamic SSR snapshot reports Nifra at 15× the throughput
-of Next.js, 6.9× Nuxt, 4× SvelteKit, and
-2× SolidStart on the measured pages. See the
+The current dynamic SSR snapshot reports Nifra at 19× the throughput
+of Next.js, 8.4× Nuxt, 5.3× SvelteKit, and
+2.2× SolidStart on the measured pages. See the
 benchmark methodology and full results.
 
 ## Nifra - Migrate route by route

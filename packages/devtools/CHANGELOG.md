@@ -1,5 +1,13 @@
 # @nifrajs/devtools
 
+## 5.16.0
+
+### Patch Changes
+
+- Updated dependencies [50718d5]
+- Updated dependencies [77d1821]
+  - @nifrajs/otel@5.16.0
+
 ## 5.15.1
 
 ### Patch Changes

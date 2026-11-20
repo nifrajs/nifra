@@ -1,5 +1,49 @@
 # @nifrajs/examples
 
+## 5.16.0
+
+### Patch Changes
+
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [7bde145]
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [4f432c2]
+- Updated dependencies [b73f77d]
+- Updated dependencies [0d6faf6]
+- Updated dependencies [2096f4c]
+- Updated dependencies [77d1821]
+- Updated dependencies [4f432c2]
+- Updated dependencies [b996b1d]
+  - @nifrajs/core@5.16.0
+  - @nifrajs/middleware@5.16.0
+  - @nifrajs/deno@5.16.0
+  - @nifrajs/mcp@5.16.0
+  - @nifrajs/node@5.16.0
+  - @nifrajs/web@5.16.0
+  - @nifrajs/web-react@5.16.0
+  - @nifrajs/web-preact@5.16.0
+  - @nifrajs/web-solid@5.16.0
+  - @nifrajs/web-svelte@5.16.0
+  - @nifrajs/web-vue@5.16.0
+  - @nifrajs/cli@5.16.0
+  - @nifrajs/auth@5.16.0
+  - @nifrajs/client@5.16.0
+  - @nifrajs/e2e@5.16.0
+  - @nifrajs/i18n@5.16.0
+  - @nifrajs/schema@5.16.0
+  - @nifrajs/webmcp@5.16.0
+  - @nifrajs/workers@5.16.0
+  - @nifrajs/content@5.16.0
+  - @nifrajs/image@5.16.0
+  - @nifrajs/web-vanilla@5.16.0
+
 ## 5.15.1
 
 ### Patch Changes

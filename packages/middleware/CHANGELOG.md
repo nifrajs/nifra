@@ -1,5 +1,18 @@
 # @nifrajs/middleware
 
+## 5.16.0
+
+### Patch Changes
+
+- 50718d5: Evidence streams, subscription sinks, the admission queue, uploads and the OTLP export queue dequeue in constant time, so a deep backlog costs no more per item.
+- 50718d5: A preflight from an origin the policy does not allow now gets a bare `204` without `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers` or `Access-Control-Max-Age`, and requested header names are reflected only when each is a valid header token. A predicate `origin` runs for the preflight and again when the response headers are added.
+- 50718d5: `createEventLoopLagSampler` returns a sampler with `stop()` and `[Symbol.dispose]()` that end its timer.
+- 50718d5: Request-path helpers reuse their text encoders, the proxy reads the forwarded protocol without parsing the URL again, response compression hands its buffer over without a copy, and an MCP HTTP reply is serialized once.
+- 50718d5: `MemoryResponseCache` also caps the bytes it holds (`maxTotalBytes`, default 64 MiB) and evicts the least recently used entry first, so a thousand large cached responses no longer sit in memory at once.
+- 50718d5: `MemoryStore` reclaims expired windows a slice per hit instead of sweeping up to 100,000 entries inside one request.
+- @nifrajs/schema@5.16.0
+  - @nifrajs/utils@5.16.0
+
 ## 5.15.1
 
 ### Patch Changes

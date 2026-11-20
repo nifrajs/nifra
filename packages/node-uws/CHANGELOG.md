@@ -1,5 +1,12 @@
 # @nifrajs/node-uws
 
+## 5.16.0
+
+### Patch Changes
+
+- 50718d5: Evidence streams, subscription sinks, the admission queue, uploads and the OTLP export queue dequeue in constant time, so a deep backlog costs no more per item.
+- 14a9a00: Replies no longer carry the `uWebSockets: 20` header. uWS's banner is switched off for the thread's event loop when the adapter loads it; a worker thread switches off its own by loading the adapter.
+
 ## 5.15.1
 
 No changes in this release.

@@ -1,5 +1,15 @@
 # @nifrajs/storage
 
+## 5.16.0
+
+### Patch Changes
+
+- 0d6faf6: Log request metadata by default in production. Set `errorLogDetail` explicitly to include error text or stacks.
+  
+  Rotate store-backed session IDs when a configured `identity` field changes.
+  
+  Cap buffered R2 reads at 16 MiB by default. Use `maxReadBytes` to set the limit for your bucket.
+
 ## 5.15.1
 
 No changes in this release.
