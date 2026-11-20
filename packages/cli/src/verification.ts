@@ -30,6 +30,7 @@ import {
   collectCapabilityProjectReport,
 } from "./capabilities-tool.ts"
 import { type CheckAssuranceContext, type CheckResult, collectCheckResult } from "./check.ts"
+import { createCheckTimer } from "./check-timings.ts"
 
 export interface CollectProjectVerificationOptions {
   /** Assurance config path, default `nifra.assurance.ts`. Honored by the assurance + levels views. */
@@ -38,6 +39,8 @@ export interface CollectProjectVerificationOptions {
   readonly preloaded?: { readonly config: AssuranceConfig } | { readonly error: unknown }
   /** Skip the `tsc` pass in the check view (the agent inner-loop mode). */
   readonly lintsOnly?: boolean
+  readonly incremental?: boolean
+  readonly timings?: boolean
   /** Cancels the check view's typecheck. */
   readonly signal?: AbortSignal
   /** Cap the check view's diagnostics (the `levels` L0 and MCP paths set this). */
@@ -81,6 +84,8 @@ export async function collectProjectVerification(
   cwd: string,
   options: CollectProjectVerificationOptions = {},
 ): Promise<ProjectVerification> {
+  const timer = options.timings === true ? createCheckTimer() : undefined
+  const started = performance.now()
   const { loadAssuranceConfig, DEFAULT_ASSURANCE_CONFIG } = await import("./assure.ts")
   const configPath = resolve(cwd, options.config ?? DEFAULT_ASSURANCE_CONFIG)
   const assuranceConfigPresent = existsSync(configPath)
@@ -143,6 +148,7 @@ export async function collectProjectVerification(
     routeAssurance = undefined
     capability = undefined
   }
+  timer?.record("assurance", started)
 
   // The check view's assurance inputs. Fed to `check()` only when no custom config path was requested,
   // so `nifra check` (which always reads the default `nifra.assurance.ts`) and `levels` L0 keep reading
@@ -168,6 +174,8 @@ export async function collectProjectVerification(
     check(): Promise<CheckResult> {
       checkResult ??= collectCheckResult(cwd, {
         lintsOnly: options.lintsOnly ?? false,
+        incremental: options.incremental ?? false,
+        ...(timer === undefined ? {} : { timer }),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.maxDiagnostics !== undefined ? { maxDiagnostics: options.maxDiagnostics } : {}),
         ...(options.config === undefined ? { assurance: checkContext } : {}),

@@ -280,6 +280,8 @@ function parseBooleanFlags(
 
 interface CheckInput {
   readonly lintsOnly?: boolean | undefined
+  readonly incremental?: boolean | undefined
+  readonly timings?: boolean | undefined
   readonly json?: boolean | undefined
   readonly sarif?: boolean | undefined
   readonly maxDiagnostics?: number | undefined
@@ -474,6 +476,7 @@ interface SyncInput {
 interface ProveInput {
   readonly files?: readonly string[] | undefined
   readonly minLevel?: number | undefined
+  readonly run?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -574,6 +577,8 @@ interface SmokeCommandOutput extends SmokeReport {}
 const CHECK_SCHEMA = input<CheckInput>(
   objectSchema({
     lintsOnly: { type: "boolean" },
+    incremental: { type: "boolean" },
+    timings: { type: "boolean" },
     json: { type: "boolean" },
     sarif: { type: "boolean" },
     maxDiagnostics: { type: "integer", minimum: 1 },
@@ -585,7 +590,7 @@ const CHECK_SCHEMA = input<CheckInput>(
     if (maxDiagnostics !== undefined && (!Number.isInteger(maxDiagnostics) || maxDiagnostics < 1))
       throw new TypeError("maxDiagnostics must be a positive integer")
     return {
-      ...parseBooleanFlags(raw, ["lintsOnly", "json", "sarif"]),
+      ...parseBooleanFlags(raw, ["lintsOnly", "incremental", "timings", "json", "sarif"]),
       ...(maxDiagnostics === undefined ? {} : { maxDiagnostics }),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     } as CheckInput
@@ -1008,6 +1013,7 @@ const PROVE_SCHEMA = input<ProveInput>(
   objectSchema({
     files: { type: "array", items: { type: "string" } },
     minLevel: { type: "integer", minimum: 0, maximum: 4 },
+    run: { type: "boolean" },
     json: { type: "boolean" },
     dir: { type: "string" },
   }),
@@ -1025,7 +1031,7 @@ const PROVE_SCHEMA = input<ProveInput>(
     return {
       ...(files === undefined ? {} : { files }),
       ...(minLevel === undefined ? {} : { minLevel }),
-      ...parseBooleanFlags(raw, ["json"]),
+      ...parseBooleanFlags(raw, ["json", "run"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1122,7 +1128,18 @@ const checkSpec: CommandSpec<CheckInput, CheckCommandOutput> = {
   input: CHECK_SCHEMA,
   output: output<CheckCommandOutput>({
     type: "object",
-    properties: { ok: { type: "boolean" }, diagnostics: { type: "array" } },
+    properties: {
+      ok: { type: "boolean" },
+      diagnostics: { type: "array" },
+      timings: {
+        type: "object",
+        properties: {
+          totalMs: { type: "number" },
+          phasesMs: { type: "object", additionalProperties: { type: "number" } },
+        },
+        required: ["totalMs", "phasesMs"],
+      },
+    },
     required: ["ok", "diagnostics"],
   }),
   transports: ["cli", "mcp"],
@@ -1130,6 +1147,8 @@ const checkSpec: CommandSpec<CheckInput, CheckCommandOutput> = {
   argv: {
     flags: [
       { name: "lints-only", field: "lintsOnly", type: "boolean" },
+      { name: "incremental", field: "incremental", type: "boolean" },
+      { name: "timings", field: "timings", type: "boolean" },
       { name: "json", field: "json", type: "boolean" },
       { name: "sarif", field: "sarif", type: "boolean" },
     ],
@@ -1139,6 +1158,8 @@ const checkSpec: CommandSpec<CheckInput, CheckCommandOutput> = {
     return (
       await collectProjectVerification(ctx.cwd, {
         lintsOnly: value.lintsOnly === true,
+        incremental: value.incremental === true,
+        timings: value.timings === true,
         ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
         ...(value.maxDiagnostics === undefined ? {} : { maxDiagnostics: value.maxDiagnostics }),
       })
@@ -2166,7 +2187,7 @@ const syncManifestSpec: CommandSpec<SyncInput, SyncManifestCommandOutput> = {
 const proveSpec: CommandSpec<ProveInput, ProjectWorkGraphResult> = {
   name: "prove",
   summary:
-    "Build the static verification work graph, plan the cheapest proofs for the changed files, and report a machine-checkable stop condition.",
+    "Plan cumulative verification gates and optionally run them against the current source and build.",
   input: PROVE_SCHEMA,
   output: output({ type: "object" }),
   transports: ["cli", "mcp"],
@@ -2175,6 +2196,7 @@ const proveSpec: CommandSpec<ProveInput, ProjectWorkGraphResult> = {
     flags: [
       { name: "file", field: "files", type: "string[]" },
       { name: "min", field: "minLevel", type: "number" },
+      { name: "run", field: "run", type: "boolean" },
       { name: "json", field: "json", type: "boolean" },
     ],
   },
@@ -2182,6 +2204,8 @@ const proveSpec: CommandSpec<ProveInput, ProjectWorkGraphResult> = {
     return collectProjectWorkGraph(ctx.cwd, {
       ...(value.files === undefined ? {} : { changedFiles: value.files }),
       ...(value.minLevel === undefined ? {} : { minLevel: value.minLevel }),
+      ...(value.run === true ? { execute: true } : {}),
+      ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     })
   },
   render: (out) => [renderWorkGraphText(out)],

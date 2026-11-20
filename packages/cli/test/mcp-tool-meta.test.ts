@@ -30,6 +30,7 @@ test("every project tool says whether it reads, writes or runs code, and describ
 test("a tool that can write a file or run project code is never marked read-only", () => {
   const byName = new Map(tools.map((tool) => [tool.name, tool]))
   for (const name of [
+    "nifra_check",
     "nifra_fix",
     "nifra_doctor",
     "nifra_scaffold",
@@ -42,7 +43,6 @@ test("a tool that can write a file or run project code is never marked read-only
       readOnly: false,
     })
   }
-  expect(byName.get("nifra_check")?.annotations?.readOnlyHint).toBe(true)
   // A stale entry would describe a tool that no longer exists.
   for (const name of Object.keys(PROJECT_TOOL_META)) expect(byName.has(name)).toBe(true)
 })

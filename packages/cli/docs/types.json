@@ -2382,7 +2382,7 @@
     "name": "BuildFreshness",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface BuildFreshness {\n    readonly ok: boolean;\n    readonly buildDir?: string;\n    readonly newestSourceMs?: number;\n    readonly newestBuildMs?: number;\n    readonly reason?: string;\n}"
+    "signature": "export interface BuildFreshness {\n    readonly ok: boolean;\n    readonly buildDir?: string;\n    readonly newestSourceMs?: number;\n    readonly newestBuildMs?: number;\n    readonly buildDigest?: string | undefined;\n    readonly sourceDigest?: string;\n    readonly reason?: string;\n}"
   },
   {
     "name": "BuildManifest",
@@ -6169,7 +6169,7 @@
     "name": "EvidenceBundle",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface EvidenceBundle {\n    readonly version: 1;\n    readonly graphDigest: string;\n    readonly changedFiles: readonly string[];\n    readonly targetLevel: number;\n    readonly plan: ProofPlan;\n    readonly proofs: readonly ProofEvidence[];\n    readonly stop: {\n        readonly done: boolean;\n        readonly missing: readonly string[];\n        readonly next?: ProofStep;\n    };\n}"
+    "signature": "export interface EvidenceBundle {\n    readonly version: 2;\n    readonly graphDigest: string;\n    readonly buildDigest?: string | undefined;\n    readonly changedFiles: readonly string[];\n    readonly targetLevel: number;\n    readonly plan: ProofPlan;\n    readonly proofs: readonly ProofEvidence[];\n    readonly stop: {\n        readonly done: boolean;\n        readonly missing: readonly string[];\n        readonly next?: ProofStep;\n    };\n}"
   },
   {
     "name": "EvidenceCounters",
@@ -12352,13 +12352,13 @@
     "name": "ProofEvidence",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface ProofEvidence {\n    readonly id: string;\n    readonly status: ProofStatus;\n    readonly level: number;\n    readonly nodeIds: readonly string[];\n    readonly command: string;\n    readonly fix?: string;\n}"
+    "signature": "export interface ProofEvidence {\n    readonly graphDigest: string;\n    readonly buildDigest?: string | undefined;\n    readonly id: string;\n    readonly status: ProofStatus;\n    readonly level: number;\n    readonly nodeIds: readonly string[];\n    readonly command: string;\n    readonly fix?: string | undefined;\n}"
   },
   {
     "name": "ProofKind",
     "kind": "type",
     "package": "@nifrajs/cli",
-    "signature": "export type ProofKind = \"typecheck\" | \"contract\" | \"assurance\" | \"suite\";"
+    "signature": "export type ProofKind = VerificationGate[\"kind\"];"
   },
   {
     "name": "ProofPlan",
@@ -12376,7 +12376,7 @@
     "name": "ProofStep",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface ProofStep {\n    readonly id: string;\n    readonly kind: ProofKind;\n    readonly level: number;\n    readonly cost: number;\n    readonly command: string;\n    readonly nodeIds: readonly string[];\n    readonly fix?: string;\n}"
+    "signature": "export interface ProofStep {\n    readonly id: string;\n    readonly kind: ProofKind;\n    readonly level: number;\n    readonly cost: number;\n    readonly command: string;\n    /** Impact hints. Every ladder gate verifies the project as a whole. */\n    readonly nodeIds: readonly string[];\n    readonly fix?: string;\n}"
   },
   {
     "name": "ProtoPoisoning",
@@ -19579,7 +19579,7 @@
     "name": "collectProjectWorkGraph",
     "kind": "function",
     "package": "@nifrajs/cli",
-    "signature": "export declare function collectProjectWorkGraph(cwd: string, options?: {\n    readonly changedFiles?: readonly string[];\n    readonly minLevel?: number;\n}): Promise<ProjectWorkGraphResult>;"
+    "signature": "export declare function collectProjectWorkGraph(cwd: string, options?: WorkGraphOptions): Promise<ProjectWorkGraphResult>;"
   },
   {
     "name": "combine",
@@ -25520,7 +25520,7 @@
     "name": "runWorkGraph",
     "kind": "function",
     "package": "@nifrajs/cli",
-    "signature": "export declare function runWorkGraph(cwd: string, options?: {\n    readonly changedFiles?: readonly string[];\n    readonly minLevel?: number;\n    readonly json?: boolean;\n}): Promise<boolean>;"
+    "signature": "export declare function runWorkGraph(cwd: string, options?: WorkGraphOptions & {\n    readonly json?: boolean;\n}): Promise<boolean>;"
   },
   {
     "name": "runtimeAdapterCertificationProfile",

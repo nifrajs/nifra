@@ -3,12 +3,14 @@ import { existsSync, readFileSync } from "node:fs"
 import { watch } from "node:fs/promises"
 import { join } from "node:path"
 import { runHydrationAssurance } from "../src/assure-hydration.ts"
+import { fingerprintBuildInputs, recordBuildProvenance } from "../src/build-provenance.ts"
 import { spawnChild, WarmWorker } from "../src/mcp-exec.ts"
 import { escalatingStop } from "../src/mcp-io.ts"
 import { askProjectChild } from "../src/mcp-isolate.ts"
 import {
   createFixtureProject,
   createFixtureRoot,
+  FIXTURE_TSCONFIG,
   removeFixtureRoot,
   writeAppFile,
 } from "./fixture-root.ts"
@@ -270,3 +272,94 @@ test("a cancelled hydration run ends even when the project ignores SIGTERM", asy
   const result = await run
   expect(result.diagnostics[0]?.message).toBe("hydration runner failed: cancelled")
 }, 60_000)
+
+async function slowProof(): Promise<string> {
+  const dir = createFixtureProject(root, "slow-proof-")
+  writeAppFile(dir, "tsconfig.json", FIXTURE_TSCONFIG)
+  writeAppFile(
+    dir,
+    "backend/app.ts",
+    'import { server } from "@nifrajs/core/server"\nexport const backend = server()\n',
+  )
+  writeAppFile(
+    dir,
+    "nifra.assurance.ts",
+    [
+      'import { renameSync, writeFileSync } from "node:fs"',
+      'import { defineAssuranceConfig } from "@nifrajs/core/assurance"',
+      'import { backend } from "./backend/app.ts"',
+      "export default defineAssuranceConfig({",
+      "  source: backend, policy: { rules: [] },",
+      "  invariants: { async setup() {",
+      "    process.on('SIGTERM', () => {})",
+      ...publish(dir, "ready", "String(process.pid)"),
+      "    await Bun.sleep(20_000)",
+      "    return { executor: (request: Request) => backend.fetch(request) }",
+      "  } },",
+      "})",
+    ].join("\n"),
+  )
+  const out = join(dir, "dist")
+  const before = await fingerprintBuildInputs(dir, out)
+  // Give the fake artifact a later timestamp even on filesystems with coarse mtimes.
+  await Bun.sleep(20)
+  writeAppFile(dir, "dist/server.js", "export {}")
+  expect(await recordBuildProvenance(dir, out, before)).toBe(true)
+  return dir
+}
+
+function proofProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+test.skipIf(process.platform === "win32")(
+  "cancelling nifra_prove over MCP ends the invariant executor",
+  async () => {
+    const dir = await slowProof()
+    const controller = new AbortController()
+    const ready = fileAppears(dir, "ready")
+    const call = askProjectChild(
+      dir,
+      { op: "tool", name: "nifra_prove", args: { run: true, minLevel: 4 } },
+      { context: { signal: controller.signal, requestId: 1, reportProgress: () => {} } },
+    )
+    await ready
+    const pid = Number(readFileSync(join(dir, "ready"), "utf8"))
+    try {
+      controller.abort()
+      expect(await call).toEqual({ ok: false, message: "[nifra] the call was cancelled" })
+      expect(proofProcessAlive(pid)).toBe(false)
+    } finally {
+      if (proofProcessAlive(pid)) process.kill(pid, "SIGKILL")
+    }
+  },
+  30_000,
+)
+
+test.skipIf(process.platform === "win32")(
+  "interrupting the prove CLI reaps its verification child before exiting",
+  async () => {
+    const dir = await slowProof()
+    const ready = fileAppears(dir, "ready")
+    const cli = Bun.spawn(
+      [process.execPath, join(import.meta.dir, "../src/cli.ts"), "prove", "--run", "--min", "4"],
+      { cwd: dir, stdout: "ignore", stderr: "ignore", detached: true },
+    )
+    await ready
+    const pid = Number(readFileSync(join(dir, "ready"), "utf8"))
+    try {
+      cli.kill("SIGINT")
+      await cli.exited
+      expect(cli.signalCode).toBe("SIGINT")
+      expect(proofProcessAlive(pid)).toBe(false)
+    } finally {
+      if (proofProcessAlive(pid)) process.kill(pid, "SIGKILL")
+    }
+  },
+  30_000,
+)

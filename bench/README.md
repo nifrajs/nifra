@@ -39,6 +39,7 @@ bun run bench:ppr               # partial prerendering's server cost and TTFB, w
 bun run bench:ppr:gzip          # the same with compression() on
 bun run bench:ppr:saturation    # every loader reading a backend pushed past its capacity
 bun run bench:size              # server bundle size
+bun bench/check.ts              # full vs incremental check after one handler edit in a 400-route app
 bun run bench:coldboot          # cold-start time
 bun run bench/keep-alive/run.ts # keepAlive restore, latency and memory (React + Svelte, Chromium)
 ```

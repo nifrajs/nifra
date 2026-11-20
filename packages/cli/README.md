@@ -101,6 +101,10 @@ For hand-rolled own-API `fetch()` calls, `nifra check` stays conservative: simpl
 that match a statically visible Nifra route get an exact typed-client rewrite diff; dynamic URLs, custom
 headers, bodies, query strings, or ambiguous routes fall back to manual steps.
 
+Run `nifra check --incremental --timings` while editing. TypeScript 5 and 6 reuse compiler state
+in `.nifra/check/`. The report includes elapsed milliseconds for the typecheck, source reads,
+lint and diagnostic phases. Pass `--json` for the same timings as structured data.
+
 ## `nifra i18n check` - the catalog gate
 
 `nifra i18n check [entry]` imports the module that exports your `locales` (from `defineLocales`) and
@@ -209,6 +213,13 @@ and limits: [Where your code and secrets run](https://nifra.dev/docs/agents#proj
 ## Structured verification
 
 `nifra check --json` returns stable diagnostic codes and machine-actionable evidence. `nifra assure --json --strict` returns one versioned bundle with explicit pass, fail, and skip gate results plus a `green` or `red` verdict. Use `nifra fix --code NF-...` for a registered fix recipe, and `nifra contracts snapshot` to opt into route contract drift detection.
+
+`nifra prove --min 2 --json` plans the same cumulative gates as `nifra levels`. Use
+`nifra prove --run --min 2 --json` to execute the plan and return passing or failing results
+bound to the current source graph and build artifact digests. Run `nifra build` first. It records
+content digests for project source, public assets, and the emitted build. Proofs require the current
+digests to match that record and every requested gate to pass. Use `--file` for impact hints.
+Regenerate saved proofs for the v2 evidence envelope with `nifra prove --run`.
 
 Assurance configs may append application-supplied rule packs. Pack codes must not use the reserved `NF-` prefix. Rules are pure source scans and run after the built-in rules.
 

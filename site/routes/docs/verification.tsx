@@ -112,8 +112,8 @@ export default function Verification() {
       </p>
       <ul>
         <li>
-          <strong>L0 typed contract</strong> - <code>nifra check</code> passes: the frontend and
-          backend cannot have silently diverged.
+          <strong>L0 typed contract</strong> - <code>nifra check</code> passes and the compiler
+          confirms the types across the frontend and backend.
         </li>
         <li>
           <strong>L1 route assurance</strong> - every route is classified, and the enforcement a rule
