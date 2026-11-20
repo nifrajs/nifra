@@ -59,7 +59,7 @@ app.get("/notifications", (c) =>
     return new Promise<void>((resolve) =>
       stream.signal.addEventListener("abort", () => { off(); resolve() }, { once: true }),
     )
-  }, { keepAlive: 15_000 }),
+  }, { keepAlive: 5_000 }),
 )`
 
 const TYPED_SSE = `import { client } from "@nifrajs/client"
@@ -136,7 +136,9 @@ export default function Streaming() {
         <code>event:</code>, <code>id:</code>, and <code>retry:</code> are supported (and CR/LF is
         stripped from <code>event</code>/<code>id</code> to prevent frame injection); multi-line{" "}
         <code>data</code> is split into multiple <code>data:</code> lines per the spec; and{" "}
-        <code>keepAlive</code> emits comment pings so idle proxies don't drop the connection.
+        <code>keepAlive</code> emits comment pings so idle proxies don't drop the connection. Bun also
+        closes a connection that sends nothing for 10 seconds, so keep the interval well under that,
+        or wrap the producer in <code>withIdleTimeout</code>.
       </p>
       <p>
         A client that stops reading is dropped once it has <code>maxBufferedBytes</code> (default 1

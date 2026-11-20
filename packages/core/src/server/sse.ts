@@ -19,7 +19,7 @@
  *     const off = bus.subscribe((e) => stream.send({ data: JSON.stringify(e) }))
  *     return new Promise<void>((resolve) =>
  *       stream.signal.addEventListener("abort", () => { off(); resolve() }, { once: true }))
- *   }, { keepAlive: 15_000 }))
+ *   }, { keepAlive: 5_000 }))
  */
 import { INSTALL_SSE } from "./install.ts"
 import { jsonText } from "./json-text.ts"
@@ -61,7 +61,14 @@ export interface SSEInit {
   // Derived from the `Headers` constructor so we don't depend on the DOM lib's `HeadersInit`
   // (core is DOM-free for edge-safety).
   readonly headers?: ConstructorParameters<typeof Headers>[0]
-  /** Send a `: ` comment ping every N ms so idle proxies don't drop the connection. */
+  /**
+   * Send a `: ` comment ping every N ms. There is no default: without it a quiet stream sends no
+   * bytes. That keeps a proxy from dropping the connection, and it keeps a Bun `listen()` server
+   * from closing it: Bun cuts a connection that moves no bytes for `idleTimeoutSec` seconds (10 by
+   * default), so on Bun use an interval well under that, or hold the connection with
+   * `withIdleTimeout` from `@nifrajs/core/idle-timeout`. `app.fetch` has no listener, so a test
+   * through it never sees the cut.
+   */
   readonly keepAlive?: number
   /**
    * Bytes of sent events one client may leave unread, default 1 MiB. Past it the client is dropped:
