@@ -52,6 +52,7 @@ import {
   promptPath,
 } from "./diagnostic.ts"
 import { diagnosticHeadline } from "./diagnostic-prompt.ts"
+import type { RoutePhase, RouteTiming, RouteTimingFor } from "./internal/route-timing.ts"
 import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 import { ISR_STATUS_HEADER } from "./isr.ts"
 import { DATA_HEADER } from "./router.ts"
@@ -71,6 +72,8 @@ export interface DevSessionOptions {
 
 /** What a dev server hands `createApp` so the app reports into the session. */
 export interface DevAppHooks {
+  /** Pass to `createWebApp({ routeTiming })` to attach page phases to the request feed. */
+  readonly routeTiming?: RouteTimingFor
   /** Pass to `createWebApp({ onLoaderError })`: failures an `_error` boundary renders reach the feed. */
   readonly onLoaderError: (
     err: unknown,
@@ -78,7 +81,8 @@ export interface DevAppHooks {
   ) => void
 }
 
-export interface DevSession {
+export interface DevSession extends DevAppHooks {
+  readonly routeTiming: RouteTimingFor
   readonly feed: DevFeed
   /** The agent token tools present as `x-nifra-dev-token`. */
   readonly token: string
@@ -104,11 +108,6 @@ export interface DevSession {
   decorateHtml(request: Request, html: string, headers: Headers, requestId?: string | null): string
   /** Record a failure that escaped the app and return the overlay HTML for it. */
   failure(err: unknown, request: { readonly method: string; readonly url: string }): string
-  /** For `createWebApp({ onLoaderError })`: loader/action/render failures a boundary answered. */
-  onLoaderError(
-    err: unknown,
-    ctx: { readonly request: Request; readonly route: string; readonly params?: unknown },
-  ): void
   buildFailed(err: unknown, label: string): void
   buildPassed(): void
   markChange(): void
@@ -640,24 +639,45 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     const path = `${url.pathname}${url.search}`
     feed.startRequest(requestId, request.method, path)
     const started = performance.now()
+    let timing: { pattern: string; phases: Partial<Record<RoutePhase, number>> } | undefined
+    const routeTiming = (): typeof timing =>
+      timing === undefined ? undefined : { pattern: timing.pattern, phases: { ...timing.phases } }
     let response: Response
     try {
       response = await runWithDevRequest(
-        { feedId: feed.id, requestId, method: request.method, path },
+        {
+          feedId: feed.id,
+          requestId,
+          method: request.method,
+          path,
+          routeTiming(pattern) {
+            const phases: Partial<Record<RoutePhase, number>> = {}
+            timing = { pattern, phases }
+            return (phase, ms) => {
+              phases[phase] = (phases[phase] ?? 0) + ms
+            }
+          },
+        },
         handler,
       )
     } catch (err) {
-      feed.finishRequest(requestId, { status: 500 }, performance.now() - started)
+      feed.finishRequest(
+        requestId,
+        { status: 500, routeTiming: routeTiming() },
+        performance.now() - started,
+      )
       throw err
     }
     response = (await overlayFor(request, requestId, response)) ?? response
     const length = response.headers.get("content-length")
+    const isr = response.headers.get(ISR_STATUS_HEADER) ?? undefined
     feed.finishRequest(
       requestId,
       {
         status: response.status,
         bytes: length !== null && /^\d+$/.test(length) ? Number(length) : undefined,
-        isr: response.headers.get(ISR_STATUS_HEADER) ?? undefined,
+        isr,
+        routeTiming: isr === "hit" || isr === "stale" ? undefined : routeTiming(),
       },
       performance.now() - started,
     )
@@ -676,6 +696,10 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     decoratePage,
     decorateHtml,
     failure: (err, request) => diagnostics.capture(err, request),
+    routeTiming: (pattern, request): RouteTiming | undefined => {
+      const context = currentDevRequest()
+      return context?.feedId === feed.id ? context.routeTiming?.(pattern, request) : undefined
+    },
     onLoaderError: (err, ctx) => {
       const url = new URL(ctx.request.url)
       feed.recordError(err, {

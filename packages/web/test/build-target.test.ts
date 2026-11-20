@@ -8,7 +8,8 @@ import {
   checkHostReach,
   generateServerEntry,
 } from "../src/build.ts"
-import type { Bundler } from "../src/build-plan.ts"
+import { type Bundler, renderSizeReport } from "../src/build-plan.ts"
+import { buildTargetVite } from "../src/build-vite.ts"
 import { discoverRoutes } from "../src/fs.ts"
 import type { RenderAdapter } from "../src/index.ts"
 import { createWebApp } from "../src/index.ts"
@@ -59,6 +60,59 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
 })
+
+test.each([buildTarget, buildTargetVite])(
+  "%p reports hydration JS only when a route's backend setting is known to enable it",
+  async (build) => {
+    const front = "export default function Page() { return null }\n"
+    const settings = {
+      "server-only": "export const hydrate: boolean = false as const\n",
+      computed: "export const hydrate = false || Boolean(globalThis.location)\n",
+      dependent: "export const hydrate = Boolean(globalThis.location)\n",
+      forwarded: "export * from '../shared/hydration.ts'\n",
+      alias: "const enabled = false; export { enabled as hydrate }\n",
+    }
+    for (const [name, source] of Object.entries(settings)) {
+      writeFileSync(join(routesDir, `${name}.tsx`), front)
+      writeFileSync(join(routesDir, `${name}.backend.ts`), source)
+    }
+    writeFileSync(join(routesDir, "server-only.tsx"), `import "./server-only.css"\n${front}`)
+    writeFileSync(join(routesDir, "server-only.css"), "body { margin: 0 }")
+    mkdirSync(join(projectRoot, "shared"))
+    writeFileSync(join(projectRoot, "shared/hydration.ts"), "export const hydrate = false\n")
+    writeFileSync(
+      join(projectRoot, "shared/label.ts"),
+      "export const label = (name: string) => name.toUpperCase()\n",
+    )
+    for (const name of ["index", "plain"]) {
+      writeFileSync(
+        join(routesDir, `${name}.tsx`),
+        `import { label } from "../shared/label.ts"\nexport default function Page() { return label(${JSON.stringify(name)}) }\n`,
+      )
+    }
+
+    const result = await build("bun", {
+      routesDir,
+      outDir: join(projectRoot, "dist"),
+      workDir: join(projectRoot, ".work"),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      reportRouteAssets: true,
+    })
+    const route = (pattern: string) => result.size.routes?.find((row) => row.pattern === pattern)
+    expect(route("/server-only")).toMatchObject({ javascript: [], javascriptGzip: 0 })
+    expect(route("/server-only")?.stylesheetsGzip).toBeGreaterThan(0)
+    for (const pattern of ["/computed", "/dependent", "/forwarded", "/alias"]) {
+      expect(route(pattern)).toMatchObject({ javascript: [], javascriptGzip: null })
+    }
+    const homeJs = route("/")?.javascript ?? []
+    const plainJs = route("/plain")?.javascript ?? []
+    expect(homeJs).toContain(result.client.entry)
+    expect(plainJs).toContain(result.client.entry)
+    expect(plainJs.some((url) => url !== result.client.entry && homeJs.includes(url))).toBe(true)
+    expect(renderSizeReport(result.size)).toContain("/computed  JS unknown (hydrate export)")
+  },
+)
 
 test("--target cloudflare → _worker.js + _routes.json + /assets bundle", async () => {
   const outDir = join(projectRoot, "dist")

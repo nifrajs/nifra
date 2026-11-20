@@ -49,8 +49,10 @@ import { loadCopySplit } from "./internal/copy-split.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
 import { emitPluginImages } from "./internal/image-assets.ts"
 import { assertIdentityParity } from "./internal/parity.ts"
+import { clientReportRoutes } from "./internal/report-hydration.ts"
 import { emittedScanFiles, formatSecretFindings, scanForSecrets } from "./internal/secret-scan.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
+import { clientRouteAssets } from "./internal/size-report.ts"
 import { unsupportedBuiltin } from "./internal/target-compat.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { normalizeRolldownPlugins } from "./internal/vite-plugin-compat.ts"
@@ -448,11 +450,26 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
-  return writeClientManifest(
+  const manifest = writeClientManifest(
     { entry: url(bootstrap.file), assets: [...assets], routes, cssCodeSplit, cssLoading },
     { publicFiles, css, routeStyles, copyChunks },
     { routesDir, publicDir, outDir },
   )
+  if (options.onRouteAssets !== undefined) {
+    const imports = new Map<string, string[]>()
+    for (const entry of Object.values(viteManifest)) {
+      const dependencies: string[] = []
+      for (const key of entry.imports ?? []) {
+        const dependency = viteManifest[key]
+        if (dependency !== undefined) dependencies.push(url(dependency.file))
+      }
+      imports.set(url(entry.file), dependencies)
+    }
+    options.onRouteAssets(
+      clientRouteAssets(manifest, clientReportRoutes(routesDir, routeManifest.routes), imports),
+    )
+  }
+  return manifest
 }
 
 /** Options for {@link buildServerVite} - the same surface as `buildServer` minus Bun-plugin specifics. */
@@ -676,6 +693,7 @@ export const viteBundler: Bundler = {
       routesDir: input.routesDir,
       outDir: input.outDir,
       clientModule: input.clientModule,
+      onRouteAssets: input.onRouteAssets,
       ...(input.plugins ? { vitePlugins: input.plugins } : {}),
       ...(input.conditions ? { conditions: input.conditions } : {}),
       ...(input.define ? { define: input.define } : {}),

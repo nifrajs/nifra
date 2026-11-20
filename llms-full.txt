@@ -8407,7 +8407,7 @@ The dev server with true HMR, on port 4321. Bun runs it unless `vitePlugins` are
 
 `nifra build [--target <t>] [--out <dir>] [--transport <module>] [--prerender <paths>] [--report]`
 
-A complete deploy directory for `bun`, `node`, `deno`, `cloudflare`, `vercel` or `static`. The server entry is generated from `backend/framework.ts`, `backend/app.ts` and `routes/`. `--report` prints each chunk's size. `--transport` builds the client to reach its server through that module's `fetch`, for a native shell. `--prerender` (static target) also prerenders the named pages, comma-separated, whether or not their route exports `prerender`.
+A complete deploy directory for `bun`, `node`, `deno`, `cloudflare`, `vercel` or `static`. The server entry is generated from `backend/framework.ts`, `backend/app.ts` and `routes/`. `--report` prints chunk sizes and initial framework JavaScript and CSS by route. `--transport` builds the client to reach its server through that module's `fetch`, for a native shell. `--prerender` (static target) also prerenders the named pages, comma-separated, whether or not their route exports `prerender`.
 
 `nifra start [--port <n>] [--out <dir>]`
 
@@ -15889,6 +15889,22 @@ view does.
 semantic conventions, and ships no SDK. Cache operations, background jobs and event consumers
 join the request's trace through the context you bind them to, and a small bridge puts the
 OpenTelemetry SDK's own database and HTTP spans under the same tree.
+
+### Find the slow stage of a page
+
+Load the page with `nifra dev` running, then call `nifra_inspect`.
+The trace includes the request duration, ISR status when available, and the route's
+`routeTiming`. Its `phases` report page loaders, layout loaders,
+output validation, serialization, and rendering in milliseconds. Loader phases can
+overlap. A streamed response is measured through the initial response, before deferred
+values settle. An ISR hit or a stale response served from cache shows the cache status.
+
+Run `nifra build --report` for the matched page and layout chunks, the client
+entry, their eager JavaScript imports, and the route stylesheet URLs. The per-route gzip
+totals estimate the initial framework assets. A literal `hydrate = false` shows
+zero framework JavaScript and keeps the stylesheet sizes. A hydration setting the build
+cannot determine shows an unknown JavaScript size. Use browser resource timing to measure dynamic imports, island scripts, locale-specific chunks, and bytes
+transferred with your server's compression and cache settings.
 
 ### Request spans
 

@@ -51,6 +51,7 @@ import {
 } from "./request-header-tracker.ts"
 import { urlPartsFor } from "./request-url.ts"
 import { PAGE_SCOPE, PageResponseControls, privateOutcome } from "./response-controls.ts"
+import { invokeLoader } from "./route-timing.ts"
 import { isStatusSignal } from "./status-page.ts"
 
 export type { NonceResolver } from "../nonce.ts"
@@ -195,6 +196,7 @@ export function createPageRequestExecutor<Env = unknown>(
         c: PageRouteContext<Env>,
         controls: PageResponseControls,
       ): Promise<PageResponse> => {
+        const timing = options.routeTiming?.(route.pattern, c.req)
         let live = liveLoadOf?.(c.req)
         const componentRuntime = options.serverComponents
         const componentOwner = componentRuntime?.owns(route.id) === true
@@ -282,6 +284,7 @@ export function createPageRequestExecutor<Env = unknown>(
             componentOwner || !retains ? undefined : retainContextOf(c),
             undefined,
             live,
+            timing,
           )
           layoutModules = run.modules
           layoutRetained = run.retained
@@ -405,12 +408,18 @@ export function createPageRequestExecutor<Env = unknown>(
               : mod.loader === undefined || skipPage
                 ? null
                 : live === undefined
-                  ? mod.loader(forkLoaderContext(ctx, { search: effectiveSearch }))
+                  ? invokeLoader(
+                      mod.loader,
+                      forkLoaderContext(ctx, { search: effectiveSearch }),
+                      timing,
+                      "pageLoader",
+                    )
                   : runLiveLoader(
                       live,
                       `P:${route.id}`,
                       mod.loader,
                       forkLoaderContext(ctx, { search: effectiveSearch }),
+                      timing,
                     )
           const [pageData, , staticBoundaries] =
             run.pending === undefined && staticBoundaryPromise === undefined
@@ -567,6 +576,7 @@ export function createPageRequestExecutor<Env = unknown>(
           seeding && liveEnvelope !== undefined && !("__nifra_deferred" in liveEnvelope)
             ? liveEnvelope
             : undefined,
+          timing,
         )
       }
       return withResponseControls(liveLoadOf === undefined ? page : admitLive(page))

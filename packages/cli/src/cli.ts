@@ -169,7 +169,7 @@ Usage:
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
                                          backend/framework.ts (adapter) + backend/app.ts + routes/.
-                                         --report prints a per-chunk size + gzip table (biggest first).
+                                         --report prints chunk sizes and initial client assets by route.
                                          Vercel defaults to Edge; export vercelRuntime = "node" from
                                          nifra.config.ts for ordinary Node.js 22 serverless SSR.
                 [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
@@ -646,6 +646,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           clientEntry,
           ...frameworkWebAppOptions(fw, backend),
           onLoaderError: dev.onLoaderError,
+          routeTiming: dev.routeTiming,
         }),
     })
     console.log(`nifra dev (bun) → http://localhost:${server.port}`)
@@ -710,6 +711,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         clientEntry,
         ...frameworkWebAppOptions(fw, backend),
         onLoaderError: dev.onLoaderError,
+        routeTiming: dev.routeTiming,
       }),
   })
   console.log(`nifra dev (vite) → http://localhost:${server.port}`)
@@ -1052,6 +1054,7 @@ async function buildForTarget(
     ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
     ...(fw.vercelRuntime !== undefined ? { vercelRuntime: fw.vercelRuntime } : {}),
     ...(fw.selfHost !== undefined ? { selfHost: fw.selfHost } : {}),
+    reportRouteAssets: flags.report,
     live: fw.live?.clientEntry,
     ...transportOption(flags, fw, cwd),
     prerenderPaths: prerenderPaths(flags, target),

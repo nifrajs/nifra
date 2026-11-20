@@ -1,3 +1,5 @@
+import type { BuildManifest } from "../build-plan.ts"
+import type { RouteEntry } from "../manifest.ts"
 import { codeUnitOrder } from "./code-unit-order.ts"
 
 // ---------------------------------------------------------------------------------------------------
@@ -16,6 +18,48 @@ export interface ChunkSize {
   readonly gzip: number
 }
 
+export interface ClientRouteAssets {
+  readonly pattern: string
+  readonly javascript: readonly string[]
+  readonly stylesheets: readonly string[]
+  /** The build could not determine whether the route enables framework hydration. */
+  readonly hydrationUnknown?: true
+}
+
+export interface ClientRouteSize extends ClientRouteAssets {
+  readonly javascriptGzip: number | null
+  readonly stylesheetsGzip: number
+}
+
+/** The client entry plus the matched page and layout chunks and their eager dependencies. */
+export function clientRouteAssets(
+  manifest: BuildManifest,
+  routes: readonly (Pick<RouteEntry, "id" | "pattern"> & {
+    readonly hydrate?: boolean | "unknown"
+  })[],
+  imports: ReadonlyMap<string, readonly string[]>,
+): readonly ClientRouteAssets[] {
+  const available = new Set(manifest.assets)
+  return routes.map(({ id, pattern, hydrate }) => {
+    const scripts = new Set<string>()
+    const pending =
+      hydrate === false || hydrate === "unknown"
+        ? []
+        : [manifest.entry, ...(manifest.routes[id] ?? [])]
+    for (const script of pending) {
+      if (scripts.has(script) || !available.has(script) || !/\.[cm]?js$/.test(script)) continue
+      scripts.add(script)
+      for (const dependency of imports.get(script) ?? []) pending.push(dependency)
+    }
+    const assets = {
+      pattern,
+      javascript: [...scripts],
+      stylesheets: [...new Set(manifest.routeStyles?.[id] ?? manifest.css ?? [])],
+    }
+    return hydrate === "unknown" ? { ...assets, hydrationUnknown: true } : assets
+  })
+}
+
 /** A whole build's size report - every chunk (largest first) + the totals. */
 export interface SizeReport {
   /** Per-chunk sizes, sorted biggest gzip first (the regression you want to see at the top). */
@@ -24,6 +68,7 @@ export interface SizeReport {
   readonly totalBytes: number
   /** Sum of every chunk's gzip bytes. */
   readonly totalGzip: number
+  readonly routes?: readonly ClientRouteSize[]
 }
 
 /**
@@ -75,10 +120,19 @@ export function renderSizeReport(report: SizeReport): string {
     " ".repeat(Math.max(0, width - value.length)) + value
   const line = (name: string, raw: string, gzip: string): string =>
     `  ${padEnd(name, nameW)}  ${padStart(raw, rawW)}  ${padStart(gzip, gzW)}`
-  return [
+  const table = [
     line("Chunk", "Raw", "Gzip"),
     line("-".repeat(nameW), "-".repeat(rawW), "-".repeat(gzW)),
     ...rows.map((row) => line(row.name, row.raw, row.gz)),
     line("Total", formatBytes(report.totalBytes), formatBytes(report.totalGzip)),
   ].join("\n")
+  if (report.routes === undefined || report.routes.length === 0) return table
+  const routes = report.routes.flatMap((route) => {
+    const js =
+      route.javascriptGzip === null ? "unknown (hydrate export)" : formatBytes(route.javascriptGzip)
+    const assets = [...route.javascript, ...route.stylesheets]
+    const row = `  ${route.pattern}  JS ${js}  CSS ${formatBytes(route.stylesheetsGzip)}`
+    return assets.length === 0 ? [row] : [row, `    ${assets.join(" ")}`]
+  })
+  return [table, "", "Initial framework assets (gzip)", ...routes].join("\n")
 }

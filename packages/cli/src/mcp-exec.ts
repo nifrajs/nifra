@@ -376,7 +376,7 @@ export function projectTools(
     {
       name: "nifra_inspect",
       description:
-        "Observe what your requests ACTUALLY did on the running dev server: one trace per request, `{ requestId, method, path, status, durationMs, bytes, isr, errorIds, logCount }`. After nifra_run or a real browser request, call this to SEE the outcome (the status, how long, ISR hit/miss, whether it logged or failed) instead of guessing; pass a trace's `requestId` to nifra_errors/nifra_logs for what that request failed with or printed. Every `nifra dev` server keeps these traces and is found automatically; `port`/`dir` pick one when several run. Narrow with `path` (a path prefix), `requestId`, `since` (a cursor from an earlier call) or `limit` (most recent N). An explicit `port` this project did not start falls back to the `@nifrajs/devtools` plugin's traces.",
+        "Inspect recent requests on the running dev server after nifra_run or a browser request. Traces include status, durationMs, bytes when known, ISR status, errorIds and logCount. Page traces can include routeTiming with the matched pattern and phase totals in milliseconds: pageLoader, layoutLoaders, validation, serialization, and render. Parallel loader times can overlap. Pass requestId to nifra_errors or nifra_logs to follow a trace. Narrow with path, requestId, since or limit. Pass port or dir to pick a server. A port this project did not start can fall back to the @nifrajs/devtools plugin.",
       inputSchema: {
         type: "object",
         properties: {

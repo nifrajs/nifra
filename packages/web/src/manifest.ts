@@ -991,12 +991,16 @@ export function mergeRouteHalves(
     }
     if (typeof fn !== "function")
       throw routeError(`"${backend}" exports a ${name} that is not a function`)
-    guarded[name] = guardChannel(fn as (...args: unknown[]) => unknown, {
-      label: `the ${name} of "${file}"`,
-      guard: schema === undefined ? undefined : outputGuard(schema, `"${backend}"`, schemaName),
-      missing: `export const ${schemaName} = t.object({ ... }) from "${backend}"`,
-      revalidate: name === "action",
-    })
+    guarded[name] = guardChannel(
+      fn as (...args: unknown[]) => unknown,
+      {
+        label: `the ${name} of "${file}"`,
+        guard: schema === undefined ? undefined : outputGuard(schema, `"${backend}"`, schemaName),
+        missing: `export const ${schemaName} = t.object({ ... }) from "${backend}"`,
+        revalidate: name === "action",
+      },
+      name === "loader",
+    )
   }
   let boundaries = front.boundaries
   if (boundaryLoaders !== undefined) {
