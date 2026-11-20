@@ -186,7 +186,7 @@ Docs: https://nifra.dev/docs/errors#solid-diagnostic
 
 Ways to fix it:
 - component_input (422): The props or input the page sent failed the component's input schema. Compare what the page passes with the schema in its defineServerComponent call.
-- component_denied (403): Either the request was not same-origin (Sec-Fetch-Site was not same-origin, or Origin named another site: call the component from your own pages), or the component's authorize callback refused it (it threw a 401, 403 or 404): check that callback and the caller's credentials.
+- component_denied (401, 403 or 404): Either the request was not same-origin (Sec-Fetch-Site was not same-origin, or Origin named another site: call the component from your own pages), or the component's authorize callback refused it (it threw a 401, 403 or 404): check that callback and the caller's credentials.
 - component_version (409): The browser's build differs from the server's, usually because a deploy landed while the page was open. Reload the page.
 - component_busy (429): The server's component queue is full: every render slot is busy and the waiting queue is at capacity. Reduce how many components render at once, or the work each one does.
 - component_timeout or component_cancelled: A component outran its deadline (timeout), or the request was aborted first, for example by the visitor navigating away (cancelled). For a timeout, speed up the data the component waits on.

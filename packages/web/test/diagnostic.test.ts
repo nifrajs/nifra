@@ -312,10 +312,17 @@ test("a plain validation message the app throws is not nifra's, and the same mes
     "idempotency must be installed before the routes it protects",
     "contextStorage: no active context. Add app.use(contextStorage())",
     "MemoryStore is per-instance and unsafe in production (each instance limits separately)",
+    "sessions require a strongly consistent store for logout and rotation",
   ]) {
     expect(classify("Error", message).code).toBe("NIFRA_UNHANDLED")
     expect(classify("Error", message, true).code).not.toBe("NIFRA_UNHANDLED")
   }
+})
+
+test("a nifra-prefixed session-store message is nifra's whatever the origin", () => {
+  expect(
+    classify("Error", "[nifra/auth] sessions require a strongly consistent store for logout").code,
+  ).toBe("NIFRA_SESSION_STORE_CONSISTENCY")
 })
 
 test("a thrown error is classified by its message, not the `Name: ` heading its stack adds", () => {

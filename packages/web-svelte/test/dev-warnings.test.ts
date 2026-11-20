@@ -28,7 +28,7 @@ test("every Svelte runtime warning is a nifra warning", async () => {
     const { code } = classify("Warning", message)
     // A hydration warning keeps the hydration code whichever framework reports it.
     expect(["NIFRA_SVELTE_DIAGNOSTIC", "NIFRA_HYDRATION_MISMATCH"]).toContain(code)
-    if (code === "NIFRA_SVELTE_DIAGNOSTIC")
-      expect(classify("Warning", message).severity).toBe("warning")
+    // Both codes stay warnings, so a Svelte hydration report never fails `nifra errors`.
+    expect(classify("Warning", message).severity).toBe("warning")
   }
 })

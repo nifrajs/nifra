@@ -13096,7 +13096,7 @@ detail, so look on the server for the cause.
 schema.
 
 -
-`component_denied` (403): the request was not same-origin (call components from
+`component_denied` (401, 403 or 404): the request was not same-origin (call components from
 your own pages), or the component's `authorize` callback refused it with a 401, 403
 or 404.
 

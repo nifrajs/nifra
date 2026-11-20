@@ -323,7 +323,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
         fix: "The props or input the page sent failed the component's input schema. Compare what the page passes with the schema in its defineServerComponent call.",
       },
       {
-        label: "component_denied (403)",
+        label: "component_denied (401, 403 or 404)",
         fix: "Either the request was not same-origin (Sec-Fetch-Site was not same-origin, or Origin named another site: call the component from your own pages), or the component's authorize callback refused it (it threw a 401, 403 or 404): check that callback and the caller's credentials.",
       },
       {
@@ -489,7 +489,8 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_SESSION_STORE_CONSISTENCY",
-    match: (_n, m) => m.includes("sessions require a strongly consistent store"),
+    match: (_n, m, fromNifra) =>
+      nifraOwned(m, fromNifra, /sessions require a strongly consistent store/),
     cause:
       "The session manager was given an eventually consistent store such as KVSessionStore. Logout and rotation need a read to see the write that revoked a session, which that kind of store does not promise.",
     fix: "Use a strongly consistent shared SessionStore.",

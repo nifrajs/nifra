@@ -193,7 +193,7 @@ export default function Errors() {
           schema.
         </li>
         <li>
-          <code>component_denied</code> (403): the request was not same-origin (call components from
+          <code>component_denied</code> (401, 403 or 404): the request was not same-origin (call components from
           your own pages), or the component's <code>authorize</code> callback refused it with a 401, 403
           or 404.
         </li>
