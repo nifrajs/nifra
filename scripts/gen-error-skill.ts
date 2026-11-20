@@ -71,7 +71,8 @@ export function renderErrorSkill(): string {
     [
       "## Verify",
       "",
-      "Re-run `nifra check`; a fix is done when the finding's code is gone from its output.",
+      "- A `nifra check` finding (`NF-...`): re-run `nifra check`; the fix is done when the code is gone from its output.",
+      "- A runtime or build error (`NIFRA_...`): reproduce the failing action or build, then read `nifra errors`; the fix is done when the code no longer appears there. `nifra check` does not reproduce runtime failures.",
     ].join("\n"),
   )
   return `${parts.join("\n\n")}\n`

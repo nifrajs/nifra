@@ -259,9 +259,9 @@ Docs: https://nifra.dev/docs/errors#svelte-diagnostic
 
 ### NIFRA_REACT_WARNING
 
-**Cause:** React's development build warned about a component: the message names the problem and links to React's page for it (react.dev/link/... or react.dev/errors/...).
+**Cause:** React reported a mistake: a development warning that links to react.dev/link/..., or an error whose message links to react.dev/errors/... (a minified production error).
 
-**Fix:** Open the link in the message for the cause and the repair, then fix the component React's trace names.
+**Fix:** Open the link in the message for the cause and the repair, then fix the component React's trace names. A react.dev/errors message is a thrown error, not a warning.
 
 Docs: https://nifra.dev/docs/errors#react-warning
 
@@ -343,11 +343,19 @@ Docs: https://nifra.dev/docs/errors#wire-invalid
 
 ### NIFRA_STORAGE_KEY
 
-**Cause:** A storage key was refused because it escapes the storage root, or is absolute, contains a backslash, or contains a NUL.
+**Cause:** A storage key was refused before any read or write: it is empty or over 1024 characters, is absolute, has a backslash, NUL, ".." or an empty or "." segment, escapes the storage root, or reaches the file through a symbolic link, a moved root directory or an untrusted writable directory.
 
-**Fix:** Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key.
+**Fix:** Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key. For a symbolic link, a moved root or an untrusted directory, the message names what to check on the filesystem.
 
 Docs: https://nifra.dev/docs/errors#storage-key
+
+### NIFRA_STORAGE_READ_LIMIT
+
+**Cause:** An R2 object is larger than maxReadBytes (or reports invalid size metadata), so R2Storage refuses to buffer it. The key itself was valid.
+
+**Fix:** Raise maxReadBytes on the R2Storage if objects of that size are expected; otherwise find why the object is larger than the limit.
+
+Docs: https://nifra.dev/docs/errors#storage-read-limit
 
 ### NIFRA_OPENAPI_IMPORT
 
@@ -604,6 +612,22 @@ Docs: https://nifra.dev/docs/errors#strict-mode
 **Fix:** For two copies, dedupe the library in your package manager so react-dom and your components import the same React. For a peer, the message names it and the underlying error: install it, or use the default build.
 
 Docs: https://nifra.dev/docs/errors#library-resolution
+
+### NIFRA_RUNTIME_MISSING
+
+**Cause:** A feature was used without its opt-in runtime installed: WebSocket routes, server-sent events, MCP declarations or the Node-direct renderer ship as separate plugins so apps that do not use them stay small.
+
+**Fix:** The message names the plugin. Add the `.use(...)` it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) before declaring the routes that need it, on the parent app when the routes are mounted from a child.
+
+Docs: https://nifra.dev/docs/errors#runtime-missing
+
+### NIFRA_SERVER_LIFECYCLE
+
+**Cause:** The server was configured at the wrong time or on the wrong runtime: a hook added after the page routes were declared (no page runs it), configuration changed after listen() sealed the server, or listen() called outside Bun.
+
+**Fix:** Move the call before listen(). For a late hook, apply it in createWebApp({ use }) to cover the pages, or inside app.group(prefix, ...). Off Bun, serve with @nifrajs/node or @nifrajs/deno, or hand app.fetch to a fetch-compatible runtime.
+
+Docs: https://nifra.dev/docs/errors#server-lifecycle
 
 ### NIFRA_OPTION_INVALID
 
@@ -1413,4 +1437,5 @@ Docs: https://nifra.dev/docs/websockets
 
 ## Verify
 
-Re-run `nifra check`; a fix is done when the finding's code is gone from its output.
+- A `nifra check` finding (`NF-...`): re-run `nifra check`; the fix is done when the code is gone from its output.
+- A runtime or build error (`NIFRA_...`): reproduce the failing action or build, then read `nifra errors`; the fix is done when the code no longer appears there. `nifra check` does not reproduce runtime failures.

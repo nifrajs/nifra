@@ -24,15 +24,20 @@ const STABLE_ERROR_CODE = /^(?:NIFRA_[A-Z0-9_]{1,80}|NF-[A-Z]\d{3})$/
 /** The error's `code` when it is one of nifra's stable codes; anything else could carry request data. */
 function stableErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null) return undefined
-  const code: unknown = Reflect.get(error, "code")
-  if (typeof code !== "string") return undefined
-  if (STABLE_ERROR_CODE.test(code)) return code
-  // Nifra's own error classes carry a closed code vocabulary (INVALID_PATH, component_busy). Only
-  // those classes qualify: a driver or app error may put request data in `code`.
-  const name: unknown = Reflect.get(error, "name")
-  return typeof name === "string" && FRAMEWORK_ERROR_CLASSES.has(name) && CLASS_CODE.test(code)
-    ? code
-    : undefined
+  // An error is application data: a getter or Proxy trap on it may throw, and recording must not.
+  try {
+    const code: unknown = Reflect.get(error, "code")
+    if (typeof code !== "string") return undefined
+    if (STABLE_ERROR_CODE.test(code)) return code
+    // Nifra's own error classes carry a closed code vocabulary (INVALID_PATH, component_busy). Only
+    // those classes qualify: a driver or app error may put request data in `code`.
+    const name: unknown = Reflect.get(error, "name")
+    return typeof name === "string" && FRAMEWORK_ERROR_CLASSES.has(name) && CLASS_CODE.test(code)
+      ? code
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 const FRAMEWORK_ERROR_CLASSES: ReadonlySet<string> = new Set([

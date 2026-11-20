@@ -330,6 +330,7 @@ const NOT_LAYERS: Readonly<Record<string, string>> = {
   "packages/web/src/internal/invalidation.ts": "drops what withISR stored; stores nothing",
   "packages/web/src/internal/render-document.ts": "renders the page withISR stores",
   "packages/web/src/internal/web-app.ts": "opens the ISR header channel; withISR stores",
+  "packages/web/src/diagnostic-catalog.ts": "names the stores in error text; stores nothing",
   "packages/web/src/manifest.ts": "route metadata",
   "packages/web/src/route-manifest.ts": "route metadata",
   "packages/cli/src/cdn-check.ts": "a static check, not a runtime layer",

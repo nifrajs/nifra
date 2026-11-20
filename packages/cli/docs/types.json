@@ -15139,7 +15139,7 @@
     "name": "SOLID_ERROR_CODES",
     "kind": "const",
     "package": "@nifrajs/web",
-    "signature": "export declare const SOLID_ERROR_CODES: ReadonlySet<string>;",
+    "signature": "export declare const SOLID_ERROR_CODES: readonly string[];",
     "doc": "/** The codes Solid 2.0 raises at error severity (the rest are warnings), from its diagnostics.json. */"
   },
   {

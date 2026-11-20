@@ -13,6 +13,13 @@ test("the gate flags a package whose uncoded count rises, and a package it has n
   expect(regressions({ core: 52 }, { core: 53 })).toEqual([])
 })
 
+test("a FrameworkError is judged by its message, not its code, and a code-shaped message is not exempt", () => {
+  expect(
+    classify("FrameworkError", "[nifra] app.sse() needs the streaming runtime", true).code,
+  ).toBe("NIFRA_RUNTIME_MISSING")
+  expect(classify("Error", "SOME_UNLISTED_CODE", true).code).toBe("NIFRA_UNHANDLED")
+})
+
 test("a message no entry recognises is uncoded, and a coded family is not", () => {
   expect(classify("Error", "a sentence nobody wrote a code for", true).code).toBe("NIFRA_UNHANDLED")
   expect(classify("Error", "effect ledger: invalid cost", true).code).not.toBe("NIFRA_UNHANDLED")

@@ -250,6 +250,8 @@ test("the production and configuration traps carry their own code", () => {
     ],
     ["RouteConfigError", "[nifra] duplicate route GET /a", "NIFRA_ROUTE_CONFIG"],
     ["StorageKeyError", "storage key ../x escapes the storage root", "NIFRA_STORAGE_KEY"],
+    ["StorageKeyError", "storage path crosses a symbolic link: uploads", "NIFRA_STORAGE_KEY"],
+    ["RangeError", "R2Storage object exceeds maxReadBytes", "NIFRA_STORAGE_READ_LIMIT"],
     ["OpenAPIImportError", "document.paths must be an object", "NIFRA_OPENAPI_IMPORT"],
   ]
   for (const [name, message, code] of cases) expect(classify(name, message).code).toBe(code)
@@ -261,6 +263,19 @@ test("a framework's development warning is a warning; a Solid error code and a t
   expect(classify("Warning", solid("STRICT_READ_UNTRACKED")).severity).toBe("warning")
   expect(classify("Warning", solid("REACTIVE_WRITE_IN_OWNED_SCOPE")).severity).toBeUndefined()
   expect(classify("Warning", "[Vue warn]: Missing required prop").severity).toBe("warning")
+  // React: a react.dev/link or a legacy "Warning:" is a warning; an errors link or a minified error is thrown.
+  const link = "Each child in a list should have a unique key. https://react.dev/link/warning-keys"
+  expect(classify("Error", link)).toMatchObject({
+    code: "NIFRA_REACT_WARNING",
+    severity: "warning",
+  })
+  expect(
+    classify("Warning", "Warning: Each child in a list should have a unique key").severity,
+  ).toBe("warning")
+  const thrown = "Minified React error #31; visit https://react.dev/errors/31 for the full message"
+  expect(classify("Error", thrown).code).toBe("NIFRA_REACT_WARNING")
+  expect(classify("Error", thrown).severity).toBeUndefined()
+  expect(classify("Error", "Minified React error #31").severity).toBeUndefined()
   expect(classify("Error", "Undefined component passed to createElement()").code).toBe(
     "NIFRA_PREACT_DIAGNOSTIC",
   )
@@ -280,6 +295,31 @@ test("a framework's development warning is a warning; a Solid error code and a t
 test("the remaining configuration families classify, for nifra's own errors only", () => {
   const cases: ReadonlyArray<readonly [string, string, string]> = [
     ["Error", "[nifra] cookie Domain contains an illegal character", "NIFRA_HEADER_VALUE_INVALID"],
+    [
+      "FrameworkError",
+      "[nifra] app.ws() needs the WebSocket runtime, which ships as an opt-in plugin so no-WebSocket apps stay lean.",
+      "NIFRA_RUNTIME_MISSING",
+    ],
+    [
+      "FrameworkError",
+      "[nifra] a Bun server with mounted WebSocket routes needs the websocket() runtime installed on the parent or child app",
+      "NIFRA_RUNTIME_MISSING",
+    ],
+    [
+      "FrameworkError",
+      "[nifra] afterHandle() at src/app.ts:3 was added after createWebApp declared the page routes, so no page runs it",
+      "NIFRA_SERVER_LIFECYCLE",
+    ],
+    [
+      "FrameworkError",
+      "[nifra] server configuration is sealed after listen() (a group once its builder returns); call get before",
+      "NIFRA_SERVER_LIFECYCLE",
+    ],
+    [
+      "FrameworkError",
+      "[nifra] listen() uses Bun.serve and runs only on Bun. Serve on Node with @nifrajs/node",
+      "NIFRA_SERVER_LIFECYCLE",
+    ],
     [
       "TypeError",
       "[nifra/web] createWebApp `cspHeader` writes the header of `nonce` documents",

@@ -13217,9 +13217,15 @@ A value could not be encoded or decoded on the typed wire: a malformed frame, an
 
 #### NIFRA_STORAGE_KEY
 
-A storage key was refused because it escapes the storage root, or is absolute, contains a backslash, or contains a NUL.
+A storage key was refused before any read or write: it is empty or over 1024 characters, is absolute, has a backslash, NUL, "..", or an empty or "." segment, escapes the storage root, or reaches the file through a symbolic link, a moved root directory or an untrusted writable directory.
 
-**Fix:** Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key.
+**Fix:** Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key. For a symbolic link, a moved root or an untrusted directory, the message names what to check on the filesystem.
+
+#### NIFRA_STORAGE_READ_LIMIT
+
+An R2 object is larger than maxReadBytes (or reports invalid size metadata), so R2Storage refuses to buffer it. The key itself was valid.
+
+**Fix:** Raise maxReadBytes on the R2Storage if objects of that size are expected; otherwise find why the object is larger than the limit.
 
 #### NIFRA_OPENAPI_IMPORT
 
@@ -13299,9 +13305,9 @@ Svelte's development build reported a mistake. The identifier after `[svelte]` (
 
 #### NIFRA_REACT_WARNING
 
-React's development build warned about a component: the message names the problem and links to React's page for it (react.dev/link/... or react.dev/errors/...).
+React reported a mistake: a development warning that links to react.dev/link/..., or an error whose message links to react.dev/errors/... (a minified production error).
 
-**Fix:** Open the link in the message for the cause and the repair, then fix the component React's trace names.
+**Fix:** Open the link in the message for the cause and the repair, then fix the component React's trace names. A react.dev/errors message is a thrown error, not a warning.
 
 ### More framework warnings
 
@@ -13438,6 +13444,20 @@ A startup check failed while strict mode is on, so the process refuses to start 
 A UI library or optional peer did not resolve to one working copy: two copies of React reached server rendering (react-dom renders with a different React than your components import), or an optional peer is missing or failed to load.
 
 **Fix:** For two copies, dedupe the library in your package manager so react-dom and your components import the same React. For a peer, the message names it and the underlying error: install it, or use the default build.
+
+### Configuration and runtime
+
+#### NIFRA_RUNTIME_MISSING
+
+A feature was used without its opt-in runtime installed: WebSocket routes, server-sent events, MCP declarations or the Node-direct renderer ship as separate plugins so apps that do not use them stay small.
+
+**Fix:** The message names the plugin. Add the `.use(...)` it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) before declaring the routes that need it, on the parent app when the routes are mounted from a child.
+
+#### NIFRA_SERVER_LIFECYCLE
+
+The server was configured at the wrong time or on the wrong runtime: a hook added after the page routes were declared (no page runs it), configuration changed after listen() sealed the server, or listen() called outside Bun.
+
+**Fix:** Move the call before listen(). For a late hook, apply it in createWebApp({ use }) to cover the pages, or inside app.group(prefix, ...). Off Bun, serve with @nifrajs/node or @nifrajs/deno, or hand app.fetch to a fetch-compatible runtime.
 
 ### Options
 

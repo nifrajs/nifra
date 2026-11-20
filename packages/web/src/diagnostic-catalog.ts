@@ -9,7 +9,7 @@ import { FAMILY_ENTRIES } from "./diagnostic-families.ts"
 export type { FixOption }
 
 /** The codes Solid 2.0 raises at error severity (the rest are warnings), from its diagnostics.json. */
-export const SOLID_ERROR_CODES: ReadonlySet<string> = new Set([
+export const SOLID_ERROR_CODES: readonly string[] = [
   "ACTION_CALLED_IN_OWNED_SCOPE",
   "ASYNC_MEMO_ELEMENT",
   "ASYNC_STORE_SETTER",
@@ -32,41 +32,49 @@ export const SOLID_ERROR_CODES: ReadonlySet<string> = new Set([
   "SETTLE_WALK_UNINITIALIZED_SOURCE",
   "SSR_RENDER_ERROR_CONTAINED",
   "SYNC_NODE_RECEIVED_ASYNC",
-])
+]
 
 /**
  * The messages Preact's debug build raises. Preact has no code or prefix, so these are the opening
  * words of each message in preact/debug; a test reads the installed source and fails when a release
  * adds one this list does not recognise.
  */
-export const PREACT_DEBUG_STEMS: readonly string[] = [
-  "Improper nesting of (?:table|paragraph|interactive content)\\.",
-  "Following component has two or more children",
-  'Calling "this\\.(?:setState|forceUpdate)" inside the constructor',
-  'Can\'t call "this\\.forceUpdate" on an unmounted component',
-  "(?:getting|setting) vnode\\.\\w+ (?:is deprecated|is not allowed)",
-  "PropTypes are not supported on lazy\\(\\)",
-  "Failed [\\w ]+ type:",
-  "Invalid argument passed to hook\\.",
-  "Undefined (?:component passed to createElement|parent passed to render)",
-  "Invalid type passed to createElement",
-  'Component\'s "\\w+" property should be',
-  "Too many re-renders",
-  "Hook can only be invoked from render methods",
-  "Objects are not valid as a child",
-  "Expected a valid HTML node as a second argument to render",
-  "Expected a DOM node of type",
-  "An error occurred in the <",
-  "Add @babel/plugin-transform-react-jsx-source",
+export const PREACT_DEBUG_STEMS: readonly RegExp[] = [
+  /^Improper nesting of (?:table|paragraph|interactive content)\./,
+  /^Following component has two or more children/,
+  /^Calling "this\.(?:setState|forceUpdate)" inside the constructor/,
+  /^Can't call "this\.forceUpdate" on an unmounted component/,
+  /^(?:getting|setting) vnode\.\w+ (?:is deprecated|is not allowed)/,
+  /^PropTypes are not supported on lazy\(\)/,
+  /^Failed [\w ]+ type:/,
+  /^Invalid argument passed to hook\./,
+  /^Undefined (?:component passed to createElement|parent passed to render)/,
+  /^Invalid type passed to createElement/,
+  /^Component's "\w+" property should be/,
+  /^Too many re-renders/,
+  /^Hook can only be invoked from render methods/,
+  /^Objects are not valid as a child/,
+  /^Expected a valid HTML node as a second argument to render/,
+  /^Expected a DOM node of type/,
+  /^An error occurred in the </,
+  /^Add @babel\/plugin-transform-react-jsx-source/,
 ]
-const PREACT_DEBUG = new RegExp(`^(?:${PREACT_DEBUG_STEMS.join("|")})`)
+const isPreactDebug = (message: string): boolean =>
+  PREACT_DEBUG_STEMS.some((stem) => stem.test(message))
 /** The stems Preact throws (an error) rather than logs (a warning). */
 const PREACT_THROWN =
   /^(?:Undefined (?:component|parent)|Invalid type passed|Component's "|Too many re-renders|Hook can only|Objects are not valid|Expected a valid HTML node|An error occurred in the <)/
 
+/** What React prints: a `Warning:` prefix (React 18), a react.dev/link warning, or an errors link. */
+const REACT_MESSAGE = /^Warning: |https:\/\/react\.dev\/(?:link|errors)\/|Minified React error #\d/
+const REACT_THROWN = /https:\/\/react\.dev\/errors\/|Minified React error #\d/
+
 /** A Solid 2.0 dev report: `[CODE] ...` plus the line naming its guide or repair skill. */
-const SOLID_DIAGNOSTIC =
-  /^\[[A-Z][A-Z0-9_]+\][^\n]*[\s\S]*(?:docs\.solidjs\.com\/reference\/solid-js\/diagnostics\/|solid-js\/skills\/reactivity-diagnostics\/)/
+const SOLID_CODE = /^\[[A-Z][A-Z0-9_]+\]/
+const SOLID_GUIDE =
+  /docs\.solidjs\.com\/reference\/solid-js\/diagnostics\/|solid-js\/skills\/reactivity-diagnostics\//
+const isSolidReport = (message: string): boolean =>
+  SOLID_CODE.test(message) && SOLID_GUIDE.test(message)
 
 /**
  * The recognised-failure catalog. Seeded with the highest-signal nifra failures; extend it as new
@@ -288,10 +296,10 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_SOLID_DIAGNOSTIC",
-    match: (_n, m) => SOLID_DIAGNOSTIC.test(m),
+    match: (_n, m) => isSolidReport(m),
     console: true,
     severity: (m) =>
-      SOLID_ERROR_CODES.has(/^\[([A-Z0-9_]+)\]/.exec(m)?.[1] ?? "") ? "error" : "warning",
+      SOLID_ERROR_CODES.includes(/^\[([A-Z0-9_]+)\]/.exec(m)?.[1] ?? "") ? "error" : "warning",
     cause:
       "Solid 2.0's dev build reported a reactivity mistake: the message opens with Solid's own stable code, then names the owner path, the source location, and the guide for that code.",
     fix: "Read the code in square brackets, open the repair guide the message names (node_modules/solid-js/skills/reactivity-diagnostics/SKILL.md, anchored by the lower-cased code) and apply its repair at the `at` location. Do not silence the report: Solid raises each one for a real defect or a real cost.",
@@ -402,20 +410,17 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_REACT_WARNING",
-    match: (_n, m) =>
-      /^Warning: /.test(m) ||
-      m.includes("https://react.dev/link/") ||
-      m.includes("https://react.dev/errors/"),
+    match: (_n, m) => REACT_MESSAGE.test(m),
     console: true,
-    severity: "warning",
+    severity: (m) => (REACT_THROWN.test(m) ? "error" : "warning"),
     cause:
-      "React's development build warned about a component: the message names the problem and links to React's page for it (react.dev/link/... or react.dev/errors/...).",
-    fix: "Open the link in the message for the cause and the repair, then fix the component React's trace names.",
+      "React reported a mistake: a development warning that links to react.dev/link/..., or an error whose message links to react.dev/errors/... (a minified production error).",
+    fix: "Open the link in the message for the cause and the repair, then fix the component React's trace names. A react.dev/errors message is a thrown error, not a warning.",
     docsAnchor: "errors#react-warning",
   },
   {
     code: "NIFRA_PREACT_DIAGNOSTIC",
-    match: (_n, m) => PREACT_DEBUG.test(m),
+    match: (_n, m) => isPreactDebug(m),
     console: true,
     severity: (m) => (PREACT_THROWN.test(m) ? "error" : "warning"),
     cause:
@@ -500,11 +505,19 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_STORAGE_KEY",
-    match: (n, m) => n === "StorageKeyError" || /^R2Storage object exceeds maxReadBytes/.test(m),
+    match: (n) => n === "StorageKeyError",
     cause:
-      "A storage key was refused because it escapes the storage root, or is absolute, contains a backslash, or contains a NUL.",
-    fix: "Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key.",
+      'A storage key was refused before any read or write: it is empty or over 1024 characters, is absolute, has a backslash, NUL, ".." or an empty or "." segment, escapes the storage root, or reaches the file through a symbolic link, a moved root directory or an untrusted writable directory.',
+    fix: "Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key. For a symbolic link, a moved root or an untrusted directory, the message names what to check on the filesystem.",
     docsAnchor: "errors#storage-key",
+  },
+  {
+    code: "NIFRA_STORAGE_READ_LIMIT",
+    match: (_n, m) => /^R2Storage object exceeds maxReadBytes/.test(m),
+    cause:
+      "An R2 object is larger than maxReadBytes (or reports invalid size metadata), so R2Storage refuses to buffer it. The key itself was valid.",
+    fix: "Raise maxReadBytes on the R2Storage if objects of that size are expected; otherwise find why the object is larger than the limit.",
+    docsAnchor: "errors#storage-read-limit",
   },
   {
     code: "NIFRA_OPENAPI_IMPORT",

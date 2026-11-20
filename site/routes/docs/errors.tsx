@@ -338,11 +338,18 @@ export default function Errors() {
       <FixPrompts code="NIFRA_WIRE_INVALID" />
 
       <h3 id="storage-key">NIFRA_STORAGE_KEY</h3>
-      <p>A storage key was refused because it escapes the storage root, or is absolute, contains a backslash, or contains a NUL.</p>
+      <p>A storage key was refused before any read or write: it is empty or over 1024 characters, is absolute, has a backslash, NUL, "..", or an empty or "." segment, escapes the storage root, or reaches the file through a symbolic link, a moved root directory or an untrusted writable directory.</p>
       <p>
-        <strong>Fix:</strong> Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key.
+        <strong>Fix:</strong> Build keys as relative, forward-slash paths that stay under the storage root, and never put unchecked user input into a key. For a symbolic link, a moved root or an untrusted directory, the message names what to check on the filesystem.
       </p>
       <FixPrompts code="NIFRA_STORAGE_KEY" />
+
+      <h3 id="storage-read-limit">NIFRA_STORAGE_READ_LIMIT</h3>
+      <p>An R2 object is larger than maxReadBytes (or reports invalid size metadata), so R2Storage refuses to buffer it. The key itself was valid.</p>
+      <p>
+        <strong>Fix:</strong> Raise maxReadBytes on the R2Storage if objects of that size are expected; otherwise find why the object is larger than the limit.
+      </p>
+      <FixPrompts code="NIFRA_STORAGE_READ_LIMIT" />
 
       <h3 id="openapi-import">NIFRA_OPENAPI_IMPORT</h3>
       <p>The OpenAPI document cannot be imported: it is malformed, uses a version outside 3.0.x, 3.1.x and 3.2.x, exceeds an import limit, or holds a construct Nifra cannot represent (a parameter $ref, an unsupported path template).</p>
@@ -433,9 +440,9 @@ export default function Errors() {
       <FixPrompts code="NIFRA_SVELTE_DIAGNOSTIC" />
 
       <h3 id="react-warning">NIFRA_REACT_WARNING</h3>
-      <p>React's development build warned about a component: the message names the problem and links to React's page for it (react.dev/link/... or react.dev/errors/...).</p>
+      <p>React reported a mistake: a development warning that links to react.dev/link/..., or an error whose message links to react.dev/errors/... (a minified production error).</p>
       <p>
-        <strong>Fix:</strong> Open the link in the message for the cause and the repair, then fix the component React's trace names.
+        <strong>Fix:</strong> Open the link in the message for the cause and the repair, then fix the component React's trace names. A react.dev/errors message is a thrown error, not a warning.
       </p>
       <FixPrompts code="NIFRA_REACT_WARNING" />
 
@@ -596,6 +603,22 @@ export default function Errors() {
         <strong>Fix:</strong> For two copies, dedupe the library in your package manager so react-dom and your components import the same React. For a peer, the message names it and the underlying error: install it, or use the default build.
       </p>
       <FixPrompts code="NIFRA_LIBRARY_RESOLUTION" />
+
+      <h2>Configuration and runtime</h2>
+
+      <h3 id="runtime-missing">NIFRA_RUNTIME_MISSING</h3>
+      <p>A feature was used without its opt-in runtime installed: WebSocket routes, server-sent events, MCP declarations or the Node-direct renderer ship as separate plugins so apps that do not use them stay small.</p>
+      <p>
+        <strong>Fix:</strong> The message names the plugin. Add the <code>.use(...)</code> it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) before declaring the routes that need it, on the parent app when the routes are mounted from a child.
+      </p>
+      <FixPrompts code="NIFRA_RUNTIME_MISSING" />
+
+      <h3 id="server-lifecycle">NIFRA_SERVER_LIFECYCLE</h3>
+      <p>The server was configured at the wrong time or on the wrong runtime: a hook added after the page routes were declared (no page runs it), configuration changed after listen() sealed the server, or listen() called outside Bun.</p>
+      <p>
+        <strong>Fix:</strong> Move the call before listen(). For a late hook, apply it in createWebApp(&#123; use &#125;) to cover the pages, or inside app.group(prefix, ...). Off Bun, serve with @nifrajs/node or @nifrajs/deno, or hand app.fetch to a fetch-compatible runtime.
+      </p>
+      <FixPrompts code="NIFRA_SERVER_LIFECYCLE" />
 
       <h2>Options</h2>
 

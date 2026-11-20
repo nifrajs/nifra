@@ -234,4 +234,30 @@ export const FAMILY_ENTRIES: readonly CatalogEntry[] = [
     fix: "For two copies, dedupe the library in your package manager so react-dom and your components import the same React. For a peer, the message names it and the underlying error: install it, or use the default build.",
     docsAnchor: "errors#library-resolution",
   },
+  {
+    code: "NIFRA_RUNTIME_MISSING",
+    match: (_n, m, fromNifra) =>
+      nifraOwned(
+        m,
+        fromNifra,
+        /^\[nifra\] (?:app\.ws\(\) needs the WebSocket runtime|app\.sse\(\) needs the streaming runtime|MCP declarations ship as an opt-in runtime|resolveNode\(\) needs the Node-direct renderer|a Bun server with mounted WebSocket routes needs the websocket\(\) runtime)/,
+      ),
+    cause:
+      "A feature was used without its opt-in runtime installed: WebSocket routes, server-sent events, MCP declarations or the Node-direct renderer ship as separate plugins so apps that do not use them stay small.",
+    fix: "The message names the plugin. Add the `.use(...)` it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) before declaring the routes that need it, on the parent app when the routes are mounted from a child.",
+    docsAnchor: "errors#runtime-missing",
+  },
+  {
+    code: "NIFRA_SERVER_LIFECYCLE",
+    match: (_n, m, fromNifra) =>
+      nifraOwned(
+        m,
+        fromNifra,
+        /^\[nifra\] (?:[\w\u2026]+\(\)[^\n]*? was added after createWebApp declared the page routes|server configuration is sealed after listen\(\)|listen\(\) uses Bun\.serve and runs only on Bun)/,
+      ),
+    cause:
+      "The server was configured at the wrong time or on the wrong runtime: a hook added after the page routes were declared (no page runs it), configuration changed after listen() sealed the server, or listen() called outside Bun.",
+    fix: "Move the call before listen(). For a late hook, apply it in createWebApp({ use }) to cover the pages, or inside app.group(prefix, ...). Off Bun, serve with @nifrajs/node or @nifrajs/deno, or hand app.fetch to a fetch-compatible runtime.",
+    docsAnchor: "errors#server-lifecycle",
+  },
 ]

@@ -65,12 +65,13 @@ const staticText = (node: ts.Expression): string | undefined => {
 
 /**
  * Throws the catalog has nothing to say about: the platform's own abort signal, a sentinel the
- * import.meta.glob reader throws and catches itself (it surfaces as a classified build error), and a
+ * import.meta.glob reader or the server-component pipeline reader throws and catches itself (it surfaces as a classified build error), and a
  * message built only from interpolated values, which has no static text to match.
  */
 function notAFrameworkError(name: string, message: string, where: string): boolean {
   if (name === "DOMException") return true
   if (name === "SyntaxError" && where.startsWith("web/src/plugins/import-glob.ts:")) return true
+  if (name === "Error" && where.startsWith("web/src/server-components/source.ts:")) return true
   return message.replace(/\[nifra[^\]]*\]|[…\s:]/g, "") === ""
 }
 
@@ -103,18 +104,17 @@ export function scanUncoded(): { total: number; excluded: number; uncoded: Uncod
       const visit = (node: ts.Node): void => {
         if (ts.isThrowStatement(node) && ts.isNewExpression(node.expression)) {
           const { expression, arguments: args } = node.expression
-          const first = args?.[0]
-          const message = first === undefined ? undefined : staticText(first)
+          const name = expression.getText(sf)
+          // FrameworkError takes (code, message): the code is not what a reader sees, the message is.
+          const text = args?.[name === "FrameworkError" ? 1 : 0]
+          const body = text === undefined ? undefined : staticText(text)
+          const message = body !== undefined && name === "FrameworkError" ? `[nifra] ${body}` : body
           if (message !== undefined) {
             total++
-            const name = expression.getText(sf)
-            // A class that carries a code as its first argument (ServerComponentError, RouteConfigError)
-            // reports it by class name; the code is not the message.
             const where = `${file.slice(ROOT.length + 1)}:${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1}`
             const hit = classify(name, message, true)
             if (
               hit.code === "NIFRA_UNHANDLED" &&
-              !/^[A-Z][A-Z0-9_]+$|^component_[a-z_]+$/.test(message) &&
               !countExcluded(notAFrameworkError(name, message, where))
             )
               uncoded.push({

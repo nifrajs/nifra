@@ -6471,7 +6471,7 @@ _No named exports (side-effect entrypoint)._
   Where the prompt is shown; it decides how the agent is told to reproduce and verify.
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
-- **SOLID_ERROR_CODES** _(const)_ - `SOLID_ERROR_CODES: ReadonlySet<string>`
+- **SOLID_ERROR_CODES** _(const)_ - `SOLID_ERROR_CODES: readonly string[]`
   The codes Solid 2.0 raises at error severity (the rest are warnings), from its diagnostics.json.
 - **SourceReader** _(type)_ - `type SourceReader = (file: string) => string | undefined`
   Reads a source file's text, or returns undefined if it cannot (missing, binary, permission).

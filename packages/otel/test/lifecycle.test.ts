@@ -138,6 +138,22 @@ describe("observation lifecycle", () => {
     // The same shape from a class that is not nifra's is not exported.
     expect(record(framework("PostgresError", "INVALID_PATH"))).toBeUndefined()
     expect(record(framework("RouteConfigError", "alice@example.com"))).toBeUndefined()
+    // A throwing getter or Proxy trap on the error neither throws out of recordError nor exports a code.
+    const hostile = Object.defineProperty(new Error("x"), "code", {
+      get() {
+        throw new Error("getter")
+      },
+    })
+    expect(record(hostile)).toBeUndefined()
+    expect(
+      record(
+        new Proxy(new Error("x"), {
+          get() {
+            throw new Error("trap")
+          },
+        }),
+      ),
+    ).toBeUndefined()
     // A driver code, a customer string, and a non-error carry no stable code.
     expect(record(Object.assign(new Error("x"), { code: "ECONNRESET" }))).toBeUndefined()
     expect(
