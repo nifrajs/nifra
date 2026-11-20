@@ -462,7 +462,10 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     record: options.record,
     indicator: options.indicator,
   })
-  const devHooks: DevAppHooks = { onLoaderError: session.onLoaderError }
+  const devHooks: DevAppHooks = {
+    onLoaderError: session.onLoaderError,
+    routeTiming: session.routeTiming,
+  }
 
   // Refuses backend code before Vite serves or transforms it; held here so a refused module's request
   // is answered with the refusal rather than falling through to the app.

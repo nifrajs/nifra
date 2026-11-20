@@ -176,7 +176,7 @@ export default function Cli() {
             <td>
               <code>nifra build [--target &lt;t&gt;] [--out &lt;dir&gt;] [--transport &lt;module&gt;] [--prerender &lt;paths&gt;] [--report]</code>
             </td>
-            <td>A complete deploy directory for <code>bun</code>, <code>node</code>, <code>deno</code>, <code>cloudflare</code>, <code>vercel</code> or <code>static</code>. The server entry is generated from <code>backend/framework.ts</code>, <code>backend/app.ts</code> and <code>routes/</code>. <code>--report</code> prints each chunk&apos;s size. <code>--transport</code> builds the client to reach its server through that module&apos;s <code>fetch</code>, for a native shell. <code>--prerender</code> (static target) also prerenders the named pages, comma-separated, whether or not their route exports <code>prerender</code>.</td>
+            <td>A complete deploy directory for <code>bun</code>, <code>node</code>, <code>deno</code>, <code>cloudflare</code>, <code>vercel</code> or <code>static</code>. The server entry is generated from <code>backend/framework.ts</code>, <code>backend/app.ts</code> and <code>routes/</code>. <code>--report</code> prints chunk sizes and initial JavaScript and CSS for each hydrated route. <code>--transport</code> builds the client to reach its server through that module&apos;s <code>fetch</code>, for a native shell. <code>--prerender</code> (static target) also prerenders the named pages, comma-separated, whether or not their route exports <code>prerender</code>.</td>
           </tr>
           <tr>
             <td>

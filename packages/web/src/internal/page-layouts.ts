@@ -21,6 +21,7 @@ import {
   tagLayoutError,
 } from "./render-document.ts"
 import { MIDDLEWARE_SCOPE, type PageResponseControls } from "./response-controls.ts"
+import { invokeLoader, type RouteTiming } from "./route-timing.ts"
 import { isStatusSignal, notFound } from "./status-page.ts"
 
 const ignore = (): void => {}
@@ -87,6 +88,7 @@ export function createLayoutRunner<Env = unknown>(base: ExecutionBase<Env>) {
     retain?: RetainContext,
     gated?: GatedLayouts,
     live?: LiveLoad,
+    timing?: RouteTiming,
   ): Promise<LayoutRun> => {
     if (route.layoutIds.length === 0) return emptyLayoutRun
     const modules = gated?.modules ?? (await loadLayoutModules(route))
@@ -127,8 +129,10 @@ export function createLayoutRunner<Env = unknown>(base: ExecutionBase<Env>) {
                   route,
                   i,
                   live === undefined
-                    ? loader
-                    : (gateCtx) => runLiveLoader(live, `L:${layoutId}`, loader, gateCtx),
+                    ? timing === undefined
+                      ? loader
+                      : (gateCtx) => invokeLoader(loader, gateCtx, timing, "layoutLoaders")
+                    : (gateCtx) => runLiveLoader(live, `L:${layoutId}`, loader, gateCtx, timing),
                   scoped,
                 )
           continue
@@ -137,8 +141,8 @@ export function createLayoutRunner<Env = unknown>(base: ExecutionBase<Env>) {
         try {
           const value =
             live === undefined
-              ? loader(scoped)
-              : runLiveLoader(live, `L:${layoutId}`, loader, scoped)
+              ? invokeLoader(loader, scoped, timing, "layoutLoaders")
+              : runLiveLoader(live, `L:${layoutId}`, loader, scoped, timing)
           // Scalars settle synchronously. Objects keep await's intrinsic promise/thenable
           // assimilation: property-presence and prototype probes are unsafe for proxies.
           if (value !== null && (typeof value === "object" || typeof value === "function")) {

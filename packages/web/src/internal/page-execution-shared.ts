@@ -37,6 +37,7 @@ import {
   type RevalidateResult,
 } from "./render-document.ts"
 import { type CoreResponseControls, DATA_RESPONSE_HEADERS } from "./response-controls.ts"
+import { invokeLoader, type RouteTiming, type RouteTimingFor } from "./route-timing.ts"
 
 /** Structural context supplied by the core server to one page route handler. */
 export interface PageRouteContext<Env = unknown> {
@@ -182,10 +183,16 @@ export const runLiveLoader = (
   owner: string,
   loader: (ctx: LoaderContext) => unknown,
   ctx: LoaderContext,
+  timing?: RouteTiming,
 ): Promise<unknown> => {
   let value: unknown
   try {
-    value = loader(forkLoaderContext(ctx, { live: live.collector(owner) }))
+    value = invokeLoader(
+      loader,
+      forkLoaderContext(ctx, { live: live.collector(owner) }),
+      timing,
+      owner.startsWith("L:") ? "layoutLoaders" : "pageLoader",
+    )
   } catch (err) {
     live.seal(owner)
     return Promise.reject(err)
@@ -341,6 +348,7 @@ export interface PageExecutionOptions<Env = unknown> {
   readonly liveLoadOf?: ((request: Request) => LiveLoad | undefined) | undefined
   /** The seed a rendered document collects its keys into; only set when the app configures `live`. */
   readonly liveSeedOf?: ((request: Request, routeId: string) => LiveLoad | undefined) | undefined
+  readonly routeTiming?: RouteTimingFor | undefined
   readonly onLoaderError?: (
     error: unknown,
     ctx: {

@@ -1,4 +1,9 @@
 {
   "extends": "../../examples/tsconfig.preact.json",
-  "include": ["nifra-preact*/**/*.ts", "nifra-preact*/**/*.tsx"]
+  "include": [
+    "nifra-preact*/**/*.ts",
+    "nifra-preact*/**/*.tsx",
+    "../route-performance/**/*.ts",
+    "../route-performance/**/*.tsx"
+  ]
 }

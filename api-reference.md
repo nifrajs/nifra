@@ -6051,6 +6051,8 @@ _No named exports (side-effect entrypoint)._
   A build-tool STRATEGY for {@link buildTargetWith} - the two bundling steps, and nothing else. Everything around them (server-entry codegen, deploy assembly, prerender, size report) is bundler-agnostic and lives in `buildTargetWith`, so a second bundler (Vite) is this interface, not a second orchest…
 - **ChunkSize** _(interface)_ - `interface ChunkSize`
   One emitted chunk's measured size, in raw bytes + gzipped bytes (over-the-wire weight).
+- **ClientRouteAssets** _(interface)_ - `interface ClientRouteAssets`
+- **ClientRouteSize** _(interface)_ - `interface ClientRouteSize`
 - **CloudflarePagesRoutes** _(interface)_ - `interface CloudflarePagesRoutes`
   A Cloudflare Pages `_routes.json` document. `exclude`d paths are served straight from the CDN (the Function/worker is NOT invoked); everything else in `include` hits the worker.
 - **CloudflarePagesRoutesOptions** _(interface)_ - `interface CloudflarePagesRoutesOptions`
@@ -6126,6 +6128,8 @@ _No named exports (side-effect entrypoint)._
   The default (Bun) strategy - `buildClient`/`buildServer` from this module.
 - **checkHostReach** _(function)_ - `checkHostReach: (options: HostReachOptions) => Promise<HostReachReport>`
   Render each page on `host`, then fetch every same-origin file each page references, following scripts' imports and stylesheets' `url()`s, and expect 200 for all of them; then expect each `refused` path to answer `refusedStatus`. Cross-origin references are skipped: they are not this app's to serve.
+- **clientRouteAssets** _(function)_ - `clientRouteAssets: (manifest: BuildManifest, routes: readonly Pick<RouteEntry, "id" | "pattern">[], imports: ReadonlyMap<string, readonly string[]>) => readonly ClientRouteAssets[]`
+  The client entry plus the matched page and layout chunks and their eager dependencies.
 - **cloudflarePagesRoutes** _(function)_ - `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
 - **cloudflareRouteRules** _(function)_ - `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
@@ -6411,6 +6415,7 @@ _No named exports (side-effect entrypoint)._
 - **DevRequestTrace** _(interface)_ - `interface DevRequestTrace`
 - **DevRequestsQuery** _(interface)_ - `interface DevRequestsQuery`
 - **DevRequestsResult** _(interface)_ - `interface DevRequestsResult`
+- **DevRouteTiming** _(interface)_ - `interface DevRouteTiming`
 - **DevServerIdentity** _(interface)_ - `interface DevServerIdentity`
   The identity a dev server reports at {@link DEV_FEED_PATHS.identity}.
 - **DevServerRecord** _(interface)_ - `interface DevServerRecord`

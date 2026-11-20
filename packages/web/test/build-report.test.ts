@@ -9,6 +9,7 @@ import {
   BUILD_TARGETS,
   type BuildTarget,
   type ChunkSize,
+  clientRouteAssets,
   cloudflareRouteRules,
   diffManifestRoutes,
   formatBytes,
@@ -93,6 +94,41 @@ describe("renderSizeReport", () => {
     expect(total).toContain(formatBytes(102048))
     expect(total).toContain(formatBytes(30800))
   })
+})
+
+test("initial route assets include shared eager chunks once and honor empty route CSS", () => {
+  const [home, settings] = clientRouteAssets(
+    {
+      entry: "/entry.js",
+      assets: ["/entry.js", "/layout.js", "/home.js", "/settings.js", "/shared.js", "/app.css"],
+      routes: { home: ["/layout.js", "/home.js"], settings: ["/layout.js", "/settings.js"] },
+      css: ["/app.css"],
+      routeStyles: { settings: [] },
+    },
+    [
+      { id: "home", pattern: "/" },
+      { id: "settings", pattern: "/settings" },
+    ],
+    new Map([
+      ["/entry.js", ["/shared.js"]],
+      ["/layout.js", ["/shared.js"]],
+      ["/home.js", ["/shared.js"]],
+      ["/shared.js", ["/entry.js"]],
+    ]),
+  )
+  if (home === undefined) throw new Error("Missing home route assets")
+  expect(home).toEqual({
+    pattern: "/",
+    javascript: ["/entry.js", "/layout.js", "/home.js", "/shared.js"],
+    stylesheets: ["/app.css"],
+  })
+  expect(settings?.stylesheets).toEqual([])
+  expect(
+    renderSizeReport({
+      ...aggregateSizeReport([]),
+      routes: [{ ...home, javascriptGzip: 1024, stylesheetsGzip: 50 }],
+    }),
+  ).toContain("/  JS 1.0 KB  CSS 50 B")
 })
 
 // --- Server-manifest drift (#7) -----------------------------------------------------------------------

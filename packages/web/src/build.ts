@@ -47,6 +47,8 @@ import {
   type Bundler,
   buildAssetPaths,
   type ChunkSize,
+  type ClientRouteAssets,
+  clientRouteAssets,
   detectNodeBuiltinsInClient,
   detectServerOnlyInClient,
   formatNodeBuiltinLeak,
@@ -177,6 +179,8 @@ export {
 } from "./prerender.ts"
 
 export interface BuildClientOptions {
+  /** Collect initial client assets for the build report without adding data to deploy artifacts. */
+  readonly onRouteAssets?: ((routes: readonly ClientRouteAssets[]) => void) | undefined
   /** The `routes/` directory to discover (absolute path). */
   readonly routesDir: string
   /** Output directory for the bundle + `manifest.json` (absolute path). */
@@ -611,7 +615,8 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       file.kind === "code" ? [[relative(cwd, file.name), file.text ?? ""] as const] : [],
     ),
   )
-  const clientGraph = withEmittedImports(fromBunMetafile(clientMeta), emitted, publicPath)
+  const eager = options.onRouteAssets === undefined ? undefined : new Map<string, string[]>()
+  const clientGraph = withEmittedImports(fromBunMetafile(clientMeta), emitted, publicPath, eager)
   const verdict = verifyClientGraph(clientGraph, {
     classifier,
     sourceOf: bunModuleSource(cwd),
@@ -796,7 +801,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
 
   const copyChunks = copy?.urls ?? {}
   const images = emitPluginImages(options.plugins ?? [], outDir, publicPath)
-  return writeClientManifest(
+  const manifest = writeClientManifest(
     {
       entry: entryUrl,
       assets: [...outputs.map((o) => toUrl(o.path)), ...Object.values(copyChunks), ...images],
@@ -805,6 +810,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     { publicFiles, css, routeStyles, copyChunks },
     { routesDir, publicDir, outDir },
   )
+  if (eager !== undefined) {
+    const imports = new Map([...eager].map(([file, deps]) => [toUrl(file), deps.map(toUrl)]))
+    options.onRouteAssets?.(clientRouteAssets(manifest, routeManifest.routes, imports))
+  }
+  return manifest
 }
 
 export interface BuildServerOptions {
@@ -1060,6 +1070,7 @@ function withEmittedImports(
   graph: ClientModuleGraph,
   emitted: readonly EmittedFile[],
   publicPath?: string,
+  eager?: Map<string, string[]>,
 ): ClientModuleGraph {
   const scanner = new Bun.Transpiler({ loader: "js" })
   const imports = new Map<string, string[]>()
@@ -1068,16 +1079,28 @@ function withEmittedImports(
       imports.set(posix.normalize(file.name), [])
       continue
     }
+    const fileName = posix.normalize(file.name)
+    const internalPath = (path: string): string | undefined => {
+      if (publicPath !== undefined && path.startsWith(publicPath))
+        return path.slice(publicPath.length)
+      if (path.startsWith("./") || path.startsWith("../"))
+        return posix.join(posix.dirname(fileName), path)
+      return undefined
+    }
+    const edges = scanner.scanImports(file.text)
     imports.set(
-      posix.normalize(file.name),
-      scanner.scanImports(file.text).map(({ path }) => {
-        if (publicPath !== undefined && path.startsWith(publicPath))
-          return path.slice(publicPath.length)
-        if (path.startsWith("./") || path.startsWith("../"))
-          return posix.join(posix.dirname(posix.normalize(file.name)), path)
-        return path
-      }),
+      fileName,
+      edges.map(({ path }) => internalPath(path) ?? path),
     )
+    if (eager !== undefined) {
+      eager.set(
+        fileName,
+        edges.flatMap(({ kind, path }) => {
+          const dependency = kind === "import-statement" ? internalPath(path) : undefined
+          return dependency === undefined ? [] : [dependency]
+        }),
+      )
+    }
   }
   const chunks: Record<string, ClientModuleGraph["chunks"][string]> = {}
   // A chunk with no emitted file keeps no `imports`, which the verifiers treat as missing evidence.
@@ -1709,6 +1732,8 @@ async function measureOutputs(paths: readonly string[]): Promise<ChunkSize[]> {
 }
 
 export interface BuildTargetOptions {
+  /** Include the initial client asset graph per route in the size report. */
+  readonly reportRouteAssets?: boolean
   /** Vercel-only: opt into Node.js 22 serverless SSR instead of the default Edge function. */
   readonly vercelRuntime?: VercelRuntime
   /** The `routes/` directory to discover (absolute path). */
@@ -1832,6 +1857,7 @@ export const bunBundler: Bundler = {
       routesDir: input.routesDir,
       outDir: input.outDir,
       clientModule: input.clientModule,
+      onRouteAssets: input.onRouteAssets,
       ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
       ...(input.conditions ? { conditions: input.conditions } : {}),
       ...(input.define ? { define: input.define } : {}),
@@ -1983,7 +2009,14 @@ export async function buildTargetWith(
   mkdirSync(workDir, { recursive: true })
 
   // (1) Client bundle → <static root>/assets/* (every target ships the same hashed client bundle).
+  let routeAssets: readonly ClientRouteAssets[] | undefined
   let client = await bundler.buildClient({
+    onRouteAssets:
+      options.reportRouteAssets === true
+        ? (routes) => {
+            routeAssets = routes
+          }
+        : undefined,
     routesDir,
     outDir: assetsDir,
     clientModule: options.clientModule,
@@ -2098,7 +2131,7 @@ export async function buildTargetWith(
     }
     collectImages()
     rmSync(workDir, { recursive: true, force: true })
-    const size = aggregateSizeReport(await measureOutputs(codeAssetPaths(client.assets, assetsDir)))
+    const size = await targetSizeReport(client, assetsDir, routeAssets)
     return {
       target,
       outDir,
@@ -2246,9 +2279,8 @@ export async function buildTargetWith(
   rmSync(workDir, { recursive: true, force: true })
 
   // Size report over the client assets + the server bundle (its parse cost matters on the edge).
-  const clientPaths = codeAssetPaths(client.assets, assetsDir)
   const serverPath = `${outDir}/${targetPlan.outputFile}`
-  const size = aggregateSizeReport(await measureOutputs([...clientPaths, serverPath]))
+  const size = await targetSizeReport(client, assetsDir, routeAssets, serverPath)
   return { target, outDir, client, run: targetPlan.run, size }
 }
 
@@ -2257,6 +2289,27 @@ export async function buildTargetWith(
 const assetUrlToPath = (url: string, assetsDir: string): string =>
   `${assetsDir}/${url.slice("/assets/".length)}`
 
-/** The client assets a size report covers: code and styles, not the media image plugins emit. */
-const codeAssetPaths = (urls: readonly string[], assetsDir: string): string[] =>
-  urls.filter((url) => !isImageAssetUrl(url)).map((url) => assetUrlToPath(url, assetsDir))
+async function targetSizeReport(
+  client: BuildManifest,
+  assetsDir: string,
+  routes: readonly ClientRouteAssets[] | undefined,
+  serverPath?: string,
+): Promise<SizeReport> {
+  const urls = client.assets.filter((url) => !isImageAssetUrl(url))
+  const paths = urls.map((url) => assetUrlToPath(url, assetsDir))
+  if (serverPath !== undefined) paths.push(serverPath)
+  const chunks = await measureOutputs(paths)
+  const report = aggregateSizeReport(chunks)
+  if (routes === undefined) return report
+  const gzip = new Map(urls.map((url, index) => [url, chunks[index]?.gzip ?? 0]))
+  const sum = (files: readonly string[]) =>
+    files.reduce((total, file) => total + (gzip.get(file) ?? 0), 0)
+  return {
+    ...report,
+    routes: routes.map((route) => ({
+      ...route,
+      javascriptGzip: sum(route.javascript),
+      stylesheetsGzip: sum(route.stylesheets),
+    })),
+  }
+}

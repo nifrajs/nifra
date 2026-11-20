@@ -21,6 +21,12 @@
  */
 import type { StandardResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import { markDeferredFree } from "./deferred-free.ts"
+import {
+  loaderTimingOf,
+  measureRoutePhase,
+  registerTimedLoader,
+  timedLoaderResult,
+} from "./route-timing.ts"
 import { wireDate } from "./wire-date.ts"
 
 // Registry symbols shared with core and `@nifrajs/schema`, so two copies of either still agree.
@@ -950,6 +956,7 @@ export function guardValue(contract: ChannelContract, value: unknown): unknown {
 export function guardChannel<Args extends unknown[]>(
   fn: (...args: Args) => unknown,
   contract: ChannelContract,
+  trackLoader = false,
 ): (...args: Args) => unknown {
   const check = (value: unknown): unknown => guardValue(contract, value)
   const checkThrown = (error: unknown): never => {
@@ -961,7 +968,30 @@ export function guardChannel<Args extends unknown[]>(
       guardValue(contract, error)
     throw error
   }
-  return (...args) => {
+  const guarded = (...args: Args): unknown => {
+    const sample = trackLoader ? loaderTimingOf(args[0]) : undefined
+    if (sample !== undefined) {
+      const validate = (value: unknown) =>
+        measureRoutePhase(sample.timing, "validation", () => timedLoaderResult(() => check(value)))
+      const rejected = (error: unknown): never => {
+        if (
+          error instanceof Response ||
+          (typeof error === "object" && error !== null && isResponseResult(error))
+        ) {
+          measureRoutePhase(sample.timing, "validation", () => checkThrown(error))
+        }
+        throw error
+      }
+      let value: unknown
+      try {
+        value = measureRoutePhase(sample.timing, sample.phase, () =>
+          timedLoaderResult(() => fn(...args)),
+        )
+      } catch (error) {
+        return rejected(error)
+      }
+      return value instanceof Promise ? value.then(validate, rejected) : validate(value)
+    }
     let value: unknown
     try {
       value = fn(...args)
@@ -972,4 +1002,6 @@ export function guardChannel<Args extends unknown[]>(
       ? Promise.resolve(value).then(check, checkThrown)
       : check(value)
   }
+  if (trackLoader) registerTimedLoader(guarded)
+  return guarded
 }
