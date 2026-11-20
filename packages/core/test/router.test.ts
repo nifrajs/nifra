@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { RouteConfigError } from "../src/errors.ts"
 import { Router, type RouterMatch } from "../src/router/router.ts"
 
@@ -424,5 +424,23 @@ describe("dynamic match cache admission", () => {
     const long = "x".repeat(300_000)
     expectUser(long)
     expectUser(long)
+  })
+
+  test("two interleaved hot paths are served from the cache after a second look", () => {
+    const r = router()
+    r.add("GET", "/users/:id", "user")
+    // biome-ignore lint/plugin/noChainedTypeAssertions: test-only seam on the private admission step
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: maybeCacheDynamicMatch is a method of Router.prototype, which spyOn needs to reach
+    const proto = Router.prototype as unknown as { maybeCacheDynamicMatch: () => void }
+    const admit = spyOn(proto, "maybeCacheDynamicMatch")
+    try {
+      for (const path of ["/users/1", "/users/2", "/users/1", "/users/2"]) r.find("GET", path)
+      admit.mockClear()
+      r.find("GET", "/users/1")
+      r.find("GET", "/users/2")
+      expect(admit).not.toHaveBeenCalled()
+    } finally {
+      admit.mockRestore()
+    }
   })
 })
