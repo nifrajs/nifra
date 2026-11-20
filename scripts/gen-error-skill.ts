@@ -83,7 +83,8 @@ if (import.meta.main) {
   const next = renderErrorSkill()
   if (process.argv.includes("--check")) {
     const current = (await Bun.file(OUT).exists()) ? await Bun.file(OUT).text() : ""
-    if (current !== next) {
+    // A Windows checkout may hold the file with CRLF line endings.
+    if (current.replaceAll("\r\n", "\n") !== next) {
       console.error(`✗ ${OUT} is stale: run \`bun run gen:errors\``)
       process.exit(1)
     }
