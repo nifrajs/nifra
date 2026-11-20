@@ -28,5 +28,9 @@ export function loadUws(): Uws {
       { cause },
     )
   }
+  // `_cfg` is absent from the typings. "silent" drops the `uWebSockets: 20` banner on every reply and,
+  // unlike a per-reply header filter, also on the ones uWS answers without entering JS.
+  const cfg: unknown = Reflect.get(loaded, "_cfg")
+  if (typeof cfg === "function") Reflect.apply(cfg, loaded, ["silent"])
   return loaded
 }

@@ -11,7 +11,7 @@ import { serve as serveNode } from "@nifrajs/node"
 import { serve as serveUws } from "../src/index.ts"
 import { parseHead, raw } from "./support.ts"
 
-const SKIP = new Set(["date", "connection", "keep-alive", "uwebsockets"])
+const SKIP = new Set(["date", "connection", "keep-alive"])
 
 function makeApp() {
   return server()

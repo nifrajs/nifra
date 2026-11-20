@@ -21679,7 +21679,7 @@ do on `@nifrajs/node`.
   `Content-Length` is declared is sent with that length and cut off, not finished, if the stream ends
   short or runs long.
 - **Headers uWS frames itself** - `Content-Length`, `Transfer-Encoding` and `Date` - are dropped from the
-  app's response, and uWS adds a `uWebSockets: 20` header it cannot be told to omit.
+  app's response. The `uWebSockets: 20` banner uWS would add is switched off for the whole process.
 - **Header values are checked** for CR, LF and other control characters before anything is written, and
   a status outside 100-999 is refused: either is a `500`, reported through the app's logger.
 - **uWS's parser, not Node's.** It rejects a repeated `Host`, a request carrying both `Content-Length`
