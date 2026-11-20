@@ -202,11 +202,13 @@ export default function Errors() {
           after a deploy. Reload the page.
         </li>
         <li>
-          <code>component_busy</code> (429): every render slot is busy and the waiting queue is full.
+          <code>component_busy</code> (429): every render slot is busy and the waiting queue is full. Reduce how
+          many components render at once, or the work each one does.
         </li>
         <li>
           <code>component_timeout</code> or <code>component_cancelled</code>: the component outran its
-          deadline, or the request was aborted first.
+          deadline, or the request was aborted first, for example by the visitor navigating away. For a
+          timeout, speed up the data the component waits on.
         </li>
       </ul>
       <FixPrompts code="NIFRA_COMPONENT_REQUEST" />

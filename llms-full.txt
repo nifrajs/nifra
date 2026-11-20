@@ -13105,11 +13105,13 @@ or 404.
 after a deploy. Reload the page.
 
 -
-`component_busy` (429): every render slot is busy and the waiting queue is full.
+`component_busy` (429): every render slot is busy and the waiting queue is full. Reduce how
+many components render at once, or the work each one does.
 
 -
 `component_timeout` or `component_cancelled`: the component outran its
-deadline, or the request was aborted first.
+deadline, or the request was aborted first, for example by the visitor navigating away. For a
+timeout, speed up the data the component waits on.
 
 #### NIFRA_COMPONENT_BUILD
 
