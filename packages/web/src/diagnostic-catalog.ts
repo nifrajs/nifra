@@ -66,7 +66,10 @@ const PREACT_THROWN =
   /^(?:Undefined (?:component|parent)|Invalid type passed|Component's "|Too many re-renders|Hook can only|Objects are not valid|Expected a valid HTML node|An error occurred in the <)/
 
 /** What React prints: a `Warning:` prefix (React 18), a react.dev/link warning, or an errors link. */
-const REACT_MESSAGE = /^Warning: |https:\/\/react\.dev\/(?:link|errors)\/|Minified React error #\d/
+const REACT_WARNING_PREFIX = /^Warning: /
+const REACT_LINK = /https:\/\/react\.dev\/(?:link|errors)\/|Minified React error #\d/
+const isReactMessage = (message: string): boolean =>
+  REACT_WARNING_PREFIX.test(message) || REACT_LINK.test(message)
 const REACT_THROWN = /https:\/\/react\.dev\/errors\/|Minified React error #\d/
 
 /** A Solid 2.0 dev report: `[CODE] ...` plus the line naming its guide or repair skill. */
@@ -411,7 +414,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_REACT_WARNING",
-    match: (_n, m) => REACT_MESSAGE.test(m),
+    match: (_n, m) => isReactMessage(m),
     console: true,
     // The dev feed names a console report "Warning". A thrown error (an invalid hook call links to
     // react.dev/link too) and a react.dev/errors or minified message stay errors.
