@@ -89,7 +89,14 @@ export {
   type HostPolicyRule,
   isHostPolicy,
 } from "./host-policy.ts"
-export { type HrefOptions, href, rawHref } from "./href.ts"
+export {
+  type HrefOptions,
+  type HrefRefusal,
+  href,
+  isInertHref,
+  onHrefRefused,
+  rawHref,
+} from "./href.ts"
 export {
   type GenerateClientEntryOptions,
   type GenerateServerManifestOptions,

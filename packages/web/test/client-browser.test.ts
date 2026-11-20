@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, expect, jest, test } from "bun:test"
+import { afterAll, beforeAll, expect, jest, spyOn, test } from "bun:test"
 import { installForms, installHistory, signalHydrated } from "../src/client.ts"
-import { rawHref } from "../src/href.ts"
+import { INERT_HREF, rawHref } from "../src/href.ts"
 import { navigateNow } from "../src/internal/navigate-runtime.ts"
 import {
   type Blocker,
@@ -794,6 +794,55 @@ test("a forged Href cannot make the navigate every adapter returns leave the ori
   expect(historyCalls).toEqual([])
   expect(locationState.pathname).toBe("/settings")
   stop()
+})
+
+test("the Href that href() returns for refused input goes nowhere, not even to a hard load", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const refused = rawHref("//elsewhere.test/page")
+    expect(refused).toBe(INERT_HREF)
+    historyCalls = []
+    navigateNow(refused)
+    navigateNow(refused, { replace: true })
+    await Bun.sleep(0)
+  } finally {
+    errors.mockRestore()
+  }
+  expect(fallback).toEqual([])
+  expect(navigated).toEqual([])
+  expect(historyCalls).toEqual([])
+  stop()
+})
+
+test("a click on an anchor holding the refused Href is swallowed, so no adapter's template can load a 404", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  try {
+    const anchor = fakeAnchor(`http://example.test${encodeURI(INERT_HREF)}`)
+    anchor.attrs.set("href", INERT_HREF)
+    const click = fakeEvent(anchor)
+    document.emit("click", click)
+    await Bun.sleep(0)
+    expect(click.defaultPrevented).toBe(true)
+    expect(navigated).toEqual([])
+    expect(fallback).toEqual([])
+    // Any other anchor still goes through the router.
+    const real = fakeAnchor("http://example.test/settings")
+    real.attrs.set("href", "/settings")
+    const realClick = fakeEvent(real)
+    document.emit("click", realClick)
+    await Bun.sleep(0)
+    expect(realClick.defaultPrevented).toBe(true)
+    expect(navigated).toEqual(["/settings"])
+  } finally {
+    stop()
+  }
 })
 
 test("a client-only search change keeps a partially prerendered first document's holes filling", async () => {

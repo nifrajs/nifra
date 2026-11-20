@@ -1,5 +1,5 @@
-import { afterEach, expect, spyOn, test } from "bun:test"
-import { rawHref, setBrowserNavigate } from "@nifrajs/web"
+import { afterEach, expect, test } from "bun:test"
+import { onHrefRefused, rawHref, setBrowserNavigate } from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { compose } from "../src/compose.ts"
@@ -281,31 +281,33 @@ test("setSearchParams navigates with the new query - record/string/URLSearchPara
 test("setSearchParams on a path that reads as another host logs and does not navigate", () => {
   const calls: unknown[] = []
   setBrowserNavigate((to) => calls.push(to))
-  const errors = spyOn(console, "error").mockImplementation(() => {})
+  const heard: string[] = []
+  const stop = onHrefRefused((refusal) => heard.push(refusal.message))
   try {
     // `//host/x` is a protocol-relative reference: handed to the browser it leaves the origin.
     const set = captureSetSearchParams("//evil.example/x?q=1")
     expect(() => set({ q: "2" })).not.toThrow()
     expect(calls).toEqual([])
-    expect(errors).toHaveBeenCalledTimes(1)
-    expect(errors.mock.calls.flat().join(" ")).not.toContain("evil.example")
+    expect(heard).toHaveLength(1)
+    expect(heard.join(" ")).not.toContain("evil.example")
   } finally {
-    errors.mockRestore()
+    stop()
   }
 })
 
 test("a Link whose destination it cannot use leaves the click to the browser", () => {
   const calls: unknown[] = []
   setBrowserNavigate((to) => calls.push(to))
-  const errors = spyOn(console, "error").mockImplementation(() => {})
+  const heard: string[] = []
+  const stop = onHrefRefused((refusal) => heard.push(refusal.message))
   try {
     const e = mockClick()
     linkOnClick({ to: "//evil.example/x" })(e)
     expect(e.defaultPrevented).toBe(false)
     expect(calls).toEqual([])
-    expect(errors).toHaveBeenCalledTimes(1)
+    expect(heard).toHaveLength(1)
   } finally {
-    errors.mockRestore()
+    stop()
   }
 })
 

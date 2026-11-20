@@ -7344,6 +7344,13 @@
     "doc": "/**\n * What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has\n * any, absent when it has none), the route's `search` as its `searchSchema` accepts it (a defaulted field\n * may be left out), and the `hash` without its `#`.\n */"
   },
   {
+    "name": "HrefRefusal",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface HrefRefusal {\n    readonly call: \"href\" | \"rawHref\";\n    /** The route pattern `href()` was given; undefined for `rawHref`. */\n    readonly route?: string;\n    /** What was refused, in words: the same text the default log writes. */\n    readonly message: string;\n}",
+    "doc": "/** One refused call, as {@link onHrefRefused} hands it over. It never holds a param, hash or path value. */"
+  },
+  {
     "name": "HreflangLink",
     "kind": "interface",
     "package": "@nifrajs/i18n",
@@ -13046,7 +13053,7 @@
     "name": "RedirectOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RedirectOptions {\n    /** HTTP status (default 303 See Other; pass 307/308 to preserve the method). */\n    readonly status?: number;\n    /** Allow an off-origin / absolute destination. Off by default: only a same-origin path (a single\n     * leading `/`) is permitted, so an action can't be turned into an open redirect by passing\n     * attacker-controlled input straight through. Set `true` for a deliberate external redirect. */\n    readonly external?: boolean;\n    /** Extra response headers. A redirect is no longer a `Response`, so there is no `.headers` to\n     * mutate after the fact - name them here. Cookies queued with `ctx.set.cookie()` still ride it. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
+    "signature": "export interface RedirectOptions {\n    /** HTTP status (default 303 See Other; pass 307/308 to preserve the method). */\n    readonly status?: number;\n    /** Allow an off-origin / absolute destination. Off by default: only a same-origin path (a single\n     * leading `/`) is permitted, so an action can't be turned into an open redirect by passing\n     * attacker-controlled input straight through. Set `true` for a deliberate external redirect. */\n    readonly external?: boolean;\n    /** Extra response headers. A redirect is no longer a `Response`, so there is no `.headers` to\n     * mutate after the fact - name them here. Cookies queued with `ctx.set.cookie()` still ride it. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Where to go when `location` is the inert `Href` that `href()` or `rawHref()` returned for a value\n     * it refused (a bad param from data, already reported). Without it `redirect` throws, since there\n     * is nowhere to send the visitor; a Post/Redirect/Get action that has already written passes one\n     * so a bad value costs the destination, not a 500 after the write.\n     */\n    readonly fallback?: Href;\n}",
     "doc": "/** Options for {@link redirect}. */"
   },
   {
@@ -22088,42 +22095,42 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function href<K extends Pattern>(options: HrefOptions<K>): Href<K>;",
-    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate) throws a `TypeError` naming it, in production too: a link built from it would go\n * somewhere else. The result is a pure function of its input, so the server and the browser build the\n * same string. A link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
+    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate), a `hash` with an unpaired surrogate, and a `search` key reserved for route-slot state\n * come from data, so they do not throw: the result is the inert `Href`, which every consumer\n * (`Link`, `Navigate`, `navigate`, and a plain `<a>` click) ignores, and a `console.error` (once per\n * distinct message; see {@link onHrefRefused} to take over) names the route and the param,\n * never the value. A link built from such a value would go somewhere else, so no link is built.\n * The result is a pure function of its input, so the server and the browser build the same string. A\n * link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
   },
   {
     "name": "href",
     "kind": "function",
     "package": "@nifrajs/web-preact",
     "signature": "export declare function href<K extends Pattern>(options: HrefOptions<K>): Href<K>;",
-    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate) throws a `TypeError` naming it, in production too: a link built from it would go\n * somewhere else. The result is a pure function of its input, so the server and the browser build the\n * same string. A link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
+    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate), a `hash` with an unpaired surrogate, and a `search` key reserved for route-slot state\n * come from data, so they do not throw: the result is the inert `Href`, which every consumer\n * (`Link`, `Navigate`, `navigate`, and a plain `<a>` click) ignores, and a `console.error` (once per\n * distinct message; see {@link onHrefRefused} to take over) names the route and the param,\n * never the value. A link built from such a value would go somewhere else, so no link is built.\n * The result is a pure function of its input, so the server and the browser build the same string. A\n * link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
   },
   {
     "name": "href",
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function href<K extends Pattern>(options: HrefOptions<K>): Href<K>;",
-    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate) throws a `TypeError` naming it, in production too: a link built from it would go\n * somewhere else. The result is a pure function of its input, so the server and the browser build the\n * same string. A link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
+    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate), a `hash` with an unpaired surrogate, and a `search` key reserved for route-slot state\n * come from data, so they do not throw: the result is the inert `Href`, which every consumer\n * (`Link`, `Navigate`, `navigate`, and a plain `<a>` click) ignores, and a `console.error` (once per\n * distinct message; see {@link onHrefRefused} to take over) names the route and the param,\n * never the value. A link built from such a value would go somewhere else, so no link is built.\n * The result is a pure function of its input, so the server and the browser build the same string. A\n * link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
   },
   {
     "name": "href",
     "kind": "function",
     "package": "@nifrajs/web-solid",
     "signature": "export declare function href<K extends Pattern>(options: HrefOptions<K>): Href<K>;",
-    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate) throws a `TypeError` naming it, in production too: a link built from it would go\n * somewhere else. The result is a pure function of its input, so the server and the browser build the\n * same string. A link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
+    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate), a `hash` with an unpaired surrogate, and a `search` key reserved for route-slot state\n * come from data, so they do not throw: the result is the inert `Href`, which every consumer\n * (`Link`, `Navigate`, `navigate`, and a plain `<a>` click) ignores, and a `console.error` (once per\n * distinct message; see {@link onHrefRefused} to take over) names the route and the param,\n * never the value. A link built from such a value would go somewhere else, so no link is built.\n * The result is a pure function of its input, so the server and the browser build the same string. A\n * link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
   },
   {
     "name": "href",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
     "signature": "export declare function href<K extends Pattern>(options: HrefOptions<K>): Href<K>;",
-    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate) throws a `TypeError` naming it, in production too: a link built from it would go\n * somewhere else. The result is a pure function of its input, so the server and the browser build the\n * same string. A link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
+    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate), a `hash` with an unpaired surrogate, and a `search` key reserved for route-slot state\n * come from data, so they do not throw: the result is the inert `Href`, which every consumer\n * (`Link`, `Navigate`, `navigate`, and a plain `<a>` click) ignores, and a `console.error` (once per\n * distinct message; see {@link onHrefRefused} to take over) names the route and the param,\n * never the value. A link built from such a value would go somewhere else, so no link is built.\n * The result is a pure function of its input, so the server and the browser build the same string. A\n * link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
   },
   {
     "name": "href",
     "kind": "function",
     "package": "@nifrajs/web-vue",
     "signature": "export declare function href<K extends Pattern>(options: HrefOptions<K>): Href<K>;",
-    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate) throws a `TypeError` naming it, in production too: a link built from it would go\n * somewhere else. The result is a pure function of its input, so the server and the browser build the\n * same string. A link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
+    "doc": "/**\n * The in-app URL for a route: the pattern filled with `params` (each value encoded as one path\n * segment), then `search` serialized as the router reads it, then the `hash`. `to` is a key of the\n * generated route table, so a misspelt route, a missing or misspelt param and a `search` that breaks the\n * route's schema are compile errors; the result is an {@link Href}, the only thing `navigate` takes.\n *\n * ```ts\n * navigate(href({ to: \"/users/:id\", params: { id }, search: { tab: \"posts\" }, hash: \"top\" }))\n * ```\n *\n * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired\n * surrogate), a `hash` with an unpaired surrogate, and a `search` key reserved for route-slot state\n * come from data, so they do not throw: the result is the inert `Href`, which every consumer\n * (`Link`, `Navigate`, `navigate`, and a plain `<a>` click) ignores, and a `console.error` (once per\n * distinct message; see {@link onHrefRefused} to take over) names the route and the param,\n * never the value. A link built from such a value would go somewhere else, so no link is built.\n * The result is a pure function of its input, so the server and the browser build the same string. A\n * link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.\n */"
   },
   {
     "name": "html",
@@ -22506,6 +22513,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function isHydrationMismatch(message: string): boolean;",
     "doc": "/** True when `message` is a framework's report of a server/browser render mismatch. */"
+  },
+  {
+    "name": "isInertHref",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function isInertHref(value: string): boolean;",
+    "doc": "/** Whether `value` is what `href()` and `rawHref()` return for input they refused. */"
   },
   {
     "name": "isJsonRpcRequest",
@@ -23416,6 +23430,13 @@
     "package": "@nifrajs/image",
     "signature": "export declare function ogImageResponse(options: OgImageOptions, request?: Request): Promise<Response>;",
     "doc": "/**\n * Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit\n * rasterization, so a crawler revalidation never repeats expensive codec work. The ETag still names the\n * bytes a rasterizer produced: a revalidation is answered from the tag this process last sent for the\n * same SVG and rasterizer, and rasterizes only when it has none.\n */"
+  },
+  {
+    "name": "onHrefRefused",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function onHrefRefused(report: (refusal: HrefRefusal) => void): () => void;",
+    "doc": "/**\n * Take over what happens when `href()` or `rawHref()` refuses a value. `report` runs for every refusal,\n * in place of the default `console.error`, so an app can send them to its error tracker or count them;\n * pass `console.error` to keep the default as well. Returns a function that removes it. One reporter at\n * a time: a second call replaces the first. A throw from `report` is swallowed, since a link must not\n * cost the render. The refusal holds no value: a CMS link can carry a token into a log.\n */"
   },
   {
     "name": "onPageHide",
@@ -24372,42 +24393,42 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function rawHref(path: string): Href;",
-    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else throws a `TypeError`. A route of this app is {@link href}; another site is a\n * plain `<a href>`.\n */"
+    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else is a path from data this function cannot vouch for, so it does not throw:\n * the result is the inert `Href` that `Link`, `Navigate` and `navigate` ignore, with a `console.error`\n * that leaves the value out. A route of this app is {@link href}; another site is a plain `<a href>`.\n */"
   },
   {
     "name": "rawHref",
     "kind": "function",
     "package": "@nifrajs/web-preact",
     "signature": "export declare function rawHref(path: string): Href;",
-    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else throws a `TypeError`. A route of this app is {@link href}; another site is a\n * plain `<a href>`.\n */"
+    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else is a path from data this function cannot vouch for, so it does not throw:\n * the result is the inert `Href` that `Link`, `Navigate` and `navigate` ignore, with a `console.error`\n * that leaves the value out. A route of this app is {@link href}; another site is a plain `<a href>`.\n */"
   },
   {
     "name": "rawHref",
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function rawHref(path: string): Href;",
-    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else throws a `TypeError`. A route of this app is {@link href}; another site is a\n * plain `<a href>`.\n */"
+    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else is a path from data this function cannot vouch for, so it does not throw:\n * the result is the inert `Href` that `Link`, `Navigate` and `navigate` ignore, with a `console.error`\n * that leaves the value out. A route of this app is {@link href}; another site is a plain `<a href>`.\n */"
   },
   {
     "name": "rawHref",
     "kind": "function",
     "package": "@nifrajs/web-solid",
     "signature": "export declare function rawHref(path: string): Href;",
-    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else throws a `TypeError`. A route of this app is {@link href}; another site is a\n * plain `<a href>`.\n */"
+    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else is a path from data this function cannot vouch for, so it does not throw:\n * the result is the inert `Href` that `Link`, `Navigate` and `navigate` ignore, with a `console.error`\n * that leaves the value out. A route of this app is {@link href}; another site is a plain `<a href>`.\n */"
   },
   {
     "name": "rawHref",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
     "signature": "export declare function rawHref(path: string): Href;",
-    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else throws a `TypeError`. A route of this app is {@link href}; another site is a\n * plain `<a href>`.\n */"
+    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else is a path from data this function cannot vouch for, so it does not throw:\n * the result is the inert `Href` that `Link`, `Navigate` and `navigate` ignore, with a `console.error`\n * that leaves the value out. A route of this app is {@link href}; another site is a plain `<a href>`.\n */"
   },
   {
     "name": "rawHref",
     "kind": "function",
     "package": "@nifrajs/web-vue",
     "signature": "export declare function rawHref(path: string): Href;",
-    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else throws a `TypeError`. A route of this app is {@link href}; another site is a\n * plain `<a href>`.\n */"
+    "doc": "/**\n * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public\n * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`\n * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control\n * character. Anything else is a path from data this function cannot vouch for, so it does not throw:\n * the result is the inert `Href` that `Link`, `Navigate` and `navigate` ignore, with a `console.error`\n * that leaves the value out. A route of this app is {@link href}; another site is a plain `<a href>`.\n */"
   },
   {
     "name": "reactAdapter",
