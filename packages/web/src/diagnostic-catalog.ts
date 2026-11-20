@@ -68,8 +68,11 @@ const PREACT_THROWN =
 /** What React prints: a `Warning:` prefix (React 18), a react.dev/link warning, or an errors link. */
 const REACT_WARNING_PREFIX = /^Warning: /
 const REACT_LINK = /https:\/\/react\.dev\/(?:link|errors)\/|Minified React error #\d/
+/** React 19 prints these without a `Warning: ` prefix or a link; each opens a message in react-dom. */
+const REACT_DOM_WARNING =
+  /^(?:React does not recognize the `|Invalid DOM property `|Received `[^`]*` for a non-boolean attribute|Encountered two children with the same key|Each child in a list should have a unique|You provided a `(?:value|checked)` prop to a form field without an `onChange`|A component is changing an? (?:un)?controlled input)/
 const isReactMessage = (message: string): boolean =>
-  REACT_WARNING_PREFIX.test(message) || REACT_LINK.test(message)
+  REACT_WARNING_PREFIX.test(message) || REACT_LINK.test(message) || REACT_DOM_WARNING.test(message)
 const REACT_THROWN = /https:\/\/react\.dev\/errors\/|Minified React error #\d/
 
 /** A Solid 2.0 dev report: `[CODE] ...` plus the line naming its guide or repair skill. */

@@ -325,6 +325,16 @@ test("a nifra-prefixed session-store message is nifra's whatever the origin", ()
   ).toBe("NIFRA_SESSION_STORE_CONSISTENCY")
 })
 
+test("a stackless console report keeps its `Warning: ` prefix, so a prefix-only React warning stays a warning", () => {
+  const report = new Error("Warning: Something React printed without a link")
+  report.name = "Warning"
+  report.stack = `Warning: ${report.message}`
+  expect(buildDiagnostic(report, { read: reader })).toMatchObject({
+    code: "NIFRA_REACT_WARNING",
+    severity: "warning",
+  })
+})
+
 test("a thrown error is classified by its message, not the `Name: ` heading its stack adds", () => {
   const error = new Error("Undefined component passed to createElement()")
   error.stack = `Error: Undefined component passed to createElement()\n    at render (/app/src/a.tsx:3:5)`

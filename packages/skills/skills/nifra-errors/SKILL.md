@@ -617,7 +617,7 @@ Docs: https://nifra.dev/docs/errors#library-resolution
 
 **Cause:** A feature was used without its opt-in runtime installed: WebSocket routes, server-sent events, MCP declarations or the Node-direct renderer ship as separate plugins so apps that do not use them stay small.
 
-**Fix:** The message names the plugin. Add the `.use(...)` it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) before declaring the routes that need it, on the parent app when the routes are mounted from a child.
+**Fix:** The message names the plugin. Add the `.use(...)` it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) on the app that declares the routes, before those routes are declared. A child app that declares its own routes needs its own `.use(...)`; for WebSocket routes mounted from a child, install it where the message says (the parent or the child).
 
 Docs: https://nifra.dev/docs/errors#runtime-missing
 
@@ -1438,4 +1438,4 @@ Docs: https://nifra.dev/docs/websockets
 ## Verify
 
 - A `nifra check` finding (`NF-...`): re-run `nifra check`; the fix is done when the code is gone from its output.
-- A runtime or build error (`NIFRA_...`): reproduce the failing action or build, then read `nifra errors`; the fix is done when the code no longer appears there. `nifra check` does not reproduce runtime failures.
+- A runtime or build error (`NIFRA_...`): reproduce the failing action or build, then read `nifra errors`; the fix is done when no entry for the code remains that is not marked `stale`. A `stale` entry predates the last file change, so reproduce the action again to confirm the error does not return. `nifra check` does not reproduce runtime failures.

@@ -311,7 +311,7 @@ function remapFrames(
 export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = {}): Diagnostic {
   const error = err instanceof Error ? err : new Error(String(err))
   const root = options.root ?? safeCwd()
-  const { message } = messageAndStack(error)
+  const { message, stack } = messageAndStack(error)
   const frames = remapFrames(parseFrames(error.stack ?? ""), options.remap)
   const top = topUserFrame(frames, root)
   // The gate sees the path that will be read: a frame's text can come from a browser.
@@ -325,11 +325,12 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
     source !== undefined && top?.line !== undefined && (options.showSource?.(source) ?? true)
       ? buildCodeframe(source, top.line, top.column, options.read)
       : undefined
-  // The stack's first line is "Name: message"; the catalog's anchored patterns match the bare message.
+  // A framed stack's first line is "Name: message"; the catalog's anchored patterns match the bare
+  // message. A stackless error (a console report) keeps its message as written, `Warning: ` included.
   const heading = `${error.name}: `
   const { code, cause, fix, docsAnchor, fixOptions, severity } = classify(
     error.name || "Error",
-    message.startsWith(heading) ? message.slice(heading.length) : message,
+    stack !== "" && message.startsWith(heading) ? message.slice(heading.length) : message,
     thrownByNifra(frames),
   )
   return {

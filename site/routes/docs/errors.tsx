@@ -613,7 +613,7 @@ export default function Errors() {
       <h3 id="runtime-missing">NIFRA_RUNTIME_MISSING</h3>
       <p>A feature was used without its opt-in runtime installed: WebSocket routes, server-sent events, MCP declarations or the Node-direct renderer ship as separate plugins so apps that do not use them stay small.</p>
       <p>
-        <strong>Fix:</strong> The message names the plugin. Add the <code>.use(...)</code> it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) before declaring the routes that need it, on the parent app when the routes are mounted from a child.
+        <strong>Fix:</strong> The message names the plugin. Add the <code>.use(...)</code> it shows (websocket() from @nifrajs/core/ws, the streaming runtime, mcp(), or nodeDirect() from @nifrajs/core/node-direct) on the app that declares the routes, before those routes are declared. A child app that declares its own routes needs its own <code>.use(...)</code>; for WebSocket routes mounted from a child, install it where the message says (the parent or the child).
       </p>
       <FixPrompts code="NIFRA_RUNTIME_MISSING" />
 
