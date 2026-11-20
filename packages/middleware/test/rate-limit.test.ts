@@ -376,3 +376,22 @@ describe("MemoryStore production guard", () => {
     }
   })
 })
+
+type Window = { count: number; resetAt: number }
+
+describe("MemoryStore incremental sweep", () => {
+  test("expired windows are reclaimed a bounded slice per hit, never in one pass", async () => {
+    const store = new MemoryStore({ sweepIntervalMs: 0 })
+    // biome-ignore lint/plugin/noChainedTypeAssertions: test-only look at the private window map
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: MemoryStore keeps its windows in exactly this map
+    const windows = (store as unknown as { windows: Map<string, Window> }).windows
+    const past = Date.now() - 1
+    for (let i = 0; i < 300; i++) windows.set(`old${i}`, { count: 1, resetAt: past })
+    await store.hit("live0", 60_000)
+    expect(windows.size).toBeGreaterThan(200)
+    expect(windows.size).toBeLessThan(300)
+    for (let i = 1; i < 8; i++) await store.hit(`live${i}`, 60_000)
+    expect([...windows.keys()].filter((key) => key.startsWith("old"))).toEqual([])
+    expect(windows.size).toBe(8)
+  })
+})

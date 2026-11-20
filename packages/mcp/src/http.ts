@@ -288,7 +288,7 @@ function eventStreamResponse(
     }
   }
 
-  const write = (frame: string): void => {
+  const writeBytes = (bytes: Uint8Array): void => {
     if (closed) return
     // The queue only shrinks as the runtime writes to the socket, so a backlog past the cap is a
     // client that stopped reading. Erroring the body releases the queue; finishing cancels the call.
@@ -301,7 +301,7 @@ function eventStreamResponse(
       return
     }
     try {
-      controller?.enqueue(TEXT_ENCODER.encode(frame))
+      controller?.enqueue(bytes)
     } catch {
       finish(false)
     }
@@ -311,18 +311,29 @@ function eventStreamResponse(
     signal: abortController.signal,
     closed: closedPromise,
     send(message) {
-      const encoded = encodeJson(message, maxFrameBytes)
       const id = "id" in message ? message.id : null
-      const payload = encoded ?? JSON.stringify(rpcError(id ?? null, -32000, "response too large"))
-      const frame = `data: ${payload}\n\n`
-      write(
-        TEXT_ENCODER.encode(frame).byteLength <= maxFrameBytes
-          ? frame
-          : `data: ${JSON.stringify(rpcError(id ?? null, -32000, "response too large"))}\n\n`,
+      let payload: string | undefined
+      try {
+        const serialized = JSON.stringify(message)
+        if (typeof serialized === "string") payload = serialized
+      } catch {
+        payload = undefined
+      }
+      if (payload !== undefined) {
+        const frameBytes = TEXT_ENCODER.encode(`data: ${payload}\n\n`)
+        if (frameBytes.byteLength <= maxFrameBytes) {
+          writeBytes(frameBytes)
+          return
+        }
+      }
+      writeBytes(
+        TEXT_ENCODER.encode(
+          `data: ${JSON.stringify(rpcError(id ?? null, -32000, "response too large"))}\n\n`,
+        ),
       )
     },
     comment(value = "") {
-      write(`: ${value.replace(/[\r\n]/g, "")}\n\n`)
+      writeBytes(TEXT_ENCODER.encode(`: ${value.replace(/[\r\n]/g, "")}\n\n`))
     },
     close() {
       finish(true)
@@ -419,9 +430,20 @@ function encodeJson(value: unknown, maxBytes: number): string | undefined {
   }
 }
 
-function boundedResponse(response: JsonRpcResponse, maxBytes: number): JsonRpcResponse {
-  if (encodeJson(response, maxBytes) !== undefined) return response
-  return rpcError(response.id, -32000, "response too large")
+function boundedJsonResponse(
+  response: JsonRpcResponse,
+  maxBytes: number,
+  status: number,
+  headers: Record<string, string>,
+): Response {
+  const encoded = encodeJson(response, maxBytes)
+  if (encoded !== undefined) {
+    return new Response(encoded, {
+      status,
+      headers: { "content-type": "application/json; charset=utf-8", ...headers },
+    })
+  }
+  return Response.json(rpcError(response.id, -32000, "response too large"), { status, headers })
 }
 
 const SENTINEL_PREFIX = "=?base64?"
@@ -622,5 +644,5 @@ export async function respondMcpHttp(
   if (response === null) return new Response(null, { status: 202, headers })
   // Modern requests carry spec HTTP statuses (400 version/header, 404 unknown method); legacy stays 200.
   const status = bodyVersion !== undefined ? modernErrorStatus(response) : 200
-  return Response.json(boundedResponse(response, maxResponseBytes), { status, headers })
+  return boundedJsonResponse(response, maxResponseBytes, status, headers)
 }

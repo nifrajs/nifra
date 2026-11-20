@@ -266,6 +266,10 @@ function isKeptResponseHeader(
  * decision - the one place that may preserve inbound `x-forwarded-for` - cannot diverge between lanes.
  * Host is intentionally absent: only the fixed `forwardedHost` option may emit it.
  */
+function protocolOfUrl(url: string): string {
+  return url.slice(0, url.indexOf(":")).toLowerCase()
+}
+
 function forwardedClientHeaders(
   priorXff: string | null,
   requestUrl: string,
@@ -274,7 +278,7 @@ function forwardedClientHeaders(
 ): Array<[string, string]> {
   return [
     ["x-forwarded-for", trustInbound && priorXff !== null ? `${priorXff}, ${clientIp}` : clientIp],
-    ["x-forwarded-proto", new URL(requestUrl).protocol.slice(0, -1)],
+    ["x-forwarded-proto", protocolOfUrl(requestUrl)],
   ]
 }
 
@@ -671,6 +675,8 @@ function nativeResponseOpen(response: NodeNativeProxyResponse): boolean {
   )
 }
 
+const PROXY_ENCODER = new TextEncoder()
+
 function nativeFlatError(
   response: NodeNativeProxyResponse,
   statusCode: number,
@@ -679,7 +685,7 @@ function nativeFlatError(
   if (!nativeResponseOpen(response)) return
   const body = JSON.stringify({ ok: false, error })
   response.setHeader("content-type", "application/json")
-  response.setHeader("content-length", String(new TextEncoder().encode(body).byteLength))
+  response.setHeader("content-length", String(PROXY_ENCODER.encode(body).byteLength))
   response.writeHead(statusCode)
   response.end(body)
 }

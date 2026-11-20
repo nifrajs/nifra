@@ -183,6 +183,7 @@ export class MemoryCacheStore implements CacheStore {
   >()
   private readonly max: number
   private readonly tagEpoch = new Map<string, string>()
+  private readonly tagIndex = new Map<string, Set<string>>()
   // Purge order: `fence` reads it; each purge advances it and records where, per key and per tag.
   private order = 0
   private readonly purgedKeys = new Map<string, number>()
@@ -211,8 +212,7 @@ export class MemoryCacheStore implements CacheStore {
     if (row !== undefined) {
       for (const [tag, epoch] of Object.entries(row.tagEpochs)) {
         if ((this.tagEpoch.get(tag) ?? "0") !== epoch) {
-          this.cache.delete(key)
-          this.pruneTagEpochs()
+          this.evict(key)
           return Promise.resolve(undefined)
         }
       }
@@ -243,21 +243,27 @@ export class MemoryCacheStore implements CacheStore {
       return Promise.resolve()
     const tagEpochs: Record<string, string> = {}
     for (const tag of tags) tagEpochs[tag] = this.tagEpoch.get(tag) ?? "0"
-    this.cache.delete(key) // re-insert at the tail so Map order tracks recency (with get) for the LRU evict
+    this.evict(key) // unlink prior tags before re-inserting at the tail for LRU order
     this.cache.set(key, { value: tags.length === 0 ? value : { ...value, tags }, tagEpochs })
+    for (const tag of tags) {
+      let keys = this.tagIndex.get(tag)
+      if (keys === undefined) {
+        keys = new Set()
+        this.tagIndex.set(tag, keys)
+      }
+      keys.add(key)
+    }
     while (this.cache.size > this.max) {
       const oldest = this.cache.keys().next().value
       if (oldest === undefined) break
-      this.cache.delete(oldest)
+      this.evict(oldest)
     }
-    this.pruneTagEpochs()
     return Promise.resolve()
   }
 
   delete(key: string): Promise<void> {
-    this.cache.delete(key)
+    this.evict(key)
     this.markPurged(this.purgedKeys, key)
-    this.pruneTagEpochs()
     return Promise.resolve()
   }
 
@@ -265,13 +271,28 @@ export class MemoryCacheStore implements CacheStore {
     normalizeTag(tag)
     this.tagEpoch.set(tag, crypto.randomUUID())
     this.markPurged(this.purgedTags, tag)
-    // This store is bounded and local, so eagerly remove matching rows. It keeps invalidation
-    // immediate and lets us discard epoch keys that no retained entry references anymore.
-    for (const [key, row] of this.cache) {
-      if (Object.hasOwn(row.tagEpochs, tag)) this.cache.delete(key)
+    // Reverse index makes tag invalidation O(matching keys) and prunes unused epochs in O(1).
+    const keys = this.tagIndex.get(tag)
+    if (keys !== undefined) {
+      for (const key of [...keys]) this.evict(key)
     }
-    this.pruneTagEpochs()
+    if (!this.tagIndex.has(tag)) this.tagEpoch.delete(tag)
     return Promise.resolve()
+  }
+
+  private evict(key: string): void {
+    const row = this.cache.get(key)
+    if (row === undefined) return
+    this.cache.delete(key)
+    for (const tag of Object.keys(row.tagEpochs)) {
+      const keys = this.tagIndex.get(tag)
+      if (keys === undefined) continue
+      keys.delete(key)
+      if (keys.size === 0) {
+        this.tagIndex.delete(tag)
+        this.tagEpoch.delete(tag)
+      }
+    }
   }
 
   private purgedAfter(key: string, tags: readonly string[], fence: number): boolean {
@@ -288,17 +309,6 @@ export class MemoryCacheStore implements CacheStore {
       if (oldest === undefined) break
       marks.delete(oldest[0])
       this.purgeFloor = Math.max(this.purgeFloor, oldest[1])
-    }
-  }
-
-  private pruneTagEpochs(): void {
-    if (this.tagEpoch.size === 0) return
-    const used = new Set<string>()
-    for (const row of this.cache.values()) {
-      for (const tag of Object.keys(row.tagEpochs)) used.add(tag)
-    }
-    for (const tag of this.tagEpoch.keys()) {
-      if (!used.has(tag)) this.tagEpoch.delete(tag)
     }
   }
 }

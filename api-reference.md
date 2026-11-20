@@ -2141,7 +2141,6 @@ Every public export of every package and documented subpath - name, kind, signat
 - **defineChannel** _(function)_ - `defineChannel: <Name extends string, Message>(name: Name) => ChannelContract<Name, Message>`
   Define a typed channel name. Message types are erased; adapters own validation at their boundary.
 - **memoryChannelHub** _(function)_ - `memoryChannelHub: (options?: MemoryChannelHubOptions) => ChannelHub`
-  A bounded in-memory hub suitable for tests and local development, never for durable fan-out.
 
 ### `@nifrajs/core/classification`
 
@@ -4604,8 +4603,7 @@ _No named exports (side-effect entrypoint)._
 - **createAdmissionController** _(function)_ - `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
   Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.
 - **createCsrfToken** _(function)_ - `createCsrfToken: (secret: CsrfSecret, nonce?: string) => Promise<string>`
-- **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
-  Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. A read retur…
+- **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => EventLoopLagSampler`
 - **csrf** _(function)_ - `csrf: (options: CsrfOptions) => Middleware`
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and in a header (or, for a plain HTML form, the {@link CsrfOptions.field} form field), and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **durableCommand** _(function)_ - `durableCommand: (options: DurableCommandOptions) => IdentityPlugin`

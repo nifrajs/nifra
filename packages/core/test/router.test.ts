@@ -399,3 +399,30 @@ describe("Router.add - boot-time rejection (L2)", () => {
     }).not.toThrow()
   })
 })
+
+describe("dynamic match cache admission", () => {
+  test("interleaved hot paths, a flood of one-off paths and an oversize path all match correctly", () => {
+    const r = router()
+    r.add("GET", "/users/:id", "user")
+    const expectUser = (id: string) =>
+      expect(r.find("GET", `/users/${id}`)).toEqual({
+        found: true,
+        payload: "user",
+        params: { id },
+      })
+    for (let round = 0; round < 3; round++) {
+      expectUser("1")
+      expectUser("2")
+    }
+    // More one-off paths than the pending window holds, so the oldest candidates are dropped.
+    for (let i = 0; i < 600; i++) expectUser(`cold${i}`)
+    for (let round = 0; round < 3; round++) {
+      expectUser("1")
+      expectUser("2")
+    }
+    // Longer than a candidate path may be: matched every time, never remembered.
+    const long = "x".repeat(300_000)
+    expectUser(long)
+    expectUser(long)
+  })
+})

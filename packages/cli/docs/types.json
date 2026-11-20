@@ -4348,7 +4348,7 @@
     "name": "CorsOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface CorsOptions {\n    /** Allowed origin(s): `\"*\"`, an exact origin, a list, or a predicate. Default `\"*\"`. A named origin\n     * is also trusted to post a form or a bodyless unsafe request to the server, as if it were in the\n     * server's `formOrigins`; `\"*\"` adds nothing. */\n    readonly origin?: string | ReadonlyArray<string> | ((origin: string) => boolean);\n    /** Methods advertised in the preflight response. Default the common verbs. */\n    readonly methods?: ReadonlyArray<string>;\n    /** Headers allowed on the actual request. Default: reflect the preflight's requested headers. */\n    readonly allowedHeaders?: ReadonlyArray<string>;\n    /** Response headers exposed to the browser. */\n    readonly exposedHeaders?: ReadonlyArray<string>;\n    /** Allow credentials (cookies / `Authorization`). Cannot be combined with `origin: \"*\"`. Default false. */\n    readonly credentials?: boolean;\n    /** Preflight cache duration, in seconds. */\n    readonly maxAge?: number;\n}"
+    "signature": "export interface CorsOptions {\n    /** Allowed origin(s): `\"*\"`, an exact origin, a list, or a predicate. Default `\"*\"`. A named origin\n     * is also trusted to post a form or a bodyless unsafe request to the server, as if it were in the\n     * server's `formOrigins`; `\"*\"` adds nothing. A predicate runs for a preflight and again when the\n     * response headers are added, so keep it free of side effects. */\n    readonly origin?: string | ReadonlyArray<string> | ((origin: string) => boolean);\n    /** Methods advertised in the preflight response. Default the common verbs. */\n    readonly methods?: ReadonlyArray<string>;\n    /** Headers allowed on the actual request. Default: reflect the preflight's requested headers. */\n    readonly allowedHeaders?: ReadonlyArray<string>;\n    /** Response headers exposed to the browser. */\n    readonly exposedHeaders?: ReadonlyArray<string>;\n    /** Allow credentials (cookies / `Authorization`). Cannot be combined with `origin: \"*\"`. Default false. */\n    readonly credentials?: boolean;\n    /** Preflight cache duration, in seconds. */\n    readonly maxAge?: number;\n}"
   },
   {
     "name": "Counter",
@@ -9792,7 +9792,7 @@
     "name": "MemoryCacheStore",
     "kind": "class",
     "package": "@nifrajs/web",
-    "signature": "export declare class MemoryCacheStore implements CacheStore {\n    private readonly cache;\n    private readonly max;\n    private readonly tagEpoch;\n    private order;\n    private readonly purgedKeys;\n    private readonly purgedTags;\n    private purgeFloor;\n    constructor(options?: MemoryCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    fence(): number;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n    invalidateTag(tag: string): Promise<void>;\n    private purgedAfter;\n    private markPurged;\n    private pruneTagEpochs;\n}",
+    "signature": "export declare class MemoryCacheStore implements CacheStore {\n    private readonly cache;\n    private readonly max;\n    private readonly tagEpoch;\n    private readonly tagIndex;\n    private order;\n    private readonly purgedKeys;\n    private readonly purgedTags;\n    private purgeFloor;\n    constructor(options?: MemoryCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    fence(): number;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n    invalidateTag(tag: string): Promise<void>;\n    private evict;\n    private purgedAfter;\n    private markPurged;\n}",
     "doc": "/**\n * In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the\n * rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a\n * read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read\n * page survives a burst of new pages).\n */"
   },
   {
@@ -9811,7 +9811,7 @@
     "name": "MemoryChannelHubOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface MemoryChannelHubOptions {\n    /** Default queue bound per subscriber. Default 64. */\n    readonly maxQueue?: number;\n    /** Maximum events retained per channel for local cursor replay. Default: the queue bound. */\n    readonly historySize?: number;\n}"
+    "signature": "export interface MemoryChannelHubOptions {\n    /** Default queue bound per subscriber. Default 64. */\n    readonly maxQueue?: number;\n    /** Maximum events retained per channel for local cursor replay. Default: the queue bound. */\n    readonly historySize?: number;\n    /** Maximum inactive channels retained in sequence/history maps before evicting oldest. Default 4096. */\n    readonly maxChannels?: number;\n}"
   },
   {
     "name": "MemoryCompactedView",
@@ -9907,13 +9907,13 @@
     "name": "MemoryResponseCache",
     "kind": "class",
     "package": "@nifrajs/middleware",
-    "signature": "export declare class MemoryResponseCache implements ResponseCacheStore {\n    private readonly entries;\n    private readonly maxEntries;\n    constructor(options?: MemoryResponseCacheOptions);\n    get(key: string): CachedResponse | undefined;\n    set(key: string, response: CachedResponse): void;\n    delete(key: string): void;\n}"
+    "signature": "export declare class MemoryResponseCache implements ResponseCacheStore {\n    private readonly entries;\n    private readonly maxEntries;\n    private readonly maxTotalBytes;\n    private totalBytes;\n    constructor(options?: MemoryResponseCacheOptions);\n    get(key: string): CachedResponse | undefined;\n    set(key: string, response: CachedResponse): void;\n    delete(key: string): void;\n}"
   },
   {
     "name": "MemoryResponseCacheOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface MemoryResponseCacheOptions {\n    /** Maximum entries retained. Default `1000`. Oldest entries are evicted first. */\n    readonly maxEntries?: number;\n    /** Allow in-process cache in production. Off by default because it is per-instance. */\n    readonly allowInProduction?: boolean;\n}"
+    "signature": "export interface MemoryResponseCacheOptions {\n    /** Maximum entries retained. Default `1000`. Least-recently-used entries are evicted first. */\n    readonly maxEntries?: number;\n    /** Maximum total cached body bytes retained in memory. Default `64 * 1024 * 1024` (64 MiB). */\n    readonly maxTotalBytes?: number;\n    /** Allow in-process cache in production. Off by default because it is per-instance. */\n    readonly allowInProduction?: boolean;\n}"
   },
   {
     "name": "MemorySagaStore",
@@ -9950,7 +9950,7 @@
     "name": "MemoryStore",
     "kind": "class",
     "package": "@nifrajs/middleware",
-    "signature": "export declare class MemoryStore implements RateLimitStore {\n    private readonly windows;\n    private scan;\n    private readonly maxKeys;\n    private readonly sweepIntervalMs;\n    private lastSweep;\n    private evictionScans;\n    /** Cumulative entries inspected by the eviction scan since construction - an eviction-pressure\n     * gauge. The bounded scan keeps this ~O(1) per over-cap insert (≤ {@link MAX_EVICTION_SCAN}); a\n     * regressed full O(n) sweep would make it ~maxKeys per insert (what the regression test asserts). */\n    get evictionScanCount(): number;\n    constructor(options?: MemoryStoreOptions);\n    hit(key: string, windowMs: number): Promise<RateLimitResult>;\n    private sweepExpired;\n    private reclaimExpired;\n}",
+    "signature": "export declare class MemoryStore implements RateLimitStore {\n    private readonly windows;\n    private scan;\n    private sweepScan;\n    private readonly maxKeys;\n    private readonly sweepIntervalMs;\n    private lastSweep;\n    private evictionScans;\n    /** Cumulative entries inspected by the eviction scan since construction - an eviction-pressure\n     * gauge. The bounded scan keeps this ~O(1) per over-cap insert (≤ {@link MAX_EVICTION_SCAN}); a\n     * regressed full O(n) sweep would make it ~maxKeys per insert (what the regression test asserts). */\n    get evictionScanCount(): number;\n    constructor(options?: MemoryStoreOptions);\n    hit(key: string, windowMs: number): Promise<RateLimitResult>;\n    private stepSweep;\n    private reclaimExpired;\n}",
     "doc": "/**\n * In-process fixed-window store. Refuses to run in production unless explicitly allowed.\n *\n * Bounded against unbounded growth: expired windows are swept lazily (amortized, at most once per\n * `sweepIntervalMs`) and the key set is hard-capped at `maxKeys` (expired keys are evicted first,\n * then new keys are refused without resetting live quotas).\n * Without this, expired entries for keys never seen again - and the unbounded key space of a bot scan\n * - would accumulate in the map forever and OOM a single-instance deploy.\n */"
   },
   {
@@ -20163,8 +20163,7 @@
     "name": "createEventLoopLagSampler",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function createEventLoopLagSampler(resolutionMs?: number, monitor?: LoopDelayMonitor): () => number;",
-    "doc": "/**\n * Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so\n * it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An\n * injected histogram remains available for deterministic tests or a runtime-native monitor. A read\n * returns the mean lag of the samples taken since the previous read and starts a new window; a read\n * with no new sample since then returns the same value again, so every request that arrives between\n * two samples of a lagging loop sees the lag.\n */"
+    "signature": "export declare function createEventLoopLagSampler(resolutionMs?: number, monitor?: LoopDelayMonitor): EventLoopLagSampler;"
   },
   {
     "name": "createEventRegistry",
@@ -23087,8 +23086,7 @@
     "name": "memoryChannelHub",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function memoryChannelHub(options?: MemoryChannelHubOptions): ChannelHub;",
-    "doc": "/** A bounded in-memory hub suitable for tests and local development, never for durable fan-out. */"
+    "signature": "export declare function memoryChannelHub(options?: MemoryChannelHubOptions): ChannelHub;"
   },
   {
     "name": "mergeHeads",

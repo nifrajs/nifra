@@ -268,6 +268,8 @@ function quoted(hash: ContentHash): string {
   return `"${hash.digest("base64url").slice(0, 22)}"`
 }
 
+const STAT_ENCODER = new TextEncoder()
+
 /** Tags from `createHash` - node:crypto's, which every runtime nifra serves files on provides. */
 export function contentTags(
   createHash: (algorithm: "sha256") => ContentHash,
@@ -344,7 +346,7 @@ export function contentTags(
         // Filesystem identities are local: another host may reuse every one of these stat fields.
         instance ??= crypto.getRandomValues(new Uint8Array(16))
         hash.update(instance)
-        hash.update(new TextEncoder().encode(`${dev}:${ino}:${size}:${mtimeMs}:${ctimeMs}`))
+        hash.update(STAT_ENCODER.encode(`${dev}:${ino}:${size}:${mtimeMs}:${ctimeMs}`))
         return quoted(hash)
       }
       const pending = reading.get(path)

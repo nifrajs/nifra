@@ -7,7 +7,8 @@ const BUN_NATIVE_REQUEST_SAFE = Symbol.for("@nifrajs/core/bun-native-request-saf
 export interface CorsOptions {
   /** Allowed origin(s): `"*"`, an exact origin, a list, or a predicate. Default `"*"`. A named origin
    * is also trusted to post a form or a bodyless unsafe request to the server, as if it were in the
-   * server's `formOrigins`; `"*"` adds nothing. */
+   * server's `formOrigins`; `"*"` adds nothing. A predicate runs for a preflight and again when the
+   * response headers are added, so keep it free of side effects. */
   readonly origin?: string | ReadonlyArray<string> | ((origin: string) => boolean)
   /** Methods advertised in the preflight response. Default the common verbs. */
   readonly methods?: ReadonlyArray<string>
@@ -32,15 +33,30 @@ const DEFAULT_METHODS: ReadonlyArray<string> = [
   "QUERY",
 ]
 
+const HEADER_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+
+function sanitizeRequestedHeaders(raw: string | null): string | null {
+  if (raw === null || raw.length === 0 || raw.length > 4096) return null
+  const valid: string[] = []
+  for (const part of raw.split(",")) {
+    const name = part.trim()
+    if (name === "") continue
+    if (!HEADER_TOKEN.test(name)) return null
+    valid.push(name)
+  }
+  return valid.length > 0 ? valid.join(", ") : null
+}
+
 /** Resolve the `Access-Control-Allow-Origin` value for a request, or `null` to omit it. */
 function resolveAllowOrigin(
   option: NonNullable<CorsOptions["origin"]>,
+  allowedSet: ReadonlySet<string> | undefined,
   requestOrigin: string | null,
 ): string | null {
   if (option === "*") return "*"
   if (requestOrigin === null) return null
+  if (allowedSet !== undefined) return allowedSet.has(requestOrigin) ? requestOrigin : null
   if (typeof option === "function") return option(requestOrigin) ? requestOrigin : null
-  if (Array.isArray(option)) return option.includes(requestOrigin) ? requestOrigin : null
   return option === requestOrigin ? requestOrigin : null
 }
 
@@ -85,6 +101,9 @@ export function cors(options: CorsOptions = {}): Middleware {
       'cors: `credentials: true` cannot be combined with `origin: "*"` - list explicit origin(s).',
     )
   }
+  const allowedOriginSet: ReadonlySet<string> | undefined = Array.isArray(origin)
+    ? new Set(origin)
+    : undefined
   const methods = (options.methods ?? DEFAULT_METHODS).join(", ")
   const allowedHeaders = options.allowedHeaders?.join(", ")
   const exposedHeaders = options.exposedHeaders?.join(", ")
@@ -97,10 +116,14 @@ export function cors(options: CorsOptions = {}): Middleware {
         req.method === "OPTIONS" && req.headers.has("access-control-request-method")
       if (!isPreflight) return undefined
       const headers = new Headers()
-      headers.set("Access-Control-Allow-Methods", methods)
-      const requested = allowedHeaders ?? req.headers.get("access-control-request-headers")
-      if (requested) headers.set("Access-Control-Allow-Headers", requested)
-      if (maxAge !== undefined) headers.set("Access-Control-Max-Age", String(maxAge))
+      if (resolveAllowOrigin(origin, allowedOriginSet, req.headers.get("origin")) !== null) {
+        headers.set("Access-Control-Allow-Methods", methods)
+        const requested =
+          allowedHeaders ??
+          sanitizeRequestedHeaders(req.headers.get("access-control-request-headers"))
+        if (requested) headers.set("Access-Control-Allow-Headers", requested)
+        if (maxAge !== undefined) headers.set("Access-Control-Max-Age", String(maxAge))
+      }
       // Allow-Origin / Allow-Credentials are added by onResponseHeaders (runs on every response).
       return new Response(null, { status: 204, headers })
     },
@@ -108,12 +131,14 @@ export function cors(options: CorsOptions = {}): Middleware {
       const isPreflight =
         req.method === "OPTIONS" && req.header("access-control-request-method") !== null
       if (!isPreflight) return undefined
-      const headers: Record<string, string> = {
-        "Access-Control-Allow-Methods": methods,
+      const headers: Record<string, string> = {}
+      if (resolveAllowOrigin(origin, allowedOriginSet, req.header("origin")) !== null) {
+        headers["Access-Control-Allow-Methods"] = methods
+        const requested =
+          allowedHeaders ?? sanitizeRequestedHeaders(req.header("access-control-request-headers"))
+        if (requested) headers["Access-Control-Allow-Headers"] = requested
+        if (maxAge !== undefined) headers["Access-Control-Max-Age"] = String(maxAge)
       }
-      const requested = allowedHeaders ?? req.header("access-control-request-headers")
-      if (requested) headers["Access-Control-Allow-Headers"] = requested
-      if (maxAge !== undefined) headers["Access-Control-Max-Age"] = String(maxAge)
       return new Response(null, { status: 204, headers })
     },
     onResponseHeaders(headers, req) {
@@ -123,7 +148,7 @@ export function cors(options: CorsOptions = {}): Middleware {
       if (origin !== "*") {
         headers.set("vary", varyOnOrigin(headers.get("vary")))
       }
-      const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
+      const allowOrigin = resolveAllowOrigin(origin, allowedOriginSet, req.header("origin"))
       if (allowOrigin === null) return
       headers.set("access-control-allow-origin", allowOrigin)
       if (credentials) headers.set("access-control-allow-credentials", "true")
@@ -134,7 +159,7 @@ export function cors(options: CorsOptions = {}): Middleware {
         const vary = nodeHeader(response.headers, "vary", response.headersAreLowercase)
         setNodeHeader(response, "vary", varyOnOrigin(vary))
       }
-      const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
+      const allowOrigin = resolveAllowOrigin(origin, allowedOriginSet, req.header("origin"))
       if (allowOrigin === null) return
       setNodeHeader(response, "access-control-allow-origin", allowOrigin)
       if (credentials) setNodeHeader(response, "access-control-allow-credentials", "true")
@@ -148,8 +173,9 @@ export function cors(options: CorsOptions = {}): Middleware {
     const trusted =
       typeof origin === "function"
         ? origin
-        : (candidate: string) =>
-            Array.isArray(origin) ? origin.includes(candidate) : origin === candidate
+        : allowedOriginSet !== undefined
+          ? (candidate: string) => allowedOriginSet.has(candidate)
+          : (candidate: string) => origin === candidate
     Object.defineProperty(middleware, TRUSTED_ORIGINS, { value: trusted })
   }
   return middleware

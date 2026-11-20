@@ -367,3 +367,69 @@ describe("otlpExporter", () => {
     expect(exports).toBe(1)
   })
 })
+
+describe("otlpExporter queue and fetch failures", () => {
+  type Exported = {
+    resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ name: string }> }> }>
+  }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: recordingFetch parses the body the exporter just serialized, which has this shape
+  const exported = (body: unknown): Exported => body as Exported
+  const spanNames = (calls: ReturnType<typeof recordingFetch>["calls"]): string[] =>
+    calls.flatMap(
+      (call) => exported(call.body).resourceSpans[0]?.scopeSpans[0]?.spans.map((s) => s.name) ?? [],
+    )
+
+  test("a fetch that throws synchronously is reported and leaves no rejection unhandled", async () => {
+    const errors: unknown[] = []
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on("unhandledRejection", onUnhandled)
+    try {
+      const exp = otlpExporter({
+        url: "http://collector/v1/traces",
+        timeoutMs: 1,
+        fetch: () => {
+          throw new Error("sync boom")
+        },
+        onError: (error) => errors.push(error),
+      })
+      exp.onEnd(span())
+      await exp.flush()
+      // A deadline timer left running would reject after its 1 ms; give it the chance to.
+      await Bun.sleep(10)
+      expect(errors.map(String)).toEqual(["Error: sync boom"])
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
+  })
+
+  test("batches leave the queue in arrival order across many batches", async () => {
+    const { calls, fetch } = recordingFetch()
+    const exp = otlpExporter({
+      url: "http://collector/v1/traces",
+      fetch,
+      batch: { maxBatch: 3, maxQueue: 1000 },
+    })
+    for (let i = 0; i < 300; i++) exp.onEnd(span({ name: `s${i}` }))
+    await exp.flush()
+    expect(spanNames(calls)).toEqual(Array.from({ length: 300 }, (_, i) => `s${i}`))
+  })
+
+  test("past the cap the oldest spans are dropped and the newest keep their order", async () => {
+    const { calls, fetch } = recordingFetch()
+    const errors: unknown[] = []
+    const exp = otlpExporter({
+      url: "http://collector/v1/traces",
+      fetch,
+      batch: { maxBatch: 1000, maxQueue: 100 },
+      onError: (error) => errors.push(error),
+    })
+    for (let i = 0; i < 300; i++) exp.onEnd(span({ name: `s${i}` }))
+    await exp.flush()
+    expect(spanNames(calls)).toEqual(Array.from({ length: 100 }, (_, i) => `s${i + 200}`))
+    expect(errors).toHaveLength(200)
+  })
+})

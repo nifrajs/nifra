@@ -33,15 +33,53 @@ export function createAgentEvidenceStream(
   if (!Number.isSafeInteger(maxQueueSize) || maxQueueSize < 1)
     throw new RangeError("agent evidence stream: maxQueueSize must be a positive safe integer")
 
-  const queue: AgentStepEvidence[] = []
-  const waiters: Array<(result: IteratorResult<AgentStepEvidence>) => void> = []
+  let queue: (AgentStepEvidence | undefined)[] = []
+  let queueHead = 0
+  let queueSize = 0
+  let waiters: (((result: IteratorResult<AgentStepEvidence>) => void) | undefined)[] = []
+  let waitersHead = 0
   let completed = false
   let dropped = 0
   let onReturn = options.onReturn
 
+  const shiftQueue = (): AgentStepEvidence | undefined => {
+    if (queueSize === 0) return undefined
+    const item = queue[queueHead]
+    queue[queueHead] = undefined
+    queueHead++
+    queueSize--
+    if (queueSize === 0) {
+      queue.length = 0
+      queueHead = 0
+    } else if (queueHead >= 64 && queueHead * 2 >= queue.length) {
+      queue = queue.slice(queueHead)
+      queueHead = 0
+    }
+    return item
+  }
+
+  const shiftWaiter = (): ((result: IteratorResult<AgentStepEvidence>) => void) | undefined => {
+    if (waitersHead >= waiters.length) return undefined
+    const waiter = waiters[waitersHead]
+    waiters[waitersHead] = undefined
+    waitersHead++
+    if (waitersHead >= waiters.length) {
+      waiters.length = 0
+      waitersHead = 0
+    } else if (waitersHead >= 64 && waitersHead * 2 >= waiters.length) {
+      waiters = waiters.slice(waitersHead)
+      waitersHead = 0
+    }
+    return waiter
+  }
+
   const finishWaiters = (): void => {
-    if (!completed || queue.length > 0) return
-    while (waiters.length > 0) waiters.shift()?.({ done: true, value: undefined })
+    if (!completed || queueSize > 0) return
+    for (let i = waitersHead; i < waiters.length; i++) {
+      waiters[i]?.({ done: true, value: undefined })
+    }
+    waiters.length = 0
+    waitersHead = 0
   }
 
   const stream: AgentEvidenceStream = {
@@ -50,7 +88,7 @@ export function createAgentEvidenceStream(
     },
     step(evidence) {
       if (completed) return
-      const waiter = waiters.shift()
+      const waiter = shiftWaiter()
       if (waiter !== undefined) {
         waiter({ done: false, value: evidence })
         return
@@ -58,24 +96,27 @@ export function createAgentEvidenceStream(
       // A consumer that stopped reading (a closed SSE connection is the common one) must never fail
       // the turn it is observing. The queue is a live view; the authoritative evidence is returned by
       // the runner either way, so the oldest item is discarded and counted instead of thrown.
-      if (queue.length >= maxQueueSize) {
-        queue.shift()
+      if (queueSize >= maxQueueSize) {
+        shiftQueue()
         dropped += 1
       }
       queue.push(evidence)
+      queueSize += 1
     },
     complete() {
       completed = true
       finishWaiters()
     },
     next() {
-      const evidence = queue.shift()
+      const evidence = shiftQueue()
       if (evidence !== undefined) return Promise.resolve({ done: false, value: evidence })
       if (completed) return Promise.resolve({ done: true, value: undefined })
       return new Promise<IteratorResult<AgentStepEvidence>>((resolve) => waiters.push(resolve))
     },
     return() {
       queue.length = 0
+      queueHead = 0
+      queueSize = 0
       completed = true
       finishWaiters()
       const notify = onReturn
