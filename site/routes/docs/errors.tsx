@@ -193,8 +193,9 @@ export default function Errors() {
           schema.
         </li>
         <li>
-          <code>component_denied</code> (403): the request was not same-origin. Call components from
-          your own pages.
+          <code>component_denied</code> (403): the request was not same-origin (call components from
+          your own pages), or the component's <code>authorize</code> callback refused it with a 401, 403
+          or 404.
         </li>
         <li>
           <code>component_version</code> (409): the browser's build differs from the server's, usually
@@ -219,6 +220,7 @@ export default function Errors() {
         <strong>Fix:</strong> fix the one thing the message names and rebuild. The build never ships a
         bundle it refused.
       </p>
+      <FixPrompts code="NIFRA_COMPONENT_BUILD" />
 
       <h2>Rendering and deployment</h2>
 
@@ -572,7 +574,7 @@ export default function Errors() {
       <h3 id="idempotency-store-corrupt">NIFRA_IDEMPOTENCY_STORE_CORRUPT</h3>
       <p>A stored idempotency record could not be replayed: its body or status is not in the form the middleware wrote.</p>
       <p>
-        <strong>Fix:</strong> Delete the record for that key. If it recurs, check that nothing else writes to the idempotency store and that the store does not alter values.
+        <strong>Fix:</strong> First confirm whether the original operation completed: deleting the record lets the next retry with that key run the handler again, which repeats any side effect already done (a charge, an email). Delete the record only once the operation is known not to have completed, or reconcile its effect by hand. If it recurs, check that nothing else writes to the idempotency store and that the store does not alter values.
       </p>
       <FixPrompts code="NIFRA_IDEMPOTENCY_STORE_CORRUPT" />
 

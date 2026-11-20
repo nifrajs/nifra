@@ -13096,8 +13096,9 @@ detail, so look on the server for the cause.
 schema.
 
 -
-`component_denied` (403): the request was not same-origin. Call components from
-your own pages.
+`component_denied` (403): the request was not same-origin (call components from
+your own pages), or the component's `authorize` callback refused it with a 401, 403
+or 404.
 
 -
 `component_version` (409): the browser's build differs from the server's, usually
@@ -13419,7 +13420,7 @@ bodyParser was given a media type nifra already handles (JSON, a form, multipart
 
 A stored idempotency record could not be replayed: its body or status is not in the form the middleware wrote.
 
-**Fix:** Delete the record for that key. If it recurs, check that nothing else writes to the idempotency store and that the store does not alter values.
+**Fix:** First confirm whether the original operation completed: deleting the record lets the next retry with that key run the handler again, which repeats any side effect already done (a charge, an email). Delete the record only once the operation is known not to have completed, or reconcile its effect by hand. If it recurs, check that nothing else writes to the idempotency store and that the store does not alter values.
 
 #### NIFRA_AUTHJS_REQUEST_FAILED
 

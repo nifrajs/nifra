@@ -162,6 +162,12 @@ if (import.meta.main) {
   const { total, excluded, uncoded } = scanUncoded()
   const counts = countByPackage(uncoded)
   if (process.argv.includes("--update")) {
+    const rose = regressions(counts, readBaseline())
+    if (rose.length > 0) {
+      console.error("✗ --update only lowers the baseline; give these throws a code instead:")
+      for (const line of rose) console.error(`  ${line}`)
+      process.exit(1)
+    }
     writeFileSync(BASELINE, `${JSON.stringify(counts, null, 2)}\n`)
     console.log(`recorded ${uncoded.length} uncoded of ${total} throw sites`)
   } else {

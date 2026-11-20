@@ -211,6 +211,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   {
     code: "NIFRA_HYDRATION_MISMATCH",
     match: (_n, m) => isHydrationMismatch(m),
+    severity: (m) => (/^(?:\[Vue warn\]|\[svelte\])/.test(m) ? "warning" : "error"),
     cause:
       "The browser rendered different markup than the server sent, so the framework discarded or patched the server HTML.",
     fix: "Look for values that differ between server and browser during render (Date.now(), Math.random(), locale formatting, window/localStorage reads, invalid HTML nesting). With happy-dom installed in the project, nifra_hydrate reproduces it with a stable diagnostic.",
@@ -320,7 +321,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
       },
       {
         label: "component_denied (403)",
-        fix: "The request was not same-origin: Sec-Fetch-Site was not same-origin, or Origin named another site. Call the component from your own pages, not from another origin or a script.",
+        fix: "Either the request was not same-origin (Sec-Fetch-Site was not same-origin, or Origin named another site: call the component from your own pages), or the component's authorize callback refused it (it threw a 401, 403 or 404): check that callback and the caller's credentials.",
       },
       {
         label: "component_version (409)",
@@ -412,7 +413,9 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
     code: "NIFRA_REACT_WARNING",
     match: (_n, m) => REACT_MESSAGE.test(m),
     console: true,
-    severity: (m) => (REACT_THROWN.test(m) ? "error" : "warning"),
+    // The dev feed names a console report "Warning". A thrown error (an invalid hook call links to
+    // react.dev/link too) and a react.dev/errors or minified message stay errors.
+    severity: (m, n) => (n === "Warning" && !REACT_THROWN.test(m) ? "warning" : "error"),
     cause:
       "React reported a mistake: a development warning that links to react.dev/link/..., or an error whose message links to react.dev/errors/... (a minified production error).",
     fix: "Open the link in the message for the cause and the repair, then fix the component React's trace names. A react.dev/errors message is a thrown error, not a warning.",
@@ -430,7 +433,8 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_MEMORY_STORE_IN_PRODUCTION",
-    match: (_n, m) => /\bis per-instance and (?:unsafe|can't dedupe)\b/.test(m),
+    match: (_n, m, fromNifra) =>
+      nifraOwned(m, fromNifra, /\bis per-instance and (?:unsafe|can't dedupe)\b/),
     cause:
       "An in-memory store (rate-limit MemoryStore, MemoryIdempotencyStore, MemoryResponseCache, MemorySessionStore) was created in production. Each instance keeps its own copy, so limits, de-duplication, cached responses or sessions differ per instance and are lost on restart.",
     fix: "Pass a shared store (for example Redis-backed), or pass { allowInProduction: true } when the app runs as a single instance.",
@@ -448,7 +452,8 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_CORS_CREDENTIALS_WILDCARD",
-    match: (_n, m) => m.includes("`credentials: true` cannot be combined with"),
+    match: (_n, m, fromNifra) =>
+      nifraOwned(m, fromNifra, /`credentials: true` cannot be combined with/),
     cause:
       'cors() was given `credentials: true` with `origin: "*"`. Browsers refuse a wildcard origin on a credentialed request, so the combination can never work.',
     fix: "List the explicit origin(s) that may send credentials instead of the wildcard.",
@@ -456,7 +461,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_SECRET_TOO_SHORT",
-    match: (_n, m) => /\bsecret must be at least \d+ bytes\b/.test(m),
+    match: (_n, m, fromNifra) => nifraOwned(m, fromNifra, /\bsecret must be at least \d+ bytes\b/),
     cause:
       "A signing secret is shorter than the 32 bytes (256 bits) nifra requires, so it is refused instead of used.",
     fix: "Generate one with `openssl rand -base64 32` and load it from the environment.",
@@ -464,7 +469,8 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_MIDDLEWARE_ORDER",
-    match: (_n, m) => m.includes("must be installed before the routes it protects"),
+    match: (_n, m, fromNifra) =>
+      nifraOwned(m, fromNifra, /must be installed before the routes it protects/),
     cause:
       "A middleware that protects routes was installed after the routes it should guard, so those routes were registered without it.",
     fix: "Call app.use(...) for it before registering the routes it protects.",
@@ -472,7 +478,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_CONTEXT_STORAGE_MISSING",
-    match: (_n, m) => m.startsWith("contextStorage: no active context"),
+    match: (_n, m, fromNifra) => nifraOwned(m, fromNifra, /^contextStorage: no active context/),
     cause:
       "getContext() ran outside a request that went through contextStorage(): the middleware was not installed before the route, or the code ran outside any request (a partially prerendered shell is built outside every request).",
     fix: "Add app.use(contextStorage()) before the route and call getContext() during that request. For a PPR shell, read the request in a dynamic boundary's loader instead.",
@@ -722,9 +728,9 @@ export function classify(
     fix: hit.fix,
     docsAnchor: hit.docsAnchor,
     fixOptions: hit.options,
-    severity: severityOf(hit, message) === "warning" ? "warning" : undefined,
+    severity: severityOf(hit, message, name) === "warning" ? "warning" : undefined,
   }
 }
 
-const severityOf = (entry: CatalogEntry, message: string): "error" | "warning" =>
-  typeof entry.severity === "function" ? entry.severity(message) : (entry.severity ?? "error")
+const severityOf = (entry: CatalogEntry, message: string, name: string): "error" | "warning" =>
+  typeof entry.severity === "function" ? entry.severity(message, name) : (entry.severity ?? "error")

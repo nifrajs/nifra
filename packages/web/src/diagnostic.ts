@@ -325,9 +325,11 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
     source !== undefined && top?.line !== undefined && (options.showSource?.(source) ?? true)
       ? buildCodeframe(source, top.line, top.column, options.read)
       : undefined
+  // The stack's first line is "Name: message"; the catalog's anchored patterns match the bare message.
+  const heading = `${error.name}: `
   const { code, cause, fix, docsAnchor, fixOptions, severity } = classify(
     error.name || "Error",
-    message,
+    message.startsWith(heading) ? message.slice(heading.length) : message,
     thrownByNifra(frames),
   )
   return {

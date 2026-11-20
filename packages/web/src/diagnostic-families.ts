@@ -192,7 +192,7 @@ export const FAMILY_ENTRIES: readonly CatalogEntry[] = [
     match: (_n, m, fromNifra) => nifraOwned(m, fromNifra, /^idempotency: corrupt stored response/),
     cause:
       "A stored idempotency record could not be replayed: its body or status is not in the form the middleware wrote.",
-    fix: "Delete the record for that key. If it recurs, check that nothing else writes to the idempotency store and that the store does not alter values.",
+    fix: "First confirm whether the original operation completed: deleting the record lets the next retry with that key run the handler again, which repeats any side effect already done (a charge, an email). Delete the record only once the operation is known not to have completed, or reconcile its effect by hand. If it recurs, check that nothing else writes to the idempotency store and that the store does not alter values.",
     docsAnchor: "errors#idempotency-store-corrupt",
   },
   {

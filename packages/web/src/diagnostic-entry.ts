@@ -22,7 +22,7 @@ export interface CatalogEntry {
    * How seriously to treat a recognised failure. Absent means an error. A framework's own development
    * warning is a "warning": the dev feed lists it, but it does not fail `nifra errors`.
    */
-  readonly severity?: "warning" | ((message: string) => "error" | "warning")
+  readonly severity?: "warning" | ((message: string, name: string) => "error" | "warning")
 }
 
 /**

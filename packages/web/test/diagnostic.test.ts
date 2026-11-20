@@ -254,7 +254,7 @@ test("the production and configuration traps carry their own code", () => {
     ["RangeError", "R2Storage object exceeds maxReadBytes", "NIFRA_STORAGE_READ_LIMIT"],
     ["OpenAPIImportError", "document.paths must be an object", "NIFRA_OPENAPI_IMPORT"],
   ]
-  for (const [name, message, code] of cases) expect(classify(name, message).code).toBe(code)
+  for (const [name, message, code] of cases) expect(classify(name, message, true).code).toBe(code)
 })
 
 test("a framework's development warning is a warning; a Solid error code and a thrown Preact error are not", () => {
@@ -265,10 +265,23 @@ test("a framework's development warning is a warning; a Solid error code and a t
   expect(classify("Warning", "[Vue warn]: Missing required prop").severity).toBe("warning")
   // React: a react.dev/link or a legacy "Warning:" is a warning; an errors link or a minified error is thrown.
   const link = "Each child in a list should have a unique key. https://react.dev/link/warning-keys"
-  expect(classify("Error", link)).toMatchObject({
+  expect(classify("Warning", link)).toMatchObject({
     code: "NIFRA_REACT_WARNING",
     severity: "warning",
   })
+  // A thrown error (an invalid hook call) links to react.dev/link too, and stays an error.
+  const hook = "Invalid hook call. See https://react.dev/link/invalid-hook-call for tips."
+  expect(classify("Error", hook).code).toBe("NIFRA_REACT_WARNING")
+  expect(classify("Error", hook).severity).toBeUndefined()
+  // Vue and Svelte hydration reports keep their warning severity under the hydration code.
+  expect(classify("Warning", "[Vue warn]: Hydration node mismatch").severity).toBe("warning")
+  expect(
+    classify("Warning", "[svelte] hydration_mismatch\nhttps://svelte.dev/e/hydration_mismatch")
+      .severity,
+  ).toBe("warning")
+  expect(
+    classify("Error", "Hydration failed because the server rendered HTML didn't match").severity,
+  ).toBeUndefined()
   expect(
     classify("Warning", "Warning: Each child in a list should have a unique key").severity,
   ).toBe("warning")
@@ -290,6 +303,25 @@ test("a framework's development warning is a warning; a Solid error code and a t
   const plain = buildDiagnostic(new Error("x is not a function"), { read: reader })
   expect(plain.severity).toBeUndefined()
   expect(JSON.stringify(plain)).not.toContain("severity")
+})
+
+test("a plain validation message the app throws is not nifra's, and the same message from nifra is", () => {
+  for (const message of [
+    "csrf: secret must be at least 32 bytes",
+    'cors: `credentials: true` cannot be combined with `origin: "*"`',
+    "idempotency must be installed before the routes it protects",
+    "contextStorage: no active context. Add app.use(contextStorage())",
+    "MemoryStore is per-instance and unsafe in production (each instance limits separately)",
+  ]) {
+    expect(classify("Error", message).code).toBe("NIFRA_UNHANDLED")
+    expect(classify("Error", message, true).code).not.toBe("NIFRA_UNHANDLED")
+  }
+})
+
+test("a thrown error is classified by its message, not the `Name: ` heading its stack adds", () => {
+  const error = new Error("Undefined component passed to createElement()")
+  error.stack = `Error: Undefined component passed to createElement()\n    at render (/app/src/a.tsx:3:5)`
+  expect(buildDiagnostic(error, { read: reader }).code).toBe("NIFRA_PREACT_DIAGNOSTIC")
 })
 
 test("the remaining configuration families classify, for nifra's own errors only", () => {
