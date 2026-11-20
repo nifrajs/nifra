@@ -1,5 +1,12 @@
 # @nifrajs/mcp
 
+## 5.16.0
+
+### Patch Changes
+
+- 50718d5: Request-path helpers reuse their text encoders, the proxy reads the forwarded protocol without parsing the URL again, response compression hands its buffer over without a copy, and an MCP HTTP reply is serialized once.
+- @nifrajs/agent-protocol@5.16.0
+
 ## 5.15.1
 
 ### Patch Changes

@@ -1,5 +1,18 @@
 # @nifrajs/core
 
+## 5.16.0
+
+### Patch Changes
+
+- 50718d5: `memoryChannelHub` takes `maxChannels` (default 4096) and forgets idle channels beyond it. A channel that comes back numbers its events above everything it sent before, so a resume token from before the eviction is refused.
+- 50718d5: The router admits a dynamic path to its match cache after it is seen twice within a bounded window, so hot paths that arrive interleaved are cached too.
+- 0d6faf6: Log request metadata by default in production. Set `errorLogDetail` explicitly to include error text or stacks.
+  
+  Rotate store-backed session IDs when a configured `identity` field changes.
+  
+  Cap buffered R2 reads at 16 MiB by default. Use `maxReadBytes` to set the limit for your bucket.
+- 2096f4c: `nifra check` reports `NF-C061` (info) for an SSE stream that sends no ping inside Bun's 10-second idle timeout, in a project served by `listen()` or `Bun.serve()`. A Bun listener closes a connection that moves no bytes for `idleTimeoutSec`, so a quiet `sse()` stream is cut, and a test through `app.fetch` never shows it. The rule stays quiet when the project uses `withIdleTimeout` or sets `idleTimeoutSec`. The `keepAlive` doc now says it has no default and names the Bun cut, and the streaming examples ping every 5 seconds instead of 15.
+
 ## 5.15.1
 
 No changes in this release.

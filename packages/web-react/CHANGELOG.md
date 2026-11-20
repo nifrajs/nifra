@@ -1,5 +1,34 @@
 # @nifrajs/web-react
 
+## 5.16.0
+
+### Minor Changes
+
+- 7bde145: `href()` and `rawHref()` no longer throw on a value that comes from data. A param that is missing, empty, `.`, `..` or an unpaired surrogate, a `hash` with an unpaired surrogate, a `search` key reserved for route-slot state, a slot target that was itself refused, and a `rawHref` path that is not same-origin now log a `console.error` that names the route and the param, never the value, and return an inert `Href`. The default log remembers the last 64 distinct messages and writes each once, so a page of rows with the same bad param is one line; past 64 it starts over. `onHrefRefused(report)` takes over: it hears every refusal, in place of the log, so an app can send them to its error tracker.
+  
+  `Link`, `NavLink`, `Navigate`, `setSearchParams`, `navigate()` in every adapter, and a click, modified click or middle click on a plain `<a>` holding the inert value all do nothing, so one bad row costs its own link and not the render. Before hydration, or without scripts, a plain anchor holding it resolves to a path no route serves. `redirect()` throws a clear error for it, since there is nowhere to send the visitor, unless you pass `{ fallback: href({ to: "/" }) }`: an action that has already written should, so a bad value costs the destination and not a 500 after the write. A route that is not in the route table stays a compile error. Code that caught the `TypeError` from `href()` or `rawHref()` should check `isInertHref(result)` from `@nifrajs/web` instead.
+- 4f432c2: Route hooks and links are typed from the route table. `useSearch(from)` on every adapter and `useParams(from)` (new on Preact, Solid, Svelte and Vue) take the route's pattern as an argument: `useSearch("/reports")`, `useParams("/users/:id")`. A pattern the table does not hold is a compile error, and an empty table (before `nifra types` has run) accepts any string with the loose types. The earlier forms are removed: `useSearch<typeof schema>()`, `useParams<{ id: string }>()` and the bare `useSearch()` / `useParams()`. `Route.ComponentProps` carries `search`, typed by the route's `searchSchema`, and the route table types the `searchSchema` of `.svelte` and `.vue` routes (visible to svelte-check and vue-tsc; a Vue page reads it with `useSearch`). `href()` takes the schema's input, so a field the schema defaults may be left out, and a route without params types `props.params` with no keys. `@nifrajs/web` exports `RouteFrom`, `ParamsOfFrom`, `SearchOfFrom`, `RouteTablePattern`, `RouteParamsOf`, `RouteSearchOf`, `RouteSearchInOf` and `SearchInputOf`.
+  
+  `nifra check` adds NF-C059 (a hook that names another page's route) and NF-C060 (a cast to `Href`), and warns that the route table is outside the program when a file imports `useSearch` or `useParams`. `create-nifra` scaffolds `nifra.check.json` with NF-C057, NF-C059 and NF-C060 as errors, and the starter's route types match the generator.
+  
+  `nifra upgrade 5.16.0 --write` rewrites the call shapes this release and the typed query keys and `formFor` retire, through three source rewrites on the syntax tree: `route-hooks` writes a page file's own route into `useSearch` and `useParams`, `query-keys` wraps the key of `getQueryData` and `setQueryData` in `queryKey(...)`, and `form-for` moves the path and method of `formFor<App, "/path">()` to `formFor<App>()("/path")`. A hook in a layout, a shared component or a `.svelte` or `.vue` file, and a `formFor` whose path is a type alias, are listed by line.
+- 4f432c2: Server functions, forms and the query cache no longer take a type on the caller's word. `serverFn` types its result as the `output` schema's output and requires what the function returns to fit the schema's input, so a field the schema drops is not in the type the browser gets; a function that returns data without an `output` schema, which the runtime already refused, is a compile error. A direct server call still returns what the function returned, and a redirect or an error `Response` may be returned with or without a schema. `formFor<typeof backend>()(path, method?)` replaces `formFor<App, Path>()`: the path is inferred from the argument, the method must be one the route declares (a route with no POST handler needs its method named), and the handle carries the route's own `action` and `method`. A path with params takes them, `formFor<typeof backend>()("/users/:id", { id })`, and `action` is the URL they fill. `queryKey<T>(key)` types a query key with its data: `getQueryData` and `setQueryData` take only such a key, and a `useQuery` / `createQuery` given one must have a fetcher of that type. A plain key still takes the type of its fetcher, with or without the data type named, and `queryKey<Todo[]>(["todos"])` stays an array.
+
+### Patch Changes
+
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [7bde145]
+- Updated dependencies [50718d5]
+- Updated dependencies [4f432c2]
+- Updated dependencies [b73f77d]
+- Updated dependencies [0d6faf6]
+- Updated dependencies [2096f4c]
+- Updated dependencies [77d1821]
+- Updated dependencies [4f432c2]
+  - @nifrajs/core@5.16.0
+  - @nifrajs/web@5.16.0
+
 ## 5.15.1
 
 ### Patch Changes

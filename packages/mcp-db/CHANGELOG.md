@@ -1,5 +1,12 @@
 # @nifrajs/mcp-db
 
+## 5.16.0
+
+### Patch Changes
+
+- Updated dependencies [50718d5]
+  - @nifrajs/mcp@5.16.0
+
 ## 5.15.1
 
 ### Patch Changes

@@ -1,5 +1,52 @@
 # @nifrajs/cli
 
+## 5.16.0
+
+### Minor Changes
+
+- 4f432c2: Route hooks and links are typed from the route table. `useSearch(from)` on every adapter and `useParams(from)` (new on Preact, Solid, Svelte and Vue) take the route's pattern as an argument: `useSearch("/reports")`, `useParams("/users/:id")`. A pattern the table does not hold is a compile error, and an empty table (before `nifra types` has run) accepts any string with the loose types. The earlier forms are removed: `useSearch<typeof schema>()`, `useParams<{ id: string }>()` and the bare `useSearch()` / `useParams()`. `Route.ComponentProps` carries `search`, typed by the route's `searchSchema`, and the route table types the `searchSchema` of `.svelte` and `.vue` routes (visible to svelte-check and vue-tsc; a Vue page reads it with `useSearch`). `href()` takes the schema's input, so a field the schema defaults may be left out, and a route without params types `props.params` with no keys. `@nifrajs/web` exports `RouteFrom`, `ParamsOfFrom`, `SearchOfFrom`, `RouteTablePattern`, `RouteParamsOf`, `RouteSearchOf`, `RouteSearchInOf` and `SearchInputOf`.
+  
+  `nifra check` adds NF-C059 (a hook that names another page's route) and NF-C060 (a cast to `Href`), and warns that the route table is outside the program when a file imports `useSearch` or `useParams`. `create-nifra` scaffolds `nifra.check.json` with NF-C057, NF-C059 and NF-C060 as errors, and the starter's route types match the generator.
+  
+  `nifra upgrade 5.16.0 --write` rewrites the call shapes this release and the typed query keys and `formFor` retire, through three source rewrites on the syntax tree: `route-hooks` writes a page file's own route into `useSearch` and `useParams`, `query-keys` wraps the key of `getQueryData` and `setQueryData` in `queryKey(...)`, and `form-for` moves the path and method of `formFor<App, "/path">()` to `formFor<App>()("/path")`. A hook in a layout, a shared component or a `.svelte` or `.vue` file, and a `formFor` whose path is a type alias, are listed by line.
+- b73f77d: Inspect page and layout loader time, output validation, initial serialization, and rendering in the `nifra_inspect` dev request trace. Use `nifra build --report` to see initial hydration JavaScript and CSS URLs and gzip totals by route with either production bundler.
+- 2096f4c: `nifra check` reports `NF-C061` (info) for an SSE stream that sends no ping inside Bun's 10-second idle timeout, in a project served by `listen()` or `Bun.serve()`. A Bun listener closes a connection that moves no bytes for `idleTimeoutSec`, so a quiet `sse()` stream is cut, and a test through `app.fetch` never shows it. The rule stays quiet when the project uses `withIdleTimeout` or sets `idleTimeoutSec`. The `keepAlive` doc now says it has no default and names the Bun cut, and the streaming examples ping every 5 seconds instead of 15.
+- 77d1821: Give the failures the framework throws a stable code, a cause and a fix that `nifra explain` and the dev overlay return. The new codes cover components, partial prerendering, deployment output, live, route files, route configuration, the typed wire, storage keys, OpenAPI import, assurance and effect declarations, tools, content, jobs, i18n, schemas, build output and plugins, assets, CSP, CDN adapters, headers and cookies, WebSockets, cron, GraphQL, images, and the production traps: an in-memory store in production, `cors` credentials with a wildcard origin, a short secret, and middleware installed out of order.
+  
+  A validation message counts as nifra's own only when the error was thrown from inside an installed `@nifrajs` package, so an app's own error with similar wording keeps its own handling.
+  
+  Record React, Vue, Svelte, Preact and Solid development warnings in the dev feed under `NIFRA_REACT_WARNING`, `NIFRA_VUE_WARNING`, `NIFRA_SVELTE_DIAGNOSTIC`, `NIFRA_PREACT_DIAGNOSTIC` and `NIFRA_SOLID_DIAGNOSTIC`. A warning is listed with a warning mark and does not make `nifra errors` exit 1; Solid's error-severity codes and Preact's thrown errors still do.
+  
+  Export an error's stable code as the `nifra.error.code` span attribute, for nifra's own error classes and codes.
+  
+  Add the `nifra-errors` skill: every stable error and `nifra check` code with its cause and repair, generated from the same catalogs.
+
+### Patch Changes
+
+- b996b1d: Plan the real verification ladder in `nifra prove` and add `--run` to execute it with source and build digests. Add opt-in phase timings and TypeScript compiler state reuse to `nifra check`, and share source reads across contract lints and doctor.
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [7bde145]
+- Updated dependencies [50718d5]
+- Updated dependencies [4f432c2]
+- Updated dependencies [b73f77d]
+- Updated dependencies [0d6faf6]
+- Updated dependencies [2096f4c]
+- Updated dependencies [77d1821]
+- Updated dependencies [4f432c2]
+  - @nifrajs/core@5.16.0
+  - @nifrajs/mcp@5.16.0
+  - @nifrajs/web@5.16.0
+  - @nifrajs/client@5.16.0
+  - @nifrajs/i18n@5.16.0
+  - @nifrajs/schema@5.16.0
+  - @nifrajs/testing@5.16.0
+  - @nifrajs/mcp-db@5.16.0
+  - @nifrajs/agent-review@5.16.0
+  - @nifrajs/runner@5.16.0
+  - @nifrajs/utils@5.16.0
+
 ## 5.15.1
 
 ### Patch Changes

@@ -1,5 +1,18 @@
 # @nifrajs/e2e
 
+## 5.16.0
+
+### Patch Changes
+
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [50718d5]
+- Updated dependencies [0d6faf6]
+- Updated dependencies [2096f4c]
+  - @nifrajs/core@5.16.0
+  - @nifrajs/node@5.16.0
+  - @nifrajs/testing@5.16.0
+
 ## 5.15.1
 
 ### Patch Changes

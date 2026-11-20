@@ -1,5 +1,11 @@
 # @nifrajs/graphql
 
+## 5.16.0
+
+### Patch Changes
+
+- 50718d5: Evidence streams, subscription sinks, the admission queue, uploads and the OTLP export queue dequeue in constant time, so a deep backlog costs no more per item.
+
 ## 5.15.1
 
 No changes in this release.
