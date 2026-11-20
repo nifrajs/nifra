@@ -116,6 +116,18 @@ Bun.serve({ idleTimeout: 0, fetch: app.fetch })
 `,
   )
   expect(await findings()).toEqual([])
+  // A quoted or computed property name sets the timeout all the same.
+  for (const options of [
+    `{ "idleTimeout": 60, fetch: app.fetch }`,
+    `{ ["idleTimeout"]: 60, fetch: app.fetch }`,
+  ]) {
+    writeAppFile(
+      root,
+      "backend/main.ts",
+      `import { app } from "./routes.ts"\nBun.serve(${options})\n`,
+    )
+    expect(await findings()).toEqual([])
+  }
 })
 
 test("an sse call that is not from nifra is left alone", async () => {

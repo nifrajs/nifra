@@ -990,7 +990,7 @@ export function redirect(location: string, options: RedirectOptions = {}): Respo
     const fallback = options.fallback
     if (fallback === undefined || isInertHref(fallback)) {
       throw new Error(
-        `[nifra/web] redirect(): the location is what href() or rawHref() returned for a value it refused (reported earlier), so there is nowhere to send the visitor. Pass { fallback: href({ to: "/" }) } to send them somewhere else.`,
+        `[nifra/web] redirect(): the location is not a usable link, since href() or rawHref() refused its value (reported earlier), so there is nowhere to send the visitor. Pass { fallback: href({ to: "/" }) } to send them somewhere else.`,
       )
     }
     target = fallback

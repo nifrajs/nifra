@@ -65,7 +65,7 @@ export interface SSEInit {
    * Send a `: ` comment ping every N ms. There is no default: without it a quiet stream sends no
    * bytes. That keeps a proxy from dropping the connection, and it keeps a Bun server from closing
    * it: Bun cuts a connection that moves no bytes for the idle timeout (`idleTimeoutSec` of
-   * `listen()`, `idleTimeout` of `Bun.serve()`; 10 seconds by default), so on Bun use an interval
+   * `listen()`, `idleTimeout` of `Bun.serve`; 10 seconds by default), so on Bun use an interval
    * well under the timeout you run with. Under `listen()`, `withIdleTimeout` from
    * `@nifrajs/core/idle-timeout` holds one stream's connection open instead. `app.fetch` has no
    * listener, so a test through it never sees the cut.

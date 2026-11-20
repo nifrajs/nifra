@@ -86,7 +86,8 @@ type UntypedHrefOptions = {
  * `isSameOriginPath` rejects it: `Link`, `Navigate`, `navigate` and `redirect` all treat it as no
  * destination. Held by a plain `<a>` in any adapter's template, a click, a modified click and a middle
  * click are cancelled by the click handler of `installHistory` once the page is hydrated. Before that,
- * or without scripts, it percent-encodes to a path no route serves, so the failure is a 404 and never
+ * or without scripts, it percent-encodes to a path no route of the app names, so the failure is a 404
+ * (or the page of a catch-all or dynamic route, such as `/:id`, that matches any one segment) and never
  * another page's link. An anchor that must never navigate leaves its `href` off:
  * `href={isInertHref(link) ? undefined : link}`.
  */

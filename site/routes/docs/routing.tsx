@@ -517,7 +517,8 @@ export default function Routing() {
         last 64, then starts over), naming the route and the param and never the value, and returns
         an inert link that <code>Link</code>, <code>Navigate</code>, <code>navigate</code> and a
         click, modified click or middle click on a plain anchor ignore, in every adapter. Before
-        hydration, or without scripts, a plain anchor holding it loads a path no route serves (a 404);
+        hydration, or without scripts, a plain anchor holding it loads a path no route names: a 404, or the page of a dynamic route such as{" "}
+        <code>/:id</code> that matches any one segment;
         an anchor that must never navigate leaves its <code>href</code> off with{" "}
         <code>{`href={isInertHref(link) ? undefined : link}`}</code>. <code>onHrefRefused(report)</code> takes over the logging: it hears every refusal, in
         place of the default, so an app can send them to its error tracker. <code>navigate</code> takes only an <code>href</code> result,

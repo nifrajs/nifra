@@ -1259,6 +1259,16 @@ Value cast to Href
 
 Docs: https://nifra.dev/docs/routing
 
+### NF-C061
+
+SSE stream with no heartbeat under Bun's idle timeout
+
+**Why:** Bun closes a connection that moves no bytes for the listener's `idleTimeoutSec` seconds (10 by default). An SSE stream that sends no ping inside that time is cut whenever its events are further apart, and a test through `app.fetch` never shows it because that path has no listener.
+
+**Fix:** Pass `{ keepAlive: 5_000 }` to the stream so a ping goes out well inside the timeout, or raise the timeout: `withIdleTimeout(c, seconds, work)` from `@nifrajs/core/idle-timeout` under `listen()`, or the `idleTimeout` option of `Bun.serve()`. A stream kept on purpose takes `// nifra-expect NF-C061: <reason>` above the registration.
+
+Docs: https://nifra.dev/docs/api
+
 ### NF-D001
 
 Doctor check

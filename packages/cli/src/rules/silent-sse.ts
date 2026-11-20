@@ -22,6 +22,11 @@ const IDLE_TUNING_HINT = /\bwithIdleTimeout\b|\bidleTimeoutSec\b|\bidleTimeout\b
 function tunesIdleTimeout(ts: TypeScriptApi, tree: TSApi.SourceFile): boolean {
   const visit = (node: TSApi.Node): boolean => {
     if (ts.isIdentifier(node) && IDLE_TUNING_NAMES.has(node.text)) return true
+    // `{ "idleTimeout": 60 }` and `{ ["idleTimeout"]: 60 }` set it too; a string anywhere else tunes nothing.
+    if (ts.isPropertyAssignment(node)) {
+      const key = ts.isComputedPropertyName(node.name) ? node.name.expression : node.name
+      if (ts.isStringLiteralLike(key) && IDLE_TUNING_NAMES.has(key.text)) return true
+    }
     return ts.forEachChild(node, visit) === true
   }
   return visit(tree)

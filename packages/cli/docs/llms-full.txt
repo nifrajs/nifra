@@ -749,7 +749,8 @@ throw, since it usually comes from data and one bad row should not fail the page
 last 64, then starts over), naming the route and the param and never the value, and returns
 an inert link that `Link`, `Navigate`, `navigate` and a
 click, modified click or middle click on a plain anchor ignore, in every adapter. Before
-hydration, or without scripts, a plain anchor holding it loads a path no route serves (a 404);
+hydration, or without scripts, a plain anchor holding it loads a path no route names: a 404, or the page of a dynamic route such as
+`/:id` that matches any one segment;
 an anchor that must never navigate leaves its `href` off with
 `href={isInertHref(link) ? undefined : link}`. `onHrefRefused(report)` takes over the logging: it hears every refusal, in
 place of the default, so an app can send them to its error tracker. `navigate` takes only an `href` result,
