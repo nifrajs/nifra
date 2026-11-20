@@ -13,6 +13,7 @@ skills/
   nifra-api/SKILL.md     typed routes, schemas, middleware, WebSockets, the never-throwing client
   nifra-web/SKILL.md     file routing, loaders/actions, SSR, islands, the client/server boundary
   nifra-verify/SKILL.md  check, assure, capabilities, manifest diff, the verification ladder
+  nifra-errors/SKILL.md  every stable error and `nifra check` code, with its cause and repair (generated)
 ```
 
 ## Install

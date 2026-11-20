@@ -646,7 +646,7 @@ export function renderErrors(out: ErrorsOutput): string[] {
       entry.resolvedAt === undefined ? undefined : "resolved",
     ].filter((tag) => tag !== undefined)
     lines.push(
-      `  ✖ [${entry.category}] ${headline(diagnostic)}${tags.length > 0 ? `  (${tags.join(", ")})` : ""}`,
+      `  ${diagnostic.severity === "warning" ? "⚠" : "✖"} [${entry.category}] ${headline(diagnostic)}${tags.length > 0 ? `  (${tags.join(", ")})` : ""}`,
     )
     const at = topFrame(diagnostic)
     if (at !== undefined) lines.push(`      at ${at}`)
@@ -677,10 +677,15 @@ export function renderLogs(out: LogsOutput): string[] {
   return lines
 }
 
-/** 0: nothing open; 1: errors the current code produced; 2: no live server to ask. */
+/** 0: nothing open; 1: errors the current code produced (a warning does not count); 2: no live server to ask. */
 function errorsExitCode(out: ErrorsOutput): number {
   if (out.from !== "live") return 2
-  return out.errors.some((entry) => !entry.stale && entry.resolvedAt === undefined) ? 1 : 0
+  return out.errors.some(
+    (entry) =>
+      !entry.stale && entry.resolvedAt === undefined && entry.diagnostic.severity !== "warning",
+  )
+    ? 1
+    : 0
 }
 
 function isFeedOutput<T extends FeedOutput>(value: unknown, list: "errors" | "logs"): value is T {

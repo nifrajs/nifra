@@ -8,9 +8,11 @@ import {
   classify,
   DIAGNOSTIC_CATALOG,
   formatBuildLog,
+  isConsoleDiagnostic,
   isHydrationMismatch,
   parseFrames,
   type SourceReader,
+  thrownByNifra,
   topUserFrame,
 } from "../src/diagnostic.ts"
 
@@ -116,6 +118,200 @@ test("classify recognises the seeded failure shapes and falls back to unhandled"
   const generic = classify("TypeError", "x is not a function")
   expect(generic.code).toBe("NIFRA_UNHANDLED")
   expect(generic.fix).toBeUndefined()
+})
+
+test("a Solid 2.0 dev report classifies under its own code and is a console diagnostic", () => {
+  const report = [
+    "[STRICT_READ_UNTRACKED] Reactive value read directly in an effect callback will not update.",
+    "in <App> › <Item> › effect",
+    "at http://localhost:5173/src/Item.tsx:12:19",
+    "[STRICT_READ_UNTRACKED] what it means and how to fix it: https://docs.solidjs.com/reference/solid-js/diagnostics/strict-read-untracked",
+    "[STRICT_READ_UNTRACKED] agent repair guide: node_modules/solid-js/skills/reactivity-diagnostics/SKILL.md#strict_read_untracked",
+  ].join("\n")
+  expect(classify("Warning", report).code).toBe("NIFRA_SOLID_DIAGNOSTIC")
+  expect(isConsoleDiagnostic(report)).toBe(true)
+  // A bracketed prefix alone, with no Solid guide line, is someone else's log.
+  expect(classify("Warning", "[vite] connected").code).toBe("NIFRA_UNHANDLED")
+  expect(isConsoleDiagnostic("[vite] connected")).toBe(false)
+})
+
+test("the failures web throws most classify under a feature code", () => {
+  const cases: ReadonlyArray<readonly [string, string, string]> = [
+    ["ServerComponentError", "[nifra/web] component_input", "NIFRA_COMPONENT_REQUEST"],
+    ["Error", "[nifra/components] Exactly one client entry is required", "NIFRA_COMPONENT_BUILD"],
+    [
+      "Error",
+      '[nifra/web] ppr: route "/shop" has a shellLoader, but its layout "/" has a loader that is not a gate.',
+      "NIFRA_PPR_CONTRACT",
+    ],
+    ["TypeError", "[nifra/web] ppr.deployment must be a non-empty string", "NIFRA_PPR_CONTRACT"],
+    [
+      "Error",
+      "[nifra/web] deployment output contains a symbolic link: out/x",
+      "NIFRA_DEPLOYMENT_OUTPUT",
+    ],
+    [
+      "TypeError",
+      "[nifra/web] live: `hub` and `bus` are exclusive; the hub owns the log",
+      "NIFRA_LIVE_CONFIG",
+    ],
+    [
+      "Error",
+      "[nifra/web] route-slot name is not registered on this route",
+      "NIFRA_ROUTE_SLOT_UNAVAILABLE",
+    ],
+    [
+      "Error",
+      "[nifra/web] the client build produced no module graph (metafile), so nifra cannot prove it",
+      "NIFRA_CLIENT_BUILD_NO_GRAPH",
+    ],
+    [
+      "RangeError",
+      "[nifra/web/cdn] sMaxAge must be a non-negative integer number of seconds",
+      "NIFRA_CDN_CONFIG",
+    ],
+    [
+      "Error",
+      "loadGoogleFont: invalid family x (letters, digits, and spaces only)",
+      "NIFRA_OPTION_INVALID",
+    ],
+    ["Error", "[nifra] unhandled request error", "NIFRA_UNHANDLED"],
+  ]
+  for (const [name, message, code] of cases) expect(classify(name, message).code).toBe(code)
+})
+
+test("React, Vue and Svelte dev warnings classify under their framework's code", () => {
+  const vue = '[Vue warn]: Missing required prop: "id"\n  at <Item>'
+  const svelte =
+    "[svelte] assignment_value_stale\nAssignment to `x` will evaluate to the right-hand side.\nhttps://svelte.dev/e/assignment_value_stale"
+  const react =
+    'Each child in a list should have a unique "key" prop. See https://react.dev/link/warning-keys for more information.'
+  expect(classify("Warning", vue).code).toBe("NIFRA_VUE_WARNING")
+  expect(classify("Warning", svelte).code).toBe("NIFRA_SVELTE_DIAGNOSTIC")
+  expect(classify("Warning", react).code).toBe("NIFRA_REACT_WARNING")
+  for (const message of [vue, svelte, react]) expect(isConsoleDiagnostic(message)).toBe(true)
+  // A hydration mismatch keeps its own code whichever framework reports it.
+  expect(
+    classify("Warning", "[Vue warn]: Hydration node mismatch\n- rendered on server").code,
+  ).not.toBe("NIFRA_VUE_WARNING")
+})
+
+test("a validation message is a nifra failure only when nifra threw it", () => {
+  expect(classify("Error", "rateLimit: max must be a positive integer").code).toBe(
+    "NIFRA_UNHANDLED",
+  )
+  expect(classify("Error", "rateLimit: max must be a positive integer", true).code).toBe(
+    "NIFRA_OPTION_INVALID",
+  )
+  expect(classify("Error", "saga checkout: not found").code).toBe("NIFRA_UNHANDLED")
+  expect(classify("Error", "saga checkout: not found", true).code).toBe("NIFRA_EFFECT_INVALID")
+  const stack = (file: string): string =>
+    `Error: rateLimit: max must be a positive integer\n    at rateLimit (${file}:10:3)\n    at boot (/app/server.ts:4:1)`
+  expect(
+    thrownByNifra(parseFrames(stack("/app/node_modules/@nifrajs/middleware/dist/index.js"))),
+  ).toBe(true)
+  expect(thrownByNifra(parseFrames(stack("/app/lib/limits.ts")))).toBe(false)
+  const thrown = (file: string): string => {
+    const err = new Error("rateLimit: max must be a positive integer")
+    err.stack = stack(file)
+    return buildDiagnostic(err, { root: "/app", read: reader }).code
+  }
+  expect(thrown("/app/node_modules/@nifrajs/middleware/dist/index.js")).toBe("NIFRA_OPTION_INVALID")
+  expect(thrown("/app/lib/limits.ts")).toBe("NIFRA_UNHANDLED")
+})
+
+test("the production and configuration traps carry their own code", () => {
+  const cases: ReadonlyArray<readonly [string, string, string]> = [
+    [
+      "Error",
+      "MemoryStore is per-instance and unsafe in production (each instance limits separately). Use a shared store",
+      "NIFRA_MEMORY_STORE_IN_PRODUCTION",
+    ],
+    [
+      "Error",
+      "[nifra/auth] MemorySessionStore is per-instance and unsafe in production (sessions don't hold",
+      "NIFRA_MEMORY_STORE_IN_PRODUCTION",
+    ],
+    [
+      "Error",
+      'cors: `credentials: true` cannot be combined with `origin: "*"` - list explicit origin(s).',
+      "NIFRA_CORS_CREDENTIALS_WILDCARD",
+    ],
+    ["Error", "csrf: secret must be at least 32 bytes", "NIFRA_SECRET_TOO_SHORT"],
+    [
+      "Error",
+      "idempotency must be installed before the routes it protects",
+      "NIFRA_MIDDLEWARE_ORDER",
+    ],
+    [
+      "Error",
+      "contextStorage: no active context. Add app.use(contextStorage())",
+      "NIFRA_CONTEXT_STORAGE_MISSING",
+    ],
+    ["RouteConfigError", "[nifra] duplicate route GET /a", "NIFRA_ROUTE_CONFIG"],
+    ["StorageKeyError", "storage key ../x escapes the storage root", "NIFRA_STORAGE_KEY"],
+    ["OpenAPIImportError", "document.paths must be an object", "NIFRA_OPENAPI_IMPORT"],
+  ]
+  for (const [name, message, code] of cases) expect(classify(name, message).code).toBe(code)
+})
+
+test("a framework's development warning is a warning; a Solid error code and a thrown Preact error are not", () => {
+  const solid = (code: string): string =>
+    `[${code}] observed\nin <App> › effect\nat src/a.tsx:1:1\n[${code}] what it means and how to fix it: https://docs.solidjs.com/reference/solid-js/diagnostics/x\n[${code}] agent repair guide: node_modules/solid-js/skills/reactivity-diagnostics/SKILL.md#x`
+  expect(classify("Warning", solid("STRICT_READ_UNTRACKED")).severity).toBe("warning")
+  expect(classify("Warning", solid("REACTIVE_WRITE_IN_OWNED_SCOPE")).severity).toBeUndefined()
+  expect(classify("Warning", "[Vue warn]: Missing required prop").severity).toBe("warning")
+  expect(classify("Error", "Undefined component passed to createElement()").code).toBe(
+    "NIFRA_PREACT_DIAGNOSTIC",
+  )
+  expect(
+    classify("Error", "Undefined component passed to createElement()").severity,
+  ).toBeUndefined()
+  expect(
+    classify("Warning", "Following component has two or more children with the same key").severity,
+  ).toBe("warning")
+  // A failure that is not a warning carries no severity, and an absent field is dropped from JSON.
+  expect(classify("Error", "contextStorage: no active context").severity).toBeUndefined()
+  const plain = buildDiagnostic(new Error("x is not a function"), { read: reader })
+  expect(plain.severity).toBeUndefined()
+  expect(JSON.stringify(plain)).not.toContain("severity")
+})
+
+test("the remaining configuration families classify, for nifra's own errors only", () => {
+  const cases: ReadonlyArray<readonly [string, string, string]> = [
+    ["Error", "[nifra] cookie Domain contains an illegal character", "NIFRA_HEADER_VALUE_INVALID"],
+    [
+      "TypeError",
+      "[nifra/web] createWebApp `cspHeader` writes the header of `nonce` documents",
+      "NIFRA_CSP_CONFIG",
+    ],
+    ["TypeError", "[nifra/web/cdn] this store cannot invalidate by tag", "NIFRA_CDN_CONFIG"],
+    ["Error", "around next() called multiple times", "NIFRA_API_MISUSE"],
+    ["RangeError", "ws.close(): the reason is over 123 UTF-8 bytes", "NIFRA_WEBSOCKET_INVALID"],
+    ["TypeError", "Do not know how to serialize a BigInt", "NIFRA_VALUE_NOT_SERIALIZABLE"],
+    ["CronError", "expected 5 space-separated fields (got 3)", "NIFRA_CRON_INVALID"],
+    [
+      "TypeError",
+      'bodyParser: "application/json" is JSON, which every body schema already reads',
+      "NIFRA_BODY_PARSER_REFUSED",
+    ],
+    ["Error", "jwks: fetch failed with 503", "NIFRA_JWKS_UNAVAILABLE"],
+    [
+      "TypeError",
+      "[nifra/node] `signals` is now `gracefulSignals`, as on Bun's server options",
+      "NIFRA_OPTION_RENAMED",
+    ],
+    ["Error", "[nifra/web] action failed (500): /orders", "NIFRA_ACTION_FAILED"],
+    ["Error", '[nifra/web] overlapping routes: "/a" and "/b" both match', "NIFRA_ROUTE_FILES"],
+  ]
+  for (const [name, message, code] of cases) expect(classify(name, message, true).code).toBe(code)
+  // The same words from the app's own code are not a nifra failure (a class only nifra defines is
+  // recognised by its name wherever it is thrown).
+  const generic = (name: string): boolean => ["Error", "TypeError", "RangeError"].includes(name)
+  for (const [name, message] of cases.filter(
+    ([kind, text]) => generic(kind) && !text.startsWith("[nifra"),
+  ))
+    expect(classify(name, message, false).code).toBe("NIFRA_UNHANDLED")
 })
 
 test("every catalog entry carries a cause, fix, and docs anchor", () => {

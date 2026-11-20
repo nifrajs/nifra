@@ -117,6 +117,35 @@ describe("observation lifecycle", () => {
     expect(ended).toEqual([child.span]) // completion is exactly once
   })
 
+  test("exports an error's stable nifra code and nothing else it carries", () => {
+    const record = (error: unknown): unknown => {
+      const ended: NifraSpan[] = []
+      const observation = createObservationLifecycle({
+        adapters: [{ onEnd: (span) => ended.push(span) }],
+      }).start({ name: "GET /x" })
+      observation.recordError(error)
+      observation.end({ statusCode: 500 })
+      return ended[0]?.attributes["nifra.error.code"]
+    }
+    expect(record(Object.assign(new Error("x"), { code: "NIFRA_DB_TIMEOUT" }))).toBe(
+      "NIFRA_DB_TIMEOUT",
+    )
+    expect(record(Object.assign(new Error("x"), { code: "NF-C031" }))).toBe("NF-C031")
+    const framework = (name: string, code: string): Error =>
+      Object.assign(new Error("x"), { name, code })
+    expect(record(framework("RouteConfigError", "INVALID_PATH"))).toBe("INVALID_PATH")
+    expect(record(framework("ServerComponentError", "component_busy"))).toBe("component_busy")
+    // The same shape from a class that is not nifra's is not exported.
+    expect(record(framework("PostgresError", "INVALID_PATH"))).toBeUndefined()
+    expect(record(framework("RouteConfigError", "alice@example.com"))).toBeUndefined()
+    // A driver code, a customer string, and a non-error carry no stable code.
+    expect(record(Object.assign(new Error("x"), { code: "ECONNRESET" }))).toBeUndefined()
+    expect(
+      record(Object.assign(new Error("x"), { code: "NIFRA_alice@example.com" })),
+    ).toBeUndefined()
+    expect(record("NIFRA_DB_TIMEOUT")).toBeUndefined()
+  })
+
   test("records error evidence without copying sensitive error text into exported attributes", () => {
     const ended: NifraSpan[] = []
     const observation = createObservationLifecycle({

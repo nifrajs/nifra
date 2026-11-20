@@ -149,6 +149,26 @@ test("errors carry the diagnostic, the cursor narrows to what is new, and explai
   expect(errorsSpec.exitCode?.(next, {})).toBe(1)
 })
 
+test("a framework warning is listed as a warning and does not fail the errors command", async () => {
+  const app = start(tempRoot())
+  const warning = new Error(
+    'Each child in a list should have a unique "key" prop. See https://react.dev/link/warning-keys for more information.',
+  )
+  warning.name = "Warning"
+  app.session.feed.recordError(warning, { category: "ssr" })
+  const onlyWarning = await runErrors({}, { cwd: app.root })
+  expect(onlyWarning.errors[0]?.diagnostic).toMatchObject({
+    code: "NIFRA_REACT_WARNING",
+    severity: "warning",
+  })
+  expect(renderErrors(onlyWarning).some((line) => line.startsWith("  ⚠ [ssr]"))).toBe(true)
+  expect(errorsSpec.exitCode?.(onlyWarning, {})).toBe(0)
+
+  app.session.feed.recordError(new TypeError("a real failure"), { category: "api" })
+  const withError = await runErrors({}, { cwd: app.root })
+  expect(errorsSpec.exitCode?.(withError, {})).toBe(1)
+})
+
 test("a workspace root finds the one app server under it, and asks when there are two", async () => {
   const workspace = tempRoot()
   const web = start(join(workspace, "apps", "web"))

@@ -6471,6 +6471,8 @@ _No named exports (side-effect entrypoint)._
   Where the prompt is shown; it decides how the agent is told to reproduce and verify.
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
+- **SOLID_ERROR_CODES** _(const)_ - `SOLID_ERROR_CODES: ReadonlySet<string>`
+  The codes Solid 2.0 raises at error severity (the rest are warnings), from its diagnostics.json.
 - **SourceReader** _(type)_ - `type SourceReader = (file: string) => string | undefined`
   Reads a source file's text, or returns undefined if it cannot (missing, binary, permission).
 - **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined`
@@ -6479,7 +6481,7 @@ _No named exports (side-effect entrypoint)._
   Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible for running Vite's `ssrFixStacktrace` first so the frames point at real source.
 - **buildFixPrompt** _(function)_ - `buildFixPrompt: (diagnostic: Diagnostic, context: FixPromptContext, option?: FixOption) => string`
   The prompt for one way of fixing `diagnostic` (its default `fix` when `option` is left out).
-- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; fixOptions?: readonly FixOption[] | undefined; }`
+- **classify** _(function)_ - `classify: (name: string, message: string, fromNifra?: boolean) => { code: string; cause?: string; fix?: string; docsAnchor?: string; fixOptions?: readonly FixOption[] | undefined; severity?: "warning" | undefined; }`
   Classify an error name+message against the catalog; falls back to the generic unhandled code.
 - **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
   One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
@@ -6493,6 +6495,8 @@ _No named exports (side-effect entrypoint)._
   Parse a V8/Node stack into structured frames. Handles the `at fn (path:line:col)`, bare `at path:line:col`, and `at async fn (...)` shapes; a frame that doesn't match keeps its raw text with no location (so nothing is silently dropped).
 - **promptPath** _(function)_ - `promptPath: (file: string, root: string | undefined) => string`
   A path a reader of the prompt may see: project-relative, package-relative, or a base name.
+- **thrownByNifra** _(function)_ - `thrownByNifra: (frames: readonly DiagnosticFrame[]) => boolean`
+  True when the error was thrown from inside an installed nifra package (the innermost located frame sits under `node_modules/@nifrajs/`), as opposed to app code that happens to word a message alike.
 - **topUserFrame** _(function)_ - `topUserFrame: (frames: readonly DiagnosticFrame[], root: string | undefined) => DiagnosticFrame | undefined`
   The first frame that points at the user's own source - what the codeframe should show.
 
