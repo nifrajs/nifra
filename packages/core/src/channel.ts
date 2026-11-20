@@ -177,10 +177,10 @@ class MemorySubscription<Message> implements ChannelSubscription<Message> {
   }
 }
 
-/** A bounded in-memory hub suitable for tests and local development, never for durable fan-out. */
 /** Channels examined per publish when the channel map is over its cap. */
 const EVICTION_SCAN = 8
 
+/** A bounded in-memory hub suitable for tests and local development, never for durable fan-out. */
 export function memoryChannelHub(options: MemoryChannelHubOptions = {}): ChannelHub {
   const maxQueue = options.maxQueue ?? 64
   if (!Number.isSafeInteger(maxQueue) || maxQueue < 1) {
@@ -207,9 +207,9 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
     sequences.set(name, seq)
     if (sequences.size <= maxChannels) return
     const subscribed: Array<[string, number]> = []
+    let examined = 0
     for (const [candidate, candidateSeq] of sequences) {
-      if (sequences.size <= maxChannels || candidate === name) break
-      if (subscribed.length >= EVICTION_SCAN) break
+      if (sequences.size <= maxChannels || candidate === name || examined++ >= EVICTION_SCAN) break
       if (subscribers.has(candidate)) {
         subscribed.push([candidate, candidateSeq])
         continue

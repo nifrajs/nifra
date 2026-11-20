@@ -167,4 +167,26 @@ describe("memoryChannelHub maxChannels", () => {
     )
     for (const subscription of subscriptions) subscription.close()
   })
+
+  test("after a burst of disconnects one publish evicts only a bounded number of channels", () => {
+    const hub = memoryChannelHub({ maxChannels: 2 })
+    const open = Array.from({ length: 100 }, (_, i) => {
+      const channel = channelNamed(`gone${i}`)
+      const subscription = hub.subscribe(channel)
+      return { channel, subscription, token: hub.publish(channel, "x").resumeToken }
+    })
+    for (const { subscription } of open) subscription.close()
+    const tokens = open
+    hub.publish(channelNamed("fresh"), "x")
+    const forgotten = tokens.filter(({ channel, token }) => {
+      try {
+        hub.subscribe(channel, { resumeFrom: token }).close()
+        return false
+      } catch {
+        return true
+      }
+    })
+    expect(forgotten.length).toBeGreaterThan(0)
+    expect(forgotten.length).toBeLessThanOrEqual(8)
+  })
 })

@@ -123,7 +123,7 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   const doFetch = options.fetch ?? (globalThis.fetch as OtlpExporterOptions["fetch"])
   const resourceAttributes = keyValues({ "service.name": options.serviceName ?? "nifra" })
 
-  const queue: (NifraSpan | undefined)[] = []
+  let queue: (NifraSpan | undefined)[] = []
   let queueHead = 0
   let queueSize = 0
   let timer: ReturnType<typeof setInterval> | undefined
@@ -144,9 +144,7 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
       return
     }
     if (queueHead >= 64 && queueHead * 2 >= queue.length) {
-      const remaining = queue.slice(queueHead)
-      queue.length = 0
-      queue.push(...remaining)
+      queue = queue.slice(queueHead)
       queueHead = 0
     }
   }

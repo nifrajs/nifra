@@ -100,6 +100,13 @@ export type LoopDelayMonitor = (resolutionMs: number) => LoopDelayHistogram | un
 /** Shared no-op sampler - the fallback when an explicitly supplied monitor has no histogram. */
 const NO_LAG: () => number = () => 0
 
+/** An event-loop-lag reader; `stop()` (or disposing it) ends its timer. */
+export interface EventLoopLagSampler {
+  (): number
+  stop(): void
+  [Symbol.dispose](): void
+}
+
 /**
  * Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so
  * it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An
@@ -108,12 +115,6 @@ const NO_LAG: () => number = () => 0
  * with no new sample since then returns the same value again, so every request that arrives between
  * two samples of a lagging loop sees the lag.
  */
-export interface EventLoopLagSampler {
-  (): number
-  stop(): void
-  [Symbol.dispose](): void
-}
-
 export function createEventLoopLagSampler(
   resolutionMs = 20,
   monitor?: LoopDelayMonitor,
