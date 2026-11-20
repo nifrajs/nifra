@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import {
   type AdmissionOptions,
@@ -376,5 +376,41 @@ describe("server({ admission }) - request-path integration", () => {
     expect(c.snapshot().inFlight).toBe(0) // slot released on the async-rejection path too
     const ok = await app.fetch(req("/ok"))
     expect(ok.status).toBe(200)
+  })
+})
+
+describe("event-loop lag sampler lifetime", () => {
+  test("stop and dispose end the default sampler's timer once", () => {
+    const clear = spyOn(globalThis, "clearInterval")
+    try {
+      const sample = createEventLoopLagSampler(20)
+      sample.stop()
+      sample[Symbol.dispose]()
+      expect(clear).toHaveBeenCalledTimes(1)
+      expect(Number.isFinite(sample())).toBe(true)
+    } finally {
+      clear.mockRestore()
+    }
+  })
+
+  test("a sampler over an injected monitor, or without one, has nothing to stop", () => {
+    const monitored = createEventLoopLagSampler(20, () => ({
+      enable() {},
+      reset() {},
+      get mean() {
+        return 20_000_000
+      },
+    }))
+    monitored.stop()
+    monitored[Symbol.dispose]()
+    expect(monitored()).toBe(0)
+    const failing = createEventLoopLagSampler(20, () => {
+      throw new Error("no monitor")
+    })
+    failing.stop()
+    expect(failing()).toBe(0)
+    const none = createEventLoopLagSampler(20, () => undefined)
+    none[Symbol.dispose]()
+    expect(none()).toBe(0)
   })
 })

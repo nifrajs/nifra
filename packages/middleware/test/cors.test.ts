@@ -280,3 +280,82 @@ describe("cors", () => {
     expect(outcome.headers?.vary).toBe("Origin")
   })
 })
+
+describe("cors preflight answers", () => {
+  const preflight = (originHeader: string | undefined, requestHeaders?: string) => {
+    const headers = new Headers({ "access-control-request-method": "POST" })
+    if (originHeader !== undefined) headers.set("origin", originHeader)
+    if (requestHeaders !== undefined) headers.set("access-control-request-headers", requestHeaders)
+    return new Request("http://x/", { method: "OPTIONS", headers })
+  }
+  const advertised = (res: Response): Array<string | null> => [
+    res.headers.get("access-control-allow-origin"),
+    res.headers.get("access-control-allow-methods"),
+    res.headers.get("access-control-allow-headers"),
+    res.headers.get("access-control-max-age"),
+  ]
+
+  test("a listed origin gets the full answer", async () => {
+    const app = server().use(cors({ origin: ["https://ok.com", "https://also.com"], maxAge: 60 }))
+    const res = await app.fetch(preflight("https://also.com", "x-a, X-B"))
+    expect(res.status).toBe(204)
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://also.com")
+    expect(res.headers.get("access-control-allow-headers")).toBe("x-a, X-B")
+    expect(res.headers.get("access-control-allow-methods")).toContain("POST")
+    expect(res.headers.get("access-control-max-age")).toBe("60")
+  })
+
+  test("an origin that is not allowed learns nothing about methods or headers", async () => {
+    const app = server().use(cors({ origin: ["https://ok.com"], maxAge: 60 }))
+    for (const sent of ["https://evil.com", undefined]) {
+      const res = await app.fetch(preflight(sent, "x-a"))
+      expect(res.status).toBe(204)
+      expect(advertised(res)).toEqual([null, null, null, null])
+    }
+  })
+
+  test("requested header names are reflected only when each is a valid token", async () => {
+    const app = server().use(cors({ origin: "https://ok.com" }))
+    const reflected = async (requested: string) =>
+      (await app.fetch(preflight("https://ok.com", requested))).headers.get(
+        "access-control-allow-headers",
+      )
+    expect(await reflected("x-a,, x-b ,")).toBe("x-a, x-b")
+    expect(await reflected("x-a, bad header")).toBeNull()
+    expect(await reflected("x-a, yé")).toBeNull()
+    expect(await reflected(" , ")).toBeNull()
+    expect(await reflected("x".repeat(4097))).toBeNull()
+  })
+
+  test("a predicate origin and an explicit allowedHeaders list are honoured", async () => {
+    const app = server().use(
+      cors({ origin: (candidate) => candidate.endsWith(".ok.com"), allowedHeaders: ["x-fixed"] }),
+    )
+    const allowed = await app.fetch(preflight("https://a.ok.com", "x-other"))
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("https://a.ok.com")
+    expect(allowed.headers.get("access-control-allow-headers")).toBe("x-fixed")
+    const refused = await app.fetch(preflight("https://a.evil.com", "x-other"))
+    expect(advertised(refused)).toEqual([null, null, null, null])
+  })
+
+  test("the native preflight hook withholds the answer from a disallowed origin", async () => {
+    const middleware = cors({ origin: ["https://ok.com"], maxAge: 5 })
+    const request = (originHeader: string) => ({
+      method: "OPTIONS",
+      url: "http://t/resource",
+      header: (name: string) =>
+        ({
+          origin: originHeader,
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "x-a",
+        })[name] ?? null,
+    })
+    const refused = await middleware.onNodeRequest!(request("https://evil.com"))
+    expect(refused?.status).toBe(204)
+    expect(refused?.headers.get("access-control-allow-methods")).toBeNull()
+    const allowed = await middleware.onNodeRequest!(request("https://ok.com"))
+    expect(allowed?.headers.get("access-control-allow-methods")).toContain("POST")
+    expect(allowed?.headers.get("access-control-allow-headers")).toBe("x-a")
+    expect(allowed?.headers.get("access-control-max-age")).toBe("5")
+  })
+})

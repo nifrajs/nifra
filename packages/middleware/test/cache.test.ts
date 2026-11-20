@@ -459,3 +459,63 @@ describe("cache over negotiated transport codecs", () => {
     expect(again.headers.get("content-type")).toBe(rich.mediaType)
   })
 })
+
+describe("MemoryResponseCache bounds", () => {
+  const stored = (size: number, expiresAt = Date.now() + 60_000): CachedResponse => ({
+    status: 200,
+    statusText: "OK",
+    headers: [],
+    body: new Uint8Array(size),
+    expiresAt,
+    storedAt: Date.now(),
+  })
+
+  test("rejects a byte cap that is not a non-negative safe integer", () => {
+    expect(() => new MemoryResponseCache({ maxTotalBytes: -1 })).toThrow(/maxTotalBytes/)
+    expect(() => new MemoryResponseCache({ maxTotalBytes: 1.5 })).toThrow(/maxTotalBytes/)
+  })
+
+  test("past the byte cap the least recently used entries go, and a read counts as use", () => {
+    const store = new MemoryResponseCache({ maxTotalBytes: 10 })
+    store.set("a", stored(4))
+    store.set("b", stored(4))
+    expect(store.get("a")).toBeDefined()
+    store.set("c", stored(4))
+    expect(store.get("b")).toBeUndefined()
+    expect(store.get("a")).toBeDefined()
+    expect(store.get("c")).toBeDefined()
+  })
+
+  test("past the entry cap the least recently used entry goes", () => {
+    const store = new MemoryResponseCache({ maxEntries: 2 })
+    store.set("a", stored(1))
+    store.set("b", stored(1))
+    store.get("a")
+    store.set("c", stored(1))
+    expect(store.get("b")).toBeUndefined()
+    expect(store.get("a")).toBeDefined()
+  })
+
+  test("a body over the whole cap is not stored and drops the entry it would replace", () => {
+    const store = new MemoryResponseCache({ maxTotalBytes: 10 })
+    store.set("a", stored(4))
+    store.set("a", stored(11))
+    expect(store.get("a")).toBeUndefined()
+  })
+
+  test("replacing a key, expiring one and deleting one all give their bytes back", () => {
+    const store = new MemoryResponseCache({ maxTotalBytes: 10 })
+    store.set("a", stored(8))
+    store.set("a", stored(2))
+    store.set("b", stored(8))
+    expect(store.get("a")).toBeDefined()
+    expect(store.get("b")).toBeDefined()
+    store.set("gone", stored(0, Date.now() - 1))
+    expect(store.get("gone")).toBeUndefined()
+    store.delete("b")
+    store.delete("never-stored")
+    store.set("c", stored(8))
+    expect(store.get("a")).toBeDefined()
+    expect(store.get("c")).toBeDefined()
+  })
+})

@@ -123,9 +123,11 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   const doFetch = options.fetch ?? (globalThis.fetch as OtlpExporterOptions["fetch"])
   const resourceAttributes = keyValues({ "service.name": options.serviceName ?? "nifra" })
 
-  const queue: NifraSpan[] = []
+  let queue: (NifraSpan | undefined)[] = []
+  let queueHead = 0
+  let queueSize = 0
   let timer: ReturnType<typeof setInterval> | undefined
-  // Spans ever queued, numbered in order. The queue holds the newest `queue.length` of them and the
+  // Spans ever queued, numbered in order. The queue holds the newest `queueSize` of them and the
   // batch in flight the run starting at `inFlightFrom`, so every span numbered below the older of the
   // two has been sent, failed or dropped. A count of settled spans is not enough: a later span dropped
   // on overflow would count toward an earlier flush whose batch is still exporting.
@@ -133,6 +135,19 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   let inFlightFrom: number | undefined
   const waiters: Array<{ readonly mark: number; readonly resolve: () => void }> = []
   let pumping = false
+
+  const compactQueue = (): void => {
+    if (queueHead === 0) return
+    if (queueSize === 0) {
+      queue.length = 0
+      queueHead = 0
+      return
+    }
+    if (queueHead >= 64 && queueHead * 2 >= queue.length) {
+      queue = queue.slice(queueHead)
+      queueHead = 0
+    }
+  }
 
   const report = (error: unknown): void => {
     try {
@@ -183,7 +198,7 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   }
 
   const settle = (): void => {
-    const unsettled = inFlightFrom ?? queued - queue.length
+    const unsettled = inFlightFrom ?? queued - queueSize
     for (let i = waiters.length - 1; i >= 0; i--) {
       const waiter = waiters[i]
       if (waiter === undefined || waiter.mark > unsettled) continue
@@ -194,9 +209,18 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
 
   // One export in flight at a time; spans arriving meanwhile wait in the bounded queue.
   const pump = async (): Promise<void> => {
-    while (queue.length > 0) {
-      inFlightFrom = queued - queue.length
-      const batch = queue.splice(0, maxBatch)
+    while (queueSize > 0) {
+      inFlightFrom = queued - queueSize
+      const take = Math.min(maxBatch, queueSize)
+      const batch: NifraSpan[] = []
+      for (let i = 0; i < take; i++) {
+        const span = queue[queueHead]
+        queue[queueHead] = undefined
+        queueHead++
+        if (span !== undefined) batch.push(span)
+      }
+      queueSize -= take
+      compactQueue()
       await send(batch)
       inFlightFrom = undefined
       settle()
@@ -208,12 +232,12 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
     pumping = true
     void pump().finally(() => {
       pumping = false
-      if (queue.length > 0) kick()
+      if (queueSize > 0) kick()
     })
   }
 
   const flush = (): Promise<void> => {
-    if (inFlightFrom === undefined && queue.length === 0) return Promise.resolve()
+    if (inFlightFrom === undefined && queueSize === 0) return Promise.resolve()
     const done = new Promise<void>((resolve) => waiters.push({ mark: queued, resolve }))
     kick()
     return done
@@ -228,13 +252,17 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   return {
     onEnd(span) {
       queue.push(span)
+      queueSize++
       queued++
-      if (queue.length > maxQueue) {
-        queue.shift() // drop the oldest under sustained backpressure rather than grow unbounded
+      if (queueSize > maxQueue) {
+        queue[queueHead] = undefined
+        queueHead++
+        queueSize--
+        compactQueue() // drop the oldest in O(1) amortized under sustained backpressure
         settle()
         report(new Error("otlp_queue_overflow_span_dropped"))
       }
-      if (queue.length >= maxBatch) kick()
+      if (queueSize >= maxBatch) kick()
       else ensureTimer()
     },
     flush,

@@ -188,3 +188,48 @@ describe("memory agent evidence log", () => {
     expect(await replay.result).toBeUndefined()
   })
 })
+
+describe("agent evidence stream queue", () => {
+  test("a long backlog is read back in order", async () => {
+    const stream = createAgentEvidenceStream({ maxQueueSize: 1000 })
+    for (let seq = 1; seq <= 300; seq++) stream.step(evidence(seq))
+    const seen: number[] = []
+    for (let i = 0; i < 300; i++) {
+      const next = await stream.next()
+      if (!next.done) seen.push(next.value.seq)
+    }
+    expect(seen).toEqual(Array.from({ length: 300 }, (_, i) => i + 1))
+  })
+
+  test("past the cap the oldest evidence is dropped, counted, and the rest stays in order", async () => {
+    const stream = createAgentEvidenceStream({ maxQueueSize: 70 })
+    for (let seq = 1; seq <= 200; seq++) stream.step(evidence(seq))
+    expect(stream.dropped).toBe(130)
+    stream.complete()
+    const seen: number[] = []
+    for (let next = await stream.next(); !next.done; next = await stream.next()) {
+      seen.push(next.value.seq)
+    }
+    expect(seen).toEqual(Array.from({ length: 70 }, (_, i) => i + 131))
+  })
+
+  test("many waiting readers are answered in the order they asked, and released on complete", async () => {
+    const stream = createAgentEvidenceStream()
+    const waiting = Array.from({ length: 200 }, () => stream.next())
+    for (let seq = 1; seq <= 150; seq++) stream.step(evidence(seq))
+    const answered = await Promise.all(waiting.slice(0, 150))
+    expect(answered.map((r) => (r.done ? -1 : r.value.seq))).toEqual(
+      Array.from({ length: 150 }, (_, i) => i + 1),
+    )
+    stream.complete()
+    const rest = await Promise.all(waiting.slice(150))
+    expect(rest.every((r) => r.done === true)).toBe(true)
+  })
+
+  test("returning empties the backlog and releases waiting readers", async () => {
+    const stream = createAgentEvidenceStream()
+    for (let seq = 1; seq <= 100; seq++) stream.step(evidence(seq))
+    await stream.return?.()
+    expect((await stream.next()).done).toBe(true)
+  })
+})

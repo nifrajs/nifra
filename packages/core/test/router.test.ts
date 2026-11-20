@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { RouteConfigError } from "../src/errors.ts"
 import { Router, type RouterMatch } from "../src/router/router.ts"
 
@@ -397,5 +397,50 @@ describe("Router.add - boot-time rejection (L2)", () => {
       r.add("GET", "/u/:id", "g")
       r.add("POST", "/u/:id", "p")
     }).not.toThrow()
+  })
+})
+
+describe("dynamic match cache admission", () => {
+  test("interleaved hot paths, a flood of one-off paths and an oversize path all match correctly", () => {
+    const r = router()
+    r.add("GET", "/users/:id", "user")
+    const expectUser = (id: string) =>
+      expect(r.find("GET", `/users/${id}`)).toEqual({
+        found: true,
+        payload: "user",
+        params: { id },
+      })
+    for (let round = 0; round < 3; round++) {
+      expectUser("1")
+      expectUser("2")
+    }
+    // More one-off paths than the pending window holds, so the oldest candidates are dropped.
+    for (let i = 0; i < 600; i++) expectUser(`cold${i}`)
+    for (let round = 0; round < 3; round++) {
+      expectUser("1")
+      expectUser("2")
+    }
+    // Longer than a candidate path may be: matched every time, never remembered.
+    const long = "x".repeat(300_000)
+    expectUser(long)
+    expectUser(long)
+  })
+
+  test("two interleaved hot paths are served from the cache after a second look", () => {
+    const r = router()
+    r.add("GET", "/users/:id", "user")
+    // biome-ignore lint/plugin/noChainedTypeAssertions: test-only seam on the private admission step
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: maybeCacheDynamicMatch is a method of Router.prototype, which spyOn needs to reach
+    const proto = Router.prototype as unknown as { maybeCacheDynamicMatch: () => void }
+    const admit = spyOn(proto, "maybeCacheDynamicMatch")
+    try {
+      for (const path of ["/users/1", "/users/2", "/users/1", "/users/2"]) r.find("GET", path)
+      admit.mockClear()
+      r.find("GET", "/users/1")
+      r.find("GET", "/users/2")
+      expect(admit).not.toHaveBeenCalled()
+    } finally {
+      admit.mockRestore()
+    }
   })
 })

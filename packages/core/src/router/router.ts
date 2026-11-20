@@ -77,11 +77,15 @@ interface DynamicMatchCacheEntry<T> {
   readonly values: readonly string[]
 }
 
+const DYNAMIC_MATCH_PENDING_MAX = 256
+const DYNAMIC_MATCH_PENDING_CHARS = 512
+
 interface DynamicMatchCacheState<T> {
   cache: Map<string, DynamicMatchCacheEntry<T>> | undefined
   /** Total length of the cached paths. */
   chars: number
-  pendingPath: string | undefined
+  /** Bounded 2-hit admission window so interleaved hot dynamic paths still promote to cache. */
+  pending: Set<string> | undefined
 }
 
 const DYNAMIC_MATCH_CACHES = new WeakMap<object, DynamicMatchCacheState<unknown>>()
@@ -94,7 +98,7 @@ function dynamicMatchCacheStateFor<T>(owner: object): DynamicMatchCacheState<T> 
   const state: DynamicMatchCacheState<T> = {
     cache: undefined,
     chars: 0,
-    pendingPath: undefined,
+    pending: undefined,
   }
   DYNAMIC_MATCH_CACHES.set(owner, state as DynamicMatchCacheState<unknown>)
   return state
@@ -481,9 +485,14 @@ export class Router<T> {
     terminal: Terminal<T>,
     values: readonly string[],
   ): void {
+    // Candidates are client-chosen, so only short ones are remembered: a hot route's path is short.
+    if (path.length > DYNAMIC_MATCH_PENDING_CHARS) return
     const state = dynamicMatchCacheStateFor<T>(this)
-    if (state.pendingPath !== path) {
-      state.pendingPath = path
+    state.pending ??= new Set<string>()
+    const pending = state.pending
+    if (!pending.delete(path)) {
+      if (pending.size >= DYNAMIC_MATCH_PENDING_MAX) pending.clear()
+      pending.add(path)
       return
     }
     let cache = state.cache

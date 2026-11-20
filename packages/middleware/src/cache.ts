@@ -18,15 +18,21 @@ export interface ResponseCacheStore {
 }
 
 export interface MemoryResponseCacheOptions {
-  /** Maximum entries retained. Default `1000`. Oldest entries are evicted first. */
+  /** Maximum entries retained. Default `1000`. Least-recently-used entries are evicted first. */
   readonly maxEntries?: number
+  /** Maximum total cached body bytes retained in memory. Default `64 * 1024 * 1024` (64 MiB). */
+  readonly maxTotalBytes?: number
   /** Allow in-process cache in production. Off by default because it is per-instance. */
   readonly allowInProduction?: boolean
 }
 
+const DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+
 export class MemoryResponseCache implements ResponseCacheStore {
   private readonly entries = new Map<string, CachedResponse>()
   private readonly maxEntries: number
+  private readonly maxTotalBytes: number
+  private totalBytes = 0
 
   constructor(options: MemoryResponseCacheOptions = {}) {
     const env = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV
@@ -40,28 +46,46 @@ export class MemoryResponseCache implements ResponseCacheStore {
     if (!Number.isInteger(this.maxEntries) || this.maxEntries < 1) {
       throw new Error("MemoryResponseCache: maxEntries must be a positive integer")
     }
+    this.maxTotalBytes = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES
+    if (!Number.isSafeInteger(this.maxTotalBytes) || this.maxTotalBytes < 0) {
+      throw new Error("MemoryResponseCache: maxTotalBytes must be a non-negative safe integer")
+    }
   }
 
   get(key: string): CachedResponse | undefined {
     const entry = this.entries.get(key)
     if (entry === undefined) return undefined
     if (Date.now() >= entry.expiresAt) {
-      this.entries.delete(key)
+      this.delete(key)
       return undefined
     }
+    // LRU touch: move accessed entry to the tail so hot entries survive bursts.
+    this.entries.delete(key)
+    this.entries.set(key, entry)
     return entry
   }
 
   set(key: string, response: CachedResponse): void {
-    if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
+    const size = response.body.byteLength
+    if (size > this.maxTotalBytes) {
+      this.delete(key)
+      return
+    }
+    this.delete(key)
+    while (this.entries.size >= this.maxEntries || this.totalBytes + size > this.maxTotalBytes) {
       const oldest = this.entries.keys().next().value
-      if (oldest !== undefined) this.entries.delete(oldest)
+      if (oldest === undefined) break
+      this.delete(oldest)
     }
     this.entries.set(key, response)
+    this.totalBytes += size
   }
 
   delete(key: string): void {
+    const existing = this.entries.get(key)
+    if (existing === undefined) return
     this.entries.delete(key)
+    this.totalBytes -= existing.body.byteLength
   }
 }
 
