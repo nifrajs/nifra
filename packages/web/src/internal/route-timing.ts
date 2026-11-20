@@ -5,21 +5,11 @@ export type RouteTiming = (phase: RoutePhase, elapsedMs: number) => void
 
 export type RouteTimingFor = (route: string, request: Request) => RouteTiming | undefined
 
-type LoaderPhase = "pageLoader" | "layoutLoaders"
-interface LoaderTiming {
-  readonly timing: RouteTiming
-  readonly phase: LoaderPhase
-}
+export type LoaderPhase = "pageLoader" | "layoutLoaders"
+export const TIMED_LOADER = Symbol("nifra.web.timed-loader")
 
-const timedContexts = new WeakMap<object, LoaderTiming>()
-const guardedLoaders = new WeakSet<object>()
-
-export function registerTimedLoader(loader: object): void {
-  guardedLoaders.add(loader)
-}
-
-export function loaderTimingOf(ctx: unknown): LoaderTiming | undefined {
-  return typeof ctx === "object" && ctx !== null ? timedContexts.get(ctx) : undefined
+type Loader<C> = ((ctx: C) => unknown) & {
+  readonly [TIMED_LOADER]?: (timing: RouteTiming, phase: LoaderPhase, ctx: C) => unknown
 }
 
 export function measureRoutePhase<T>(timing: RouteTiming, phase: RoutePhase, run: () => T): T {
@@ -46,17 +36,16 @@ export function timedLoaderResult(run: () => unknown): unknown {
     : value
 }
 
-/** Mark the final loader context so the output guard can time the two phases independently. */
+/** A guarded loader can measure its application code and its output guard separately. */
 export function invokeLoader<C extends object>(
-  loader: (ctx: C) => unknown,
+  loader: Loader<C>,
   ctx: C,
   timing: RouteTiming | undefined,
   phase: LoaderPhase,
 ): unknown {
   if (timing === undefined) return loader(ctx)
-  if (!guardedLoaders.has(loader)) {
-    return measureRoutePhase(timing, phase, () => timedLoaderResult(() => loader(ctx)))
-  }
-  timedContexts.set(ctx, { timing, phase })
-  return loader(ctx)
+  const measured = loader[TIMED_LOADER]
+  return measured === undefined
+    ? measureRoutePhase(timing, phase, () => timedLoaderResult(() => loader(ctx)))
+    : measured(timing, phase, ctx)
 }

@@ -3538,7 +3538,7 @@
     "name": "ClientRouteAssets",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ClientRouteAssets {\n    readonly pattern: string;\n    readonly javascript: readonly string[];\n    readonly stylesheets: readonly string[];\n}"
+    "signature": "export interface ClientRouteAssets {\n    readonly pattern: string;\n    readonly javascript: readonly string[];\n    readonly stylesheets: readonly string[];\n    /** The build could not determine whether the route enables framework hydration. */\n    readonly hydrationUnknown?: true;\n}"
   },
   {
     "name": "ClientRouteHooks",
@@ -3551,7 +3551,7 @@
     "name": "ClientRouteSize",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ClientRouteSize extends ClientRouteAssets {\n    readonly javascriptGzip: number;\n    readonly stylesheetsGzip: number;\n}"
+    "signature": "export interface ClientRouteSize extends ClientRouteAssets {\n    readonly javascriptGzip: number | null;\n    readonly stylesheetsGzip: number;\n}"
   },
   {
     "name": "ClientRouter",
@@ -19543,7 +19543,7 @@
     "name": "clientRouteAssets",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function clientRouteAssets(manifest: BuildManifest, routes: readonly Pick<RouteEntry, \"id\" | \"pattern\">[], imports: ReadonlyMap<string, readonly string[]>): readonly ClientRouteAssets[];",
+    "signature": "export declare function clientRouteAssets(manifest: BuildManifest, routes: readonly (Pick<RouteEntry, \"id\" | \"pattern\"> & {\n    readonly hydrate?: boolean | \"unknown\";\n})[], imports: ReadonlyMap<string, readonly string[]>): readonly ClientRouteAssets[];",
     "doc": "/** The client entry plus the matched page and layout chunks and their eager dependencies. */"
   },
   {

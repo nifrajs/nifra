@@ -49,6 +49,7 @@ import { loadCopySplit } from "./internal/copy-split.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
 import { emitPluginImages } from "./internal/image-assets.ts"
 import { assertIdentityParity } from "./internal/parity.ts"
+import { clientReportRoutes } from "./internal/report-hydration.ts"
 import { emittedScanFiles, formatSecretFindings, scanForSecrets } from "./internal/secret-scan.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { clientRouteAssets } from "./internal/size-report.ts"
@@ -465,7 +466,9 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
         }),
       )
     }
-    options.onRouteAssets(clientRouteAssets(manifest, routeManifest.routes, imports))
+    options.onRouteAssets(
+      clientRouteAssets(manifest, clientReportRoutes(routesDir, routeManifest.routes), imports),
+    )
   }
   return manifest
 }

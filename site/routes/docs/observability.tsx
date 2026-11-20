@@ -112,8 +112,9 @@ export default function Observability() {
       <p>
         Run <code>nifra build --report</code> for the matched page and layout chunks, the client
         entry, their eager JavaScript imports, and the route stylesheet URLs. The per-route gzip
-        totals estimate the initial framework assets for a hydrated page. Use browser resource
-        timing to measure dynamic imports, island scripts, locale-specific chunks, and bytes
+        totals estimate the initial framework assets. A literal <code>hydrate = false</code> shows
+        zero framework JavaScript and keeps the stylesheet sizes. A hydration setting the build
+        cannot determine shows an unknown JavaScript size. Use browser resource timing to measure dynamic imports, island scripts, locale-specific chunks, and bytes
         transferred with your server's compression and cache settings.
       </p>
 

@@ -93,6 +93,7 @@ import {
 } from "./internal/prerendered-pages.ts"
 import { privateEnvCheck } from "./internal/private-env.ts"
 import { publicUrlPaths } from "./internal/public-url.ts"
+import { clientReportRoutes } from "./internal/report-hydration.ts"
 import {
   assertNoSecrets,
   buildEnvironment,
@@ -812,7 +813,9 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   )
   if (eager !== undefined) {
     const imports = new Map([...eager].map(([file, deps]) => [toUrl(file), deps.map(toUrl)]))
-    options.onRouteAssets?.(clientRouteAssets(manifest, routeManifest.routes, imports))
+    options.onRouteAssets?.(
+      clientRouteAssets(manifest, clientReportRoutes(routesDir, routeManifest.routes), imports),
+    )
   }
   return manifest
 }
@@ -2308,7 +2311,7 @@ async function targetSizeReport(
     ...report,
     routes: routes.map((route) => ({
       ...route,
-      javascriptGzip: sum(route.javascript),
+      javascriptGzip: route.hydrationUnknown === true ? null : sum(route.javascript),
       stylesheetsGzip: sum(route.stylesheets),
     })),
   }

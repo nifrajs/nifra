@@ -22,33 +22,41 @@ export interface ClientRouteAssets {
   readonly pattern: string
   readonly javascript: readonly string[]
   readonly stylesheets: readonly string[]
+  /** The build could not determine whether the route enables framework hydration. */
+  readonly hydrationUnknown?: true
 }
 
 export interface ClientRouteSize extends ClientRouteAssets {
-  readonly javascriptGzip: number
+  readonly javascriptGzip: number | null
   readonly stylesheetsGzip: number
 }
 
 /** The client entry plus the matched page and layout chunks and their eager dependencies. */
 export function clientRouteAssets(
   manifest: BuildManifest,
-  routes: readonly Pick<RouteEntry, "id" | "pattern">[],
+  routes: readonly (Pick<RouteEntry, "id" | "pattern"> & {
+    readonly hydrate?: boolean | "unknown"
+  })[],
   imports: ReadonlyMap<string, readonly string[]>,
 ): readonly ClientRouteAssets[] {
   const available = new Set(manifest.assets)
-  return routes.map(({ id, pattern }) => {
+  return routes.map(({ id, pattern, hydrate }) => {
     const scripts = new Set<string>()
-    const pending = [manifest.entry, ...(manifest.routes[id] ?? [])]
+    const pending =
+      hydrate === false || hydrate === "unknown"
+        ? []
+        : [manifest.entry, ...(manifest.routes[id] ?? [])]
     for (const script of pending) {
       if (scripts.has(script) || !available.has(script) || !/\.[cm]?js$/.test(script)) continue
       scripts.add(script)
       for (const dependency of imports.get(script) ?? []) pending.push(dependency)
     }
-    return {
+    const assets = {
       pattern,
       javascript: [...scripts],
       stylesheets: [...new Set(manifest.routeStyles?.[id] ?? manifest.css ?? [])],
     }
+    return hydrate === "unknown" ? { ...assets, hydrationUnknown: true } : assets
   })
 }
 
@@ -119,9 +127,12 @@ export function renderSizeReport(report: SizeReport): string {
     line("Total", formatBytes(report.totalBytes), formatBytes(report.totalGzip)),
   ].join("\n")
   if (report.routes === undefined || report.routes.length === 0) return table
-  const routes = report.routes.flatMap((route) => [
-    `  ${route.pattern}  JS ${formatBytes(route.javascriptGzip)}  CSS ${formatBytes(route.stylesheetsGzip)}`,
-    `    ${[...route.javascript, ...route.stylesheets].join(" ")}`,
-  ])
-  return [table, "", "Initial client assets (hydrated pages, gzip)", ...routes].join("\n")
+  const routes = report.routes.flatMap((route) => {
+    const js =
+      route.javascriptGzip === null ? "unknown (hydrate export)" : formatBytes(route.javascriptGzip)
+    const assets = [...route.javascript, ...route.stylesheets]
+    const row = `  ${route.pattern}  JS ${js}  CSS ${formatBytes(route.stylesheetsGzip)}`
+    return assets.length === 0 ? [row] : [row, `    ${assets.join(" ")}`]
+  })
+  return [table, "", "Initial framework assets (gzip)", ...routes].join("\n")
 }

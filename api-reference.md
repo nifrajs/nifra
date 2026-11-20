@@ -6128,7 +6128,7 @@ _No named exports (side-effect entrypoint)._
   The default (Bun) strategy - `buildClient`/`buildServer` from this module.
 - **checkHostReach** _(function)_ - `checkHostReach: (options: HostReachOptions) => Promise<HostReachReport>`
   Render each page on `host`, then fetch every same-origin file each page references, following scripts' imports and stylesheets' `url()`s, and expect 200 for all of them; then expect each `refused` path to answer `refusedStatus`. Cross-origin references are skipped: they are not this app's to serve.
-- **clientRouteAssets** _(function)_ - `clientRouteAssets: (manifest: BuildManifest, routes: readonly Pick<RouteEntry, "id" | "pattern">[], imports: ReadonlyMap<string, readonly string[]>) => readonly ClientRouteAssets[]`
+- **clientRouteAssets** _(function)_ - `clientRouteAssets: (manifest: BuildManifest, routes: readonly (Pick<RouteEntry, "id" | "pattern"> & { readonly hydrate?: boolean | "unknown"; })[], imports: ReadonlyMap<string, readonly string[]>) => readonly ClientRout…`
   The client entry plus the matched page and layout chunks and their eager dependencies.
 - **cloudflarePagesRoutes** _(function)_ - `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
