@@ -469,8 +469,9 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // Route slots add 4,177 B gzip to the 23,476 B href/rawHref baseline (Bun 1.4.4).
   // Identity-cached query hashes, first-component invalidation indexes and amortized cache-cap
   // sweeps measured 28,019 B gzip on Bun 1.4.4. Bounding imperative writes and clearing retained
-  // handles across visitor changes brings the measured bundle to 28,195 B gzip.
-  "nifra-web-client": 27.55,
+  // handles across visitor changes brings the measured bundle to 28,195 B gzip. The router's
+  // dynamic-match admission window reaches the client router: 28,244 B on CI (Bun 1.4.4).
+  "nifra-web-client": 27.6,
   "nifra-i18n": 4.3,
 }
 
