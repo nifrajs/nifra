@@ -1,5 +1,5 @@
-import { expect, spyOn, test } from "bun:test"
-import { type Href, href, rawHref } from "@nifrajs/web"
+import { expect, test } from "bun:test"
+import { type Href, href, onHrefRefused, rawHref } from "@nifrajs/web"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { Link, Navigate, NavLink } from "../src/router.ts"
@@ -54,23 +54,38 @@ test("I10: Link and NavLink render a built Href as the anchor's href", () => {
   )
 })
 
-test("I10: Link and NavLink given a forged Href render no href and log it, never throw", () => {
-  const errors = spyOn(console, "error").mockImplementation(() => {})
+test("I10: Link and NavLink given a forged Href render no href and report it, never throw", () => {
+  const heard: string[] = []
+  const stop = onHrefRefused((refusal) => heard.push(refusal.message))
   try {
     for (const value of FORGED) {
       const to = forged(value)
-      errors.mockClear()
+      heard.length = 0
       expect(renderToStaticMarkup(createElement(Link, { to }, "x"))).toBe("<a>x</a>")
-      expect(errors).toHaveBeenCalledTimes(1)
-      errors.mockClear()
+      expect(heard).toHaveLength(1)
+      heard.length = 0
       expect(renderToStaticMarkup(createElement(NavLink, { to }, "x"))).not.toContain("href=")
-      expect(errors).toHaveBeenCalledTimes(1)
-      const logged = errors.mock.calls.flat().join(" ")
-      expect(logged).toContain("same-origin")
-      if (value !== "") expect(logged).not.toContain(value)
+      expect(heard).toHaveLength(1)
+      expect(heard[0]).toContain("same-origin")
+      if (value !== "") expect(heard[0]).not.toContain(value)
     }
   } finally {
-    errors.mockRestore()
+    stop()
+  }
+})
+
+test("a Link given what href() returns for a refused param renders no href and adds no second report", () => {
+  const heard: string[] = []
+  const stop = onHrefRefused((refusal) => heard.push(refusal.message))
+  try {
+    const to = href({ to: "/link-users/:id", params: { id: "\ud800" } })
+    expect(heard).toHaveLength(1)
+    expect(renderToStaticMarkup(createElement(Link, { to }, "x"))).toBe("<a>x</a>")
+    expect(renderToStaticMarkup(createElement(NavLink, { to }, "x"))).not.toContain("href=")
+    expect(heard).toHaveLength(1)
+    expect(heard[0]).not.toContain("\ud800")
+  } finally {
+    stop()
   }
 })
 

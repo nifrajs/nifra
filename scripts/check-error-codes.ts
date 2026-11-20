@@ -111,7 +111,8 @@ export function scanUncoded(): { total: number; excluded: number; uncoded: Uncod
           const message = body !== undefined && name === "FrameworkError" ? `[nifra] ${body}` : body
           if (message !== undefined) {
             total++
-            const where = `${file.slice(ROOT.length + 1)}:${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1}`
+            // Forward slashes on every platform: the exclusions above match on them.
+            const where = `${file.slice(ROOT.length + 1).replaceAll("\\", "/")}:${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1}`
             const hit = classify(name, message, true)
             if (
               hit.code === "NIFRA_UNHANDLED" &&

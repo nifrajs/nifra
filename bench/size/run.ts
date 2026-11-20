@@ -471,7 +471,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // sweeps measured 28,019 B gzip on Bun 1.4.4. Bounding imperative writes and clearing retained
   // handles across visitor changes brings the measured bundle to 28,195 B gzip. The router's
   // dynamic-match admission window reaches the client router: 28,244 B on CI (Bun 1.4.4).
-  "nifra-web-client": 27.6,
+  // `href` and `rawHref` refusing data with a log and an inert link instead of a throw, a refusal
+  // reporter, a log written once per message, `isInertHref`, and `navigate` and the click handler
+  // ignoring the inert link, modified and middle clicks included: 28,244 -> 28,531 B (Bun 1.4.4).
+  "nifra-web-client": 27.87,
   "nifra-i18n": 4.3,
 }
 

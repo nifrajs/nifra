@@ -28,6 +28,14 @@ export interface UndeclaredResponseRoute {
   readonly path: string
 }
 
+/** An SSE stream of one file with no heartbeat under Bun's idle cut, from {@link SourceFacts.silentSseStreams}. */
+export interface SilentSseStream {
+  /** The start of the `sse` name (`.sse(` route registration or the `sse(c, run)` helper call). */
+  readonly position: number
+  /** The `keepAlive` milliseconds written as a literal; undefined when the stream sets none. */
+  readonly keepAlive: number | undefined
+}
+
 /** A zod `coerce.boolean()` that a route's text slot reaches, from {@link SourceFacts.textSlotBooleanCoercions}. */
 export interface TextSlotBooleanCoercion {
   /** The start of the `coerce.boolean()` call. */
@@ -125,6 +133,14 @@ export interface SourceFacts {
    * left out too, since the file does not show whether it declares one.
    */
   undeclaredResponseRoutes(source: TSApi.SourceFile): readonly UndeclaredResponseRoute[]
+  /**
+   * The SSE streams of `source` that send no ping within `idleSeconds`: an `app.sse(path, schema, run)`
+   * route or an `sse(c, run)` helper call (imported from a `@nifrajs/` package) whose init object
+   * has no `keepAlive`, or a literal one of `idleSeconds` seconds or more. An init that is not an
+   * object literal, spreads another object, or sets `keepAlive` to something that is not a literal
+   * is left out, since the file does not show its interval.
+   */
+  silentSseStreams(source: TSApi.SourceFile, idleSeconds: number): readonly SilentSseStream[]
   /**
    * The zod `coerce.boolean()` calls a route's `query`, `headers` or `cookies` schema reaches in
    * `source`: written in the route's options, or in a variable of the file the options name, at any
@@ -912,6 +928,67 @@ export function createSourceFacts(
     return found
   }
 
+  const silentSseStreams = (
+    source: TSApi.SourceFile,
+    idleSeconds: number,
+  ): readonly SilentSseStream[] => {
+    const helpers = new Set<string>()
+    for (const [local, { specifier, name }] of valueImports(ts, source))
+      if (name === "sse" && specifier.startsWith("@nifrajs/")) helpers.add(local)
+    const found: SilentSseStream[] = []
+    const visit = (node: TSApi.Node): void => {
+      ts.forEachChild(node, visit)
+      if (!ts.isCallExpression(node)) return
+      const callee = node.expression
+      let name: TSApi.MemberName | undefined
+      let initIndex = 0
+      if (ts.isPropertyAccessExpression(callee) && callee.name.text === "sse") {
+        const path = node.arguments[0]
+        if (path === undefined || !ts.isStringLiteralLike(path) || node.arguments.length < 3) return
+        name = callee.name
+        initIndex = 3
+      } else if (
+        ts.isIdentifier(callee) &&
+        helpers.has(callee.text) &&
+        node.arguments.length >= 2
+      ) {
+        name = callee
+        initIndex = 2
+      }
+      if (name === undefined) return
+      const init = node.arguments[initIndex]
+      let keepAlive: number | undefined
+      if (init !== undefined) {
+        const value = unwrapExpression(ts, init)
+        if (!ts.isObjectLiteralExpression(value)) return
+        for (const property of value.properties) {
+          if (ts.isSpreadAssignment(property)) return
+          const key = property.name
+          if (key === undefined) continue
+          // A computed key the file does not spell out may be `keepAlive`: the interval is unknown.
+          if (ts.isComputedPropertyName(key)) {
+            const spelled = unwrapExpression(ts, key.expression)
+            if (!ts.isStringLiteralLike(spelled)) return
+            if (spelled.text !== "keepAlive") continue
+          } else if (
+            !(ts.isIdentifier(key) || ts.isStringLiteralLike(key)) ||
+            key.text !== "keepAlive"
+          ) {
+            continue
+          }
+          if (!ts.isPropertyAssignment(property)) return
+          const written = unwrapExpression(ts, property.initializer)
+          if (!ts.isNumericLiteral(written)) return
+          keepAlive = Number(written.text)
+        }
+      }
+      if (keepAlive !== undefined && keepAlive > 0 && keepAlive < idleSeconds * 1000) return
+      found.push({ position: name.getStart(source), keepAlive })
+    }
+    visit(source)
+    return found.sort((a, b) => a.position - b.position)
+  }
+
   const textSlotBooleanCoercions = (
     source: TSApi.SourceFile,
   ): readonly TextSlotBooleanCoercion[] => {
@@ -1093,6 +1170,7 @@ export function createSourceFacts(
     isResponseSyntaxAt,
     untypedResponseRoutes,
     undeclaredResponseRoutes,
+    silentSseStreams,
     textSlotBooleanCoercions,
     internalAnchors,
     routeHookCalls,

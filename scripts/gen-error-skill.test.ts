@@ -5,10 +5,11 @@ import { RULE_CODES } from "../packages/cli/src/rules/codes.ts"
 import { DIAGNOSTIC_CATALOG } from "../packages/web/src/diagnostic-catalog.ts"
 import { renderErrorSkill } from "./gen-error-skill.ts"
 
+// A Windows checkout may hold the file with CRLF line endings; the guide is compared by its text.
 const committed = readFileSync(
   join(import.meta.dir, "../packages/skills/skills/nifra-errors/SKILL.md"),
   "utf8",
-)
+).replaceAll("\r\n", "\n")
 
 test("the committed repair guide is what the catalogs generate", () => {
   expect(committed).toBe(renderErrorSkill())

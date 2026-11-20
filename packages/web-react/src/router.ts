@@ -30,7 +30,13 @@ import type {
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
-import { getBrowserNavigate, IDLE_BLOCKER, rawHref, registerBlocker } from "@nifrajs/web/client"
+import {
+  getBrowserNavigate,
+  IDLE_BLOCKER,
+  isInertHref,
+  rawHref,
+  registerBlocker,
+} from "@nifrajs/web/client"
 // Its own subpath, so an app that never calls `useMatches` bundles none of it.
 import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 import { navigateNow } from "@nifrajs/web/internal/navigate-runtime"
@@ -116,18 +122,13 @@ function splitPath(path: string): { readonly pathname: string; readonly search: 
     : { pathname: path.slice(0, q), search: path.slice(q) }
 }
 
-/** `value` as an `Href`, or `undefined` after a `console.error` when it is not a same-origin path: a bad
- * destination costs its own link, never the render. The message leaves the value out, since a CMS link
- * can carry a token or personal data into the server log. */
-function checkedHref(value: string, where: string): Href | undefined {
-  try {
-    return rawHref(value)
-  } catch {
-    console.error(
-      `[nifra/web-react] ${where} ignored its destination: it is not a same-origin path (one beginning with "/", not "//", with no backslash or control character).`,
-    )
-    return undefined
-  }
+/** `value` as an `Href`, or `undefined` when it is not a same-origin path: a bad destination costs its
+ * own link, never the render. `href()` or `rawHref` has already logged the refusal (without the value,
+ * since a CMS link can carry a token or personal data into the server log). */
+function checkedHref(value: string): Href | undefined {
+  if (isInertHref(value)) return undefined
+  const checked = rawHref(value)
+  return isInertHref(checked) ? undefined : checked
 }
 
 /**
@@ -328,7 +329,7 @@ export function useSearchParams(): readonly [URLSearchParams, SetSearchParams] {
     (next, options) => {
       const resolved = typeof next === "function" ? next(new URLSearchParams(search)) : next
       const qs = toSearchParams(resolved).toString()
-      const target = checkedHref(pathname + (qs !== "" ? `?${qs}` : ""), "setSearchParams")
+      const target = checkedHref(pathname + (qs !== "" ? `?${qs}` : ""))
       if (target !== undefined) navigate(target, options)
     },
     [navigate, pathname, search],
@@ -368,7 +369,7 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
   { to, replace, prefetch, onClick, target, ...rest },
   ref,
 ) {
-  const destination = checkedHref(to, "<Link>")
+  const destination = checkedHref(to)
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     onClick?.(event)
     if (event.defaultPrevented) return // the app's own handler already took over
@@ -482,7 +483,7 @@ export interface NavigateProps {
 export function Navigate({ to, replace }: NavigateProps): null {
   const navigate = useNavigate()
   useEffect(() => {
-    const destination = checkedHref(to, "<Navigate>")
+    const destination = checkedHref(to)
     if (destination !== undefined) navigate(destination, { replace: replace === true })
   }, [navigate, to, replace])
   return null

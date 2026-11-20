@@ -59,6 +59,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C058": "Internal link written as a path string",
   "NF-C059": "Route hook names another route than its page's",
   "NF-C060": "Value cast to Href",
+  "NF-C061": "SSE stream with no heartbeat under Bun's idle timeout",
   "NF-D001": "Doctor check",
   "NF-D002": "Mixed nifra versions",
   "NF-D003": "Stale file: dependencies in bun.lock",

@@ -9,6 +9,7 @@ import {
 } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { DEFERRED_ERROR_CODE, DEFERRED_RUNTIME, prepareDeferred } from "../deferred.ts"
+import { isInertHref } from "../href.ts"
 import {
   ISR_REVALIDATE_HEADER,
   ISR_REVALIDATE_TAGS_HEADER,
@@ -935,6 +936,13 @@ export interface RedirectOptions {
   /** Extra response headers. A redirect is no longer a `Response`, so there is no `.headers` to
    * mutate after the fact - name them here. Cookies queued with `ctx.set.cookie()` still ride it. */
   readonly headers?: Readonly<Record<string, string>>
+  /**
+   * Where to go when `location` is the inert `Href` that `href()` or `rawHref()` returned for a value
+   * it refused (a bad param from data, already reported). Without it `redirect` throws, since there
+   * is nowhere to send the visitor; a Post/Redirect/Get action that has already written passes one
+   * so a bad value costs the destination, not a 500 after the write.
+   */
+  readonly fallback?: Href
 }
 
 /** A same-origin destination is an absolute path: one leading `/`, but NOT `//` (protocol-relative →
@@ -961,7 +969,12 @@ export interface RedirectOptions {
  * `redirect(...)` is still returned or thrown from exactly the same places; only `.status` /
  * `.headers` are gone from the value, replaced by `options.headers` and the request's `c.set`.
  *
- * @param options redirect status, extra headers, and whether an off-origin destination is intentional.
+ * A `location` that is the inert `Href` `href()` returns for a value it refused has nowhere to go, so
+ * it throws, unless `options.fallback` names another `Href` to send the visitor to. An action that
+ * has already written passes one, so a bad value costs the destination and not a 500 after the write.
+ *
+ * @param options redirect status, extra headers, whether an off-origin destination is intentional, and
+ * the `fallback` for a refused location.
  */
 export function redirect(
   location: Href,
@@ -972,22 +985,35 @@ export function redirect(
   options: RedirectOptions & { readonly external: true },
 ): ResponseResult
 export function redirect(location: string, options: RedirectOptions = {}): ResponseResult {
-  if (options.external !== true && !isSameOriginPath(location)) {
+  let target = location
+  if (isInertHref(location)) {
+    const fallback = options.fallback
+    if (fallback === undefined || isInertHref(fallback)) {
+      throw new Error(
+        `[nifra/web] redirect(): the location is not a usable link, since href() or rawHref() refused its value (reported earlier), so there is nowhere to send the visitor. Pass { fallback: href({ to: "/" }) } to send them somewhere else.`,
+      )
+    }
+    target = fallback
+  }
+  if (options.external !== true && !isSameOriginPath(target)) {
     throw new Error(
-      `[nifra/web] redirect(${JSON.stringify(location)}) is not a same-origin path. Use a path beginning with "/" (not "//", no backslash or control character), or redirect(location, { external: true }) for a deliberate off-origin redirect. This guards against open redirects from unvalidated input.`,
+      `[nifra/web] redirect(${JSON.stringify(target)}) is not a same-origin path. Use a path beginning with "/" (not "//", no backslash or control character), or redirect(location, { external: true }) for a deliberate off-origin redirect. This guards against open redirects from unvalidated input.`,
     )
   }
   // Reject CR/LF in the Location explicitly - defense-in-depth (response splitting / header
   // injection). Spec-correct runtimes' Headers setter throws on CR/LF, but `external: true` lets
   // unvalidated input reach this sink, so we don't rely on the runtime. Same posture as
   // serializeCookie / the SSE frame formatter, which strip CRLF at their sinks.
-  if (/[\r\n]/.test(location)) {
+  if (/[\r\n]/.test(target)) {
     throw new Error(
       `[nifra/web] redirect location contains a CR/LF character - refusing to emit a header-injecting redirect.`,
     )
   }
   return statusResult(options.status ?? 303, undefined, {
-    headers: options.headers === undefined ? { location } : { ...options.headers, location },
+    headers:
+      options.headers === undefined
+        ? { location: target }
+        : { ...options.headers, location: target },
   })
 }
 

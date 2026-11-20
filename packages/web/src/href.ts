@@ -81,11 +81,82 @@ type UntypedHrefOptions = {
   readonly slots?: Readonly<Record<string, string | null>>
 }
 
-function fragment(hash: string): string {
+/**
+ * What `href()` and `rawHref()` return for input they refuse. It starts with a control character, so
+ * `isSameOriginPath` rejects it: `Link`, `Navigate`, `navigate` and `redirect` all treat it as no
+ * destination. Held by a plain `<a>` in any adapter's template, a click, a modified click and a middle
+ * click are cancelled by the click handler of `installHistory` once the page is hydrated. Before that,
+ * or without scripts, it percent-encodes to a path no route of the app names, so the failure is a 404
+ * (or the page of a catch-all or dynamic route, such as `/:id`, that matches any one segment) and never
+ * another page's link. An anchor that must never navigate leaves its `href` off:
+ * `href={isInertHref(link) ? undefined : link}`.
+ */
+export const INERT_HREF: Href = brand("/\u0001nifra-invalid-href")
+
+/** Whether `value` is what `href()` and `rawHref()` return for input they refused. */
+export function isInertHref(value: string): boolean {
+  return value === INERT_HREF
+}
+
+/** One refused call, as {@link onHrefRefused} hands it over. It never holds a param, hash or path value. */
+export interface HrefRefusal {
+  readonly call: "href" | "rawHref"
+  /** The route pattern `href()` was given; undefined for `rawHref`. */
+  readonly route?: string
+  /** What was refused, in words: the same text the default log writes. */
+  readonly message: string
+}
+
+let reporter: ((refusal: HrefRefusal) => void) | undefined
+
+/**
+ * Take over what happens when `href()` or `rawHref()` refuses a value. `report` runs for every refusal,
+ * in place of the default `console.error`, so an app can send them to its error tracker or count them;
+ * pass `console.error` to keep the default as well. Returns a function that removes it. One reporter at
+ * a time: a second call replaces the first. A throw from `report` is swallowed, since a link must not
+ * cost the render. The refusal holds no value: a CMS link can carry a token into a log.
+ */
+export function onHrefRefused(report: (refusal: HrefRefusal) => void): () => void {
+  reporter = report
+  return () => {
+    if (reporter === report) reporter = undefined
+  }
+}
+
+const MAX_LOGGED = 64
+const logged = new Set<string>()
+
+/**
+ * Refuse input without throwing: a param, hash or path that comes from data (a database row, a CMS
+ * link) must cost its own link, never the render. The default log remembers the last 64 distinct
+ * messages and writes each once, so a page of rows with the same bad param is one line; past 64 it
+ * starts over, so a longer cycle of messages can repeat. A {@link onHrefRefused} reporter hears every
+ * refusal.
+ */
+function refuse<Pattern extends string = string>(
+  call: HrefRefusal["call"],
+  to: string | undefined,
+  message: string,
+): Href<Pattern> {
+  if (reporter !== undefined) {
+    try {
+      reporter(to === undefined ? { call, message } : { call, route: to, message })
+    } catch {
+      // a broken reporter costs its own report, never the link
+    }
+  } else if (!logged.has(message)) {
+    if (logged.size >= MAX_LOGGED) logged.clear()
+    logged.add(message)
+    console.error(message)
+  }
+  return brand<Pattern>(INERT_HREF)
+}
+
+function fragment(hash: string): string | undefined {
   try {
     return `#${encodeURI(hash)}`
   } catch {
-    throw new TypeError("[nifra/web] href: the hash holds an unpaired surrogate")
+    return undefined
   }
 }
 
@@ -100,9 +171,13 @@ function fragment(hash: string): string {
  * ```
  *
  * A param that is missing, empty, or holds a value no path segment can carry (`.`, `..`, an unpaired
- * surrogate) throws a `TypeError` naming it, in production too: a link built from it would go
- * somewhere else. The result is a pure function of its input, so the server and the browser build the
- * same string. A link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.
+ * surrogate), a `hash` with an unpaired surrogate, a `search` key reserved for route-slot state, and a
+ * slot target that was itself refused come from data, so they do not throw: the result is the inert
+ * `Href`, which every consumer (`Link`, `Navigate`, `navigate`, and a click on a plain `<a>`) ignores,
+ * and a `console.error` (once per distinct message, within a bounded memory; see {@link onHrefRefused}
+ * to take over) names the route and the param, never the value. A link built from such a value would go somewhere else, so no link is built.
+ * The result is a pure function of its input, so the server and the browser build the same string. A
+ * link to a path built elsewhere is {@link rawHref}; one to another site is a plain `<a>`.
  */
 export function href<K extends Pattern>(options: HrefOptions<K>): Href<K> {
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: HrefOptions<K> is this shape with the route table's types in place of string and unknown
@@ -116,23 +191,48 @@ export function href<K extends Pattern>(options: HrefOptions<K>): Href<K> {
           `"${name}" holds a value no path segment can carry ("." or ".." or an unpaired surrogate)`,
       ),
     ]
-    throw new TypeError(`[nifra/web] href({ to: ${JSON.stringify(to)} }): ${problems.join("; ")}`)
+    return refuse(
+      "href",
+      to,
+      `[nifra/web] href({ to: ${JSON.stringify(to)} }): ${problems.join("; ")}`,
+    )
   }
   let url = filled.path
   if (search !== undefined) url += serializeSearch(search)
   const queryStart = url.indexOf("?")
   if (queryStart >= 0 && hasRouteSlotsSearch(url.slice(queryStart + 1))) {
-    throw new TypeError(
-      `[nifra/web] query keys beginning with ${ROUTE_SLOT_QUERY_PREFIX} are reserved for route-slot state`,
+    return refuse(
+      "href",
+      to,
+      `[nifra/web] href({ to: ${JSON.stringify(to)} }): query keys beginning with ${ROUTE_SLOT_QUERY_PREFIX} are reserved for route-slot state`,
     )
   }
   if (slots !== undefined) {
+    // A target the child `href()` refused has nowhere to go, so neither does the parent.
+    for (const target of Object.values(slots)) {
+      if (target !== null && isInertHref(target)) {
+        return refuse(
+          "href",
+          to,
+          `[nifra/web] href({ to: ${JSON.stringify(to)} }): a slot target is a link that was refused`,
+        )
+      }
+    }
     const targets = Object.fromEntries(
       Object.entries(slots).filter((entry): entry is [string, string] => entry[1] !== null),
     )
     url = withRouteSlots(url, targets)
   }
-  if (hash !== undefined && hash !== "") url += fragment(hash)
+  if (hash !== undefined && hash !== "") {
+    const written = fragment(hash)
+    if (written === undefined)
+      return refuse(
+        "href",
+        to,
+        `[nifra/web] href({ to: ${JSON.stringify(to)} }): the hash holds an unpaired surrogate`,
+      )
+    url += written
+  }
   return brand<K>(url)
 }
 
@@ -140,13 +240,16 @@ export function href<K extends Pattern>(options: HrefOptions<K>): Href<K> {
  * An {@link Href} for a same-origin path built elsewhere: a CMS link, a `@nifrajs/content` page, a public
  * file such as `/llms.txt`. The path is returned as written, never encoded, after `isSameOriginPath`
  * (the check `redirect()` makes) accepts it: one leading `/`, not `//`, no backslash and no control
- * character. Anything else throws a `TypeError`. A route of this app is {@link href}; another site is a
- * plain `<a href>`.
+ * character. Anything else is a path from data this function cannot vouch for, so it does not throw:
+ * the result is the inert `Href` that `Link`, `Navigate` and `navigate` ignore, with a `console.error`
+ * that leaves the value out. A route of this app is {@link href}; another site is a plain `<a href>`.
  */
 export function rawHref(path: string): Href {
   if (typeof path !== "string" || !isSameOriginPath(path)) {
-    throw new TypeError(
-      `[nifra/web] rawHref(${JSON.stringify(path)}) is not a same-origin path. Use a path beginning with "/" (not "//", no backslash or control character); a link to another site is a plain <a href>.`,
+    return refuse(
+      "rawHref",
+      undefined,
+      `[nifra/web] rawHref: the path is not a same-origin one. Use a path beginning with "/" (not "//", no backslash or control character); a link to another site is a plain <a href>.`,
     )
   }
   return brand(path)

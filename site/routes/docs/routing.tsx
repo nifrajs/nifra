@@ -511,23 +511,34 @@ export default function Routing() {
       <p>
         Each param is encoded as one path segment, so a value such as <code>a/b</code> or{" "}
         <code>//evil.com</code> stays inside the segment and never changes where the link goes. A
-        param that is missing, empty, <code>.</code>, <code>..</code> or an unpaired surrogate throws a{" "}
-        <code>TypeError</code> naming it. <code>navigate</code> takes only an <code>href</code> result,
+        param that is missing, empty, <code>.</code>, <code>..</code> or an unpaired surrogate does not{" "}
+        throw, since it usually comes from data and one bad row should not fail the page:{" "}
+        <code>href</code> logs a <code>console.error</code> once per distinct message (it remembers the
+        last 64, then starts over), naming the route and the param and never the value, and returns
+        an inert link that <code>Link</code>, <code>Navigate</code>, <code>navigate</code> and a
+        click, modified click or middle click on a plain anchor ignore, in every adapter. Before
+        hydration, or without scripts, a plain anchor holding it loads a path no route names: a 404, or the page of a dynamic route such as{" "}
+        <code>/:id</code> that matches any one segment;
+        an anchor that must never navigate leaves its <code>href</code> off with{" "}
+        <code>{`href={isInertHref(link) ? undefined : link}`}</code>. <code>onHrefRefused(report)</code> takes over the logging: it hears every refusal, in
+        place of the default, so an app can send them to its error tracker. <code>navigate</code> takes only an <code>href</code> result,
         or a history delta such as <code>navigate(-1)</code>; a string or a template literal is a
         compile error. So do React's <code>Link</code>, <code>NavLink</code> and <code>Navigate</code>{" "}
         (<code>{`<Link to={href({ to: "/pricing" })}>`}</code>) and the server's{" "}
         <code>redirect()</code>; when <code>to</code> is not a same-origin path,{" "}
         <code>Link</code> and <code>NavLink</code> render the anchor without an <code>href</code>,
         and <code>Navigate</code> and <code>setSearchParams</code> do not navigate; each logs a{" "}
-        <code>console.error</code> that names the call and never the value. <code>redirect</code>{" "}
+        <code>console.error</code> that never holds the value. <code>redirect</code>{" "}
         takes an off-origin location with <code>{`{ external: true }`}</code>, which still refuses
         one holding a line break. For a same-origin path built elsewhere - a CMS link,{" "}
         <code>/llms.txt</code> - <code>{`rawHref("/llms.txt")`}</code> checks it (one leading{" "}
         <code>/</code>, no backslash or control character) and returns the same type. A link to
         another site is a plain <code>&lt;a href&gt;</code>. A path that comes from outside is
-        checked where it is read: <code>rawHref</code> throws a <code>TypeError</code> for one that is
-        not same-origin, so catch it at that call when a field cannot be trusted. A value that gets
-        past it as a forged <code>Href</code> costs only its own link.
+        checked where it is read: <code>rawHref</code> returns the same inert link, and logs, for one that
+        is not same-origin. A value that gets past it as a forged <code>Href</code> costs only its own
+        link. <code>redirect</code> has no page to fall back to, so a refused location throws unless you
+        pass <code>{`{ fallback: href({ to: "/" }) }`}</code>: an action that has already written
+        should, so a bad value costs the destination and not a 500 after the write.
       </p>
 
       <h2 id="typed-links">Moving existing links to href()</h2>

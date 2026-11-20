@@ -314,6 +314,11 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Build the link with `href({ to, params, search })`. A path built elsewhere, such as a CMS link, goes through `rawHref(path)`. A cast kept on purpose takes `// nifra-expect NF-C060: <reason>` above it.",
     docs: "/docs/routing",
   },
+  "NF-C061": {
+    why: "Bun closes a connection that moves no bytes for the listener's `idleTimeoutSec` seconds (10 by default). An SSE stream that sends no ping inside that time is cut whenever its events are further apart, and a test through `app.fetch` never shows it because that path has no listener.",
+    fix: "Pass `{ keepAlive: 5_000 }` to the stream so a ping goes out well inside the timeout, or raise the timeout: `withIdleTimeout(c, seconds, work)` from `@nifrajs/core/idle-timeout` under `listen()`, or the `idleTimeout` option of `Bun.serve()`. A stream kept on purpose takes `// nifra-expect NF-C061: <reason>` above the registration.",
+    docs: "/docs/api",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",

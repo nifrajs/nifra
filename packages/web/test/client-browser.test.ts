@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, expect, jest, test } from "bun:test"
+import { afterAll, beforeAll, expect, jest, spyOn, test } from "bun:test"
 import { installForms, installHistory, signalHydrated } from "../src/client.ts"
-import { rawHref } from "../src/href.ts"
+import { INERT_HREF, rawHref } from "../src/href.ts"
 import { navigateNow } from "../src/internal/navigate-runtime.ts"
 import {
   type Blocker,
@@ -794,6 +794,75 @@ test("a forged Href cannot make the navigate every adapter returns leave the ori
   expect(historyCalls).toEqual([])
   expect(locationState.pathname).toBe("/settings")
   stop()
+})
+
+test("the Href that href() returns for refused input goes nowhere, not even to a hard load", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const refused = rawHref("//elsewhere.test/page")
+    expect(refused).toBe(INERT_HREF)
+    historyCalls = []
+    navigateNow(refused)
+    navigateNow(refused, { replace: true })
+    await Bun.sleep(0)
+  } finally {
+    errors.mockRestore()
+  }
+  expect(fallback).toEqual([])
+  expect(navigated).toEqual([])
+  expect(historyCalls).toEqual([])
+  stop()
+})
+
+test("a click on an anchor holding the refused Href is swallowed, so no adapter's template can load a 404", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+  try {
+    const anchor = fakeAnchor(`http://example.test${encodeURI(INERT_HREF)}`)
+    anchor.attrs.set("href", INERT_HREF)
+    const click = fakeEvent(anchor)
+    document.emit("click", click)
+    await Bun.sleep(0)
+    expect(click.defaultPrevented).toBe(true)
+    expect(navigated).toEqual([])
+    expect(fallback).toEqual([])
+    // A modified click would open the refused path in a new tab, and a middle click does the same.
+    for (const modifier of ["metaKey", "ctrlKey", "shiftKey", "altKey"] as const) {
+      const modified = fakeEvent(anchor)
+      Object.assign(modified, { [modifier]: true })
+      document.emit("click", modified)
+      expect(modified.defaultPrevented).toBe(true)
+    }
+    const middle = fakeEvent(anchor)
+    Object.assign(middle, { button: 1 })
+    document.emit("auxclick", middle)
+    expect(middle.defaultPrevented).toBe(true)
+    // Any other anchor still goes through the router.
+    const real = fakeAnchor("http://example.test/settings")
+    real.attrs.set("href", "/settings")
+    const realClick = fakeEvent(real)
+    document.emit("click", realClick)
+    await Bun.sleep(0)
+    expect(realClick.defaultPrevented).toBe(true)
+    expect(navigated).toEqual(["/settings"])
+    // A valid anchor keeps the browser's own modified-click and middle-click behavior.
+    const modifiedReal = fakeEvent(real)
+    Object.assign(modifiedReal, { ctrlKey: true })
+    document.emit("click", modifiedReal)
+    const middleReal = fakeEvent(real)
+    Object.assign(middleReal, { button: 1 })
+    document.emit("auxclick", middleReal)
+    expect(modifiedReal.defaultPrevented).toBe(false)
+    expect(middleReal.defaultPrevented).toBe(false)
+  } finally {
+    stop()
+  }
 })
 
 test("a client-only search change keeps a partially prerendered first document's holes filling", async () => {

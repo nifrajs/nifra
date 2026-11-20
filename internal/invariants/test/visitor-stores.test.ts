@@ -1367,6 +1367,8 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
   "packages/web/src/href.ts": {
     compiledPatterns:
       "route patterns compiled by their text, bounded and dropped when full; no data",
+    logged:
+      "refusal messages already written, bounded and dropped when full; each names a route and a param, never a value",
   },
   "packages/web/src/identity.ts": { "listeners@listenersOf": LISTENERS },
   "packages/web/src/internal/deferred-free.ts": {

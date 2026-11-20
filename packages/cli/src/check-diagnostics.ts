@@ -38,6 +38,7 @@ import { routeRules } from "./rules/routes.ts"
 import { secretRules } from "./rules/secrets.ts"
 import { securityRules } from "./rules/security.ts"
 import { serverFnNamespaceRule } from "./rules/server-fn-namespace.ts"
+import { silentSseRule } from "./rules/silent-sse.ts"
 import { swapRules } from "./rules/swap.ts"
 import { textSlotBooleanRule } from "./rules/text-slot-boolean.ts"
 import { undeclaredResponseRule } from "./rules/undeclared-response.ts"
@@ -511,6 +512,7 @@ export async function collectCheckDiagnostics(
     mergeAuthGapRule,
     routeStatementRule,
     undeclaredResponseRule,
+    silentSseRule,
     textSlotBooleanRule,
     ...internalLinkRules,
     ...routeHookRules,

@@ -2456,7 +2456,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    *       stream.send({ id: 1, title: "hello" })          // typed
    *       await waitForDisconnect(stream.signal)
    *     },
-   *     { keepAlive: 15_000 })
+   *     { keepAlive: 5_000 })
    *
    *   // client: const off = api.feed.subscribe((post) => console.log(post.title))
    *

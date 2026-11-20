@@ -5620,6 +5620,8 @@ _No named exports (side-effect entrypoint)._
   An in-app URL: what `href()` builds from a route and `rawHref()` returns for a checked path. A string at runtime, a branded string to the compiler, so a plain string or a template literal is not assignable to it. `Pattern` is the {@link RouteTable} key it was built for. The brand is a named propert…
 - **HrefOptions** _(type)_ - `type HrefOptions<K extends Pattern> = { readonly to: K; readonly search?: SearchOfRoute<K> | undefined; readonly hash?: string | undefined } & ParamsOption<K> & SlotOptions<K>`
   What {@link href} takes: the route's pattern as `to`, its `params` (required when the pattern has any, absent when it has none), the route's `search` as its `searchSchema` accepts it (a defaulted field may be left out), and the `hash` without its `#`.
+- **HrefRefusal** _(interface)_ - `interface HrefRefusal`
+  One refused call, as {@link onHrefRefused} hands it over. It never holds a param, hash or path value.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
@@ -5951,6 +5953,8 @@ _No named exports (side-effect entrypoint)._
   Whether `request` carries a **valid**, unexpired signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, tampered, or expired cookie returns `false`.
 - **isHostPolicy** _(function)_ - `isHostPolicy: (value: unknown) => value is HostPolicy`
   Whether `value` came from {@link createHostPolicy}.
+- **isInertHref** _(function)_ - `isInertHref: (value: string) => boolean`
+  Whether `value` is what `href()` and `rawHref()` return for input they refused.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **localeOfProps** _(function)_ - `localeOfProps: (props: RenderProps | undefined) => PageLocale | undefined`
@@ -5963,6 +5967,8 @@ _No named exports (side-effect entrypoint)._
   Runtime validation for JavaScript callers, generated manifests, and hand-authored integrations.
 - **notFound** _(function)_ - `notFound: (options?: StatusPageOptions) => never`
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
+- **onHrefRefused** _(function)_ - `onHrefRefused: (report: (refusal: HrefRefusal) => void) => () => void`
+  Take over what happens when `href()` or `rawHref()` refuses a value. `report` runs for every refusal, in place of the default `console.error`, so an app can send them to its error tracker or count them; pass `console.error` to keep the default as well. Returns a function that removes it. One report…
 - **openGraph** _(function)_ - `openGraph: (input: OpenGraphInput) => MetaDescriptor[]`
   Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
 - **pageLocaleIn** _(function)_ - `pageLocaleIn: (config: PageLocales, path: string) => PageLocale | undefined`
@@ -6256,6 +6262,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/client`
 
+- **HrefRefusal** _(interface)_ - `interface HrefRefusal`
+  One refused call, as {@link onHrefRefused} hands it over. It never holds a param, hash or path value.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
   The idle blocker - a stable reference (no needless adapter re-renders while unblocked).
 - **InstallHistoryOptions** _(interface)_ - `interface InstallHistoryOptions`
@@ -6303,6 +6311,8 @@ _No named exports (side-effect entrypoint)._
   Intercept submissions of same-origin `<form method="post">` whose action targets an app route: submit via the router (no full reload - POST the action, then revalidate the active loader). On failure it falls back to a native submit, so the form still works. Returns a teardown function.
 - **installHistory** _(function)_ - `installHistory: (router: ClientRouter, options?: InstallHistoryOptions) => () => void`
   Attach history + link interception to a router. Returns a teardown function that removes the listeners. A data-fetch failure during a client navigation falls back to a full-page load, so navigation degrades gracefully rather than leaving the user stuck.
+- **isInertHref** _(function)_ - `isInertHref: (value: string) => boolean`
+  Whether `value` is what `href()` and `rawHref()` return for input they refused.
 - **loadRouteSlot** _(function)_ - `loadRouteSlot: (runtime: RouteSlotRuntime, name: string, parentPath: string, targetValue: string, signal: AbortSignal) => Promise<LoadedRouteSlot>`
   Resolve an addressed slot through the current router and its normal authorized route-data path.
 - **localeOfProps** _(function)_ - `localeOfProps: (props: RenderProps | undefined) => PageLocale | undefined`
@@ -6311,6 +6321,8 @@ _No named exports (side-effect entrypoint)._
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **notFound** _(function)_ - `notFound: (options?: StatusPageOptions) => never`
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
+- **onHrefRefused** _(function)_ - `onHrefRefused: (report: (refusal: HrefRefusal) => void) => () => void`
+  Take over what happens when `href()` or `rawHref()` refuses a value. `report` runs for every refusal, in place of the default `console.error`, so an app can send them to its error tracker or count them; pass `console.error` to keep the default as well. Returns a function that removes it. One report…
 - **onRouteSlotIdentityChange** _(function)_ - `onRouteSlotIdentityChange: (listener: () => void) => () => void`
 - **parseRouteSlots** _(function)_ - `parseRouteSlots: (path: string) => RouteSlotTargets`
   Parse and strictly validate flat `slot.<name>=<target>` query values.
