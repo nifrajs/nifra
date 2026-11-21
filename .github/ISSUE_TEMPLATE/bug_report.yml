@@ -25,7 +25,7 @@ body:
     attributes:
       label: Nifra version
       description: The `@nifrajs/*` version from your lockfile.
-      placeholder: "5.16.0"
+      placeholder: "5.17.0"
     validations:
       required: true
   - type: dropdown
