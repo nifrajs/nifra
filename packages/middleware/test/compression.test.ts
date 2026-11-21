@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { randomBytes } from "node:crypto"
-import * as zlib from "node:zlib"
+import nodeZlib, * as zlib from "node:zlib"
 import { constants, gunzipSync, gzipSync } from "node:zlib"
 import { server } from "@nifrajs/core"
 import { idempotency } from "@nifrajs/core/idempotency-plugin"
@@ -892,6 +892,74 @@ describe("compression()", () => {
   test("validates the threshold", () => {
     expect(() => compression({ threshold: 1.5 })).toThrow(/threshold/)
     expect(() => compression({ threshold: -1 })).toThrow(/threshold/)
+  })
+
+  describe("inlineMax", () => {
+    // zlib's `gzipSync` is the inline lane, `gzip` the pool: whichever the plan picks is the one called.
+    const countCalls = async (
+      inlineMax: number | undefined,
+    ): Promise<{ sync: number; pool: number }> => {
+      const calls = { sync: 0, pool: 0 }
+      const { gzipSync: realSync, gzip: realPool } = nodeZlib
+      const patched: { gzipSync: unknown; gzip: unknown } = nodeZlib
+      patched.gzipSync = (...args: Parameters<typeof realSync>) => {
+        calls.sync++
+        return realSync(...args)
+      }
+      patched.gzip = (...args: Parameters<typeof realPool>) => {
+        calls.pool++
+        return realPool(...args)
+      }
+      try {
+        const app = server()
+          .use(compression(inlineMax === undefined ? {} : { inlineMax }))
+          .get("/", (c) => c.json({ text: big }))
+        const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
+        expect(res.headers.get("content-encoding")).toBe("gzip")
+        expect(await gunzip(res)).toBe(JSON.stringify({ text: big }))
+      } finally {
+        patched.gzipSync = realSync
+        patched.gzip = realPool
+      }
+      return calls
+    }
+
+    test("a body within the limit is gzipped on the calling thread", async () => {
+      const calls = await countCalls(1024 * 1024)
+      expect(calls.sync).toBeGreaterThan(0)
+      expect(calls.pool).toBe(0)
+    })
+
+    test("a body past the limit goes to the pool, 0 included", async () => {
+      const calls = await countCalls(0)
+      expect(calls.sync).toBe(0)
+      expect(calls.pool).toBeGreaterThan(0)
+    })
+
+    test("0 gzips nothing inline, an empty body included", async () => {
+      const calls = { sync: 0 }
+      const { gzipSync: realSync } = nodeZlib
+      const patched: { gzipSync: unknown } = nodeZlib
+      patched.gzipSync = (...args: Parameters<typeof realSync>) => {
+        calls.sync++
+        return realSync(...args)
+      }
+      try {
+        const app = server()
+          .use(compression({ threshold: 0, inlineMax: 0 }))
+          .get("/", (c) => c.text(""))
+        await app.fetch(new Request("http://x/", { headers: GZIP }))
+      } finally {
+        patched.gzipSync = realSync
+      }
+      expect(calls.sync).toBe(0)
+    })
+
+    test("rejects a limit that is not a non-negative safe integer", () => {
+      for (const inlineMax of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(() => compression({ inlineMax })).toThrow(/inlineMax/)
+      }
+    })
   })
 
   // An upstream that fails partway is the case the raw tier cannot buffer its way out of: the

@@ -14,6 +14,13 @@ export interface CompressionOptions {
   /** Decide whether a `Content-Type` is worth compressing. Default: text, JSON/+json, JS, XML/+xml,
    * NDJSON, wasm, SVG. Already-compressed media (images, video, archives) is skipped. */
   readonly compressible?: (contentType: string) => boolean
+  /** Gzip a buffered body of up to this many bytes on the calling thread, rather than handing it to a
+   * worker pool. The default depends on the runtime: Bun on Linux gzips inline up to 64 KiB, Deno
+   * always does, and Node never does. A pool hand-off pays when the process has idle cores to spend
+   * on it; when every core already runs a process of its own (one per core, behind a cluster or
+   * `reusePort`) it only adds cost, and an inline limit measured 1.5 to 4 times the throughput on
+   * Node. `0` gzips nothing inline. Streamed bodies are unaffected. */
+  readonly inlineMax?: number
 }
 
 // Text-like payloads benefit from gzip; binary media (images/video/archives) is already compressed.
@@ -327,8 +334,10 @@ export interface GzipPlan {
  * KB bodies) inline won at every size: one process with 16 connections 1.21x / 1.15x / 1.23x / 1.06x,
  * two with 64 (not 67 KB) 1.20x / 1.09x / 1.11x, four with 256 1.89x / 1.54x / 1.61x / 1.45x, so it
  * gzips inline to 64 KiB there; past that is unmeasured. Deno always gzips inline (256 KB: 1.54x `CompressionStream`): its one-shot swells the
- * process by ~250 MB, after which inline calls serve at 0.6x. Node never gzips inline (16 KB: 0.44x),
- * and its one-shot beats `CompressionStream` only up to 8 KiB (2 KB: 1.16x, 16 KB: 0.92x). These bodies
+ * process by ~250 MB, after which inline calls serve at 0.6x. Node by default never gzips inline (16 KB:
+ * 0.44x, one process with idle cores for the pool), and its one-shot beats `CompressionStream` only up
+ * to 8 KiB (2 KB: 1.16x, 16 KB: 0.92x). With one process per core the pool has no idle core to use and
+ * inline wins 1.5-4x (1 CPU per process, 2-66 KB bodies), which is what `inlineMax` is for. These bodies
  * compress 4-6x like real pages; a far cheaper one (100x+) loses the hand-off on Bun (33 KB: 0.93x).
  *
  * A streamed page (a 16 KB shell, then three frames of 150-350 bytes; 64 connections) is gzipped by
@@ -696,7 +705,22 @@ export function compression(options: CompressionOptions = {}) {
   if (!Number.isSafeInteger(threshold) || threshold < 0) {
     throw new Error("compression: threshold must be a non-negative safe integer")
   }
+  const inlineMax = options.inlineMax
+  if (inlineMax !== undefined && (!Number.isSafeInteger(inlineMax) || inlineMax < 0)) {
+    throw new Error("compression: inlineMax must be a non-negative safe integer")
+  }
   const isCompressible = options.compressible ?? defaultCompressible
+  let bufferedPlan: GzipPlan | undefined
+  const planOf = (): GzipPlan => {
+    if (bufferedPlan !== undefined) return bufferedPlan
+    planLookup ??= gzipPlanFor(globalThis)
+    // -1 is the plan's "never inline"; a length of 0 (an empty body) would still pass `<= 0`.
+    bufferedPlan =
+      inlineMax === undefined
+        ? planLookup
+        : { ...planLookup, inlineMax: inlineMax === 0 ? -1 : inlineMax }
+    return bufferedPlan
+  }
   if (globalThis.navigator?.userAgent === "Cloudflare-Workers") {
     return defineRouterPlugin("compression", (app) => app)
   }
@@ -705,8 +729,7 @@ export function compression(options: CompressionOptions = {}) {
       withResponseObserver<Middleware>({
         onResponseBody(body, headers, req, status) {
           if (!shouldGzip(body, headers, req, status, threshold, isCompressible)) return undefined
-          planLookup ??= gzipPlanFor(globalThis)
-          const compressed = gzipBuffered(body, planLookup, zlibModule())
+          const compressed = gzipBuffered(body, planOf(), zlibModule())
           if (compressed instanceof Promise) {
             return compressed.then((result) => {
               markGzipped(headers)
@@ -720,8 +743,7 @@ export function compression(options: CompressionOptions = {}) {
         // inline. The hook above still runs on the rendered response and finds `content-encoding` set.
         renderBody(body, headers, req, status) {
           if (!shouldGzip(body, headers, req, status, threshold, isCompressible)) return undefined
-          planLookup ??= gzipPlanFor(globalThis)
-          const compressed = gzipInline(body, planLookup, zlibModule())
+          const compressed = gzipInline(body, planOf(), zlibModule())
           if (compressed === undefined) return undefined
           markGzipped(headers)
           return compressed
