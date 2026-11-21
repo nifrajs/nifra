@@ -1082,7 +1082,9 @@ test("status() refuses a code outside 200-599 at the call site", () => {
 })
 
 test("stop() drains an in-flight request, then is idempotent", async () => {
+  const entered = Promise.withResolvers<void>()
   const app = server().get("/slow", async () => {
+    entered.resolve()
     await Bun.sleep(80)
     return { done: true }
   })
@@ -1090,7 +1092,7 @@ test("stop() drains an in-flight request, then is idempotent", async () => {
   const inflight = fetch(`http://127.0.0.1:${running.port}/slow`)
     .then((r) => r.json())
     .catch(() => "ERR")
-  await Bun.sleep(20) // ensure the request is in-flight
+  await entered.promise
   await running.stop({ drainMs: 1000 })
   expect(await inflight).toEqual({ done: true })
   await running.stop() // second call is a no-op (idempotent)

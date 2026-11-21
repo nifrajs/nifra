@@ -1,5 +1,17 @@
 # @nifrajs/web
 
+## 5.17.0
+
+### Patch Changes
+
+- a6d0e89: Check response cache entries against the final response before storing them. Custom stores must preserve the new `finalized` flag, and entries written before that check was added miss on upgrade. Server component owner routes bypass the generic shared cache.
+  
+  Bound WebSocket receive queues and ISR document capture and retention. Release SSE producers when their stream ends, and evict idle channel histories as subscribers disconnect.
+- Updated dependencies [a6d0e89]
+  - @nifrajs/core@5.17.0
+  - @nifrajs/island-trigger@5.17.0
+  - @nifrajs/utils@5.17.0
+
 ## 5.16.0
 
 ### Minor Changes

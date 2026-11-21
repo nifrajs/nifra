@@ -411,6 +411,7 @@ const NOT_LAYERS: Readonly<Record<string, string>> = {
   "packages/cli/src/cdn-check.ts": "a static check, not a runtime layer",
   "packages/cli/src/recipes/4.0.0.ts": "an upgrade codemod",
   "packages/cli/src/recipes/5.6.0.ts": "an upgrade note",
+  "packages/cli/src/recipes/5.17.0.ts": "an upgrade note",
   "packages/core/src/server/context.ts": "route option types",
   "packages/core/src/tool-contract.ts":
     "tool idempotency refuses a duplicate call; it replays no result",

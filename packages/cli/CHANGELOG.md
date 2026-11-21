@@ -1,5 +1,22 @@
 # @nifrajs/cli
 
+## 5.17.0
+
+### Patch Changes
+
+- Updated dependencies [a6d0e89]
+  - @nifrajs/client@5.17.0
+  - @nifrajs/core@5.17.0
+  - @nifrajs/web@5.17.0
+  - @nifrajs/testing@5.17.0
+  - @nifrajs/i18n@5.17.0
+  - @nifrajs/mcp@5.17.0
+  - @nifrajs/schema@5.17.0
+  - @nifrajs/agent-review@5.17.0
+  - @nifrajs/mcp-db@5.17.0
+  - @nifrajs/runner@5.17.0
+  - @nifrajs/utils@5.17.0
+
 ## 5.16.0
 
 ### Minor Changes

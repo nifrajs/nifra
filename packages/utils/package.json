@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/utils",
-  "version": "5.16.0",
+  "version": "5.17.0",
   "license": "MIT",
   "description": "Runtime-neutral utility functions shared across Nifra packages.",
   "type": "module",

@@ -1,5 +1,9 @@
 # @nifrajs/edge
 
+## 5.17.0
+
+No changes in this release.
+
 ## 5.16.0
 
 No changes in this release.
