@@ -25,6 +25,7 @@ export const NO_SOCKET = Symbol.for("@nifrajs/client/no-socket")
 // `readyState` values, fixed by the WebSocket standard (an implementation's statics may be absent).
 const CONNECTING = 0
 const CLOSED = 3
+const DEFAULT_MAX_PENDING_MESSAGES = 256
 
 interface WsRuntimeOptions extends WsCallOptions {
   transport?: {
@@ -65,6 +66,10 @@ export function openWebSocket(
     )
   }
 
+  const maxPending = callOptions?.maxPendingMessages ?? DEFAULT_MAX_PENDING_MESSAGES
+  if (!Number.isSafeInteger(maxPending) || maxPending < 1) {
+    throw new RangeError("websocket maxPendingMessages must be a positive safe integer")
+  }
   const url = toWsUrl(base, path, callOptions?.query)
   const socket =
     callOptions?.protocols !== undefined
@@ -107,29 +112,62 @@ export function openWebSocket(
     for (const listener of listeners) listener(message)
   }
   const schema = callOptions?.validateReceive
-  // One chain for every frame, so an async schema cannot reorder what it lets through.
-  let received = Promise.resolve()
+  const validationStopped = new AbortController()
+  const validationQueue: { frame: unknown }[] = []
+  let validating = false
+  let received: Promise<void> | undefined
+  const reportReceiveError = (error: unknown): void => {
+    try {
+      callOptions?.onError?.(error)
+    } catch {
+      // An observer's failure cannot stop the receive queue from draining.
+    }
+  }
+  const drainValidation = async (
+    validate: NonNullable<typeof schema>["~standard"],
+  ): Promise<void> => {
+    try {
+      let item = validationQueue.shift()
+      while (item !== undefined) {
+        validating = true
+        try {
+          const result = await validate.validate(item.frame)
+          if (validationStopped.signal.aborted) return
+          if (result.issues === undefined) deliver(result.value)
+          else {
+            reportReceiveError(
+              new TypeError(
+                `a received frame does not match validateReceive: ${formatStandardIssues(result.issues)}`,
+                { cause: item.frame },
+              ),
+            )
+          }
+        } catch (error) {
+          if (!validationStopped.signal.aborted) reportReceiveError(error)
+        }
+        item = validationQueue.shift()
+      }
+    } finally {
+      validating = false
+      received = undefined
+    }
+  }
   const receive =
     schema === undefined
       ? deliver
       : (frame: unknown): void => {
-          const next = received
-            .then(() => schema["~standard"].validate(frame))
-            .then((result) => {
-              if (result.issues === undefined) deliver(result.value)
-              else {
-                callOptions?.onError?.(
-                  new TypeError(
-                    `a received frame does not match validateReceive: ${formatStandardIssues(result.issues)}`,
-                    { cause: frame },
-                  ),
-                )
-              }
-            })
-          received = next.catch((error: unknown) => callOptions?.onError?.(error))
+          if (validationQueue.length + (validating ? 1 : 0) >= maxPending) {
+            validationQueue.length = 0
+            validationStopped.abort()
+            socket.close(4008, "receive queue full")
+            reportReceiveError(new Error("websocket_validation_queue_full"))
+            return
+          }
+          validationQueue.push({ frame })
+          received ??= Promise.resolve().then(() => drainValidation(schema["~standard"]))
         }
   socket.addEventListener("message", (event: MessageEvent) => {
-    if (typeof event.data !== "string") return // binary frames live off the typed contract
+    if (typeof event.data !== "string" || validationStopped.signal.aborted) return
     let parsed: unknown
     try {
       parsed =
@@ -191,6 +229,9 @@ export function openWebSocket(
         const resolve = pending.shift()
         if (resolve !== undefined) {
           resolve({ value: message, done: false })
+        } else if (buffered.length === maxPending) {
+          discard()
+          reportReceiveError(new Error("websocket_iterator_queue_full"))
         } else {
           buffered.push(message)
         }
@@ -201,22 +242,28 @@ export function openWebSocket(
         unsubscribe()
         socket.removeEventListener("close", closed)
         socket.removeEventListener("error", closed)
-        signal?.removeEventListener("abort", end)
+        signal?.removeEventListener("abort", discard)
+        validationStopped.signal.removeEventListener("abort", discard)
         for (const resolve of pending) resolve({ value: undefined, done: true })
         pending.length = 0
       }
+      const discard = (): void => {
+        buffered.length = 0
+        end()
+      }
       // A frame still in `validateReceive` arrived before the close, so it is delivered first.
       const closed = (): void => {
-        if (schema === undefined) end()
+        if (received === undefined) end()
         else void received.then(end)
       }
 
       const unsubscribe = onMessage(push)
       socket.addEventListener("close", closed, { once: true })
       socket.addEventListener("error", closed, { once: true })
-      signal?.addEventListener("abort", end, { once: true })
+      signal?.addEventListener("abort", discard, { once: true })
+      validationStopped.signal.addEventListener("abort", discard, { once: true })
       // Already over: no close or abort event is coming to end the iteration.
-      if (signal?.aborted === true) end()
+      if (signal?.aborted === true || validationStopped.signal.aborted) discard()
       else if (socket.readyState === CLOSED) closed()
 
       const iterator: AsyncIterableIterator<unknown> = {
@@ -233,7 +280,7 @@ export function openWebSocket(
           })
         },
         return(): Promise<IteratorResult<unknown>> {
-          end()
+          discard()
           return Promise.resolve({ value: undefined, done: true })
         },
       }

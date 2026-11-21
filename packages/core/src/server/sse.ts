@@ -47,7 +47,7 @@ export interface SSEStream {
   send(message: SSEMessage): void
   /** End the stream now. */
   close(): void
-  /** Aborts when the client disconnects - use it to tear down subscriptions/loops. */
+  /** Aborts when the stream ends - use it to tear down subscriptions and loops. */
   readonly signal: AbortSignal
 }
 
@@ -93,7 +93,7 @@ export interface TypedSSEStream<Event> {
   comment(text: string): void
   /** End the stream now. */
   close(): void
-  /** Aborts when the client disconnects - use it to tear down subscriptions/loops. */
+  /** Aborts when the stream ends - use it to tear down subscriptions and loops. */
   readonly signal: AbortSignal
 }
 
@@ -158,6 +158,7 @@ export function sse(
           if (closed) return
           closed = true
           teardown()
+          stopped.abort()
           try {
             controller.close()
           } catch {
@@ -187,14 +188,10 @@ export function sse(
         // Stop the moment the client goes away.
         if (requestSignal !== undefined) {
           if (requestSignal.aborted) {
-            stopped.abort()
             close()
             return
           }
-          onAbort = () => {
-            stopped.abort()
-            close()
-          }
+          onAbort = close
           requestSignal.addEventListener("abort", onAbort, { once: true })
         }
 
@@ -210,8 +207,10 @@ export function sse(
           if (closed) return
           closed = true
           teardown()
+          const reason = err instanceof Error ? err : new Error("sse_producer_failed")
+          stopped.abort(reason)
           try {
-            controller.error(err instanceof Error ? err : new Error("sse_producer_failed"))
+            controller.error(reason)
           } catch {
             // Stream already torn down.
           }

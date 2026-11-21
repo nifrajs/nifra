@@ -1,4 +1,8 @@
-import { isAuthenticatedRequest, type Middleware } from "@nifrajs/core/server"
+import {
+  isAuthenticatedRequest,
+  type Middleware,
+  sharedResponseCacheBypass,
+} from "@nifrajs/core/server"
 import { type ChunkReader, concatBytes, replayFrom } from "./_chunks.ts"
 import { type MaybePromise, withHeaders } from "./_utils.ts"
 
@@ -9,6 +13,8 @@ export interface CachedResponse {
   readonly body: Uint8Array
   readonly expiresAt: number
   readonly storedAt: number
+  /** A shared-cache write checked against the final response. Older entries are misses. */
+  readonly finalized?: true
 }
 
 export interface ResponseCacheStore {
@@ -292,33 +298,37 @@ export function cache(options: CacheOptions): Middleware {
   }
   const hits = new WeakSet<Request>()
   const requestKeys = new WeakMap<Request, string>()
+  const pending = new WeakMap<Request, CachedResponse>()
   const hasAuthentication = (req: Request): boolean =>
-    authenticatedHeaders.some((header) => req.headers.has(header))
+    isAuthenticatedRequest(req) || authenticatedHeaders.some((header) => req.headers.has(header))
+  const responseLifetime = (headers: Headers): number =>
+    respectResponseCacheControl ? responseLifetimeMs(headers, ttlMs) : ttlMs
+  const bypass = (req: Request): boolean => sharedResponseCacheBypass.get(req)?.(req) === true
+  const mayShare = (headers: Headers, req: Request): boolean =>
+    !bypass(req) &&
+    (cacheSetCookie || !headers.has("set-cookie")) &&
+    responseVaryMatchesKey(headers, vary) &&
+    (cacheAuthenticated ||
+      !hasAuthentication(req) ||
+      cacheControlHas(headers, ["public", "s-maxage"]))
 
   return {
     name: "cache",
     async onRequest(req) {
       if (!methods.has(req.method.toUpperCase())) return undefined
+      if (bypass(req)) return undefined
       if (respectRequestCacheControl && cacheControlHas(req.headers, ["no-cache", "no-store"])) {
         return undefined
       }
       const key = keyOf(req)
       requestKeys.set(req, key)
       const entry = await store.get(key)
-      if (entry === undefined) return undefined
+      if (entry?.finalized !== true) return undefined
       const cachedHeaders = new Headers([...entry.headers])
       // Never replay a personalized entry before route-scoped authentication runs. Public entries
       // remain eligible (and are explicitly marked by their response Cache-Control metadata).
-      if (
-        !cacheAuthenticated &&
-        hasAuthentication(req) &&
-        !cacheControlHas(cachedHeaders, ["public", "s-maxage"])
-      ) {
-        return undefined
-      }
-      const lifetimeMs = respectResponseCacheControl
-        ? responseLifetimeMs(cachedHeaders, ttlMs)
-        : ttlMs
+      if (!mayShare(cachedHeaders, req)) return undefined
+      const lifetimeMs = responseLifetime(cachedHeaders)
       if (
         lifetimeMs === 0 ||
         Date.now() >= Math.min(entry.expiresAt, entry.storedAt + lifetimeMs)
@@ -358,31 +368,8 @@ export function cache(options: CacheOptions): Middleware {
       if (respectRequestCacheControl && cacheControlHas(req.headers, ["no-store"])) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
-      const lifetimeMs = respectResponseCacheControl
-        ? responseLifetimeMs(res.headers, ttlMs)
-        : ttlMs
-      if (lifetimeMs === 0) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
-      }
-      if (!cacheSetCookie && res.headers.has("set-cookie")) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
-      }
-      // A response-declared Vary must be represented in the lookup key. If the caller did not opt
-      // those request headers into `vary`, bypass storage instead of replaying one representation to
-      // another request. `Vary: *` is never cacheable by a shared cache.
-      if (!responseVaryMatchesKey(res.headers, vary)) {
-        return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
-      }
-      // Shared-cache safety (RFC 9111 §3.5): never store a response to an authenticated request
-      // unless it's explicitly public - otherwise a personalized 200 leaks across users. A credential
-      // header outside `authenticatedHeaders` is caught by the authentication stage that accepted it,
-      // because a hit is served before that stage runs. Opt in with `cacheAuthenticated: true` for a
-      // route that's the same for everyone.
-      if (
-        !cacheAuthenticated &&
-        (hasAuthentication(req) || isAuthenticatedRequest(req)) &&
-        !cacheControlHas(res.headers, ["public", "s-maxage"])
-      ) {
+      const lifetimeMs = responseLifetime(res.headers)
+      if (lifetimeMs === 0 || !mayShare(res.headers, req)) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS", req)
       }
       const declared = parseLength(res.headers.get("content-length"))
@@ -404,9 +391,8 @@ export function cache(options: CacheOptions): Middleware {
       const headers = new Headers(capturedResponse.headers)
       if (cacheStatusHeader !== false) headers.delete(cacheStatusHeader)
       appendVary(headers, vary)
-      const key = requestKeys.get(req) ?? keyOf(req)
-      requestKeys.delete(req)
-      await store.set(key, {
+      // Snapshot this stage for replay. Later transforms run again on a hit.
+      pending.set(req, {
         status: res.status,
         statusText: res.statusText,
         headers: [...headers.entries()],
@@ -416,12 +402,34 @@ export function cache(options: CacheOptions): Middleware {
       })
       const outgoing = new Headers(capturedResponse.headers)
       appendVary(outgoing, vary)
-      if (cacheStatusHeader !== false) outgoing.set(cacheStatusHeader, "MISS")
       return new Response(capturedResponse.body, {
         status: capturedResponse.status,
         statusText: capturedResponse.statusText,
         headers: outgoing,
       })
+    },
+    async onResponseFinalized(outcome, req) {
+      const entry = pending.get(req)
+      const key = requestKeys.get(req)
+      requestKeys.delete(req)
+      if (entry === undefined) return
+      pending.delete(req)
+      if ("error" in outcome) return
+      const { response } = outcome
+      const expiresAt = Math.min(
+        entry.expiresAt,
+        entry.storedAt + responseLifetime(response.headers),
+      )
+      if (
+        response.status !== entry.status ||
+        !mayShare(response.headers, req) ||
+        Date.now() >= expiresAt
+      ) {
+        if (cacheStatusHeader !== false) response.headers.set(cacheStatusHeader, "BYPASS")
+        return
+      }
+      await store.set(key ?? keyOf(req), { ...entry, expiresAt, finalized: true })
+      if (cacheStatusHeader !== false) response.headers.set(cacheStatusHeader, "MISS")
     },
   }
 }

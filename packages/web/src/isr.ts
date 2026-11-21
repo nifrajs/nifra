@@ -7,7 +7,11 @@
  * This module is the store primitive; the SWR wrapper (`withISR`) builds on it next.
  */
 import { isAuthenticatedRequest, writableResponse } from "@nifrajs/core/server"
-import { readBoundedBytes, TransportCodecError } from "@nifrajs/core/transport-codec"
+import {
+  assertTransportTextBounded,
+  readBoundedBytes,
+  TransportCodecError,
+} from "@nifrajs/core/transport-codec"
 import { isDraftEnabled } from "./draft.ts"
 import {
   type InvalidationReport,
@@ -165,6 +169,8 @@ export interface MemoryCacheStoreOptions {
   readonly allowInProduction?: boolean
   /** Hard cap on entries; the least-recently-used is evicted past it (default 500). */
   readonly max?: number
+  /** Total retained HTML budget, counted at two bytes per UTF-16 code unit. Default 64 MiB. */
+  readonly maxTotalBytes?: number
 }
 
 // Nothing outside this process can write these, so `withISR` keeps their pages unsigned.
@@ -179,9 +185,15 @@ const inProcessStores = new WeakSet<CacheStore>()
 export class MemoryCacheStore implements CacheStore {
   private readonly cache = new Map<
     string,
-    { readonly value: CachedResponse; readonly tagEpochs: Readonly<Record<string, string>> }
+    {
+      readonly value: CachedResponse
+      readonly tagEpochs: Readonly<Record<string, string>>
+      readonly bytes: number
+    }
   >()
   private readonly max: number
+  private readonly maxTotalBytes: number
+  private totalBytes = 0
   private readonly tagEpoch = new Map<string, string>()
   private readonly tagIndex = new Map<string, Set<string>>()
   // Purge order: `fence` reads it; each purge advances it and records where, per key and per tag.
@@ -204,6 +216,12 @@ export class MemoryCacheStore implements CacheStore {
     if (!Number.isSafeInteger(this.max) || this.max <= 0) {
       throw new RangeError("[nifra/web] MemoryCacheStore max must be a positive safe integer")
     }
+    this.maxTotalBytes = options.maxTotalBytes ?? 64 * 1024 * 1024
+    if (!Number.isSafeInteger(this.maxTotalBytes) || this.maxTotalBytes < 0) {
+      throw new RangeError(
+        "[nifra/web] MemoryCacheStore maxTotalBytes must be a non-negative safe integer",
+      )
+    }
     inProcessStores.add(this)
   }
 
@@ -217,20 +235,13 @@ export class MemoryCacheStore implements CacheStore {
         }
       }
     }
-    const value = row?.value
     // LRU: a read bumps the entry to the tail so the bounded evict drops the LEAST-RECENTLY-USED,
     // not the oldest-written - otherwise a burst of new pages would evict a hot, frequently-read one.
-    if (value !== undefined) {
+    if (row !== undefined) {
       this.cache.delete(key)
-      this.cache.set(
-        key,
-        row as {
-          readonly value: CachedResponse
-          readonly tagEpochs: Readonly<Record<string, string>>
-        },
-      )
+      this.cache.set(key, row)
     }
-    return Promise.resolve(value)
+    return Promise.resolve(row?.value)
   }
 
   fence(): number {
@@ -241,10 +252,13 @@ export class MemoryCacheStore implements CacheStore {
     const tags = normalizeTags(value.tags)
     if (value.fence !== undefined && this.purgedAfter(key, tags, value.fence))
       return Promise.resolve()
+    const bytes = value.body.length * 2
+    this.evict(key)
+    if (bytes > this.maxTotalBytes) return Promise.resolve()
     const tagEpochs: Record<string, string> = {}
     for (const tag of tags) tagEpochs[tag] = this.tagEpoch.get(tag) ?? "0"
-    this.evict(key) // unlink prior tags before re-inserting at the tail for LRU order
-    this.cache.set(key, { value: tags.length === 0 ? value : { ...value, tags }, tagEpochs })
+    this.cache.set(key, { value: tags.length === 0 ? value : { ...value, tags }, tagEpochs, bytes })
+    this.totalBytes += bytes
     for (const tag of tags) {
       let keys = this.tagIndex.get(tag)
       if (keys === undefined) {
@@ -253,7 +267,7 @@ export class MemoryCacheStore implements CacheStore {
       }
       keys.add(key)
     }
-    while (this.cache.size > this.max) {
+    while (this.cache.size > this.max || this.totalBytes > this.maxTotalBytes) {
       const oldest = this.cache.keys().next().value
       if (oldest === undefined) break
       this.evict(oldest)
@@ -284,6 +298,7 @@ export class MemoryCacheStore implements CacheStore {
     const row = this.cache.get(key)
     if (row === undefined) return
     this.cache.delete(key)
+    this.totalBytes -= row.bytes
     for (const tag of Object.keys(row.tagEpochs)) {
       const keys = this.tagIndex.get(tag)
       if (keys === undefined) continue
@@ -646,6 +661,9 @@ export function withoutCacheChannel(res: Response): Response {
 
 export interface ISROptions {
   readonly store: CacheStore
+  /** Maximum UTF-8 bytes captured for one document. Larger pages stream without caching.
+   * Default 2 MiB. */
+  readonly maxEntryBytes?: number
   /**
    * Signs every page written to `store` and checks the signature on every read, so whoever else can
    * write the store (another service on the same KV namespace, a leaked token) cannot hand visitors a
@@ -1111,6 +1129,12 @@ export function withISR(
 ): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   const { store, now } = options
   assertRevalidate(options.revalidate, "revalidate")
+  const maxBytes = options.maxEntryBytes ?? 2 * 1024 * 1024
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError("[nifra/web] ISR maxEntryBytes must be a non-negative safe integer")
+  }
+  const byteLimit = { maxBytes }
+  const decoder = new TextDecoder()
   const signer = signerFor(store, options.storeSecret)
   const write = (key: string, entry: CachedResponse): Promise<void> =>
     signer === undefined
@@ -1291,6 +1315,28 @@ export function withISR(
     return safeSeconds * 1000
   }
 
+  const entryOf = (res: Response, bytes: Uint8Array, fence: number | undefined): CachedResponse => {
+    const tags = tagsOf(res)
+    return {
+      body: decoder.decode(bytes),
+      status: res.status,
+      headers: headersOf(res),
+      storedAt: now(),
+      revalidate: ttlMs(res),
+      ...(tags.length === 0 ? {} : { tags }),
+      fence,
+    }
+  }
+
+  const capture = async (res: Response): Promise<Uint8Array | undefined> => {
+    try {
+      return await readBoundedBytes(res, byteLimit)
+    } catch (error) {
+      if (error instanceof TransportCodecError) return undefined
+      throw error
+    }
+  }
+
   const render = async (
     req: Request,
     platform: ISRPlatform | undefined,
@@ -1305,17 +1351,13 @@ export function withISR(
       return withoutCacheChannel(res)
     }
     uncacheable.delete(key)
-    const body = await res.text()
-    const tags = tagsOf(res)
-    const entry: CachedResponse = {
-      body,
-      status: res.status,
-      headers: headersOf(res),
-      storedAt: now(),
-      revalidate: ttlMs(res),
-      ...(tags.length === 0 ? {} : { tags }),
-      fence,
-    }
+    if (Number(res.headers.get("content-length")) > maxBytes) return withoutCacheChannel(res)
+    // The original branch keeps the prefix for a pass-through if the capture exceeds the cap.
+    const bytes = await capture(new Response(res.clone().body, { headers: res.headers }))
+    if (bytes === undefined) return withoutCacheChannel(res)
+    // The capture drained its branch. Release the unused original without joining tee cancellation.
+    void res.body?.cancel().catch(() => {})
+    const entry = entryOf(res, bytes, fence)
     // A failed write still answers with the page, and still hands it to concurrent misses: whether it
     // may be shared was decided above, not by the store.
     await attempt("set", key, () => write(key, entry))
@@ -1372,17 +1414,13 @@ export function withISR(
       const fence = await fenceFor(key)
       const res = await app.fetch(req, platform)
       if (cacheableResponse(req, res)) {
-        const tags = tagsOf(res)
-        const entry: CachedResponse = {
-          body: await res.text(),
-          status: res.status,
-          headers: headersOf(res),
-          storedAt: now(),
-          revalidate: ttlMs(res),
-          ...(tags.length === 0 ? {} : { tags }),
-          fence,
+        const bytes = await capture(res)
+        if (bytes === undefined) {
+          await attempt("delete", key, () => store.delete(key))
+        } else {
+          const entry = entryOf(res, bytes, fence)
+          await attempt("set", key, () => write(key, entry))
         }
-        await attempt("set", key, () => write(key, entry))
       } else if (isInvalidationResponse(judged(req), res)) {
         // A withdrawal is authoritative. Keeping the old entry would make a withdrawn page stay
         // publicly visible forever, because every stale request would retry the same non-cacheable
@@ -1434,6 +1472,15 @@ export function withISR(
 
     const read = personal ? undefined : await attempt("get", key, () => store.get(key))
     let hit = read === STORE_FAILED ? undefined : read
+    if (hit !== undefined) {
+      try {
+        if (hit.body.length > maxBytes) hit = undefined
+        else assertTransportTextBounded(hit.body, byteLimit)
+      } catch (error) {
+        if (!(error instanceof TransportCodecError)) throw error
+        hit = undefined
+      }
+    }
     if (hit !== undefined && signer !== undefined && !(await verified(signer, key, hit))) {
       reportStoreError("verify", key, new Error("a stored page failed its signature check"))
       hit = undefined

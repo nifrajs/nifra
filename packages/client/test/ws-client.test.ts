@@ -314,6 +314,66 @@ describe("WebSocket runtime behavior", () => {
     expect(await iterator.next()).toEqual({ value: undefined, done: true })
   })
 
+  test("an iterator that falls behind ends without discarding other listeners' messages", async () => {
+    useFakeWebSocket()
+    const errors: unknown[] = []
+    const handle = openWebSocket(
+      "http://example.test",
+      "/ticks",
+      { maxPendingMessages: 2, onError: (error) => errors.push(error) },
+      false,
+    )
+    const socket = FakeWebSocket.instances[0]!
+    const iterator = handle.messages()
+    const seen: unknown[] = []
+    handle.onMessage((message) => seen.push(message))
+    for (let n = 0; n < 4; n++) socket.message(JSON.stringify(n))
+    expect(await iterator.next()).toEqual({ value: undefined, done: true })
+    expect(seen).toEqual([0, 1, 2, 3])
+    expect(errors.map(String)).toEqual(["Error: websocket_iterator_queue_full"])
+    expect(socket.closeCalls).toEqual([])
+  })
+
+  test("the validation queue counts the in-flight message and drops pending work on overrun", async () => {
+    useFakeWebSocket()
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<StandardResult<number>>()
+    const errors: unknown[] = []
+    let validations = 0
+    const handle = openWebSocket(
+      "http://example.test",
+      "/ticks",
+      {
+        maxPendingMessages: 2,
+        onError: (error) => errors.push(error),
+        validateReceive: {
+          "~standard": {
+            ...schema(() => ({ value: 0 }))["~standard"],
+            validate: () => {
+              validations++
+              started.resolve()
+              return finish.promise
+            },
+          },
+        },
+      },
+      false,
+    )
+    const socket = FakeWebSocket.instances[0]!
+    const iterator = handle.messages()
+    const pending = iterator.next()
+    socket.message("1")
+    await started.promise
+    socket.message("2")
+    socket.message("3")
+    expect(await pending).toEqual({ value: undefined, done: true })
+    expect(errors.map(String)).toEqual(["Error: websocket_validation_queue_full"])
+    expect(socket.closeCalls).toEqual([{ code: 4008, reason: "receive queue full" }])
+    finish.resolve({ value: 1 })
+    await finish.promise
+    expect(validations).toBe(1)
+  })
+
   test("encodes the handshake query the way an HTTP call does", () => {
     useFakeWebSocket()
     openWebSocket(

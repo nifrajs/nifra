@@ -17,6 +17,7 @@ import {
   replacedRequestOf,
   type ServerOptions,
   server,
+  sharedResponseCacheBypass,
 } from "@nifrajs/core/server"
 import {
   type CspHeaderContext,
@@ -560,6 +561,26 @@ export function createWebApp<Env = unknown>(
     app,
   })
   if (liveAttachment !== undefined) app.onRequest(liveAttachment.onRequest)
+  const runtime = options.serverComponents
+  const privateRouteMatcher =
+    runtime === undefined
+      ? undefined
+      : createMatcher(
+          manifest.routes
+            .filter((route) => runtime.owns(route.id) || runtime.hosts?.(route.id) === true)
+            .map((route) => ({ routeId: route.id, pattern: route.pattern })),
+        )
+  const privateRoute =
+    privateRouteMatcher === undefined
+      ? undefined
+      : (request: Request): boolean =>
+          request.headers.has("x-nifra-component") ||
+          privateRouteMatcher(new URL(request.url).pathname) !== null
+  if (privateRoute !== undefined) {
+    app.onRequest((request) => {
+      sharedResponseCacheBypass.set(request, privateRoute)
+    })
+  }
   // Before the mount hooks and before every page route, so the order-scoped hooks (`derive`,
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.
@@ -574,26 +595,17 @@ export function createWebApp<Env = unknown>(
         finishRequestHeaderTrackingInPlace(context.req)
     })
   }
-  if (options.serverComponents !== undefined) {
-    const runtime = options.serverComponents
-    // A route whose holes show server components is one visitor's too.
-    const match = createMatcher(
-      manifest.routes
-        .filter((route) => runtime.owns(route.id) || runtime.hosts?.(route.id) === true)
-        .map((route) => ({ routeId: route.id, pattern: route.pattern })),
-    )
+  if (runtime !== undefined && privateRouteMatcher !== undefined && privateRoute !== undefined) {
     const componentCachePartition = (request: Request): string | null | undefined => {
-      const matched = match(new URL(request.url).pathname)
+      const matched = privateRouteMatcher(new URL(request.url).pathname)
       return matched === null ? undefined : runtime.cacheIdentity?.(matched.routeId)
     }
     Object.defineProperty(app, SERVER_COMPONENT_CACHE_PARTITION, { value: componentCachePartition })
-    const privateRoute = (request: Request): boolean =>
-      request.headers.has("x-nifra-component") || match(new URL(request.url).pathname) !== null
     Object.defineProperty(app, Symbol.for("nifra.web.private-route"), { value: privateRoute })
     app.onResponse((response, request) => {
       const requestHeadersReadByHooks = requestHeadersWereRead(request)
       if (!privateRoute(request)) return response
-      const matched = match(new URL(request.url).pathname)
+      const matched = privateRouteMatcher(new URL(request.url).pathname)
       const cacheableOwner =
         matched !== null && runtime.cacheIdentity?.(matched.routeId) !== undefined
       const cachePolicy = matched === null ? undefined : runtime.cachePolicy?.(matched.routeId)

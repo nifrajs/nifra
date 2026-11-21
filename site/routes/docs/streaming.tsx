@@ -131,6 +131,10 @@ export default function Streaming() {
         <code>stream.signal</code>). It's a Web <code>ReadableStream</code> too, so it runs on Bun,
         Node, Deno, and the edge - no <code>new Function</code>, no per-runtime API.
       </p>
+      <p>
+        Use <code>stream.signal</code> to release subscriptions when the stream ends, including
+        when the producer closes the stream or fails.
+      </p>
       <CodeBlock code={SSE} />
       <p>
         <code>event:</code>, <code>id:</code>, and <code>retry:</code> are supported (and CR/LF is

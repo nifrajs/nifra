@@ -710,9 +710,11 @@ export default function Plugins() {
       <h2>Response caching</h2>
       <p>
         <code>cache</code> is a full response cache with a pluggable store, <code>Vary</code>-aware keys,
-        and a byte cap. It <b>bypasses <code>Set-Cookie</code></b> and honors request/response{" "}
-        <code>Cache-Control</code> (<code>no-store</code>/<code>private</code>) so it never serves one
-        user's response to another. <code>MemoryResponseCache</code> is per-instance and refuses{" "}
+        and a byte cap. It checks the final response's <code>Set-Cookie</code>, <code>Vary</code>,
+        and <code>Cache-Control</code> before storing an entry. Keep request gates that must run on
+        hits before the cache. A custom store must retain the entire entry, including its{" "}
+        <code>finalized</code> flag. Older entries without that flag miss.{" "}
+        <code>MemoryResponseCache</code> is per-instance and refuses{" "}
         <code>NODE_ENV=production</code> unless opted in - use a shared store in prod. <code>prettyJson</code>{" "}
         pretty-prints JSON responses (capped, with an optional query toggle).
       </p>

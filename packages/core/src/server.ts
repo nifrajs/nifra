@@ -118,6 +118,7 @@ export {
   carryRequestLocals,
   type RequestLocal,
   requestLocal,
+  sharedResponseCacheBypass,
 } from "./server/request-local.ts"
 export { writableResponse } from "./server/respond.ts"
 export { routeTemplateOf } from "./server/route-template.ts"

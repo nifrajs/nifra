@@ -1834,6 +1834,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
+- **sharedResponseCacheBypass** _(const)_ - `sharedResponseCacheBypass: RequestLocal<(request: Request) => boolean>`
+  Early request policy for the shared response cache. The ISR cache applies its own route policy.
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
@@ -3219,6 +3221,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
+- **sharedResponseCacheBypass** _(const)_ - `sharedResponseCacheBypass: RequestLocal<(request: Request) => boolean>`
+  Early request policy for the shared response cache. The ISR cache applies its own route policy.
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
@@ -8630,6 +8634,8 @@ _No named exports (side-effect entrypoint)._
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
+- **sharedResponseCacheBypass** _(const)_ - `sharedResponseCacheBypass: RequestLocal<(request: Request) => boolean>`
+  Early request policy for the shared response cache. The ISR cache applies its own route policy.
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`

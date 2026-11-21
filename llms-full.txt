@@ -2751,6 +2751,10 @@ broken. A store that also implements `fence()` keeps a purge that lands while a
 page renders from being undone when that render stores the page it built from the old data;
 both built-in stores do.
 
+ISR captures up to `maxEntryBytes` per document (2 MiB by default). Larger pages
+stream directly. `MemoryCacheStore` also has a `maxTotalBytes` budget
+for retained HTML (64 MiB by default) and evicts least-recently-used entries to stay within it.
+
 Workers KV is eventually consistent: a purge is usually seen at once where it was made and
 reaches other locations as their copies expire, which Cloudflare puts at up to 60 seconds or
 more. Until then those locations serve the old page. A page one of them rebuilt from the old
@@ -3540,6 +3544,9 @@ For server push - live feeds, progress, notifications - `sse(c, run)` returns a
 resolves, you call `stream.close()`, or the client disconnects (
 `stream.signal`). It's a Web `ReadableStream` too, so it runs on Bun,
 Node, Deno, and the edge - no `new Function`, no per-runtime API.
+
+Use `stream.signal` to release subscriptions when the stream ends, including
+when the producer closes the stream or fails.
 
 ```ts
 import { server } from "@nifrajs/core/server"
@@ -4542,9 +4549,11 @@ app.use(basicAuth({ username: "admin", password: process.env.PASS!, realm: "stag
 ### Response caching
 
 `cache` is a full response cache with a pluggable store, `Vary`-aware keys,
-and a byte cap. It **bypasses `Set-Cookie`** and honors request/response
-`Cache-Control` (`no-store`/`private`) so it never serves one
-user's response to another. `MemoryResponseCache` is per-instance and refuses
+and a byte cap. It checks the final response's `Set-Cookie`, `Vary`,
+and `Cache-Control` before storing an entry. Keep request gates that must run on
+hits before the cache. A custom store must retain the entire entry, including its
+`finalized` flag. Older entries without that flag miss.
+`MemoryResponseCache` is per-instance and refuses
 `NODE_ENV=production` unless opted in - use a shared store in prod. `prettyJson`
 pretty-prints JSON responses (capped, with an optional query toggle).
 
@@ -7645,6 +7654,10 @@ carries the contract's types, not its schemas, so the schema is the import). A f
 that fails is not delivered; `onError` gets a `TypeError` naming the
 issues, with the frame as its `cause`. Frames keep their arrival order, an async
 schema included.
+
+`maxPendingMessages` defaults to 256 per iterator and per validation queue.
+An iterator that falls behind ends and discards its buffered frames. If validation falls
+behind, the socket closes with code `4008`. Both report through `onError`.
 
 ```ts
 import { client } from "@nifrajs/client"
@@ -23314,7 +23327,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestLocal`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TopicAdapter`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `carryRequestLocals`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `echoParam`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `requestLocal`, `routePatternOverlap`, `routeTemplateOf`, `serializeCookie`, `server`, `signValue`, `silentLogger`, `staticResponse`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `varyOn`, `writableResponse`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `AuthHeaders`, `AuthMaybePromise`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `Context`, `ContextPlugin`, `CookieOptions`, `CookieSecret`, `DeclaredMountRoute`, `DefinePluginResult`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FetchApp`, `FrameworkError`, `FrameworkName`, `Handler`, `IdentityPlugin`, `InferInput`, `InferOutput`, `JoinRoutePath`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `ListenTlsOptions`, `LogFields`, `Logger`, `METHODS`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `Middleware`, `MountFetchOptions`, `MountOptions`, `MountableApp`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `OpaqueMountDeclaration`, `Params`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RedactOptions`, `Registry`, `RequestLocal`, `RequestPath`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `RoutePatternOverlapLimitError`, `RouteSchema`, `Router`, `RouterMatch`, `RunningServer`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `ScheduledController`, `ScheduledHandler`, `Server`, `ServerOptions`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `StatusResponse`, `ToolAnnotations`, `TopicAdapter`, `TypedSSEStream`, `UrlParts`, `VERSION`, `ValidationOutcome`, `VercelHandler`, `Version`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`, `authenticated`, `beforeHandler`, `carryRequestLocals`, `commonSecretPatterns`, `cookieNamePrefix`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `echoParam`, `hasDuplicateCookie`, `isAuthenticatedRequest`, `isSameOriginForm`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `markAuthenticatedRequest`, `parseCookies`, `pathnameOf`, `redactLogFields`, `rejected`, `replacedRequestOf`, `requestLocal`, `routePatternOverlap`, `routeTemplateOf`, `serializeCookie`, `server`, `sharedResponseCacheBypass`, `signValue`, `silentLogger`, `staticResponse`, `status`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `toVercelHandler`, `unsignValue`, `urlPartsOf`, `varyOn`, `writableResponse`
 
 ## @nifrajs/cron
 
