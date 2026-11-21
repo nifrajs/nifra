@@ -26035,6 +26035,13 @@
     "doc": "/** Early request policy for the shared response cache. The ISR cache applies its own route policy. */"
   },
   {
+    "name": "sharedResponseCacheBypass",
+    "kind": "const",
+    "package": "nifra",
+    "signature": "export declare const sharedResponseCacheBypass: RequestLocal<(request: Request) => boolean>;",
+    "doc": "/** Early request policy for the shared response cache. The ISR cache applies its own route policy. */"
+  },
+  {
     "name": "sharpImageBackend",
     "kind": "function",
     "package": "@nifrajs/image",

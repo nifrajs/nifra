@@ -13,9 +13,16 @@ import {
   idempotency,
   MemoryIdempotencyStore,
   MemoryResponseCache,
+  type ResponseCacheStore,
 } from "@nifrajs/middleware"
-import { MemoryCacheStore, withISR } from "@nifrajs/web"
+import { t } from "@nifrajs/schema"
+import { buildManifest, createWebApp, MemoryCacheStore, withISR } from "@nifrajs/web"
 import { defineCdnProvider, withCdn } from "@nifrajs/web/cdn"
+import {
+  createServerComponents,
+  defineServerComponent,
+  serverComponentInstance,
+} from "@nifrajs/web/server-components"
 
 const SERVICE_KEY = "s".repeat(40)
 const SECOND_KEY = "t".repeat(40)
@@ -315,6 +322,74 @@ for (const layer of LAYERS) {
     }
   })
 }
+
+test("a personalized server component owner document bypasses the shared response cache", async () => {
+  const cacheOps: string[] = []
+  const store: ResponseCacheStore = {
+    get: () => {
+      cacheOps.push("get")
+      return undefined
+    },
+    set: () => {
+      cacheOps.push("set")
+    },
+  }
+  const greeting = defineServerComponent(
+    {
+      input: t.object({}),
+      props: t.object({ message: t.string() }),
+      authorize() {},
+      load({ request }) {
+        return {
+          message:
+            request.headers.get("accept-language") === "fr" ? "Bonjour fixture" : "Hello fixture",
+        }
+      },
+      view: ({ props }) => props.message,
+    },
+    "greeting_component",
+  )
+  const app = createWebApp({
+    clientEntry: "/entry.js",
+    manifest: buildManifest(["greeting.tsx"], () => async () => ({ default: () => null })),
+    adapter: {
+      renderToString: () => "<main>Greeting</main>",
+      renderToStream: () => new Blob(["<main>Greeting</main>"]).stream(),
+      hydrationHead: () => "",
+    },
+    serverComponents: createServerComponents({
+      build: "greeting_build",
+      adapter: {
+        name: "vue",
+        version: 1,
+        render(_view, props) {
+          const isFrench =
+            typeof props === "object" &&
+            props !== null &&
+            "message" in props &&
+            props.message === "Bonjour fixture"
+          return { html: isFrench ? "<p>Bonjour fixture</p>" : "<p>Hello fixture</p>" }
+        },
+      },
+      owners: {
+        greeting: {
+          scope: "anonymous",
+          components: [greeting],
+          instances: () => [serverComponentInstance(greeting, "greeting", {})],
+        },
+      },
+    }),
+    use: (server) => server.use(cache({ store, ttlMs: 60_000 })),
+  })
+  const response = await app.fetch(
+    new Request("https://fixture.test/greeting", { headers: { "accept-language": "fr" } }),
+  )
+  expect(response.status).toBe(200)
+  expect(response.headers.get("cache-control")).toBe("private, no-store")
+  expect(response.headers.get("x-nifra-cache")).toBe("BYPASS")
+  expect(await response.text()).toContain("Bonjour fixture")
+  expect(cacheOps).toEqual([])
+})
 
 // Source files that use a storing primitive but decide nothing about what is stored or replayed.
 const NOT_LAYERS: Readonly<Record<string, string>> = {
