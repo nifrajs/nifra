@@ -87,6 +87,10 @@ const app = server()
 - **`combine()` / `namedCombine()`** - reusable runtime bundles for middleware/plugins.
 - **`requestId()` / `logger()` / `etag()` / `compression()` / `cacheControl()` /
   `idempotency()` / `healthcheck()` / `openapi()`** - additional operational middleware for APIs.
+- **`compression({ inlineMax })`** - on Node, gzip runs on the thread pool by default, which pays when a
+  process has idle cores. With one process per core (a cluster, or `reusePort`), set `inlineMax` (bytes) to
+  gzip bodies up to that size on the calling thread. At 1 CPU per process on Node 26 (2-66 KB bodies) it
+  measured 1.5-4x the pool's throughput.
 
 ## Header middleware: declared headers and `onResponseHeaders`
 
