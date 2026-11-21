@@ -936,6 +936,25 @@ describe("compression()", () => {
       expect(calls.pool).toBeGreaterThan(0)
     })
 
+    test("0 gzips nothing inline, an empty body included", async () => {
+      const calls = { sync: 0 }
+      const { gzipSync: realSync } = nodeZlib
+      const patched: { gzipSync: unknown } = nodeZlib
+      patched.gzipSync = (...args: Parameters<typeof realSync>) => {
+        calls.sync++
+        return realSync(...args)
+      }
+      try {
+        const app = server()
+          .use(compression({ threshold: 0, inlineMax: 0 }))
+          .get("/", (c) => c.text(""))
+        await app.fetch(new Request("http://x/", { headers: GZIP }))
+      } finally {
+        patched.gzipSync = realSync
+      }
+      expect(calls.sync).toBe(0)
+    })
+
     test("rejects a limit that is not a non-negative safe integer", () => {
       for (const inlineMax of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
         expect(() => compression({ inlineMax })).toThrow(/inlineMax/)

@@ -714,7 +714,11 @@ export function compression(options: CompressionOptions = {}) {
   const planOf = (): GzipPlan => {
     if (bufferedPlan !== undefined) return bufferedPlan
     planLookup ??= gzipPlanFor(globalThis)
-    bufferedPlan = inlineMax === undefined ? planLookup : { ...planLookup, inlineMax }
+    // -1 is the plan's "never inline"; a length of 0 (an empty body) would still pass `<= 0`.
+    bufferedPlan =
+      inlineMax === undefined
+        ? planLookup
+        : { ...planLookup, inlineMax: inlineMax === 0 ? -1 : inlineMax }
     return bufferedPlan
   }
   if (globalThis.navigator?.userAgent === "Cloudflare-Workers") {
