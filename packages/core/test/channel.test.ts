@@ -168,7 +168,7 @@ describe("memoryChannelHub maxChannels", () => {
     for (const subscription of subscriptions) subscription.close()
   })
 
-  test("after a burst of disconnects one publish evicts only a bounded number of channels", () => {
+  test("a burst of disconnects immediately keeps only the newest inactive channels", () => {
     const hub = memoryChannelHub({ maxChannels: 2 })
     const open = Array.from({ length: 100 }, (_, i) => {
       const channel = channelNamed(`gone${i}`)
@@ -176,17 +176,13 @@ describe("memoryChannelHub maxChannels", () => {
       return { channel, subscription, token: hub.publish(channel, "x").resumeToken }
     })
     for (const { subscription } of open) subscription.close()
-    const tokens = open
-    hub.publish(channelNamed("fresh"), "x")
-    const forgotten = tokens.filter(({ channel, token }) => {
-      try {
-        hub.subscribe(channel, { resumeFrom: token }).close()
-        return false
-      } catch {
-        return true
-      }
-    })
-    expect(forgotten.length).toBeGreaterThan(0)
-    expect(forgotten.length).toBeLessThanOrEqual(8)
+    for (const { channel, token } of open.slice(0, -2)) {
+      expect(() => hub.subscribe(channel, { resumeFrom: token })).toThrow(
+        ChannelResumeUnavailableError,
+      )
+    }
+    for (const { channel, token } of open.slice(-2)) {
+      hub.subscribe(channel, { resumeFrom: token }).close()
+    }
   })
 })

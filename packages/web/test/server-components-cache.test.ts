@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { sharedResponseCacheBypass } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 import {
   type CreateWebAppOptions,
@@ -197,6 +198,21 @@ function ownerApp(
   const app = createWebApp(nonce === undefined ? appOptions : { ...appOptions, nonce })
   return { app, build }
 }
+
+test("the generic cache receives the private route policy before routing", async () => {
+  const { app } = ownerApp("build_cache_policy", "deploy_cache_policy", {
+    page: 0,
+    component: 0,
+    render: 0,
+  })
+  const bypassed: boolean[] = []
+  app.onRequest((request) => {
+    bypassed.push(sharedResponseCacheBypass.get(request)?.(request) === true)
+  })
+  await (await app.fetch(new Request("https://fixture.test/owner"))).text()
+  await (await app.fetch(new Request("https://fixture.test/plain"))).text()
+  expect(bypassed).toEqual([true, false])
+})
 
 test("public owner ISR caches the complete page only inside a deployment/build/route partition", async () => {
   const store = new MemoryCacheStore()

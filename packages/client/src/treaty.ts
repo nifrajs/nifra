@@ -152,6 +152,10 @@ export interface WsCallOptions<Out = unknown> {
   signal?: AbortSignal
   /** Socket-level failures (connection refused, abnormal close), and frames `validateReceive` refuses. */
   onError?: (error: unknown) => void
+  /** Maximum pending incoming messages per iterator and per validation queue, including the frame
+   * being validated. Default 256. An overrun ends that iterator or closes the socket if validation
+   * fell behind. Both report through `onError`. */
+  maxPendingMessages?: number
   /**
    * Check every received frame against this schema - the route's `sendSchema`, imported from the
    * module that declares it (the typed client carries the contract's types, not its schemas). A frame
@@ -170,7 +174,8 @@ export interface WsCallOptions<Out = unknown> {
 export interface WsHandle<In, Out> {
   /** Send one typed frame (JSON-encoded). Queued until the socket opens, so it never throws. */
   send(message: In): void
-  /** Async-iterate incoming typed frames. Ends when the socket closes (or `signal` aborts). */
+  /** Async-iterate incoming typed frames. Drains on socket close. An abort or queue overrun ends
+   * this iterator and discards its buffered messages. */
   messages(options?: { signal?: AbortSignal }): AsyncIterableIterator<Out>
   /** Callback form of {@link messages}; returns an unsubscribe. */
   onMessage(callback: (message: Out) => void): () => void

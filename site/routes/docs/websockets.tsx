@@ -337,6 +337,11 @@ export default function WebSockets() {
         issues, with the frame as its <code>cause</code>. Frames keep their arrival order, an async
         schema included.
       </p>
+      <p>
+        <code>maxPendingMessages</code> defaults to 256 per iterator and per validation queue.
+        An iterator that falls behind ends and discards its buffered frames. If validation falls
+        behind, the socket closes with code <code>4008</code>. Both report through <code>onError</code>.
+      </p>
       <CodeBlock code={TYPED_MESSAGES} />
 
       <h2 id="heartbeat">Frames the client must answer (heartbeats)</h2>

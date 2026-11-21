@@ -38,6 +38,22 @@ describe("MemoryCacheStore", () => {
     expect((await store.get("/3"))?.body).toBe("3")
   })
 
+  test("the byte budget evicts the least-recently-used body and releases bytes on invalidation", async () => {
+    const store = new MemoryCacheStore({ maxTotalBytes: 8 })
+    await store.set("/old", entry("ab"))
+    await store.set("/hot", { ...entry("cd"), tags: ["products"] })
+    await store.get("/hot")
+    await store.set("/new", entry("ef"))
+    expect(await store.get("/old")).toBeUndefined()
+    expect(await store.get("/hot")).toBeDefined()
+    await store.invalidateTag("products")
+    await store.set("/next", entry("gh"))
+    expect(await store.get("/new")).toBeDefined()
+    await store.set("/oversize", entry("12345"))
+    expect(await store.get("/oversize")).toBeUndefined()
+    expect(await store.get("/next")).toBeDefined()
+  })
+
   test("a read bumps recency (LRU) - a frequently-read entry survives a burst of new pages [AUDIT]", async () => {
     const store = new MemoryCacheStore({ max: 2 })
     await store.set("/1", entry("1"))
@@ -161,6 +177,50 @@ describe("withISR", () => {
     expect(await res.text()).toBe("v1")
     expect(calls()).toBe(1)
     expect((await store.get(pageKey("/p")))?.body).toBe("v1")
+  })
+
+  test("a chunked page above the UTF-8 byte limit streams with its prefix intact", async () => {
+    const store = new MemoryCacheStore()
+    const source = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>()
+    const encoder = new TextEncoder()
+    const { app } = trackApp(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              source.resolve(controller)
+              controller.enqueue(encoder.encode("é"))
+              controller.enqueue(encoder.encode("é"))
+            },
+          }),
+          { headers: { "content-type": "text/html" } },
+        ),
+    )
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0, maxEntryBytes: 3 })
+    const res = await handler(new Request("http://x/p"))
+    expect(res.headers.get("x-nifra-isr")).toBeNull()
+    expect(await store.get(pageKey("/p"))).toBeUndefined()
+    const controller = await source.promise
+    controller.enqueue(encoder.encode("tail"))
+    controller.close()
+    expect(await res.text()).toBe("éétail")
+  })
+
+  test("a page that grows past the cap stops serving its stale entry", async () => {
+    const store = new MemoryCacheStore()
+    let now = 0
+    let body = "v1"
+    const { app } = trackApp(() => html(body))
+    const handler = withISR(app, { store, revalidate: 1, now: () => now, maxEntryBytes: 2 })
+    expect(await (await handler(new Request("http://x/p"))).text()).toBe("v1")
+    body = "longer page"
+    now = 2_000
+    const platform = collectWaitUntil()
+    const stale = await handler(new Request("http://x/p"), platform)
+    expect(await stale.text()).toBe("v1")
+    await platform.settle()
+    expect(await store.get(pageKey("/p"))).toBeUndefined()
+    expect(await (await handler(new Request("http://x/p"))).text()).toBe(body)
   })
 
   test("fresh hit serves from cache without re-rendering", async () => {

@@ -75,6 +75,22 @@ describe("sse", () => {
     expect(out).toBe("data: a\n\n")
   })
 
+  test("server close notifies a producer waiting to release its subscription", async () => {
+    const producerReady = Promise.withResolvers<SSEStream>()
+    const cleaned = Promise.withResolvers<void>()
+    const res = sse(ctx(), (stream) => {
+      stream.signal.addEventListener("abort", () => cleaned.resolve(), { once: true })
+      producerReady.resolve(stream)
+      return cleaned.promise
+    })
+    const stream = await producerReady.promise
+    stream.send({ data: "last" })
+    stream.close()
+    expect(stream.signal.aborted).toBe(true)
+    await cleaned.promise
+    expect(await readAll(res)).toBe("data: last\n\n")
+  })
+
   test("client disconnect (req.signal) ends the stream and fires the producer's abort handler", async () => {
     const controller = new AbortController()
     let tornDown = false
@@ -126,11 +142,15 @@ describe("sse", () => {
   })
 
   test("a producer error propagates to the stream consumer", async () => {
-    const res = sse(ctx(), () => {
-      throw new Error("boom")
+    const failure = new Error("boom")
+    const cleaned = Promise.withResolvers<unknown>()
+    const res = sse(ctx(), (stream) => {
+      stream.signal.addEventListener("abort", () => cleaned.resolve(stream.signal.reason))
+      throw failure
     })
     const reader = (res.body as ReadableStream<Uint8Array>).getReader()
     await expect(reader.read()).rejects.toThrow("boom")
+    await expect(cleaned.promise).resolves.toBe(failure)
   })
 
   test("keepAlive emits comment pings", async () => {

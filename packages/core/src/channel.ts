@@ -177,9 +177,6 @@ class MemorySubscription<Message> implements ChannelSubscription<Message> {
   }
 }
 
-/** Channels examined per publish when the channel map is over its cap. */
-const EVICTION_SCAN = 8
-
 /** A bounded in-memory hub suitable for tests and local development, never for durable fan-out. */
 export function memoryChannelHub(options: MemoryChannelHubOptions = {}): ChannelHub {
   const maxQueue = options.maxQueue ?? 64
@@ -197,32 +194,22 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
   const subscribers = new Map<string, Set<MemorySubscription<unknown>>>()
   const sequences = new Map<string, number>()
   const history = new Map<string, ChannelEvent<unknown>[]>()
+  const idle = new Set<string>()
 
   // Highest sequence given up with an evicted channel. A channel that returns starts above it, so
   // a resume token issued before the eviction can never name an event of the new numbering.
   let evictedFloor = 0
 
-  const touchChannel = (name: string, seq: number): void => {
-    sequences.delete(name)
-    sequences.set(name, seq)
-    if (sequences.size <= maxChannels) return
-    const subscribed: Array<[string, number]> = []
-    let examined = 0
-    for (const [candidate, candidateSeq] of sequences) {
-      if (sequences.size <= maxChannels || candidate === name || examined++ >= EVICTION_SCAN) break
-      if (subscribers.has(candidate)) {
-        subscribed.push([candidate, candidateSeq])
-        continue
-      }
-      evictedFloor = Math.max(evictedFloor, candidateSeq)
-      sequences.delete(candidate)
-      history.delete(candidate)
-    }
-    // Skipped channels move behind the idle ones, so the next scan does not meet them first.
-    for (const [candidate, candidateSeq] of subscribed) {
-      sequences.delete(candidate)
-      sequences.set(candidate, candidateSeq)
-    }
+  const retainIdle = (name: string): void => {
+    idle.delete(name)
+    idle.add(name)
+    if (idle.size <= maxChannels) return
+    const oldest = idle.values().next().value
+    if (oldest === undefined) return
+    evictedFloor = Math.max(evictedFloor, sequences.get(oldest) ?? 0)
+    idle.delete(oldest)
+    sequences.delete(oldest)
+    history.delete(oldest)
   }
 
   const tokenFor = (channel: string, sequence: number): string =>
@@ -272,11 +259,15 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
       if (members === undefined) {
         members = new Set()
         subscribers.set(channel.name, members)
+        idle.delete(channel.name)
       }
       let subscription: MemorySubscription<unknown>
       const remove = (): void => {
         members?.delete(subscription)
-        if (members?.size === 0) subscribers.delete(channel.name)
+        if (members?.size === 0) {
+          subscribers.delete(channel.name)
+          if (sequences.has(channel.name)) retainIdle(channel.name)
+        }
       }
       subscription = new MemorySubscription(channel.name, queue, remove)
       subscription.seed(replay)
@@ -293,7 +284,8 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
         throw new RangeError("channel: sequence space exhausted")
       }
       const sequence = previous + 1
-      touchChannel(channel.name, sequence)
+      sequences.set(channel.name, sequence)
+      if (!subscribers.has(channel.name)) retainIdle(channel.name)
       const event: ChannelEvent<Message> = {
         sequence,
         resumeToken: tokenFor(channel.name, sequence),

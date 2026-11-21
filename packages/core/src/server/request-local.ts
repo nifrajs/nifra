@@ -107,3 +107,7 @@ export function requestLocal<T>(): RequestLocal<T> {
     delete: (request) => valuesOf(request, false)?.delete(key) === true,
   }
 }
+
+/** Early request policy for the shared response cache. The ISR cache applies its own route policy. */
+export const sharedResponseCacheBypass: RequestLocal<(request: Request) => boolean> =
+  /* @__PURE__ */ requestLocal<(request: Request) => boolean>()

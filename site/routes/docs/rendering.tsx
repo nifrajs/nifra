@@ -309,6 +309,11 @@ export default function Rendering() {
         both built-in stores do.
       </p>
       <p>
+        ISR captures up to <code>maxEntryBytes</code> per document (2 MiB by default). Larger pages
+        stream directly. <code>MemoryCacheStore</code> also has a <code>maxTotalBytes</code> budget
+        for retained HTML (64 MiB by default) and evicts least-recently-used entries to stay within it.
+      </p>
+      <p>
         Workers KV is eventually consistent: a purge is usually seen at once where it was made and
         reaches other locations as their copies expire, which Cloudflare puts at up to 60 seconds or
         more. Until then those locations serve the old page. A page one of them rebuilt from the old

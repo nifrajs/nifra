@@ -8,11 +8,38 @@ import {
   apiKey,
   type CachedResponse,
   cache,
+  cacheControl,
   MemoryResponseCache,
   type ResponseCacheStore,
 } from "../src/index.ts"
 
 describe("cache() response freshness", () => {
+  test("a downstream private policy vetoes storage", async () => {
+    const store = new MemoryResponseCache()
+    const app = server()
+      .use(cache({ store, ttlMs: 60_000 }))
+      .use(cacheControl("private, no-store"))
+      .get("/profile", () => "profile")
+    const response = await app.fetch(new Request("http://x/profile"))
+    expect(response.headers.get("cache-control")).toBe("private, no-store")
+    expect(response.headers.get("x-nifra-cache")).toBe("BYPASS")
+    expect(store.get("GET http://x/profile")).toBeUndefined()
+  })
+
+  test("downstream Vary must be represented in the cache key", async () => {
+    const store = new MemoryResponseCache()
+    const app = server()
+      .use(cache({ store, ttlMs: 60_000 }))
+      .onResponse((response) => {
+        response.headers.set("vary", "accept-language")
+        return response
+      })
+      .get("/page", () => "page")
+    const response = await app.fetch(new Request("http://x/page"))
+    expect(response.headers.get("x-nifra-cache")).toBe("BYPASS")
+    expect(store.get("GET http://x/page")).toBeUndefined()
+  })
+
   test("a stripped child bypasses shared caching for parent custom-session authentication", async () => {
     let calls = 0
     const seen: boolean[] = []
@@ -70,12 +97,12 @@ describe("cache() response freshness", () => {
     })
   }
 
-  test("rejects a pre-existing stored response that requires validation", async () => {
+  test("rejects pre-existing records written before final policy checks", async () => {
     const store: ResponseCacheStore = {
       get: () => ({
         status: 200,
         statusText: "",
-        headers: [["cache-control", "no-cache"]],
+        headers: [],
         body: new TextEncoder().encode("old"),
         storedAt: Date.now(),
         expiresAt: Date.now() + 60_000,
