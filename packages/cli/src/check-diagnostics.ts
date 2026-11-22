@@ -22,6 +22,7 @@ import {
 import type { DuplicateInstallFinding } from "./doctor.ts"
 import type { PipelineReport } from "./pipeline-report.ts"
 import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
+import { a11yRules } from "./rules/a11y.ts"
 import { contractVisibilityRule } from "./rules/contract-visibility.ts"
 import { dataGuardRules } from "./rules/data-guard.ts"
 import { parseRulePacks, runRuleRegistry } from "./rules/index.ts"
@@ -515,6 +516,7 @@ export async function collectCheckDiagnostics(
     silentSseRule,
     textSlotBooleanRule,
     ...internalLinkRules,
+    ...a11yRules,
     ...routeHookRules,
     serverFnNamespaceRule,
     ...zoneRules,

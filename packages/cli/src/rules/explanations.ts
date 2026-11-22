@@ -319,6 +319,16 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Pass `{ keepAlive: 5_000 }` to the stream so a ping goes out well inside the timeout, or raise the timeout: `withIdleTimeout(c, seconds, work)` from `@nifrajs/core/idle-timeout` under `listen()`, or the `idleTimeout` option of `Bun.serve()`. A stream kept on purpose takes `// nifra-expect NF-C061: <reason>` above the registration.",
     docs: "/docs/api",
   },
+  "NF-C062": {
+    why: "An ARIA role or attribute that is misspelled, abstract, given a value it does not take, or missing something its role requires. Browsers drop it without a sound, so the control looks right and a screen reader reads it as plain text, or not at all. `tsc` cannot tell: every attribute type-checks as a string.",
+    fix: 'Name a concrete ARIA 1.2 role and spell each `aria-*` attribute as the spec does (`aria-labelledby`, not `aria-labeledby`). Give a role what it requires: `role="checkbox"` needs `aria-checked`, `role="slider"` needs `aria-valuenow`. A native element needs none of this: `<input type="checkbox">` carries its own state. A use kept on purpose takes `// nifra-expect NF-C062: <reason>` above the element, or `{/* nifra-expect NF-C062: <reason> */}` in JSX.',
+    docs: "/docs/errors",
+  },
+  "NF-C063": {
+    why: 'Markup that works but reads worse to assistive technology than it could: an image with no `alt`, a positive `tabindex` that jumps the page\'s tab order, a `<div role="button">` that has to rebuild what `<button>` gives for free, a role the element already has, or an `<html>` with no `lang`.',
+    fix: 'Describe the image in `alt`, or write `alt=""` when it is decoration. Use `tabindex="0"` or `-1`. Use the native element. Remove the repeated role. Write `<html lang="en">`. A use kept on purpose takes `// nifra-expect NF-C063: <reason>` (or `nifra-expect a11y: <reason>` for both codes) above the element.',
+    docs: "/docs/errors",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",

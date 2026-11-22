@@ -5,6 +5,7 @@ import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { IGNORED, stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
+import { distance } from "../internal/edit-distance.ts"
 import { toPosix } from "../internal/posix-path.ts"
 import { ANCHOR_HOLE } from "../internal/source-facts.ts"
 import { buildRouteTable } from "../introspect.ts"
@@ -51,22 +52,6 @@ interface PageRoutes {
 }
 
 const cache = new WeakMap<RuleContext, Promise<PageRoutes | undefined>>()
-
-function distance(a: string, b: string): number {
-  let row = Array.from({ length: b.length + 1 }, (_, i) => i)
-  for (let i = 1; i <= a.length; i++) {
-    const next = [i]
-    for (let j = 1; j <= b.length; j++) {
-      next[j] = Math.min(
-        (row[j] ?? 0) + 1,
-        (next[j - 1] ?? 0) + 1,
-        (row[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
-      )
-    }
-    row = next
-  }
-  return row[b.length] ?? 0
-}
 
 /** Read only literal mount exports, never import/evaluate the app's config. An unreadable field
  * leaves the dead-link verdict open, just like an unreadable backend registration. */
