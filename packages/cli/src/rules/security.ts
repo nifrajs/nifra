@@ -9,6 +9,7 @@ import {
   commentBlockHasMarker,
   MISSING_EXPECTATION_REASON,
 } from "./comment-markers.ts"
+import { createHostExposureRule } from "./host-exposure.ts"
 import type { CheckRule, RuleContext, SourceIndex } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
@@ -1113,6 +1114,8 @@ export const unvalidatedWsFrameRule: CheckRule = {
     ),
 }
 
+export const hostExposureRule = createHostExposureRule(parsedFile)
+
 export const securityRules = Object.freeze([
   failOpenGateRule,
   secretComparisonRule,
@@ -1123,4 +1126,5 @@ export const securityRules = Object.freeze([
   unprefixedSecureCookieRule,
   inputBeforeAuthenticationRule,
   unvalidatedWsFrameRule,
+  hostExposureRule,
 ])

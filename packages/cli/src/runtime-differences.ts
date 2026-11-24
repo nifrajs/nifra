@@ -65,12 +65,12 @@ export const RUNTIME_DIFFERENCES: readonly RuntimeEntry[] = [
   },
   {
     id: "host-builds-url",
-    runtimes: ["deno", "bun"],
+    runtimes: ["deno", "bun", "node"],
     symptom:
       "`c.req.url` points at a path the client did not ask for, or is a relative string, after a request with an odd `Host` header such as `Host: h.test/admin#`.",
     cause:
-      "With `Host: h.test/admin#` and no options set, Deno builds `Request.url` from the Host as received and routes `/admin`, Bun leaves `c.req.url` relative (`/url`), and `@nifrajs/node` answers `400 Bad Request`.",
-    fix: "Set `validateHost: true` so Nifra answers `400 invalid_host` for a Host the request target cannot safely be built on. Off by default: reading the Host header measured about 6% of a bare route on Bun.",
+      "With `Host: h.test/admin#` and no options set, Deno builds `Request.url` from the Host as received and routes `/admin`, Bun leaves `c.req.url` relative (`/url`), and `@nifrajs/node` and `@nifrajs/node-uws` answer `400 Bad Request` because they check Host on every request.",
+    fix: 'Set `validateHost: true` (`server({ validateHost: true })`) so Nifra answers `400 invalid_host` for a Host the request target cannot safely be built on. Off by default: reading the Host header measured about 6% of a bare route on Bun. Behind a proxy that checks Host, leave it off and say so with `"hostTopology": "proxied"` in nifra.check.json: `nifra check` (NF-S010) warns about a listener that terminates TLS itself with no Host check.',
     verify:
       "`printf 'GET /url HTTP/1.1\\r\\nhost: h.test/admin#\\r\\n\\r\\n' | nc 127.0.0.1 <port>` against a route that echoes `c.req.url`.",
     seeAlso: "validateHost invalid_host Host header",

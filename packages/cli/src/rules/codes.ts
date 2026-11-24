@@ -78,6 +78,7 @@ export const RULE_CODES = Object.freeze({
   "NF-S007": "Secure cookie without a __Host-/__Secure- prefix",
   "NF-S008": "Authenticated route validates input before authentication",
   "NF-S009": "WebSocket frames parsed without a messageSchema",
+  "NF-S010": "Server answers requests with Host unchecked",
 } as const)
 
 /** Codes that no longer fire but remain reserved forever. */
