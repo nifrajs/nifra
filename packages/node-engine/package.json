@@ -1,0 +1,43 @@
+{
+  "name": "@nifrajs/node-engine",
+  "version": "5.16.0",
+  "private": true,
+  "description": "EXPERIMENTAL, not for release: serve a nifra app from Node on the in-repo Rust engine (native/nifra-engine) - the node-direct lane over a libuv-polled native HTTP/1.1, HTTP/2, TLS and WebSocket server.",
+  "type": "module",
+  "nifra": {
+    "environment": "backend"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cluster": {
+      "types": "./dist/cluster.d.ts",
+      "default": "./dist/cluster.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@nifrajs/node": "^5.14.0"
+  },
+  "devDependencies": {
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/node": "workspace:*",
+    "typescript": "^6.0.3"
+  },
+  "license": "MIT"
+}
