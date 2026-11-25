@@ -64,7 +64,11 @@ test("a Host policy turns the check on", async () => {
 
 test("validateHost takes a boolean and not alongside a Host policy", () => {
   const base = { port: 0, hostname: "127.0.0.1" }
-  assert.throws(() => serve(app(), { ...base, validateHost: 0 as never }), TypeError)
+  assert.throws(
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a malformed option, to prove the runtime refuses what the type already would.
+    () => serve(app(), { ...base, validateHost: 0 as never }),
+    TypeError,
+  )
   assert.throws(
     () => serve(app(), { ...base, validateHost: false, allowedHosts: ["example.test"] }),
     TypeError,

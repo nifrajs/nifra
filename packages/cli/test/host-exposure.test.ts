@@ -17,7 +17,10 @@ async function scan(files: Files, hostTopology?: "direct" | "proxied") {
     source,
     policies: {
       ...base.policies,
-      checkConfig: { externalMounts: [], rules: {}, ...(hostTopology ? { hostTopology } : {}) },
+      checkConfig:
+        hostTopology === undefined
+          ? { externalMounts: [], rules: {} }
+          : { externalMounts: [], rules: {}, hostTopology },
     },
   }
   const found = await runRuleRegistry({ root: "/tmp/project", sources: source, project: facts }, [

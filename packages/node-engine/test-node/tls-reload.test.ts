@@ -11,10 +11,10 @@ import { server } from "@nifrajs/core"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
 import { serve } from "../src/index.ts"
 
-/** The fingerprint of the certificate a fresh TLS handshake is given. */
-function presented(port: number): Promise<string> {
+/** The fingerprint of the certificate a fresh TLS handshake is given, over a handshake that trusts only `trusted`: a second certificate with the same subject would shadow it. */
+function presented(port: number, trusted: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const socket = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+    const socket = tlsConnect({ port, host: "127.0.0.1", ca: trusted }, () => {
       const fingerprint = socket.getPeerCertificate().fingerprint256
       socket.destroy()
       resolve(fingerprint)
@@ -40,11 +40,11 @@ test("a reload gives new handshakes the new certificate and leaves an open conne
   const [fpA, fpB] = [await fingerprintOf(a.cert), await fingerprintOf(b.cert)]
   assert.notEqual(fpA, fpB)
   try {
-    assert.equal(await presented(running.port), fpA)
-    const held = tlsConnect({ port: running.port, host: "127.0.0.1", rejectUnauthorized: false })
+    assert.equal(await presented(running.port, a.cert), fpA)
+    const held = tlsConnect({ port: running.port, host: "127.0.0.1", ca: a.cert })
     await new Promise<void>((resolve) => held.once("secureConnect", () => resolve()))
     running.reloadTls({ cert: b.cert, key: b.key })
-    assert.equal(await presented(running.port), fpB)
+    assert.equal(await presented(running.port, b.cert), fpB)
     assert.equal(held.getPeerCertificate().fingerprint256, fpA)
     // The held connection still answers.
     const reply = new Promise<string>((resolve) =>
@@ -71,11 +71,11 @@ test("rotated certificate files are picked up by a reload with no argument", asy
     tls: { cert_file_name: certFile, key_file_name: keyFile },
   })
   try {
-    assert.equal(await presented(running.port), await fingerprintOf(a.cert))
+    assert.equal(await presented(running.port, a.cert), await fingerprintOf(a.cert))
     await writeFile(certFile, b.cert)
     await writeFile(keyFile, b.key)
     running.reloadTls()
-    assert.equal(await presented(running.port), await fingerprintOf(b.cert))
+    assert.equal(await presented(running.port, b.cert), await fingerprintOf(b.cert))
   } finally {
     await running.stop({ drainMs: 50 })
     await rm(dir, { recursive: true, force: true })
@@ -93,7 +93,7 @@ test("material the engine refuses throws and leaves the certificate in place", a
     // A certificate with another certificate's key.
     assert.throws(() => running.reloadTls({ cert: a.cert, key: b.key }))
     assert.throws(() => running.reloadTls({ cert: "not pem", key: "not pem" }))
-    assert.equal(await presented(running.port), await fingerprintOf(a.cert))
+    assert.equal(await presented(running.port, a.cert), await fingerprintOf(a.cert))
   } finally {
     await running.stop({ drainMs: 50 })
   }

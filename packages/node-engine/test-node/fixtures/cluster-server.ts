@@ -23,9 +23,10 @@ try {
       hostname: "127.0.0.1",
       workers: Number(process.env.WORKERS ?? 3),
       gracefulSignals: { drainMs: 500 },
-      ...(certFile === undefined || keyFile === undefined
-        ? {}
-        : { tls: { cert_file_name: certFile, key_file_name: keyFile } }),
+      tls:
+        certFile === undefined || keyFile === undefined
+          ? undefined
+          : { cert_file_name: certFile, key_file_name: keyFile },
       onWorkerEvent: (event) => say({ event: event.type, ...event }),
     },
   )

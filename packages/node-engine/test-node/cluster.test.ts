@@ -87,20 +87,18 @@ class Run {
 function pidsOf(event: Event): number[] {
   const workers = event.workers
   if (!Array.isArray(workers)) throw new Error("no workers in the event")
-  return workers.map((worker) => {
-    if (!isRecord(worker) || typeof worker.pid !== "number")
-      throw new Error("a worker without a pid")
-    return worker.pid
-  })
+  return workers.map((worker) => pidField(worker, "a worker without a pid"))
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null
+function pidField(value: unknown, failure: string): number {
+  if (typeof value !== "object" || value === null || !("pid" in value)) throw new Error(failure)
+  if (typeof value.pid !== "number") throw new Error(failure)
+  return value.pid
+}
 
 async function pidOf(port: number): Promise<number> {
   const body: unknown = await (await fetch(`http://127.0.0.1:${port}/pid`)).json()
-  if (!isRecord(body) || typeof body.pid !== "number") throw new Error("no pid in the answer")
-  return body.pid
+  return pidField(body, "no pid in the answer")
 }
 
 test("every worker comes up on one port and the primary answers through them", async () => {
@@ -175,12 +173,12 @@ test("a reload reaches every worker", async () => {
     CERT_FILE: certFile,
     KEY_FILE: keyFile,
   })
-  const handshakes = async (): Promise<Set<string>> => {
+  const handshakes = async (trusted: string): Promise<Set<string>> => {
     const seen = new Set<string>()
     for (let i = 0; i < 12; i++) {
       seen.add(
         await new Promise<string>((resolve, reject) => {
-          const socket = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+          const socket = tlsConnect({ port, host: "127.0.0.1", ca: trusted }, () => {
             const fingerprint = socket.getPeerCertificate().fingerprint256
             socket.destroy()
             resolve(fingerprint)
@@ -193,12 +191,12 @@ test("a reload reaches every worker", async () => {
   }
   try {
     await run.nth("ready")
-    assert.deepEqual([...(await handshakes())], [new X509Certificate(a.cert).fingerprint256])
+    assert.deepEqual([...(await handshakes(a.cert))], [new X509Certificate(a.cert).fingerprint256])
     await writeFile(certFile, b.cert)
     await writeFile(keyFile, b.key)
     run.child.kill("SIGHUP")
     await run.nth("reloaded")
-    assert.deepEqual([...(await handshakes())], [new X509Certificate(b.cert).fingerprint256])
+    assert.deepEqual([...(await handshakes(b.cert))], [new X509Certificate(b.cert).fingerprint256])
   } finally {
     run.child.kill("SIGTERM")
     await run.exited

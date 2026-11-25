@@ -89,11 +89,11 @@ interface RustBatchBuffers {
 }
 
 interface RustTlsOptions {
-  readonly cert?: string
-  readonly key?: string
-  readonly certFileName?: string
-  readonly keyFileName?: string
-  readonly ticketKeys?: Buffer
+  readonly cert: string | undefined
+  readonly key: string | undefined
+  readonly certFileName: string | undefined
+  readonly keyFileName: string | undefined
+  readonly ticketKeys: Buffer | undefined
 }
 
 interface RustUvServer {
@@ -154,15 +154,15 @@ interface RustAddon {
     options?: {
       readonly maxBodySize?: number
       readonly oversizeWindow?: number
-      readonly maxHeaderBytes?: number
-      readonly idleTimeoutMs?: number
-      readonly maxConnections?: number
-      readonly requestTimeoutMs?: number
-      readonly wsMaxMessageSize?: number
-      readonly http2?: boolean
-      readonly http2MaxConcurrentStreams?: number
-      readonly reusePort?: boolean
-      readonly tls?: RustTlsOptions
+      readonly maxHeaderBytes?: number | undefined
+      readonly idleTimeoutMs?: number | undefined
+      readonly maxConnections?: number | undefined
+      readonly requestTimeoutMs?: number | undefined
+      readonly wsMaxMessageSize?: number | undefined
+      readonly http2?: boolean | undefined
+      readonly http2MaxConcurrentStreams?: number | undefined
+      readonly reusePort?: boolean | undefined
+      readonly tls?: RustTlsOptions | undefined
     },
   ): RustUvServer
 }
@@ -187,11 +187,11 @@ function toRustTls(tls: TlsOptions): RustTlsOptions {
   const key = pemToString(tls.key)
   const ticketKeys = toTicketBuffer(tls.ticketKeys)
   return {
-    ...(cert === undefined ? {} : { cert }),
-    ...(key === undefined ? {} : { key }),
-    ...(tls.cert_file_name === undefined ? {} : { certFileName: tls.cert_file_name }),
-    ...(tls.key_file_name === undefined ? {} : { keyFileName: tls.key_file_name }),
-    ...(ticketKeys === undefined ? {} : { ticketKeys }),
+    cert,
+    key,
+    certFileName: tls.cert_file_name,
+    keyFileName: tls.key_file_name,
+    ticketKeys,
   }
 }
 
@@ -855,6 +855,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     }
   }
 
+  const outcomeOf = (source: RustBatchSource): NodeServeOutcome | Promise<NodeServeOutcome> =>
+    resolveNodeSource === undefined
+      ? Promise.resolve(app.fetch(source.request, source)).then(
+          (response): NodeServeOutcome => ({ kind: "response", response }),
+        )
+      : resolveNodeSource.call(app, source, source, nodeOutcomeRuntime)
+
   const onBatch = (count: number): void => {
     const { inMeta, inData, outMeta, outData, inSlotU32s, outSlotU32s } = bufs
     const maxOutBytes = outData.byteLength
@@ -984,12 +991,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       }
 
       try {
-        const outcome =
-          resolveNodeSource === undefined
-            ? Promise.resolve(app.fetch(source.request, source)).then(
-                (response): NodeServeOutcome => ({ kind: "response", response }),
-              )
-            : resolveNodeSource.call(app, source, source, nodeOutcomeRuntime)
+        const outcome = outcomeOf(source)
 
         if (outcome instanceof Promise) {
           inflight.set(reqId, source)
@@ -1037,12 +1039,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
   const dispatchHttp = (source: RustBatchSource): void => {
     try {
-      const outcome =
-        resolveNodeSource === undefined
-          ? Promise.resolve(app.fetch(source.request, source)).then(
-              (response): NodeServeOutcome => ({ kind: "response", response }),
-            )
-          : resolveNodeSource.call(app, source, source, nodeOutcomeRuntime)
+      const outcome = outcomeOf(source)
       if (outcome instanceof Promise) {
         outcome.then(
           (settled) => writeComplexOutcome(source, settled, false),
@@ -1214,14 +1211,14 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     uvServer = addon.createUvServer(host, options.port, onBatch, {
       maxBodySize,
       oversizeWindow,
-      ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs }),
-      ...(maxConnections === undefined ? {} : { maxConnections }),
-      ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
-      ...(options.engine?.reusePort === undefined ? {} : { reusePort: options.engine.reusePort }),
-      ...(wsCap === undefined ? {} : { wsMaxMessageSize: wsCap }),
-      ...(http2Enabled ? { http2: true } : {}),
-      ...(http2MaxStreams === undefined ? {} : { http2MaxConcurrentStreams: http2MaxStreams }),
-      ...(currentTls === undefined ? {} : { tls: toRustTls(currentTls) }),
+      idleTimeoutMs,
+      maxConnections,
+      requestTimeoutMs,
+      reusePort: options.engine?.reusePort,
+      wsMaxMessageSize: wsCap,
+      http2: http2Enabled ? true : undefined,
+      http2MaxConcurrentStreams: http2MaxStreams,
+      tls: currentTls === undefined ? undefined : toRustTls(currentTls),
     })
   } catch (cause) {
     return Promise.reject(
