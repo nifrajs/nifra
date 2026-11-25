@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/node-engine",
-  "version": "5.16.0",
+  "version": "5.17.0",
   "private": true,
   "description": "EXPERIMENTAL, not for release: serve a nifra app from Node on the in-repo Rust engine (native/nifra-engine) - the node-direct lane over a libuv-polled native HTTP/1.1, HTTP/2, TLS and WebSocket server.",
   "type": "module",

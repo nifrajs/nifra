@@ -607,6 +607,18 @@
         "ws",
       ],
     },
+    "packages/node-engine": {
+      "name": "@nifrajs/node-engine",
+      "version": "5.17.0",
+      "devDependencies": {
+        "@nifrajs/core": "workspace:*",
+        "@nifrajs/node": "workspace:*",
+        "typescript": "^6.0.3",
+      },
+      "peerDependencies": {
+        "@nifrajs/node": "^5.14.0",
+      },
+    },
     "packages/node-uws": {
       "name": "@nifrajs/node-uws",
       "version": "5.17.0",
@@ -1442,6 +1454,8 @@
     "@nifrajs/mock": ["@nifrajs/mock@workspace:packages/mock"],
 
     "@nifrajs/node": ["@nifrajs/node@workspace:packages/node"],
+
+    "@nifrajs/node-engine": ["@nifrajs/node-engine@workspace:packages/node-engine"],
 
     "@nifrajs/node-uws": ["@nifrajs/node-uws@workspace:packages/node-uws"],
 
