@@ -13,7 +13,7 @@ const rounds = Number(env.ROUNDS ?? 5)
 const duration = Number(env.DURATION ?? 6)
 const targets = (
   env.TARGETS ??
-  "nifra-engine,nifra-engine-host,nifra-uws,nifra-node,moro,moro-engine,nifra-engine#2"
+  "raw-nifra-engine,raw-uws,raw-node,raw-moro-engine,nifra-engine,nifra-engine-host,nifra-uws,nifra-node,moro,nifra-engine#2"
 ).split(",")
 const out = env.OUT ?? "bench-out"
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -170,7 +170,29 @@ for (const name of names) {
     )
   }
 }
-const table = rows.join("\n")
+// What each framework costs over its own engine: the same three routes, the same bytes, the same checks
+// in the `raw-*` target, so the ratio is the framework layer and nothing else.
+const LAYERS = [
+  ["nifra on the Rust engine", "nifra-engine", "raw-nifra-engine"],
+  ["nifra on uWebSockets.js", "nifra-uws", "raw-uws"],
+  ["nifra on node:http", "nifra-node", "raw-node"],
+  ["Moro", "moro", "raw-moro-engine"],
+]
+const layerRows = [
+  "| workload | stack | framework rps | raw rps | framework / raw |",
+  "|---|---|---:|---:|---:|",
+]
+for (const name of names) {
+  for (const [label, framework, raw] of LAYERS) {
+    if (results[name][framework] === undefined || results[name][raw] === undefined) continue
+    const f = median(results[name][framework].map((r) => r.rps))
+    const r = median(results[name][raw].map((x) => x.rps))
+    layerRows.push(
+      `| ${name} | ${label} | ${Math.round(f)} | ${Math.round(r)} | ${(f / r).toFixed(3)} |`,
+    )
+  }
+}
+const table = `${rows.join("\n")}\n\n${layerRows.join("\n")}`
 console.log(table)
 writeFileSync(
   join(out, "engine-compare.json"),

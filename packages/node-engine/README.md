@@ -182,7 +182,12 @@ On Linux, closing a worker's listening socket resets the connections that were s
 
 ## Benchmark
 
-`bench/compare.mjs` runs a rotated, serial `wrk` comparison on one Linux box: the Rust engine (`nifra-engine`, and `nifra-engine-host` with `validateHost`), `@nifrajs/node-uws`, `@nifrajs/node` (`node:http`), the Moro framework (`moro`) and `@morojs/engine` written straight on its API (`moro-engine`). Workloads are a path-parameter GET, the same with a browser-sized header set, and 13 B and 1 KiB JSON POSTs with schema validation. The table reports median req/s, spread, and each row's ratio to `moro` and to `nifra-uws`; `nifra-engine#2` is an A/A control, so its gap to `nifra-engine` is noise.
+`bench/compare.mjs` runs a rotated, serial `wrk` comparison on one Linux box, in two tiers:
+
+- **Frameworks**, each answering the same three routes as an ordinary app: nifra on the Rust engine (`nifra-engine`, and `nifra-engine-host` with `validateHost`), on `@nifrajs/node-uws` (`nifra-uws`) and on `node:http` (`nifra-node`), and the Moro framework (`moro`). Workloads are a path-parameter GET, the same with a browser-sized header set, and 13 B and 1 KiB JSON POSTs with validation.
+- **Raw engines**, each driven directly by one shared handler (`bench/raw-handler.mjs`) with no router, hooks or content-type check, so every engine does the same work for the same bytes: `raw-nifra-engine` (the addon on its batch ABI), `raw-uws`, `raw-node` and `raw-moro-engine` (`@morojs/engine`).
+
+The first table reports median req/s, spread, and each row's ratio to `moro` and to `nifra-uws`. The second divides each framework by its own raw engine, which is that framework's layer cost; comparing raw engines to each other is the engine gap. `nifra-engine#2` is an A/A control, so its gap to `nifra-engine` is noise. A framework row set against a raw row of another stack is not a like-for-like comparison.
 
 Moro is a benchmark competitor only. No nifra package depends on it: `bench/moro` holds its own `package.json` and `package-lock.json` (outside the workspace), installed with `npm ci` and found through `MORO_DIR`.
 

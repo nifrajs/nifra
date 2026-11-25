@@ -1,4 +1,4 @@
-// usage: node server.mjs <nifra-engine|nifra-engine-host|nifra-node|nifra-uws|moro|moro-engine> <port>
+// usage: node server.mjs <nifra-engine|nifra-engine-host|nifra-node|nifra-uws|moro|raw-nifra-engine|raw-uws|raw-node|raw-moro-engine> <port>
 // ROOT is the nifra checkout (built). MORO_DIR is packages/node-engine/bench/moro after `npm ci` there:
 // the competitors are installed only for this benchmark and are not a dependency of any nifra package.
 import { createRequire } from "node:module"
@@ -41,44 +41,122 @@ if (target.startsWith("nifra-")) {
     .body(z.object({ name: z.string() }))
     .handler((req) => ({ ok: true, name: req.body.name }))
   app.listen(port, () => console.error("engine:", JSON.stringify(app.engine)))
-} else if (target === "moro-engine") {
-  // The same three routes written straight on `@morojs/engine`: its ceiling with no framework above it.
-  if (MORO_DIR === undefined) throw new Error("MORO_DIR is required for moro-engine")
+} else if (target === "raw-moro-engine") {
+  // `@morojs/engine` straight on its API: its ceiling with no framework above it.
+  if (MORO_DIR === undefined) throw new Error("MORO_DIR is required for raw-moro-engine")
+  const { handle, decode } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
   const engine = createRequire(`${MORO_DIR}/`)("@morojs/engine")
-  const JSON_HEADERS = ["content-type", "application/json"]
-  const decoder = new TextDecoder()
+  const METHODS = ["GET", "POST"]
   const serverId = engine.serve(
     {
       onRequest(id, methodIdx, path) {
-        if (methodIdx === 0) {
-          if (path.startsWith("/user/") && path.length > 6) {
-            const segment = path.slice(6)
-            if (!segment.includes("/")) {
-              engine.respond(id, 200, JSON_HEADERS, `{"id":${JSON.stringify(segment)}}`)
-              return
-            }
-          }
-          if (path === "/ping") engine.respond(id, 200, ["content-type", "text/plain"], "ok")
-          else engine.respond(id, 404, JSON_HEADERS, '{"error":"not_found"}')
-          return
-        }
-        if (methodIdx === 1 && path === "/users") {
-          const body = engine.getBody(id)
-          try {
-            const parsed = JSON.parse(body === null ? "" : decoder.decode(body))
-            if (typeof parsed?.name !== "string") throw new TypeError("name")
-            engine.respond(id, 200, JSON_HEADERS, JSON.stringify({ ok: true, name: parsed.name }))
-          } catch {
-            engine.respond(id, 400, JSON_HEADERS, '{"error":"bad_request"}')
-          }
-          return
-        }
-        engine.respond(id, 404, JSON_HEADERS, '{"error":"not_found"}')
+        const method = METHODS[methodIdx] ?? ""
+        const body = method === "POST" ? decode(engine.getBody(id)) : null
+        const [status, type, text] = handle(method, path, body)
+        engine.respond(id, status, ["content-type", type], text)
       },
       onAborted() {},
     },
     { maxBodySize: 1_048_576 },
   )
   engine.listen(serverId, "0.0.0.0", port)
+} else if (target === "raw-nifra-engine") {
+  // The Rust addon straight on its batch ABI, the way `serve()` drives it, with no adapter and no core.
+  const { handle } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
+  const addonPath = process.env.NIFRA_RUST_ENGINE_PATH
+  if (addonPath === undefined)
+    throw new Error("NIFRA_RUST_ENGINE_PATH is required for raw-nifra-engine")
+  const module = { exports: {} }
+  process.dlopen(module, addonPath)
+  const addon = module.exports
+  const METHODS = ["GET", "POST"]
+  const HAS_BODY = 1 << 4
+  const LARGE_BODY = 1 << 10
+  const templates = new Map()
+  let server
+  let bufs
+  const template = (status, type) => {
+    const key = `${status} ${type}`
+    let id = templates.get(key)
+    if (id === undefined) {
+      id = server.prepareResponse(status, ["content-type", type])
+      templates.set(key, id)
+    }
+    return id
+  }
+  const onBatch = (count) => {
+    const { inMeta, inData, outMeta, outData, inSlotU32s, outSlotU32s } = bufs
+    let outCount = 0
+    let outOff = 0
+    for (let i = 0; i < count; i++) {
+      const b = i * inSlotU32s
+      const reqId = inMeta[b]
+      const flags = inMeta[b + 1]
+      const method = METHODS[flags & 0x0f] ?? ""
+      const path = inData.toString("latin1", inMeta[b + 2], inMeta[b + 2] + inMeta[b + 3])
+      let body = null
+      if ((flags & HAS_BODY) !== 0) {
+        body =
+          (flags & LARGE_BODY) === 0
+            ? inData.toString("utf8", inMeta[b + 6], inMeta[b + 6] + inMeta[b + 7])
+            : (server.getBody(reqId)?.toString("utf8") ?? "")
+      }
+      const [status, type, text] = handle(method, path, body)
+      const len = outData.write(text, outOff, "utf8")
+      const ob = outCount * outSlotU32s
+      outMeta[ob] = reqId
+      outMeta[ob + 1] = template(status, type)
+      outMeta[ob + 2] = outOff
+      outMeta[ob + 3] = len
+      outOff += len
+      outCount += 1
+    }
+    server.flushResponses(outCount)
+  }
+  server = addon.createUvServer("0.0.0.0", port, onBatch, { maxBodySize: 2_097_152 })
+  bufs = server.getBatchBuffers()
+} else if (target === "raw-uws") {
+  const { handle, decode } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
+  const uws = createRequire(`${ROOT}/packages/node-uws/`)("uWebSockets.js")
+  const cfg = Reflect.get(uws, "_cfg")
+  if (typeof cfg === "function") Reflect.apply(cfg, uws, ["silent"])
+  const reply = (res, [status, type, text]) =>
+    res.cork(() => {
+      res.writeStatus(
+        `${status} ${status === 200 ? "OK" : status === 400 ? "Bad Request" : "Not Found"}`,
+      )
+      res.writeHeader("content-type", type)
+      res.end(text)
+    })
+  uws
+    .App()
+    .any("/*", (res, req) => {
+      const method = req.getMethod().toUpperCase()
+      const path = req.getUrl()
+      if (method !== "POST") return reply(res, handle(method, path, null))
+      const chunks = []
+      res.onAborted(() => {})
+      res.onData((chunk, last) => {
+        chunks.push(Buffer.from(chunk.slice(0)))
+        if (last) reply(res, handle(method, path, decode(Buffer.concat(chunks))))
+      })
+    })
+    .listen("0.0.0.0", port, () => {})
+} else if (target === "raw-node") {
+  const { handle } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
+  const http = await import("node:http")
+  http
+    .createServer((req, res) => {
+      const finish = (body) => {
+        const [status, type, text] = handle(req.method, req.url, body)
+        res.writeHead(status, { "content-type": type, "content-length": Buffer.byteLength(text) })
+        res.end(text)
+      }
+      if (req.method !== "POST") return finish(null)
+      const chunks = []
+      req.on("data", (chunk) => chunks.push(chunk))
+      req.on("end", () => finish(Buffer.concat(chunks).toString("utf8")))
+    })
+    .listen(port, "0.0.0.0")
 } else throw new Error(`unknown target ${target}`)
 console.error("ready", target, port)
