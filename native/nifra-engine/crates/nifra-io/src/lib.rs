@@ -6,9 +6,16 @@
 //!   `libuv` (`napi_get_uv_event_loop`) integration layer.
 
 #[cfg(target_os = "linux")]
+pub mod epoll;
+#[cfg(unix)]
+pub mod sys;
+#[cfg(target_os = "linux")]
 pub mod uring;
 #[cfg(unix)]
 pub mod uv;
+
+#[cfg(unix)]
+pub use sys::conn_slot;
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -23,6 +30,7 @@ const READ_BUF_SIZE: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportKind {
+    Epoll,
     LibuvPoll,
     IoUring,
     Mio,
@@ -31,6 +39,7 @@ pub enum TransportKind {
 impl TransportKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Epoll => "epoll",
             Self::LibuvPoll => "libuv-poll",
             Self::IoUring => "io_uring",
             Self::Mio => "mio",
@@ -71,12 +80,11 @@ impl Default for SocketConfig {
 pub fn detect_transport() -> TransportKind {
     #[cfg(target_os = "linux")]
     {
-        if std::env::var("NIFRA_ENGINE_TRANSPORT").as_deref() == Ok("uring") {
-            if probe_io_uring() {
-                return TransportKind::IoUring;
-            }
+        match std::env::var("NIFRA_ENGINE_TRANSPORT").as_deref() {
+            Ok("uring") if probe_io_uring() => return TransportKind::IoUring,
+            Ok("uv") => return TransportKind::LibuvPoll,
+            _ => return TransportKind::Epoll,
         }
-        TransportKind::LibuvPoll
     }
     #[cfg(not(target_os = "linux"))]
     {

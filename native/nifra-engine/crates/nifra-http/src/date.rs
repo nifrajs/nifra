@@ -2,6 +2,8 @@
 //! every response. The text is rebuilt at most once a second per thread.
 
 use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DAYS: [&[u8; 3]; 7] = [b"Thu", b"Fri", b"Sat", b"Sun", b"Mon", b"Tue", b"Wed"];
@@ -58,27 +60,90 @@ thread_local! {
     static CACHE: Cell<(u64, [u8; IMF_LEN])> = const { Cell::new((u64::MAX, [0; IMF_LEN])) };
 }
 
-/// The current time as an IMF-fixdate, rebuilt when the second has changed.
-pub fn now() -> [u8; IMF_LEN] {
-    let secs = SystemTime::now()
+static CACHED_SECS: AtomicU64 = AtomicU64::new(u64::MAX);
+static CLOCK_LEASES: Mutex<usize> = Mutex::new(0);
+
+#[inline]
+fn system_now_secs() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+        .map_or(0, |d| d.as_secs())
+}
+
+/// RAII lease allowing active event loops to supply cached wall-clock seconds without per-response
+/// `clock_gettime` syscalls. Reverts to direct `SystemTime::now()` when the last lease drops.
+pub struct ClockLeaseGuard(());
+
+impl ClockLeaseGuard {
+    pub fn new() -> Self {
+        let mut leases = CLOCK_LEASES.lock().unwrap_or_else(|e| e.into_inner());
+        if *leases == 0 {
+            CACHED_SECS.store(system_now_secs(), Ordering::Relaxed);
+        }
+        *leases += 1;
+        Self(())
+    }
+}
+
+impl Default for ClockLeaseGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ClockLeaseGuard {
+    fn drop(&mut self) {
+        let mut leases = CLOCK_LEASES.lock().unwrap_or_else(|e| e.into_inner());
+        *leases = leases.saturating_sub(1);
+        if *leases == 0 {
+            CACHED_SECS.store(u64::MAX, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Update the loop-maintained cached Unix timestamp in seconds.
+#[inline]
+pub fn set_cached_secs(secs: u64) {
+    CACHED_SECS.store(secs, Ordering::Relaxed);
+}
+
+/// Current Unix timestamp in seconds, using the loop-maintained cache when active.
+#[inline]
+pub fn now_secs() -> u64 {
+    let cached = CACHED_SECS.load(Ordering::Relaxed);
+    if cached != u64::MAX {
+        cached
+    } else {
+        system_now_secs()
+    }
+}
+
+/// Current `(unix_secs, imf_fixdate)` pair, rebuilt at most once a second per thread.
+#[inline]
+pub fn now_cached() -> (u64, [u8; IMF_LEN]) {
+    let secs = now_secs();
     CACHE.with(|cache| {
         let (at, text) = cache.get();
         if at == secs {
-            return text;
+            return (secs, text);
         }
         let text = imf_fixdate(secs);
         cache.set((secs, text));
-        text
+        (secs, text)
     })
+}
+
+/// The current time as an IMF-fixdate, rebuilt when the second has changed.
+pub fn now() -> [u8; IMF_LEN] {
+    now_cached().1
 }
 
 /// Append `date: <now>\r\n`.
 #[inline]
 pub fn append_header(out: &mut Vec<u8>) {
+    let text = now();
     out.extend_from_slice(b"date: ");
-    out.extend_from_slice(&now());
+    out.extend_from_slice(&text);
     out.extend_from_slice(b"\r\n");
 }
 

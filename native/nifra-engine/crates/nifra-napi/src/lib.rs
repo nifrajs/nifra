@@ -3,7 +3,7 @@
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::cell::{OnceCell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -22,6 +22,8 @@ use nifra_http::{
     write_chunk_terminator, write_stream_head, BatchPacker, ChunkResume, FastRoutes, ParseLimits,
     ParseStatus, PreparedTemplates,
 };
+#[cfg(unix)]
+use nifra_io::conn_slot;
 use nifra_io::{bind_tcp_listener, detect_transport, run_mio_loop, ConnAction, SocketConfig};
 
 #[cfg(unix)]
@@ -205,13 +207,11 @@ unsafe fn call_js_u32(raw_env: sys::napi_env, cb_ref: sys::napi_ref, value: u32)
         return;
     }
     let mut cb = std::ptr::null_mut();
-    let mut undef = std::ptr::null_mut();
     let mut arg0 = std::ptr::null_mut();
     if sys::napi_get_reference_value(raw_env, cb_ref, &mut cb) == sys::Status::napi_ok
-        && sys::napi_get_undefined(raw_env, &mut undef) == sys::Status::napi_ok
         && sys::napi_create_uint32(raw_env, value, &mut arg0) == sys::Status::napi_ok
     {
-        call_js(raw_env, undef, cb, &[arg0]);
+        call_js(raw_env, std::ptr::null_mut(), cb, &[arg0]);
     }
     let _ = sys::napi_close_handle_scope(raw_env, scope);
 }
@@ -421,25 +421,111 @@ impl HeadStorage {
 }
 
 #[cfg(unix)]
-struct PendingReq {
-    conn_id: u32,
-    keep_alive: bool,
-    raw_head: HeadStorage,
+const PENDING_KEEP_ALIVE: u8 = 1 << 0;
+#[cfg(unix)]
+const PENDING_STREAMING: u8 = 1 << 1;
+#[cfg(unix)]
+const PENDING_CHUNKED: u8 = 1 << 2;
+#[cfg(unix)]
+const PENDING_H2: u8 = 1 << 3;
+
+#[cfg(unix)]
+#[derive(Default)]
+struct PendingCold {
     parsed_head: OnceCell<Vec<String>>,
     custom_method: Option<Box<str>>,
     h2_stream_id: Option<u32>,
     h2_headers: Option<Vec<(String, String)>>,
     query: Option<Box<str>>,
     body: Option<Vec<u8>>,
-    streaming: bool,
-    chunked: bool,
+}
+
+#[cfg(unix)]
+struct PendingReq {
+    conn_id: u32,
+    flags: u8,
+    raw_head: HeadStorage,
+    cold: Option<Box<PendingCold>>,
 }
 
 #[cfg(unix)]
 impl PendingReq {
-    fn parsed_head(&self, arena: &[u8]) -> &[String] {
-        self.parsed_head
-            .get_or_init(|| collect_headers_in_head(self.raw_head.as_bytes(arena)))
+    #[inline]
+    fn new(
+        conn_id: u32,
+        keep_alive: bool,
+        raw_head: HeadStorage,
+        cold: Option<Box<PendingCold>>,
+    ) -> Self {
+        let mut flags = if keep_alive { PENDING_KEEP_ALIVE } else { 0 };
+        if cold.as_ref().is_some_and(|c| c.h2_stream_id.is_some()) {
+            flags |= PENDING_H2;
+        }
+        Self {
+            conn_id,
+            flags,
+            raw_head,
+            cold,
+        }
+    }
+
+    #[inline]
+    fn keep_alive(&self) -> bool {
+        (self.flags & PENDING_KEEP_ALIVE) != 0
+    }
+
+    #[inline]
+    fn streaming(&self) -> bool {
+        (self.flags & PENDING_STREAMING) != 0
+    }
+
+    #[inline]
+    fn set_streaming(&mut self) {
+        self.flags |= PENDING_STREAMING;
+    }
+
+    #[inline]
+    fn chunked(&self) -> bool {
+        (self.flags & PENDING_CHUNKED) != 0
+    }
+
+    #[inline]
+    fn set_chunked(&mut self, chunked: bool) {
+        if chunked {
+            self.flags |= PENDING_CHUNKED;
+        } else {
+            self.flags &= !PENDING_CHUNKED;
+        }
+    }
+
+    #[inline]
+    fn h2_stream_id(&self) -> Option<u32> {
+        if (self.flags & PENDING_H2) == 0 {
+            return None;
+        }
+        self.cold.as_ref().and_then(|c| c.h2_stream_id)
+    }
+
+    #[inline]
+    fn h2_headers(&self) -> Option<&Vec<(String, String)>> {
+        self.cold.as_ref().and_then(|c| c.h2_headers.as_ref())
+    }
+
+    #[inline]
+    fn custom_method(&self) -> Option<&str> {
+        self.cold.as_ref().and_then(|c| c.custom_method.as_deref())
+    }
+
+    #[inline]
+    fn body(&self) -> Option<&[u8]> {
+        self.cold.as_ref().and_then(|c| c.body.as_deref())
+    }
+
+    fn parsed_head(&mut self, arena: &[u8]) -> &[String] {
+        let raw = &self.raw_head;
+        let cold = self.cold.get_or_insert_with(Default::default);
+        cold.parsed_head
+            .get_or_init(|| collect_headers_in_head(raw.as_bytes(arena)))
     }
 }
 
@@ -480,6 +566,124 @@ struct H1Order {
     held_bytes: usize,
 }
 
+/// O(1) direct-indexed per-connection metadata indexed by `nifra_io::conn_slot(conn_id)`.
+/// Keeps non-pipelined HTTP/1.1 keep-alive requests completely free of heap allocations and hashing.
+#[cfg(unix)]
+#[derive(Default)]
+struct ConnMetaSlot {
+    gen_id: u32,
+    h1_head: u32,
+    h1_overflow: Option<Box<H1Order>>,
+    chunk_resume: Option<Box<ChunkResume>>,
+    ws: Option<Box<WsConnState>>,
+    h2: Option<Box<H2Conn>>,
+}
+
+#[cfg(unix)]
+impl ConnMetaSlot {
+    #[inline]
+    fn clear_for(&mut self, new_gen_id: u32) {
+        self.gen_id = new_gen_id;
+        self.h1_head = 0;
+        self.h1_overflow = None;
+        self.chunk_resume = None;
+        self.ws = None;
+        self.h2 = None;
+    }
+
+    #[inline]
+    fn has_h1_pending(&self) -> bool {
+        self.h1_head != 0
+            || self
+                .h1_overflow
+                .as_ref()
+                .is_some_and(|o| !o.queue.is_empty())
+    }
+
+    #[inline]
+    fn h1_len(&self) -> usize {
+        if let Some(ref o) = self.h1_overflow {
+            o.queue.len()
+        } else if self.h1_head != 0 {
+            1
+        } else {
+            0
+        }
+    }
+
+    #[inline]
+    fn push_h1(&mut self, req_id: u32) {
+        if let Some(ref mut order) = self.h1_overflow {
+            order.queue.push_back(req_id);
+        } else if self.h1_head == 0 {
+            self.h1_head = req_id;
+        } else {
+            let mut order = Box::new(H1Order::default());
+            order.queue.push_back(self.h1_head);
+            order.queue.push_back(req_id);
+            self.h1_head = 0;
+            self.h1_overflow = Some(order);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct ConnMetaTable {
+    slots: Vec<ConnMetaSlot>,
+}
+
+#[cfg(unix)]
+impl ConnMetaTable {
+    fn with_capacity(cap: usize) -> Self {
+        Self {
+            slots: Vec::with_capacity(cap),
+        }
+    }
+
+    #[inline]
+    fn ensure(&mut self, conn_id: u32) -> &mut ConnMetaSlot {
+        let idx = conn_slot(conn_id);
+        if idx >= self.slots.len() {
+            self.slots.resize_with(idx + 1, ConnMetaSlot::default);
+        }
+        let slot = &mut self.slots[idx];
+        if slot.gen_id != conn_id {
+            slot.clear_for(conn_id);
+        }
+        slot
+    }
+
+    #[inline]
+    fn get(&self, conn_id: u32) -> Option<&ConnMetaSlot> {
+        let slot = self.slots.get(conn_slot(conn_id))?;
+        (slot.gen_id == conn_id).then_some(slot)
+    }
+
+    #[inline]
+    fn get_mut(&mut self, conn_id: u32) -> Option<&mut ConnMetaSlot> {
+        let slot = self.slots.get_mut(conn_slot(conn_id))?;
+        (slot.gen_id == conn_id).then_some(slot)
+    }
+
+    fn clear_conn(&mut self, conn_id: u32) -> Option<Box<WsConnState>> {
+        let slot = self.slots.get_mut(conn_slot(conn_id))?;
+        if slot.gen_id != conn_id {
+            return None;
+        }
+        slot.gen_id = 0;
+        slot.h1_head = 0;
+        slot.h1_overflow = None;
+        slot.chunk_resume = None;
+        slot.h2 = None;
+        slot.ws.take()
+    }
+
+    fn clear_all(&mut self) {
+        self.slots.clear();
+    }
+}
+
 /// Most bytes one connection may park behind an unanswered earlier request before it is closed.
 #[cfg(unix)]
 const MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
@@ -491,6 +695,7 @@ const MAX_PIPELINED: usize = 1024;
 /// Write to an HTTP/1.1 connection. While the connection is inside `on_data`, `write_to_conn` parks
 /// the bytes and appends them after what the handler already queued.
 #[cfg(unix)]
+#[inline]
 fn h1_write(
     server: &UvServer,
     _st: &mut UvHttpShared,
@@ -513,42 +718,56 @@ fn h1_send(
     finish: bool,
     keep_alive: bool,
 ) -> WriteResult {
-    let ended = finish && server.has_read_ended(conn_id);
-    let Some(mut order) = st.h1_order.remove(&conn_id) else {
-        return h1_write(server, st, conn_id, bytes, finish && (!keep_alive || ended));
+    let mut taken_order = {
+        let Some(slot) = st.conn_meta.get_mut(conn_id) else {
+            return server.write_to_conn_h1(conn_id, bytes, finish && !keep_alive, finish);
+        };
+        if let Some(order) = slot.h1_overflow.take() {
+            order
+        } else if slot.h1_head == req_id {
+            if finish {
+                slot.h1_head = 0;
+                return server.write_to_conn_h1(conn_id, bytes, !keep_alive, true);
+            }
+            return server.write_to_conn(conn_id, bytes, false);
+        } else {
+            return server.write_to_conn_h1(conn_id, bytes, finish && !keep_alive, finish);
+        }
     };
+
+    let ended = finish && server.has_read_ended(conn_id);
     let result = 'send: {
-        if order.queue.front() != Some(&req_id) {
-            if !order.queue.contains(&req_id) {
+        if taken_order.queue.front() != Some(&req_id) {
+            if !taken_order.queue.contains(&req_id) {
                 break 'send h1_write(server, st, conn_id, bytes, finish && (!keep_alive || ended));
             }
-            let held = order.held.entry(req_id).or_default();
+            let held = taken_order.held.entry(req_id).or_default();
             held.bytes.extend_from_slice(bytes);
             held.done |= finish;
             held.keep_alive = keep_alive;
-            order.held_bytes += bytes.len();
-            if order.held_bytes > MAX_HELD_BYTES {
+            taken_order.held_bytes += bytes.len();
+            if taken_order.held_bytes > MAX_HELD_BYTES {
                 server.close_conn(conn_id);
                 return WriteResult::Closed;
             }
             break 'send WriteResult::Written;
         }
         if finish {
-            order.queue.pop_front();
+            taken_order.queue.pop_front();
         }
-        let close = finish && (!keep_alive || (ended && order.queue.is_empty()));
+        let close = finish && (!keep_alive || (ended && taken_order.queue.is_empty()));
         let mut result = h1_write(server, st, conn_id, bytes, close);
         if finish && !close {
             // Answers that finished (or started) while this one held the socket go out now.
             while result != WriteResult::Closed {
-                let Some(&next) = order.queue.front() else {
+                let Some(&next) = taken_order.queue.front() else {
                     break;
                 };
-                let Some(held) = order.held.get_mut(&next) else {
+                let Some(held) = taken_order.held.get_mut(&next) else {
                     break;
                 };
                 let chunk = std::mem::take(&mut held.bytes);
-                order.held_bytes -= chunk.len();
+                taken_order.held_bytes -= chunk.len();
                 if !held.done {
                     // It is the head now: what it has so far goes out, the rest streams live.
                     if !chunk.is_empty() {
@@ -557,9 +776,9 @@ fn h1_send(
                     break;
                 }
                 let keep = held.keep_alive;
-                order.held.remove(&next);
-                order.queue.pop_front();
-                let close = !keep || (ended && order.queue.is_empty());
+                taken_order.held.remove(&next);
+                taken_order.queue.pop_front();
+                let close = !keep || (ended && taken_order.queue.is_empty());
                 result = h1_write(server, st, conn_id, &chunk, close);
                 if close {
                     break;
@@ -568,8 +787,10 @@ fn h1_send(
         }
         result
     };
-    if result != WriteResult::Closed {
-        st.h1_order.insert(conn_id, order);
+    if result != WriteResult::Closed && !taken_order.queue.is_empty() {
+        if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+            slot.h1_overflow = Some(taken_order);
+        }
     }
     result
 }
@@ -579,6 +800,7 @@ fn h1_send(
 struct PendingSlab {
     slots: Vec<Option<PendingReq>>,
     free: Vec<u32>,
+    active: usize,
 }
 
 #[cfg(unix)]
@@ -587,11 +809,18 @@ impl PendingSlab {
         Self {
             slots: Vec::with_capacity(cap),
             free: Vec::with_capacity(cap),
+            active: 0,
         }
     }
 
     #[inline]
+    fn is_empty(&self) -> bool {
+        self.active == 0
+    }
+
+    #[inline]
     fn insert(&mut self, req: PendingReq) -> u32 {
+        self.active += 1;
         if let Some(idx) = self.free.pop() {
             self.slots[idx as usize] = Some(req);
             idx + 1
@@ -627,6 +856,7 @@ impl PendingSlab {
         let slot = self.slots.get_mut(idx)?;
         let val = slot.take()?;
         self.free.push(idx as u32);
+        self.active -= 1;
         Some(val)
     }
 
@@ -640,6 +870,7 @@ impl PendingSlab {
     fn clear(&mut self) {
         self.slots.clear();
         self.free.clear();
+        self.active = 0;
     }
 }
 
@@ -680,11 +911,7 @@ struct UvHttpShared {
     batch_heads: Vec<u8>,
     batch_req_ids: Vec<u32>,
     pending: PendingSlab,
-    ws_conns: HashMap<u32, WsConnState>,
-    h2_conns: HashMap<u32, H2Conn>,
-    /// Chunked request bodies a connection has partly sent, so a later read resumes the decode.
-    chunk_resume: HashMap<u32, ChunkResume>,
-    h1_order: HashMap<u32, H1Order>,
+    conn_meta: ConnMetaTable,
     /// Ids for native-route answers parked behind a JS request; they count down from the top so they
     /// never meet a slab id.
     placeholder_seq: u32,
@@ -713,13 +940,15 @@ fn invoke_on_batch_unlocked(shared: &Rc<RefCell<UvHttpShared>>) {
         ref mut batch_req_ids,
         ..
     } = *st;
-    for &req_id in batch_req_ids.iter() {
-        if let Some(req) = pending.get_mut(req_id) {
-            if let HeadStorage::BatchSlice { off, len } = req.raw_head {
-                let start = off as usize;
-                let end = start + (len as usize);
-                let owned: Box<[u8]> = batch_heads.get(start..end).unwrap_or(&[]).into();
-                req.raw_head = HeadStorage::Owned(owned);
+    if !pending.is_empty() {
+        for &req_id in batch_req_ids.iter() {
+            if let Some(req) = pending.get_mut(req_id) {
+                if let HeadStorage::BatchSlice { off, len } = req.raw_head {
+                    let start = off as usize;
+                    let end = start + (len as usize);
+                    let owned: Box<[u8]> = batch_heads.get(start..end).unwrap_or(&[]).into();
+                    req.raw_head = HeadStorage::Owned(owned);
+                }
             }
         }
     }
@@ -743,24 +972,25 @@ impl HttpUvCallbacks {
         read_buf: &[u8],
         write_buf: &mut Vec<u8>,
     ) -> ConnAction {
+        let mut st = self.shared.borrow_mut();
+
         // If this connection has already upgraded to WebSocket, decode RFC 6455 frames directly.
-        let ws_feed = {
-            let mut st = self.shared.borrow_mut();
-            if let Some(ws) = st.ws_conns.get_mut(&conn_id) {
-                let feed = ws.conn.feed(read_buf, write_buf);
-                let has_close = feed
-                    .events
-                    .iter()
-                    .any(|e| matches!(e, WsEvent::Close { .. }));
-                if has_close {
-                    ws.close_emitted = true;
-                }
-                Some((st.raw_env, st.on_ws_message_ref, st.on_ws_close_ref, feed))
-            } else {
-                None
+        if let Some(ws) = st
+            .conn_meta
+            .get_mut(conn_id)
+            .and_then(|s| s.ws.as_deref_mut())
+        {
+            let feed = ws.conn.feed(read_buf, write_buf);
+            let has_close = feed
+                .events
+                .iter()
+                .any(|e| matches!(e, WsEvent::Close { .. }));
+            if has_close {
+                ws.close_emitted = true;
             }
-        };
-        if let Some((raw_env, msg_ref, close_ref, feed)) = ws_feed {
+            let (raw_env, msg_ref, close_ref) =
+                (st.raw_env, st.on_ws_message_ref, st.on_ws_close_ref);
+            drop(st);
             for event in &feed.events {
                 match event {
                     WsEvent::Text(_) | WsEvent::Binary(_) => unsafe {
@@ -783,27 +1013,23 @@ impl HttpUvCallbacks {
         }
 
         // Check HTTP/2 (existing H2 connection or incoming client preface when http2 is enabled).
-        let h2_mode = {
-            let mut st = self.shared.borrow_mut();
-            if st.h2_conns.contains_key(&conn_id) {
-                1u8 // active H2
-            } else if st.http2_enabled {
-                if read_buf.starts_with(CLIENT_PREFACE) {
-                    let cfg = st.h2_cfg;
-                    st.h2_conns.insert(conn_id, H2Conn::new(cfg));
-                    1u8
-                } else if read_buf.len() < CLIENT_PREFACE.len()
-                    && CLIENT_PREFACE.starts_with(read_buf)
-                {
-                    2u8 // partial H2 preface, wait for more bytes
-                } else {
-                    0u8
-                }
-            } else if read_buf.starts_with(b"PRI * HTTP/2.0") {
-                3u8 // H2 disabled: refuse H2 preface immediately
+        let h2_mode = if st.conn_meta.get(conn_id).is_some_and(|s| s.h2.is_some()) {
+            1u8 // active H2
+        } else if st.http2_enabled {
+            if read_buf.starts_with(CLIENT_PREFACE) {
+                let cfg = st.h2_cfg;
+                st.conn_meta.ensure(conn_id).h2 = Some(Box::new(H2Conn::new(cfg)));
+                1u8
+            } else if read_buf.len() < CLIENT_PREFACE.len() && CLIENT_PREFACE.starts_with(read_buf)
+            {
+                2u8 // partial H2 preface, wait for more bytes
             } else {
                 0u8
             }
+        } else if read_buf.starts_with(b"PRI * HTTP/2.0") {
+            3u8 // H2 disabled: refuse H2 preface immediately
+        } else {
+            0u8
         };
         if h2_mode == 2 {
             return ConnAction::Continue { consumed: 0 };
@@ -822,19 +1048,22 @@ impl HttpUvCallbacks {
             };
         }
         if h2_mode == 1 {
-            let feed = {
-                let mut st = self.shared.borrow_mut();
-                let Some(h2) = st.h2_conns.get_mut(&conn_id) else {
-                    return ConnAction::CloseNow;
-                };
-                h2.feed(read_buf, write_buf)
+            let Some(h2) = st
+                .conn_meta
+                .get_mut(conn_id)
+                .and_then(|s| s.h2.as_deref_mut())
+            else {
+                return ConnAction::CloseNow;
             };
+            let feed = h2.feed(read_buf, write_buf);
+            drop(st);
             for event in feed.events {
                 match event {
                     H2Event::Request(req) => {
                         let inline_body = req.body.len() <= nifra_http::abi::INLINE_BODY_MAX;
                         let needed = req.path.len()
                             + req.query.len()
+                            + h2_content_type(&req).map_or(0, str::len)
                             + if inline_body { req.body.len() } else { 0 };
                         if !has_batch_room(&self.shared.borrow(), needed) {
                             invoke_on_batch_unlocked(&self.shared);
@@ -849,25 +1078,30 @@ impl HttpUvCallbacks {
                         } else {
                             None
                         };
-                        let mut st = self.shared.borrow_mut();
-                        let req_id = st.pending.insert(PendingReq {
-                            conn_id,
-                            keep_alive: true,
-                            raw_head: HeadStorage::Empty,
+                        let cold = Box::new(PendingCold {
                             parsed_head: OnceCell::new(),
                             custom_method,
                             h2_stream_id: Some(req.stream_id),
                             h2_headers: Some(req.headers.clone()),
                             query: None,
                             body: saved_body,
-                            streaming: false,
-                            chunked: false,
                         });
+                        let mut st = self.shared.borrow_mut();
+                        let req_id = st.pending.insert(PendingReq::new(
+                            conn_id,
+                            true,
+                            HeadStorage::Empty,
+                            Some(cold),
+                        ));
                         if pack_h2_into_shared(&mut st, req_id, &req) {
                             st.batch_req_ids.push(req_id);
                         } else {
                             st.pending.remove(req_id);
-                            if let Some(conn) = st.h2_conns.get_mut(&conn_id) {
+                            if let Some(conn) = st
+                                .conn_meta
+                                .get_mut(conn_id)
+                                .and_then(|s| s.h2.as_deref_mut())
+                            {
                                 // INTERNAL_ERROR: this request did not fit the bridge's batch.
                                 conn.reset_stream(req.stream_id, 0x2, write_buf);
                             }
@@ -880,7 +1114,7 @@ impl HttpUvCallbacks {
                                 .pending
                                 .iter()
                                 .filter(|(_, p)| {
-                                    p.conn_id == conn_id && p.h2_stream_id == Some(stream_id)
+                                    p.conn_id == conn_id && p.h2_stream_id() == Some(stream_id)
                                 })
                                 .map(|(id, _)| id)
                                 .collect();
@@ -904,7 +1138,9 @@ impl HttpUvCallbacks {
                         .pending
                         .iter()
                         .filter(|(_, p)| {
-                            p.conn_id == conn_id && p.h2_stream_id == Some(stream_id) && p.streaming
+                            p.conn_id == conn_id
+                                && p.h2_stream_id() == Some(stream_id)
+                                && p.streaming()
                         })
                         .map(|(id, _)| id)
                         .collect();
@@ -929,20 +1165,17 @@ impl HttpUvCallbacks {
 
         let mut consumed = 0usize;
         let mut close_after = false;
+        let limits = st.limits;
+        let mut resume = st
+            .conn_meta
+            .get_mut(conn_id)
+            .and_then(|s| s.chunk_resume.take())
+            .map_or_else(ChunkResume::default, |b| *b);
 
         loop {
             if consumed >= read_buf.len() {
                 break;
             }
-            let (limits, mut resume) = {
-                let mut st = self.shared.borrow_mut();
-                let resume = if st.chunk_resume.is_empty() {
-                    ChunkResume::default()
-                } else {
-                    st.chunk_resume.remove(&conn_id).unwrap_or_default()
-                };
-                (st.limits, resume)
-            };
             match parse_http1_resume(&read_buf[consumed..], limits, &mut resume) {
                 Ok(ParseStatus::Complete(req)) => {
                     let req_head = &read_buf[consumed..consumed + req.head_len];
@@ -952,20 +1185,28 @@ impl HttpUvCallbacks {
                     // request still unanswered waits behind it instead of jumping the queue.
                     let mut parked = false;
                     let mut over_held = false;
-                    let fast_hit = {
-                        let mut st = self.shared.borrow_mut();
-                        if req.method_idx != 0 || req.is_ws_upgrade {
+                    let fast_hit =
+                        if st.routes.is_empty() || req.method_idx != 0 || req.is_ws_upgrade {
                             false
                         } else if st
-                            .h1_order
-                            .get(&conn_id)
-                            .is_some_and(|order| !order.queue.is_empty())
+                            .conn_meta
+                            .get(conn_id)
+                            .is_some_and(|s| s.has_h1_pending())
                         {
                             let mut frame = Vec::new();
                             if st.routes.try_match_get(req.path, &mut frame) {
                                 let id = st.placeholder_seq;
                                 st.placeholder_seq = id.wrapping_sub(1);
-                                let order = st.h1_order.entry(conn_id).or_default();
+                                let slot = st.conn_meta.ensure(conn_id);
+                                if slot.h1_overflow.is_none() {
+                                    let mut order = Box::new(H1Order::default());
+                                    if slot.h1_head != 0 {
+                                        order.queue.push_back(slot.h1_head);
+                                        slot.h1_head = 0;
+                                    }
+                                    slot.h1_overflow = Some(order);
+                                }
+                                let order = slot.h1_overflow.as_deref_mut().unwrap();
                                 order.queue.push_back(id);
                                 order.held_bytes += frame.len();
                                 over_held = order.held_bytes > MAX_HELD_BYTES;
@@ -984,12 +1225,14 @@ impl HttpUvCallbacks {
                             }
                         } else {
                             st.routes.try_match_get(req.path, write_buf)
-                        }
-                    };
+                        };
                     if over_held {
                         return ConnAction::CloseNow;
                     }
                     if fast_hit {
+                        if resume.is_active() {
+                            resume = ChunkResume::default();
+                        }
                         if !req.keep_alive {
                             close_after = !parked;
                             break;
@@ -1001,9 +1244,12 @@ impl HttpUvCallbacks {
                     let inline_body = body_slice.len() <= nifra_http::abi::INLINE_BODY_MAX;
                     let needed = req.path.len()
                         + req.query.len()
+                        + req.content_type.map_or(0, str::len)
                         + if inline_body { body_slice.len() } else { 0 };
-                    if !has_batch_room(&self.shared.borrow(), needed) {
+                    if !has_batch_room(&st, needed) {
+                        drop(st);
                         invoke_on_batch_unlocked(&self.shared);
+                        st = self.shared.borrow_mut();
                     }
 
                     // Inline bodies live directly in `inData` (zero heap alloc); only spill > 64 KiB.
@@ -1022,73 +1268,69 @@ impl HttpUvCallbacks {
                     } else {
                         None
                     };
+                    let cold =
+                        if saved_body.is_some() || saved_query.is_some() || custom_method.is_some()
+                        {
+                            Some(Box::new(PendingCold {
+                                parsed_head: OnceCell::new(),
+                                custom_method,
+                                h2_stream_id: None,
+                                h2_headers: None,
+                                query: saved_query,
+                                body: saved_body,
+                            }))
+                        } else {
+                            None
+                        };
 
                     // 2) Pack into zero-copy `inMeta` + `inData` and bump-allocate raw_head in `batch_heads`.
+                    if st
+                        .conn_meta
+                        .get(conn_id)
+                        .is_some_and(|s| s.h1_len() >= MAX_PIPELINED)
                     {
-                        let mut st = self.shared.borrow_mut();
-                        if st
-                            .h1_order
-                            .get(&conn_id)
-                            .is_some_and(|order| order.queue.len() >= MAX_PIPELINED)
-                        {
-                            // A client that stacks this many unanswered requests is not reading.
-                            return ConnAction::CloseNow;
-                        }
-                        let head_off = st.batch_heads.len() as u32;
-                        st.batch_heads.extend_from_slice(req_head);
-                        let raw_head = HeadStorage::BatchSlice {
-                            off: head_off,
-                            len: req_head.len() as u32,
+                        // A client that stacks this many unanswered requests is not reading.
+                        return ConnAction::CloseNow;
+                    }
+                    let head_off = st.batch_heads.len() as u32;
+                    st.batch_heads.extend_from_slice(req_head);
+                    let raw_head = HeadStorage::BatchSlice {
+                        off: head_off,
+                        len: req_head.len() as u32,
+                    };
+                    let req_id =
+                        st.pending
+                            .insert(PendingReq::new(conn_id, req.keep_alive, raw_head, cold));
+                    if pack_into_shared(&mut st, req_id, &req) {
+                        st.batch_req_ids.push(req_id);
+                        st.conn_meta.ensure(conn_id).push_h1(req_id);
+                    } else {
+                        st.pending.remove(req_id);
+                        st.batch_heads.truncate(head_off as usize);
+                        st.templates.write_prepared(
+                            st.headers_too_large_tpl,
+                            b"Request Header Fields Too Large",
+                            write_buf,
+                        );
+                        return ConnAction::CloseAfterWrite {
+                            consumed: read_buf.len(),
                         };
-                        let req_id = st.pending.insert(PendingReq {
-                            conn_id,
-                            keep_alive: req.keep_alive,
-                            raw_head,
-                            parsed_head: OnceCell::new(),
-                            custom_method,
-                            h2_stream_id: None,
-                            h2_headers: None,
-                            query: saved_query,
-                            body: saved_body,
-                            streaming: false,
-                            chunked: false,
-                        });
-                        if pack_into_shared(&mut st, req_id, &req) {
-                            st.batch_req_ids.push(req_id);
-                            st.h1_order
-                                .entry(conn_id)
-                                .or_default()
-                                .queue
-                                .push_back(req_id);
-                        } else {
-                            st.pending.remove(req_id);
-                            st.batch_heads.truncate(head_off as usize);
-                            st.templates.write_prepared(
-                                st.headers_too_large_tpl,
-                                b"Request Header Fields Too Large",
-                                write_buf,
-                            );
-                            return ConnAction::CloseAfterWrite {
-                                consumed: read_buf.len(),
-                            };
-                        }
                     }
 
+                    if resume.is_active() {
+                        resume = ChunkResume::default();
+                    }
                     if !req.keep_alive {
                         break;
                     }
                 }
                 Ok(ParseStatus::Incomplete) => {
                     if resume.is_active() {
-                        self.shared
-                            .borrow_mut()
-                            .chunk_resume
-                            .insert(conn_id, resume);
+                        st.conn_meta.ensure(conn_id).chunk_resume = Some(Box::new(resume));
                     }
                     break;
                 }
                 Err(nifra_http::ParseError::PayloadTooLarge) => {
-                    let st = self.shared.borrow();
                     st.templates
                         .write_prepared(st.too_large_tpl, b"", write_buf);
                     return ConnAction::CloseAfterWrite {
@@ -1096,7 +1338,6 @@ impl HttpUvCallbacks {
                     };
                 }
                 Err(nifra_http::ParseError::HeadersTooLarge) => {
-                    let st = self.shared.borrow();
                     st.templates.write_prepared(
                         st.headers_too_large_tpl,
                         b"Request Header Fields Too Large",
@@ -1107,7 +1348,6 @@ impl HttpUvCallbacks {
                     };
                 }
                 Err(_) => {
-                    let st = self.shared.borrow();
                     st.templates
                         .write_prepared(st.bad_req_tpl, b"Bad Request", write_buf);
                     return ConnAction::CloseAfterWrite {
@@ -1142,49 +1382,43 @@ impl UvCallbacks for HttpUvCallbacks {
             if request.conn_id != conn_id {
                 continue;
             }
-            if request.streaming {
+            if request.streaming() {
                 return false;
             }
             any = true;
         }
-        any && !st.h2_conns.contains_key(&conn_id)
+        any && !st.conn_meta.get(conn_id).is_some_and(|s| s.h2.is_some())
     }
 
     fn has_pending_requests(&self, conn_id: u32) -> bool {
         let st = self.shared.borrow();
-        st.pending
-            .iter()
-            .any(|(_, request)| request.conn_id == conn_id)
-            || st
-                .h1_order
-                .get(&conn_id)
-                .is_some_and(|order| !order.queue.is_empty())
-            || st
-                .h2_conns
-                .get(&conn_id)
-                .is_some_and(|conn| conn.active_response_streams() > 0)
+        (!st.pending.is_empty()
+            && st
+                .pending
+                .iter()
+                .any(|(_, request)| request.conn_id == conn_id))
+            || st.conn_meta.get(conn_id).is_some_and(|s| {
+                s.has_h1_pending()
+                    || s.h2
+                        .as_ref()
+                        .is_some_and(|conn| conn.active_response_streams() > 0)
+            })
     }
 
     fn without_pending(&self, ids: Vec<u32>) -> Vec<u32> {
         let st = self.shared.borrow();
-        let mut owing: HashSet<u32> = st
-            .pending
-            .iter()
-            .map(|(_, request)| request.conn_id)
-            .collect();
-        owing.extend(
-            st.h1_order
-                .iter()
-                .filter(|(_, order)| !order.queue.is_empty())
-                .map(|(&id, _)| id),
-        );
         ids.into_iter()
-            .filter(|id| {
-                !owing.contains(id)
-                    && !st
-                        .h2_conns
-                        .get(id)
-                        .is_some_and(|conn| conn.active_response_streams() > 0)
+            .filter(|&id| {
+                let busy_meta = st.conn_meta.get(id).is_some_and(|s| {
+                    s.has_h1_pending()
+                        || s.h2
+                            .as_ref()
+                            .is_some_and(|conn| conn.active_response_streams() > 0)
+                });
+                if busy_meta {
+                    return false;
+                }
+                st.pending.is_empty() || !st.pending.iter().any(|(_, r)| r.conn_id == id)
             })
             .collect()
     }
@@ -1198,7 +1432,7 @@ impl UvCallbacks for HttpUvCallbacks {
             let ids: Vec<u32> = st
                 .pending
                 .iter()
-                .filter(|(_, p)| p.conn_id == conn_id && p.streaming)
+                .filter(|(_, p)| p.conn_id == conn_id && p.streaming())
                 .map(|(id, _)| id)
                 .collect();
             (st.raw_env, st.on_writable_ref, ids)
@@ -1211,19 +1445,19 @@ impl UvCallbacks for HttpUvCallbacks {
     fn on_disconnect(&mut self, conn_id: u32) {
         let (raw_env, cb_ref, aborted_ids, ws_close) = {
             let mut st = self.shared.borrow_mut();
-            let ids: Vec<u32> = st
-                .pending
-                .iter()
-                .filter(|(_, p)| p.conn_id == conn_id)
-                .map(|(id, _)| id)
-                .collect();
+            let ids: Vec<u32> = if st.pending.is_empty() {
+                Vec::new()
+            } else {
+                st.pending
+                    .iter()
+                    .filter(|(_, p)| p.conn_id == conn_id)
+                    .map(|(id, _)| id)
+                    .collect()
+            };
             for &id in &ids {
                 st.pending.remove(id);
             }
-            st.h2_conns.remove(&conn_id);
-            st.chunk_resume.remove(&conn_id);
-            st.h1_order.remove(&conn_id);
-            let ws_close = st.ws_conns.remove(&conn_id).and_then(|ws| {
+            let ws_close = st.conn_meta.clear_conn(conn_id).and_then(|ws| {
                 if ws.close_emitted {
                     None
                 } else {
@@ -1267,8 +1501,11 @@ fn pack_into_shared(
     let query_bytes = req.query.as_bytes();
     let body_slice = req.body.as_ref();
     let inline_body = body_slice.len() <= nifra_http::abi::INLINE_BODY_MAX;
-    let needed =
-        path_bytes.len() + query_bytes.len() + if inline_body { body_slice.len() } else { 0 };
+    let ct_bytes = req.content_type.map_or(&[][..], str::as_bytes);
+    let needed = path_bytes.len()
+        + query_bytes.len()
+        + ct_bytes.len()
+        + if inline_body { body_slice.len() } else { 0 };
     if st.batch_data_pos + needed > st.in_data.len {
         return false;
     }
@@ -1283,6 +1520,10 @@ fn pack_into_shared(
     let query_off = st.batch_data_pos as u32;
     data[st.batch_data_pos..st.batch_data_pos + query_bytes.len()].copy_from_slice(query_bytes);
     st.batch_data_pos += query_bytes.len();
+
+    let ct_off = st.batch_data_pos as u32;
+    data[st.batch_data_pos..st.batch_data_pos + ct_bytes.len()].copy_from_slice(ct_bytes);
+    st.batch_data_pos += ct_bytes.len();
 
     let (body_off, body_len) = if inline_body {
         let off = st.batch_data_pos as u32;
@@ -1318,6 +1559,9 @@ fn pack_into_shared(
     if req.is_json_ct {
         flags |= nifra_http::abi::FLAG_CT_JSON;
     }
+    if req.content_type.is_some() {
+        flags |= nifra_http::abi::FLAG_HAS_CT;
+    }
     if req.is_chunked {
         flags |= nifra_http::abi::FLAG_CHUNKED;
     }
@@ -1330,12 +1574,23 @@ fn pack_into_shared(
     meta[slot_base + 5] = query_bytes.len() as u32;
     meta[slot_base + 6] = body_off;
     meta[slot_base + 7] = body_len;
+    meta[slot_base + 8] = ct_off;
+    meta[slot_base + 9] = ct_bytes.len() as u32;
 
     st.batch_count += 1;
     true
 }
 
 #[cfg(unix)]
+/// The first `content-type` of an HTTP/2 request, as the header lookup would return it.
+#[cfg(unix)]
+fn h2_content_type(req: &H2Request) -> Option<&str> {
+    req.headers
+        .iter()
+        .find(|(name, _)| name == "content-type")
+        .map(|(_, value)| value.as_str())
+}
+
 fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> bool {
     let slot_base = st.batch_count * IN_SLOT_U32S;
     let max_u32s = st.in_meta.len / 4;
@@ -1346,8 +1601,11 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> b
     let query_bytes = req.query.as_bytes();
     let body_slice = req.body.as_slice();
     let inline_body = body_slice.len() <= nifra_http::abi::INLINE_BODY_MAX;
-    let needed =
-        path_bytes.len() + query_bytes.len() + if inline_body { body_slice.len() } else { 0 };
+    let ct_bytes = h2_content_type(req).map_or(&[][..], str::as_bytes);
+    let needed = path_bytes.len()
+        + query_bytes.len()
+        + ct_bytes.len()
+        + if inline_body { body_slice.len() } else { 0 };
     if st.batch_data_pos + needed > st.in_data.len {
         return false;
     }
@@ -1362,6 +1620,10 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> b
     let query_off = st.batch_data_pos as u32;
     data[st.batch_data_pos..st.batch_data_pos + query_bytes.len()].copy_from_slice(query_bytes);
     st.batch_data_pos += query_bytes.len();
+
+    let ct_off = st.batch_data_pos as u32;
+    data[st.batch_data_pos..st.batch_data_pos + ct_bytes.len()].copy_from_slice(ct_bytes);
+    st.batch_data_pos += ct_bytes.len();
 
     let (body_off, body_len) = if inline_body {
         let off = st.batch_data_pos as u32;
@@ -1395,6 +1657,9 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> b
     if req.is_json_ct {
         flags |= nifra_http::abi::FLAG_CT_JSON;
     }
+    if h2_content_type(req).is_some() {
+        flags |= nifra_http::abi::FLAG_HAS_CT;
+    }
 
     meta[slot_base] = req_id;
     meta[slot_base + 1] = flags;
@@ -1404,6 +1669,8 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> b
     meta[slot_base + 5] = query_bytes.len() as u32;
     meta[slot_base + 6] = body_off;
     meta[slot_base + 7] = body_len;
+    meta[slot_base + 8] = ct_off;
+    meta[slot_base + 9] = ct_bytes.len() as u32;
 
     st.batch_count += 1;
     true
@@ -1500,17 +1767,21 @@ impl UvHttpServer {
             .borrow()
             .pending
             .get(req_id)?
-            .custom_method
-            .as_deref()
+            .custom_method()
             .map(str::to_owned)
     }
 
     /// Lazily look up a single header by case-insensitive name for an in-flight request.
     #[napi]
     pub fn get_header(&self, req_id: u32, name: String) -> Option<String> {
-        let st = self.shared.borrow();
-        let pending = st.pending.get(req_id)?;
-        if let Some(ref h2_hdrs) = pending.h2_headers {
+        let mut st = self.shared.borrow_mut();
+        let UvHttpShared {
+            ref mut pending,
+            ref batch_heads,
+            ..
+        } = *st;
+        let pending = pending.get_mut(req_id)?;
+        if let Some(h2_hdrs) = pending.h2_headers() {
             let first_only = name.eq_ignore_ascii_case("content-type");
             let mut found: Option<String> = None;
             for (k, v) in h2_hdrs {
@@ -1531,17 +1802,22 @@ impl UvHttpServer {
             }
             return found;
         }
-        header_from_head(pending.parsed_head(&st.batch_heads), &name)
+        header_from_head(pending.parsed_head(batch_heads), &name)
     }
 
     /// Lazily return all request headers as `[lowercaseName, value, ...]`.
     #[napi]
     pub fn get_headers(&self, req_id: u32) -> Vec<String> {
-        let st = self.shared.borrow();
-        let Some(pending) = st.pending.get(req_id) else {
+        let mut st = self.shared.borrow_mut();
+        let UvHttpShared {
+            ref mut pending,
+            ref batch_heads,
+            ..
+        } = *st;
+        let Some(pending) = pending.get_mut(req_id) else {
             return Vec::new();
         };
-        if let Some(ref h2_hdrs) = pending.h2_headers {
+        if let Some(h2_hdrs) = pending.h2_headers() {
             let mut out = Vec::with_capacity(h2_hdrs.len() * 2);
             for (k, v) in h2_hdrs {
                 out.push(k.clone());
@@ -1549,7 +1825,7 @@ impl UvHttpServer {
             }
             return out;
         }
-        pending.parsed_head(&st.batch_heads).to_vec()
+        pending.parsed_head(batch_heads).to_vec()
     }
 
     /// Lazily return the complete request body (used for bodies > 64 KiB or chunked uploads).
@@ -1557,7 +1833,7 @@ impl UvHttpServer {
     pub fn get_body(&self, req_id: u32) -> Option<Buffer> {
         let st = self.shared.borrow();
         let pending = st.pending.get(req_id)?;
-        pending.body.as_ref().map(|b| Buffer::from(b.as_slice()))
+        pending.body().map(Buffer::from)
     }
 
     /// Lazily return the socket peer IP address for an in-flight request.
@@ -1637,6 +1913,8 @@ impl UvHttpServer {
         let meta = unsafe { out_meta.as_u32() };
         let data = unsafe { out_data.as_bytes() };
         let n = (count as usize).min(meta.len() / OUT_SLOT_U32S);
+        let (sec, date_text) = nifra_http::date::now_cached();
+        let mut frame = std::mem::take(&mut st.scratch_frame);
         for i in 0..n {
             let base = i * OUT_SLOT_U32S;
             let req_id = meta[base];
@@ -1650,44 +1928,43 @@ impl UvHttpServer {
                 continue;
             }
             let body_slice = &data[body_off..body_off + body_len];
-            st.scratch_frame.clear();
-            if let Some(stream_id) = pending.h2_stream_id {
+            frame.clear();
+            if let Some(stream_id) = pending.h2_stream_id() {
                 let UvHttpShared {
                     ref template_meta,
-                    ref mut h2_conns,
-                    ref mut scratch_frame,
+                    ref mut conn_meta,
                     ..
                 } = *st;
                 if let (Some((status, hdrs)), Some(h2)) = (
                     template_meta.get(template_id as usize),
-                    h2_conns.get_mut(&pending.conn_id),
+                    conn_meta
+                        .get_mut(pending.conn_id)
+                        .and_then(|s| s.h2.as_deref_mut()),
                 ) {
                     let pairs: Vec<(&str, &str)> =
                         hdrs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-                    h2.write_response(stream_id, *status, &pairs, Some(body_slice), scratch_frame);
-                    let _ = self
-                        .server
-                        .write_to_conn(pending.conn_id, scratch_frame, false);
+                    h2.write_response(stream_id, *status, &pairs, Some(body_slice), &mut frame);
+                    let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
                 }
-            } else {
-                let mut frame = std::mem::take(&mut st.scratch_frame);
-                if st
-                    .templates
-                    .write_prepared(template_id, body_slice, &mut frame)
-                {
-                    let _ = h1_send(
-                        &self.server,
-                        &mut st,
-                        pending.conn_id,
-                        req_id,
-                        &frame,
-                        true,
-                        pending.keep_alive,
-                    );
-                }
-                st.scratch_frame = frame;
+            } else if st.templates.write_prepared_at(
+                template_id,
+                sec,
+                &date_text,
+                body_slice,
+                &mut frame,
+            ) {
+                let _ = h1_send(
+                    &self.server,
+                    &mut st,
+                    pending.conn_id,
+                    req_id,
+                    &frame,
+                    true,
+                    pending.keep_alive(),
+                );
             }
         }
+        st.scratch_frame = frame;
     }
 
     /// Respond to a single request using a prepared template.
@@ -1697,38 +1974,35 @@ impl UvHttpServer {
         let Some(pending) = st.pending.remove(req_id) else {
             return false;
         };
-        st.scratch_frame.clear();
-        if let Some(stream_id) = pending.h2_stream_id {
+        let mut frame = std::mem::take(&mut st.scratch_frame);
+        frame.clear();
+        if let Some(stream_id) = pending.h2_stream_id() {
             let UvHttpShared {
                 ref template_meta,
-                ref mut h2_conns,
-                ref mut scratch_frame,
+                ref mut conn_meta,
                 ..
             } = *st;
             let (Some((status, hdrs)), Some(h2)) = (
                 template_meta.get(template_id as usize),
-                h2_conns.get_mut(&pending.conn_id),
+                conn_meta
+                    .get_mut(pending.conn_id)
+                    .and_then(|s| s.h2.as_deref_mut()),
             ) else {
+                st.scratch_frame = frame;
                 return false;
             };
             let pairs: Vec<(&str, &str)> =
                 hdrs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-            h2.write_response(
-                stream_id,
-                *status,
-                &pairs,
-                Some(body.as_ref()),
-                scratch_frame,
-            );
-            return self
-                .server
-                .write_to_conn(pending.conn_id, scratch_frame, false)
-                != WriteResult::Closed;
+            h2.write_response(stream_id, *status, &pairs, Some(body.as_ref()), &mut frame);
+            let sent =
+                self.server.write_to_conn(pending.conn_id, &frame, false) != WriteResult::Closed;
+            st.scratch_frame = frame;
+            return sent;
         }
-        let mut frame = std::mem::take(&mut st.scratch_frame);
-        let written = st
-            .templates
-            .write_prepared(template_id, body.as_ref(), &mut frame);
+        let (sec, date_text) = nifra_http::date::now_cached();
+        let written =
+            st.templates
+                .write_prepared_at(template_id, sec, &date_text, body.as_ref(), &mut frame);
         let sent = written
             && h1_send(
                 &self.server,
@@ -1737,7 +2011,7 @@ impl UvHttpServer {
                 req_id,
                 &frame,
                 true,
-                pending.keep_alive,
+                pending.keep_alive(),
             ) != WriteResult::Closed;
         st.scratch_frame = frame;
         sent
@@ -1761,14 +2035,15 @@ impl UvHttpServer {
             .chunks_exact(2)
             .map(|c| (c[0].as_str(), c[1].as_str()))
             .collect();
-        st.scratch_frame.clear();
-        if let Some(stream_id) = pending.h2_stream_id {
-            let UvHttpShared {
-                ref mut h2_conns,
-                ref mut scratch_frame,
-                ..
-            } = *st;
-            let Some(h2) = h2_conns.get_mut(&pending.conn_id) else {
+        let mut frame = std::mem::take(&mut st.scratch_frame);
+        frame.clear();
+        if let Some(stream_id) = pending.h2_stream_id() {
+            let Some(h2) = st
+                .conn_meta
+                .get_mut(pending.conn_id)
+                .and_then(|s| s.h2.as_deref_mut())
+            else {
+                st.scratch_frame = frame;
                 return false;
             };
             h2.write_response(
@@ -1776,14 +2051,13 @@ impl UvHttpServer {
                 status,
                 &pairs,
                 body.as_ref().map(|b| b.as_ref()),
-                scratch_frame,
+                &mut frame,
             );
-            return self
-                .server
-                .write_to_conn(pending.conn_id, scratch_frame, false)
-                != WriteResult::Closed;
+            let sent =
+                self.server.write_to_conn(pending.conn_id, &frame, false) != WriteResult::Closed;
+            st.scratch_frame = frame;
+            return sent;
         }
-        let mut frame = std::mem::take(&mut st.scratch_frame);
         write_buffered_response(
             &mut frame,
             status,
@@ -1797,7 +2071,7 @@ impl UvHttpServer {
             req_id,
             &frame,
             true,
-            pending.keep_alive,
+            pending.keep_alive(),
         ) != WriteResult::Closed;
         st.scratch_frame = frame;
         sent
@@ -1817,24 +2091,25 @@ impl UvHttpServer {
             return false;
         };
         let conn_id = pending.conn_id;
-        let h2_stream_id = pending.h2_stream_id;
-        let keep_alive = pending.keep_alive;
-        pending.streaming = true;
-        pending.chunked = content_length.is_none();
+        let h2_stream_id = pending.h2_stream_id();
+        let keep_alive = pending.keep_alive();
+        pending.set_streaming();
+        pending.set_chunked(content_length.is_none());
 
         let hdr_vec = flat_headers.unwrap_or_default();
         let pairs: Vec<(&str, &str)> = hdr_vec
             .chunks_exact(2)
             .map(|c| (c[0].as_str(), c[1].as_str()))
             .collect();
-        st.scratch_frame.clear();
+        let mut frame = std::mem::take(&mut st.scratch_frame);
+        frame.clear();
         if let Some(stream_id) = h2_stream_id {
-            let UvHttpShared {
-                ref mut h2_conns,
-                ref mut scratch_frame,
-                ..
-            } = *st;
-            let Some(h2) = h2_conns.get_mut(&conn_id) else {
+            let Some(h2) = st
+                .conn_meta
+                .get_mut(conn_id)
+                .and_then(|s| s.h2.as_deref_mut())
+            else {
+                st.scratch_frame = frame;
                 return false;
             };
             h2.write_stream_head(
@@ -1842,11 +2117,12 @@ impl UvHttpServer {
                 status,
                 &pairs,
                 content_length.map(|n| n as u64),
-                scratch_frame,
+                &mut frame,
             );
-            return self.server.write_to_conn(conn_id, scratch_frame, false) != WriteResult::Closed;
+            let sent = self.server.write_to_conn(conn_id, &frame, false) != WriteResult::Closed;
+            st.scratch_frame = frame;
+            return sent;
         }
-        let mut frame = std::mem::take(&mut st.scratch_frame);
         write_stream_head(&mut frame, status, &pairs, content_length.map(|n| n as u64));
         let sent = h1_send(
             &self.server,
@@ -1870,16 +2146,16 @@ impl UvHttpServer {
             return false;
         };
         let conn_id = pending.conn_id;
-        let chunked = pending.chunked;
-        let keep_alive = pending.keep_alive;
-        let h2_stream_id = pending.h2_stream_id;
+        let chunked = pending.chunked();
+        let keep_alive = pending.keep_alive();
+        let h2_stream_id = pending.h2_stream_id();
         if let Some(stream_id) = h2_stream_id {
             let UvHttpShared {
-                ref mut h2_conns,
+                ref mut conn_meta,
                 ref mut scratch_frame,
                 ..
             } = *st;
-            let Some(h2) = h2_conns.get_mut(&conn_id) else {
+            let Some(h2) = conn_meta.get_mut(conn_id).and_then(|s| s.h2.as_deref_mut()) else {
                 return false;
             };
             scratch_frame.clear();
@@ -1924,32 +2200,32 @@ impl UvHttpServer {
         let Some(pending) = st.pending.remove(req_id) else {
             return false;
         };
-        st.scratch_frame.clear();
-        if let Some(stream_id) = pending.h2_stream_id {
-            let UvHttpShared {
-                ref mut h2_conns,
-                ref mut scratch_frame,
-                ..
-            } = *st;
-            let Some(h2) = h2_conns.get_mut(&pending.conn_id) else {
+        let mut frame = std::mem::take(&mut st.scratch_frame);
+        frame.clear();
+        if let Some(stream_id) = pending.h2_stream_id() {
+            let Some(h2) = st
+                .conn_meta
+                .get_mut(pending.conn_id)
+                .and_then(|s| s.h2.as_deref_mut())
+            else {
+                st.scratch_frame = frame;
                 return false;
             };
             let bytes = chunk.as_ref().map_or(&[][..], |c| c.as_ref());
-            h2.write_stream_data(stream_id, bytes, true, scratch_frame);
-            return self
-                .server
-                .write_to_conn(pending.conn_id, scratch_frame, false)
-                != WriteResult::Closed;
+            h2.write_stream_data(stream_id, bytes, true, &mut frame);
+            let sent =
+                self.server.write_to_conn(pending.conn_id, &frame, false) != WriteResult::Closed;
+            st.scratch_frame = frame;
+            return sent;
         }
-        let mut frame = std::mem::take(&mut st.scratch_frame);
         if let Some(c) = chunk {
-            if pending.chunked {
+            if pending.chunked() {
                 write_chunk(&mut frame, c.as_ref());
             } else {
                 frame.extend_from_slice(c.as_ref());
             }
         }
-        if pending.chunked {
+        if pending.chunked() {
             write_chunk_terminator(&mut frame);
         }
         let sent = h1_send(
@@ -1959,7 +2235,7 @@ impl UvHttpServer {
             req_id,
             &frame,
             true,
-            pending.keep_alive,
+            pending.keep_alive(),
         ) != WriteResult::Closed;
         st.scratch_frame = frame;
         sent
@@ -1973,13 +2249,16 @@ impl UvHttpServer {
         let Some(pending) = st.pending.remove(req_id) else {
             return false;
         };
-        if let Some(stream_id) = pending.h2_stream_id {
+        if let Some(stream_id) = pending.h2_stream_id() {
             let UvHttpShared {
-                ref mut h2_conns,
+                ref mut conn_meta,
                 ref mut scratch_frame,
                 ..
             } = *st;
-            if let Some(h2) = h2_conns.get_mut(&pending.conn_id) {
+            if let Some(h2) = conn_meta
+                .get_mut(pending.conn_id)
+                .and_then(|s| s.h2.as_deref_mut())
+            {
                 scratch_frame.clear();
                 h2.reset_stream(stream_id, ERR_INTERNAL_ERROR, scratch_frame);
                 return self
@@ -2056,11 +2335,16 @@ impl UvHttpServer {
     #[napi]
     pub fn upgrade_to_web_socket(&self, req_id: u32) -> i32 {
         let accept = {
-            let st = self.shared.borrow();
-            let Some(pending) = st.pending.get(req_id) else {
+            let mut st = self.shared.borrow_mut();
+            let UvHttpShared {
+                ref mut pending,
+                ref batch_heads,
+                ..
+            } = *st;
+            let Some(pending) = pending.get_mut(req_id) else {
                 return -1;
             };
-            let head = pending.parsed_head(&st.batch_heads);
+            let head = pending.parsed_head(batch_heads);
             let conn_hdr = header_from_head(head, "connection");
             let upg_hdr = header_from_head(head, "upgrade");
             let ver_hdr = header_from_head(head, "sec-websocket-version");
@@ -2078,12 +2362,15 @@ impl UvHttpServer {
 
         let (raw_env, open_ref, conn_id) = {
             let mut st = self.shared.borrow_mut();
-            let Some(pending) = st.pending.remove(req_id) else {
+            let Some(mut pending) = st.pending.remove(req_id) else {
                 return -1;
             };
             let owned_head = pending.raw_head.into_owned(&st.batch_heads);
             // The connection speaks WebSocket from here on; no HTTP response is owed in order.
-            st.h1_order.remove(&pending.conn_id);
+            if let Some(slot) = st.conn_meta.get_mut(pending.conn_id) {
+                slot.h1_head = 0;
+                slot.h1_overflow = None;
+            }
             st.scratch_frame.clear();
             write_upgrade_response(&accept, &mut st.scratch_frame);
             if self
@@ -2094,17 +2381,19 @@ impl UvHttpServer {
                 return -1;
             }
             let max_msg = st.ws_max_message_size;
-            let query = pending.query.map(String::from).unwrap_or_default();
-            st.ws_conns.insert(
-                pending.conn_id,
-                WsConnState {
-                    conn: WsConn::new(max_msg),
-                    raw_head: owned_head,
-                    query,
-                    sent_close: None,
-                    close_emitted: false,
-                },
-            );
+            let query = pending
+                .cold
+                .as_mut()
+                .and_then(|c| c.query.take())
+                .map(String::from)
+                .unwrap_or_default();
+            st.conn_meta.ensure(pending.conn_id).ws = Some(Box::new(WsConnState {
+                conn: WsConn::new(max_msg),
+                raw_head: owned_head,
+                query,
+                sent_close: None,
+                close_emitted: false,
+            }));
             (st.raw_env, st.on_ws_open_ref, pending.conn_id)
         };
 
@@ -2116,7 +2405,7 @@ impl UvHttpServer {
     #[napi]
     pub fn ws_send(&self, socket_id: u32, payload: Buffer, is_binary: bool) -> bool {
         let mut st = self.shared.borrow_mut();
-        if !st.ws_conns.contains_key(&socket_id) {
+        if !st.conn_meta.get(socket_id).is_some_and(|s| s.ws.is_some()) {
             return false;
         }
         st.scratch_frame.clear();
@@ -2138,7 +2427,7 @@ impl UvHttpServer {
     #[napi]
     pub fn ws_send_text(&self, socket_id: u32, text: String) -> bool {
         let mut st = self.shared.borrow_mut();
-        if !st.ws_conns.contains_key(&socket_id) {
+        if !st.conn_meta.get(socket_id).is_some_and(|s| s.ws.is_some()) {
             return false;
         }
         st.scratch_frame.clear();
@@ -2154,7 +2443,11 @@ impl UvHttpServer {
         let reason_str = reason.unwrap_or_default();
         let immediate_close = {
             let mut st = self.shared.borrow_mut();
-            let Some(ws) = st.ws_conns.get_mut(&socket_id) else {
+            let Some(ws) = st
+                .conn_meta
+                .get_mut(socket_id)
+                .and_then(|s| s.ws.as_deref_mut())
+            else {
                 return false;
             };
             ws.conn.mark_close_sent();
@@ -2166,8 +2459,9 @@ impl UvHttpServer {
                 .write_to_conn(socket_id, &st.scratch_frame, true);
             if res == WriteResult::Closed {
                 let emit = st
-                    .ws_conns
-                    .remove(&socket_id)
+                    .conn_meta
+                    .get_mut(socket_id)
+                    .and_then(|s| s.ws.take())
                     .is_some_and(|w| !w.close_emitted);
                 if emit {
                     Some((st.raw_env, st.on_ws_close_ref))
@@ -2187,7 +2481,7 @@ impl UvHttpServer {
     #[napi]
     pub fn ws_get_headers(&self, socket_id: u32) -> Vec<String> {
         let st = self.shared.borrow();
-        let Some(ws) = st.ws_conns.get(&socket_id) else {
+        let Some(ws) = st.conn_meta.get(socket_id).and_then(|s| s.ws.as_deref()) else {
             return Vec::new();
         };
         collect_headers_in_head(&ws.raw_head)
@@ -2197,15 +2491,22 @@ impl UvHttpServer {
     pub fn ws_get_query(&self, socket_id: u32) -> String {
         self.shared
             .borrow()
-            .ws_conns
-            .get(&socket_id)
+            .conn_meta
+            .get(socket_id)
+            .and_then(|s| s.ws.as_deref())
             .map(|ws| ws.query.clone())
             .unwrap_or_default()
     }
 
     #[napi]
     pub fn ws_get_remote_address(&self, socket_id: u32) -> Option<String> {
-        if !self.shared.borrow().ws_conns.contains_key(&socket_id) {
+        if !self
+            .shared
+            .borrow()
+            .conn_meta
+            .get(socket_id)
+            .is_some_and(|s| s.ws.is_some())
+        {
             return None;
         }
         let ip = self.server.remote_addr(socket_id)?;
@@ -2231,13 +2532,17 @@ impl UvHttpServer {
         // Send HTTP/2 GOAWAY(NO_ERROR) so open H2 sessions finish in-flight streams and close.
         let mut st = self.shared.borrow_mut();
         let UvHttpShared {
-            ref mut h2_conns,
+            ref mut conn_meta,
             ref mut scratch_frame,
             ..
         } = *st;
-        let conn_ids: Vec<u32> = h2_conns.keys().copied().collect();
+        let conn_ids: Vec<u32> = conn_meta
+            .slots
+            .iter()
+            .filter_map(|s| (s.gen_id != 0 && s.h2.is_some()).then_some(s.gen_id))
+            .collect();
         for cid in conn_ids {
-            if let Some(h2) = h2_conns.get_mut(&cid) {
+            if let Some(h2) = conn_meta.get_mut(cid).and_then(|s| s.h2.as_deref_mut()) {
                 scratch_frame.clear();
                 h2.send_goaway(ERR_NO_ERROR, scratch_frame);
                 let close_now = h2.active_response_streams() == 0;
@@ -2271,8 +2576,7 @@ impl UvHttpServer {
             }
         }
         st.pending.clear();
-        st.ws_conns.clear();
-        st.h2_conns.clear();
+        st.conn_meta.clear_all();
     }
 }
 
@@ -2405,10 +2709,7 @@ pub fn create_uv_server(
         batch_heads: Vec::with_capacity(64 * 1024),
         batch_req_ids: Vec::with_capacity(DEFAULT_IN_SLOTS),
         pending: PendingSlab::with_capacity(256),
-        ws_conns: HashMap::with_capacity(64),
-        h2_conns: HashMap::with_capacity(32),
-        chunk_resume: HashMap::new(),
-        h1_order: HashMap::new(),
+        conn_meta: ConnMetaTable::with_capacity(256),
         placeholder_seq: u32::MAX,
         scratch_frame: Vec::with_capacity(4096),
     }));

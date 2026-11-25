@@ -302,6 +302,7 @@ dependencies = [
  "io-uring",
  "libc",
  "mio",
+ "nifra-http",
  "nifra-tls",
  "socket2",
 ]

@@ -60,7 +60,7 @@ if (target.startsWith("nifra-")) {
     { maxBodySize: 1_048_576 },
   )
   engine.listen(serverId, "0.0.0.0", port)
-} else if (target === "raw-nifra-engine") {
+} else if (target === "raw-nifra-engine" || target === "raw-nifra-engine-ct") {
   // The Rust addon straight on its batch ABI, the way `serve()` drives it, with no adapter and no core.
   const { handle } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
   const addonPath = process.env.NIFRA_RUST_ENGINE_PATH
@@ -69,6 +69,7 @@ if (target.startsWith("nifra-")) {
   const module = { exports: {} }
   process.dlopen(module, addonPath)
   const addon = module.exports
+  const readContentType = target === "raw-nifra-engine-ct"
   const METHODS = ["GET", "POST"]
   const HAS_BODY = 1 << 4
   const LARGE_BODY = 1 << 10
@@ -101,6 +102,8 @@ if (target.startsWith("nifra-")) {
             ? inData.toString("utf8", inMeta[b + 6], inMeta[b + 6] + inMeta[b + 7])
             : (server.getBody(reqId)?.toString("utf8") ?? "")
       }
+      // `-ct` reads the one header an adapter must read on a POST, to price a header call on its own.
+      if (readContentType && body !== null) server.getHeader(reqId, "content-type")
       const [status, type, text] = handle(method, path, body)
       const len = outData.write(text, outOff, "utf8")
       const ob = outCount * outSlotU32s

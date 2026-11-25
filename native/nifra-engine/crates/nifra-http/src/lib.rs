@@ -7,13 +7,14 @@ pub mod h2;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::mem::MaybeUninit;
 
 pub const MAX_HEADERS: usize = 64;
 
 /// Bitflags and slot constants shared verbatim between Rust and JS (`packages/node-engine`).
 pub mod abi {
     /// 8 x u32 (32 bytes) per inbound request in `inMeta`.
-    pub const IN_SLOT_U32S: usize = 8;
+    pub const IN_SLOT_U32S: usize = 10;
     /// 4 x u32 (16 bytes) per outbound response in `outMeta`.
     pub const OUT_SLOT_U32S: usize = 4;
 
@@ -27,6 +28,9 @@ pub mod abi {
     pub const FLAG_LARGE_BODY: u32 = 1 << 10;
     pub const FLAG_CT_JSON: u32 = 1 << 11;
     pub const FLAG_CHUNKED: u32 = 1 << 12;
+    /// The request carried a `Content-Type`; its first value is in the batch at slot words 8 and 9
+    /// (offset, length), so the adapter reads it without a call into the engine.
+    pub const FLAG_HAS_CT: u32 = 1 << 13;
 
     /// Sentinel offset indicating the body exceeds the inline slab and must be read via `getBody(id)`.
     pub const LARGE_BODY_SENTINEL: u32 = u32::MAX;
@@ -70,6 +74,8 @@ pub struct ParsedRequest<'a> {
     pub host: Option<&'a str>,
     pub host_valid: bool,
     pub is_json_ct: bool,
+    /// First `Content-Type` value, trimmed.
+    pub content_type: Option<&'a str>,
     pub is_chunked: bool,
     pub is_ws_upgrade: bool,
     pub keep_alive: bool,
@@ -102,38 +108,53 @@ pub fn method_to_idx(method: &str) -> u8 {
 /// Fast RFC 9110 Host syntax check (rejects spaces, `@`, `/`, control chars, invalid port).
 #[inline]
 pub fn is_valid_host(host: &str) -> bool {
-    let port = if let Some(literal) = host.strip_prefix('[') {
-        let Some((address, suffix)) = literal.split_once(']') else {
+    let bytes = host.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    if bytes[0] == b'[' {
+        let Some(end) = memchr::memchr(b']', &bytes[1..]) else {
             return false;
         };
+        let address = &host[1..1 + end];
         if address.parse::<std::net::Ipv6Addr>().is_err() {
             return false;
         }
+        let suffix = &bytes[2 + end..];
         if suffix.is_empty() {
             return true;
         }
-        let Some(port) = suffix.strip_prefix(':') else {
-            return false;
-        };
-        Some(port)
-    } else {
-        let (name, port) = host
-            .split_once(':')
-            .map_or((host, None), |(name, port)| (name, Some(port)));
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
-        {
+        return suffix[0] == b':' && is_valid_port_bytes(&suffix[1..]);
+    }
+
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let b = bytes[idx];
+        if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_') {
+            idx += 1;
+            continue;
+        }
+        if b == b':' {
+            return idx > 0 && is_valid_port_bytes(&bytes[idx + 1..]);
+        }
+        return false;
+    }
+    true
+}
+
+#[inline]
+fn is_valid_port_bytes(port: &[u8]) -> bool {
+    if port.is_empty() || port.len() > 5 {
+        return false;
+    }
+    let mut val = 0u32;
+    for &b in port {
+        if !b.is_ascii_digit() {
             return false;
         }
-        port
-    };
-    port.is_none_or(|port| {
-        (1..=5).contains(&port.len())
-            && port.bytes().all(|b| b.is_ascii_digit())
-            && port.parse::<u16>().is_ok()
-    })
+        val = val * 10 + u32::from(b - b'0');
+    }
+    val <= u32::from(u16::MAX)
 }
 
 /// Validate an RFC 9110 HTTP header name (tchar token).
@@ -333,6 +354,39 @@ pub fn parse_http1<'a>(buf: &'a [u8], limits: ParseLimits) -> Result<ParseStatus
     parse_http1_resume(buf, limits, &mut ChunkResume::default())
 }
 
+#[inline]
+fn parse_trimmed_usize(raw: &str) -> Result<usize, ParseError> {
+    let mut bytes = raw.as_bytes();
+    while let Some((&b, rest)) = bytes.split_first() {
+        if b.is_ascii_whitespace() {
+            bytes = rest;
+        } else {
+            break;
+        }
+    }
+    while let Some((&b, rest)) = bytes.split_last() {
+        if b.is_ascii_whitespace() {
+            bytes = rest;
+        } else {
+            break;
+        }
+    }
+    if bytes.is_empty() {
+        return Err(ParseError::Malformed);
+    }
+    let mut acc = 0usize;
+    for &b in bytes {
+        if !b.is_ascii_digit() {
+            return Err(ParseError::Malformed);
+        }
+        acc = acc
+            .checked_mul(10)
+            .and_then(|v| v.checked_add(usize::from(b - b'0')))
+            .ok_or(ParseError::Malformed)?;
+    }
+    Ok(acc)
+}
+
 /// [`parse_http1`] that continues a partly decoded chunked body from `resume` instead of restarting.
 ///
 /// Pass the same `resume` with a buffer that starts at the same request on every call until it returns
@@ -342,9 +396,9 @@ pub fn parse_http1_resume<'a>(
     limits: ParseLimits,
     resume: &mut ChunkResume,
 ) -> Result<ParseStatus<'a>, ParseError> {
-    let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
-    let mut req = httparse::Request::new(&mut headers);
-    let head_len = match req.parse(buf) {
+    let mut headers = [const { MaybeUninit::uninit() }; MAX_HEADERS];
+    let mut req = httparse::Request::new(&mut []);
+    let head_len = match req.parse_with_uninit_headers(buf, &mut headers) {
         Ok(httparse::Status::Complete(n)) => {
             if n > limits.max_header_bytes {
                 return Err(ParseError::HeadersTooLarge);
@@ -370,6 +424,7 @@ pub fn parse_http1_resume<'a>(
     let mut host: Option<&'a str> = None;
     let mut content_length: Option<usize> = None;
     let mut is_json_ct = None;
+    let mut content_type: Option<&'a str> = None;
     let mut is_chunked = false;
     let mut has_te = false;
     let mut is_ws_upgrade = false;
@@ -377,63 +432,64 @@ pub fn parse_http1_resume<'a>(
 
     for h in req.headers.iter() {
         let name = h.name;
+        // `httparse` already rejects all control bytes except HTAB via `HEADER_VALUE_MAP`.
         let val = std::str::from_utf8(h.value).map_err(|_| ParseError::Malformed)?;
-        if !is_valid_header_value(val) {
-            return Err(ParseError::Malformed);
-        }
-        if name.eq_ignore_ascii_case("host") {
-            if host.is_some() {
-                return Err(ParseError::DuplicateHost);
+        match name.len() {
+            4 if name.eq_ignore_ascii_case("host") => {
+                if host.is_some() {
+                    return Err(ParseError::DuplicateHost);
+                }
+                host = Some(val.trim());
             }
-            host = Some(val.trim());
-        } else if name.eq_ignore_ascii_case("content-length") {
-            let trimmed = val.trim();
-            if trimmed.is_empty() || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
-                return Err(ParseError::Malformed);
-            }
-            let parsed = trimmed
-                .parse::<usize>()
-                .map_err(|_| ParseError::Malformed)?;
-            if let Some(prev) = content_length {
-                if prev != parsed {
-                    return Err(ParseError::ConflictingContentLength);
+            7 if name.eq_ignore_ascii_case("upgrade") => {
+                if val.trim().eq_ignore_ascii_case("websocket") {
+                    is_ws_upgrade = true;
                 }
             }
-            content_length = Some(parsed);
-        } else if is_json_ct.is_none() && name.eq_ignore_ascii_case("content-type") {
-            let essence = val
-                .split_once(';')
-                .map_or(val, |(essence, _)| essence)
-                .trim();
-            is_json_ct = Some(essence.eq_ignore_ascii_case("application/json"));
-        } else if name.eq_ignore_ascii_case("transfer-encoding") {
-            if has_te {
-                return Err(ParseError::DuplicateTransferEncoding);
+            10 if name.eq_ignore_ascii_case("connection") => {
+                // A token list: `close` wins over `keep-alive` wherever it appears.
+                let mut has_close = false;
+                let mut has_keep_alive = false;
+                for token in val.split(',') {
+                    let token = token.trim();
+                    has_close |= token.eq_ignore_ascii_case("close");
+                    has_keep_alive |= token.eq_ignore_ascii_case("keep-alive");
+                }
+                if has_close {
+                    keep_alive = false;
+                } else if has_keep_alive {
+                    keep_alive = true;
+                }
             }
-            has_te = true;
-            if val.trim().eq_ignore_ascii_case("chunked") {
-                is_chunked = true;
-            } else {
-                return Err(ParseError::Malformed);
+            12 if is_json_ct.is_none() && name.eq_ignore_ascii_case("content-type") => {
+                let essence = val
+                    .split_once(';')
+                    .map_or(val, |(essence, _)| essence)
+                    .trim();
+                is_json_ct = Some(essence.eq_ignore_ascii_case("application/json"));
+                content_type = Some(val.trim());
             }
-        } else if name.eq_ignore_ascii_case("upgrade") {
-            if val.trim().eq_ignore_ascii_case("websocket") {
-                is_ws_upgrade = true;
+            14 if name.eq_ignore_ascii_case("content-length") => {
+                let parsed = parse_trimmed_usize(val)?;
+                if let Some(prev) = content_length {
+                    if prev != parsed {
+                        return Err(ParseError::ConflictingContentLength);
+                    }
+                }
+                content_length = Some(parsed);
             }
-        } else if name.eq_ignore_ascii_case("connection") {
-            // A token list: `close` wins over `keep-alive` wherever it appears.
-            let mut has_close = false;
-            let mut has_keep_alive = false;
-            for token in val.split(',') {
-                let token = token.trim();
-                has_close |= token.eq_ignore_ascii_case("close");
-                has_keep_alive |= token.eq_ignore_ascii_case("keep-alive");
+            17 if name.eq_ignore_ascii_case("transfer-encoding") => {
+                if has_te {
+                    return Err(ParseError::DuplicateTransferEncoding);
+                }
+                has_te = true;
+                if val.trim().eq_ignore_ascii_case("chunked") {
+                    is_chunked = true;
+                } else {
+                    return Err(ParseError::Malformed);
+                }
             }
-            if has_close {
-                keep_alive = false;
-            } else if has_keep_alive {
-                keep_alive = true;
-            }
+            _ => {}
         }
     }
 
@@ -479,6 +535,7 @@ pub fn parse_http1_resume<'a>(
         host,
         host_valid,
         is_json_ct: is_json_ct.unwrap_or(false),
+        content_type,
         is_chunked,
         is_ws_upgrade,
         keep_alive,
@@ -491,9 +548,10 @@ pub fn parse_http1_resume<'a>(
 
 /// Lazily collect all headers from a saved raw HTTP/1.1 head as `[lowercase_name, value, ...]`.
 pub fn collect_headers_in_head(raw_head: &[u8]) -> Vec<String> {
-    let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
-    let mut req = httparse::Request::new(&mut headers);
-    let Ok(httparse::Status::Complete(_)) = req.parse(raw_head) else {
+    let mut headers = [const { MaybeUninit::uninit() }; MAX_HEADERS];
+    let mut req = httparse::Request::new(&mut []);
+    let Ok(httparse::Status::Complete(_)) = req.parse_with_uninit_headers(raw_head, &mut headers)
+    else {
         return Vec::new();
     };
     let mut out = Vec::with_capacity(req.headers.len() * 2);
@@ -520,6 +578,10 @@ struct ParamRoute {
 }
 
 impl FastRoutes {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.static_get.is_empty() && self.param_get.is_empty()
+    }
     pub fn add_static_get(
         &mut self,
         path: String,
@@ -570,28 +632,85 @@ impl FastRoutes {
     }
 }
 
+#[derive(Default)]
+struct TemplateEntry {
+    prefix: Vec<u8>,
+    cached_sec: u64,
+    cached_head: Vec<u8>,
+}
+
 /// Prepared response templates (`prepareResponse` / `respondPrepared`).
 #[derive(Default)]
 pub struct PreparedTemplates {
-    prefixes: Vec<Vec<u8>>,
+    entries: Vec<TemplateEntry>,
 }
 
 impl PreparedTemplates {
     pub fn register(&mut self, status: u16, headers: &[(&str, &str)]) -> u32 {
         let mut prefix = Vec::with_capacity(128);
         write_head_prefix(&mut prefix, status, headers);
-        let id = self.prefixes.len() as u32;
-        self.prefixes.push(prefix);
+        let id = self.entries.len() as u32;
+        self.entries.push(TemplateEntry {
+            prefix,
+            cached_sec: u64::MAX,
+            cached_head: Vec::new(),
+        });
         id
     }
 
     #[inline]
     pub fn write_prepared(&self, template_id: u32, body: &[u8], out: &mut Vec<u8>) -> bool {
-        let Some(prefix) = self.prefixes.get(template_id as usize) else {
+        let Some(entry) = self.entries.get(template_id as usize) else {
             return false;
         };
-        out.extend_from_slice(prefix);
+        out.extend_from_slice(&entry.prefix);
         append_content_length_and_body(out, body);
+        true
+    }
+
+    /// Write a prepared response reusing the pre-baked `prefix + date + content-length: ` header block
+    /// whenever `sec` matches the template's cached second.
+    #[inline]
+    pub fn write_prepared_at(
+        &mut self,
+        template_id: u32,
+        sec: u64,
+        date_text: &[u8; date::IMF_LEN],
+        body: &[u8],
+        out: &mut Vec<u8>,
+    ) -> bool {
+        let Some(entry) = self.entries.get_mut(template_id as usize) else {
+            return false;
+        };
+        if entry.cached_sec != sec {
+            entry.cached_head.clear();
+            entry
+                .cached_head
+                .reserve(entry.prefix.len() + 6 + date::IMF_LEN + 2 + 16);
+            entry.cached_head.extend_from_slice(&entry.prefix);
+            entry.cached_head.extend_from_slice(b"date: ");
+            entry.cached_head.extend_from_slice(date_text);
+            entry.cached_head.extend_from_slice(b"\r\ncontent-length: ");
+            entry.cached_sec = sec;
+        }
+        let mut num = itoa::Buffer::new();
+        let len_bytes = num.format(body.len()).as_bytes();
+        let h_len = entry.cached_head.len();
+        let l_len = len_bytes.len();
+        let b_len = body.len();
+        let old_len = out.len();
+        out.reserve(h_len + l_len + 4 + b_len);
+        // SAFETY: `reserve` guaranteed capacity for all written bytes, and the slices are disjoint from `out`.
+        unsafe {
+            let dst = out.as_mut_ptr().add(old_len);
+            std::ptr::copy_nonoverlapping(entry.cached_head.as_ptr(), dst, h_len);
+            std::ptr::copy_nonoverlapping(len_bytes.as_ptr(), dst.add(h_len), l_len);
+            std::ptr::copy_nonoverlapping(b"\r\n\r\n".as_ptr(), dst.add(h_len + l_len), 4);
+            if b_len > 0 {
+                std::ptr::copy_nonoverlapping(body.as_ptr(), dst.add(h_len + l_len + 4), b_len);
+            }
+            out.set_len(old_len + h_len + l_len + 4 + b_len);
+        }
         true
     }
 }
@@ -833,8 +952,11 @@ impl<'a> BatchPacker<'a> {
         let query_bytes = req.query.as_bytes();
         let body_slice = req.body.as_ref();
         let inline_body = body_slice.len() <= abi::INLINE_BODY_MAX;
-        let needed =
-            path_bytes.len() + query_bytes.len() + if inline_body { body_slice.len() } else { 0 };
+        let ct_bytes = req.content_type.map_or(&[][..], str::as_bytes);
+        let needed = path_bytes.len()
+            + query_bytes.len()
+            + ct_bytes.len()
+            + if inline_body { body_slice.len() } else { 0 };
         if self.data_pos + needed > self.data.len() {
             return false;
         }
@@ -846,6 +968,10 @@ impl<'a> BatchPacker<'a> {
         let query_off = self.data_pos as u32;
         self.data[self.data_pos..self.data_pos + query_bytes.len()].copy_from_slice(query_bytes);
         self.data_pos += query_bytes.len();
+
+        let ct_off = self.data_pos as u32;
+        self.data[self.data_pos..self.data_pos + ct_bytes.len()].copy_from_slice(ct_bytes);
+        self.data_pos += ct_bytes.len();
 
         let (body_off, body_len) = if inline_body {
             let off = self.data_pos as u32;
@@ -878,6 +1004,9 @@ impl<'a> BatchPacker<'a> {
         if req.is_json_ct {
             flags |= abi::FLAG_CT_JSON;
         }
+        if req.content_type.is_some() {
+            flags |= abi::FLAG_HAS_CT;
+        }
         if req.is_chunked {
             flags |= abi::FLAG_CHUNKED;
         }
@@ -890,6 +1019,8 @@ impl<'a> BatchPacker<'a> {
         self.meta[slot_base + 5] = query_bytes.len() as u32;
         self.meta[slot_base + 6] = body_off;
         self.meta[slot_base + 7] = body_len;
+        self.meta[slot_base + 8] = ct_off;
+        self.meta[slot_base + 9] = ct_bytes.len() as u32;
 
         self.count += 1;
         true
@@ -1168,6 +1299,62 @@ mod tests {
         assert_eq!(meta[1] & abi::METHOD_MASK, 1);
         assert_ne!(meta[1] & abi::FLAG_HOST_VALID, 0);
         assert_ne!(meta[1] & abi::FLAG_IS_ASCII_BODY, 0);
+    }
+
+    #[test]
+    fn batch_slots_carry_the_first_content_type() {
+        let cases: [(&[u8], Option<&str>); 4] = [
+            (
+                b"POST /u HTTP/1.1\r\nHost: h\r\nContent-Type:   application/json; charset=utf-8  \r\nContent-Length: 2\r\n\r\n{}",
+                Some("application/json; charset=utf-8"),
+            ),
+            (
+                b"POST /u HTTP/1.1\r\nHost: h\r\nContent-Type: text/plain\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+                Some("text/plain"),
+            ),
+            (
+                b"POST /u HTTP/1.1\r\nHost: h\r\nContent-Type:\r\nContent-Length: 2\r\n\r\n{}",
+                Some(""),
+            ),
+            (
+                b"POST /u HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\n{}",
+                None,
+            ),
+        ];
+        for (raw, expected) in cases {
+            let ParseStatus::Complete(parsed) = parse_http1(raw, ParseLimits::default()).unwrap()
+            else {
+                panic!("expected complete");
+            };
+            let mut meta = [0u32; abi::IN_SLOT_U32S];
+            let mut data = [0u8; 256];
+            let mut packer = BatchPacker::new(&mut meta, &mut data);
+            assert!(packer.push(1, &parsed));
+            assert_eq!(meta[1] & abi::FLAG_HAS_CT != 0, expected.is_some());
+            let (off, len) = (meta[8] as usize, meta[9] as usize);
+            match expected {
+                Some(value) => assert_eq!(&data[off..off + len], value.as_bytes()),
+                None => assert_eq!(len, 0),
+            }
+            // The body still lands where its own slot says, after the content type.
+            let (body_off, body_len) = (meta[6] as usize, meta[7] as usize);
+            assert_eq!(&data[body_off..body_off + body_len], b"{}");
+        }
+    }
+
+    #[test]
+    fn a_full_batch_refuses_instead_of_overrunning_for_a_long_content_type() {
+        let raw = b"POST /u HTTP/1.1\r\nHost: h\r\nContent-Type: application/vnd.example+json\r\nContent-Length: 2\r\n\r\n{}";
+        let ParseStatus::Complete(parsed) = parse_http1(raw, ParseLimits::default()).unwrap()
+        else {
+            panic!("expected complete");
+        };
+        let mut meta = [0u32; abi::IN_SLOT_U32S];
+        // Room for the path and body but not the content type.
+        let mut data = [0u8; 8];
+        let mut packer = BatchPacker::new(&mut meta, &mut data);
+        assert!(!packer.push(1, &parsed));
+        assert_eq!(packer.count(), 0);
     }
 
     #[test]

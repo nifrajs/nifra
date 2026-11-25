@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { createConnection } from "node:net"
 import { test } from "node:test"
 import { server } from "@nifrajs/core/server"
+import { serve as serveNode } from "@nifrajs/node"
+import { t } from "@nifrajs/schema"
 import { serve } from "../dist/index.js"
 
 const settings = { port: 0, hostname: "127.0.0.1" }
@@ -88,6 +90,65 @@ test("Rust answers an HTTP/2 preface with a 505 when http2 is off", nativeTest, 
     await running.stop({ drainMs: 0 })
   }
 })
+
+test(
+  "Rust reads Content-Type from the batch exactly as the Node adapter reads it",
+  nativeTest,
+  async () => {
+    const app = () => server().post("/u", { body: t.object({ name: t.string() }) }, (c) => c.body)
+    const body = '{"name":"x"}'
+    const post = (type) =>
+      `POST /u HTTP/1.1\r\nHost: localhost\r\n${type}Content-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`
+    const cases = {
+      json: post("Content-Type: application/json\r\n"),
+      charset: post("Content-Type: application/json; charset=utf-8\r\n"),
+      spaced: post("Content-Type:    application/json   \r\n"),
+      upper: post("CONTENT-TYPE: Application/JSON\r\n"),
+      plain: post("Content-Type: text/plain\r\n"),
+      plainFirst: post("Content-Type: text/plain\r\nContent-Type: application/json\r\n"),
+      jsonFirst: post("Content-Type: application/json\r\nContent-Type: text/plain\r\n"),
+      absent: post(""),
+      empty: post("Content-Type:\r\n"),
+      vendor: post("Content-Type: application/vnd.example+json\r\n"),
+    }
+    const status = (port, raw) =>
+      new Promise((resolve, reject) => {
+        const socket = createConnection(port, settings.hostname)
+        let text = ""
+        socket.setTimeout(3000, () => socket.destroy(new Error("response timed out")))
+        socket.on("error", reject)
+        socket.on("data", (chunk) => {
+          text += chunk
+        })
+        socket.on("close", () => resolve(Number(/^HTTP\/1\.1 (\d{3})/.exec(text)?.[1])))
+        socket.on("connect", () => socket.write(raw))
+      })
+    const ours = await serve(app(), settings)
+    const reference = await serveNode(app(), { port: 0, hostname: settings.hostname })
+    try {
+      for (const [name, raw] of Object.entries(cases)) {
+        if (name === "plainFirst" || name === "jsonFirst") continue
+        const expected = await status(reference.port, raw)
+        assert.equal(
+          await status(ours.port, raw),
+          expected,
+          `${name}: same status as @nifrajs/node`,
+        )
+      }
+      assert.equal(await status(ours.port, cases.json), 200)
+      assert.equal(
+        await status(ours.port, cases.plainFirst),
+        415,
+        "the first Content-Type decides (the engine has always read the first; @nifrajs/node joins repeats)",
+      )
+      assert.equal(await status(ours.port, cases.jsonFirst), 200)
+      assert.equal(await status(ours.port, cases.absent), 415)
+    } finally {
+      await ours.stop({ drainMs: 0 })
+      await reference.stop({ drainMs: 0 })
+    }
+  },
+)
 
 test("Rust delivers strings and binary bodies beyond the response slab", nativeTest, async () => {
   const length = 3 * 1024 * 1024

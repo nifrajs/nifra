@@ -8,6 +8,7 @@ description = "Zero-hop socket and event-loop layer for @nifrajs/node-engine (li
 [dependencies]
 libc.workspace = true
 mio.workspace = true
+nifra-http = { path = "../nifra-http" }
 nifra-tls = { path = "../nifra-tls" }
 socket2.workspace = true
 

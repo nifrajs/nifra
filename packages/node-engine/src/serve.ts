@@ -58,6 +58,7 @@ const FLAG_HOST_VALID = 1 << 8
 const FLAG_OVER_MAX_BODY = 1 << 9
 const FLAG_LARGE_BODY = 1 << 10
 const FLAG_CHUNKED = 1 << 12
+const FLAG_HAS_CT = 1 << 13
 
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
@@ -328,6 +329,8 @@ class RustBatchSource {
   private readonly bodyLen: number
   private bodyText: string | null
   private bodyBytes: Uint8Array | null | undefined
+  /** The request's first `Content-Type`: `null` when it had none, `undefined` when not carried (ask the engine). */
+  private readonly contentType: string | null | undefined
   private peer: string | undefined
   private urlValue: string | undefined
   private headersValue: Headers | undefined
@@ -347,6 +350,7 @@ class RustBatchSource {
     bodyLen: number,
     bodyText: string | null,
     bodyBytes: Uint8Array | null | undefined,
+    contentType: string | null | undefined,
   ) {
     this.server = server
     this.id = id
@@ -359,6 +363,7 @@ class RustBatchSource {
     this.bodyLen = bodyLen
     this.bodyText = bodyText
     this.bodyBytes = bodyBytes
+    this.contentType = contentType
   }
 
   get requestId(): number {
@@ -407,6 +412,7 @@ class RustBatchSource {
     if (lower === "content-length" && (this.flags & FLAG_CHUNKED) === 0) {
       if ((this.flags & FLAG_HAS_BODY) !== 0) return String(this.bodyLen)
     }
+    if (lower === "content-type" && this.contentType !== undefined) return this.contentType
     if (this.id < 0) return null
     return this.server.getHeader(this.id, lower)
   }
@@ -917,6 +923,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       const queryLen = inMeta[b + 5] ?? 0
       const bodyOff = inMeta[b + 6] ?? 0
       const bodyLen = inMeta[b + 7] ?? 0
+      const ctOff = inMeta[b + 8] ?? 0
+      const ctLen = inMeta[b + 9] ?? 0
 
       const rawPath = inData.toString("latin1", pathOff, pathOff + pathLen)
       const rawQuery =
@@ -929,7 +937,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       const search = queryStart === -1 ? "" : target.slice(queryStart)
 
       let bodyText: string | null = null
-      let bodyBytes: Uint8Array | null | undefined = undefined
+      let bodyBytes: Uint8Array | null | undefined
       if ((flags & FLAG_HAS_BODY) !== 0 && (flags & FLAG_LARGE_BODY) === 0) {
         if ((flags & FLAG_IS_ASCII_BODY) !== 0) {
           bodyText = inData.toString("latin1", bodyOff, bodyOff + bodyLen)
@@ -938,6 +946,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         }
       } else if ((flags & FLAG_HAS_BODY) === 0) {
         bodyBytes = null
+      }
+
+      // Carried in the batch, which the next one overwrites; a request with a body is where it is read.
+      let contentType: string | null | undefined
+      if ((flags & FLAG_HAS_BODY) !== 0) {
+        contentType =
+          (flags & FLAG_HAS_CT) === 0 ? null : inData.toString("utf8", ctOff, ctOff + ctLen)
       }
 
       const isWsHandshake = checkUpgrade && methodIdx === 0 && (flags & FLAG_IS_WS_UPGRADE) !== 0
@@ -959,6 +974,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         bodyLen,
         bodyText,
         bodyBytes,
+        contentType,
       )
 
       if (isWsHandshake) {
