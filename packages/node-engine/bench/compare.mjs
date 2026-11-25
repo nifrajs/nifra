@@ -131,6 +131,8 @@ for (const name of names) {
       let run
       try {
         await sleep(3000)
+        if (child.exitCode !== null)
+          throw new Error(`${target} exited with ${child.exitCode} before it served`)
         const url = `http://127.0.0.1:${port}${workloads[name].path}`
         if (wrk(name, url).bad)
           throw new Error(`${name} on ${target}: warm-up got non-2xx or socket errors`)

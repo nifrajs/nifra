@@ -67,6 +67,11 @@ jobs:
       - name: Build
         run: bun run build
 
+      # The root build leaves out private packages; the benchmark loads this one from dist.
+      - name: Build node-engine
+        run: bun run build
+        working-directory: packages/node-engine
+
       - name: Build the Rust addon
         run: cargo build --release --locked -p nifra-napi --manifest-path native/nifra-engine/Cargo.toml
 
