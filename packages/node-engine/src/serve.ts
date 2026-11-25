@@ -862,39 +862,82 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         )
       : resolveNodeSource.call(app, source, source, nodeOutcomeRuntime)
 
+  // The shared out slab: a sync outcome fills it during `onBatch`, which flushes at its end; an outcome
+  // that settles later (a body still being read) fills it from a microtask, flushed at the end of that
+  // microtask checkpoint, so a POST costs one batched native call like a GET and not one call each.
+  let outMeta!: Uint32Array
+  let outData!: Buffer
+  let outSlotU32s = 0
+  let maxOutBytes = 0
+  let outCount = 0
+  let outOff = 0
+  let flushScheduled = false
+
+  const flush = (): void => {
+    if (outCount === 0) return
+    uvServer.flushResponses(outCount)
+    outCount = 0
+    outOff = 0
+  }
+
+  const queueSync = (reqId: number, templateId: number, body: string | Uint8Array): boolean => {
+    const room = maxOutBytes - outOff
+    // A conservative bound keeps the small string fast path to one UTF-8 pass.
+    const fits = typeof body === "string" ? body.length * 3 <= room : body.byteLength <= room
+    if ((outCount + 1) * outSlotU32s > outMeta.length || !fits) {
+      const len = typeof body === "string" ? Buffer.byteLength(body) : body.byteLength
+      if (len > room || (outCount + 1) * outSlotU32s > outMeta.length) flush()
+      if (len > maxOutBytes) return false
+    }
+    const len = typeof body === "string" ? outData.write(body, outOff, "utf8") : body.byteLength
+    if (typeof body !== "string") outData.set(body, outOff)
+    const ob = outCount * outSlotU32s
+    outMeta[ob] = reqId
+    outMeta[ob + 1] = templateId
+    outMeta[ob + 2] = outOff
+    outMeta[ob + 3] = len
+    outOff += len
+    outCount += 1
+    return true
+  }
+
+  const flushSoon = (): void => {
+    if (flushScheduled) return
+    flushScheduled = true
+    queueMicrotask(() => {
+      flushScheduled = false
+      flush()
+    })
+  }
+
+  /** Queues a plain json or text outcome into the out slab; `false` when it needs the full writer. */
+  const queueOutcome = (reqId: number, outcome: NodeServeOutcome, isHead: boolean): boolean => {
+    if (isHead || outcome.kind === "response") return false
+    if (outcome.headers !== undefined || isBodyless(outcome.status)) return false
+    if (outcome.kind === "json") {
+      return (
+        outcome.cookies === undefined &&
+        queueSync(reqId, jsonTemplate(outcome.status), outcome.body ?? "")
+      )
+    }
+    return queueSync(reqId, textTemplate(outcome.status), outcome.body ?? "")
+  }
+
+  const settleOutcome = (
+    source: RustBatchSource,
+    outcome: NodeServeOutcome,
+    isHead: boolean,
+  ): void => {
+    if (!source.aborted && !source.settled && queueOutcome(source.requestId, outcome, isHead)) {
+      finish(source)
+      flushSoon()
+      return
+    }
+    writeComplexOutcome(source, outcome, isHead)
+  }
+
   const onBatch = (count: number): void => {
-    const { inMeta, inData, outMeta, outData, inSlotU32s, outSlotU32s } = bufs
-    const maxOutBytes = outData.byteLength
-    let outCount = 0
-    let outOff = 0
-
-    const flush = (): void => {
-      if (outCount === 0) return
-      uvServer.flushResponses(outCount)
-      outCount = 0
-      outOff = 0
-    }
-
-    const queueSync = (reqId: number, templateId: number, body: string | Uint8Array): boolean => {
-      const room = maxOutBytes - outOff
-      // A conservative bound keeps the small string fast path to one UTF-8 pass.
-      const fits = typeof body === "string" ? body.length * 3 <= room : body.byteLength <= room
-      if ((outCount + 1) * outSlotU32s > outMeta.length || !fits) {
-        const len = typeof body === "string" ? Buffer.byteLength(body) : body.byteLength
-        if (len > room || (outCount + 1) * outSlotU32s > outMeta.length) flush()
-        if (len > maxOutBytes) return false
-      }
-      const len = typeof body === "string" ? outData.write(body, outOff, "utf8") : body.byteLength
-      if (typeof body !== "string") outData.set(body, outOff)
-      const ob = outCount * outSlotU32s
-      outMeta[ob] = reqId
-      outMeta[ob + 1] = templateId
-      outMeta[ob + 2] = outOff
-      outMeta[ob + 3] = len
-      outOff += len
-      outCount += 1
-      return true
-    }
+    const { inMeta, inData, inSlotU32s } = bufs
 
     for (let i = 0; i < count; i++) {
       const b = i * inSlotU32s
@@ -996,26 +1039,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         if (outcome instanceof Promise) {
           inflight.set(reqId, source)
           outcome.then(
-            (settled) => writeComplexOutcome(source, settled, isHead),
+            (settled) => settleOutcome(source, settled, isHead),
             (err: unknown) => fail(source, err),
           )
-        } else if (
-          !isHead &&
-          outcome.kind === "json" &&
-          outcome.headers === undefined &&
-          outcome.cookies === undefined &&
-          !isBodyless(outcome.status) &&
-          queueSync(reqId, jsonTemplate(outcome.status), outcome.body ?? "")
-        ) {
-          source.settled = true
-          source.release()
-        } else if (
-          !isHead &&
-          outcome.kind === "body" &&
-          outcome.headers === undefined &&
-          !isBodyless(outcome.status) &&
-          queueSync(reqId, textTemplate(outcome.status), outcome.body ?? "")
-        ) {
+        } else if (queueOutcome(reqId, outcome, isHead)) {
           source.settled = true
           source.release()
         } else {
@@ -1269,6 +1296,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     finishSocket,
   )
   bufs = uvServer.getBatchBuffers()
+  outMeta = bufs.outMeta
+  outData = bufs.outData
+  outSlotU32s = bufs.outSlotU32s
+  maxOutBytes = outData.byteLength
   tpl400 = textTemplate(400)
   tpl413 = jsonTemplate(413)
   tpl500 = jsonTemplate(500)

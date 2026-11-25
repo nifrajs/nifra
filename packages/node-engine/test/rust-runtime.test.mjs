@@ -461,3 +461,35 @@ test("Rust names the status in the response line", nativeTest, async () => {
     await running.stop({ drainMs: 0 })
   }
 })
+
+test(
+  "answers that settle after a body is read reach the right request, in one batch or many",
+  nativeTest,
+  async () => {
+    const app = server()
+      .post("/echo", { body: t.object({ name: t.string() }) }, (c) => ({ name: c.body.name }))
+      .post("/slow", { body: t.object({ name: t.string() }) }, async (c) => {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return { name: c.body.name }
+      })
+    const running = await serve(app, settings)
+    const ask = (path, name) =>
+      fetch(`http://127.0.0.1:${running.port}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      }).then(async (response) => [response.status, await response.json()])
+    try {
+      const names = Array.from({ length: 200 }, (_, i) => `n${i}`)
+      const answers = await Promise.all(
+        names.map((name, i) => ask(i % 4 === 0 ? "/slow" : "/echo", name)),
+      )
+      assert.deepEqual(
+        answers,
+        names.map((name) => [200, { name }]),
+      )
+    } finally {
+      await running.stop({ drainMs: 0 })
+    }
+  },
+)
