@@ -779,6 +779,12 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                         } else {
                             conn.read_buf.extend_from_slice(&scratch[..n as usize]);
                         }
+                        // A read that did not fill the buffer emptied the socket. The poll is
+                        // level-triggered, so more data wakes it again: a second read here would only
+                        // come back EAGAIN, one wasted syscall per request.
+                        if (n as usize) < scratch.len() {
+                            break;
+                        }
                     } else if n == 0 {
                         read_ended = true;
                         break;
