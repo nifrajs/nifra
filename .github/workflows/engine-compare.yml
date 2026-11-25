@@ -2,9 +2,14 @@ name: Engine compare
 
 # Rotated, serial wrk comparison of the Rust engine (@nifrajs/node-engine) against uWebSockets.js
 # (@nifrajs/node-uws), node:http (@nifrajs/node) and Moro: the Moro framework and `@morojs/engine`
-# written straight on its API. Moro is installed here only, from the pinned versions below; no nifra
-# package depends on it. Manual: the numbers that go in a report come from this run, not a laptop.
+# written straight on its API. Moro is installed here only, from the lockfile in
+# packages/node-engine/bench/moro; no nifra package depends on it. The numbers that go in a report
+# come from this run, not a laptop.
 on:
+  # TEMPORARY: lets the benchmark run from the PR branch before this file is on main. Remove with
+  # the next commit once a run has produced its report; the dispatch trigger below stays.
+  push:
+    branches: [feat/node-engine]
   workflow_dispatch:
     inputs:
       rounds:
@@ -25,8 +30,8 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 120
     env:
-      ROUNDS: ${{ inputs.rounds }}
-      DURATION: ${{ inputs.duration }}
+      ROUNDS: ${{ inputs.rounds || '5' }}
+      DURATION: ${{ inputs.duration || '6' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -66,9 +71,7 @@ jobs:
         run: cargo build --release --locked -p nifra-napi --manifest-path native/nifra-engine/Cargo.toml
 
       - name: Install the competitors
-        run: >-
-          npm install --prefix "$RUNNER_TEMP/moro" --no-audit --no-fund
-          @morojs/moro@1.9.1 @morojs/engine@1.2.1 zod@4.6.7
+        run: npm ci --prefix packages/node-engine/bench/moro --ignore-scripts --no-audit --no-fund
 
       - name: Compare
         env:
@@ -76,7 +79,7 @@ jobs:
           OUT: bench-out
         run: |
           cp native/nifra-engine/target/release/libnifra_napi.so "$RUNNER_TEMP/nifra_napi.node"
-          export NIFRA_RUST_ENGINE_PATH="$RUNNER_TEMP/nifra_napi.node" MORO_DIR="$RUNNER_TEMP/moro"
+          export NIFRA_RUST_ENGINE_PATH="$RUNNER_TEMP/nifra_napi.node" MORO_DIR="$PWD/packages/node-engine/bench/moro"
           node packages/node-engine/bench/compare.mjs
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

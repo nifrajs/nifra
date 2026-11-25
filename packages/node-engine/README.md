@@ -184,11 +184,11 @@ On Linux, closing a worker's listening socket resets the connections that were s
 
 `bench/compare.mjs` runs a rotated, serial `wrk` comparison on one Linux box: the Rust engine (`nifra-engine`, and `nifra-engine-host` with `validateHost`), `@nifrajs/node-uws`, `@nifrajs/node` (`node:http`), the Moro framework (`moro`) and `@morojs/engine` written straight on its API (`moro-engine`). Workloads are a path-parameter GET, the same with a browser-sized header set, and 13 B and 1 KiB JSON POSTs with schema validation. The table reports median req/s, spread, and each row's ratio to `moro` and to `nifra-uws`; `nifra-engine#2` is an A/A control, so its gap to `nifra-engine` is noise.
 
-Moro is a benchmark competitor only. No nifra package depends on it: the competitors are installed into a scratch directory and found through `MORO_DIR`.
+Moro is a benchmark competitor only. No nifra package depends on it: `bench/moro` holds its own `package.json` and `package-lock.json` (outside the workspace), installed with `npm ci` and found through `MORO_DIR`.
 
 ```sh
-npm install --prefix "$MORO_DIR" @morojs/moro@1.9.1 @morojs/engine@1.2.1 zod@4.6.7
-ROOT="$PWD" MORO_DIR="$MORO_DIR" NIFRA_RUST_ENGINE_PATH=/path/to/nifra_napi.node node packages/node-engine/bench/compare.mjs
+npm ci --prefix packages/node-engine/bench/moro --ignore-scripts
+ROOT="$PWD" MORO_DIR="$PWD/packages/node-engine/bench/moro" NIFRA_RUST_ENGINE_PATH=/path/to/nifra_napi.node node packages/node-engine/bench/compare.mjs
 ```
 
 Numbers that are reported come from the `Engine compare` workflow (manual dispatch), not from a developer machine. Configuration is environment: `ROUNDS`, `DURATION`, `TARGETS`, `WORKLOADS`, `OUT`.

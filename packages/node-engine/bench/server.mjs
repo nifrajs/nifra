@@ -1,7 +1,6 @@
 // usage: node server.mjs <nifra-engine|nifra-engine-host|nifra-node|nifra-uws|moro|moro-engine> <port>
-// ROOT is the nifra checkout (built). MORO_DIR holds the competitors, which are installed only for this
-// benchmark and are not a dependency of any nifra package:
-//   npm install --prefix "$MORO_DIR" @morojs/moro@1.9.1 @morojs/engine@1.2.1 zod@4.6.7
+// ROOT is the nifra checkout (built). MORO_DIR is packages/node-engine/bench/moro after `npm ci` there:
+// the competitors are installed only for this benchmark and are not a dependency of any nifra package.
 import { createRequire } from "node:module"
 import { pathToFileURL } from "node:url"
 
