@@ -59,20 +59,31 @@ export const VENDORED: readonly VendoredCopy[] = [
   },
   {
     source: "packages/core/src/server/websocket.ts",
-    targets: ["packages/deno/src/generated/ws-close.ts", "packages/node/src/generated/ws-close.ts"],
+    targets: [
+      "packages/deno/src/generated/ws-close.ts",
+      "packages/node/src/generated/ws-close.ts",
+      "packages/node-engine/src/generated/ws-close.ts",
+    ],
     symbols: ["UTF8_BUFFER", "exceedsPayloadCap", "utf8ExceedsCap", "assertCloseArgs"],
     why: "Copied so each adapter refuses the closes and messages core refuses, without depending on it.",
   },
   {
     source: "packages/core/src/server/ws-adapter-view.ts",
-    targets: ["packages/deno/src/generated/ws-types.ts", "packages/node/src/generated/ws-types.ts"],
+    targets: [
+      "packages/deno/src/generated/ws-types.ts",
+      "packages/node/src/generated/ws-types.ts",
+      "packages/node-engine/src/generated/ws-types.ts",
+    ],
     symbols: ["NifraWsData", "NifraWs", "WsPubSub", "NifraWsHandler", "WsUpgradeOutcome"],
     why: "This file is type-only so each adapter reads core's WebSocket outcome without depending on it.",
   },
   {
     source: "packages/core/src/server/declarative-routes.ts",
-    targets: ["packages/node-uws/src/generated/declarative-routes.ts"],
-    why: "Copied so @nifrajs/node-uws picks the fixed replies core's Bun table picks, without depending on core.",
+    targets: [
+      "packages/node-uws/src/generated/declarative-routes.ts",
+      "packages/node-engine/src/generated/declarative-routes.ts",
+    ],
+    why: "Copied so @nifrajs/node-uws and @nifrajs/node-engine pick the fixed replies core's Bun table picks, without depending on core.",
   },
   {
     source: "packages/core/src/server/request-target.ts",
