@@ -27,6 +27,12 @@ type FramedJsonSource = RequestSource & {
     readonly value: unknown
     readonly byteLength: number
   }>
+  /**
+   * A source that already holds the whole body (a transport that buffered it before dispatch) parses
+   * it on the spot: the parsed value and the delivered byte count, or `undefined` when the body is
+   * not in hand yet. Throws on malformed JSON. It lets the lane run to the handler with no promise.
+   */
+  readonly jsonNow?: () => { readonly value: unknown; readonly byteLength: number } | undefined
 }
 
 // Every lane calls `onResult` outside its parse guard: a throw from the continuation is the app's,
@@ -64,6 +70,36 @@ export function readBoundedJsonSource<T>(
   onResult?: JsonResultContinuation<T>,
   onError?: JsonErrorContinuation<T>,
 ): Promise<unknown | ResponseResult | T> {
+  const settled = readBoundedJsonNow(req, maxBytes, protoPoisoning, onResult, onError)
+  return settled instanceof Promise ? settled : Promise.resolve(settled)
+}
+
+/**
+ * {@link readBoundedJsonSource} for a caller that takes its answer synchronously when the source can
+ * give it: a source that already holds its whole body (`jsonNow`) runs the lane, the continuation
+ * included, with no promise. Every other source answers with a promise, as before.
+ */
+export function readBoundedJsonNow<T>(
+  req: RequestSource,
+  maxBytes: number,
+  protoPoisoning: ProtoPoisoning,
+  onResult: JsonResultContinuation<T>,
+  onError: JsonErrorContinuation<T>,
+): MaybePromise<T>
+export function readBoundedJsonNow<T>(
+  req: RequestSource,
+  maxBytes: number,
+  protoPoisoning?: ProtoPoisoning,
+  onResult?: JsonResultContinuation<T>,
+  onError?: JsonErrorContinuation<T>,
+): MaybePromise<unknown | ResponseResult | T>
+export function readBoundedJsonNow<T>(
+  req: RequestSource,
+  maxBytes: number,
+  protoPoisoning: ProtoPoisoning = "reject",
+  onResult?: JsonResultContinuation<T>,
+  onError?: JsonErrorContinuation<T>,
+): MaybePromise<unknown | ResponseResult | T> {
   const preDecoded = preDecodedBody(req)
   if (preDecoded !== undefined) {
     const value =
@@ -124,6 +160,33 @@ export function readBoundedJsonSource<T>(
     }
 
     if (headerOf(req, "transfer-encoding") === null) {
+      const now = raw.jsonNow
+      if (now !== undefined) {
+        let ready: { readonly value: unknown; readonly byteLength: number } | undefined
+        let malformed = false
+        try {
+          ready = now.call(raw)
+        } catch {
+          malformed = true
+        }
+        if (malformed) {
+          return onResult === undefined ? Promise.resolve(INVALID_JSON()) : onResult(INVALID_JSON())
+        }
+        if (ready !== undefined) {
+          if (ready.byteLength > length || ready.byteLength > maxBytes) {
+            return onResult === undefined
+              ? Promise.resolve(plainError(413, "payload_too_large"))
+              : onResult(plainError(413, "payload_too_large"))
+          }
+          let guarded: unknown
+          try {
+            guarded = guardParsedValue(ready.value, protoPoisoning)
+          } catch {
+            guarded = INVALID_JSON()
+          }
+          return onResult === undefined ? Promise.resolve(guarded) : onResult(guarded)
+        }
+      }
       const jsonWithByteLength = raw.jsonWithByteLength
       if (jsonWithByteLength !== undefined) {
         return jsonWithByteLength.call(raw).then(
@@ -287,6 +350,30 @@ export function readBodyFramed<T>(
   bodySchema?: object,
   formOrigins?: FormOrigins,
 ): Promise<T> {
+  const settled = readBodyFramedNow(
+    source,
+    maxBodyBytes,
+    protoPoisoning,
+    onParsed,
+    wrapResponse,
+    onError,
+    bodySchema,
+    formOrigins,
+  )
+  return settled instanceof Promise ? settled : Promise.resolve(settled)
+}
+
+/** {@link readBodyFramed} that answers synchronously when the source already holds its body. */
+export function readBodyFramedNow<T>(
+  source: RequestSource,
+  maxBodyBytes: number,
+  protoPoisoning: ProtoPoisoning,
+  onParsed: (parsed: unknown) => MaybePromise<T>,
+  wrapResponse: (response: Response | ResponseResult) => T,
+  onError: (err: unknown) => MaybePromise<T>,
+  bodySchema?: object,
+  formOrigins?: FormOrigins,
+): MaybePromise<T> {
   const contentType = headerOf(source, "content-type") ?? ""
   // A body a transport codec decoded keeps its media type; the JSON lane below takes its value.
   if (!isJsonMediaType(contentType) && preDecodedBody(source) === undefined) {
@@ -317,7 +404,7 @@ export function readBodyFramed<T>(
     return Promise.resolve(wrapResponse(plainError(415, "unsupported_media_type")))
   }
   try {
-    return readBoundedJsonSource(
+    return readBoundedJsonNow(
       source,
       maxBodyBytes,
       protoPoisoning,

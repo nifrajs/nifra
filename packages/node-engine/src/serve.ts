@@ -405,6 +405,13 @@ class RustBatchSource {
   }
 
   header(name: string): string | null {
+    if (name === "content-type" && this.contentType !== undefined) return this.contentType
+    if (name === "content-length" && (this.flags & FLAG_CHUNKED) === 0) {
+      if ((this.flags & FLAG_HAS_BODY) !== 0) return String(this.bodyLen)
+    }
+    if (name === "transfer-encoding") {
+      return (this.flags & FLAG_CHUNKED) !== 0 ? "chunked" : null
+    }
     const lower = name.toLowerCase()
     if (lower === "transfer-encoding") {
       return (this.flags & FLAG_CHUNKED) !== 0 ? "chunked" : null
@@ -786,6 +793,26 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         const type = outcome.kind === "json" ? JSON_CONTENT_TYPE : defaultBodyType
         const len = typeof body === "string" ? Buffer.byteLength(body) : (body?.byteLength ?? 0)
         if (
+          headers === undefined &&
+          cookies === undefined &&
+          !isHead &&
+          !isBodyless(status) &&
+          len <= MAX_BUFFERED_RESPONSE_BYTES &&
+          (outcome.kind === "json" || defaultBodyType === "text/plain; charset=utf-8")
+        ) {
+          const buf =
+            body === null || body === undefined
+              ? Buffer.alloc(0)
+              : typeof body === "string"
+                ? Buffer.from(body)
+                : Buffer.from(body.buffer, body.byteOffset, body.byteLength)
+          const tpl = outcome.kind === "json" ? jsonTemplate(status) : textTemplate(status)
+          uvServer.respondPrepared(source.requestId, tpl, buf)
+          source.headWritten = true
+          finish(source)
+          return
+        }
+        if (
           body !== null &&
           body !== undefined &&
           !isHead &&
@@ -952,7 +979,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       let contentType: string | null | undefined
       if ((flags & FLAG_HAS_BODY) !== 0) {
         contentType =
-          (flags & FLAG_HAS_CT) === 0 ? null : inData.toString("utf8", ctOff, ctOff + ctLen)
+          (flags & FLAG_HAS_CT) === 0 ? null : inData.toString("latin1", ctOff, ctOff + ctLen)
       }
 
       const isWsHandshake = checkUpgrade && methodIdx === 0 && (flags & FLAG_IS_WS_UPGRADE) !== 0
