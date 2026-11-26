@@ -143,7 +143,10 @@ export function serverFn<Input = void, Schema extends StandardSchemaV1 = Standar
 ): ServerFn<Input, InferOutput<Schema>, InferInput<Schema>>
 export function serverFn<Input = void>(
   config: ServerFnConfig<Input> & { readonly output?: undefined },
-  fn: (input: Input, context: Context) => MaybePromise<void | null | undefined | ServerFnControl>,
+  fn: (
+    input: Input,
+    context: Context,
+  ) => MaybePromise<null | undefined | ServerFnControl> | Promise<void> | void,
 ): ServerFn<Input, void>
 export function serverFn(
   config: ServerFnConfig<unknown>,

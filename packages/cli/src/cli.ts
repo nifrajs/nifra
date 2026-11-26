@@ -1399,13 +1399,42 @@ function manualFlagValue(argv: readonly string[], name: string): string | undefi
   return undefined
 }
 
+function rejectUnknownManualFlags(
+  args: readonly string[],
+  valueFlags: readonly string[],
+  booleanFlags: readonly string[],
+): void {
+  const valueSet = new Set(valueFlags)
+  const boolSet = new Set(booleanFlags)
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    if (arg === undefined || arg === "--") break
+    if (!arg.startsWith("-")) continue
+    const eq = arg.indexOf("=")
+    const name = eq === -1 ? arg : arg.slice(0, eq)
+    if (name === "--help" || name === "-h") continue
+    if (boolSet.has(name)) {
+      if (eq !== -1 && arg.slice(eq + 1) !== "true" && arg.slice(eq + 1) !== "false") {
+        throw new Error(`[nifra] ${name} takes no value`)
+      }
+      continue
+    }
+    if (valueSet.has(name)) {
+      if (eq === -1) index++
+      continue
+    }
+    throw new Error(`[nifra] unknown option: ${arg} - see \`nifra help\``)
+  }
+}
+
 async function main(): Promise<void> {
   const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
   const helpCommand = rawArgv[0]
   if (
     helpCommand !== undefined &&
-    MANUAL_HELP_COMMANDS.has(helpCommand) &&
-    (rawArgv.includes("--help") || rawArgv.includes("-h"))
+    ((MANUAL_HELP_COMMANDS.has(helpCommand) &&
+      (rawArgv.includes("--help") || rawArgv.includes("-h"))) ||
+      (helpCommand === "db" && (rawArgv[1] === "--help" || rawArgv[1] === "-h")))
   ) {
     console.log(manualHelp(helpCommand))
     return
@@ -1454,6 +1483,13 @@ async function main(): Promise<void> {
   // `mcp` runs a long-lived stdio server and loads the project lazily per-tool - it must not go through
   // the eager `loadApp` below (which would fail fast on a project that's API-only / not yet built).
   if (command === "mcp") {
+    try {
+      rejectUnknownManualFlags(argv.slice(1), [], [])
+    } catch (err) {
+      reportFailure(err, argv)
+      process.exitCode = 1
+      return
+    }
     // Bun passes what it loaded to every subprocess whatever `process.env` says now, so the session
     // moves to a copy of this process that never loads `.env` files.
     if (forgotten.length > 0) {
@@ -1477,26 +1513,39 @@ async function main(): Promise<void> {
   // `docs-mcp` runs the PUBLIC docs MCP over HTTP - project-independent (serves the bundled corpus), so
   // it self-hosts anywhere Bun runs (a VPS behind a reverse proxy, a container). Long-lived; no loadApp.
   if (command === "docs-mcp") {
-    const { handleMcpHttp } = await import("./mcp-http.ts")
-    const portArg = manualFlagValue(argv, "--port") ?? Bun.env.PORT ?? "8787"
-    const port = /^\d+$/.test(portArg) ? Number(portArg) : Number.NaN
-    if (!Number.isInteger(port) || port < 0 || port > 65535) {
-      throw new Error(`[nifra] invalid --port: ${port}`)
+    try {
+      rejectUnknownManualFlags(argv.slice(1), ["--port", "-p"], [])
+      const { handleMcpHttp } = await import("./mcp-http.ts")
+      const portArg =
+        manualFlagValue(argv, "--port") ?? manualFlagValue(argv, "-p") ?? Bun.env.PORT ?? "8787"
+      const port = /^\d+$/.test(portArg) ? Number(portArg) : Number.NaN
+      if (!Number.isInteger(port) || port < 0 || port > 65535) {
+        throw new Error(`[nifra] invalid --port: ${port}`)
+      }
+      const server = Bun.serve({ port, fetch: handleMcpHttp })
+      console.log(`nifra docs MCP (HTTP) → ${server.url}`)
+    } catch (err) {
+      reportFailure(err, argv)
+      process.exitCode = 1
     }
-    const server = Bun.serve({ port, fetch: handleMcpHttp })
-    console.log(`nifra docs MCP (HTTP) → ${server.url}`)
     return
   }
   // `learn` prints the guided build-an-app path (the human head of `nifra_learn`). Project-independent:
   // the path is static, so no project needs to load. `nifra learn` for the index, `nifra learn 3` for a step.
   if (command === "learn") {
-    const { renderLearnResult } = await import("./learn.ts")
-    const stepArg = argv[1]
-    console.log(
-      renderLearnResult(
-        stepArg !== undefined && /^\d+$/.test(stepArg) ? Number(stepArg) : undefined,
-      ),
-    )
+    try {
+      rejectUnknownManualFlags(argv.slice(1), [], [])
+      const { renderLearnResult } = await import("./learn.ts")
+      const stepArg = argv[1]
+      console.log(
+        renderLearnResult(
+          stepArg !== undefined && /^\d+$/.test(stepArg) ? Number(stepArg) : undefined,
+        ),
+      )
+    } catch (err) {
+      reportFailure(err, argv)
+      process.exitCode = 1
+    }
     return
   }
   // `frontend` prints the client-side footgun catalog (the human head of `nifra_frontend`).
@@ -1596,40 +1645,49 @@ async function main(): Promise<void> {
     return
   }
   if (command === "verify") {
-    const { runReleaseVerification } = await import("./release-verification.ts")
-    const ok = await runReleaseVerification(process.cwd(), {
-      mode: argv.includes("--release") ? "release" : "default",
-      json: argv.includes("--json"),
-    })
-    if (!ok) process.exitCode = 1
+    try {
+      rejectUnknownManualFlags(argv.slice(1), [], ["--release", "--json"])
+      const { runReleaseVerification } = await import("./release-verification.ts")
+      const ok = await runReleaseVerification(process.cwd(), {
+        mode: argv.includes("--release") ? "release" : "default",
+        json: argv.includes("--json"),
+      })
+      if (!ok) process.exitCode = 1
+    } catch (err) {
+      reportFailure(err, argv)
+      process.exitCode = 1
+    }
     return
   }
   // `init-agents` retrofits the agent files (.mcp.json, CLAUDE.md, AGENTS.md, …) into the cwd. It's a
   // pure file-writing command independent of the app loading, so dispatch it before the eager `loadApp`
   // (an existing app might be API-only or not yet built). It always succeeds unless a write throws.
   if (command === "init-agents") {
-    const { runInitAgents } = await import("./init-agents.ts")
-    await runInitAgents(process.cwd(), {
-      json: argv.includes("--json"),
-      force: argv.includes("--force"),
-      syncMcp: argv.includes("--sync-mcp"),
-    })
+    try {
+      rejectUnknownManualFlags(argv.slice(1), [], ["--force", "--sync-mcp", "--json"])
+      const { runInitAgents } = await import("./init-agents.ts")
+      await runInitAgents(process.cwd(), {
+        json: argv.includes("--json"),
+        force: argv.includes("--force"),
+        syncMcp: argv.includes("--sync-mcp"),
+      })
+    } catch (err) {
+      reportFailure(err, argv)
+      process.exitCode = 1
+    }
     return
   }
   if (command === "sdk") {
-    const language = manualFlagValue(argv, "--lang")
-    const out = manualFlagValue(argv, "--out")
-    if (language !== "python" && language !== "go") {
-      console.error("[nifra] sdk needs --lang python or --lang go")
-      process.exitCode = 1
-      return
-    }
-    if (out === "") {
-      console.error("[nifra] --out needs a file path")
-      process.exitCode = 1
-      return
-    }
     try {
+      rejectUnknownManualFlags(argv.slice(1), ["--lang", "--out"], ["--strict", "--json"])
+      const language = manualFlagValue(argv, "--lang")
+      const out = manualFlagValue(argv, "--out")
+      if (language !== "python" && language !== "go") {
+        throw new Error("[nifra] sdk needs --lang python or --lang go")
+      }
+      if (out === "") {
+        throw new Error("[nifra] --out needs a file path")
+      }
       const { runSdk } = await import("./sdk.ts")
       await runSdk(process.cwd(), {
         language,
@@ -1637,7 +1695,7 @@ async function main(): Promise<void> {
         ...(argv.includes("--strict") ? { strict: true } : {}),
       })
     } catch (err) {
-      console.error(formatCliError(err))
+      reportFailure(err, argv)
       process.exitCode = 1
     }
     exitIfHeldOpen(command)

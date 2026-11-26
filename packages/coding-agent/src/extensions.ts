@@ -363,6 +363,12 @@ export class ExtensionHost {
   }
 
   private async loadOne(path: string, digest: string): Promise<ExtensionActivation> {
+    const source = readFileSync(path, "utf8")
+    const trusted = new Set(this.options.trustedCapabilities ?? [])
+    const staticCapabilities = staticDeclaredCapabilities(source)
+    if (staticCapabilities !== undefined) {
+      assertTrustedCapabilities(path, staticCapabilities, trusted)
+    }
     // Reused activations never import again. New attempts need isolated module state, and a failed
     // evaluation can stay cached for the URL used by that attempt.
     const module = (await import(`${path}?revision=${++activationSequence}`)) as {
@@ -373,10 +379,7 @@ export class ExtensionHost {
     if (typeof module.default !== "function")
       throw new Error(`extension ${path} has no default factory`)
     const capabilities = Object.freeze([...(module.capabilities ?? [])])
-    const trusted = new Set(this.options.trustedCapabilities ?? [])
-    const denied = capabilities.find((capability) => !trusted.has(capability))
-    if (denied !== undefined)
-      throw new Error(`extension ${path} requires untrusted capability: ${denied}`)
+    assertTrustedCapabilities(path, capabilities, trusted)
     const registrations = createRegistrations()
     const own = this.context(registrations)
     let activation: ExtensionActivation | undefined
@@ -469,6 +472,39 @@ export class ExtensionHost {
         handlers.set(event, [...current, handler])
       },
     }
+  }
+}
+
+function staticDeclaredCapabilities(source: string): readonly string[] | undefined {
+  // Strip line and block comments so commented examples never pass or fail validation.
+  const stripped = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+  const match = /\bexport\s+(?:const|let|var)\s+capabilities(?:\s*:[^=]+)?\s*=\s*\[([^\]]*)\]/.exec(
+    stripped,
+  )
+  if (match === null) return undefined
+  const body = match[1] ?? ""
+  const entries = body
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+  const capabilities: string[] = []
+  for (const entry of entries) {
+    const literal = /^(?:"([^"\\]+)"|'([^'\\]+)'|`([^`$\\]+)`)$/.exec(entry)
+    if (literal === null) return undefined
+    const value = literal[1] ?? literal[2] ?? literal[3]
+    if (value !== undefined) capabilities.push(value)
+  }
+  return capabilities
+}
+
+function assertTrustedCapabilities(
+  path: string,
+  capabilities: readonly string[],
+  trusted: ReadonlySet<string>,
+): void {
+  const denied = capabilities.find((capability) => !trusted.has(capability))
+  if (denied !== undefined) {
+    throw new Error(`extension ${path} requires untrusted capability: ${denied}`)
   }
 }
 

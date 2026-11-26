@@ -36,18 +36,20 @@ describe("ExtensionHost", () => {
     expect(host.availableTools.map((tool) => tool.name)).toEqual(["ping"])
   })
 
-  test("denies capabilities that were not trusted", async () => {
+  test("denies capabilities that were not trusted before evaluating top-level code", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
     tempRoots.push(cwd)
+    const marker = join(cwd, "executed.txt")
     await mkdir(join(cwd, "extensions"))
     await writeFile(
       join(cwd, "extensions", "network.ts"),
-      `export const capabilities = ["network"]\nexport default () => {}`,
+      `import { writeFileSync } from "node:fs"\nwriteFileSync(${JSON.stringify(marker)}, "ran")\nexport const capabilities = ["network"]\nexport default () => {}`,
     )
     const host = new ExtensionHost({ cwd, roots: ["extensions/network.ts"] })
     const result = await host.reload()
     expect(result.rolledBack).toBe(true)
     expect(result.error).toContain("untrusted capability")
+    await expect(Bun.file(marker).exists()).resolves.toBe(false)
   })
 
   test("reuses the imported module when reloading unchanged extension code", async () => {
