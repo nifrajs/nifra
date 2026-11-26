@@ -123,13 +123,18 @@ describe("a source that already holds its body (jsonNow)", () => {
     ).toBe(413)
   })
 
+  const hasOwnProto = (value: unknown): boolean => {
+    expect(typeof value).toBe("object")
+    return typeof value === "object" && value !== null && Object.hasOwn(value, "__proto__")
+  }
+
   test("prototype poisoning follows the app's policy", () => {
     const poison = (): Parsed => ({ value: poisoned(), byteLength: 7 })
     expect(continued(source(declared, { jsonNow: poison }), 64, "reject")).toBe(400)
     const stripped = continued(source(declared, { jsonNow: poison }), 64, "strip")
-    expect(Object.hasOwn(stripped as object, "__proto__")).toBe(false)
+    expect(hasOwnProto(stripped)).toBe(false)
     const kept = continued(source(declared, { jsonNow: poison }), 64, "ignore")
-    expect(Object.hasOwn(kept as object, "__proto__")).toBe(true)
+    expect(hasOwnProto(kept)).toBe(true)
   })
 
   test("an unparsable Content-Length is refused before the body is read", () => {

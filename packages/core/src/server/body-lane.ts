@@ -49,6 +49,29 @@ const fromBuffer =
 // untouched, runtime-framed request, or decodes the checked bytes below for other sources.
 const nativeJsonKeepsBom = "Deno" in globalThis
 
+/** The shared tail of the parsed-JSON lanes: the byte-count refusal, the poisoning guard, then the
+ * continuation. Explicit parameters, not a closure, so a POST allocates nothing for it. */
+function settleParsed<T>(
+  value: unknown,
+  byteLength: number,
+  length: number,
+  maxBytes: number,
+  protoPoisoning: ProtoPoisoning,
+  onResult: JsonResultContinuation<T> | undefined,
+): unknown {
+  if (byteLength > length || byteLength > maxBytes) {
+    const refused = plainError(413, "payload_too_large")
+    return onResult === undefined ? refused : onResult(refused)
+  }
+  let guarded: unknown
+  try {
+    guarded = guardParsedValue(value, protoPoisoning)
+  } catch {
+    guarded = INVALID_JSON()
+  }
+  return onResult === undefined ? guarded : onResult(guarded)
+}
+
 /** Read a JSON source with the declared-length precheck, delivered-byte recheck, streaming cap, and
  * prototype-poisoning guard in one lane. */
 export function readBoundedJsonSource(
@@ -173,37 +196,22 @@ export function readBoundedJsonNow<T>(
           return onResult === undefined ? Promise.resolve(INVALID_JSON()) : onResult(INVALID_JSON())
         }
         if (ready !== undefined) {
-          if (ready.byteLength > length || ready.byteLength > maxBytes) {
-            return onResult === undefined
-              ? Promise.resolve(plainError(413, "payload_too_large"))
-              : onResult(plainError(413, "payload_too_large"))
-          }
-          let guarded: unknown
-          try {
-            guarded = guardParsedValue(ready.value, protoPoisoning)
-          } catch {
-            guarded = INVALID_JSON()
-          }
-          return onResult === undefined ? Promise.resolve(guarded) : onResult(guarded)
+          const settled = settleParsed(
+            ready.value,
+            ready.byteLength,
+            length,
+            maxBytes,
+            protoPoisoning,
+            onResult,
+          )
+          return onResult === undefined ? Promise.resolve(settled) : settled
         }
       }
       const jsonWithByteLength = raw.jsonWithByteLength
       if (jsonWithByteLength !== undefined) {
         return jsonWithByteLength.call(raw).then(
-          ({ value, byteLength }) => {
-            if (byteLength > length || byteLength > maxBytes) {
-              return onResult === undefined
-                ? plainError(413, "payload_too_large")
-                : onResult(plainError(413, "payload_too_large"))
-            }
-            let guarded: unknown
-            try {
-              guarded = guardParsedValue(value, protoPoisoning)
-            } catch {
-              guarded = INVALID_JSON()
-            }
-            return onResult === undefined ? guarded : onResult(guarded)
-          },
+          ({ value, byteLength }) =>
+            settleParsed(value, byteLength, length, maxBytes, protoPoisoning, onResult),
           () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
         )
       }
@@ -340,26 +348,8 @@ export const crossSiteFormRefused = (
  * their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and
  * not one of `formOrigins`, is refused with `403` before the body is read.
  */
-export function readBodyFramed<T>(
-  source: RequestSource,
-  maxBodyBytes: number,
-  protoPoisoning: ProtoPoisoning,
-  onParsed: (parsed: unknown) => MaybePromise<T>,
-  wrapResponse: (response: Response | ResponseResult) => T,
-  onError: (err: unknown) => MaybePromise<T>,
-  bodySchema?: object,
-  formOrigins?: FormOrigins,
-): Promise<T> {
-  const settled = readBodyFramedNow(
-    source,
-    maxBodyBytes,
-    protoPoisoning,
-    onParsed,
-    wrapResponse,
-    onError,
-    bodySchema,
-    formOrigins,
-  )
+export function readBodyFramed<T>(...args: Parameters<typeof readBodyFramedNow<T>>): Promise<T> {
+  const settled = readBodyFramedNow<T>(...args)
   return settled instanceof Promise ? settled : Promise.resolve(settled)
 }
 
