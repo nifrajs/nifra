@@ -134,6 +134,8 @@ interface ExtensionActivation {
   readonly extension: CodingAgentExtension
   readonly digest: string
   readonly registrations: ExtensionRegistrations
+  /** The host's live registry while this activation is committed: where a late registration also goes. */
+  live: ExtensionContext | undefined
 }
 
 let activationSequence = 0
@@ -235,8 +237,9 @@ export class ExtensionHost {
       })
     const next: ExtensionActivation[] = []
     const created: ExtensionActivation[] = []
-    const registrations = createRegistrations()
-    const staging = this.context(registrations)
+    const staging = this.context(createRegistrations())
+    const committed = createRegistrations()
+    const live = this.context(committed)
     try {
       if (pathError !== undefined) throw new Error(pathError)
       for (const path of paths) {
@@ -255,6 +258,9 @@ export class ExtensionHost {
         replayRegistrations(activation.registrations, staging)
         next.push(activation)
       }
+      // Replayed again with no await between: a retained extension may have registered more while
+      // a later one was loading.
+      for (const activation of next) replayRegistrations(activation.registrations, live)
     } catch (error) {
       for (const { extension } of created.reverse()) {
         try {
@@ -275,9 +281,11 @@ export class ExtensionHost {
     }
 
     const previous = this.activations
+    for (const activation of previous) activation.live = undefined
+    for (const activation of next) activation.live = live
     this.activations = next
     this.active = Object.freeze(next.map(({ extension }) => extension))
-    this.registrations = registrations
+    this.registrations = committed
     this.revision = `${Date.now().toString(36)}-${next.length}`
     for (const activation of previous) {
       if (next.includes(activation)) continue
@@ -299,10 +307,19 @@ export class ExtensionHost {
   close(): Promise<void> {
     return this.runLifecycle(async () => {
       const active = this.active
+      for (const activation of this.activations) activation.live = undefined
       this.active = []
       this.activations = []
       this.registrations = createRegistrations()
-      for (const extension of active) await extension.dispose?.()
+      const failures: unknown[] = []
+      for (const extension of active) {
+        try {
+          await extension.dispose?.()
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      if (failures.length > 0) throw failures[0]
     })
   }
 
@@ -354,7 +371,37 @@ export class ExtensionHost {
     if (denied !== undefined)
       throw new Error(`extension ${path} requires untrusted capability: ${denied}`)
     const registrations = createRegistrations()
-    const result = await module.default(this.context(registrations))
+    const own = this.context(registrations)
+    let activation: ExtensionActivation | undefined
+    // The factory keeps these callbacks. The live registry goes first, so a name another extension
+    // holds is refused before this one records it.
+    const result = await module.default({
+      cwd: own.cwd,
+      registerCommand: (name, handler) => {
+        activation?.live?.registerCommand(name, handler)
+        own.registerCommand(name, handler)
+      },
+      registerTool: (tool) => {
+        activation?.live?.registerTool(tool)
+        own.registerTool(tool)
+      },
+      registerWorkflow: (name, workflow) => {
+        activation?.live?.registerWorkflow(name, workflow)
+        own.registerWorkflow(name, workflow)
+      },
+      registerSubagent: (role) => {
+        activation?.live?.registerSubagent(role)
+        own.registerSubagent(role)
+      },
+      registerProvider: (provider) => {
+        activation?.live?.registerProvider(provider)
+        own.registerProvider(provider)
+      },
+      on: (event, handler) => {
+        activation?.live?.on(event, handler)
+        own.on(event, handler)
+      },
+    })
     const extension = Object.freeze({
       id: module.id ?? path,
       path,
@@ -363,7 +410,8 @@ export class ExtensionHost {
         ? { dispose: result.dispose }
         : {}),
     })
-    return { extension, digest, registrations }
+    activation = { extension, digest, registrations, live: undefined }
+    return activation
   }
 
   private context(registrations = this.registrations): ExtensionContext {

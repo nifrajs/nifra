@@ -354,3 +354,16 @@ test("a JWT is redacted wherever its header holds another token start", () => {
   ] as const)
     expect([written, redacted(written)]).toEqual([written, `${kept}[REDACTED]`])
 })
+
+test("a sensitive key covers an Error's own name and message", () => {
+  const redacted = (keyParts: string[]) =>
+    redactLogFields({ error: new Error("private detail") }, { keyParts }).error
+  expect(redacted(["message"])).toMatchObject({
+    name: "Error",
+    message: "[REDACTED]",
+  })
+  expect(redacted(["name"])).toMatchObject({
+    name: "[REDACTED]",
+    message: "private detail",
+  })
+})

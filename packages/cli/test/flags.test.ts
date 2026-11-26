@@ -333,10 +333,10 @@ test("arguments typed before the command follow it instead of being dropped", ()
   const runtime = ["/usr/local/bin/bun", "/app/node_modules/.bin/nifra"]
   expect(commandArgv([...runtime, "--json", "check"], 3)).toEqual(["check", "--json"])
   expect(commandArgv([...runtime, "--env-file", ".env", "upgrade", "4.0.0"], 4)).toEqual([
-    "upgrade",
-    "4.0.0",
     "--env-file",
     ".env",
+    "upgrade",
+    "4.0.0",
   ])
   expect(commandArgv([...runtime, "--json", "run", "--", "x"], 3)).toEqual([
     "run",
@@ -355,4 +355,27 @@ test("--prerender is a build flag with a value", () => {
   expect(parseFlags(["--prerender", "/,/about"]).prerender).toBe("/,/about")
   expect(parseFlags(["--prerender=/", "--target", "static"]).prerender).toBe("/")
   expect(() => parseFlags(["--prerender"])).toThrow("--prerender needs a value")
+})
+
+test("env-file flags keep command-line order, and the script path never reaches the command", () => {
+  const flags = [["--env-file", "a.env"], ["--env-file=a.env"]]
+  for (const flag of flags) {
+    for (const before of [
+      ["bun", "/app/cli.ts", ...flag],
+      ["bun", ...flag, "/app/cli.ts"],
+      ["bun", ...flag],
+      [...flag],
+    ]) {
+      const values = [...before, "check", "--env-file=b.env"]
+      expect([values, commandArgv(values, before.length)]).toEqual([
+        values,
+        [...flag, "check", "--env-file=b.env"],
+      ])
+    }
+  }
+  expect(commandArgv(["bun", "--env-file=a.env", "--json", "check"], 3)).toEqual([
+    "--env-file=a.env",
+    "check",
+    "--json",
+  ])
 })

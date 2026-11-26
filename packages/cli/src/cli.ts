@@ -1820,22 +1820,35 @@ function findCliCommand(values: readonly string[]): number {
 /**
  * The command vector from one runtime argv: the command, then its arguments. Arguments typed before
  * the command (`nifra --json check`) follow the command's own, ahead of any `--`, rather than being
- * dropped. A leading env-file flag also belongs to the CLI when Bun omits the script path.
+ * dropped. Env-file flags go first instead, so they keep command-line order and a later file still
+ * wins. A leading one also belongs to the CLI when Bun omits the script path.
  */
 export function commandArgv(values: readonly string[], commandIndex: number): readonly string[] {
   const command = values.slice(commandIndex)
-  const script = values[1]
-  const envFileIndex = values
+  const runtimeEnvFile = values
     .slice(0, 2)
     .findIndex((value) => value === "--env-file" || value.startsWith("--env-file="))
-  const leadingStart = envFileIndex === -1 ? 2 : envFileIndex
-  if (commandIndex <= leadingStart || script === undefined) return command
-  if (script.startsWith("-") && envFileIndex === -1) return command
-  const leading = values.slice(leadingStart, commandIndex)
+  // With no env-file flag ahead of it, index 1 is the script, or a runtime flag whose neighbours
+  // are the runtime's own.
+  if (runtimeEnvFile === -1 && (values[1] === undefined || values[1].startsWith("-")))
+    return command
+
+  const envFiles: string[] = []
+  let others: string[] = []
+  let scriptAhead = runtimeEnvFile !== -1
+  for (let index = scriptAhead ? runtimeEnvFile : 2; index < commandIndex; index++) {
+    const value = values[index] ?? ""
+    if (value === "--env-file") envFiles.push(...values.slice(index, ++index + 1))
+    else if (value.startsWith("--env-file=")) envFiles.push(value)
+    else if (scriptAhead && !value.startsWith("-")) {
+      // The script path: it and the runtime flags before it are not the caller's.
+      scriptAhead = false
+      others = []
+    } else others.push(value)
+  }
   const separator = command.indexOf("--")
-  return separator === -1
-    ? [...command, ...leading]
-    : [...command.slice(0, separator), ...leading, ...command.slice(separator)]
+  const end = separator === -1 ? command.length : separator
+  return [...envFiles, ...command.slice(0, end), ...others, ...command.slice(end)]
 }
 
 function cliArgv(): readonly string[] {

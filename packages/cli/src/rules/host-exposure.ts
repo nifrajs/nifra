@@ -43,12 +43,55 @@ type Bindings = ReadonlyMap<string, readonly TSApi.Expression[]>
  * What a spread can copy from, `null` standing for a branch that writes nothing, or `undefined` when
  * one of them cannot be read.
  */
+/** `node` without the wrappers that change only its type: parentheses, `as`, `satisfies`, `!`. */
+function unwrapped(ts: typeof TSApi, node: TSApi.Expression): TSApi.Expression {
+  let inner = node
+  while (isTypeWrapper(ts, inner)) inner = inner.expression
+  return inner
+}
+
+function isTypeWrapper(
+  ts: typeof TSApi,
+  node: TSApi.Node,
+): node is
+  | TSApi.ParenthesizedExpression
+  | TSApi.AsExpression
+  | TSApi.SatisfiesExpression
+  | TSApi.NonNullExpression {
+  return (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
+  )
+}
+
+/** Whether `node` only names a member (`request.options`, `{ options: 1 }`) and refers to no binding. */
+function namesMember(ts: typeof TSApi, node: TSApi.Identifier): boolean {
+  const parent = node.parent
+  if (ts.isBindingElement(parent)) return parent.propertyName === node
+  if (ts.isQualifiedName(parent)) return parent.right === node
+  return (
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isPropertyAssignment(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isEnumMember(parent)) &&
+    parent.name === node
+  )
+}
+
 function spreadSources(
   ts: typeof TSApi,
   from: TSApi.Expression,
   bindings: Bindings,
   seen: ReadonlySet<TSApi.Node>,
 ): readonly (TSApi.ObjectLiteralExpression | null)[] | undefined {
+  if (isTypeWrapper(ts, from)) return spreadSources(ts, from.expression, bindings, seen)
   if (ts.isObjectLiteralExpression(from)) return [from]
   if (
     from.kind === ts.SyntaxKind.NullKeyword ||
@@ -56,8 +99,7 @@ function spreadSources(
   )
     return [null]
   let branches: readonly TSApi.Expression[] | undefined
-  if (ts.isParenthesizedExpression(from)) branches = [from.expression]
-  else if (ts.isConditionalExpression(from)) branches = [from.whenTrue, from.whenFalse]
+  if (ts.isConditionalExpression(from)) branches = [from.whenTrue, from.whenFalse]
   else if (
     ts.isBinaryExpression(from) &&
     from.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
@@ -104,7 +146,9 @@ function hostSetting(
     } else if (prop.name !== undefined && ts.isComputedPropertyName(prop.name)) {
       setting = false
     } else if (propertyKey(ts, prop) === HOST_OPTION) {
-      setting = ts.isPropertyAssignment(prop) && prop.initializer.kind === ts.SyntaxKind.TrueKeyword
+      setting =
+        ts.isPropertyAssignment(prop) &&
+        unwrapped(ts, prop.initializer).kind === ts.SyntaxKind.TrueKeyword
     }
   }
   return setting
@@ -191,11 +235,10 @@ function unescapedOptions(
 ): Bindings {
   const options = new Map(constants)
   const visit = (node: TSApi.Node): void => {
-    if (ts.isIdentifier(node) && options.has(node.text)) {
+    if (ts.isIdentifier(node) && options.has(node.text) && !namesMember(ts, node)) {
       let value: TSApi.Node = node
       while (
-        ts.isParenthesizedExpression(value.parent) ||
-        ts.isSatisfiesExpression(value.parent) ||
+        isTypeWrapper(ts, value.parent) ||
         (ts.isConditionalExpression(value.parent) && value !== value.parent.condition) ||
         (ts.isBinaryExpression(value.parent) &&
           value.parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
@@ -235,8 +278,7 @@ function hasHostGuard(
   while (receiver !== undefined && !seen.has(receiver)) {
     seen.add(receiver)
     if (ts.isIdentifier(receiver)) receiver = constants.get(receiver.text)?.[0]
-    else if (ts.isParenthesizedExpression(receiver) || ts.isSatisfiesExpression(receiver))
-      receiver = receiver.expression
+    else if (isTypeWrapper(ts, receiver)) receiver = receiver.expression
     else if (ts.isCallExpression(receiver)) {
       const callee = receiver.expression
       if (isServerFactory(ts, callee, names)) {

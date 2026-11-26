@@ -41,11 +41,14 @@ interface Reader {
   readonly read: (input: string) => unknown
 }
 
-/** `unit` repeated to about `n` characters, between `head` and `tail`. */
+/** `unit` repeated to at most `n` characters, between `head` and `tail`: rounding up would carry a
+ * shape past its reader's cap, which then refuses it unread. */
 const fill =
   (unit: string, head = "", tail = ""): Shape =>
   (n) =>
-    head + unit.repeat(Math.max(1, Math.ceil((n - head.length - tail.length) / unit.length))) + tail
+    head +
+    unit.repeat(Math.max(1, Math.floor((n - head.length - tail.length) / unit.length))) +
+    tail
 
 const cpu = (): number => {
   const used = process.cpuUsage()
@@ -181,7 +184,7 @@ const READERS: readonly Reader[] = [
     cap: BODY_CAP,
     shapes: {
       "many keys": (n) =>
-        `{${Array.from({ length: Math.max(1, Math.floor(n / 8)) }, (_, i) => `"k${i}":0`).join(",")}}`,
+        `{${Array.from({ length: Math.max(1, Math.floor(n / 16)) }, (_, i) => `"k${i}":0`).join(",")}}`,
       "a long array": fill("0,", "[", "0]"),
       "escapes in a string": fill("\\u0041", '"', '"'),
       "repeated proto keys": fill('"__proto__":0,', "{", '"a":0}'),
@@ -364,6 +367,17 @@ const READERS: readonly Reader[] = [
       ),
   },
 ]
+
+test("no shape outgrows its reader's cap", () => {
+  const over = READERS.flatMap(({ name, cap, shapes }) =>
+    cap === undefined
+      ? []
+      : Object.entries(shapes)
+          .filter(([, shape]) => shape(cap).length > cap)
+          .map(([label, shape]) => `${name}, ${label}: ${shape(cap).length} > ${cap}`),
+  )
+  expect(over).toEqual([])
+})
 
 describe("input scaling", () => {
   for (const reader of READERS) {

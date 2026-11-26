@@ -265,3 +265,40 @@ describe("nifra.check.json hostTopology", () => {
     await rm(dir, { recursive: true, force: true })
   })
 })
+
+describe("NF-S010 a guard traced through types and unrelated names", () => {
+  const WRAPPERS = ["x", "(x)", "x as const", "x!", "x satisfies object", "(x as any)!"]
+  const listen = "\nawait app.listen(443, { tls })"
+
+  test("a type-only wrapper changes nothing, wherever the guard passes through", async () => {
+    for (const wrapper of WRAPPERS) {
+      const wrap = (inner: string) => wrapper.replace("x", () => inner)
+      for (const body of [
+        `const o = ${wrap("{ validateHost: true }")}\nconst app = server(o)`,
+        `const o = { validateHost: true }\nconst app = server(${wrap("o")})`,
+        `const app = server(${wrap("{ validateHost: true }")})`,
+        `const app = server({ validateHost: ${wrap("true")} })`,
+        `const app = ${wrap("server({ validateHost: true })")}`,
+        `const o = { validateHost: true }\nconst app = server({ ...${wrap("o")} })`,
+      ])
+        expect([body, await one(`${CORE}${body}${listen}`)]).toEqual([body, []])
+      const off = `const app = server(${wrap("{ validateHost: false }")})`
+      expect([off, (await one(`${CORE}${off}${listen}`)).length]).toEqual([off, 1])
+    }
+  })
+
+  test("a member that shares the options' name does not touch them", async () => {
+    const guarded = `${CORE}const options = { validateHost: true }\nconst app = server(options)\n`
+    for (const use of [
+      "log(request.options)",
+      "log({ options: 1 })",
+      "class A { options = 1 }",
+      "class B { options() {} }",
+      "interface C { options: number }",
+      "const { options: renamed } = request",
+    ])
+      expect([use, await one(`${guarded}${use}${listen}`)]).toEqual([use, []])
+    for (const use of ["mutate(options)", "log({ options })", "options.validateHost = false"])
+      expect([use, (await one(`${guarded}${use}${listen}`)).length]).toEqual([use, 1])
+  })
+})

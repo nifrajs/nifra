@@ -115,11 +115,10 @@ function redactValue(value: unknown, seen: WeakSet<object>, config: RedactConfig
   seen.add(value)
   if (Array.isArray(value)) return value.map((item) => redactValue(item, seen, config))
   const out: Record<string, unknown> = Object.create(null)
-  if (value instanceof Error) {
-    out.name = redactString(value.name, config)
-    out.message = redactString(value.message, config)
-  }
-  for (const [key, val] of Object.entries(value)) {
+  const entries = Object.entries(value)
+  // An Error's own name and message are not enumerable.
+  if (value instanceof Error) entries.unshift(["name", value.name], ["message", value.message])
+  for (const [key, val] of entries) {
     // A sensitive key wins outright (don't scan it) - the whole value is replaced.
     const lower = key.toLowerCase()
     out[key] = config.keyParts.some((part) => lower.includes(part))

@@ -419,15 +419,18 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-effect-ledger": 43.6,
   // The same `listen()` disposal crossed the mcp and sse caps (41,496 B and 42,097 B on the first cut,
   // Bun 1.4.4). Each takes the next 0.1 KiB step.
-  "nifra-mcp": 41.8,
+  // Logging an Error's name and message through the sensitive-key rules (Bun 1.4.4): mcp 42,814 B.
+  "nifra-mcp": 41.9,
   // The kernel's idempotency gate dispatch: 36,758 -> 36,764 B, over a 3.6 B margin (Bun 1.4.3).
-  "nifra-sse": 42.4,
+  // Logging an Error's name and message through the sensitive-key rules (Bun 1.4.4): sse 43,428 B.
+  "nifra-sse": 42.5,
   // Suppressing custom error names in production brings this row to 43,113 B (Bun 1.4.4).
   "nifra-valibot": 42.6,
   // Merged ordinary-input and own-only TypeBox validation: 69,894 B measured for typebox-t (Bun 1.4.4).
   // The WebSocket topic adapter adds 0.3 KiB to the TypeBox body-schema variant.
   // The same `listen()` disposal: typebox-t 70,670 B (Bun 1.4.4).
-  "nifra-typebox-t": 70.3,
+  // Logging an Error's name and message through the sensitive-key rules (Bun 1.4.4): typebox-t 71,993 B.
+  "nifra-typebox-t": 70.4,
   // t.integer() bounded to the safe-integer range: typebox-form 68,734 -> 68,765 B (Bun 1.4.4).
   // A derive result that cannot be merged answered through the fused lanes' error path, and a JSON
   // body continuation run outside the parse guard: typebox-form 73,082 -> 73,119 B (Bun 1.4.4); only

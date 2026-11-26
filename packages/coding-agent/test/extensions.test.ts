@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ExtensionHost } from "../src/extensions.ts"
+import { type ExtensionContext, ExtensionHost } from "../src/extensions.ts"
 
 const tempRoots: string[] = []
 
@@ -199,5 +200,66 @@ describe("ExtensionHost", () => {
     await expect(host.reload()).resolves.toMatchObject({ rolledBack: false })
     expect(host.availableSubagents.map((role) => role.name)).toEqual(["reviewer"])
     expect(host.provider("local")?.description).toBe("Local model")
+  })
+
+  test("a callback the factory kept registers into the live host, across reloads", async () => {
+    const unused: Omit<ExtensionContext, "cwd"> = {
+      registerCommand: () => {},
+      registerTool: () => {},
+      registerWorkflow: () => {},
+      registerSubagent: () => {},
+      registerProvider: () => {},
+      on: () => {},
+    }
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    await writeFile(
+      join(cwd, "late.ts"),
+      `export default ({ registerCommand, on }) => {
+         let installed = 0
+         registerCommand("install", () => {
+           const name = "extra" + ++installed
+           registerCommand(name, () => name)
+           on("ping", (payload) => payload.seen.push(name))
+         })
+       }`,
+    )
+    const host = new ExtensionHost({ cwd, roots: ["late.ts"] })
+    const install = () => host.command("install")?.("", { ...unused, cwd })
+    const pinged = async () => {
+      const seen: string[] = []
+      await host.emit("ping", { seen })
+      return seen
+    }
+    try {
+      await host.reload()
+      install()
+      expect(host.availableCommands).toEqual(["extra1", "install"])
+      expect(await pinged()).toEqual(["extra1"])
+      await host.reload()
+      install()
+      expect(host.availableCommands).toEqual(["extra1", "extra2", "install"])
+      expect(await pinged()).toEqual(["extra1", "extra2"])
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("close runs every disposer and reports the first failure", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    await writeFile(
+      join(cwd, "bad.ts"),
+      'export default () => ({ dispose: () => { throw new Error("stuck") } })',
+    )
+    await writeFile(
+      join(cwd, "good.ts"),
+      `import { writeFileSync } from "node:fs"
+       export default ({ cwd }) => ({ dispose: () => writeFileSync(cwd + "/closed", "") })`,
+    )
+    const host = new ExtensionHost({ cwd, roots: ["bad.ts", "good.ts"] })
+    expect((await host.reload()).rolledBack).toBe(false)
+    await expect(host.close()).rejects.toThrow("stuck")
+    expect(existsSync(join(cwd, "closed"))).toBe(true)
   })
 })
