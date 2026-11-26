@@ -109,8 +109,20 @@ export function machineSurfaceResponse(body: string, contentType: string): Respo
   })
 }
 
+function pathnameOf(url: string): string {
+  const scheme = url.indexOf("://")
+  const pathStart = scheme === -1 ? 0 : url.indexOf("/", scheme + 3)
+  if (pathStart === -1) return "/"
+  let end = url.length
+  const query = url.indexOf("?", pathStart)
+  if (query !== -1) end = query
+  const hash = url.indexOf("#", pathStart)
+  if (hash !== -1 && hash < end) end = hash
+  return url.slice(pathStart, end)
+}
+
 export function machineSurfaceFor(request: Request): Response | undefined {
-  const pathname = new URL(request.url).pathname
+  const pathname = pathnameOf(request.url)
   if (pathname === "/agents.md")
     return machineSurfaceResponse(AGENTS_MD, "text/markdown; charset=utf-8")
   if (pathname === "/.well-known/mcp")

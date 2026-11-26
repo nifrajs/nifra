@@ -86,40 +86,49 @@ export function createWebSocketHub<Env = unknown>(
       this.#env = env
     }
 
-    async fetch(request: Request): Promise<Response> {
+    fetch(request: Request): Promise<Response> {
       const platform = {
         env: this.#env,
         waitUntil: (promise: Promise<unknown>) => {
           this.#state.waitUntil?.(promise)
         },
       }
-      const outcome = await app.resolveWebSocketUpgrade(request, platform)
-      if (outcome.kind === "reject") return outcome.response
-      if (outcome.kind !== "upgrade") {
-        // Not a WebSocket route: its HTTP route answers, with this same request so the app's
-        // onRequest hooks, which the handshake check already ran, do not run again.
-        return app.fetch === undefined
-          ? new Response("Upgrade Required", { status: 426 })
-          : app.fetch(request, platform)
+      const finish = (outcome: WebSocketUpgradeOutcome): Response | Promise<Response> => {
+        if (outcome.kind === "reject") return outcome.response
+        if (outcome.kind !== "upgrade") {
+          // Not a WebSocket route: its HTTP route answers, with this same request so the app's
+          // onRequest hooks, which the handshake check already ran, do not run again.
+          return app.fetch === undefined
+            ? new Response("Upgrade Required", { status: 426 })
+            : app.fetch(request, platform)
+        }
+        const Pair = (globalThis as { WebSocketPair?: WebSocketPairCtor }).WebSocketPair
+        if (Pair === undefined) {
+          return new Response("WebSocketPair unavailable (not a Workers runtime)", { status: 500 })
+        }
+        const pair = new Pair()
+        const server = pair[1]
+        server.accept()
+        // The socket + the app's pub/sub registry both live in this DO isolate, so a broadcast from any
+        // connection's `message`/`open` (via `app.publish`) reaches every client held here.
+        attachWebSocket(server, outcome.handler, outcome.data, {
+          openNow: true,
+          pubsub: outcome.pubsub,
+          ...(outcome.maxPayloadBytes === undefined
+            ? {}
+            : { maxPayloadBytes: outcome.maxPayloadBytes }),
+        })
+        // `webSocket` is a Workers-only `ResponseInit` field, and 101 is only valid on Workers.
+        return new Response(null, { status: 101, webSocket: pair[0] } as ResponseInit)
       }
-      const Pair = (globalThis as { WebSocketPair?: WebSocketPairCtor }).WebSocketPair
-      if (Pair === undefined) {
-        return new Response("WebSocketPair unavailable (not a Workers runtime)", { status: 500 })
+      try {
+        const outcome = app.resolveWebSocketUpgrade(request, platform)
+        if (outcome instanceof Promise) return outcome.then(finish)
+        const response = finish(outcome)
+        return response instanceof Promise ? response : Promise.resolve(response)
+      } catch (err) {
+        return Promise.reject(err)
       }
-      const pair = new Pair()
-      const server = pair[1]
-      server.accept()
-      // The socket + the app's pub/sub registry both live in this DO isolate, so a broadcast from any
-      // connection's `message`/`open` (via `app.publish`) reaches every client held here.
-      attachWebSocket(server, outcome.handler, outcome.data, {
-        openNow: true,
-        pubsub: outcome.pubsub,
-        ...(outcome.maxPayloadBytes === undefined
-          ? {}
-          : { maxPayloadBytes: outcome.maxPayloadBytes }),
-      })
-      // `webSocket` is a Workers-only `ResponseInit` field, and 101 is only valid on Workers.
-      return new Response(null, { status: 101, webSocket: pair[0] } as ResponseInit)
     }
   }
 }

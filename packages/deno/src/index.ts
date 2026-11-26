@@ -94,6 +94,8 @@ export interface DenoServer {
 
 /** Agrees with core's `SERVER_LIFECYCLE` by the string alone; the stop tests fail on drift. */
 const SERVER_LIFECYCLE = Symbol.for("@nifrajs/core/server-lifecycle")
+/** Registered symbol so core's JSON lane keeps Deno's fused parse without importing core. */
+const TRUSTED_FRAMING = Symbol.for("nifra.body.trustedFraming")
 
 /** The app's stop hooks when it is a nifra server; a plain `{ fetch }` handler has none. */
 function lifecycleOf(app: object): (phase: "stopping" | "stopped") => Promise<void> {
@@ -133,17 +135,21 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
   const first = options.static
 
+  function releaseOne(): void {
+    activeRequests -= 1
+    if (activeRequests !== 0) return
+    const resolvers = idleResolvers
+    idleResolvers = []
+    for (const resolve of resolvers) resolve()
+  }
+
   function beginRequest(): () => void {
     activeRequests += 1
     let released = false
     return () => {
       if (released) return
       released = true
-      activeRequests -= 1
-      if (activeRequests !== 0) return
-      const resolvers = idleResolvers
-      idleResolvers = []
-      for (const resolve of resolvers) resolve()
+      releaseOne()
     }
   }
 
@@ -177,10 +183,15 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       if (closed) return serverClosing()
       // A request counts until Deno has sent its whole response, not until the handler returns: a
       // streamed body is still in flight then, and once shutdown() starts nothing can force-close it.
-      const release = beginRequest()
       const completed = info.completed
-      if (completed !== undefined) completed.then(release, release)
-      const handled = completed === undefined ? release : noop
+      let handled: () => void
+      if (completed !== undefined) {
+        activeRequests += 1
+        completed.then(releaseOne, releaseOne)
+        handled = noop
+      } else {
+        handled = beginRequest()
+      }
       return first === undefined
         ? route(request, info, handled)
         : front(first, request, info, handled)
@@ -193,6 +204,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     info: DenoRequestInfo,
     handled: () => void,
   ): Response | Promise<Response> {
+    const clientIp = info.remoteAddr?.hostname
+    const platform = clientIp === undefined ? undefined : { clientIp }
     // WebSocket upgrade for a registered `app.ws()` route → Deno.upgradeWebSocket. The shared
     // resolveWebSocketUpgrade seam runs the route's upgrade() guard; pass falls through to HTTP.
     //
@@ -205,21 +218,20 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     // the adapter within a few percent of a hand-written `Deno.serve` handler.
     if (resolveWs !== undefined) {
       try {
-        const clientIp = info.remoteAddr?.hostname
-        const outcome = resolveWs(request, clientIp === undefined ? undefined : { clientIp })
+        const outcome = resolveWs(request, platform)
         if (outcome instanceof Promise) {
           return settleRequest(
-            outcome.then((o) => finishWs(o, request, info)).catch(() => internalError()),
+            outcome.then((o) => finishWs(o, request, platform)).catch(() => internalError()),
             handled,
           )
         }
-        return settleRequest(finishWs(outcome, request, info), handled)
+        return settleRequest(finishWs(outcome, request, platform), handled)
       } catch {
         handled()
         return internalError()
       }
     }
-    return settleRequest(runFetch(request, info), handled)
+    return settleRequest(runFetch(request, platform), handled)
   }
 
   /** The `static` handler's answer, or the app's when it has none. */
@@ -250,9 +262,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   function finishWs(
     o: WsUpgradeOutcome,
     request: Request,
-    info: { readonly remoteAddr?: { readonly hostname?: string } },
+    platform: { readonly clientIp: string } | undefined,
   ): Response | Promise<Response> {
-    if (o.kind === "pass") return runFetch(request, info)
+    if (o.kind === "pass") return runFetch(request, platform)
     if (o.kind === "reject") return o.response
     const { socket, response } = Deno.upgradeWebSocket(request)
     attachDenoWebSocket(socket, o)
@@ -261,21 +273,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
 
   function runFetch(
     request: Request,
-    info: { readonly remoteAddr?: { readonly hostname?: string } },
+    platform: { readonly clientIp: string } | undefined,
   ): Response | Promise<Response> {
     try {
       // `Deno.serve` delimited this body with its own HTTP parser, so the declared Content-Length is
       // the transport frame, not a caller's hint - the same guarantee Bun's native routes carry. The
       // mark lets core's JSON lane keep the runtime's fused parse instead of copying the body out to
       // recount it. Registered symbol because this adapter deliberately never imports core.
-      ;(request as typeof request & Record<symbol, unknown>)[
-        Symbol.for("nifra.body.trustedFraming")
-      ] = true
+      ;(request as typeof request & Record<symbol, unknown>)[TRUSTED_FRAMING] = true
       // Deno's socket peer (the one address a client can't forge) → `c.clientIp`, unless the app's
       // `clientIp` trust declaration derives it from the forwarding chain instead.
-      const clientIp = info.remoteAddr?.hostname
-      const response =
-        clientIp === undefined ? app.fetch(request) : app.fetch(request, { clientIp })
+      const response = platform === undefined ? app.fetch(request) : app.fetch(request, platform)
       return response instanceof Promise ? response.catch(() => internalError()) : response
     } catch {
       // nifra's app.fetch returns its own 500; this guards non-nifra handlers and never

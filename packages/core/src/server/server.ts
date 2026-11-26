@@ -4370,10 +4370,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       (result) => (result instanceof Response ? refuse(result) : resolveHooked(result)),
       failed,
     )
-    return bounded(
-      Promise.resolve(pending).then((result) => result),
-      onTimeout,
-    )
+    return bounded(pending, onTimeout)
   }
 
   /** Bun `fetch` when WS routes exist: try a WS upgrade first, else run the normal HTTP lifecycle.
@@ -4384,23 +4381,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     server: BunUpgradeServer,
     setIdleTimeout: IdleTimeoutSetter,
   ): MaybePromise<Response | undefined> {
-    const handle = (o: WebSocketUpgradeOutcome): MaybePromise<Response | undefined> => {
-      if (o.kind === "pass")
-        return this.fetch(
-          req,
-          new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>,
-        )
-      if (o.kind === "reject") return o.response
-      // A copy: the Bun socket keeps per-connection state on it, and a hand-built outcome may be shared.
-      return server.upgrade(req, { data: { ...o } })
-        ? undefined
-        : jsonError(426, "upgrade_required")
+    const platform = new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>
+    const outcome = this.resolveWebSocketUpgrade(req, platform)
+    if (outcome instanceof Promise) {
+      return outcome.then((o) => this.finishBunWebSocket(req, server, platform, o))
     }
-    const outcome = this.resolveWebSocketUpgrade(
-      req,
-      new BunPeerPlatform(server, req, setIdleTimeout) as Platform<EnvOf<Ctx>>,
-    )
-    return outcome instanceof Promise ? outcome.then(handle) : handle(outcome)
+    return this.finishBunWebSocket(req, server, platform, outcome)
+  }
+
+  private finishBunWebSocket(
+    req: Request,
+    server: BunUpgradeServer,
+    platform: Platform<EnvOf<Ctx>>,
+    o: WebSocketUpgradeOutcome,
+  ): MaybePromise<Response | undefined> {
+    if (o.kind === "pass") return this.fetch(req, platform)
+    if (o.kind === "reject") return o.response
+    // A copy: the Bun socket keeps per-connection state on it, and a hand-built outcome may be shared.
+    return server.upgrade(req, { data: { ...o } }) ? undefined : jsonError(426, "upgrade_required")
   }
 
   /**

@@ -581,6 +581,7 @@ struct H1Order {
 #[derive(Default)]
 struct ConnMetaSlot {
     gen_id: u32,
+    pending_count: u32,
     h1_head: u32,
     h1_overflow: Option<Box<H1Order>>,
     chunk_resume: Option<Box<ChunkResume>>,
@@ -595,6 +596,7 @@ impl ConnMetaSlot {
     #[inline]
     fn clear_for(&mut self, new_gen_id: u32) {
         self.gen_id = new_gen_id;
+        self.pending_count = 0;
         self.h1_head = 0;
         self.h1_overflow = None;
         self.chunk_resume = None;
@@ -689,6 +691,7 @@ impl ConnMetaTable {
             return None;
         }
         slot.gen_id = 0;
+        slot.pending_count = 0;
         slot.h1_head = 0;
         slot.h1_overflow = None;
         slot.chunk_resume = None;
@@ -1026,6 +1029,62 @@ struct UvHttpShared {
     scratch_frame: Vec<u8>,
 }
 
+#[cfg(unix)]
+impl UvHttpShared {
+    #[inline]
+    fn insert_pending(&mut self, req: PendingReq) -> u32 {
+        self.conn_meta.ensure(req.conn_id).pending_count += 1;
+        self.pending.insert(req)
+    }
+
+    #[inline]
+    fn remove_pending(&mut self, req_id: u32) -> Option<PendingReq> {
+        let removed = self.pending.remove(req_id)?;
+        if let Some(slot) = self.conn_meta.get_mut(removed.conn_id) {
+            slot.pending_count = slot.pending_count.saturating_sub(1);
+        }
+        Some(removed)
+    }
+}
+
+#[cfg(unix)]
+#[inline]
+fn with_flat_header_pairs<R>(hdr_vec: &[String], f: impl FnOnce(&[(&str, &str)]) -> R) -> R {
+    let count = hdr_vec.len() / 2;
+    if count <= 16 {
+        let mut stack = [("", ""); 16];
+        for (i, c) in hdr_vec.chunks_exact(2).enumerate() {
+            stack[i] = (c[0].as_str(), c[1].as_str());
+        }
+        f(&stack[..count])
+    } else {
+        let pairs: Vec<(&str, &str)> = hdr_vec
+            .chunks_exact(2)
+            .map(|c| (c[0].as_str(), c[1].as_str()))
+            .collect();
+        f(&pairs)
+    }
+}
+
+#[cfg(unix)]
+#[inline]
+fn with_tuple_header_pairs<R>(
+    hdrs: &[(String, String)],
+    f: impl FnOnce(&[(&str, &str)]) -> R,
+) -> R {
+    let count = hdrs.len();
+    if count <= 16 {
+        let mut stack = [("", ""); 16];
+        for (i, (k, v)) in hdrs.iter().enumerate() {
+            stack[i] = (k.as_str(), v.as_str());
+        }
+        f(&stack[..count])
+    } else {
+        let pairs: Vec<(&str, &str)> = hdrs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        f(&pairs)
+    }
+}
+
 /// Call a registered callback once per id, resolving it each time: a handler may delete it.
 #[cfg(unix)]
 fn notify_each(
@@ -1067,7 +1126,7 @@ fn invoke_on_batch_unlocked(shared: &Rc<RefCell<UvHttpShared>>) {
                 .get(id)
                 .is_some_and(|p| p.conn_id == conn_id && p.h2_stream_id() == Some(stream_id));
             if same {
-                st.pending.remove(id);
+                st.remove_pending(id);
                 aborted.push(id);
             }
         }
@@ -1212,49 +1271,24 @@ impl HttpUvCallbacks {
                 match event {
                     H2Event::Request(req) => {
                         let inline_body = req.body.len() <= nifra_http::abi::INLINE_BODY_MAX;
+                        let ct_len = h2_content_type(&req).map_or(0, str::len);
                         let needed = req.path.len()
                             + req.query.len()
-                            + h2_content_type(&req).map_or(0, str::len)
+                            + ct_len
                             + if inline_body { req.body.len() } else { 0 };
                         if !has_batch_room(&self.shared.borrow(), needed) {
                             invoke_on_batch_unlocked(&self.shared);
                         }
-                        let saved_body = if inline_body || req.body.is_empty() {
-                            None
-                        } else {
-                            Some(req.body.clone())
-                        };
-                        let custom_method = if req.method_idx >= 7 {
-                            Some(req.method.clone().into_boxed_str())
-                        } else {
-                            None
-                        };
-                        let cold = Box::new(PendingCold {
-                            parsed_head: OnceCell::new(),
-                            custom_method,
-                            h2_stream_id: Some(req.stream_id),
-                            h2_headers: Some(req.headers.clone()),
-                            query: None,
-                            body: saved_body,
-                        });
                         let mut st = self.shared.borrow_mut();
-                        let req_id = st.pending.insert(PendingReq::new(
-                            conn_id,
-                            true,
-                            HeadStorage::Empty,
-                            Some(cold),
-                        ));
-                        if pack_h2_into_shared(&mut st, req_id, &req) {
-                            st.batch_req_ids.push(req_id);
-                        } else {
-                            st.pending.remove(req_id);
+                        let stream_id = req.stream_id;
+                        if !pack_h2_into_shared(&mut st, conn_id, req) {
                             if let Some(conn) = st
                                 .conn_meta
                                 .get_mut(conn_id)
                                 .and_then(|s| s.h2.as_deref_mut())
                             {
                                 // INTERNAL_ERROR: this request did not fit the bridge's batch.
-                                conn.reset_stream(req.stream_id, 0x2, write_buf);
+                                conn.reset_stream(stream_id, 0x2, write_buf);
                             }
                         }
                     }
@@ -1274,7 +1308,7 @@ impl HttpUvCallbacks {
                                 if st.batch_req_ids.contains(&id) {
                                     st.reset_in_batch.push((id, conn_id, stream_id));
                                 } else {
-                                    st.pending.remove(id);
+                                    st.remove_pending(id);
                                     aborted.push(id);
                                 }
                             }
@@ -1431,13 +1465,12 @@ impl HttpUvCallbacks {
                         len: req_head.len() as u32,
                     };
                     let req_id =
-                        st.pending
-                            .insert(PendingReq::new(conn_id, req.keep_alive, raw_head, cold));
+                        st.insert_pending(PendingReq::new(conn_id, req.keep_alive, raw_head, cold));
                     if pack_into_shared(&mut st, req_id, &req) {
                         st.batch_req_ids.push(req_id);
                         st.conn_meta.ensure(conn_id).push_h1(req_id);
                     } else {
-                        st.pending.remove(req_id);
+                        st.remove_pending(req_id);
                         st.batch_heads.truncate(head_off as usize);
                         let template = st.headers_too_large_tpl;
                         return refuse_request(
@@ -1544,33 +1577,26 @@ impl UvCallbacks for HttpUvCallbacks {
 
     fn has_pending_requests(&self, conn_id: u32) -> bool {
         let st = self.shared.borrow();
-        (!st.pending.is_empty()
-            && st
-                .pending
-                .iter()
-                .any(|(_, request)| request.conn_id == conn_id))
-            || st.conn_meta.get(conn_id).is_some_and(|s| {
-                s.has_h1_pending()
-                    || s.h2
-                        .as_ref()
-                        .is_some_and(|conn| conn.active_response_streams() > 0)
-            })
+        st.conn_meta.get(conn_id).is_some_and(|s| {
+            s.pending_count > 0
+                || s.has_h1_pending()
+                || s.h2
+                    .as_ref()
+                    .is_some_and(|conn| conn.active_response_streams() > 0)
+        })
     }
 
     fn without_pending(&self, ids: Vec<u32>) -> Vec<u32> {
         let st = self.shared.borrow();
         ids.into_iter()
             .filter(|&id| {
-                let busy_meta = st.conn_meta.get(id).is_some_and(|s| {
-                    s.has_h1_pending()
+                !st.conn_meta.get(id).is_some_and(|s| {
+                    s.pending_count > 0
+                        || s.has_h1_pending()
                         || s.h2
                             .as_ref()
                             .is_some_and(|conn| conn.active_response_streams() > 0)
-                });
-                if busy_meta {
-                    return false;
-                }
-                st.pending.is_empty() || !st.pending.iter().any(|(_, r)| r.conn_id == id)
+                })
             })
             .collect()
     }
@@ -1578,7 +1604,12 @@ impl UvCallbacks for HttpUvCallbacks {
     fn on_writable(&mut self, conn_id: u32) {
         let req_ids: Vec<u32> = {
             let st = self.shared.borrow();
-            if st.on_writable_ref.is_null() {
+            if st.on_writable_ref.is_null()
+                || st
+                    .conn_meta
+                    .get(conn_id)
+                    .is_none_or(|s| s.pending_count == 0)
+            {
                 return;
             }
             st.pending
@@ -1593,7 +1624,11 @@ impl UvCallbacks for HttpUvCallbacks {
     fn on_disconnect(&mut self, conn_id: u32) {
         let (aborted_ids, ws_close) = {
             let mut st = self.shared.borrow_mut();
-            let ids: Vec<u32> = if st.pending.is_empty() {
+            let ids: Vec<u32> = if st
+                .conn_meta
+                .get(conn_id)
+                .is_none_or(|s| s.pending_count == 0)
+            {
                 Vec::new()
             } else {
                 st.pending
@@ -1603,7 +1638,7 @@ impl UvCallbacks for HttpUvCallbacks {
                     .collect()
             };
             for &id in &ids {
-                st.pending.remove(id);
+                st.remove_pending(id);
             }
             let ws_close = st.conn_meta.clear_conn(conn_id).and_then(|ws| {
                 if ws.close_emitted {
@@ -1730,7 +1765,6 @@ fn pack_into_shared(
     true
 }
 
-#[cfg(unix)]
 /// The first `content-type` of an HTTP/2 request, as the header lookup would return it.
 #[cfg(unix)]
 fn h2_content_type(req: &H2Request) -> Option<&str> {
@@ -1741,7 +1775,7 @@ fn h2_content_type(req: &H2Request) -> Option<&str> {
 }
 
 #[cfg(unix)]
-fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> bool {
+fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> bool {
     let slot_base = st.batch_count * IN_SLOT_U32S;
     let max_u32s = st.in_meta.len / 4;
     if slot_base + IN_SLOT_U32S > max_u32s {
@@ -1751,17 +1785,18 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> b
     let query_bytes = req.query.as_bytes();
     let body_slice = req.body.as_slice();
     let inline_body = body_slice.len() <= nifra_http::abi::INLINE_BODY_MAX;
-    let ct_bytes = h2_content_type(req).map_or(&[][..], str::as_bytes);
+    let content_type = h2_content_type(&req);
+    let ct_bytes = content_type.map_or(&[][..], str::as_bytes);
+    let ct_len = ct_bytes.len();
     let needed = path_bytes.len()
         + query_bytes.len()
-        + ct_bytes.len()
+        + ct_len
         + if inline_body { body_slice.len() } else { 0 };
     if st.batch_data_pos + needed > st.in_data.len {
         return false;
     }
 
     let data = unsafe { st.in_data.as_bytes_mut() };
-    let meta = unsafe { st.in_meta.as_u32_mut() };
 
     let path_off = st.batch_data_pos as u32;
     data[st.batch_data_pos..st.batch_data_pos + path_bytes.len()].copy_from_slice(path_bytes);
@@ -1807,10 +1842,25 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> b
     if req.is_json_ct {
         flags |= nifra_http::abi::FLAG_CT_JSON;
     }
-    if h2_content_type(req).is_some() {
+    if content_type.is_some() {
         flags |= nifra_http::abi::FLAG_HAS_CT;
     }
 
+    let cold = Box::new(PendingCold {
+        parsed_head: OnceCell::new(),
+        custom_method: (req.method_idx >= 7).then(|| req.method.into_boxed_str()),
+        h2_stream_id: Some(req.stream_id),
+        h2_headers: Some(req.headers),
+        query: None,
+        body: (!inline_body).then_some(req.body),
+    });
+    let req_id = st.insert_pending(PendingReq::new(
+        conn_id,
+        true,
+        HeadStorage::Empty,
+        Some(cold),
+    ));
+    let meta = unsafe { st.in_meta.as_u32_mut() };
     meta[slot_base] = req_id;
     meta[slot_base + 1] = flags;
     meta[slot_base + 2] = path_off;
@@ -1820,8 +1870,8 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> b
     meta[slot_base + 6] = body_off;
     meta[slot_base + 7] = body_len;
     meta[slot_base + 8] = ct_off;
-    meta[slot_base + 9] = ct_bytes.len() as u32;
-
+    meta[slot_base + 9] = ct_len as u32;
+    st.batch_req_ids.push(req_id);
     st.batch_count += 1;
     true
 }
@@ -2071,7 +2121,7 @@ impl UvHttpServer {
             let template_id = meta[base + 1];
             let body_off = meta[base + 2] as usize;
             let body_len = meta[base + 3] as usize;
-            let Some(pending) = st.pending.remove(req_id) else {
+            let Some(pending) = st.remove_pending(req_id) else {
                 continue;
             };
             if body_off + body_len > data.len() {
@@ -2091,9 +2141,9 @@ impl UvHttpServer {
                         .get_mut(pending.conn_id)
                         .and_then(|s| s.h2.as_deref_mut()),
                 ) {
-                    let pairs: Vec<(&str, &str)> =
-                        hdrs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-                    h2.write_response(stream_id, *status, &pairs, Some(body_slice), &mut frame);
+                    with_tuple_header_pairs(hdrs, |pairs| {
+                        h2.write_response(stream_id, *status, pairs, Some(body_slice), &mut frame);
+                    });
                     let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
                 }
             } else if st.templates.write_prepared_at(
@@ -2121,7 +2171,7 @@ impl UvHttpServer {
     #[napi]
     pub fn respond_prepared(&self, req_id: u32, template_id: u32, body: Buffer) -> bool {
         let mut st = self.shared.borrow_mut();
-        let Some(pending) = st.pending.remove(req_id) else {
+        let Some(pending) = st.remove_pending(req_id) else {
             return false;
         };
         let mut frame = std::mem::take(&mut st.scratch_frame);
@@ -2141,9 +2191,9 @@ impl UvHttpServer {
                 st.scratch_frame = frame;
                 return false;
             };
-            let pairs: Vec<(&str, &str)> =
-                hdrs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-            h2.write_response(stream_id, *status, &pairs, Some(body.as_ref()), &mut frame);
+            with_tuple_header_pairs(hdrs, |pairs| {
+                h2.write_response(stream_id, *status, pairs, Some(body.as_ref()), &mut frame);
+            });
             let sent =
                 self.server.write_to_conn(pending.conn_id, &frame, false) != WriteResult::Closed;
             st.scratch_frame = frame;
@@ -2177,14 +2227,10 @@ impl UvHttpServer {
         body: Option<Buffer>,
     ) -> bool {
         let mut st = self.shared.borrow_mut();
-        let Some(pending) = st.pending.remove(req_id) else {
+        let Some(pending) = st.remove_pending(req_id) else {
             return false;
         };
         let hdr_vec = flat_headers.unwrap_or_default();
-        let pairs: Vec<(&str, &str)> = hdr_vec
-            .chunks_exact(2)
-            .map(|c| (c[0].as_str(), c[1].as_str()))
-            .collect();
         let mut frame = std::mem::take(&mut st.scratch_frame);
         frame.clear();
         if let Some(stream_id) = pending.h2_stream_id() {
@@ -2196,24 +2242,23 @@ impl UvHttpServer {
                 st.scratch_frame = frame;
                 return false;
             };
-            h2.write_response(
-                stream_id,
-                status,
-                &pairs,
-                body.as_ref().map(|b| b.as_ref()),
-                &mut frame,
-            );
+            with_flat_header_pairs(&hdr_vec, |pairs| {
+                h2.write_response(
+                    stream_id,
+                    status,
+                    pairs,
+                    body.as_ref().map(|b| b.as_ref()),
+                    &mut frame,
+                );
+            });
             let sent =
                 self.server.write_to_conn(pending.conn_id, &frame, false) != WriteResult::Closed;
             st.scratch_frame = frame;
             return sent;
         }
-        write_buffered_response(
-            &mut frame,
-            status,
-            &pairs,
-            body.as_ref().map(|b| b.as_ref()),
-        );
+        with_flat_header_pairs(&hdr_vec, |pairs| {
+            write_buffered_response(&mut frame, status, pairs, body.as_ref().map(|b| b.as_ref()));
+        });
         let sent = h1_send(
             &self.server,
             &mut st,
@@ -2247,10 +2292,6 @@ impl UvHttpServer {
         pending.set_chunked(content_length.is_none());
 
         let hdr_vec = flat_headers.unwrap_or_default();
-        let pairs: Vec<(&str, &str)> = hdr_vec
-            .chunks_exact(2)
-            .map(|c| (c[0].as_str(), c[1].as_str()))
-            .collect();
         let mut frame = std::mem::take(&mut st.scratch_frame);
         frame.clear();
         if let Some(stream_id) = h2_stream_id {
@@ -2262,18 +2303,22 @@ impl UvHttpServer {
                 st.scratch_frame = frame;
                 return false;
             };
-            h2.write_stream_head(
-                stream_id,
-                status,
-                &pairs,
-                content_length.map(|n| n as u64),
-                &mut frame,
-            );
+            with_flat_header_pairs(&hdr_vec, |pairs| {
+                h2.write_stream_head(
+                    stream_id,
+                    status,
+                    pairs,
+                    content_length.map(|n| n as u64),
+                    &mut frame,
+                );
+            });
             let sent = self.server.write_to_conn(conn_id, &frame, false) != WriteResult::Closed;
             st.scratch_frame = frame;
             return sent;
         }
-        write_stream_head(&mut frame, status, &pairs, content_length.map(|n| n as u64));
+        with_flat_header_pairs(&hdr_vec, |pairs| {
+            write_stream_head(&mut frame, status, pairs, content_length.map(|n| n as u64));
+        });
         let sent = h1_send(
             &self.server,
             &mut st,
@@ -2347,7 +2392,7 @@ impl UvHttpServer {
     #[napi]
     pub fn end(&self, req_id: u32, chunk: Option<Buffer>) -> bool {
         let mut st = self.shared.borrow_mut();
-        let Some(pending) = st.pending.remove(req_id) else {
+        let Some(pending) = st.remove_pending(req_id) else {
             return false;
         };
         let mut frame = std::mem::take(&mut st.scratch_frame);
@@ -2396,7 +2441,7 @@ impl UvHttpServer {
     #[napi]
     pub fn abort_stream(&self, req_id: u32) -> bool {
         let mut st = self.shared.borrow_mut();
-        let Some(pending) = st.pending.remove(req_id) else {
+        let Some(pending) = st.remove_pending(req_id) else {
             return false;
         };
         if let Some(stream_id) = pending.h2_stream_id() {
@@ -2526,7 +2571,7 @@ impl UvHttpServer {
             if owed_earlier {
                 return -1;
             }
-            let Some(mut pending) = st.pending.remove(req_id) else {
+            let Some(mut pending) = st.remove_pending(req_id) else {
                 return -1;
             };
             let owned_head = pending.raw_head.into_owned(&st.batch_heads);

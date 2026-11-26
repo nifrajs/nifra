@@ -171,9 +171,11 @@ function keptBodyOf(
   return out.body
 }
 
+const TEXT_ENCODER = new TextEncoder()
+
 // Svelte SSR yields a complete HTML string; the seam wants a stream, so emit it as one chunk.
 function oneChunk(html: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(html)
+  const bytes = TEXT_ENCODER.encode(html)
   return new ReadableStream({
     start(controller) {
       controller.enqueue(bytes)
