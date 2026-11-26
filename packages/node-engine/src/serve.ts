@@ -78,6 +78,7 @@ const WS_CLOSED = 3
 
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const BAD_VALUE = /[^\t\x20-\x7e\x80-\xff]/
+const URL_DELIMITER = /[/\\?#@]/
 
 type HeaderRecord = Readonly<Record<string, string | readonly string[]>>
 
@@ -161,6 +162,7 @@ interface RustAddon {
       readonly idleTimeoutMs?: number | undefined
       readonly maxConnections?: number | undefined
       readonly requestTimeoutMs?: number | undefined
+      readonly headersTimeoutMs?: number | undefined
       readonly wsMaxMessageSize?: number | undefined
       readonly http2?: boolean | undefined
       readonly http2MaxConcurrentStreams?: number | undefined
@@ -548,6 +550,12 @@ interface RustWsEntry {
 }
 
 const UNSUPPORTED_OPTIONS = ["static", "fastResponse"] as const
+
+/** A timeout the engine takes, or `undefined` to keep its default. */
+const nativeMs = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(Math.round(value), MAX_NATIVE_LENGTH)
+    : undefined
 
 export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineServer> {
   for (const name of UNSUPPORTED_OPTIONS) {
@@ -1069,6 +1077,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           queueSync(reqId, tpl400, BAD_REQUEST_BODY)
           continue
         }
+      } else if ((flags & FLAG_HOST_VALID) === 0) {
+        // `validateHost` off leaves the Host unchecked, but the URL carries it: one holding a URL
+        // delimiter (or nothing, which swallows the first path segment) would give `req.url` a path
+        // the router never saw. The flag spares the plain forms this engine call.
+        const sent = uvServer.getHeader(reqId, "host")
+        if (sent === "") {
+          authority = "localhost"
+        } else if (sent !== null && URL_DELIMITER.test(sent)) {
+          queueSync(reqId, tpl400, BAD_REQUEST_BODY)
+          continue
+        }
       }
 
       if ((flags & FLAG_OVER_MAX_BODY) !== 0) {
@@ -1348,16 +1367,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     typeof options.http2 === "object" && options.http2 !== null
       ? options.http2.maxConcurrentStreams
       : undefined
-  const rawIdle = options.engine?.idleTimeoutMs
-  const idleTimeoutMs =
-    typeof rawIdle === "number" && Number.isFinite(rawIdle) && rawIdle >= 0
-      ? Math.round(rawIdle)
-      : undefined
-  const rawRequest = options.engine?.requestTimeoutMs
-  const requestTimeoutMs =
-    typeof rawRequest === "number" && Number.isFinite(rawRequest) && rawRequest >= 0
-      ? Math.round(rawRequest)
-      : undefined
+  const idleTimeoutMs = nativeMs(options.engine?.idleTimeoutMs)
+  const requestTimeoutMs = nativeMs(options.engine?.requestTimeoutMs)
+  const headersTimeoutMs = nativeMs(options.engine?.headersTimeoutMs)
+  const rawHeaderBytes = options.engine?.maxHeaderBytes
+  const maxHeaderBytes =
+    isCap(rawHeaderBytes) && rawHeaderBytes <= MAX_NATIVE_LENGTH ? rawHeaderBytes : undefined
   const rawMax = options.engine?.maxConnections
   const maxConnections =
     typeof rawMax === "number" && Number.isInteger(rawMax) && rawMax > 0 ? rawMax : undefined
@@ -1368,6 +1383,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       idleTimeoutMs,
       maxConnections,
       requestTimeoutMs,
+      headersTimeoutMs,
+      maxHeaderBytes,
       reusePort: options.engine?.reusePort,
       wsMaxMessageSize: wsCap,
       http2: http2Enabled ? true : undefined,

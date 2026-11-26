@@ -18,9 +18,10 @@ use nifra_http::h2::{
     H2Config, H2Conn, H2Event, H2Request, CLIENT_PREFACE, ERR_INTERNAL_ERROR, ERR_NO_ERROR,
 };
 use nifra_http::{
-    collect_headers_in_head, parse_http1, parse_http1_resume, write_buffered_response, write_chunk,
-    write_chunk_terminator, write_stream_head, BatchPacker, ChunkResume, FastRoutes, ParseLimits,
-    ParseStatus, PreparedTemplates,
+    awaits_continue, collect_headers_in_head, parse_http1, parse_http1_resume,
+    write_buffered_response, write_chunk, write_chunk_terminator, write_close_delimited_head,
+    write_stream_head, BatchPacker, ChunkResume, FastRoutes, ParseLimits, ParseStatus,
+    PreparedTemplates,
 };
 #[cfg(unix)]
 use nifra_io::conn_slot;
@@ -373,6 +374,7 @@ pub struct UvServerOptions {
     pub idle_timeout_ms: Option<u32>,
     pub max_connections: Option<u32>,
     pub request_timeout_ms: Option<u32>,
+    pub headers_timeout_ms: Option<u32>,
     pub ws_max_message_size: Option<u32>,
     pub http2: Option<bool>,
     pub http2_max_concurrent_streams: Option<u32>,
@@ -428,6 +430,9 @@ const PENDING_STREAMING: u8 = 1 << 1;
 const PENDING_CHUNKED: u8 = 1 << 2;
 #[cfg(unix)]
 const PENDING_H2: u8 = 1 << 3;
+/// The request was HTTP/1.0, which has no chunked framing to answer with.
+#[cfg(unix)]
+const PENDING_HTTP10: u8 = 1 << 4;
 
 #[cfg(unix)]
 #[derive(Default)]
@@ -476,6 +481,11 @@ impl PendingReq {
     #[inline]
     fn keep_alive(&self) -> bool {
         (self.flags & PENDING_KEEP_ALIVE) != 0
+    }
+
+    /// A streamed HTTP/1.0 response of unknown length ends where the connection does.
+    fn close_delimits(&mut self) {
+        self.flags &= !PENDING_KEEP_ALIVE;
     }
 
     #[inline]
@@ -593,6 +603,8 @@ struct ConnMetaSlot {
     h2: Option<Box<H2Conn>>,
     /// A terminal parse error is queued behind earlier answers: whatever the peer sends next is dropped.
     refuse_input: bool,
+    /// The request being received was already looked at for `Expect: 100-continue`.
+    continue_checked: bool,
 }
 
 #[cfg(unix)]
@@ -607,6 +619,7 @@ impl ConnMetaSlot {
         self.ws = None;
         self.h2 = None;
         self.refuse_input = false;
+        self.continue_checked = false;
     }
 
     /// An open WebSocket that has not sent its Close.
@@ -1088,6 +1101,8 @@ mod pending_tests {
 #[cfg(unix)]
 struct WsConnState {
     conn: WsConn,
+    /// A Ping from the idle sweep that nothing has been heard since.
+    awaiting_pong: std::cell::Cell<bool>,
     raw_head: Box<[u8]>,
     query: String,
     close_emitted: bool,
@@ -1288,6 +1303,7 @@ impl HttpUvCallbacks {
             .get_mut(conn_id)
             .and_then(|s| s.ws.as_deref_mut())
         {
+            ws.awaiting_pong.set(false);
             let feed = ws.conn.feed(read_buf, write_buf);
             let has_close = feed
                 .events
@@ -1461,6 +1477,9 @@ impl HttpUvCallbacks {
             }
             match parse_http1_resume(&read_buf[consumed..], limits, &mut resume) {
                 Ok(ParseStatus::Complete(req)) => {
+                    if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                        slot.continue_checked = false;
+                    }
                     let req_head = &read_buf[consumed..consumed + req.head_len];
                     consumed += req.total_bytes;
 
@@ -1510,7 +1529,7 @@ impl HttpUvCallbacks {
                     let inline_body = body_slice.len() <= nifra_http::abi::INLINE_BODY_MAX;
                     let needed = req.path.len()
                         + req.query.len()
-                        + req.content_type.map_or(0, str::len)
+                        + req.content_type.map_or(0, <[u8]>::len)
                         + if inline_body { body_slice.len() } else { 0 };
                     if !has_batch_room(&st, needed) {
                         drop(st);
@@ -1564,8 +1583,11 @@ impl HttpUvCallbacks {
                         off: head_off,
                         len: req_head.len() as u32,
                     };
-                    let req_id =
-                        st.insert_pending(PendingReq::new(conn_id, req.keep_alive, raw_head, cold));
+                    let mut pending = PendingReq::new(conn_id, req.keep_alive, raw_head, cold);
+                    if req.http10 {
+                        pending.flags |= PENDING_HTTP10;
+                    }
+                    let req_id = st.insert_pending(pending);
                     if pack_into_shared(&mut st, req_id, &req) {
                         st.batch_req_ids.push(req_id);
                         st.conn_meta.ensure(conn_id).push_h1(req_id);
@@ -1594,6 +1616,16 @@ impl HttpUvCallbacks {
                 Ok(ParseStatus::Incomplete) => {
                     if resume.is_active() {
                         st.conn_meta.ensure(conn_id).chunk_resume = Some(Box::new(resume));
+                    }
+                    let slot = st.conn_meta.ensure(conn_id);
+                    // An interim reply must not overtake an answer still owed to an earlier request.
+                    if !slot.continue_checked && !slot.has_h1_pending() {
+                        if let Some(expects) = awaits_continue(&read_buf[consumed..]) {
+                            slot.continue_checked = true;
+                            if expects {
+                                write_buf.extend_from_slice(b"HTTP/1.1 100 Continue\r\n\r\n");
+                            }
+                        }
                     }
                     break;
                 }
@@ -1658,6 +1690,42 @@ impl UvCallbacks for HttpUvCallbacks {
             .get(conn_id)
             .and_then(|s| s.h2.as_deref())
             .and_then(H2Conn::oldest_incomplete_request)
+    }
+
+    fn oldest_incomplete_head(&self, conn_id: u32) -> Option<std::time::Instant> {
+        self.shared
+            .borrow()
+            .conn_meta
+            .get(conn_id)
+            .and_then(|s| s.h2.as_deref())
+            .and_then(H2Conn::oldest_incomplete_head)
+    }
+
+    fn reads_http1(&self, conn_id: u32) -> bool {
+        !self
+            .shared
+            .borrow()
+            .conn_meta
+            .get(conn_id)
+            .is_some_and(|s| s.ws.is_some() || s.h2.is_some())
+    }
+
+    fn output_stalled_since(&self, conn_id: u32) -> Option<std::time::Instant> {
+        self.shared
+            .borrow()
+            .conn_meta
+            .get(conn_id)
+            .and_then(|s| s.h2.as_deref())
+            .and_then(H2Conn::output_stalled_since)
+    }
+
+    fn probe_idle(&self, conn_id: u32) -> bool {
+        self.shared
+            .borrow()
+            .conn_meta
+            .get(conn_id)
+            .and_then(|s| s.ws.as_deref())
+            .is_some_and(|ws| !ws.conn.close_sent() && !ws.awaiting_pong.replace(true))
     }
 
     fn unanswered_only(&self, conn_id: u32) -> bool {
@@ -1766,7 +1834,7 @@ fn pack_into_shared(
     let query_bytes = req.query.as_bytes();
     let body_slice = req.body.as_ref();
     let inline_body = body_slice.len() <= nifra_http::abi::INLINE_BODY_MAX;
-    let ct_bytes = req.content_type.map_or(&[][..], str::as_bytes);
+    let ct_bytes = req.content_type.unwrap_or_default();
     let needed = path_bytes.len()
         + query_bytes.len()
         + ct_bytes.len()
@@ -1867,7 +1935,9 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
     let body_slice = req.body.as_slice();
     let inline_body = body_slice.len() <= nifra_http::abi::INLINE_BODY_MAX;
     let content_type = h2_content_type(&req);
-    let ct_bytes = content_type.map_or(&[][..], str::as_bytes);
+    // Header values were widened from latin-1, and the batch carries the bytes as sent.
+    let ct_bytes: Vec<u8> =
+        content_type.map_or_else(Vec::new, |v| v.chars().map(|c| c as u8).collect());
     let ct_len = ct_bytes.len();
     let needed = path_bytes.len()
         + query_bytes.len()
@@ -1888,7 +1958,7 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
     st.batch_data_pos += query_bytes.len();
 
     let ct_off = st.batch_data_pos as u32;
-    data[st.batch_data_pos..st.batch_data_pos + ct_bytes.len()].copy_from_slice(ct_bytes);
+    data[st.batch_data_pos..st.batch_data_pos + ct_bytes.len()].copy_from_slice(&ct_bytes);
     st.batch_data_pos += ct_bytes.len();
 
     let (body_off, body_len) = if inline_body {
@@ -2369,8 +2439,15 @@ impl UvHttpServer {
         let conn_id = pending.conn_id;
         let h2_stream_id = pending.h2_stream_id();
         let keep_alive = pending.keep_alive();
+        let close_delimited = h2_stream_id.is_none()
+            && content_length.is_none()
+            && (pending.flags & PENDING_HTTP10) != 0;
+        if close_delimited {
+            pending.close_delimits();
+        }
+        let keep_alive = keep_alive && !close_delimited;
         pending.set_streaming();
-        pending.set_chunked(content_length.is_none());
+        pending.set_chunked(content_length.is_none() && !close_delimited);
 
         let hdr_vec = flat_headers.unwrap_or_default();
         let mut frame = std::mem::take(&mut st.scratch_frame);
@@ -2398,7 +2475,11 @@ impl UvHttpServer {
             return sent;
         }
         with_flat_header_pairs(&hdr_vec, |pairs| {
-            write_stream_head(&mut frame, status, pairs, content_length.map(|n| n as u64));
+            if close_delimited {
+                write_close_delimited_head(&mut frame, status, pairs);
+            } else {
+                write_stream_head(&mut frame, status, pairs, content_length.map(|n| n as u64));
+            }
         });
         let sent = h1_send(
             &self.server,
@@ -2679,6 +2760,7 @@ impl UvHttpServer {
                 .unwrap_or_default();
             st.conn_meta.ensure(pending.conn_id).ws = Some(Box::new(WsConnState {
                 conn: WsConn::new(max_msg),
+                awaiting_pong: Default::default(),
                 raw_head: owned_head,
                 query,
                 close_emitted: false,
@@ -2948,6 +3030,9 @@ pub fn create_uv_server(
         }
         if let Some(v) = opts.request_timeout_ms {
             sock_cfg.request_timeout_ms = v as u64;
+        }
+        if let Some(v) = opts.headers_timeout_ms {
+            sock_cfg.headers_timeout_ms = v as u64;
         }
         if let Some(v) = opts.ws_max_message_size {
             ws_max_message_size = v as usize;

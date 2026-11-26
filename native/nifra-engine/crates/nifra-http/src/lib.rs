@@ -9,7 +9,69 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
 
+/// Header fields parsed without allocating.
 pub const MAX_HEADERS: usize = 64;
+/// Most header fields a request may carry; past [`MAX_HEADERS`] they are parsed on the heap.
+const MAX_HEADERS_HEAVY: usize = 1024;
+/// A head that arrives past this is not re-parsed until its blank line is in.
+const REPARSE_LIMIT: usize = 4096;
+
+/// Header bytes as latin-1, one char per byte, which is how Node, Bun and Deno read them.
+pub(crate) fn latin1(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) if text.is_ascii() => text.to_owned(),
+        _ => bytes.iter().map(|&b| char::from(b)).collect(),
+    }
+}
+
+fn trim_ows(mut bytes: &[u8]) -> &[u8] {
+    while let [b' ' | b'\t', rest @ ..] = bytes {
+        bytes = rest;
+    }
+    while let [rest @ .., b' ' | b'\t'] = bytes {
+        bytes = rest;
+    }
+    bytes
+}
+
+/// Whether every line feed in a request head follows a carriage return. A bare LF ends a line for
+/// some parsers and not others, which is a request-smuggling gap behind a proxy (RFC 9112 §2.2).
+fn lines_end_in_crlf(head: &[u8]) -> bool {
+    memchr::memchr_iter(b'\n', head).all(|at| at > 0 && head[at - 1] == b'\r')
+}
+
+/// An origin-form or absolute-form target, or `*` for `OPTIONS` (RFC 9112 §3.2).
+fn is_routable_target(method: &str, target: &str) -> bool {
+    if target.starts_with('/') {
+        return true;
+    }
+    if target == "*" {
+        return method == "OPTIONS";
+    }
+    target.split_once("://").is_some_and(|(scheme, _)| {
+        scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+    })
+}
+
+/// Whether a request whose body has not all arrived asked for `100 Continue` before sending it;
+/// `None` while its head is still arriving.
+pub fn awaits_continue(buf: &[u8]) -> Option<bool> {
+    let mut headers = [const { MaybeUninit::uninit() }; MAX_HEADERS];
+    let mut req = httparse::Request::new(&mut []);
+    let Ok(httparse::Status::Complete(_)) = req.parse_with_uninit_headers(buf, &mut headers) else {
+        return None;
+    };
+    Some(
+        req.version == Some(1)
+            && req.headers.iter().any(|h| {
+                h.name.eq_ignore_ascii_case("expect")
+                    && trim_ows(h.value).eq_ignore_ascii_case(b"100-continue")
+            }),
+    )
+}
 
 /// Bitflags and slot constants shared verbatim between Rust and JS (`packages/node-engine`).
 pub mod abi {
@@ -41,6 +103,7 @@ pub mod abi {
 pub enum ParseError {
     Malformed,
     DuplicateHost,
+    MissingHost,
     ConflictingContentLength,
     ContentLengthWithTransferEncoding,
     DuplicateTransferEncoding,
@@ -60,7 +123,7 @@ impl Default for ParseLimits {
         Self {
             max_body_size: 1_048_576,
             oversize_window: 1_048_576,
-            max_header_bytes: 64 * 1024,
+            max_header_bytes: 16 * 1024,
         }
     }
 }
@@ -74,8 +137,9 @@ pub struct ParsedRequest<'a> {
     pub host: Option<&'a str>,
     pub host_valid: bool,
     pub is_json_ct: bool,
-    /// First `Content-Type` value, trimmed.
-    pub content_type: Option<&'a str>,
+    /// First `Content-Type` value, trimmed, as sent.
+    pub content_type: Option<&'a [u8]>,
+    pub http10: bool,
     pub is_chunked: bool,
     pub is_ws_upgrade: bool,
     pub keep_alive: bool,
@@ -434,12 +498,28 @@ pub fn parse_http1_resume<'a>(
     limits: ParseLimits,
     resume: &mut ChunkResume,
 ) -> Result<ParseStatus<'a>, ParseError> {
-    let mut headers = [const { MaybeUninit::uninit() }; MAX_HEADERS];
+    if buf.len() > REPARSE_LIMIT && !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+        if buf.len() > limits.max_header_bytes {
+            return Err(ParseError::HeadersTooLarge);
+        }
+        return Ok(ParseStatus::Incomplete);
+    }
+    let mut inline = [const { MaybeUninit::uninit() }; MAX_HEADERS];
+    let mut heavy = Vec::new();
     let mut req = httparse::Request::new(&mut []);
-    let head_len = match req.parse_with_uninit_headers(buf, &mut headers) {
+    let mut parsed = req.parse_with_uninit_headers(buf, &mut inline);
+    if parsed == Err(httparse::Error::TooManyHeaders) {
+        heavy.resize_with(MAX_HEADERS_HEAVY, MaybeUninit::uninit);
+        req = httparse::Request::new(&mut []);
+        parsed = req.parse_with_uninit_headers(buf, &mut heavy);
+    }
+    let head_len = match parsed {
         Ok(httparse::Status::Complete(n)) => {
             if n > limits.max_header_bytes {
                 return Err(ParseError::HeadersTooLarge);
+            }
+            if !lines_end_in_crlf(&buf[..n]) {
+                return Err(ParseError::Malformed);
             }
             n
         }
@@ -449,11 +529,15 @@ pub fn parse_http1_resume<'a>(
             }
             return Ok(ParseStatus::Incomplete);
         }
+        Err(httparse::Error::TooManyHeaders) => return Err(ParseError::HeadersTooLarge),
         Err(_) => return Err(ParseError::Malformed),
     };
 
     let method = req.method.ok_or(ParseError::Malformed)?;
     let raw_target = req.path.ok_or(ParseError::Malformed)?;
+    if !is_routable_target(method, raw_target) {
+        return Err(ParseError::Malformed);
+    }
     let (path, query) = match memchr::memchr(b'?', raw_target.as_bytes()) {
         Some(pos) => (&raw_target[..pos], &raw_target[pos + 1..]),
         None => (raw_target, ""),
@@ -462,7 +546,7 @@ pub fn parse_http1_resume<'a>(
     let mut host: Option<&'a str> = None;
     let mut content_length: Option<usize> = None;
     let mut is_json_ct = None;
-    let mut content_type: Option<&'a str> = None;
+    let mut content_type: Option<&'a [u8]> = None;
     let mut is_chunked = false;
     let mut has_te = false;
     let mut is_ws_upgrade = false;
@@ -473,13 +557,16 @@ pub fn parse_http1_resume<'a>(
     for h in req.headers.iter() {
         let name = h.name;
         // `httparse` already rejects all control bytes except HTAB via `HEADER_VALUE_MAP`.
-        let val = std::str::from_utf8(h.value).map_err(|_| ParseError::Malformed)?;
+        // A field that frames or routes the request must be text; any other may be any bytes.
+        let text = std::str::from_utf8(h.value);
+        let strict = || text.map_err(|_| ParseError::Malformed);
+        let val = text.unwrap_or("");
         match name.len() {
             4 if name.eq_ignore_ascii_case("host") => {
                 if host.is_some() {
                     return Err(ParseError::DuplicateHost);
                 }
-                host = Some(val.trim());
+                host = Some(strict()?.trim_matches([' ', '\t']));
             }
             7 if name.eq_ignore_ascii_case("upgrade") => {
                 if val.trim().eq_ignore_ascii_case("websocket") {
@@ -495,15 +582,13 @@ pub fn parse_http1_resume<'a>(
                 }
             }
             12 if is_json_ct.is_none() && name.eq_ignore_ascii_case("content-type") => {
-                let essence = val
-                    .split_once(';')
-                    .map_or(val, |(essence, _)| essence)
-                    .trim();
-                is_json_ct = Some(essence.eq_ignore_ascii_case("application/json"));
-                content_type = Some(val.trim());
+                let end = memchr::memchr(b';', h.value).unwrap_or(h.value.len());
+                let essence = trim_ows(&h.value[..end]);
+                is_json_ct = Some(essence.eq_ignore_ascii_case(b"application/json"));
+                content_type = Some(trim_ows(h.value));
             }
             14 if name.eq_ignore_ascii_case("content-length") => {
-                let parsed = parse_trimmed_usize(val)?;
+                let parsed = parse_trimmed_usize(strict()?)?;
                 if let Some(prev) = content_length {
                     if prev != parsed {
                         return Err(ParseError::ConflictingContentLength);
@@ -516,7 +601,7 @@ pub fn parse_http1_resume<'a>(
                     return Err(ParseError::DuplicateTransferEncoding);
                 }
                 has_te = true;
-                if val.trim().eq_ignore_ascii_case("chunked") {
+                if strict()?.trim().eq_ignore_ascii_case("chunked") {
                     is_chunked = true;
                 } else {
                     return Err(ParseError::Malformed);
@@ -526,6 +611,10 @@ pub fn parse_http1_resume<'a>(
         }
     }
 
+    let http10 = req.version == Some(0);
+    if !http10 && host.is_none() {
+        return Err(ParseError::MissingHost);
+    }
     if has_te && content_length.is_some() {
         return Err(ParseError::ContentLengthWithTransferEncoding);
     }
@@ -569,6 +658,7 @@ pub fn parse_http1_resume<'a>(
         host_valid,
         is_json_ct: is_json_ct.unwrap_or(false),
         content_type,
+        http10,
         is_chunked,
         is_ws_upgrade,
         keep_alive: !close_seen && (keep_alive_seen || default_keep_alive),
@@ -581,18 +671,22 @@ pub fn parse_http1_resume<'a>(
 
 /// Lazily collect all headers from a saved raw HTTP/1.1 head as `[lowercase_name, value, ...]`.
 pub fn collect_headers_in_head(raw_head: &[u8]) -> Vec<String> {
-    let mut headers = [const { MaybeUninit::uninit() }; MAX_HEADERS];
+    let mut inline = [const { MaybeUninit::uninit() }; MAX_HEADERS];
+    let mut heavy = Vec::new();
     let mut req = httparse::Request::new(&mut []);
-    let Ok(httparse::Status::Complete(_)) = req.parse_with_uninit_headers(raw_head, &mut headers)
-    else {
+    let mut parsed = req.parse_with_uninit_headers(raw_head, &mut inline);
+    if parsed == Err(httparse::Error::TooManyHeaders) {
+        heavy.resize_with(MAX_HEADERS_HEAVY, MaybeUninit::uninit);
+        req = httparse::Request::new(&mut []);
+        parsed = req.parse_with_uninit_headers(raw_head, &mut heavy);
+    }
+    let Ok(httparse::Status::Complete(_)) = parsed else {
         return Vec::new();
     };
     let mut out = Vec::with_capacity(req.headers.len() * 2);
     for h in req.headers.iter() {
-        if let Ok(val) = std::str::from_utf8(h.value) {
-            out.push(h.name.to_ascii_lowercase());
-            out.push(val.trim().to_owned());
-        }
+        out.push(h.name.to_ascii_lowercase());
+        out.push(latin1(trim_ows(h.value)));
     }
     out
 }
@@ -821,6 +915,25 @@ pub fn write_stream_head(
     headers: &[(&str, &str)],
     content_length: Option<u64>,
 ) {
+    write_stream_fields(out, status, headers);
+    if let Some(cl) = content_length {
+        let mut num = itoa::Buffer::new();
+        out.extend_from_slice(b"content-length: ");
+        out.extend_from_slice(num.format(cl).as_bytes());
+        out.extend_from_slice(b"\r\n\r\n");
+    } else {
+        out.extend_from_slice(b"transfer-encoding: chunked\r\n\r\n");
+    }
+}
+
+/// Write the head of a streamed response that ends when the connection closes, for an HTTP/1.0
+/// peer that knows no chunked framing.
+pub fn write_close_delimited_head(out: &mut Vec<u8>, status: u16, headers: &[(&str, &str)]) {
+    write_stream_fields(out, status, headers);
+    out.extend_from_slice(b"connection: close\r\n\r\n");
+}
+
+fn write_stream_fields(out: &mut Vec<u8>, status: u16, headers: &[(&str, &str)]) {
     let mut num = itoa::Buffer::new();
     out.extend_from_slice(b"HTTP/1.1 ");
     out.extend_from_slice(num.format(status).as_bytes());
@@ -842,13 +955,6 @@ pub fn write_stream_head(
     }
 
     date::append_header(out);
-    if let Some(cl) = content_length {
-        out.extend_from_slice(b"content-length: ");
-        out.extend_from_slice(num.format(cl).as_bytes());
-        out.extend_from_slice(b"\r\n\r\n");
-    } else {
-        out.extend_from_slice(b"transfer-encoding: chunked\r\n\r\n");
-    }
 }
 
 /// Append one HTTP/1.1 chunk (`<hex>\r\n<bytes>\r\n`).
@@ -1013,7 +1119,7 @@ impl<'a> BatchPacker<'a> {
         let query_bytes = req.query.as_bytes();
         let body_slice = req.body.as_ref();
         let inline_body = body_slice.len() <= abi::INLINE_BODY_MAX;
-        let ct_bytes = req.content_type.map_or(&[][..], str::as_bytes);
+        let ct_bytes = req.content_type.unwrap_or_default();
         let needed = path_bytes.len()
             + query_bytes.len()
             + ct_bytes.len()
@@ -1533,5 +1639,68 @@ mod tests {
         ] {
             assert!(!is_valid_host(host), "{host}");
         }
+    }
+
+    fn parse_one(wire: &[u8]) -> Result<bool, ParseError> {
+        parse_http1(wire, ParseLimits::default())
+            .map(|status| matches!(status, ParseStatus::Complete(_)))
+    }
+
+    #[test]
+    fn refuses_what_proxies_and_servers_read_differently() {
+        for wire in [
+            &b"GET / HTTP/1.1\nHost: a\n\n"[..],
+            b"GET / HTTP/1.1\r\nHost: a\n\r\n",
+            b"GET @evil.test/x HTTP/1.1\r\nHost: a\r\n\r\n",
+            b"GET * HTTP/1.1\r\nHost: a\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: \xe9\r\n\r\n",
+        ] {
+            assert_eq!(parse_one(wire), Err(ParseError::Malformed), "{wire:?}");
+        }
+        assert_eq!(
+            parse_one(b"GET / HTTP/1.1\r\n\r\n"),
+            Err(ParseError::MissingHost)
+        );
+        for wire in [
+            &b"GET / HTTP/1.0\r\n\r\n"[..],
+            b"OPTIONS * HTTP/1.1\r\nHost: a\r\n\r\n",
+            b"GET http://a/x HTTP/1.1\r\nHost: a\r\n\r\n",
+        ] {
+            assert_eq!(parse_one(wire), Ok(true), "{wire:?}");
+        }
+    }
+
+    #[test]
+    fn takes_many_fields_and_latin1_values() {
+        let mut wire = b"GET / HTTP/1.1\r\nHost: a\r\nx-raw: \xe9\r\n".to_vec();
+        for i in 0..200 {
+            wire.extend_from_slice(format!("x-{i}: 1\r\n").as_bytes());
+        }
+        wire.extend_from_slice(b"\r\n");
+        assert_eq!(parse_one(&wire), Ok(true));
+        let fields = collect_headers_in_head(&wire);
+        assert_eq!(fields.len(), 2 * 202);
+        assert_eq!(fields[3], "\u{e9}");
+    }
+
+    #[test]
+    fn bounds_the_head_at_16_kib() {
+        let mut wire = b"GET / HTTP/1.1\r\nHost: a\r\nx-big: ".to_vec();
+        wire.resize(wire.len() + 8_000, b'a');
+        assert_eq!(parse_one(&wire), Ok(false));
+        wire.resize(wire.len() + 10_000, b'a');
+        assert_eq!(parse_one(&wire), Err(ParseError::HeadersTooLarge));
+    }
+
+    #[test]
+    fn sees_expect_continue_once_the_head_is_in() {
+        let head =
+            b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\nExpect: 100-Continue\r\n\r\n";
+        assert_eq!(awaits_continue(head), Some(true));
+        assert_eq!(awaits_continue(&head[..30]), None);
+        assert_eq!(
+            awaits_continue(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\n"),
+            Some(false)
+        );
     }
 }

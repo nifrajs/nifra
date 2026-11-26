@@ -195,6 +195,8 @@ async function runWorker(
 ): Promise<ClusterWorker> {
   const { workers: _workers, respawn: _respawn, onWorkerEvent: _onWorkerEvent, ...rest } = options
   const hex = process.env[TICKET_ENV]
+  // The ticket key decrypts resumed sessions: a process the app spawns must not inherit it.
+  delete process.env[TICKET_ENV]
   const reloaded = await askForTls()
   const current =
     reloaded === undefined
