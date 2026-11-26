@@ -135,11 +135,11 @@ Cached rows are not SSR rows: compare within Table B only.
 
 ## In CI
 
-The Benchmarks workflow (`bench/README.md`) runs one SSR job per runtime, Bun and Node, nightly and on
-demand (a PR labelled `bench` skips them), through `bench/ci/run.ts --suite ssr`. A job runs `run.ts --runtime <runtime> --json`: every table, with
-nifra's app rows on that runtime and every rival app, renderer and static-host row, in 4 interleaved
-rounds. `--json` sends the tables to stderr and prints one result line holding every round; it never
-touches the website's numbers. The rival apps run on Node in both jobs.
+CI (`bench/README.md`) measures Node and Bun in one job through
+`bench/ci/run.ts --suite ssr --runtime node,bun`, which calls `run.ts --runtime node,bun --json`:
+every table, with nifra's app rows on both runtimes and each rival app, renderer and static-host row
+sampled once, in 5 interleaved rounds. `--json` sends the tables to stderr and prints one result line
+per runtime holding every round; it never touches the website's numbers. The rival apps run on Node.
 
 Each CI JSON line also records the exact installed comparator version for every measured target. Before
 importing a payload, install every rival comparator at its pinned version (`bun install --frozen-lockfile`

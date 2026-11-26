@@ -291,6 +291,11 @@ export function unsettledRows(workloads: readonly WorkloadSummary[]): number {
   return workloads.reduce((n, w) => n + w.rows.filter((r) => r.verdict !== "ok").length, 0)
 }
 
+/** The workloads with a row that is not settled: what another run has to measure. */
+export function unsettledWorkloads(workloads: readonly WorkloadSummary[]): string[] {
+  return workloads.filter((w) => w.rows.some((r) => r.verdict !== "ok")).map((w) => w.workload)
+}
+
 /** The http rival row for nifra's row, keeping a suffix such as `-body`. */
 export function rivalRow(runtime: Runtime, nifraRow: string): string {
   return `${RIVALS[runtime]}${nifraRow.slice("nifra".length)}`

@@ -40,6 +40,7 @@ import {
   pushRounds,
   roundOrder,
 } from "../rounds.ts"
+import { selectWorkloads } from "../selection.ts"
 
 const APP_DIR = Bun.env.BENCH_APP_DIR ?? "bench/http-realworld"
 const BUN_CORE_PRELOAD =
@@ -103,8 +104,8 @@ const GET_ORDERS_BODY: Workload = {
   headers: AUTH_HEADERS,
 }
 
-const WORKLOADS: readonly Workload[] = [GET_ORDERS, POST_ORDERS]
-const BODY_WORKLOADS: readonly Workload[] = [GET_ORDERS_BODY]
+const WORKLOADS = selectWorkloads<Workload>([GET_ORDERS, POST_ORDERS])
+const BODY_WORKLOADS = selectWorkloads<Workload>([GET_ORDERS_BODY])
 const ALL_WORKLOADS: readonly Workload[] = [...WORKLOADS, ...BODY_WORKLOADS]
 
 interface Target {
@@ -218,6 +219,32 @@ const nifraUwsTargets: readonly Target[] =
       ]
     : []
 
+// nifra on the in-repo Rust engine. Workspace only, and measured only where the addon is built.
+const NIFRA_ENGINE_BUNDLE = `${APP_DIR}/dist/serve-node-nifra-engine.js`
+const buildNifraEngineBundle = buildNodeBundle("serve-node-nifra-engine.ts")
+const engineSpawn = (port: number, ...extra: string[]): readonly string[] => [
+  "node",
+  NIFRA_ENGINE_BUNDLE,
+  String(port),
+  ...extra,
+]
+const nifraEngineTargets: readonly Target[] =
+  Bun.env.BENCH_APP_DIR === undefined && Bun.env.NIFRA_RUST_ENGINE_PATH !== undefined
+    ? [
+        {
+          framework: "nifra-engine",
+          prepare: buildNifraEngineBundle,
+          spawn: (port) => engineSpawn(port),
+        },
+        {
+          framework: "nifra-engine-body",
+          prepare: buildNifraEngineBundle,
+          spawn: (port) => engineSpawn(port, "body"),
+          workloads: BODY_WORKLOADS,
+        },
+      ]
+    : []
+
 const bodyTarget = (t: Target): Target => ({ ...t, workloads: BODY_WORKLOADS })
 
 const SECTIONS: readonly Section[] = [
@@ -247,6 +274,7 @@ const SECTIONS: readonly Section[] = [
       { ...nodeTarget("node-raw"), isCeiling: true },
       nifraNodeBodyTarget,
       ...nifraUwsTargets,
+      ...nifraEngineTargets,
       bodyTarget(nodeTarget("hono-body")),
       bodyTarget(nodeTarget("fastify-body")),
       bodyTarget(nodeTarget("express-body")),

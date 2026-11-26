@@ -27,6 +27,7 @@ import {
   pushRounds,
   roundOrder,
 } from "../rounds.ts"
+import { selectWorkloads } from "../selection.ts"
 
 // Scale/warmup/round knobs are env-overridable for a fast pass (noisier, but the paired RATIO
 // holds): `BENCH_SCALE=10 BENCH_WARMUP=0 BENCH_ROUNDS=2 …`. Defaults are the credible-numbers set.
@@ -92,9 +93,11 @@ const POST_USERS: Workload = {
 // Default is the meaningful pair - one read (routing + path param) + one write (body validation) -
 // which roughly halves the suite. `--full` adds the GET / baseline and the GET /search query-
 // validation workloads for the detailed BENCHMARKS.md tables.
-const WORKLOADS: readonly Workload[] = process.argv.includes("--full")
-  ? [GET_ROOT, GET_USER, GET_SEARCH, POST_USERS]
-  : [GET_USER, POST_USERS]
+const WORKLOADS: readonly Workload[] = selectWorkloads(
+  process.argv.includes("--full")
+    ? [GET_ROOT, GET_USER, GET_SEARCH, POST_USERS]
+    : [GET_USER, POST_USERS],
+)
 
 interface Target {
   readonly framework: string
@@ -187,6 +190,19 @@ const nifraUwsTarget: Target = {
   spawn: (port) => ["env", `NODE_PATH=${UWS_ADDON_DIR}`, "node", NIFRA_UWS_BUNDLE, String(port)],
 }
 
+// nifra on the in-repo Rust engine. Measured only where the addon is built (CI builds it).
+const NIFRA_ENGINE_BUNDLE = `${import.meta.dir}/dist/serve-node-nifra-engine.js`
+const nifraEngineTargets: readonly Target[] =
+  Bun.env.NIFRA_RUST_ENGINE_PATH === undefined
+    ? []
+    : [
+        {
+          framework: "nifra-engine",
+          prepare: buildNodeBundle("serve-node-nifra-engine.ts"),
+          spawn: (port) => ["node", NIFRA_ENGINE_BUNDLE, String(port)],
+        },
+      ]
+
 const SECTIONS: readonly Section[] = [
   {
     runtime: "bun",
@@ -203,6 +219,7 @@ const SECTIONS: readonly Section[] = [
     targets: [
       nifraNodeTarget,
       nifraUwsTarget,
+      ...nifraEngineTargets,
       nodeTarget("hono"),
       nodeTarget("fastify"),
       nodeTarget("express"),

@@ -9,11 +9,12 @@
  *   bun run bench:ssr                       # every table
  *   bun run bench/ssr/run.ts react vue:A    # React (both tables) + Vue Table A
  *   BENCH_ROUNDS=3 BENCH_SSR_JSON=out.json bun run bench/ssr/run.ts svelte
- *   bun run bench/ssr/run.ts --runtime node --json   # one CI job's matrix (bench/ci/run.ts)
+ *   bun run bench/ssr/run.ts --runtime bun,node --json   # the CI job's matrix (bench/ci/run.ts)
  *
- * `--runtime` keeps nifra's rows on one runtime; `--json` then prints the progress to stderr and
- * one result line to stdout, and leaves the website's numbers alone.
+ * `--runtime` keeps nifra's rows on the runtimes it names; `--json` then prints the progress to
+ * stderr and one result line per runtime to stdout, and leaves the website's numbers alone.
  */
+import { onlyWorkloads } from "../selection.ts"
 import { capturedMeta, NIFRA_VERSION, ohaVersion, writeSiteBench } from "../site-bench.ts"
 import {
   nodeVersion,
@@ -28,6 +29,7 @@ import {
   forRuntime,
   type MeasuredTable,
   SSR_RUNTIMES,
+  sectionsMeasuring,
   selectSections,
 } from "./matrix.ts"
 import { assertEveryTargetMeasured, hostSteps, runSection } from "./section.ts"
@@ -57,17 +59,30 @@ function sourceCommit(): string {
 const argv = process.argv.slice(2)
 const jsonMode = argv.includes("--json")
 const runtimeAt = argv.indexOf("--runtime")
-const runtime = SSR_RUNTIMES.find((r) => runtimeAt >= 0 && r === argv[runtimeAt + 1])
-if (runtimeAt >= 0 && runtime === undefined) {
-  throw new Error(`--runtime takes one of ${SSR_RUNTIMES.join(", ")}`)
+const asked = runtimeAt < 0 ? [] : (argv[runtimeAt + 1] ?? "").split(",")
+const runtimes = asked.flatMap((name) => SSR_RUNTIMES.filter((r) => r === name))
+if (runtimeAt >= 0 && runtimes.length !== asked.length) {
+  throw new Error(`--runtime takes any of ${SSR_RUNTIMES.join(", ")}, comma-separated`)
 }
-if (jsonMode && runtime === undefined) throw new Error("--json needs --runtime")
+if (jsonMode && runtimes.length === 0) throw new Error("--json needs --runtime")
 const filters = argv.filter((a, i) => !a.startsWith("--") && (runtimeAt < 0 || i !== runtimeAt + 1))
+const [only1] = runtimes
 const sections = selectSections(ALL_TABLE_SECTIONS, filters).map((s) =>
-  runtime === undefined ? s : forRuntime(s, runtime),
+  runtimes.length === 1 && only1 !== undefined ? forRuntime(s, only1) : s,
 )
 // Fail on a table the report could not summarize before spending its build and rounds.
-if (jsonMode) for (const section of sections) ciWorkloads(section)
+if (jsonMode) {
+  for (const runtime of runtimes) {
+    for (const section of sections) ciWorkloads(forRuntime(section, runtime))
+  }
+}
+const only = onlyWorkloads()
+const due = only === undefined ? sections : sectionsMeasuring(sections, runtimes, only)
+// A rerun in the same CI job measures what the first run built.
+const steps =
+  Bun.env.BENCH_SKIP_BUILD === "1"
+    ? { ...hostSteps, build: async (): Promise<void> => {} }
+    : hostSteps
 const log = jsonMode ? console.error : console.log
 
 const node = nodeVersion()
@@ -82,8 +97,8 @@ const tableBRows: SsrRunRow[] = []
 const rawSamples: Record<string, Record<string, number[]>> = {}
 const measured: MeasuredTable[] = []
 const failures: string[] = []
-for (const section of sections) {
-  const result = await runSection(section, { ...hostSteps, log })
+for (const section of due) {
+  const result = await runSection(section, { ...steps, log })
   measured.push({ section, rounds: result.rounds })
   rawSamples[section.label] = result.samples
   failures.push(...result.failures)
@@ -116,18 +131,23 @@ const expected = (table: string): number =>
   )
 const expectedA = expected("Table A")
 const expectedB = expected("Table B")
-if (jsonMode && runtime !== undefined) {
-  const meta = {
-    bun: Bun.version,
-    node,
-    oha: ohaVersion(),
-    rounds: SSR_BENCH_ROUNDS,
-    connections: SSR_BENCH_CONNECTIONS,
-    durationS: SSR_BENCH_DURATION_S,
-    warmupS: SSR_BENCH_WARMUP_S,
-    ssrTargetVersions: JSON.stringify(targetVersions),
+if (jsonMode) {
+  for (const runtime of runtimes) {
+    const meta = {
+      bun: Bun.version,
+      node,
+      oha: ohaVersion(),
+      rounds: SSR_BENCH_ROUNDS,
+      connections: SSR_BENCH_CONNECTIONS,
+      durationS: SSR_BENCH_DURATION_S,
+      warmupS: SSR_BENCH_WARMUP_S,
+      // Every run of a report names the same targets, a rerun of a few tables included.
+      ssrTargetVersions: JSON.stringify(
+        ssrTargetVersionMap(sections.flatMap((s) => forRuntime(s, runtime).targets)),
+      ),
+    }
+    console.log(JSON.stringify(ciRunOutput(runtime, measured, meta)))
   }
-  console.log(JSON.stringify(ciRunOutput(runtime, measured, meta)))
 } else if (tableARows.length === expectedA && tableBRows.length === expectedB) {
   // writeSiteBench logs the update itself.
   await writeSiteBench({

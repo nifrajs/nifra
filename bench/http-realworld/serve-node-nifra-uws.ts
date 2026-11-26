@@ -8,37 +8,11 @@
  *   node <bundled serve-node-nifra-uws.js> <port> [body]
  */
 import { serve } from "@nifrajs/node-uws"
-import { responseObserver } from "../../packages/core/dist/response-observer.js"
-import { makeNifraApp } from "./_nifra-app.ts"
+import { makeNifraNodeApp } from "./_nifra-node-app.ts"
 
 const port = Number(process.argv[2])
 if (!Number.isInteger(port)) {
   throw new Error("usage: node <bundled serve-node-nifra-uws.js> <port> [body]")
 }
 
-function hash(s: string): string {
-  let h = 5381
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
-  return (h >>> 0).toString(16)
-}
-
-const app = makeNifraApp()
-if (process.argv[3] === "body") {
-  app.use(responseObserver()).onResponseBody(
-    (body, headers) => {
-      headers.set(
-        "x-body-hash",
-        hash(typeof body === "string" ? body : new TextDecoder().decode(body)),
-      )
-      return undefined
-    },
-    (body, res) => {
-      res.headers ??= {}
-      res.headers["x-body-hash"] =
-        typeof body === "string" ? hash(body) : hash(new TextDecoder().decode(body))
-      return undefined
-    },
-  )
-}
-
-await serve(app, { port })
+await serve(makeNifraNodeApp(process.argv[3] === "body"), { port })

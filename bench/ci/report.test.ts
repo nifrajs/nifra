@@ -10,6 +10,7 @@ import {
   rivalRow,
   summarize,
   unsettledRows,
+  unsettledWorkloads,
 } from "./report.ts"
 
 const GET = "GET /users/:id"
@@ -130,6 +131,8 @@ describe("summarize", () => {
     expect(w?.rows.find((r) => r.row === "nifra")?.verdict).toBe("ok")
     expect(unsettledRows(summarize(runs, "bun", 10))).toBe(1)
     expect(unsettledRows(summarize(runs, "bun", 60))).toBe(0)
+    expect(unsettledWorkloads(summarize(runs, "bun", 10))).toEqual([GET])
+    expect(unsettledWorkloads(summarize(runs, "bun", 60))).toEqual([])
 
     const [one] = summarize([run([100, 100, 100, 100], { nifra: steady(0.98) })], "bun", 10)
     expect(one?.rows.map((r) => r.verdict)).toEqual(["too few rounds", "too few rounds"])
