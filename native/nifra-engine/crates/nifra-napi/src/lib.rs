@@ -1651,13 +1651,18 @@ impl UvCallbacks for HttpUvCallbacks {
         invoke_on_batch_unlocked(&self.shared);
     }
 
-    fn oldest_incomplete_request(&self, conn_id: u32) -> Option<std::time::Instant> {
+    fn expire_requests(
+        &mut self,
+        conn_id: u32,
+        now: std::time::Instant,
+        out: &mut Vec<u8>,
+    ) -> bool {
         self.shared
-            .borrow()
+            .borrow_mut()
             .conn_meta
-            .get(conn_id)
-            .and_then(|s| s.h2.as_deref())
-            .and_then(H2Conn::oldest_incomplete_request)
+            .get_mut(conn_id)
+            .and_then(|slot| slot.h2.as_deref_mut())
+            .is_some_and(|h2| h2.expire_requests(now, out))
     }
 
     fn unanswered_only(&self, conn_id: u32) -> bool {
@@ -2967,6 +2972,9 @@ pub fn create_uv_server(
             tls_store = Some(Arc::new(store));
         }
     }
+
+    h2_cfg.request_timeout = (sock_cfg.request_timeout_ms > 0)
+        .then(|| std::time::Duration::from_millis(sock_cfg.request_timeout_ms));
 
     let (listener, local_addr) = bind_tcp_listener(&host, port, sock_cfg)
         .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;

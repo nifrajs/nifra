@@ -18,11 +18,11 @@ use nifra_tls::{feed_ciphertext, TlsError, TlsInput, TlsStore};
 #[cfg(target_os = "linux")]
 use crate::epoll::EpollServer;
 use crate::sys::{
-    alloc_handle, alloc_read_scratch, collect_timeout_ids, ensure_read_scratch,
-    flush_write_buf_core, free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock,
-    set_nosigpipe_if_supported, set_tcp_nodelay, uv_api, write_bytes_or_queue, ConnCore, ConnSlab,
-    FlushAction, LoopClock, UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES,
-    READ_SCRATCH_SIZE, SHRINK_THRESHOLD, UV_READABLE, UV_WRITABLE,
+    alloc_handle, alloc_read_scratch, collect_timeouts, ensure_read_scratch, flush_write_buf_core,
+    free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock, set_nosigpipe_if_supported,
+    set_tcp_nodelay, uv_api, write_bytes_or_queue, ConnCore, ConnSlab, FlushAction, LoopClock,
+    UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES, READ_SCRATCH_SIZE,
+    SHRINK_THRESHOLD, UV_READABLE, UV_WRITABLE,
 };
 use crate::{ConnAction, SocketConfig};
 
@@ -51,10 +51,15 @@ pub trait UvCallbacks {
     fn unanswered_only(&self, conn_id: u32) -> bool {
         self.has_pending_requests(conn_id)
     }
-    /// When the oldest request still being received on `conn_id` began, for protocols that keep
-    /// unfinished requests as parsed state rather than as unread bytes (HTTP/2 streams).
-    fn oldest_incomplete_request(&self, _conn_id: u32) -> Option<std::time::Instant> {
-        None
+    /// Cancel expired protocol requests and append any reply bytes. Returns true if the
+    /// connection must close. Runs while the transport is borrowed, so this cannot call JS.
+    fn expire_requests(
+        &mut self,
+        _conn_id: u32,
+        _now: std::time::Instant,
+        _out: &mut Vec<u8>,
+    ) -> bool {
+        false
     }
     fn on_writable(&mut self, conn_id: u32);
     fn on_disconnect(&mut self, conn_id: u32);
@@ -1187,17 +1192,23 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     if !st.clock.on_timer_tick(uv_ms) {
         return;
     }
-    let now = st.clock.now();
-    let ids = collect_timeout_ids(
-        st.conns.iter().map(|(id, c)| (id, &c.core)),
-        now,
-        st.cfg,
-        st.callbacks.as_deref(),
-    );
-    for id in ids {
+    let sweep = {
+        let st = &mut *st;
+        collect_timeouts(
+            st.conns.iter().map(|(id, c)| (id, &c.core)),
+            st.clock.now(),
+            st.cfg,
+            st.callbacks.as_deref_mut(),
+        )
+    };
+    for id in sweep.closed {
         if let Some(conn) = st.conns.remove(id) {
             close_client_handle(uv, conn.poll_handle);
         }
+    }
+    drop(st);
+    for (id, reply) in sweep.replies {
+        UvPollState::write_to_conn(&state_rc, id, &reply, false, false);
     }
 }
 

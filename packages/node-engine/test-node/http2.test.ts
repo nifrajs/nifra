@@ -1,7 +1,7 @@
 /** HTTP/2 on the engine: by ALPN over TLS, by prior knowledge in the clear, with HTTP/1.1 beside it. */
 
 import assert from "node:assert/strict"
-import { type ClientHttp2Session, connect, type IncomingHttpHeaders } from "node:http2"
+import { type ClientHttp2Session, connect, constants, type IncomingHttpHeaders } from "node:http2"
 import { test } from "node:test"
 import { server, staticResponse, status } from "@nifrajs/core"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
@@ -268,5 +268,49 @@ test("a stream of no declared length that fails resets the HTTP/2 stream rather 
   } finally {
     session.destroy()
     await running.stop({ drainMs: 50 })
+  }
+})
+
+test("an HTTP/2 upload deadline resets just the expired stream", { timeout: 6000 }, async () => {
+  const release = Promise.withResolvers<void>()
+  const entered = Promise.withResolvers<void>()
+  let uploads = 0
+  const app = server()
+    .post("/upload", () => {
+      uploads++
+      return { ok: true }
+    })
+    .get("/sibling", async () => {
+      entered.resolve()
+      await release.promise
+      return { ok: true }
+    })
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    http2: true,
+    engine: { requestTimeoutMs: 250 },
+  })
+  const session = connect(`http://127.0.0.1:${running.port}`)
+  const upload = session.request({ ":method": "POST", ":path": "/upload" })
+  const closed = new Promise<number>((resolve) => {
+    upload.on("error", () => {
+      // Node can emit an error for RST_STREAM. Assert its wire code on close.
+    })
+    upload.once("close", () => resolve(upload.rstCode))
+  })
+  upload.write("part of the upload")
+  try {
+    const sibling = exchange(session, "GET", "/sibling")
+    await Promise.race([entered.promise, sibling])
+    assert.equal(await closed, constants.NGHTTP2_CANCEL)
+    assert.equal(uploads, 0)
+    release.resolve()
+    assert.equal((await sibling).status, 200)
+    assert.equal((await exchange(session, "GET", "/sibling")).status, 200)
+  } finally {
+    release.resolve()
+    session.destroy()
+    await running.stop({ drainMs: 0 })
   }
 })

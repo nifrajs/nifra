@@ -29,6 +29,9 @@ NIFRA_RUST_ENGINE_PATH=/tmp/nifra_napi.node node --test packages/node-engine/tes
 
 On Linux, use `libnifra_napi.so`.
 
+Set `NIFRA_ENGINE_TEST_DENO=1` with Deno on `PATH` to include the live adapter comparison in
+`parity.test.ts`. CI enables this comparison.
+
 ## `serve(app, options)`
 
 Resolves to an `EngineServer` once the port is bound. Invalid options throw before anything is started.
@@ -88,6 +91,10 @@ await serve(app, { port: 443, tls: { cert, key }, http2: true })
 With `tls`, clients negotiate `h2` by ALPN. Without it, a client opening with the HTTP/2 preface is served (prior knowledge, `curl --http2-prior-knowledge`). Every other client gets HTTP/1.1 on the same port. A request on an HTTP/2 stream reaches the app exactly as an HTTP/1 request does.
 
 Not served over HTTP/2: WebSocket upgrades (RFC 8441), server push, CONNECT. A WebSocket needs an HTTP/1.1 connection.
+
+`engine.requestTimeoutMs` bounds reception of each HTTP/2 request from its initial headers.
+An upload that exceeds the deadline is cancelled while other streams keep running.
+If the deadline expires inside an unfinished frame or HPACK header block, the connection closes.
 
 ### HTTP/2 benchmarks
 

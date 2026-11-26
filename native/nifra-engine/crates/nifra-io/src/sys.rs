@@ -662,12 +662,17 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
     flush_write_buf_core(core)
 }
 
-pub(crate) fn collect_timeout_ids<'a>(
+pub(crate) struct TimeoutSweep {
+    pub closed: Vec<u32>,
+    pub replies: Vec<(u32, Vec<u8>)>,
+}
+
+pub(crate) fn collect_timeouts<'a>(
     conns: impl Iterator<Item = (u32, &'a ConnCore)>,
     now: Instant,
     cfg: SocketConfig,
-    callbacks: Option<&dyn UvCallbacks>,
-) -> Vec<u32> {
+    mut callbacks: Option<&mut (dyn UvCallbacks + 'static)>,
+) -> TimeoutSweep {
     let idle_limit = (cfg.idle_timeout_ms > 0).then(|| Duration::from_millis(cfg.idle_timeout_ms));
     let request_limit =
         (cfg.request_timeout_ms > 0).then(|| Duration::from_millis(cfg.request_timeout_ms));
@@ -675,17 +680,24 @@ pub(crate) fn collect_timeout_ids<'a>(
     let mut idle = Vec::new();
     let mut partial = Vec::new();
     let mut abandoned = Vec::new();
+    let mut replies = Vec::new();
+    let mut reply = Vec::new();
 
     for (id, c) in conns {
         if idle_limit.is_some_and(|l| now.duration_since(c.last_activity) >= l) {
             idle.push(id);
         }
-        // A newer partial frame must not hide an older unfinished request.
-        let unfinished = request_limit.and_then(|_| callbacks?.oldest_incomplete_request(id));
-        let started = [c.partial_since, unfinished].into_iter().flatten().min();
-        if let Some(started) = started {
-            if request_limit.is_some_and(|l| now.duration_since(started) >= l) {
+        if let Some(limit) = request_limit {
+            if c.partial_since
+                .is_some_and(|started| now.saturating_duration_since(started) >= limit)
+                || callbacks
+                    .as_mut()
+                    .is_some_and(|cb| cb.expire_requests(id, now, &mut reply))
+            {
                 partial.push(id);
+                reply.clear();
+            } else if !reply.is_empty() {
+                replies.push((id, std::mem::take(&mut reply)));
             }
         }
         if c.close_deadline.is_some_and(|d| now >= d) {
@@ -698,7 +710,7 @@ pub(crate) fn collect_timeout_ids<'a>(
         }
     }
 
-    let mut ids = match callbacks {
+    let mut ids = match callbacks.as_deref() {
         Some(cb) if !idle.is_empty() => cb.without_pending(idle),
         _ => idle,
     };
@@ -712,5 +724,8 @@ pub(crate) fn collect_timeout_ids<'a>(
     }
     ids.sort_unstable();
     ids.dedup();
-    ids
+    TimeoutSweep {
+        closed: ids,
+        replies,
+    }
 }

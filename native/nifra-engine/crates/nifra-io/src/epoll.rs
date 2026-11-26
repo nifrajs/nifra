@@ -20,11 +20,11 @@ use std::sync::Arc;
 use nifra_tls::{feed_ciphertext, TlsError, TlsInput, TlsStore};
 
 use crate::sys::{
-    alloc_handle, alloc_read_scratch, collect_timeout_ids, ensure_read_scratch,
-    flush_write_buf_core, free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock,
-    set_tcp_nodelay, socket_incoming_cpu, uv_api, write_bytes_or_queue, ConnCore, ConnSlab,
-    FlushAction, LoopClock, UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES,
-    READ_SCRATCH_SIZE, SHRINK_THRESHOLD, UV_READABLE,
+    alloc_handle, alloc_read_scratch, collect_timeouts, ensure_read_scratch, flush_write_buf_core,
+    free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock, set_tcp_nodelay,
+    socket_incoming_cpu, uv_api, write_bytes_or_queue, ConnCore, ConnSlab, FlushAction, LoopClock,
+    UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES, READ_SCRATCH_SIZE,
+    SHRINK_THRESHOLD, UV_READABLE,
 };
 use crate::uv::{UvCallbacks, WriteResult};
 use crate::{ConnAction, SocketConfig};
@@ -1331,7 +1331,7 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     let ctx = &*(data as *const TimerCtx);
     let state_rc = Rc::clone(&ctx.state);
 
-    let sweep_due = {
+    let replies = {
         let mut st = state_rc.borrow_mut();
         if st.closed {
             return;
@@ -1340,20 +1340,26 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         if !st.clock.on_timer_tick(uv_ms) {
             return;
         }
-        let now = st.clock.now();
-        let ids = collect_timeout_ids(
-            st.conns.iter().map(|(id, c)| (id, c)),
-            now,
+        let st = &mut *st;
+        let sweep = collect_timeouts(
+            st.conns.iter(),
+            st.clock.now(),
             st.cfg,
-            st.callbacks.as_deref(),
+            st.callbacks.as_deref_mut(),
         );
-        for id in ids {
+        for id in sweep.closed {
             st.remove_and_close_conn(id);
         }
-        !st.pending_disconnects.is_empty()
+        sweep.replies
     };
 
-    if sweep_due {
+    let server = EpollServer {
+        state: Rc::clone(&state_rc),
+    };
+    for (id, reply) in replies {
+        server.write_to_conn(id, &reply, false, false);
+    }
+    if !state_rc.borrow().pending_disconnects.is_empty() {
         drain_turn_and_side_effects(&state_rc);
     }
 }
