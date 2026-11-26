@@ -23,10 +23,11 @@ import { fileURLToPath } from "node:url"
  * content type; 10,243 B (from 10,196) once that refusal also tells a browser-managed `Authorization`
  * scheme from a script-set one; 10,321 B with the router's dynamic-match admission window, which
  * caches interleaved hot dynamic paths (10 -> 33 M finds/s on eight alternating paths); 10,442 B (from 10,321) with
- * the synchronous JSON body lane that lets a native engine answer a POST without a promise, unused on edge. The ceiling has headroom for honest
- * growth; a jump past it means something big got pulled in - investigate, don't just bump the number.
+ * the synchronous JSON body lane that lets a native engine answer a POST without a promise, unused
+ * on edge; 10,499 B once form writes also honor Fetch Metadata when Origin is absent. The ceiling
+ * includes a small margin for the measured bundle.
  */
-const CEILING_GZIP_BYTES = 10_470
+const CEILING_GZIP_BYTES = 10_530
 
 test(`self-contained bundle stays under ${CEILING_GZIP_BYTES} B gzipped`, async () => {
   const built = await Bun.build({
