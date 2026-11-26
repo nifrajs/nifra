@@ -825,12 +825,15 @@ fn h1_send(
     result
 }
 
+/// Set on every queued-answer id: slab ids count the requests in flight and never reach it.
+#[cfg(unix)]
+const PLACEHOLDER_BIT: u32 = 1 << 31;
+
 /// An id for a queued answer that no request owns.
 #[cfg(unix)]
 fn next_placeholder(st: &mut UvHttpShared) -> u32 {
-    let id = st.placeholder_seq;
-    st.placeholder_seq = id.wrapping_sub(1);
-    id
+    st.placeholder_seq = st.placeholder_seq.wrapping_add(1);
+    PLACEHOLDER_BIT | st.placeholder_seq
 }
 
 /// Queue a finished answer behind the connection's earlier unanswered requests, so it leaves in
@@ -1018,8 +1021,7 @@ struct UvHttpShared {
     reset_in_batch: Vec<(u32, u32, u32)>,
     pending: PendingSlab,
     conn_meta: ConnMetaTable,
-    /// Ids for finished answers parked behind an earlier request; they count down from the top so
-    /// they never meet a slab id.
+    /// The last id given to a finished answer parked behind an earlier request.
     placeholder_seq: u32,
     scratch_frame: Vec<u8>,
 }
@@ -2899,7 +2901,7 @@ pub fn create_uv_server(
         reset_in_batch: Vec::new(),
         pending: PendingSlab::with_capacity(256),
         conn_meta: ConnMetaTable::with_capacity(256),
-        placeholder_seq: u32::MAX,
+        placeholder_seq: 0,
         scratch_frame: Vec::with_capacity(4096),
     }));
 

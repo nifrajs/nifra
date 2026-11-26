@@ -47,6 +47,25 @@ test("a TLS response larger than the record buffer arrives whole", async () => {
   }
 })
 
+test("a Content-Length too large to frame is refused without waiting for the body", async () => {
+  const running = await serve(
+    server().get(
+      "/huge",
+      () => new Response(new ReadableStream(), { headers: { "content-length": "4294967296" } }),
+    ),
+    loopback,
+  )
+  try {
+    const reply = await raw(
+      running.port,
+      "GET /huge HTTP/1.1\r\nHost: x\r\nconnection: close\r\n\r\n",
+    )
+    assert.match(reply, /^HTTP\/1\.1 500 /)
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
 test("repeated Cookie fields are joined as cookie pairs", async () => {
   const running = await serve(
     server().get("/cookie", (c) => ({ header: c.req.headers.get("cookie"), seen: c.cookies })),

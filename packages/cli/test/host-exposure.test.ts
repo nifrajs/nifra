@@ -197,6 +197,19 @@ describe("what counts as configuring or serving", () => {
     ).toEqual([])
   })
 
+  test("a source is judged where it is spread, and `&&` may write nothing", async () => {
+    for (const code of [
+      "const defaults = { validateHost: true }\nexport const o = { ...defaults, validateHost: false }",
+      "export const o = { validateHost: false, ...(enabled && { validateHost: true }) }",
+      "export const o = { ...(flag ? { validateHost: true } : undefined) }",
+    ]) {
+      expect(await one(`${listen}${code}`)).toHaveLength(1)
+    }
+    expect(
+      await one(`${listen}const base = { validateHost: true }\nexport const o = { ...base }`),
+    ).toEqual([])
+  })
+
   test("a long route chain is still a server", async () => {
     const routes = '.get("/a", h)'.repeat(12)
     expect(

@@ -40,25 +40,34 @@ function propertyKey(ts: typeof TSApi, prop: TSApi.ObjectLiteralElementLike): st
 
 type Bindings = ReadonlyMap<string, readonly TSApi.Expression[]>
 
-/** The object literals a spread can copy from, or `undefined` when one of them cannot be read. */
+/**
+ * What a spread can copy from, `null` standing for a branch that writes nothing, or `undefined` when
+ * one of them cannot be read.
+ */
 function spreadSources(
   ts: typeof TSApi,
   from: TSApi.Expression,
   bindings: Bindings,
   seen: ReadonlySet<TSApi.Node>,
-): readonly TSApi.ObjectLiteralExpression[] | undefined {
+): readonly (TSApi.ObjectLiteralExpression | null)[] | undefined {
   if (ts.isObjectLiteralExpression(from)) return [from]
+  if (
+    from.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(from) && from.text === "undefined")
+  )
+    return [null]
   let branches: readonly TSApi.Expression[] | undefined
   if (ts.isParenthesizedExpression(from)) branches = [from.expression]
   else if (ts.isConditionalExpression(from)) branches = [from.whenTrue, from.whenFalse]
   else if (
     ts.isBinaryExpression(from) &&
     from.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
-  )
-    branches = [from.right]
-  else if (ts.isIdentifier(from)) branches = bindings.get(from.text)
+  ) {
+    const right = spreadSources(ts, from.right, bindings, seen)
+    return right === undefined ? undefined : [...right, null]
+  } else if (ts.isIdentifier(from)) branches = bindings.get(from.text)
   if (branches === undefined) return undefined
-  const found: TSApi.ObjectLiteralExpression[] = []
+  const found: (TSApi.ObjectLiteralExpression | null)[] = []
   for (const branch of branches) {
     // Each node is followed once, so a name bound to itself ends here.
     if (seen.has(branch)) return undefined
@@ -89,7 +98,7 @@ function hostSetting(
         continue
       }
       const results = sources.map((source) =>
-        hostSetting(ts, source, bindings, new Set([...seen, source])),
+        source === null ? undefined : hostSetting(ts, source, bindings, new Set([...seen, source])),
       )
       if (results.includes(false)) setting = false
       else if (results.every((result) => result === true)) setting = true
@@ -102,15 +111,38 @@ function hostSetting(
   return setting
 }
 
+/** The object literals that reach a server only by being spread into another. */
+function spreadLiterals(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+  bindings: Bindings,
+): ReadonlySet<TSApi.Node> {
+  const found = new Set<TSApi.Node>()
+  const collect = (node: TSApi.Node): void => {
+    if (ts.isSpreadAssignment(node)) {
+      for (const source of spreadSources(ts, node.expression, bindings, new Set()) ?? []) {
+        if (source !== null) found.add(source)
+      }
+    }
+    ts.forEachChild(node, collect)
+  }
+  collect(tree)
+  return found
+}
+
 /**
  * Whether code in `tree` puts a Host check on a server. A comment or a string that names the option
- * configures nothing.
+ * configures nothing, and a spread literal is judged where it lands, where it can be overwritten.
  */
 function configuresHost(ts: typeof TSApi, tree: TSApi.SourceFile, bindings: Bindings): boolean {
+  const spread = spreadLiterals(ts, tree, bindings)
   const visit = (node: TSApi.Node): boolean => {
-    // A literal spread into another is judged there, where a later property can overwrite it.
-    if (ts.isSpreadAssignment(node) && ts.isObjectLiteralExpression(node.expression)) return false
-    if (ts.isObjectLiteralExpression(node) && hostSetting(ts, node, bindings) === true) return true
+    if (
+      ts.isObjectLiteralExpression(node) &&
+      !spread.has(node) &&
+      hostSetting(ts, node, bindings) === true
+    )
+      return true
     return ts.forEachChild(node, (child) => (visit(child) ? true : undefined)) === true
   }
   return visit(tree)

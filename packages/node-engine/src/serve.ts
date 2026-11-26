@@ -727,6 +727,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     source.onWritable = () => unblock?.()
 
     const declared = bodyLength ?? declaredContentLength(headers)
+    // Only a body that completes at once can still be sent, at its real length: do not wait on one.
+    const unframeable = declared !== undefined && declared > MAX_NATIVE_LENGTH
     const pending: Uint8Array[] = []
     let finished = false
     // A second read that is still pending after a turn is not waited for: a route that sent its first
@@ -735,7 +737,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     for (let i = 0; i < 2 && !finished; i++) {
       const read = reader.read()
       let next: Awaited<ReturnType<typeof reader.read>> | undefined
-      if (i === 0 || pending.length === 0) {
+      if (!unframeable && (i === 0 || pending.length === 0)) {
         next = await read
       } else {
         next = await Promise.race([read, new Promise<undefined>((r) => setImmediate(r))])
@@ -758,7 +760,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     validateHeaders(status, headers, cookies)
     const flat = buildFlatHeaders(headers, cookies, defaultType)
     // The native writer takes a u32 and would wrap a larger value into a short, wrong length.
-    if (declared !== undefined && declared > MAX_NATIVE_LENGTH) {
+    if (unframeable) {
+      void reader.cancel().catch(() => {})
       throw new RangeError(`Content-Length ${declared} is larger than the engine can frame`)
     }
     uvServer.writeHead(source.requestId, status, flat, declared ?? null)
