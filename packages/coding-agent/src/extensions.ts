@@ -140,6 +140,38 @@ interface ExtensionActivation {
   live: ExtensionContext | undefined
 }
 
+interface ExtensionSnapshot {
+  readonly contents: string
+  readonly loader: "ts" | "tsx" | "js" | "jsx"
+}
+
+const extensionSnapshots = new Map<string, ExtensionSnapshot>()
+let snapshotPluginRegistered = false
+
+function ensureExtensionSnapshotLoader(): void {
+  if (snapshotPluginRegistered) return
+  snapshotPluginRegistered = true
+  Bun.plugin({
+    name: "nifra-coding-agent-extension-snapshot",
+    setup(build) {
+      build.onLoad({ filter: /\?nifraExtensionRevision=/ }, (args) => {
+        const snapshot = extensionSnapshots.get(args.path)
+        if (snapshot === undefined) {
+          throw new Error(`missing verified snapshot for extension ${args.path}`)
+        }
+        return { contents: snapshot.contents, loader: snapshot.loader }
+      })
+    },
+  })
+}
+
+function extensionLoaderFor(path: string): "ts" | "tsx" | "js" | "jsx" {
+  if (path.endsWith(".tsx")) return "tsx"
+  if (path.endsWith(".jsx")) return "jsx"
+  if (path.endsWith(".js") || path.endsWith(".mjs") || path.endsWith(".cjs")) return "js"
+  return "ts"
+}
+
 let activationSequence = 0
 
 function replayRegistrations(
@@ -246,7 +278,9 @@ export class ExtensionHost {
       if (pathError !== undefined) throw new Error(pathError)
       for (const path of paths) {
         await this.options.validate?.(path)
-        const digest = createHash("sha256").update(readFileSync(path)).digest("hex")
+        const canonicalPath = realpathSync(path)
+        const rawBytes = readFileSync(canonicalPath)
+        const digest = createHash("sha256").update(rawBytes).digest("hex")
         let activation = this.activations.find(
           (candidate) =>
             candidate.extension.path === path &&
@@ -254,7 +288,7 @@ export class ExtensionHost {
             !next.includes(candidate),
         )
         if (activation === undefined) {
-          activation = await this.loadOne(path, digest)
+          activation = await this.loadOne(path, canonicalPath, digest, rawBytes)
           created.push(activation)
         }
         replayRegistrations(activation.registrations, staging)
@@ -362,19 +396,39 @@ export class ExtensionHost {
     for (const { handler, context } of calls) await handler(payload, context)
   }
 
-  private async loadOne(path: string, digest: string): Promise<ExtensionActivation> {
-    const source = readFileSync(path, "utf8")
+  private async loadOne(
+    path: string,
+    canonicalPath: string,
+    digest: string,
+    rawBytes: Buffer,
+  ): Promise<ExtensionActivation> {
+    const source = rawBytes.toString("utf8")
     const trusted = new Set(this.options.trustedCapabilities ?? [])
     const staticCapabilities = staticDeclaredCapabilities(source)
     if (staticCapabilities !== undefined) {
       assertTrustedCapabilities(path, staticCapabilities, trusted)
     }
-    // Reused activations never import again. New attempts need isolated module state, and a failed
-    // evaluation can stay cached for the URL used by that attempt.
-    const module = (await import(`${path}?revision=${++activationSequence}`)) as {
+    // Reused activations never import again. New attempts need isolated module state, and serving the
+    // verified in-memory source through Bun's loader prevents TOCTOU changes between preflight and eval.
+    ensureExtensionSnapshotLoader()
+    const specifier = `${canonicalPath}?nifraExtensionRevision=${++activationSequence}`
+    extensionSnapshots.set(specifier, {
+      contents: source,
+      loader: extensionLoaderFor(canonicalPath),
+    })
+    let module: {
       default?: ExtensionFactory
       id?: string
       capabilities?: readonly string[]
+    }
+    try {
+      module = (await import(specifier)) as {
+        default?: ExtensionFactory
+        id?: string
+        capabilities?: readonly string[]
+      }
+    } finally {
+      extensionSnapshots.delete(specifier)
     }
     if (typeof module.default !== "function")
       throw new Error(`extension ${path} has no default factory`)
@@ -476,15 +530,31 @@ export class ExtensionHost {
 }
 
 type CapabilityToken =
-  | { readonly kind: "word"; readonly text: string; readonly depth: number }
-  | { readonly kind: "string"; readonly value: string; readonly depth: number }
+  | {
+      readonly kind: "word"
+      readonly text: string
+      readonly depth: number
+      readonly line: number
+    }
+  | {
+      readonly kind: "string"
+      readonly value: string
+      readonly depth: number
+      readonly line: number
+    }
   | {
       readonly kind: "punct"
       readonly text: string
       readonly depth: number
+      readonly line: number
       readonly regexNext?: boolean
     }
-  | { readonly kind: "other"; readonly text: string; readonly depth: number }
+  | {
+      readonly kind: "other"
+      readonly text: string
+      readonly depth: number
+      readonly line: number
+    }
 
 const REGEX_PREFIX_KEYWORDS = new Set([
   "return",
@@ -497,7 +567,6 @@ const REGEX_PREFIX_KEYWORDS = new Set([
   "yield",
   "in",
   "instanceof",
-  "of",
   "new",
   "export",
   "default",
@@ -540,58 +609,155 @@ const EXPR_BRACE_PREFIX_PUNCT = new Set([
   "<",
   ">",
 ])
-const EXPORT_DECL_KEYWORDS = new Set(["const", "let", "var"])
+const STATEMENT_PREFIX_WORDS = new Set([
+  "export",
+  "import",
+  "const",
+  "let",
+  "var",
+  "function",
+  "class",
+  "if",
+  "for",
+  "while",
+  "do",
+  "switch",
+  "try",
+  "return",
+  "throw",
+  "break",
+  "continue",
+  "type",
+  "interface",
+])
+const TYPE_CONTINUATION_BEFORE = new Set(["|", "&", "=>", "<", ":", "(", "[", "{", ","])
+const TYPE_CONTINUATION_WORDS = new Set([
+  "keyof",
+  "typeof",
+  "readonly",
+  "infer",
+  "extends",
+  "is",
+  "asserts",
+  "unique",
+])
+const INFIX_BEFORE_NEWLINE = new Set([
+  ".",
+  "?.",
+  "=",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "&",
+  "|",
+  "^",
+  "?",
+  ":",
+  "&&",
+  "||",
+  "??",
+  ",",
+  "(",
+  "[",
+  "<",
+  ">",
+])
+const INFIX_AFTER_NEWLINE = new Set([
+  ".",
+  "?.",
+  "[",
+  "(",
+  "as",
+  "satisfies",
+  "?",
+  ":",
+  "&&",
+  "||",
+  "??",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+])
+
+function isLineTerminatorCode(code: number): boolean {
+  return code === 10 || code === 13 || code === 0x2028 || code === 0x2029
+}
+
+function isWhitespaceCode(code: number): boolean {
+  return (
+    code === 32 ||
+    code === 9 ||
+    code === 11 ||
+    code === 12 ||
+    isLineTerminatorCode(code) ||
+    code === 0xfeff ||
+    code === 0x00a0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000
+  )
+}
 
 function isWordStartCode(code: number): boolean {
-  return (
-    (code >= 65 && code <= 90) ||
-    (code >= 97 && code <= 122) ||
-    code === 95 ||
-    code === 36 ||
-    code > 127
-  )
+  if (code > 127) return !isWhitespaceCode(code)
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95 || code === 36
 }
 
 function isWordContinueCode(code: number): boolean {
   return isWordStartCode(code) || (code >= 48 && code <= 57)
 }
 
-function isWhitespaceCode(code: number): boolean {
-  return code === 32 || code === 9 || code === 10 || code === 13 || code === 11 || code === 12
+function isHexDigitCode(code: number): boolean {
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102)
 }
 
-function decodeHexEscape(
+function decodeHexRange(
   source: string,
   start: number,
-  digits: number,
-): { readonly ch: string; readonly nextIndex: number } | undefined {
-  if (start + digits > source.length) return undefined
-  const slice = source.slice(start, start + digits)
-  for (let idx = 0; idx < slice.length; idx++) {
-    const code = slice.charCodeAt(idx)
-    const hex =
-      (code >= 48 && code <= 57) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102)
-    if (!hex) return undefined
+  end: number,
+): { readonly valid: boolean; readonly ch: string } {
+  if (end <= start || end > source.length) return { valid: false, ch: "" }
+  let cp = 0
+  for (let idx = start; idx < end; idx++) {
+    const code = source.charCodeAt(idx)
+    if (!isHexDigitCode(code)) return { valid: false, ch: "" }
+    const digit = code <= 57 ? code - 48 : code <= 70 ? code - 55 : code - 87
+    cp = cp * 16 + digit
+    if (cp > 0x10ffff) return { valid: false, ch: "" }
   }
-  return {
-    ch: String.fromCodePoint(Number.parseInt(slice, 16)),
-    nextIndex: start + digits,
-  }
+  return { valid: true, ch: String.fromCodePoint(cp) }
 }
 
 function decodeStringEscape(
   source: string,
   escapeIndex: number,
-): { readonly ch: string; readonly nextIndex: number } {
+): {
+  readonly ch: string
+  readonly valid: boolean
+  readonly nextIndex: number
+  readonly lineDelta: number
+} {
   const esc = source[escapeIndex + 1]
-  if (esc === undefined) return { ch: "", nextIndex: escapeIndex + 1 }
+  if (esc === undefined) {
+    return { ch: "", valid: false, nextIndex: escapeIndex + 1, lineDelta: 0 }
+  }
   if (esc === "\r") {
     return {
       ch: "",
+      valid: true,
       nextIndex: source[escapeIndex + 2] === "\n" ? escapeIndex + 3 : escapeIndex + 2,
+      lineDelta: 1,
     }
   }
-  if (esc === "\n") return { ch: "", nextIndex: escapeIndex + 2 }
+  if (esc === "\n" || esc === "\u2028" || esc === "\u2029") {
+    return { ch: "", valid: true, nextIndex: escapeIndex + 2, lineDelta: 1 }
+  }
   const simple: Record<string, string> = {
     n: "\n",
     r: "\r",
@@ -601,70 +767,113 @@ function decodeStringEscape(
     v: "\v",
     "0": "\0",
   }
-  if (esc in simple) return { ch: simple[esc] ?? esc, nextIndex: escapeIndex + 2 }
+  if (esc in simple) {
+    return { ch: simple[esc] ?? esc, valid: true, nextIndex: escapeIndex + 2, lineDelta: 0 }
+  }
   if (esc === "x") {
-    const hex = decodeHexEscape(source, escapeIndex + 2, 2)
-    if (hex !== undefined) return hex
+    const hex = decodeHexRange(source, escapeIndex + 2, escapeIndex + 4)
+    return hex.valid
+      ? { ch: hex.ch, valid: true, nextIndex: escapeIndex + 4, lineDelta: 0 }
+      : { ch: "", valid: false, nextIndex: escapeIndex + 2, lineDelta: 0 }
   }
   if (esc === "u") {
     if (source[escapeIndex + 2] === "{") {
-      const close = source.indexOf("}", escapeIndex + 3)
-      if (close !== -1 && close > escapeIndex + 3) {
-        const hex = decodeHexEscape(source, escapeIndex + 3, close - (escapeIndex + 3))
-        if (hex !== undefined) return { ch: hex.ch, nextIndex: close + 1 }
+      // Forward scan stops at the first non-hex character or closing brace, preventing quadratic scans.
+      let cursor = escapeIndex + 3
+      while (cursor < source.length && isHexDigitCode(source.charCodeAt(cursor))) cursor++
+      if (cursor > escapeIndex + 3 && source[cursor] === "}") {
+        const hex = decodeHexRange(source, escapeIndex + 3, cursor)
+        return hex.valid
+          ? { ch: hex.ch, valid: true, nextIndex: cursor + 1, lineDelta: 0 }
+          : { ch: "", valid: false, nextIndex: cursor + 1, lineDelta: 0 }
       }
-    } else {
-      const hex = decodeHexEscape(source, escapeIndex + 2, 4)
-      if (hex !== undefined) return hex
+      return { ch: "", valid: false, nextIndex: escapeIndex + 3, lineDelta: 0 }
     }
+    const hex = decodeHexRange(source, escapeIndex + 2, escapeIndex + 6)
+    return hex.valid
+      ? { ch: hex.ch, valid: true, nextIndex: escapeIndex + 6, lineDelta: 0 }
+      : { ch: "", valid: false, nextIndex: escapeIndex + 2, lineDelta: 0 }
   }
-  return { ch: esc, nextIndex: escapeIndex + 2 }
+  return { ch: esc, valid: true, nextIndex: escapeIndex + 2, lineDelta: 0 }
 }
 
 function scanQuotedString(
   source: string,
   start: number,
-): { readonly value: string; readonly nextIndex: number } {
+): {
+  readonly value: string
+  readonly valid: boolean
+  readonly nextIndex: number
+  readonly lineDelta: number
+} {
   const quote = source[start]
   let value = ""
+  let valid = true
+  let lineDelta = 0
   let idx = start + 1
   while (idx < source.length) {
     const ch = source[idx]
-    if (ch === quote) return { value, nextIndex: idx + 1 }
+    if (ch === quote) return { value, valid, nextIndex: idx + 1, lineDelta }
     if (ch === "\\") {
       const decoded = decodeStringEscape(source, idx)
+      if (!decoded.valid) valid = false
       value += decoded.ch
+      lineDelta += decoded.lineDelta
       idx = decoded.nextIndex
       continue
     }
+    if (ch === "\r") {
+      lineDelta++
+      value += ch
+      idx += source[idx + 1] === "\n" ? 2 : 1
+      continue
+    }
+    if (ch === "\n") lineDelta++
     value += ch
     idx++
   }
-  return { value, nextIndex: idx }
+  return { value, valid: false, nextIndex: idx, lineDelta }
 }
 
 function scanTemplateSegment(
   source: string,
   start: number,
-): { readonly value: string; readonly interpolated: boolean; readonly nextIndex: number } {
+): {
+  readonly value: string
+  readonly valid: boolean
+  readonly interpolated: boolean
+  readonly nextIndex: number
+  readonly lineDelta: number
+} {
   let value = ""
+  let valid = true
+  let lineDelta = 0
   let idx = start
   while (idx < source.length) {
     const ch = source[idx]
-    if (ch === "`") return { value, interpolated: false, nextIndex: idx + 1 }
+    if (ch === "`") return { value, valid, interpolated: false, nextIndex: idx + 1, lineDelta }
     if (ch === "$" && source[idx + 1] === "{") {
-      return { value, interpolated: true, nextIndex: idx + 2 }
+      return { value, valid, interpolated: true, nextIndex: idx + 2, lineDelta }
     }
     if (ch === "\\") {
       const decoded = decodeStringEscape(source, idx)
+      if (!decoded.valid) valid = false
       value += decoded.ch
+      lineDelta += decoded.lineDelta
       idx = decoded.nextIndex
       continue
     }
+    if (ch === "\r") {
+      lineDelta++
+      value += "\n"
+      idx += source[idx + 1] === "\n" ? 2 : 1
+      continue
+    }
+    if (ch === "\n" || ch === "\u2028" || ch === "\u2029") lineDelta++
     value += ch
     idx++
   }
-  return { value, interpolated: false, nextIndex: idx }
+  return { value, valid: false, interpolated: false, nextIndex: idx, lineDelta }
 }
 
 function scanRegexLiteral(source: string, start: number): number {
@@ -673,6 +882,9 @@ function scanRegexLiteral(source: string, start: number): number {
   while (idx < source.length) {
     const ch = source[idx]
     if (ch === "\\") {
+      if (idx + 1 < source.length && isLineTerminatorCode(source.charCodeAt(idx + 1))) {
+        return idx + 1
+      }
       idx += 2
       continue
     }
@@ -691,15 +903,18 @@ function scanRegexLiteral(source: string, start: number): number {
       while (idx < source.length && isWordContinueCode(source.charCodeAt(idx))) idx++
       return idx
     }
-    if (ch === "\n" || ch === "\r") return idx
+    if (isLineTerminatorCode(source.charCodeAt(idx))) return idx
     idx++
   }
   return idx
 }
 
-function canStartRegex(prev: CapabilityToken | undefined): boolean {
+function canStartRegex(prev: CapabilityToken | undefined, inForParen: boolean): boolean {
   if (prev === undefined) return true
-  if (prev.kind === "word") return REGEX_PREFIX_KEYWORDS.has(prev.text)
+  if (prev.kind === "word") {
+    if (prev.text === "of") return inForParen
+    return REGEX_PREFIX_KEYWORDS.has(prev.text)
+  }
   if (prev.kind === "punct") {
     if (prev.regexNext !== undefined) return prev.regexNext
     return !NON_REGEX_PUNCT.has(prev.text)
@@ -721,54 +936,85 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
   const tokens: CapabilityToken[] = []
   const templateBraceDepths: number[] = []
   const braceExprStack: boolean[] = []
-  const parenRegexStack: boolean[] = []
+  const parenKindStack: Array<"control" | "for" | "expr"> = []
   let braceDepth = 0
   let bracketDepth = 0
   let parenDepth = 0
   let inTypeAlias = false
+  let line = 1
   const depth = (): number => braceDepth + bracketDepth + parenDepth
   let idx = 0
 
   while (idx < source.length) {
     const code = source.charCodeAt(idx)
     if (isWhitespaceCode(code)) {
+      if (code === 13) {
+        line++
+        idx += source[idx + 1] === "\n" ? 2 : 1
+        continue
+      }
+      if (code === 10 || code === 0x2028 || code === 0x2029) line++
       idx++
       continue
     }
     const ch = source[idx]
     if (ch === "/" && source[idx + 1] === "/") {
-      const nl = source.indexOf("\n", idx + 2)
-      idx = nl === -1 ? source.length : nl + 1
+      idx += 2
+      while (idx < source.length && !isLineTerminatorCode(source.charCodeAt(idx))) idx++
       continue
     }
     if (ch === "/" && source[idx + 1] === "*") {
-      const end = source.indexOf("*/", idx + 2)
-      idx = end === -1 ? source.length : end + 2
+      idx += 2
+      while (idx < source.length) {
+        if (source[idx] === "*" && source[idx + 1] === "/") {
+          idx += 2
+          break
+        }
+        const c = source.charCodeAt(idx)
+        if (c === 13) {
+          line++
+          idx += source[idx + 1] === "\n" ? 2 : 1
+          continue
+        }
+        if (c === 10 || c === 0x2028 || c === 0x2029) line++
+        idx++
+      }
       continue
     }
-    if (ch === "/" && canStartRegex(tokens.at(-1))) {
-      tokens.push({ kind: "other", text: "/", depth: depth() })
+    if (ch === "/" && canStartRegex(tokens.at(-1), parenKindStack.at(-1) === "for")) {
+      tokens.push({ kind: "other", text: "/", depth: depth(), line })
       idx = scanRegexLiteral(source, idx)
       continue
     }
     if (ch === '"' || ch === "'") {
       const scanned = scanQuotedString(source, idx)
-      tokens.push({ kind: "string", value: scanned.value, depth: depth() })
+      tokens.push(
+        scanned.valid
+          ? { kind: "string", value: scanned.value, depth: depth(), line }
+          : { kind: "other", text: ch, depth: depth(), line },
+      )
+      line += scanned.lineDelta
       idx = scanned.nextIndex
       continue
     }
     if (ch === "`") {
       const d = depth()
+      const startLine = line
       const seg = scanTemplateSegment(source, idx + 1)
+      line += seg.lineDelta
       if (!seg.interpolated) {
-        tokens.push({ kind: "string", value: seg.value, depth: d })
+        tokens.push(
+          seg.valid
+            ? { kind: "string", value: seg.value, depth: d, line: startLine }
+            : { kind: "other", text: "`", depth: d, line: startLine },
+        )
         idx = seg.nextIndex
         continue
       }
       templateBraceDepths.push(braceDepth)
       braceExprStack.push(false)
       braceDepth++
-      tokens.push({ kind: "other", text: "`${", depth: d })
+      tokens.push({ kind: "punct", text: "${", depth: d, line: startLine, regexNext: true })
       idx = seg.nextIndex
       continue
     }
@@ -780,53 +1026,73 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
       if (templateBraceDepths.at(-1) === braceDepth) {
         templateBraceDepths.pop()
         const seg = scanTemplateSegment(source, idx + 1)
+        const segLine = line
+        line += seg.lineDelta
         if (seg.interpolated) {
           templateBraceDepths.push(braceDepth)
           braceExprStack.push(false)
           braceDepth++
-          tokens.push({ kind: "other", text: "${", depth: d })
+          tokens.push({ kind: "punct", text: "${", depth: d, line: segLine, regexNext: true })
         } else {
-          tokens.push({ kind: "other", text: "`", depth: d })
+          tokens.push({ kind: "other", text: "`", depth: d, line: segLine })
         }
         idx = seg.nextIndex
         continue
       }
-      tokens.push({ kind: "punct", text: "}", depth: d, regexNext: !exprBrace })
+      tokens.push({ kind: "punct", text: "}", depth: d, line, regexNext: !exprBrace })
       idx++
       continue
     }
     if (ch === "{") {
       const d = depth()
       braceExprStack.push(isExpressionOpeningBrace(tokens.at(-1), inTypeAlias))
-      tokens.push({ kind: "punct", text: "{", depth: d })
+      tokens.push({ kind: "punct", text: "{", depth: d, line })
       braceDepth++
       idx++
       continue
     }
     if (ch === "[") {
-      tokens.push({ kind: "punct", text: "[", depth: depth() })
+      tokens.push({ kind: "punct", text: "[", depth: depth(), line })
       bracketDepth++
       idx++
       continue
     }
     if (ch === "]") {
       if (bracketDepth > 0) bracketDepth--
-      tokens.push({ kind: "punct", text: "]", depth: depth() })
+      tokens.push({ kind: "punct", text: "]", depth: depth(), line })
       idx++
       continue
     }
     if (ch === "(") {
       const prev = tokens.at(-1)
-      parenRegexStack.push(prev?.kind === "word" && REGEX_AFTER_PAREN_KEYWORDS.has(prev.text))
-      tokens.push({ kind: "punct", text: "(", depth: depth() })
+      const beforePrev = tokens.at(-2)
+      let pKind: "control" | "for" | "expr" = "expr"
+      if (prev?.kind === "word") {
+        if (
+          prev.text === "for" ||
+          (prev.text === "await" && beforePrev?.kind === "word" && beforePrev.text === "for")
+        ) {
+          pKind = "for"
+        } else if (REGEX_AFTER_PAREN_KEYWORDS.has(prev.text)) {
+          pKind = "control"
+        }
+      }
+      parenKindStack.push(pKind)
+      tokens.push({ kind: "punct", text: "(", depth: depth(), line })
       parenDepth++
       idx++
       continue
     }
     if (ch === ")") {
       if (parenDepth > 0) parenDepth--
-      const regexNext = parenRegexStack.pop() ?? false
-      tokens.push({ kind: "punct", text: ")", depth: depth(), regexNext })
+      const pKind = parenKindStack.pop() ?? "expr"
+      tokens.push({
+        kind: "punct",
+        text: ")",
+        depth: depth(),
+        line,
+        regexNext: pKind === "control" || pKind === "for",
+      })
       idx++
       continue
     }
@@ -840,13 +1106,14 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
         const prev = tokens.at(-1)
         if (
           prev === undefined ||
+          prev.line < line ||
           (prev.kind === "punct" && (prev.text === ";" || prev.text === "}")) ||
           (prev.kind === "word" && prev.text === "export")
         ) {
           inTypeAlias = true
         }
       }
-      tokens.push({ kind: "word", text: word, depth: d })
+      tokens.push({ kind: "word", text: word, depth: d, line })
       continue
     }
     if (code >= 48 && code <= 57) {
@@ -864,17 +1131,17 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
         }
         break
       }
-      tokens.push({ kind: "other", text: source.slice(start, idx), depth: depth() })
+      tokens.push({ kind: "other", text: source.slice(start, idx), depth: depth(), line })
       continue
     }
     if (ch === ";" && depth() === 0) inTypeAlias = false
     const two = source.slice(idx, idx + 2)
     if (two === "=>" || two === "==" || two === "++" || two === "--" || two === "?.") {
-      tokens.push({ kind: "punct", text: two, depth: depth() })
+      tokens.push({ kind: "punct", text: two, depth: depth(), line })
       idx += 2
       continue
     }
-    tokens.push({ kind: "punct", text: ch ?? "", depth: depth() })
+    tokens.push({ kind: "punct", text: ch ?? "", depth: depth(), line })
     idx++
   }
 
@@ -885,7 +1152,7 @@ function readStringArrayLiteral(
   tokens: readonly CapabilityToken[],
   openIndex: number,
   expectedDepth: number,
-): readonly string[] | undefined {
+): { readonly items: readonly string[]; readonly nextIndex: number } | undefined {
   const open = tokens[openIndex]
   if (open?.kind !== "punct" || open.text !== "[" || open.depth !== expectedDepth) {
     return undefined
@@ -897,14 +1164,14 @@ function readStringArrayLiteral(
     const token = tokens[idx]
     if (token === undefined) return undefined
     if (token.kind === "punct" && token.text === "]" && token.depth === expectedDepth) {
-      return items
+      return { items, nextIndex: idx + 1 }
     }
     if (token.kind !== "string" || token.depth !== innerDepth) return undefined
     items.push(token.value)
     idx++
     const sep = tokens[idx]
     if (sep?.kind === "punct" && sep.text === "]" && sep.depth === expectedDepth) {
-      return items
+      return { items, nextIndex: idx + 1 }
     }
     if (sep?.kind === "punct" && sep.text === "," && sep.depth === innerDepth) {
       idx++
@@ -915,46 +1182,121 @@ function readStringArrayLiteral(
   return undefined
 }
 
-function staticDeclaredCapabilities(source: string): readonly string[] | undefined {
-  const tokens = tokenizeModuleSource(source)
-  for (let i = 0; i < tokens.length - 3; i++) {
-    const prevTok = i > 0 ? tokens[i - 1] : undefined
-    if (prevTok?.kind === "punct" && (prevTok.text === "." || prevTok.text === "?.")) {
-      continue
+function continuesTypeAnnotationAcrossNewline(
+  prev: CapabilityToken,
+  cur: CapabilityToken,
+): boolean {
+  if (prev.kind === "punct" && TYPE_CONTINUATION_BEFORE.has(prev.text)) return true
+  if (prev.kind === "word" && TYPE_CONTINUATION_WORDS.has(prev.text)) return true
+  if (cur.kind === "punct" && (cur.text === "|" || cur.text === "&" || cur.text === "=>")) {
+    return true
+  }
+  return false
+}
+
+function skipTypeAnnotation(tokens: readonly CapabilityToken[], start: number): number {
+  let idx = start
+  let angleDepth = 0
+  while (idx < tokens.length) {
+    const tok = tokens[idx]
+    if (tok === undefined) return idx
+    if (tok.depth === 0 && angleDepth === 0) {
+      if (tok.kind === "punct" && (tok.text === "=" || tok.text === "," || tok.text === ";")) {
+        return idx
+      }
+      if (idx > start) {
+        const prev = tokens[idx - 1]
+        if (
+          prev !== undefined &&
+          tok.line > prev.line &&
+          !continuesTypeAnnotationAcrossNewline(prev, tok)
+        ) {
+          return idx
+        }
+      }
     }
-    const exportTok = tokens[i]
-    const declTok = tokens[i + 1]
-    const nameTok = tokens[i + 2]
+    if (tok.kind === "punct") {
+      if (tok.text === "<") angleDepth++
+      else if (tok.text === ">" && angleDepth > 0) angleDepth--
+    }
+    idx++
+  }
+  return idx
+}
+
+function continuesExpressionAcrossNewline(prev: CapabilityToken, cur: CapabilityToken): boolean {
+  if (prev.kind === "punct" && INFIX_BEFORE_NEWLINE.has(prev.text)) return true
+  if (prev.kind === "word" && (prev.text === "as" || prev.text === "satisfies")) return true
+  if (cur.kind === "punct" && INFIX_AFTER_NEWLINE.has(cur.text)) return true
+  if (cur.kind === "word" && (cur.text === "as" || cur.text === "satisfies")) return true
+  return false
+}
+
+function findInitializerEnd(tokens: readonly CapabilityToken[], start: number): number {
+  let idx = start
+  while (idx < tokens.length) {
+    const tok = tokens[idx]
+    if (tok === undefined) return idx
+    if (tok.depth === 0) {
+      if (tok.kind === "punct" && (tok.text === "," || tok.text === ";" || tok.text === "}")) {
+        return idx
+      }
+      if (idx > start) {
+        const prev = tokens[idx - 1]
+        if (
+          prev !== undefined &&
+          tok.line > prev.line &&
+          !continuesExpressionAcrossNewline(prev, tok)
+        ) {
+          return idx
+        }
+      }
+    }
+    idx++
+  }
+  return idx
+}
+
+function isAllowedTypeSuffixOnly(
+  tokens: readonly CapabilityToken[],
+  start: number,
+  end: number,
+): boolean {
+  if (start === end) return true
+  const first = tokens[start]
+  return first?.kind === "word" && (first.text === "as" || first.text === "satisfies")
+}
+
+function isObjectGlobalShadowed(tokens: readonly CapabilityToken[]): boolean {
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]
+    if (tok?.kind !== "word" || tok.text !== "Object") continue
+    const next = tokens[i + 1]
+    const next2 = tokens[i + 2]
     if (
-      exportTok?.kind !== "word" ||
-      exportTok.text !== "export" ||
-      exportTok.depth !== 0 ||
-      declTok?.kind !== "word" ||
-      !EXPORT_DECL_KEYWORDS.has(declTok.text) ||
-      declTok.depth !== 0 ||
-      nameTok?.kind !== "word" ||
-      nameTok.text !== "capabilities" ||
-      nameTok.depth !== 0
+      next?.kind === "punct" &&
+      next.text === "." &&
+      next2?.kind === "word" &&
+      next2.text === "freeze"
     ) {
       continue
     }
-    // Skip any TypeScript type annotation (`: readonly string[]`) up to the top-level `=`.
-    let eqIdx = i + 3
-    while (eqIdx < tokens.length) {
-      const tok = tokens[eqIdx]
-      if (tok === undefined) return undefined
-      if (tok.depth === 0 && tok.kind === "punct" && tok.text === "=") break
-      if (tok.depth === 0 && tok.kind === "punct" && (tok.text === ";" || tok.text === ",")) {
-        eqIdx = -1
-        break
-      }
-      eqIdx++
-    }
-    if (eqIdx === -1 || eqIdx + 1 >= tokens.length) continue
-    const rhsStart = eqIdx + 1
-    const direct = readStringArrayLiteral(tokens, rhsStart, 0)
-    if (direct !== undefined) return direct
-    // Also recognize `Object.freeze([...])` at depth 0.
+    return true
+  }
+  return false
+}
+
+function readDeclaratorCapabilities(
+  tokens: readonly CapabilityToken[],
+  rhsStart: number,
+  initEnd: number,
+  objectShadowed: boolean,
+): readonly string[] | undefined {
+  const direct = readStringArrayLiteral(tokens, rhsStart, 0)
+  if (direct !== undefined && isAllowedTypeSuffixOnly(tokens, direct.nextIndex, initEnd)) {
+    return direct.items
+  }
+  if (!objectShadowed && rhsStart + 4 < initEnd) {
     const t0 = tokens[rhsStart]
     const t1 = tokens[rhsStart + 1]
     const t2 = tokens[rhsStart + 2]
@@ -970,9 +1312,91 @@ function staticDeclaredCapabilities(source: string): readonly string[] | undefin
       t3.text === "("
     ) {
       const frozen = readStringArrayLiteral(tokens, rhsStart + 4, 1)
-      if (frozen !== undefined) return frozen
+      const closeParen = frozen !== undefined ? tokens[frozen.nextIndex] : undefined
+      if (
+        frozen !== undefined &&
+        closeParen?.kind === "punct" &&
+        closeParen.text === ")" &&
+        closeParen.depth === 0 &&
+        isAllowedTypeSuffixOnly(tokens, frozen.nextIndex + 1, initEnd)
+      ) {
+        return frozen.items
+      }
     }
-    return undefined
+  }
+  return undefined
+}
+
+function staticDeclaredCapabilities(source: string): readonly string[] | undefined {
+  const tokens = tokenizeModuleSource(source)
+  const objectShadowed = isObjectGlobalShadowed(tokens)
+  for (let i = 0; i < tokens.length - 3; i++) {
+    const prevTok = i > 0 ? tokens[i - 1] : undefined
+    if (prevTok?.kind === "punct" && (prevTok.text === "." || prevTok.text === "?.")) {
+      continue
+    }
+    const exportTok = tokens[i]
+    const declTok = tokens[i + 1]
+    // Restrict preflight to `export const` so mutable `let`/`var` bindings reassigned before return
+    // defer to the post-import runtime check.
+    if (
+      exportTok?.kind !== "word" ||
+      exportTok.text !== "export" ||
+      exportTok.depth !== 0 ||
+      declTok?.kind !== "word" ||
+      declTok.text !== "const" ||
+      declTok.depth !== 0
+    ) {
+      continue
+    }
+    let pos = i + 2
+    while (pos < tokens.length) {
+      const nameTok = tokens[pos]
+      if (nameTok === undefined || nameTok.depth !== 0) break
+      if (nameTok.kind === "punct" && (nameTok.text === "{" || nameTok.text === "[")) {
+        let pat = pos + 1
+        while (pat < tokens.length && (tokens[pat]?.depth ?? 0) > 0) pat++
+        const afterPat = tokens[pat]
+        if (afterPat?.kind === "punct" && afterPat.text === ":")
+          pat = skipTypeAnnotation(tokens, pat + 1)
+        const patEq = tokens[pat]
+        if (patEq?.kind !== "punct" || patEq.text !== "=") break
+        pos = findInitializerEnd(tokens, pat + 1)
+        const nextSep = tokens[pos]
+        if (nextSep?.depth === 0 && nextSep.kind === "punct" && nextSep.text === ",") {
+          pos++
+          continue
+        }
+        break
+      }
+      if (nameTok.kind !== "word" || STATEMENT_PREFIX_WORDS.has(nameTok.text)) break
+      const ident = nameTok.text
+      pos++
+      const typeColon = tokens[pos]
+      if (typeColon?.depth === 0 && typeColon.kind === "punct" && typeColon.text === ":") {
+        pos = skipTypeAnnotation(tokens, pos + 1)
+      }
+      const eqTok = tokens[pos]
+      if (eqTok?.depth !== 0 || eqTok.kind !== "punct" || eqTok.text !== "=") {
+        if (eqTok?.depth === 0 && eqTok.kind === "punct" && eqTok.text === ",") {
+          pos++
+          continue
+        }
+        break
+      }
+      const rhsStart = pos + 1
+      const initEnd = findInitializerEnd(tokens, rhsStart)
+      if (ident === "capabilities") {
+        return readDeclaratorCapabilities(tokens, rhsStart, initEnd, objectShadowed)
+      }
+      pos = initEnd
+      const sepTok = tokens[pos]
+      if (sepTok?.depth === 0 && sepTok.kind === "punct" && sepTok.text === ",") {
+        pos++
+        continue
+      }
+      break
+    }
   }
   return undefined
 }

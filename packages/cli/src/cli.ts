@@ -438,10 +438,20 @@ export function commandHelp<Input, Output>(spec: CommandSpec<Input, Output>): st
   return `Usage:\n  nifra ${name}${usage === "" ? "" : ` ${usage}`}  ${spec.summary}`
 }
 
+function manualBooleanFlag(args: readonly string[], name: string): boolean {
+  let enabled = false
+  for (const arg of args) {
+    if (arg === "--") break
+    if (arg === name) enabled = true
+    else if (arg.startsWith(`${name}=`)) enabled = arg.slice(name.length + 1) === "true"
+  }
+  return enabled
+}
+
 function reportFailure(err: unknown, argv: readonly string[]): void {
   const message = formatCliError(err)
   console.error(message)
-  if (argv.includes("--json") || argv.includes("--json=true"))
+  if (manualBooleanFlag(argv, "--json"))
     console.log(JSON.stringify({ ok: false, error: message }, null, 2))
 }
 
@@ -1420,7 +1430,15 @@ function rejectUnknownManualFlags(
       continue
     }
     if (valueSet.has(name)) {
-      if (eq === -1) index++
+      if (eq !== -1) {
+        if (arg.slice(eq + 1) === "") throw new Error(`[nifra] ${name} needs a value`)
+        continue
+      }
+      const next = args[index + 1]
+      if (next === undefined || next.startsWith("-")) {
+        throw new Error(`[nifra] ${name} needs a value`)
+      }
+      index++
       continue
     }
     throw new Error(`[nifra] unknown option: ${arg} - see \`nifra help\``)
@@ -1646,11 +1664,12 @@ async function main(): Promise<void> {
   }
   if (command === "verify") {
     try {
-      rejectUnknownManualFlags(argv.slice(1), [], ["--release", "--json"])
+      const commandArgs = argv.slice(1)
+      rejectUnknownManualFlags(commandArgs, [], ["--release", "--json"])
       const { runReleaseVerification } = await import("./release-verification.ts")
       const ok = await runReleaseVerification(process.cwd(), {
-        mode: argv.includes("--release") ? "release" : "default",
-        json: argv.includes("--json"),
+        mode: manualBooleanFlag(commandArgs, "--release") ? "release" : "default",
+        json: manualBooleanFlag(commandArgs, "--json"),
       })
       if (!ok) process.exitCode = 1
     } catch (err) {
@@ -1664,12 +1683,13 @@ async function main(): Promise<void> {
   // (an existing app might be API-only or not yet built). It always succeeds unless a write throws.
   if (command === "init-agents") {
     try {
-      rejectUnknownManualFlags(argv.slice(1), [], ["--force", "--sync-mcp", "--json"])
+      const commandArgs = argv.slice(1)
+      rejectUnknownManualFlags(commandArgs, [], ["--force", "--sync-mcp", "--json"])
       const { runInitAgents } = await import("./init-agents.ts")
       await runInitAgents(process.cwd(), {
-        json: argv.includes("--json"),
-        force: argv.includes("--force"),
-        syncMcp: argv.includes("--sync-mcp"),
+        json: manualBooleanFlag(commandArgs, "--json"),
+        force: manualBooleanFlag(commandArgs, "--force"),
+        syncMcp: manualBooleanFlag(commandArgs, "--sync-mcp"),
       })
     } catch (err) {
       reportFailure(err, argv)
@@ -1679,7 +1699,8 @@ async function main(): Promise<void> {
   }
   if (command === "sdk") {
     try {
-      rejectUnknownManualFlags(argv.slice(1), ["--lang", "--out"], ["--strict", "--json"])
+      const commandArgs = argv.slice(1)
+      rejectUnknownManualFlags(commandArgs, ["--lang", "--out"], ["--strict", "--json"])
       const language = manualFlagValue(argv, "--lang")
       const out = manualFlagValue(argv, "--out")
       if (language !== "python" && language !== "go") {
@@ -1692,7 +1713,7 @@ async function main(): Promise<void> {
       await runSdk(process.cwd(), {
         language,
         ...(out !== undefined ? { out } : {}),
-        ...(argv.includes("--strict") ? { strict: true } : {}),
+        ...(manualBooleanFlag(commandArgs, "--strict") ? { strict: true } : {}),
       })
     } catch (err) {
       reportFailure(err, argv)

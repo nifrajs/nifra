@@ -99,6 +99,81 @@ describe("ExtensionHost", () => {
     expect(host.availableCommands).toEqual(["docs-example"])
   })
 
+  test("handles BOM, unicode terminators, tagged templates, generic types, and multi-declarators", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    const marker = join(cwd, "executed-edge.txt")
+    await mkdir(join(cwd, "extensions"))
+
+    // 1. BOM + multi-declarator + generic type comma + \u2028 line comment
+    await writeFile(
+      join(cwd, "extensions", "bom-multi.ts"),
+      `\uFEFFimport { writeFileSync } from "node:fs"\n// comment\u2028writeFileSync(${JSON.stringify(marker)}, "ran")\nexport const version = 1, capabilities: Record<string, never> | readonly string[] = ["network"]\nexport default () => {}`,
+    )
+    const blockedHost = new ExtensionHost({ cwd, roots: ["extensions/bom-multi.ts"] })
+    const blocked = await blockedHost.reload()
+    expect(blocked.rolledBack).toBe(true)
+    expect(blocked.error).toContain("untrusted capability")
+    await expect(Bun.file(marker).exists()).resolves.toBe(false)
+
+    // 2. Valid edge cases: String.raw`\u{110000}`, regex in `${/[}]/}`, `of / 2`, mutable let reassigned to []
+    await writeFile(
+      join(cwd, "extensions", "valid-edges.ts"),
+      [
+        "const raw = String.raw`\\u{110000} \\u{bad`",
+        "const braceRegex = `${/[}]/.source}`",
+        "const of = 4; const half = (of / 2)",
+        'export let capabilities = ["network"]',
+        "capabilities = []",
+        'export default ({ registerCommand }) => { registerCommand("edge-ok", async () => raw + braceRegex + half) }',
+      ].join("\n"),
+    )
+    const validHost = new ExtensionHost({ cwd, roots: ["extensions/valid-edges.ts"] })
+    const loaded = await validHost.reload()
+    expect(loaded.rolledBack).toBe(false)
+    expect(validHost.availableCommands).toEqual(["edge-ok"])
+
+    // 3. Derived `.slice(1)` + shadowed Object.freeze + ASI boundary defers to runtime value `[]`
+    await writeFile(
+      join(cwd, "extensions", "derived-shadow.ts"),
+      [
+        'export const capabilities = ["network"].slice(1)',
+        'export default ({ registerCommand }) => registerCommand("derived-ok", async () => "ok")',
+      ].join("\n"),
+    )
+    const derivedHost = new ExtensionHost({ cwd, roots: ["extensions/derived-shadow.ts"] })
+    expect((await derivedHost.reload()).rolledBack).toBe(false)
+    expect(derivedHost.availableCommands).toEqual(["derived-ok"])
+
+    // 4. Local Object binding shadowing `Object.freeze` + escaped \u2028 continuation
+    await writeFile(
+      join(cwd, "extensions", "shadow-freeze.ts"),
+      [
+        "const Object = { freeze: () => [] as string[] }",
+        'export const capabilities = Object.freeze(["network"])',
+        'export default ({ registerCommand }) => registerCommand("shadow-ok", async () => "ok")',
+      ].join("\n"),
+    )
+    const shadowHost = new ExtensionHost({ cwd, roots: ["extensions/shadow-freeze.ts"] })
+    expect((await shadowHost.reload()).rolledBack).toBe(false)
+    expect(shadowHost.availableCommands).toEqual(["shadow-ok"])
+
+    await writeFile(
+      join(cwd, "extensions", "u2028-cont.ts"),
+      [
+        'export const capabilities = ["net\\\u2028work"]',
+        'export default ({ registerCommand }) => registerCommand("net-ok", async () => "ok")',
+      ].join("\n"),
+    )
+    const trustedNetHost = new ExtensionHost({
+      cwd,
+      roots: ["extensions/u2028-cont.ts"],
+      trustedCapabilities: ["network"],
+    })
+    expect((await trustedNetHost.reload()).rolledBack).toBe(false)
+    expect(trustedNetHost.availableCommands).toEqual(["net-ok"])
+  })
+
   test("reuses the imported module when reloading unchanged extension code", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
     tempRoots.push(cwd)

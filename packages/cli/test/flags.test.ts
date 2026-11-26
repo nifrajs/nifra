@@ -79,6 +79,27 @@ test("manual dispatch commands reject unknown options and format --json errors",
       ok: false,
       error: "[nifra] sdk needs --lang python or --lang go",
     })
+    const sdkJsonEq = Bun.spawnSync(
+      [process.execPath, "--no-env-file", cli, "sdk", "--json=true"],
+      { cwd, timeout: 3000 },
+    )
+    expect(sdkJsonEq.exitCode).toBe(1)
+    expect(JSON.parse(sdkJsonEq.stdout.toString())).toEqual({
+      ok: false,
+      error: "[nifra] sdk needs --lang python or --lang go",
+    })
+    for (const [args, expectedError] of [
+      [["sdk", "--lang", "python", "--lang", "--bogus"], "[nifra] --lang needs a value"],
+      [["docs-mcp", "--port", "8787", "--port", "--bogus"], "[nifra] --port needs a value"],
+      [["verify", "--release=true", "--bogus"], "[nifra] unknown option: --bogus"],
+    ] as const) {
+      const missingOperand = Bun.spawnSync([process.execPath, "--no-env-file", cli, ...args], {
+        cwd,
+        timeout: 3000,
+      })
+      expect(missingOperand.exitCode).toBe(1)
+      expect(missingOperand.stderr.toString()).toContain(expectedError)
+    }
     expect(readdirSync(cwd)).toEqual([])
   } finally {
     rmSync(cwd, { recursive: true, force: true })
