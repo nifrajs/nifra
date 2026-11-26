@@ -258,6 +258,8 @@ describe("rateLimit", () => {
     const req = (xff: string) => new Request("http://x/", { headers: { "x-forwarded-for": xff } })
     expect((await app.fetch(req("evil, 1.1.1.1"))).status).toBe(200) // client 1.1.1.1
     expect((await app.fetch(req("other, 1.1.1.1"))).status).toBe(429) // same client, new prefix → SAME bucket
+    expect((await app.fetch(req("1.1.1.1, "))).status).toBe(429)
+    expect((await app.fetch(req("unknown"))).status).toBe(500)
     expect((await app.fetch(req("z, 2.2.2.2"))).status).toBe(200) // a different real client → its own bucket
   })
 

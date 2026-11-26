@@ -89,6 +89,16 @@ export function ipBucketForAddress(ip: string): string | null {
   return parsed === null ? null : bucketParsedIp(parsed)
 }
 
+/** Empty list entries do not count as proxy hops. */
+export function forwardedClient(value: string | null, trustedProxies: number): string | null {
+  if (value === null || trustedProxies <= 0) return null
+  const hops = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "")
+  return hops[hops.length - trustedProxies] ?? null
+}
+
 /** Keep the common canonical IPv4 case allocation-light; unusual valid forms use the full parser. */
 function canonicalIPv4Literal(input: string): string | null {
   let octets = 0

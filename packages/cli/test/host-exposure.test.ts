@@ -57,14 +57,24 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
     expect(denoServe).toHaveLength(1)
   })
 
-  test("a Host check anywhere in the project leaves it alone", async () => {
-    const listener = { file: "serve.ts", content: `${DENO}await serve(app, { port: 1, tls })` }
-    expect(
-      await scan([
-        listener,
-        { file: "app.ts", content: `${CORE}export const app = server({ validateHost: true })` },
-      ]),
-    ).toEqual([])
+  test("one guarded app cannot suppress another listener", async () => {
+    const findings = await scan([
+      {
+        file: "serve.ts",
+        content: `${CORE}${DENO}const checked = server({ validateHost: true })
+const unchecked = server()
+await serve(checked, { port: 1, tls })
+await serve(unchecked, { port: 2, tls })`,
+      },
+      { file: "unrelated.ts", content: "const settings = { validateHost: true }" },
+    ])
+    expect(findings.map(({ line }) => line)).toEqual([6])
+  })
+
+  test("an unconnected guard cannot suppress a raw listener", async () => {
+    const found = await one(`${CORE}server({ validateHost: true })
+Bun.serve({ port: 443, tls, fetch })`)
+    expect(found).toHaveLength(1)
   })
 
   test("allowedHosts and canonicalHost are the Node adapters' options: a Deno or Bun listener ignores them", async () => {
@@ -79,11 +89,12 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
   })
 
   test("a validateHost a later spread may switch off is not a guarantee", async () => {
-    const listener = { file: "serve.ts", content: `${DENO}await serve(app, { port: 1, tls })` }
-    const content = `${CORE}server({ validateHost: true, ...(disabled ? { validateHost: false } : {}) })`
-    expect(await scan([listener, { file: "app.ts", content }])).toHaveLength(1)
-    const unrelated = `${CORE}server({ validateHost: true, ...(more ? { port: 1 } : {}) })`
-    expect(await scan([listener, { file: "app.ts", content: unrelated }])).toEqual([])
+    const listener = "await serve(app, { port: 1, tls })"
+    const ambiguous =
+      "const app = server({ validateHost: true, ...(disabled ? { validateHost: false } : {}) })"
+    expect(await one(`${CORE}${DENO}${ambiguous}\n${listener}`)).toHaveLength(1)
+    const unrelated = "const app = server({ validateHost: true, ...(more ? { port: 1 } : {}) })"
+    expect(await one(`${CORE}${DENO}${unrelated}\n${listener}`)).toEqual([])
   })
 
   test("validateHost: false, a comment or a string that names it configures nothing", async () => {
@@ -181,33 +192,41 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
 })
 
 describe("what counts as configuring or serving", () => {
-  const listen = 'import { server } from "@nifrajs/core"\nawait server().listen(443, { tls })\n'
+  const listen = (options: string): string =>
+    `${CORE}${options}\nawait server(o).listen(443, { tls })`
 
   test("a later writer wins over a spread, and an unreadable spread proves nothing", async () => {
     for (const options of [
       "{ ...{ validateHost: true }, validateHost: false }",
       "{ validateHost: true, ...overrides }",
+      "{ validateHost: toggle }",
     ]) {
-      expect(await one(`${listen}export const options = ${options}`)).toHaveLength(1)
+      expect(await one(listen(`const o = ${options}`))).toHaveLength(1)
     }
     expect(
-      await one(
-        `const base = { port: 1 }\n${listen}export const o = { validateHost: true, ...base }`,
-      ),
+      await one(listen("const base = { port: 1 }\nconst o = { validateHost: true, ...base }")),
     ).toEqual([])
   })
 
-  test("a source is judged where it is spread, and `&&` may write nothing", async () => {
+  test("a source is judged where it is spread, and && may write nothing", async () => {
     for (const code of [
-      "const defaults = { validateHost: true }\nexport const o = { ...defaults, validateHost: false }",
-      "export const o = { validateHost: false, ...(enabled && { validateHost: true }) }",
-      "export const o = { ...(flag ? { validateHost: true } : undefined) }",
+      "const defaults = { validateHost: true }\nconst o = { ...defaults, validateHost: false }",
+      "const o = { validateHost: false, ...(enabled && { validateHost: true }) }",
+      "const o = { ...(flag ? { validateHost: true } : undefined) }",
     ]) {
-      expect(await one(`${listen}${code}`)).toHaveLength(1)
+      expect(await one(listen(code))).toHaveLength(1)
     }
-    expect(
-      await one(`${listen}const base = { validateHost: true }\nexport const o = { ...base }`),
-    ).toEqual([])
+    expect(await one(listen("const base = { validateHost: true }\nconst o = { ...base }"))).toEqual(
+      [],
+    )
+  })
+
+  test("an options binding must remain local to spreads and server configuration", async () => {
+    const options = "const o = { validateHost: true }"
+    expect(await one(listen(options))).toEqual([])
+    for (const use of ["updateOptions(o)", "const alias = o", "o.port = 1"]) {
+      expect(await one(listen(`${options}\n${use}`))).toHaveLength(1)
+    }
   })
 
   test("a long route chain is still a server", async () => {
@@ -244,5 +263,70 @@ describe("nifra.check.json hostTopology", () => {
     expect(result.hostTopology).toBeUndefined()
     expect(result.diagnostics.some((d) => d.rule === "check-config")).toBe(true)
     await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("NF-S010 a guard traced through types and unrelated names", () => {
+  const WRAPPERS = ["x", "(x)", "x as const", "x!", "x satisfies object", "(x as any)!"]
+  const listen = "\nawait app.listen(443, { tls })"
+
+  test("a type-only wrapper changes nothing, wherever the guard passes through", async () => {
+    for (const wrapper of WRAPPERS) {
+      const wrap = (inner: string) => wrapper.replace("x", () => inner)
+      for (const body of [
+        `const o = ${wrap("{ validateHost: true }")}\nconst app = server(o)`,
+        `const o = { validateHost: true }\nconst app = server(${wrap("o")})`,
+        `const app = server(${wrap("{ validateHost: true }")})`,
+        `const app = server({ validateHost: ${wrap("true")} })`,
+        `const app = ${wrap("server({ validateHost: true })")}`,
+        `const o = { validateHost: true }\nconst app = server({ ...${wrap("o")} })`,
+      ])
+        expect([body, await one(`${CORE}${body}${listen}`)]).toEqual([body, []])
+      const off = `const app = server(${wrap("{ validateHost: false }")})`
+      expect([off, (await one(`${CORE}${off}${listen}`)).length]).toEqual([off, 1])
+    }
+  })
+
+  test("a member that shares the options' name does not touch them", async () => {
+    const guarded = `${CORE}const options = { validateHost: true }\nconst app = server(options)\n`
+    for (const use of [
+      "log(request.options)",
+      "log({ options: 1 })",
+      "class A { options = 1 }",
+      "class B { options() {} }",
+      "interface C { options: number }",
+      "const { options: renamed } = request",
+    ])
+      expect([use, await one(`${guarded}${use}${listen}`)]).toEqual([use, []])
+    for (const use of ["mutate(options)", "log({ options })", "options.validateHost = false"])
+      expect([use, (await one(`${guarded}${use}${listen}`)).length]).toEqual([use, 1])
+  })
+})
+
+describe("NF-S010 writes and scopes the guard trace must not miss", () => {
+  const listen = "await app.listen(443, { tls })"
+
+  test("an accessor named validateHost proves nothing, and another accessor changes nothing", async () => {
+    for (const accessor of ["get validateHost() { return false }", "set validateHost(v) {}"])
+      for (const options of [`{ ${accessor} }`, `{ validateHost: true, ...{ ${accessor} } }`]) {
+        const found = await one(`${CORE}const app = server(${options})\n${listen}`)
+        // A spread copies a setter-only property as `undefined`, which is no guarantee either.
+        expect([options, found.length]).toEqual([options, 1])
+      }
+    const other = "{ validateHost: true, ...{ get logger() { return log } } }"
+    expect(await one(`${CORE}const app = server(${other})\n${listen}`)).toEqual([])
+  })
+
+  test("a scope that can redeclare the app does not inherit the module app's guard", async () => {
+    const guarded = `${CORE}const app = server({ validateHost: true })\n`
+    for (const scope of [
+      `for (const app of [server()]) ${listen}`,
+      `for (const app in apps) ${listen}`,
+      `for (let app = server(); ; ) ${listen}`,
+      `switch (kind) { case 1: const app = server(); ${listen} }`,
+      `namespace N { export const app = server(); ${listen} }`,
+    ])
+      expect([scope, (await one(`${guarded}${scope}`)).length]).toEqual([scope, 1])
+    expect(await one(`${guarded}if (ready) ${listen}`)).toEqual([])
   })
 })

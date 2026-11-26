@@ -1370,8 +1370,46 @@ export function frontendCommandInput(
 }
 
 /** Dispatch a CLI invocation, including project-independent agent and documentation commands. */
+const MANUAL_HELP_COMMANDS = new Set([
+  "mcp",
+  "docs-mcp",
+  "learn",
+  "frontend",
+  "runtime",
+  "verify",
+  "init-agents",
+  "sdk",
+])
+
+function manualHelp(command: string): string {
+  return HELP.split(/\n(?= {2}nifra )/)
+    .filter((section) => section.startsWith(`  nifra ${command} `))
+    .map((section) => section.trimEnd())
+    .join("\n")
+}
+
+function manualFlagValue(argv: readonly string[], name: string): string | undefined {
+  for (const [index, arg] of argv.entries()) {
+    if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1)
+    if (arg === name) {
+      const value = argv[index + 1]
+      return value === undefined || value.startsWith("-") ? "" : value
+    }
+  }
+  return undefined
+}
+
 async function main(): Promise<void> {
   const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
+  const helpCommand = rawArgv[0]
+  if (
+    helpCommand !== undefined &&
+    MANUAL_HELP_COMMANDS.has(helpCommand) &&
+    (rawArgv.includes("--help") || rawArgv.includes("-h"))
+  ) {
+    console.log(manualHelp(helpCommand))
+    return
+  }
   // `nifra mcp` keeps none of the `.env` values Bun loaded at startup. Decided before the
   // `--env-file`s below, which the caller names explicitly and which stay.
   const forgotten =
@@ -1440,8 +1478,8 @@ async function main(): Promise<void> {
   // it self-hosts anywhere Bun runs (a VPS behind a reverse proxy, a container). Long-lived; no loadApp.
   if (command === "docs-mcp") {
     const { handleMcpHttp } = await import("./mcp-http.ts")
-    const portArg = argv[argv.indexOf("--port") + 1]
-    const port = Number(portArg && argv.includes("--port") ? portArg : (Bun.env.PORT ?? 8787))
+    const portArg = manualFlagValue(argv, "--port") ?? Bun.env.PORT ?? "8787"
+    const port = /^\d+$/.test(portArg) ? Number(portArg) : Number.NaN
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
       throw new Error(`[nifra] invalid --port: ${port}`)
     }
@@ -1521,7 +1559,11 @@ async function main(): Promise<void> {
       const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
       markReflecting(undefined)
       const asRecord = output as Record<string, unknown>
-      const wantsJson = asRecord.json === true || argv.includes("--json")
+      const jsonFlag =
+        typeof input === "object" && input !== null ? Reflect.get(input, "json") : undefined
+      const wantsJson =
+        asRecord.json === true ||
+        (typeof jsonFlag === "boolean" ? jsonFlag : argv.includes("--json"))
       if (wantsJson) {
         const value = catalogSpec.json?.(output, input) ?? output
         console.log(typeof value === "string" ? value : JSON.stringify(value, null, 2))
@@ -1575,16 +1617,14 @@ async function main(): Promise<void> {
     return
   }
   if (command === "sdk") {
-    const languageIndex = argv.indexOf("--lang")
-    const language = languageIndex === -1 ? undefined : argv[languageIndex + 1]
-    const outIndex = argv.indexOf("--out")
-    const out = outIndex === -1 ? undefined : argv[outIndex + 1]
+    const language = manualFlagValue(argv, "--lang")
+    const out = manualFlagValue(argv, "--out")
     if (language !== "python" && language !== "go") {
       console.error("[nifra] sdk needs --lang python or --lang go")
       process.exitCode = 1
       return
     }
-    if (outIndex !== -1 && (out === undefined || out.startsWith("-"))) {
+    if (out === "") {
       console.error("[nifra] --out needs a file path")
       process.exitCode = 1
       return
@@ -1754,8 +1794,7 @@ function isCliCommandToken(value: string): boolean {
     value === "dev" ||
     value === "build" ||
     value === "start" ||
-    value === "mcp" ||
-    value === "init-agents" ||
+    MANUAL_HELP_COMMANDS.has(value) ||
     value === "upgrade" ||
     value === "db" ||
     value === "help" ||
@@ -1771,24 +1810,45 @@ function findCliCommand(values: readonly string[]): number {
   // Most Bun/Node argv vectors reserve index 0 for the runtime and index 1 for the script. Bun 1.4
   // on Windows can omit the script for a directly spawned TS entry, leaving the command at index 0.
   // Accept that one exact-token shape while keeping arbitrary imported-module argv inert.
-  return values.findIndex((value) => isCliCommandToken(value))
+  for (const [index, value] of values.entries()) {
+    if (values[index - 1] === "--env-file" && !value.startsWith("-")) continue
+    if (isCliCommandToken(value)) return index
+  }
+  return -1
 }
 
 /**
  * The command vector from one runtime argv: the command, then its arguments. Arguments typed before
  * the command (`nifra --json check`) follow the command's own, ahead of any `--`, rather than being
- * dropped. Only when index 1 is the script: a runtime flag there means the leading entries are the
- * runtime's own, not the caller's.
+ * dropped. Env-file flags go first instead, so they keep command-line order and a later file still
+ * wins. A leading one also belongs to the CLI when Bun omits the script path.
  */
 export function commandArgv(values: readonly string[], commandIndex: number): readonly string[] {
   const command = values.slice(commandIndex)
-  const script = values[1]
-  if (commandIndex <= 2 || script === undefined || script.startsWith("-")) return command
-  const leading = values.slice(2, commandIndex)
+  const runtimeEnvFile = values
+    .slice(0, 2)
+    .findIndex((value) => value === "--env-file" || value.startsWith("--env-file="))
+  // With no env-file flag ahead of it, index 1 is the script, or a runtime flag whose neighbours
+  // are the runtime's own.
+  if (runtimeEnvFile === -1 && (values[1] === undefined || values[1].startsWith("-")))
+    return command
+
+  const envFiles: string[] = []
+  let others: string[] = []
+  let scriptAhead = runtimeEnvFile !== -1
+  for (let index = scriptAhead ? runtimeEnvFile : 2; index < commandIndex; index++) {
+    const value = values[index] ?? ""
+    if (value === "--env-file") envFiles.push(...values.slice(index, ++index + 1))
+    else if (value.startsWith("--env-file=")) envFiles.push(value)
+    else if (scriptAhead && !value.startsWith("-")) {
+      // The script path: it and the runtime flags before it are not the caller's.
+      scriptAhead = false
+      others = []
+    } else others.push(value)
+  }
   const separator = command.indexOf("--")
-  return separator === -1
-    ? [...command, ...leading]
-    : [...command.slice(0, separator), ...leading, ...command.slice(separator)]
+  const end = separator === -1 ? command.length : separator
+  return [...envFiles, ...command.slice(0, end), ...others, ...command.slice(end)]
 }
 
 function cliArgv(): readonly string[] {
@@ -1825,7 +1885,14 @@ function reexecCliArgv(): readonly string[] | undefined {
   ) {
     return undefined
   }
-  const command = parsed[0]
+  // commandArgv puts env-file flags ahead of the command.
+  let at = 0
+  while (at < parsed.length) {
+    if (parsed[at] === "--env-file") at += 2
+    else if (String(parsed[at]).startsWith("--env-file=")) at++
+    else break
+  }
+  const command = parsed[at]
   if (typeof command !== "string") return undefined
   return isCliCommandToken(command) ? (parsed as string[]) : undefined
 }

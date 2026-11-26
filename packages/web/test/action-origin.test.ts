@@ -64,6 +64,10 @@ test("a cross-site POST to an action is refused before the action runs", async (
     post("https://bank.example/settings", { origin: "null", "sec-fetch-site": "cross-site" }),
   )
   expect(sandboxed.status).toBe(403)
+  const metadataOnly = await app.fetch(
+    post("https://bank.example/settings", { "sec-fetch-site": "cross-site" }),
+  )
+  expect(metadataOnly.status).toBe(403)
   expect(counts.action).toBe(0)
 })
 

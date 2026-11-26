@@ -164,6 +164,7 @@ test("release verification provisions the runtimes its gates run and leaves timi
 })
 
 interface WorkflowStep {
+  readonly id?: string
   readonly name?: string
   readonly uses?: string
   readonly run?: string
@@ -172,6 +173,7 @@ interface WorkflowStep {
 }
 
 interface WorkflowJob {
+  readonly outputs?: Readonly<Record<string, string>>
   readonly if?: string
   readonly needs?: string | readonly string[]
   readonly environment?: unknown
@@ -264,7 +266,11 @@ test("the job that can publish runs no build tooling and publishes what the buil
   const download = publish?.steps?.find((step) =>
     step.uses?.startsWith("actions/download-artifact@"),
   )
-  expect(download?.with?.name).toBe(upload?.with?.name ?? "missing upload")
+  expect(upload?.id).toBe("upload")
+  expect(build?.outputs?.artifact_id).toBe("${{ steps.upload.outputs.artifact-id }}")
+  expect(download?.with?.["artifact-ids"]).toBe("${{ needs.build-release.outputs.artifact_id }}")
+  expect(download?.with?.["digest-mismatch"]).toBe("error")
+  expect(download?.with?.["merge-multiple"]).toBe(true)
   const names = publish?.steps?.map((step) => step.name) ?? []
   expect(names.indexOf(download?.name)).toBeGreaterThan(
     names.indexOf("Validate the merged release artifact"),
@@ -623,7 +629,7 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
       }
       const base = commit("packages/core/package.json", '{"version":"4.0.2"}')
       const merge = commit("packages/core/package.json", '{"version":"5.0.0"}')
-      const publish = commit("packages/core/test.ts", "// CI fix\n")
+      const publish = commit(".github/workflows/ci.yml", "# CI fix\n")
       const releasePr = {
         merged_at: "2026-10-11T00:00:00Z",
         merge_commit_sha: merge,
@@ -753,6 +759,9 @@ test.skipIf(process.platform === "win32" || Bun.which("jq") === null)(
         "bun.lock",
         "package.json",
         "internal/tool/package.json",
+        "packages/core/src/server.ts",
+        "scripts/build.ts",
+        ".github/workflows/release.yml",
       ]) {
         git("reset", "--hard", publish)
         const drift = commit(path, "changed release metadata\n")

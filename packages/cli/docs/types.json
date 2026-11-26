@@ -6333,7 +6333,7 @@
     "name": "ExtensionHost",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class ExtensionHost {\n    private readonly options;\n    private active;\n    private commands;\n    private tools;\n    private workflows;\n    private subagents;\n    private providers;\n    private handlers;\n    private revision;\n    constructor(options: ExtensionHostOptions);\n    get extensions(): readonly CodingAgentExtension[];\n    get currentRevision(): string;\n    get availableCommands(): readonly string[];\n    get availableTools(): readonly ExtensionTool[];\n    get availableWorkflows(): readonly string[];\n    get availableSubagents(): readonly ExtensionSubagent[];\n    get availableProviders(): readonly ExtensionProvider[];\n    reload(): Promise<ExtensionReloadResult>;\n    close(): Promise<void>;\n    command(name: string): ExtensionCommand | undefined;\n    tool(name: string): ExtensionTool | undefined;\n    workflow(name: string): ExtensionWorkflow | undefined;\n    subagent(name: string): ExtensionSubagent | undefined;\n    provider(name: string): ExtensionProvider | undefined;\n    runWorkflow(name: string, options?: WorkflowRunOptions): Promise<WorkflowResult>;\n    emit(event: string, payload: unknown): Promise<void>;\n    private loadOne;\n    private context;\n}",
+    "signature": "export declare class ExtensionHost {\n    private readonly options;\n    private active;\n    private activations;\n    private registrations;\n    private lifecycle;\n    private revision;\n    constructor(options: ExtensionHostOptions);\n    get extensions(): readonly CodingAgentExtension[];\n    get currentRevision(): string;\n    get availableCommands(): readonly string[];\n    get availableTools(): readonly ExtensionTool[];\n    get availableWorkflows(): readonly string[];\n    get availableSubagents(): readonly ExtensionSubagent[];\n    get availableProviders(): readonly ExtensionProvider[];\n    reload(): Promise<ExtensionReloadResult>;\n    private runLifecycle;\n    private reloadOnce;\n    close(): Promise<void>;\n    command(name: string): ExtensionCommand | undefined;\n    tool(name: string): ExtensionTool | undefined;\n    workflow(name: string): ExtensionWorkflow | undefined;\n    subagent(name: string): ExtensionSubagent | undefined;\n    provider(name: string): ExtensionProvider | undefined;\n    runWorkflow(name: string, options?: WorkflowRunOptions): Promise<WorkflowResult>;\n    emit(event: string, payload: unknown): Promise<void>;\n    private loadOne;\n    private context;\n}",
     "doc": "/**\n * Transactional TypeScript extension loader for the Nifra-native backend.\n *\n * This loader only activates explicitly supplied files. It never scans a project implicitly and it\n * leaves the previous extension graph intact when a staged reload fails.\n */"
   },
   {
@@ -13065,14 +13065,14 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface RedactOptions {\n    readonly keyParts?: readonly string[];\n    readonly valuePatterns?: readonly RegExp[];\n    readonly placeholder?: string;\n}",
-    "doc": "/**\n * Tunes redaction. Key-name redaction always runs; the rest is **opt-in**:\n * - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist.\n * - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is\n *   replaced with the placeholder. This is the value-scanning hook for secrets that land in a value or\n *   message (e.g. `err.message`), which key-name redaction can't catch. Off unless provided - the\n *   default path does no value scanning, so it stays allocation-light. See {@link commonSecretPatterns}.\n * - `placeholder` - the replacement string (default `[REDACTED]`).\n */"
+    "doc": "/**\n * Tunes redaction. Key-name redaction always runs.\n * - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist.\n * - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is\n *   replaced with the placeholder. This is the value-scanning hook for secrets that land in a value or\n *   message (e.g. `err.message`), which key-name redaction can't catch. Defaults to\n *   {@link commonSecretPatterns} for `jsonLogger` and to no patterns for `redactLogFields`. Strings\n *   over 8,192 UTF-16 code units are replaced entirely when scanning in `jsonLogger`.\n * - `placeholder` - the replacement string (default `[REDACTED]`).\n */"
   },
   {
     "name": "RedactOptions",
     "kind": "interface",
     "package": "nifra",
     "signature": "export interface RedactOptions {\n    readonly keyParts?: readonly string[];\n    readonly valuePatterns?: readonly RegExp[];\n    readonly placeholder?: string;\n}",
-    "doc": "/**\n * Tunes redaction. Key-name redaction always runs; the rest is **opt-in**:\n * - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist.\n * - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is\n *   replaced with the placeholder. This is the value-scanning hook for secrets that land in a value or\n *   message (e.g. `err.message`), which key-name redaction can't catch. Off unless provided - the\n *   default path does no value scanning, so it stays allocation-light. See {@link commonSecretPatterns}.\n * - `placeholder` - the replacement string (default `[REDACTED]`).\n */"
+    "doc": "/**\n * Tunes redaction. Key-name redaction always runs.\n * - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist.\n * - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is\n *   replaced with the placeholder. This is the value-scanning hook for secrets that land in a value or\n *   message (e.g. `err.message`), which key-name redaction can't catch. Defaults to\n *   {@link commonSecretPatterns} for `jsonLogger` and to no patterns for `redactLogFields`. Strings\n *   over 8,192 UTF-16 code units are replaced entirely when scanning in `jsonLogger`.\n * - `placeholder` - the replacement string (default `[REDACTED]`).\n */"
   },
   {
     "name": "RedirectOptions",
@@ -19660,14 +19660,14 @@
     "kind": "const",
     "package": "@nifrajs/core",
     "signature": "export declare const commonSecretPatterns: ReadonlyArray<RegExp>;",
-    "doc": "/**\n * A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by\n * passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a\n * few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives;\n * add your own (e.g. internal id formats) as needed. Every pattern is global so all matches are scrubbed.\n */"
+    "doc": "/**\n * A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns}.\n * Covers bearer tokens, JWTs, emails, and a\n * few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives;\n * add your own (e.g. internal id formats) as needed. Every pattern is global so all matches are scrubbed.\n */"
   },
   {
     "name": "commonSecretPatterns",
     "kind": "const",
     "package": "nifra",
     "signature": "export declare const commonSecretPatterns: ReadonlyArray<RegExp>;",
-    "doc": "/**\n * A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by\n * passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a\n * few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives;\n * add your own (e.g. internal id formats) as needed. Every pattern is global so all matches are scrubbed.\n */"
+    "doc": "/**\n * A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns}.\n * Covers bearer tokens, JWTs, emails, and a\n * few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives;\n * add your own (e.g. internal id formats) as needed. Every pattern is global so all matches are scrubbed.\n */"
   },
   {
     "name": "compareAgentEvalBaseline",
@@ -20626,7 +20626,7 @@
     "kind": "const",
     "package": "@nifrajs/core",
     "signature": "export declare const crossSiteFormRefused: (source: RequestSource, formOrigins: FormOrigins | undefined) => boolean;",
-    "doc": "/** Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can\n * send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request\n * with no content type that carries an `Authorization` header other than a browser-managed scheme\n * (Basic, Digest, Negotiate, NTLM) passes: script-set, it forced a preflight, so the app's CORS policy\n * has already judged its origin. It decides on the cheapest header first: a request without an\n * `Origin` (any non-browser client) costs one lookup, and a browser's own-origin post stops at\n * `Sec-Fetch-Site` before the URL is parsed. */"
+    "doc": "/** Whether a request is a cross-site post that {@link readBodyFramed} would refuse, or one a page can\n * send the same way: a form media type, or no content type at all (`fetch` with `no-cors`). A request\n * with no content type that carries an `Authorization` header other than a browser-managed scheme\n * (Basic, Digest, Negotiate, NTLM) passes: script-set, it forced a preflight, so the app's CORS policy\n * has already judged its origin. Fetch Metadata can reject a browser request without an `Origin`;\n * callers that send neither header still pass. */"
   },
   {
     "name": "csrf",
@@ -22639,14 +22639,14 @@
     "name": "isSameOriginForm",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function isSameOriginForm(origin: string, secFetchSite: string | null, request: {\n    readonly url: string;\n}): boolean;",
+    "signature": "export declare function isSameOriginForm(origin: string | null, secFetchSite: string | null, request: {\n    readonly url: string;\n}): boolean;",
     "doc": "/**\n * {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a\n * browser sends a same-origin form POST with `Origin: null`; that one passes on its\n * `Sec-Fetch-Site: same-origin`, a header page script cannot set.\n */"
   },
   {
     "name": "isSameOriginForm",
     "kind": "function",
     "package": "nifra",
-    "signature": "export declare function isSameOriginForm(origin: string, secFetchSite: string | null, request: {\n    readonly url: string;\n}): boolean;",
+    "signature": "export declare function isSameOriginForm(origin: string | null, secFetchSite: string | null, request: {\n    readonly url: string;\n}): boolean;",
     "doc": "/**\n * {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a\n * browser sends a same-origin form POST with `Origin: null`; that one passes on its\n * `Sec-Fetch-Site: same-origin`, a header page script cannot set.\n */"
   },
   {
@@ -22770,14 +22770,14 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function jsonLogger(write?: (line: string) => void, options?: RedactOptions): Logger;",
-    "doc": "/**\n * The default logger: one redacted JSON object per line. `write` is injectable for tests or\n * alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g.\n * {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys\n * (`level`, `message`, `time`) always win over user fields of the same name.\n */"
+    "doc": "/**\n * The default logger: one redacted JSON object per line. `write` is injectable for tests or\n * alternative sinks (defaults to stderr). `commonSecretPatterns` scrubs values and the log message\n * by default. Pass `valuePatterns` to replace those patterns. Framework keys\n * (`level`, `message`, `time`) always win over user fields of the same name.\n */"
   },
   {
     "name": "jsonLogger",
     "kind": "function",
     "package": "nifra",
     "signature": "export declare function jsonLogger(write?: (line: string) => void, options?: RedactOptions): Logger;",
-    "doc": "/**\n * The default logger: one redacted JSON object per line. `write` is injectable for tests or\n * alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g.\n * {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys\n * (`level`, `message`, `time`) always win over user fields of the same name.\n */"
+    "doc": "/**\n * The default logger: one redacted JSON object per line. `write` is injectable for tests or\n * alternative sinks (defaults to stderr). `commonSecretPatterns` scrubs values and the log message\n * by default. Pass `valuePatterns` to replace those patterns. Framework keys\n * (`level`, `message`, `time`) always win over user fields of the same name.\n */"
   },
   {
     "name": "jsonResponse",

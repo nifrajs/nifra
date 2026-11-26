@@ -1398,9 +1398,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   // The first stop's shutdown, which a handle disposed mid-shutdown waits for.
   let shutdown: Promise<void> | undefined
   function stop(options: NodeStopOptions = {}): Promise<void> {
-    const run = stopOnce(options)
-    shutdown ??= run
-    return run
+    shutdown ??= stopOnce(options)
+    return shutdown
   }
   async function stopOnce({
     drainMs = DEFAULT_DRAIN_MS,
@@ -1413,26 +1412,30 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       process.removeListener("SIGTERM", onSignal)
       process.removeListener("SIGINT", onSignal)
     }
-    await lifecycle("stopping")
-    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs))
-    server.close() // stop accepting new connections; existing requests continue
-    // A WebSocket gets a close handshake now and the drain window to finish it.
-    for (const ws of upgraded) ws.close(1001, "server shutting down")
-    const deadline = Date.now() + drainMs
-    while ((inFlight > 0 || answering.size > 0 || upgraded.size > 0) && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, DRAIN_POLL_MS))
+    try {
+      await lifecycle("stopping")
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs))
+      server.close()
+      for (const ws of upgraded) ws.close(1001, "server shutting down")
+      const deadline = Date.now() + drainMs
+      while ((inFlight > 0 || answering.size > 0 || upgraded.size > 0) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, DRAIN_POLL_MS))
+      }
+    } finally {
+      if (server.listening) server.close()
+      server.closeAllConnections()
+      for (const socket of answering) socket.destroy()
+      for (const ws of upgraded) ws.terminate()
     }
-    server.closeAllConnections() // force-close stragglers + idle keep-alive sockets
-    for (const socket of answering) socket.destroy()
-    for (const ws of upgraded) ws.terminate()
     await lifecycle("stopped")
   }
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     // Do not pass an explicit `undefined` hostname. Node accepts it, but Bun's Node-compatible
     // `http.Server.listen` can misinterpret that overload (especially with port 0) as a failed bind.
     // Omitting the argument selects the same default host while keeping the overload unambiguous.
     const onListening = (): void => {
+      server.removeListener("error", reject)
       const address = server.address()
       const port = address !== null && typeof address === "object" ? address.port : options.port
       if (signals !== undefined) {
@@ -1441,6 +1444,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       }
       resolve({ port, stop, [Symbol.asyncDispose]: () => shutdown ?? stop() })
     }
+    server.once("error", reject)
     if (options.hostname === undefined) server.listen(options.port, onListening)
     else server.listen(options.port, options.hostname, onListening)
   })

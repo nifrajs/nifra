@@ -284,8 +284,12 @@ export default function Islands() {
             </td>
             <td>
               Sets an attribute per pair, removing it for <code>false</code> or{" "}
-              <code>null</code>. Never an <code>on*</code> attribute or <code>srcdoc</code>, and a
-              URL attribute takes only an http(s), mailto, tel or relative URL.
+              <code>null</code>. Event handler attributes and <code>srcdoc</code> are blocked. URL
+              bindings accept explicit http(s), mailto, tel, and relative URLs without an authority.
+              They are blocked on a{" "}
+              <code>script</code>, <code>iframe</code>, <code>object</code>, <code>embed</code>,{" "}
+              <code>link</code> or <code>base</code> element. SVG animation elements such as{" "}
+              <code>&lt;animate&gt;</code> reject all attribute bindings.
             </td>
           </tr>
           <tr>

@@ -57,13 +57,14 @@ const IMPERATIVE = `const counter = defineIsland((el, props) => {
 const ALL =
   "batch, bindIsland, bindList, computed, createIslandBus, defineIsland, effect, islandProps, mountIslands, resource, signal"
 
-// Measured on Bun 1.4.3 + 2%. Raise a cap only in the commit that explains the new bytes.
+// Measured on Bun 1.4.4 + 2%. Raise a cap only in the commit that explains the new bytes.
 const fixtures = {
   // Per-host disposal adds ~30 B gz; the updated imperative/JS caps retain the 2% margin.
   imperative: { budget: 1168, source: `${IMPERATIVE}mountIslands({ counter })` },
-  markup: { budget: 2672, source: `${MARKUP}mountIslands({ compare })` },
+  // Blocking active elements and network-path URLs adds checks to the markup binding runtime.
+  markup: { budget: 2810, source: `${MARKUP}mountIslands({ compare })` },
   js: { budget: 2462, source: `${JS}mountIslands({ todos })` },
-  everything: { budget: 3498, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
+  everything: { budget: 3629, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
   // `@nifrajs/web/islands/swap` in place of `mountIslands`: what a page pays for slot swaps.
   swap: {
     budget: 2996,

@@ -126,22 +126,13 @@ backend is loader-only; `nifra check` reports that as NF-C035, and `nifra fix --
   versions - a version skew in any declared package is fatal in `nifra check`, and the preload warns
   once per package (`{ "packages": [...], "strict": true }` or `NIFRA_SINGLE_COPY_STRICT=1` makes it
   throw). See `/docs/troubleshooting`.
-- **Server-only code** → three ways to keep it out of the browser bundle:
-  - put it in a `*.server.ts` module - the client build empties it (its `node:` / native imports never
-    ship), no extra import needed;
-  - for **pure server logic with no `node:` import** (a secret, a server-only API call), add
-    `import "@nifrajs/web/server-only"` at the top - the client build fails loud, naming the import
-    **chain**, if that module ever reaches a browser chunk (the node-builtin guard can't catch it);
-  - mark the value's type `ServerOnly<T>` (from `@nifrajs/web`) to document intent - but it's
-    type-level only and erases at build, so always pair it with `.server.ts` or the import marker.
-  - or import a heavy / `node:`-using npm SDK (stripe, a DB driver, an API client) DYNAMICALLY *inside* the
-    `loader`/`action`: `const X = (await import('pkg')).default` - it then never sits in the route's
-    top-level (client-reachable) scope, so its `node:` builtins can't leak into the browser bundle.
-  A server-only import **co-located** in a route file fails the build loud - error: `… reached the
-  client bundle via <chain>`. `nifra check` reports the same transitive chain pre-build. See
-  `/docs/troubleshooting` (keyed on the literal error strings).
+- **Backend-only code** belongs under `backend/` or in a route's `x.backend.ts` file. A module whose
+  location does not establish the boundary can import `@nifrajs/web/backend-only`. The browser build
+  and `nifra check` report the import chain if backend code is reachable from the client.
+  Use a server function (`*.fn.ts`) when browser code needs to call backend logic. See
+  `/docs/troubleshooting` for the build messages.
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +
-  server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency. When capability
+  backend code in the browser graph + raw-`Response`-from-a-route + undeclared dependency. When capability
   assurance is configured, this also fails on raw effect-import bypasses and declaration/evidence drift.
 - For a release-equivalent repository gate, run **`bun run check:release`**: it builds and runs the
   release plan, including lint/typecheck/tests, coverage, the explicit **`bun run check:corpus`**

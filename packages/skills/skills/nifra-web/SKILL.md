@@ -37,7 +37,7 @@ Signals and their causes:
 | Error | Cause |
 |---|---|
 | `... reached the client bundle` | A `node:` or native import pulled in from a component or route module |
-| `server-only module reached the client bundle` | A module carrying the server-only marker was imported from client code |
+| `backend-only module reached the client bundle` | Client code imported a module that imports `@nifrajs/web/backend-only` |
 | `resolveDispatcher` / `Invalid hook call` | Two copies of the UI framework. The adapter dedupes it at build time - a stale `dist/` or a second install is the usual source |
 
 Fixes: move the server work into a loader, an action, or a server function; keep secrets in modules

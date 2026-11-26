@@ -11,7 +11,7 @@
  * readers themselves, so it also catches loops and patterns the analysis cannot see.
  */
 import { describe, expect, test } from "bun:test"
-import { type StandardSchemaV1, server } from "@nifrajs/core"
+import { jsonLogger, type StandardSchemaV1, server } from "@nifrajs/core"
 import { parseCookies } from "@nifrajs/core/cookies"
 import { multipartBody } from "@nifrajs/core/multipart"
 import { parseByteRange } from "@nifrajs/core/range"
@@ -41,11 +41,14 @@ interface Reader {
   readonly read: (input: string) => unknown
 }
 
-/** `unit` repeated to about `n` characters, between `head` and `tail`. */
+/** `unit` repeated to at most `n` characters, between `head` and `tail`: rounding up would carry a
+ * shape past its reader's cap, which then refuses it unread. */
 const fill =
   (unit: string, head = "", tail = ""): Shape =>
   (n) =>
-    head + unit.repeat(Math.max(1, Math.ceil((n - head.length - tail.length) / unit.length))) + tail
+    head +
+    unit.repeat(Math.max(1, Math.floor((n - head.length - tail.length) / unit.length))) +
+    tail
 
 const cpu = (): number => {
   const used = process.cpuUsage()
@@ -112,6 +115,7 @@ const localized = server()
 const guarded = server()
   .use(basicAuth({ username: "u", password: "p" }))
   .get("/", () => 1)
+const logger = jsonLogger(() => undefined)
 const schema = buildSchema("type Query { hello: String, me: Query }")
 
 const get = (url: string, headers?: Record<string, string>) =>
@@ -124,6 +128,22 @@ const BOUNDARY = "b0undary"
 const multipart = (body: string) => post("/mp", `multipart/form-data; boundary=${BOUNDARY}`, body)
 
 const READERS: readonly Reader[] = [
+  {
+    name: "default log redaction",
+    // A longer string is replaced whole, unscanned.
+    cap: 8192,
+    shapes: {
+      "JWT starts with no dot": fill("eyJ-"),
+      "JWT headers with no signature": fill("eyJa."),
+      "bearer words": fill("Bearer "),
+      "an address that never ends": fill("a.", "", "@"),
+      "dotted domain labels": fill("a.", "a@", "1"),
+      "Stripe key starts": fill("sk_live_-"),
+      "GitHub token starts": fill("ghp_-"),
+      "AWS key starts": fill("AKIA-"),
+    },
+    read: (message) => logger.info(message),
+  },
   {
     name: "route path",
     shapes: {
@@ -164,7 +184,7 @@ const READERS: readonly Reader[] = [
     cap: BODY_CAP,
     shapes: {
       "many keys": (n) =>
-        `{${Array.from({ length: Math.max(1, Math.floor(n / 8)) }, (_, i) => `"k${i}":0`).join(",")}}`,
+        `{${Array.from({ length: Math.max(1, Math.floor(n / 16)) }, (_, i) => `"k${i}":0`).join(",")}}`,
       "a long array": fill("0,", "[", "0]"),
       "escapes in a string": fill("\\u0041", '"', '"'),
       "repeated proto keys": fill('"__proto__":0,', "{", '"a":0}'),
@@ -347,6 +367,17 @@ const READERS: readonly Reader[] = [
       ),
   },
 ]
+
+test("no shape outgrows its reader's cap", () => {
+  const over = READERS.flatMap(({ name, cap, shapes }) =>
+    cap === undefined
+      ? []
+      : Object.entries(shapes)
+          .filter(([, shape]) => shape(cap).length > cap)
+          .map(([label, shape]) => `${name}, ${label}: ${shape(cap).length} > ${cap}`),
+  )
+  expect(over).toEqual([])
+})
 
 describe("input scaling", () => {
   for (const reader of READERS) {

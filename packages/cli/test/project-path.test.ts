@@ -7,6 +7,7 @@ import { applyDiagnosticRecipe } from "../src/fix-recipes.ts"
 import { resolveInsideProject } from "../src/project-path.ts"
 
 const roots: string[] = []
+const NODE_CRYPTO = 'import "node:crypto"\n'
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
@@ -62,13 +63,16 @@ describe("project-scoped diagnostic paths", () => {
 
   test("allows a normal project-relative fixer path", async () => {
     const root = await project()
-    await writeFile(join(root, "security.ts"), "if (token === expected) return true\n")
+    await writeFile(
+      join(root, "security.ts"),
+      NODE_CRYPTO + "if (token === expected) return true\n",
+    )
     expect(await applyDiagnosticRecipe(root, diagnostic("security.ts"))).toEqual(["security.ts"])
     expect(await readFile(join(root, "security.ts"), "utf8")).toContain("timingSafeEqual")
   })
 
   test("rewrites the confirmation compares check reports, and only those", async () => {
-    const compare = "if (password !== confirmPassword) return false\n"
+    const compare = NODE_CRYPTO + "if (password !== confirmPassword) return false\n"
     const api = await project()
     await mkdir(join(api, "routes"))
     await writeFile(join(api, "routes", "signup.ts"), compare)
@@ -91,6 +95,7 @@ describe("project-scoped diagnostic paths", () => {
     const root = await project()
     const source = [
       '"use server"',
+      'import "node:crypto"',
       "export function verify(token: string, expected: string, count: number, limit: number, headers: { signature: string }) {",
       "  if (count === limit) return false",
       "  if (token === expected) return true",
@@ -102,20 +107,27 @@ describe("project-scoped diagnostic paths", () => {
     await writeFile(join(root, "verify.ts"), source)
     // The line numbers one check run reports, applied in order the way `nifra fix` does.
     const at = (line: number): Diagnostic => ({ ...diagnostic("verify.ts"), line })
-    expect(await applyDiagnosticRecipe(root, at(4))).toEqual(["verify.ts"])
-    expect(await applyDiagnosticRecipe(root, at(6))).toEqual([])
+    expect(await applyDiagnosticRecipe(root, at(5))).toEqual(["verify.ts"])
+    expect(await applyDiagnosticRecipe(root, at(7))).toEqual([])
     expect(await readFile(join(root, "verify.ts"), "utf8")).toBe(
       [
         '"use server"',
         "",
         'import { timingSafeEqual as nifraTimingSafeEqualBytes } from "node:crypto"',
         "",
-        "function nifraTimingSafeEqual(left: string, right: string): boolean {",
-        "  const leftBytes = Buffer.from(left)",
-        "  const rightBytes = Buffer.from(right)",
-        "  return leftBytes.length === rightBytes.length && nifraTimingSafeEqualBytes(leftBytes, rightBytes)",
+        "function nifraTimingSafeEqual(left: unknown, right: unknown): boolean {",
+        '  if (typeof left !== "string" || typeof right !== "string") return left === right',
+        "  if (left.length !== right.length) return false",
+        "  const leftUnits = new Uint16Array(left.length)",
+        "  const rightUnits = new Uint16Array(right.length)",
+        "  for (let index = 0; index < left.length; index++) {",
+        "    leftUnits[index] = left.charCodeAt(index)",
+        "    rightUnits[index] = right.charCodeAt(index)",
+        "  }",
+        "  return nifraTimingSafeEqualBytes(leftUnits, rightUnits)",
         "}",
         "",
+        'import "node:crypto"',
         "export function verify(token: string, expected: string, count: number, limit: number, headers: { signature: string }) {",
         "  if (count === limit) return false",
         "  if (nifraTimingSafeEqual(token, expected)) return true",

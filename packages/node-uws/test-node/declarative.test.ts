@@ -102,6 +102,10 @@ const cases: Array<[string, string | Buffer]> = [
       "origin: https://evil.test\r\ncontent-type: text/plain\r\ncontent-length: 0\r\n",
     ),
   ],
+  [
+    "Fetch Metadata refuses a cross-site POST when Origin is missing",
+    head("POST", "/ping", "sec-fetch-site: cross-site\r\ncontent-length: 0\r\n"),
+  ],
   ["201 status", head("GET", "/created")],
   ["204 stays bodyless", head("GET", "/nothing")],
   ["nested path", head("GET", "/api/v1/health")],
@@ -191,7 +195,7 @@ test("a fixed route is answered without entering the app", async () => {
     await observe(running.port, head("GET", "/ping"))
     assert.equal((await observe(running.port, head("GET", "/user/abc"))).body, "abc")
     assert.equal(entered, 0)
-    // A POST with no Origin cannot fail the cross-site form check, so it is answered natively too.
+    // A POST without browser origin information can be answered directly.
     await observe(running.port, head("POST", "/ping", "content-length: 0\r\n"))
     assert.equal(entered, 0)
     // One with an Origin runs the check, on the ordinary path.

@@ -87,6 +87,25 @@ describe("redactLogFields", () => {
 })
 
 describe("jsonLogger", () => {
+  test("scrubs values by default and serializes error records and big integers", () => {
+    const lines: string[] = []
+    const fields = Object.fromEntries([
+      ["__proto__", { label: "literal field" }],
+      ["error", new Error("Delivery failed for example@example.invalid")],
+      ["count", 9007199254740993n],
+    ])
+    jsonLogger((line) => lines.push(line)).warn(
+      "Delivery to example@example.invalid failed",
+      fields,
+    )
+    expect(lines[0]).toContain('"message":"Delivery to [REDACTED] failed"')
+    expect(lines[0]).toContain('"__proto__":{"label":"literal field"}')
+    expect(lines[0]).toContain(
+      '"error":{"name":"Error","message":"Delivery failed for [REDACTED]"}',
+    )
+    expect(lines[0]).toContain('"count":"9007199254740993"')
+  })
+
   test("emits one redacted JSON line per call, across all levels", () => {
     const lines: string[] = []
     const logger = jsonLogger((line) => lines.push(line))
@@ -307,5 +326,44 @@ describe("server error logging", () => {
     const res = await app.fetch(new Request("http://x/boom"))
     expect(res.status).toBe(418)
     expect(logs).toHaveLength(0)
+  })
+})
+
+test("value scanning replaces oversized fields and messages and honors an empty pattern list", () => {
+  const lines: string[] = []
+  const oversized = "text".repeat(3000)
+  jsonLogger((line) => lines.push(line)).info(oversized, { detail: oversized })
+  jsonLogger((line) => lines.push(line), { valuePatterns: [] }).info(oversized, {
+    detail: oversized,
+  })
+  expect(JSON.parse(lines[0] ?? "")).toMatchObject({ message: "[REDACTED]", detail: "[REDACTED]" })
+  expect(JSON.parse(lines[1] ?? "")).toMatchObject({ message: oversized, detail: oversized })
+})
+
+test("a JWT is redacted wherever its header holds another token start", () => {
+  const redacted = (detail: string) =>
+    redactLogFields({ detail }, { valuePatterns: commonSecretPatterns }).detail
+  for (const [written, kept] of [
+    ["eyJa.b.c", ""],
+    ["id=eyJa.b.c", "id="],
+    ["x-eyJa.b.c", "x-"],
+    ["eyJab-eyJ.b.c", ""],
+    // The match starts at the last viable `eyJ`; the payload and signature always go with it.
+    ["eyJ-eyJa.b.c", "eyJ-"],
+    ["eyJa-eyJb.c.d", "eyJa-"],
+  ] as const)
+    expect([written, redacted(written)]).toEqual([written, `${kept}[REDACTED]`])
+})
+
+test("a sensitive key covers an Error's own name and message", () => {
+  const redacted = (keyParts: string[]) =>
+    redactLogFields({ error: new Error("private detail") }, { keyParts }).error
+  expect(redacted(["message"])).toMatchObject({
+    name: "Error",
+    message: "[REDACTED]",
+  })
+  expect(redacted(["name"])).toMatchObject({
+    name: "[REDACTED]",
+    message: "private detail",
   })
 })

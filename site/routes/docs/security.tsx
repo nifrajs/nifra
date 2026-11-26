@@ -365,9 +365,9 @@ const sagas = createSagaEngine({
 
 const LOGGING = `import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core/server"
 
-// Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.
+// The default logger redacts sensitive keys and scans string values and messages.
 const app = server({
-  logger: jsonLogger(undefined, { valuePatterns: commonSecretPatterns }),
+  logger: jsonLogger(),
 })
 
 // logger.error("auth failed for user@example.com with Bearer abc.def")
@@ -926,10 +926,10 @@ export default function Security() {
       <h2>Redacting logs</h2>
       <p>
         The built-in <code>jsonLogger</code> redacts values under sensitive <b>keys</b>{" "}
-        (<code>password</code>, <code>authorization</code>, <code>token</code>, …) by default. For
-        secrets that land in a <b>value</b> or the message itself (e.g. an <code>err.message</code> that
-        embeds a token), pass opt-in <code>valuePatterns</code> - <code>commonSecretPatterns</code> covers
-        bearer tokens, JWTs, emails, and a few well-known key formats, or supply your own:
+        (<code>password</code>, <code>authorization</code>, <code>token</code>, …) and applies
+        <code>commonSecretPatterns</code> to string values and messages. It covers bearer tokens,
+        JWTs, emails, and several well-known key formats. Pass <code>valuePatterns</code> to set your
+        own rules or extend the defaults:
       </p>
       <CodeBlock code={LOGGING} />
 

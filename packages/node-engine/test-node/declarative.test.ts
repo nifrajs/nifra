@@ -102,6 +102,10 @@ const cases: Array<[string, string | Buffer]> = [
       "origin: https://evil.test\r\ncontent-type: text/plain\r\ncontent-length: 0\r\n",
     ),
   ],
+  [
+    "Fetch Metadata refuses a cross-site POST when Origin is missing",
+    head("POST", "/ping", "sec-fetch-site: cross-site\r\ncontent-length: 0\r\n"),
+  ],
   ["201 status", head("GET", "/created")],
   ["204 stays bodyless", head("GET", "/nothing")],
   ["nested path", head("GET", "/api/v1/health")],

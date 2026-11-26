@@ -3222,8 +3222,12 @@ Toggles a class per pair.
 `data-bind-attr="aria-expanded:open"`
 
 Sets an attribute per pair, removing it for `false` or
-`null`. Never an `on*` attribute or `srcdoc`, and a
-URL attribute takes only an http(s), mailto, tel or relative URL.
+`null`. Event handler attributes and `srcdoc` are blocked. URL
+bindings accept explicit http(s), mailto, tel, and relative URLs without an authority.
+They are blocked on a
+`script`, `iframe`, `object`, `embed`,
+`link` or `base` element. SVG animation elements such as
+`<animate>` reject all attribute bindings.
 
 `data-bind-value="query"`
 
@@ -5632,17 +5636,17 @@ limiter (@nifrajs/middleware), and a hardened image-resize endpoint
 ### Redacting logs
 
 The built-in `jsonLogger` redacts values under sensitive **keys**
-(`password`, `authorization`, `token`, …) by default. For
-secrets that land in a **value** or the message itself (e.g. an `err.message` that
-embeds a token), pass opt-in `valuePatterns` - `commonSecretPatterns` covers
-bearer tokens, JWTs, emails, and a few well-known key formats, or supply your own:
+(`password`, `authorization`, `token`, …) and applies
+`commonSecretPatterns` to string values and messages. It covers bearer tokens,
+JWTs, emails, and several well-known key formats. Pass `valuePatterns` to set your
+own rules or extend the defaults:
 
 ```ts
 import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core/server"
 
-// Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.
+// The default logger redacts sensitive keys and scans string values and messages.
 const app = server({
-  logger: jsonLogger(undefined, { valuePatterns: commonSecretPatterns }),
+  logger: jsonLogger(),
 })
 
 // logger.error("auth failed for user@example.com with Bearer abc.def")
@@ -9707,7 +9711,7 @@ below - without starting a server:
 ```ts
 # doc-check: skip - fragment: terminal output, not source.
 $ nifra dev
-nifra dev (bun) → http://localhost:3000
+nifra dev (bun) → http://localhost:4321
   bundler: bun (default; --vite to switch)
 
 $ nifra build
@@ -9906,11 +9910,11 @@ supply that plugin yourself through your own `bunfig.toml`; plain CSS and Tailwi
 need nothing either way.
 
 **
-Server functions and `*.server` modules work under `--bun`
+Server functions and backend-only modules under `--bun`
 **
-- and the plumbing is worth knowing. The client build strips them: a `*.fn` module
-is replaced with an RPC stub and a `*.server` module is emptied, so their bodies
-(DB handles, secrets, imports) never reach a browser. Bun's dev-server bundling accepts
+- the client build replaces a `*.fn.ts` module with an RPC stub and rejects
+browser imports that reach `backend/`, a route's `x.backend.ts`, or
+a module marked with `@nifrajs/web/backend-only`. Bun's dev-server bundling accepts
 plugins only through `bunfig.toml` (`[serve.static] plugins`) - not
 programmatically, and a runtime `Bun.plugin` never reaches it (upstream ask:
 oven-sh/bun#36830). So `nifra dev --bun` generates a config under

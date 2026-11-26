@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { DEFAULT_DEV_PORT } from "@nifrajs/web"
@@ -16,6 +16,43 @@ const savedPort = Bun.env.PORT
 afterEach(() => {
   if (savedPort === undefined) delete Bun.env.PORT
   else Bun.env.PORT = savedPort
+})
+
+test("manual command help prints usage before dispatching", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "nifra-cli-help-"))
+  try {
+    const cli = resolve(import.meta.dir, "../src/cli.ts")
+    for (const command of [
+      "mcp",
+      "docs-mcp",
+      "learn",
+      "frontend",
+      "runtime",
+      "verify",
+      "init-agents",
+      "sdk",
+    ]) {
+      const result = Bun.spawnSync([process.execPath, "--no-env-file", cli, command, "--help"], {
+        cwd,
+        timeout: 3000,
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout.toString()).toStartWith(`  nifra ${command} `)
+    }
+    expect(readdirSync(cwd)).toEqual([])
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test("a leading env-file value that names a command stays with its flag", () => {
+  const cli = resolve(import.meta.dir, "../src/cli.ts")
+  const result = Bun.spawnSync(
+    [process.execPath, "--no-env-file", cli, "--env-file", "runtime", "sdk", "--help"],
+    { timeout: 5000 },
+  )
+  expect(result.exitCode).toBe(0)
+  expect(result.stdout.toString()).toStartWith("  nifra sdk ")
 })
 
 test("parseFlags defaults to the shared uncommon DEFAULT_DEV_PORT (no flag, no env)", () => {
@@ -268,7 +305,11 @@ test("formatCliError falls back to the message for a plain Error, and String for
   expect(formatCliError("just a string")).toBe("just a string")
 })
 
-test("a configured Bun child recovers its command vector when argv is empty", async () => {
+test.each([
+  [["--version"]],
+  [["--env-file=bunfig.toml", "--version"]],
+  [["--env-file", "bunfig.toml", "--env-file=bunfig.toml", "--version"]],
+])("a configured Bun child recovers its command vector when argv is empty: %j", async (vector) => {
   const cli = resolve(import.meta.dir, "../src/cli.ts")
   const config = resolve(import.meta.dir, "../../../bunfig.toml")
   const proc = Bun.spawn([process.execPath, `--config=${config}`, cli], {
@@ -279,7 +320,7 @@ test("a configured Bun child recovers its command vector when argv is empty", as
       ...process.env,
       NIFRA_BUN_DEV_TOKEN: "test-launch-token",
       NIFRA_BUN_DEV_DEPTH: "1",
-      NIFRA_BUN_DEV_ARGS: JSON.stringify(["--version"]),
+      NIFRA_BUN_DEV_ARGS: JSON.stringify(vector),
     },
   })
   const [stdout, stderr, code] = await Promise.all([
@@ -296,10 +337,10 @@ test("arguments typed before the command follow it instead of being dropped", ()
   const runtime = ["/usr/local/bin/bun", "/app/node_modules/.bin/nifra"]
   expect(commandArgv([...runtime, "--json", "check"], 3)).toEqual(["check", "--json"])
   expect(commandArgv([...runtime, "--env-file", ".env", "upgrade", "4.0.0"], 4)).toEqual([
-    "upgrade",
-    "4.0.0",
     "--env-file",
     ".env",
+    "upgrade",
+    "4.0.0",
   ])
   expect(commandArgv([...runtime, "--json", "run", "--", "x"], 3)).toEqual([
     "run",
@@ -318,4 +359,27 @@ test("--prerender is a build flag with a value", () => {
   expect(parseFlags(["--prerender", "/,/about"]).prerender).toBe("/,/about")
   expect(parseFlags(["--prerender=/", "--target", "static"]).prerender).toBe("/")
   expect(() => parseFlags(["--prerender"])).toThrow("--prerender needs a value")
+})
+
+test("env-file flags keep command-line order, and the script path never reaches the command", () => {
+  const flags = [["--env-file", "a.env"], ["--env-file=a.env"]]
+  for (const flag of flags) {
+    for (const before of [
+      ["bun", "/app/cli.ts", ...flag],
+      ["bun", ...flag, "/app/cli.ts"],
+      ["bun", ...flag],
+      [...flag],
+    ]) {
+      const values = [...before, "check", "--env-file=b.env"]
+      expect([values, commandArgv(values, before.length)]).toEqual([
+        values,
+        [...flag, "check", "--env-file=b.env"],
+      ])
+    }
+  }
+  expect(commandArgv(["bun", "--env-file=a.env", "--json", "check"], 3)).toEqual([
+    "--env-file=a.env",
+    "check",
+    "--json",
+  ])
 })

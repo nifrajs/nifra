@@ -8,7 +8,7 @@ name: Release
 # It is guarded by the GitHub API association between that SHA and a merged release PR, so an
 # ordinary main merge is a no-op. workflow_dispatch on main retries that merge, or recovers failed
 # release CI using the run ID of a successful main CI run. Recovery preserves the original release
-# PR proof and rejects changes to the prepared release metadata.
+# PR proof and permits changes only to the CI workflow, keeping package and build inputs identical.
 #
 # npm publishes through trusted publishing: every public package trusts this workflow file run in the
 # npm-publish environment, so there is no npm token to store or leak. Only a proven release enters
@@ -285,11 +285,9 @@ jobs:
               echo "${PUBLISH_SHA} is not descended from release merge ${MERGE_SHA}; refusing to publish." >&2
               exit 1
             fi
-            # Compare the complete trees locally: GitHub's compare files list is truncated at 300.
-            if ! git diff --quiet "$MERGE_SHA" "$PUBLISH_SHA" -- \
-              .changeset bun.lock bun.lockb package.json \
-              ':(glob)**/package.json' ':(glob)**/CHANGELOG.md'; then
-              echo "Prepared release metadata changed after ${MERGE_SHA}; refusing to publish." >&2
+            # A CI repair can validate the release again. A change to its inputs needs a release PR.
+            if ! git diff --quiet "$MERGE_SHA" "$PUBLISH_SHA" -- . ':(exclude).github/workflows/ci.yml'; then
+              echo "Release contents changed after ${MERGE_SHA}; refusing to publish." >&2
               exit 1
             fi
           fi
@@ -312,6 +310,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       # Keep the checkout action on a fixed branch: prove-release has validated the target commit,
       # and selecting it from the complete main history avoids passing a job output into the action ref.
@@ -347,6 +347,7 @@ jobs:
       # Only gitignored build output and the corpus gen:llms regenerates from it; everything else the
       # tarballs hold comes from the publish job's own checkout of the same merge.
       - name: Upload the built packages
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-packages
@@ -418,10 +419,17 @@ jobs:
           RELEASE_HEAD_SHA: ${{ needs.prove-release.outputs.publish_sha }}
         run: bun run release:check --merge
 
+      - name: Require an artifact from the package build
+        env:
+          ARTIFACT_ID: ${{ needs.build-release.outputs.artifact_id }}
+        run: '[[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]'
+
       - name: Download the built packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: release-packages
+          artifact-ids: ${{ needs.build-release.outputs.artifact_id }}
+          digest-mismatch: error
+          merge-multiple: true
           path: packages
 
       # Ignoring scripts keeps a package's prepack build out of this job too.

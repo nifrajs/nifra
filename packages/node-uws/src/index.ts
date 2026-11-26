@@ -389,10 +389,8 @@ function registerDeclarative(
 }
 
 /**
- * A fixed POST is not a precompiled reply: every bodyless POST runs the cross-site form check, which
- * refuses a request only when it carries an `Origin` header (a browser always sends one; a script or a
- * load generator does not). A request with one goes to the ordinary path, which runs the check; one
- * without is answered here, from uWS's callback, without building a request. The body is left unread,
+ * A fixed POST with browser origin information goes to the router for its form policy.
+ * Requests without that information can be answered without building a request. The body stays unread,
  * as the ordinary path leaves it for a route with no body schema.
  */
 function registerFixedPost(
@@ -403,7 +401,8 @@ function registerFixedPost(
   const line = statusLine(route.status)
   const headers = route.headers.filter(([name]) => !owned(name))
   app$.post(route.path, (res, req) => {
-    if (req.getHeader("origin") !== "") {
+    const site = req.getHeader("sec-fetch-site")
+    if (req.getHeader("origin") !== "" || site === "cross-site" || site === "same-site") {
       ordinary(res, req)
       return
     }

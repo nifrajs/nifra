@@ -1697,7 +1697,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ROUTE_PATTERN_OVERLAP_MAX_STATES** _(const)_ - `ROUTE_PATTERN_OVERLAP_MAX_STATES: 100000`
   Hard budget for the offline route-language intersection. Never use this on the request path.
 - **RedactOptions** _(interface)_ - `interface RedactOptions`
-  Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
+  Tunes redaction. Key-name redaction always runs. - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the value-scanning hook for…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
 - **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
@@ -1789,7 +1789,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
   Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is kept where…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
-  A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+  A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns}. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; add your own (e.g. internal id formats) as needed. Every pattern is glo…
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
   RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
@@ -1806,14 +1806,14 @@ Every public export of every package and documented subpath - name, kind, signat
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
   Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
-- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
+- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string | null, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
   {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with `Origin: null`; that one passes on its `Sec-Fetch-Site: same-origin`, a header page script cannot set.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
-  The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+  The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `commonSecretPatterns` scrubs values and the log message by default. Pass `valuePatterns` to replace those patterns. Framework keys (`level`, `message`, `time`) always w…
 - **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
   Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
@@ -2625,11 +2625,11 @@ Every public export of every package and documented subpath - name, kind, signat
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
 - **RedactOptions** _(interface)_ - `interface RedactOptions`
-  Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
+  Tunes redaction. Key-name redaction always runs. - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the value-scanning hook for…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
-  A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+  A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns}. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; add your own (e.g. internal id formats) as needed. Every pattern is glo…
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
-  The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+  The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `commonSecretPatterns` scrubs values and the log message by default. Pass `valuePatterns` to replace those patterns. Framework keys (`level`, `message`, `time`) always w…
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **silentLogger** _(const)_ - `silentLogger: Logger`
@@ -3089,7 +3089,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ROUTE_PATTERN_OVERLAP_MAX_STATES** _(const)_ - `ROUTE_PATTERN_OVERLAP_MAX_STATES: 100000`
   Hard budget for the offline route-language intersection. Never use this on the request path.
 - **RedactOptions** _(interface)_ - `interface RedactOptions`
-  Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
+  Tunes redaction. Key-name redaction always runs. - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the value-scanning hook for…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
 - **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
@@ -3178,7 +3178,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
   Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is kept where…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
-  A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+  A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns}. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; add your own (e.g. internal id formats) as needed. Every pattern is glo…
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
   RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
@@ -3195,14 +3195,14 @@ Every public export of every package and documented subpath - name, kind, signat
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
   Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
-- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
+- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string | null, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
   {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with `Origin: null`; that one passes on its `Sec-Fetch-Site: same-origin`, a header page script cannot set.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
-  The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+  The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `commonSecretPatterns` scrubs values and the log message by default. Pass `valuePatterns` to replace those patterns. Framework keys (`level`, `message`, `time`) always w…
 - **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
   Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
@@ -8499,7 +8499,7 @@ _No named exports (side-effect entrypoint)._
 - **ROUTE_PATTERN_OVERLAP_MAX_STATES** _(const)_ - `ROUTE_PATTERN_OVERLAP_MAX_STATES: 100000`
   Hard budget for the offline route-language intersection. Never use this on the request path.
 - **RedactOptions** _(interface)_ - `interface RedactOptions`
-  Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
+  Tunes redaction. Key-name redaction always runs. - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the value-scanning hook for…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
 - **RequestLocal** _(interface)_ - `interface RequestLocal<T>`
@@ -8591,7 +8591,7 @@ _No named exports (side-effect entrypoint)._
 - **carryRequestLocals** _(function)_ - `carryRequestLocals: (from: Request, to: Request) => void`
   Join `to` to `from`'s request-local scope: each then reads every value set through either, now and later. nifra does this wherever it rebuilds a request itself; call it where a wrapper or an `onRequest` hook rebuilds one, right after `new Request(url, req)`. A value `to` already holds is kept where…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
-  A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+  A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns}. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; add your own (e.g. internal id formats) as needed. Every pattern is glo…
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
   RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
@@ -8608,14 +8608,14 @@ _No named exports (side-effect entrypoint)._
   True when a raw Cookie header contains the same exact cookie name more than once.
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
   Whether `request` passed an authentication stage or was marked with {@link markAuthenticatedRequest}. The server records the request object its response hooks receive, including one an `onRequest` hook replaced.
-- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
+- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string | null, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
   {@link isSameOriginRequest} for a browser form submission. Under `Referrer-Policy: no-referrer` a browser sends a same-origin form POST with `Origin: null`; that one passes on its `Sec-Fetch-Site: same-origin`, a header page script cannot set.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
-  The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+  The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `commonSecretPatterns` scrubs values and the log message by default. Pass `valuePatterns` to replace those patterns. Framework keys (`level`, `message`, `time`) always w…
 - **markAuthenticatedRequest** _(function)_ - `markAuthenticatedRequest: (request: Request) => void`
   Record that `request` carries a verified credential, so a response-side store keyed without it - a response cache, an idempotency replay - treats the response as personalized whichever header carried the credential. The server records every request an authentication stage accepts; call this from an…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`

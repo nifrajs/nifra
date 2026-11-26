@@ -14,6 +14,7 @@ export interface Logger {
 }
 
 const REDACTED = "[REDACTED]"
+const MAX_SCAN_LENGTH = 8192
 
 /**
  * Field-name fragments whose values are replaced with `[REDACTED]` (case-insensitive
@@ -34,12 +35,13 @@ const SENSITIVE_KEY_PARTS: ReadonlyArray<string> = [
 ]
 
 /**
- * Tunes redaction. Key-name redaction always runs; the rest is **opt-in**:
+ * Tunes redaction. Key-name redaction always runs.
  * - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist.
  * - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is
  *   replaced with the placeholder. This is the value-scanning hook for secrets that land in a value or
- *   message (e.g. `err.message`), which key-name redaction can't catch. Off unless provided - the
- *   default path does no value scanning, so it stays allocation-light. See {@link commonSecretPatterns}.
+ *   message (e.g. `err.message`), which key-name redaction can't catch. Defaults to
+ *   {@link commonSecretPatterns} for `jsonLogger` and to no patterns for `redactLogFields`. Strings
+ *   over 8,192 UTF-16 code units are replaced entirely when scanning in `jsonLogger`.
  * - `placeholder` - the replacement string (default `[REDACTED]`).
  */
 export interface RedactOptions {
@@ -49,14 +51,16 @@ export interface RedactOptions {
 }
 
 /**
- * A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by
- * passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a
+ * A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns}.
+ * Covers bearer tokens, JWTs, emails, and a
  * few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives;
  * add your own (e.g. internal id formats) as needed. Every pattern is global so all matches are scrubbed.
  */
 export const commonSecretPatterns: ReadonlyArray<RegExp> = [
   /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, // Authorization: Bearer <token>
-  /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, // JWT (header.payload.signature)
+  // JWT (header.payload.signature). The header stops before a `-eyJ` where a later attempt can start,
+  // so a run of them is not rescanned from every one.
+  /\beyJ(?:\w|-(?!eyJ[\w-]))+\.[\w-]+\.[\w-]+/g,
   // Email. The lookbehind starts a match only where a run of address characters starts; `\b` would
   // restart inside `a.a.a.` at every `a` and rescan the run each time, quadratic in its length.
   /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
@@ -67,6 +71,7 @@ export const commonSecretPatterns: ReadonlyArray<RegExp> = [
 
 interface RedactConfig {
   readonly keyParts: readonly string[]
+  readonly maxScanLength: number
   readonly valuePatterns: readonly RegExp[]
   readonly placeholder: string
 }
@@ -76,40 +81,47 @@ interface RedactConfig {
 const ensureGlobal = (re: RegExp): RegExp =>
   re.flags.includes("g") ? re : new RegExp(re.source, `${re.flags}g`)
 
-function buildConfig(options?: RedactOptions): RedactConfig {
+function buildConfig(
+  options?: RedactOptions,
+  defaultPatterns: ReadonlyArray<RegExp> = [],
+  maxScanLength = Infinity,
+): RedactConfig {
   const extra = options?.keyParts
   return {
     keyParts:
-      extra !== undefined && extra.length > 0
-        ? [...SENSITIVE_KEY_PARTS, ...extra.map((k) => k.toLowerCase())]
-        : SENSITIVE_KEY_PARTS,
-    valuePatterns: (options?.valuePatterns ?? []).map(ensureGlobal),
+      extra === undefined
+        ? SENSITIVE_KEY_PARTS
+        : [...SENSITIVE_KEY_PARTS, ...extra.map((part) => part.toLowerCase())],
+    maxScanLength,
+    valuePatterns: (options?.valuePatterns ?? defaultPatterns).map(ensureGlobal),
     placeholder: options?.placeholder ?? REDACTED,
   }
 }
 
-function isSensitiveKey(key: string, parts: readonly string[]): boolean {
-  const lower = key.toLowerCase()
-  return parts.some((part) => lower.includes(part))
-}
-
 function redactString(value: string, config: RedactConfig): string {
-  if (config.valuePatterns.length === 0) return value // default fast path: no value scanning
+  if (config.valuePatterns.length === 0) return value
+  if (value.length > config.maxScanLength) return config.placeholder
   let out = value
-  for (const pattern of config.valuePatterns) out = out.replace(pattern, config.placeholder)
+  for (const pattern of config.valuePatterns) out = out.replace(pattern, () => config.placeholder)
   return out
 }
 
 function redactValue(value: unknown, seen: WeakSet<object>, config: RedactConfig): unknown {
   if (typeof value === "string") return redactString(value, config)
+  if (typeof value === "bigint") return value.toString()
+  if (typeof value === "function") return undefined
   if (value === null || typeof value !== "object") return value
   if (seen.has(value)) return "[Circular]"
   seen.add(value)
   if (Array.isArray(value)) return value.map((item) => redactValue(item, seen, config))
-  const out: Record<string, unknown> = {}
-  for (const [key, val] of Object.entries(value)) {
+  const out: Record<string, unknown> = Object.create(null)
+  const entries = Object.entries(value)
+  // An Error's own name and message are not enumerable.
+  if (value instanceof Error) entries.unshift(["name", value.name], ["message", value.message])
+  for (const [key, val] of entries) {
     // A sensitive key wins outright (don't scan it) - the whole value is replaced.
-    out[key] = isSensitiveKey(key, config.keyParts)
+    const lower = key.toLowerCase()
+    out[key] = config.keyParts.some((part) => lower.includes(part))
       ? config.placeholder
       : redactValue(val, seen, config)
   }
@@ -131,15 +143,15 @@ function writeToStderr(line: string): void {
 
 /**
  * The default logger: one redacted JSON object per line. `write` is injectable for tests or
- * alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g.
- * {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys
+ * alternative sinks (defaults to stderr). `commonSecretPatterns` scrubs values and the log message
+ * by default. Pass `valuePatterns` to replace those patterns. Framework keys
  * (`level`, `message`, `time`) always win over user fields of the same name.
  */
 export function jsonLogger(
   write: (line: string) => void = writeToStderr,
   options?: RedactOptions,
 ): Logger {
-  const config = buildConfig(options) // normalize patterns once, reuse per entry
+  const config = buildConfig(options, commonSecretPatterns, MAX_SCAN_LENGTH)
   const emit = (level: string, message: string, fields?: LogFields): void => {
     const entry: Record<string, unknown> =
       fields === undefined

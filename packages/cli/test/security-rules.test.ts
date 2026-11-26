@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { parseCompatibleReplayFile } from "@nifrajs/core/replay"
 import { runRuleRegistry } from "../src/rules/index.ts"
-import { securityRules } from "../src/rules/security.ts"
+import { rewriteSecretComparisons, securityRules } from "../src/rules/security.ts"
 import { projectFacts } from "./rule-facts.ts"
 
 async function scan(file: string, content: string, root = "/tmp/project") {
@@ -20,6 +20,28 @@ async function scan(file: string, content: string, root = "/tmp/project") {
 }
 
 describe("built-in security rules", () => {
+  test("offers the strict-equality recipe only where Node crypto is already in use", async () => {
+    const source = [
+      'import { randomBytes } from "node:crypto"',
+      "export const check = (token: string | undefined, expected: string) => token === expected",
+    ].join("\n")
+    const strict = await scan("backend/check.ts", source)
+    expect(strict.find((finding) => finding.code === "NF-S002")?.fix?.recipe).toBe(
+      "security.timing-safe-equal",
+    )
+    for (const [file, text] of [
+      ["backend/check.ts", source.replace("===", "==")],
+      ["shared/check.ts", source],
+    ] as const) {
+      const findings = await scan(file, text)
+      expect(findings.find((finding) => finding.code === "NF-S002")?.fix).toBeUndefined()
+    }
+    const ts = await import("typescript")
+    const rewritten = rewriteSecretComparisons(ts.default, "backend/check.ts", source, false)
+    expect(rewritten).toContain('if (typeof left !== "string" || typeof right !== "string")')
+    expect(rewritten).toContain("nifraTimingSafeEqual(token, expected)")
+  })
+
   test("flags fail-open catches, secret comparisons, and PII logs", async () => {
     const findings = await scan(
       "routes/security.ts",
@@ -30,9 +52,7 @@ describe("built-in security rules", () => {
       ].join("\n"),
     )
     expect(findings.map((finding) => finding.code)).toEqual(["NF-S001", "NF-S002", "NF-S003"])
-    expect(findings.find((finding) => finding.code === "NF-S002")?.fix?.recipe).toBe(
-      "security.timing-safe-equal",
-    )
+    expect(findings.find((finding) => finding.code === "NF-S002")?.fix).toBeUndefined()
   })
 
   test("a generic arrow in a .ts file does not hide the code after it", async () => {

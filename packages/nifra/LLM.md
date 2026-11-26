@@ -21,7 +21,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **echoParam** _(function)_ - `echoParam: (path: string) => (context: { readonly params: Readonly<Record<string, string>>; readonly req: Request; }) => Response`
 - **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
 - **isAuthenticatedRequest** _(function)_ - `isAuthenticatedRequest: (request: Request) => boolean`
-- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
+- **isSameOriginForm** _(function)_ - `isSameOriginForm: (origin: string | null, secFetchSite: string | null, request: { readonly url: string; }) => boolean`
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: { readonly url: string; }) => boolean`
 

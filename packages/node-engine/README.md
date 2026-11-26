@@ -77,7 +77,7 @@ Off by default, as `validateHost` is on the Bun and Deno server. With it off, `H
 
 ## Fixed replies
 
-`staticResponse()` and `echoParam()` GET routes are registered with the engine, which answers them without calling into JS. They are skipped under a Host policy (every request's Host must be read) and a fixed POST stays on the router, since its cross-site form check needs the `Origin` header.
+`staticResponse()` and `echoParam()` GET routes are registered with the engine, which answers them without calling into JS. They are skipped under a Host policy (every request's Host must be read) and a fixed POST stays on the router, where the cross-site form check can read `Origin` and `Sec-Fetch-Site`.
 
 ## HTTP/2
 
