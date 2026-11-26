@@ -9,6 +9,26 @@ function appWith(options: RateLimitOptions) {
 }
 
 describe("rateLimit", () => {
+  test("MemoryStore keeps its Promise interface and rateLimit uses a store's override", async () => {
+    expect(await new MemoryStore().hit("key", 60_000).then((result) => result.count)).toBe(1)
+
+    class RecordingStore extends MemoryStore {
+      readonly keys: string[] = []
+
+      override hit(key: string, windowMs: number) {
+        this.keys.push(key)
+        return super.hit(key, windowMs)
+      }
+    }
+
+    const store = new RecordingStore()
+    const app = appWith({ store, max: 2, windowMs: 60_000, key: () => "key" })
+    const response = await app.fetch(new Request("http://x/"))
+    expect(response.status).toBe(200)
+    expect(response.headers.get("ratelimit-remaining")).toBe("1")
+    expect(store.keys).toHaveLength(1)
+  })
+
   test("allows up to max, then 429 with Retry-After + RateLimit headers", async () => {
     const app = appWith({ store: new MemoryStore(), max: 2, windowMs: 60_000, key: () => "k" })
 

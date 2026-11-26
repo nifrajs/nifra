@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { runInNewContext } from "node:vm"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { createWebSocketHub } from "../src/index.ts"
@@ -82,6 +83,27 @@ describe("createWebSocketHub", () => {
     const hub = new (createWebSocketHub(app))({}, {})
     const res = await hub.fetch(upgrade("/g"))
     expect(res.status).toBe(403)
+  })
+
+  test("an upgrade result from another realm is resolved before the hub answers", async () => {
+    const response = new Response("denied", { status: 403 })
+    const outcome: Promise<{ kind: "reject"; response: Response }> = runInNewContext(
+      'Promise.resolve({ kind: "reject", response })',
+      { response },
+    )
+    expect(outcome).not.toBeInstanceOf(Promise)
+    const hub = new (createWebSocketHub({ resolveWebSocketUpgrade: () => outcome }))({}, {})
+    expect(await hub.fetch(upgrade("/room"))).toBe(response)
+  })
+
+  test("throws from the upgrade resolver reject the hub's fetch Promise", async () => {
+    const error = new Error("upgrade failed")
+    const hub = new (createWebSocketHub({
+      resolveWebSocketUpgrade() {
+        throw error
+      },
+    }))({}, {})
+    await expect(hub.fetch(upgrade("/room"))).rejects.toBe(error)
   })
 
   test("an upgrade to a path with no WS route gets the HTTP answer, as on other runtimes", async () => {

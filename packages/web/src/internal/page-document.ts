@@ -119,7 +119,7 @@ export function createDocumentRenderer<Env = unknown>(
     )
   }
 
-  const handleDataOrDocument = async (
+  const handleDataOrDocument = (
     req: Request,
     isData: boolean,
     env: Env,
@@ -138,7 +138,7 @@ export function createDocumentRenderer<Env = unknown>(
     live?: LiveEnvelope | Deferred<LiveEnvelope>,
     liveSeed?: LiveEnvelope,
     timing?: RouteTiming,
-  ): Promise<PageResponse> => {
+  ): PageResponse | Promise<PageResponse> => {
     // Every layout loader settled before the page rendered, so a status or error page can reuse them.
     const settled: LayoutChainSource = async (_page, count) =>
       settledLayouts(layoutModules, layoutData, count)
@@ -168,68 +168,10 @@ export function createDocumentRenderer<Env = unknown>(
           )
     }
 
-    const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
-    const { chain, head } = resolveChainAndHead(
-      layoutModules,
-      layoutData,
-      mod,
-      {
-        data,
-        pageData: data,
-        params,
-        origin: originFor(req),
-        ...(nonce === undefined ? {} : { nonce }),
-      },
-      serverLeafOf(route, mod),
-    )
-    try {
-      // Optional fields are assigned, not spread in: a conditional spread per field cost every
-      // document request about 1us on Bun.
-      const page: DocumentInput = {
-        adapter,
-        chain,
-        data,
-        head,
-        clientEntry,
-        routeId: route.id,
-        params,
-        path: pathOf(req),
-        search: searchChainOf(layoutModules, mod, req),
-        matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
-        hydrate: mod.hydrate !== false,
-        signal: req.signal,
-        logError: deferredLogOf(req),
-        ...preloadOf(route.id),
-        ...stylesOf(route.id),
-        ...appDocumentOptions,
-        ...localeOption(req),
-      }
-      if (serverComponents !== undefined) page.serverComponents = serverComponents
-      if (liveSeed?.grant !== undefined) page.live = liveSeed
-      if (progressiveActionData.has(req)) page.actionData = progressiveActionData.get(req)
-      const swapSlot = swapSlotOf(req)
-      if (swapSlot !== undefined) page.swapSlot = swapSlot
-      if (keepTable !== undefined) Object.assign(page, slotsFor(route.layoutIds, route.id))
-      if (layoutData !== undefined) page.layoutData = layoutData
-      if (boundaryStates !== undefined) page.boundaries = boundaryStates
-      if (responseHeaders !== undefined) page.headers = responseHeaders
-      // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
-      if (!personalized && options.cacheChannel?.enabled === true) {
-        if (mod.revalidate !== undefined) page.revalidate = mod.revalidate
-        if (mod.revalidateTags !== undefined) {
-          page.revalidateTags = routeTags(
-            mod.revalidateTags,
-            { params, url: new URL(req.url) },
-            route.id,
-          )
-        }
-      }
-      if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
-      if (nonce !== undefined) page.nonce = nonce
-      if (assemblyCache !== undefined) page.assemblyCache = assemblyCache
-      if (timing !== undefined) page.timing = timing
-      return await renderPageResult(page)
-    } catch (err) {
+    const handleRenderError = (
+      err: unknown,
+      nonce: string | undefined,
+    ): PageResponse | Promise<PageResponse> => {
       if (isStatusSignal(err)) return renderStatusSignal(req, env, err, personalized, settled)
       if (isControlFlow(err)) throw err
       reportLoaderError(route, req, { ...params }, err)
@@ -246,6 +188,81 @@ export function createDocumentRenderer<Env = unknown>(
         settled,
       )
     }
+
+    const renderWithNonce = (nonce: string | undefined): PageResponse | Promise<PageResponse> => {
+      const { chain, head } = resolveChainAndHead(
+        layoutModules,
+        layoutData,
+        mod,
+        {
+          data,
+          pageData: data,
+          params,
+          origin: originFor(req),
+          ...(nonce === undefined ? {} : { nonce }),
+        },
+        serverLeafOf(route, mod),
+      )
+      try {
+        // Optional fields are assigned, not spread in: a conditional spread per field cost every
+        // document request about 1us on Bun.
+        const page: DocumentInput = {
+          adapter,
+          chain,
+          data,
+          head,
+          clientEntry,
+          routeId: route.id,
+          params,
+          path: pathOf(req),
+          search: searchChainOf(layoutModules, mod, req),
+          matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
+          hydrate: mod.hydrate !== false,
+          signal: req.signal,
+          logError: deferredLogOf(req),
+          ...preloadOf(route.id),
+          ...stylesOf(route.id),
+          ...appDocumentOptions,
+          ...localeOption(req),
+        }
+        if (serverComponents !== undefined) page.serverComponents = serverComponents
+        if (liveSeed?.grant !== undefined) page.live = liveSeed
+        if (progressiveActionData.has(req)) page.actionData = progressiveActionData.get(req)
+        const swapSlot = swapSlotOf(req)
+        if (swapSlot !== undefined) page.swapSlot = swapSlot
+        if (keepTable !== undefined) Object.assign(page, slotsFor(route.layoutIds, route.id))
+        if (layoutData !== undefined) page.layoutData = layoutData
+        if (boundaryStates !== undefined) page.boundaries = boundaryStates
+        if (responseHeaders !== undefined) page.headers = responseHeaders
+        // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
+        if (!personalized && options.cacheChannel?.enabled === true) {
+          if (mod.revalidate !== undefined) page.revalidate = mod.revalidate
+          if (mod.revalidateTags !== undefined) {
+            page.revalidateTags = routeTags(
+              mod.revalidateTags,
+              { params, url: new URL(req.url) },
+              route.id,
+            )
+          }
+        }
+        if (mod.islandScripts !== undefined) page.islandScripts = mod.islandScripts
+        if (nonce !== undefined) page.nonce = nonce
+        if (assemblyCache !== undefined) page.assemblyCache = assemblyCache
+        if (timing !== undefined) page.timing = timing
+        const rendered = renderPageResult(page)
+        return rendered instanceof Promise
+          ? rendered.catch((err) => handleRenderError(err, nonce))
+          : rendered
+      } catch (err) {
+        return handleRenderError(err, nonce)
+      }
+    }
+
+    if (options.nonce === undefined) return renderWithNonce(undefined)
+    const nonce = resolveNonce(req, env)
+    return typeof nonce === "string" || nonce === undefined
+      ? renderWithNonce(nonce)
+      : Promise.resolve(nonce).then(renderWithNonce)
   }
 
   const pprRequestFor = (

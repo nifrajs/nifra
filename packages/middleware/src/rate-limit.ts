@@ -41,6 +41,7 @@ export interface MemoryStoreOptions {
  * check resumes where it stopped. Bounds reclamation to O(1) per insertion instead of a full O(n) sweep
  * under a distinct-key flood - the abuse the key cap defends against. */
 const MAX_EVICTION_SCAN = 64
+const memoryHits = new WeakMap<RateLimitStore, (key: string, windowMs: number) => RateLimitResult>()
 
 /**
  * In-process fixed-window store. Refuses to run in production unless explicitly allowed.
@@ -82,9 +83,14 @@ export class MemoryStore implements RateLimitStore {
     if (!Number.isFinite(this.sweepIntervalMs) || this.sweepIntervalMs < 0) {
       throw new Error("MemoryStore: sweepIntervalMs must be a non-negative number")
     }
+    memoryHits.set(this, this.#hitNow.bind(this))
   }
 
   hit(key: string, windowMs: number): Promise<RateLimitResult> {
+    return Promise.resolve(this.#hitNow(key, windowMs))
+  }
+
+  #hitNow(key: string, windowMs: number): RateLimitResult {
     const now = Date.now()
     // Incremental amortized GC: once sweepIntervalMs has elapsed, advance a bounded cursor
     // (<= MAX_EVICTION_SCAN entries per hit) until one pass completes, avoiding a full O(n)
@@ -99,14 +105,14 @@ export class MemoryStore implements RateLimitStore {
     const current = this.windows.get(key)
     if (current === undefined || now >= current.resetAt) {
       if (current === undefined && this.windows.size >= this.maxKeys && !this.reclaimExpired(now)) {
-        return Promise.resolve({ count: 0, resetAt: now + windowMs, limited: true })
+        return { count: 0, resetAt: now + windowMs, limited: true }
       }
       const fresh = { count: 1, resetAt: now + windowMs }
       this.windows.set(key, fresh)
-      return Promise.resolve({ count: fresh.count, resetAt: fresh.resetAt })
+      return { count: fresh.count, resetAt: fresh.resetAt }
     }
     current.count += 1
-    return Promise.resolve({ count: current.count, resetAt: current.resetAt })
+    return { count: current.count, resetAt: current.resetAt }
   }
 
   private stepSweep(now: number): void {
@@ -144,6 +150,8 @@ export class MemoryStore implements RateLimitStore {
     return false
   }
 }
+
+const memoryStoreHit = MemoryStore.prototype.hit
 
 export interface RateLimitOptions {
   /** Where counters live. `MemoryStore` for dev; a shared store in production. */
@@ -380,22 +388,19 @@ function limiter(
   // State for the Node twins, keyed by the NodeRequestContext identity (the same object is passed
   // to the request and response twins - the core identity contract that replaces `Request` keying).
   const nativeQuota = new WeakMap<object, QuotaInfo>()
+  const hitMemory = memoryHits.get(store)
 
-  const charge = async (
+  const finalizeCharge = (
     bucket: Bucket,
-    key: string | null,
-  ): Promise<{ info: QuotaInfo; reject: Response | undefined } | Response> => {
-    if (typeof key !== "string" || key.trim() === "") {
-      return Response.json({ ok: false, error: "rate_limit_key_unavailable" }, { status: 500 })
-    }
-    const { count, resetAt, limited } = await store.hit(bucket.scope + key, bucket.windowMs)
-    const resetSeconds = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
-    const info = {
+    result: RateLimitResult,
+  ): { info: QuotaInfo; reject: Response | undefined } => {
+    const resetSeconds = Math.max(0, Math.ceil((result.resetAt - Date.now()) / 1000))
+    const info: QuotaInfo = {
       limit: bucket.max,
-      remaining: limited ? 0 : Math.max(0, bucket.max - count),
+      remaining: result.limited ? 0 : Math.max(0, bucket.max - result.count),
       resetSeconds,
     }
-    if (limited || count > bucket.max) {
+    if (result.limited || result.count > bucket.max) {
       return {
         info,
         reject: new Response(JSON.stringify({ ok: false, error: "rate_limited" }), {
@@ -407,21 +412,62 @@ function limiter(
     return { info, reject: undefined }
   }
 
+  const charge = (
+    bucket: Bucket,
+    key: string | null,
+  ):
+    | { info: QuotaInfo; reject: Response | undefined }
+    | Response
+    | Promise<{ info: QuotaInfo; reject: Response | undefined } | Response> => {
+    if (typeof key !== "string" || key.trim() === "") {
+      return Response.json({ ok: false, error: "rate_limit_key_unavailable" }, { status: 500 })
+    }
+    const counterKey = bucket.scope + key
+    // Keep custom stores and overrides on the public Promise contract, including foreign Promises.
+    if (hitMemory !== undefined && store.hit === memoryStoreHit) {
+      return finalizeCharge(bucket, hitMemory(counterKey, bucket.windowMs))
+    }
+    return chargeAsync(bucket, counterKey)
+  }
+
+  const chargeAsync = async (bucket: Bucket, counterKey: string) =>
+    finalizeCharge(bucket, await store.hit(counterKey, bucket.windowMs))
+
+  const applyWebOutcome = (
+    req: Request,
+    outcome: { info: QuotaInfo; reject: Response | undefined } | Response,
+  ): Response | undefined => {
+    if (outcome instanceof Response) return outcome
+    quota.set(req, outcome.info)
+    return outcome.reject
+  }
+
+  const applyNodeOutcome = (
+    req: NodeRequestContext,
+    outcome: { info: QuotaInfo; reject: Response | undefined } | Response,
+  ): Response | undefined => {
+    if (outcome instanceof Response) return outcome
+    nativeQuota.set(req, outcome.info)
+    return outcome.reject
+  }
+
   const native = skip === undefined && buckets.every((bucket) => bucket.nativeKey !== undefined)
   const middleware: RateLimiter = {
     name,
-    async onRequest(req, platform) {
+    onRequest(req, platform) {
       if (skip?.(req, platform) === true) return undefined
       const bucket = bucketFor(pathAware ? pathnameOf(req.url) : "")
       if (bucket === undefined) return undefined
       const key = keyFor(bucket, req, platform)
-      const outcome = await charge(
-        bucket,
-        typeof key === "string" || key === null ? key : await key,
-      )
-      if (outcome instanceof Response) return outcome
-      quota.set(req, outcome.info)
-      return outcome.reject
+      if (key instanceof Promise) {
+        return key
+          .then((resolved) => charge(bucket, resolved))
+          .then((outcome) => applyWebOutcome(req, outcome))
+      }
+      const outcome = charge(bucket, key)
+      return outcome instanceof Promise
+        ? outcome.then((resolved) => applyWebOutcome(req, resolved))
+        : applyWebOutcome(req, outcome)
     },
     async keyOf(req, platform) {
       if (skip?.(req, platform) === true) return undefined
@@ -446,13 +492,13 @@ function limiter(
     },
     ...(native
       ? {
-          onNodeRequest: async (req: NodeRequestContext, platform?: Platform) => {
+          onNodeRequest: (req: NodeRequestContext, platform?: Platform) => {
             const bucket = bucketFor(pathAware ? pathnameOf(req.url) : "")
             if (bucket === undefined) return undefined
-            const outcome = await charge(bucket, bucket.nativeKey?.(req, platform) ?? null)
-            if (outcome instanceof Response) return outcome
-            nativeQuota.set(req, outcome.info)
-            return outcome.reject
+            const outcome = charge(bucket, bucket.nativeKey?.(req, platform) ?? null)
+            return outcome instanceof Promise
+              ? outcome.then((resolved) => applyNodeOutcome(req, resolved))
+              : applyNodeOutcome(req, outcome)
           },
           onNodeResponse: (res: NodeResponseContext, req: NodeRequestContext) => {
             const info = nativeQuota.get(req)

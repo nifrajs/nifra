@@ -16,8 +16,10 @@ import {
 } from "./preact-render.ts"
 import { slottedChain } from "./slot.ts"
 
+const TEXT_ENCODER = new TextEncoder()
+const TEXT_DECODER = new TextDecoder()
 const ISLAND_RUNTIME_OPEN = "<script>(function(){"
-const ISLAND_RUNTIME_OPEN_BYTES = new TextEncoder().encode(ISLAND_RUNTIME_OPEN)
+const ISLAND_RUNTIME_OPEN_BYTES = TEXT_ENCODER.encode(ISLAND_RUNTIME_OPEN)
 
 const startsWithBytes = (chunk: Uint8Array, prefix: Uint8Array): boolean => {
   if (chunk.length < prefix.length) return false
@@ -35,16 +37,14 @@ function withIslandRuntimeNonce(
   stream: ReadableStream<Uint8Array>,
   nonce: string,
 ): ReadableStream<Uint8Array> {
-  const decoder = new TextDecoder()
-  const encoder = new TextEncoder()
   const nonced = `<script nonce="${nonce.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")}">(function(){`
   return stream.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         if (startsWithBytes(chunk, ISLAND_RUNTIME_OPEN_BYTES)) {
-          const text = decoder.decode(chunk)
+          const text = TEXT_DECODER.decode(chunk)
           if (text.includes('"preact-island"')) {
-            controller.enqueue(encoder.encode(nonced + text.slice(ISLAND_RUNTIME_OPEN.length)))
+            controller.enqueue(TEXT_ENCODER.encode(nonced + text.slice(ISLAND_RUNTIME_OPEN.length)))
             return
           }
         }

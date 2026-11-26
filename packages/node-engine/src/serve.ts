@@ -45,6 +45,7 @@ type WsUpgrade = Extract<WsUpgradeOutcome, { readonly kind: "upgrade" }>
 
 const JSON_CONTENT_TYPE = Response.json(0).headers.get("content-type") ?? "application/json"
 const INTERNAL_ERROR_BODY = '{"ok":false,"error":"internal_error"}'
+const INTERNAL_ERROR_BUF = Buffer.from(INTERNAL_ERROR_BODY)
 
 const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] as const
 
@@ -236,50 +237,44 @@ function ownedHeader(name: string): boolean {
   return lower === "date" || lower === "content-length" || lower === "transfer-encoding"
 }
 
-function validateHeaders(
+function validateAndBuildFlatHeaders(
   status: number,
-  headers: HeaderRecord | undefined,
-  cookies: readonly string[] | undefined,
-): void {
-  if (!Number.isInteger(status) || status < 100 || status > 999) {
-    throw new RangeError(`Invalid status code: ${String(status)}`)
-  }
-  if (headers !== undefined) {
-    for (const [name, value] of Object.entries(headers)) {
-      if (!TOKEN.test(name)) throw new TypeError("Invalid character in header name")
-      if (typeof value === "string") {
-        if (BAD_VALUE.test(value)) throw new TypeError("Invalid character in header content")
-      } else if (value !== undefined) {
-        for (const each of value) {
-          if (BAD_VALUE.test(each)) throw new TypeError("Invalid character in header content")
-        }
-      }
-    }
-  }
-  if (cookies !== undefined) {
-    for (const cookie of cookies) {
-      if (BAD_VALUE.test(cookie)) throw new TypeError("Invalid character in header content")
-    }
-  }
-}
-
-function buildFlatHeaders(
   headers: HeaderRecord | undefined,
   cookies: readonly string[] | undefined,
   defaultType: string | undefined,
 ): string[] {
+  if (!Number.isInteger(status) || status < 100 || status > 999) {
+    throw new RangeError(`Invalid status code: ${String(status)}`)
+  }
   const flat: string[] = []
   let typed = false
   if (headers !== undefined) {
-    for (const [name, value] of Object.entries(headers)) {
-      if (ownedHeader(name)) continue
-      if (!typed && name.length === 12 && name.toLowerCase() === "content-type") typed = true
-      if (typeof value === "string") flat.push(name, value)
-      else if (value !== undefined) for (const each of value) flat.push(name, each)
+    for (const name in headers) {
+      if (!Object.hasOwn(headers, name)) continue
+      if (!TOKEN.test(name)) throw new TypeError("Invalid character in header name")
+      const value = headers[name]
+      const skip = ownedHeader(name)
+      if (!skip && !typed && name.length === 12 && name.toLowerCase() === "content-type") {
+        typed = true
+      }
+      if (typeof value === "string") {
+        if (BAD_VALUE.test(value)) throw new TypeError("Invalid character in header content")
+        if (!skip) flat.push(name, value)
+      } else if (value !== undefined) {
+        for (const each of value) {
+          if (BAD_VALUE.test(each)) throw new TypeError("Invalid character in header content")
+          if (!skip) flat.push(name, each)
+        }
+      }
     }
   }
   if (!typed && defaultType !== undefined) flat.push("content-type", defaultType)
-  if (cookies !== undefined) for (const cookie of cookies) flat.push("set-cookie", cookie)
+  if (cookies !== undefined) {
+    for (const cookie of cookies) {
+      if (BAD_VALUE.test(cookie)) throw new TypeError("Invalid character in header content")
+      flat.push("set-cookie", cookie)
+    }
+  }
   return flat
 }
 
@@ -667,7 +662,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         // A clean end would tell the client (and any cache) the truncated body is whole.
         uvServer.abortStream(source.requestId)
       } else {
-        uvServer.respondPrepared(source.requestId, tpl500, Buffer.from(INTERNAL_ERROR_BODY))
+        uvServer.respondPrepared(source.requestId, tpl500, INTERNAL_ERROR_BUF)
         source.headWritten = true
       }
     }
@@ -684,9 +679,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     defaultType: string | undefined,
     headLength?: number,
   ): void => {
-    validateHeaders(status, headers, cookies)
     const bodyless = isBodyless(status)
-    const flat = buildFlatHeaders(
+    const flat = validateAndBuildFlatHeaders(
+      status,
       headers,
       cookies,
       bodyless || body === null ? undefined : defaultType,
@@ -707,6 +702,40 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       uvServer.respond(source.requestId, status, flat, buf)
     }
     source.headWritten = true
+  }
+
+  const pumpBuffer = async (
+    source: RustBatchSource,
+    status: number,
+    headers: HeaderRecord | undefined,
+    cookies: readonly string[] | undefined,
+    bytes: Uint8Array,
+    defaultType: string | undefined,
+    len: number,
+  ): Promise<void> => {
+    const flat = validateAndBuildFlatHeaders(status, headers, cookies, defaultType)
+    if (len > MAX_NATIVE_LENGTH) {
+      throw new RangeError(`Content-Length ${len} is larger than the engine can frame`)
+    }
+    let unblock: (() => void) | undefined
+    source.onAbort = () => unblock?.()
+    source.onWritable = () => unblock?.()
+    uvServer.writeHead(source.requestId, status, flat, len)
+    source.headWritten = true
+
+    for (let offset = 0; offset < len && !source.aborted; offset += STREAM_CHUNK_BYTES) {
+      const chunkLen = Math.min(STREAM_CHUNK_BYTES, len - offset)
+      const buf = Buffer.from(bytes.buffer, bytes.byteOffset + offset, chunkLen)
+      if (offset + chunkLen === len) {
+        uvServer.end(source.requestId, buf)
+        return
+      }
+      if (!uvServer.write(source.requestId, buf)) {
+        await new Promise<void>((resolveWrite) => {
+          unblock = resolveWrite
+        })
+      }
+    }
   }
 
   const pumpStream = async (
@@ -757,8 +786,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       return
     }
 
-    validateHeaders(status, headers, cookies)
-    const flat = buildFlatHeaders(headers, cookies, defaultType)
+    const flat = validateAndBuildFlatHeaders(status, headers, cookies, defaultType)
     // The native writer takes a u32 and would wrap a larger value into a short, wrong length.
     if (unframeable) {
       void reader.cancel().catch(() => {})
@@ -769,13 +797,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
     let sent = 0
     let done = false
-    const sendChunk = async (chunk: Uint8Array): Promise<void> => {
-      if (declared !== undefined && sent + chunk.byteLength > declared) {
-        void reader.cancel().catch(() => {})
-        throw new RangeError("response body is longer than its Content-Length")
-      }
+    // Return the next byte offset only if the native writer needs to drain.
+    const writeAvailable = (chunk: Uint8Array, startOffset: number): number | undefined => {
       for (
-        let offset = 0;
+        let offset = startOffset;
         offset < chunk.byteLength && !source.aborted;
         offset += STREAM_CHUNK_BYTES
       ) {
@@ -786,18 +811,33 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           void reader.cancel().catch(() => {})
           uvServer.end(source.requestId, buf)
           done = true
-          return
+          return undefined
         }
-        if (!uvServer.write(source.requestId, buf)) {
-          await new Promise<void>((resolveWrite) => {
-            unblock = resolveWrite
-          })
-        }
+        if (!uvServer.write(source.requestId, buf)) return offset + len
       }
+      return undefined
+    }
+    const drainRemainder = async (chunk: Uint8Array, startOffset: number): Promise<void> => {
+      let offset: number | undefined = startOffset
+      while (offset !== undefined && !source.aborted) {
+        await new Promise<void>((resolveWrite) => {
+          unblock = resolveWrite
+        })
+        offset = writeAvailable(chunk, offset)
+      }
+    }
+    const sendChunk = (chunk: Uint8Array): Promise<void> | undefined => {
+      if (declared !== undefined && sent + chunk.byteLength > declared) {
+        void reader.cancel().catch(() => {})
+        throw new RangeError("response body is longer than its Content-Length")
+      }
+      const offset = writeAvailable(chunk, 0)
+      return offset === undefined ? undefined : drainRemainder(chunk, offset)
     }
 
     for (const chunk of pending) {
-      await sendChunk(chunk)
+      const wait = sendChunk(chunk)
+      if (wait !== undefined) await wait
       if (source.aborted || done) return
     }
     for (;;) {
@@ -806,7 +846,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       if (source.aborted) return
       if (next.done) break
       if (next.value.byteLength === 0) continue
-      await sendChunk(next.value)
+      const wait = sendChunk(next.value)
+      if (wait !== undefined) await wait
       if (source.aborted || done) return
     }
     if (declared !== undefined && sent !== declared) {
@@ -856,13 +897,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           len > MAX_BUFFERED_RESPONSE_BYTES
         ) {
           const bytes = typeof body === "string" ? Buffer.from(body) : body
-          const stream = new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(bytes)
-              controller.close()
-            },
-          })
-          pumpStream(source, status, headers, cookies, stream, type, len).then(
+          pumpBuffer(source, status, headers, cookies, bytes, type, len).then(
             () => finish(source),
             (err: unknown) => fail(source, err),
           )
@@ -918,12 +953,20 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     }
   }
 
-  const outcomeOf = (source: RustBatchSource): NodeServeOutcome | Promise<NodeServeOutcome> =>
-    resolveNodeSource === undefined
-      ? Promise.resolve(app.fetch(source.request, source)).then(
-          (response): NodeServeOutcome => ({ kind: "response", response }),
+  const outcomeOf = (source: RustBatchSource): NodeServeOutcome | Promise<NodeServeOutcome> => {
+    if (resolveNodeSource !== undefined) {
+      return resolveNodeSource.call(app, source, source, nodeOutcomeRuntime)
+    }
+    const response = app.fetch(source.request, source)
+    return response instanceof Response
+      ? { kind: "response", response }
+      : Promise.resolve(response).then(
+          (settled): NodeServeOutcome => ({
+            kind: "response",
+            response: settled,
+          }),
         )
-      : resolveNodeSource.call(app, source, source, nodeOutcomeRuntime)
+  }
 
   // The shared out slab: a sync outcome fills it during `onBatch`, which flushes at its end; an outcome
   // that settles later (a body still being read) fills it from a microtask, flushed at the end of that

@@ -1,4 +1,4 @@
-import type { RenderAdapter } from "@nifrajs/web"
+import type { RenderAdapter, RenderProps, RenderStreamOptions } from "@nifrajs/web"
 /**
  * @nifrajs/web-react - the React render adapter for @nifrajs/web (server side). Streaming SSR via
  * `renderToReadableStream`; the layout-chain fold is in `./compose`. Client hydration lives in
@@ -6,7 +6,7 @@ import type { RenderAdapter } from "@nifrajs/web"
  */
 import type { ReactNode } from "react"
 import { compose } from "./compose.ts"
-import { reactDomServer } from "./react-dom-server.ts"
+import { type ReactDomServer, reactDomServer, reactDomServerNow } from "./react-dom-server.ts"
 import { explainRenderError } from "./render-error.ts"
 import { inActivity, slottedChain } from "./slot.ts"
 
@@ -25,6 +25,42 @@ const suspendedSynchronously = (error: unknown): boolean =>
   (error.message.includes("Minified React error #426;") ||
     error.message.includes("suspended while responding to synchronous input"))
 
+function renderStringWith(
+  { renderToString }: ReactDomServer,
+  chain: readonly unknown[],
+  props: RenderProps,
+  options?: RenderStreamOptions,
+): string | undefined | Promise<never> {
+  let html: string
+  try {
+    html = renderToString(
+      compose(options?.slots === undefined ? chain : slottedChain(chain, options.slots), props),
+    )
+  } catch (error) {
+    if (suspendedSynchronously(error)) return undefined
+    return Promise.reject(explainRenderError(error))
+  }
+  return html.includes(CLIENT_RENDERED_BOUNDARY) ? undefined : html
+}
+
+function renderFragmentWith(
+  { renderToString }: ReactDomServer,
+  ui: () => unknown,
+  options: { readonly idPrefix?: string; readonly hydrates?: boolean },
+): string | Promise<never> {
+  try {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns React output; the seam erases it to unknown.
+    const content = ui() as ReactNode
+    // A hole's own root hydrates in an `<Activity>`, so a kept page can pause it.
+    const html = renderToString(options.hydrates === true ? inActivity(false, content) : content, {
+      identifierPrefix: options.idPrefix ?? "",
+    })
+    return html.replace(LEADING_PRELOADS, "")
+  } catch (error) {
+    return Promise.reject(explainRenderError(error))
+  }
+}
+
 /** The React server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const reactAdapter: RenderAdapter = {
   // Synchronous one-pass render for non-deferred pages (renderPage's buffered fast path). React's
@@ -32,44 +68,26 @@ export const reactAdapter: RenderAdapter = {
   // content and is markedly cheaper than `renderToReadableStream` - most visibly on Bun, where Fizz's
   // streaming machinery is the heaviest. A page that defer()s/Suspends takes `renderToStream` below.
   //
-  // Async because the `react-dom/server` module is resolved lazily (from the consumer app's node_modules
-  // under Bun runtime SSR - see ./react-dom-server). `RenderAdapter.renderToString` permits a Promise;
-  // renderPage awaits it.
+  // The first render resolves `react-dom/server` lazily (from the consumer app's node_modules under
+  // Bun runtime SSR - see ./react-dom-server); once loaded, every subsequent call returns the HTML
+  // string synchronously with zero Promise allocation.
   //
   // React's string renderer cannot wait for a component that suspends (`use`, `lazy`): it writes the
   // boundary's fallback behind a client-render marker, or throws with no boundary above it. Either
   // way the page is handed back (`undefined`) to be streamed, where the boundary resolves.
-  async renderToString(chain, props, options) {
-    const { renderToString } = await reactDomServer()
-    let html: string
-    try {
-      html = renderToString(
-        compose(options?.slots === undefined ? chain : slottedChain(chain, options.slots), props),
-      )
-    } catch (error) {
-      if (suspendedSynchronously(error)) return undefined
-      throw explainRenderError(error)
-    }
-    return html.includes(CLIENT_RENDERED_BOUNDARY) ? undefined : html
+  renderToString(chain, props, options) {
+    const loaded = reactDomServerNow()
+    return loaded instanceof Promise
+      ? loaded.then((rds) => renderStringWith(rds, chain, props, options))
+      : renderStringWith(loaded, chain, props, options)
   },
   // A partially prerendered hole's HTML: rendered alone, its `useId`s prefixed so they never collide
   // with the page's, which the client root it hydrates into repeats.
-  async renderFragment(ui, options) {
-    const { renderToString } = await reactDomServer()
-    try {
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns React output; the seam erases it to unknown.
-      const content = ui() as ReactNode
-      // A hole's own root hydrates in an `<Activity>`, so a kept page can pause it.
-      const html = renderToString(
-        options.hydrates === true ? inActivity(false, content) : content,
-        {
-          identifierPrefix: options.idPrefix ?? "",
-        },
-      )
-      return html.replace(LEADING_PRELOADS, "")
-    } catch (error) {
-      throw explainRenderError(error)
-    }
+  renderFragment(ui, options) {
+    const loaded = reactDomServerNow()
+    return loaded instanceof Promise
+      ? loaded.then((rds) => renderFragmentWith(rds, ui, options))
+      : renderFragmentWith(loaded, ui, options)
   },
   async renderToStream(chain, props, options) {
     // Resolves a Web `ReadableStream<Uint8Array>` once the shell is renderable; Suspense

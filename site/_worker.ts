@@ -26,9 +26,11 @@ const handler = toFetchHandler(app)
 // Exact arg tuple of the SSR handler's fetch - keeps env/ctx strongly typed without `any`.
 type FetchArgs = Parameters<typeof handler.fetch>
 
+const SECURITY_HEADER_ENTRIES = Object.entries(SECURITY_HEADERS)
+
 function withSecurityHeaders(response: Response): Response {
   const headers = new Headers(response.headers)
-  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+  for (const [name, value] of SECURITY_HEADER_ENTRIES) {
     if (!headers.has(name)) headers.set(name, value)
   }
   return new Response(response.body, {
@@ -38,25 +40,38 @@ function withSecurityHeaders(response: Response): Response {
   })
 }
 
+function isMcpPath(url: string): boolean {
+  const scheme = url.indexOf("://")
+  const pathStart = scheme === -1 ? 0 : url.indexOf("/", scheme + 3)
+  if (pathStart === -1) return false
+  let end = url.length
+  const query = url.indexOf("?", pathStart)
+  if (query !== -1) end = query
+  const hash = url.indexOf("#", pathStart)
+  if (hash !== -1 && hash < end) end = hash
+  return end - pathStart === 4 && url.startsWith("/mcp", pathStart)
+}
+
 // Cloudflare Pages advanced mode (`_worker.js`): Pages serves what `_routes.json` excludes (the
 // client bundle and every prerendered page) itself, falling through here for everything else.
 export default {
-  async fetch(...args: FetchArgs): Promise<Response> {
-    return withSecurityHeaders(await answer(...args))
+  fetch(...args: FetchArgs): Response | Promise<Response> {
+    const response = answer(...args)
+    return response instanceof Promise
+      ? response.then(withSecurityHeaders)
+      : withSecurityHeaders(response)
   },
 }
 
-function answer(...args: FetchArgs): ReturnType<typeof handler.fetch> {
+function answer(...args: FetchArgs): Response | Promise<Response> {
   const [request] = args
-  const url = new URL(request.url)
   const machineSurface = machineSurfaceFor(request)
-  if (machineSurface !== undefined) return Promise.resolve(machineSurface)
+  if (machineSurface !== undefined) return machineSurface
   // The docs MCP now runs on its own always-on origin (mcp.nifra.dev), so its traffic never counts
   // against this Pages deployment's request budget. Anything still pointed at the old path gets a
-  // permanent redirect: 308 preserves the POST method + body, so an MCP client re-sends its JSON-RPC to
+  // permanent redirect: 308 preserves the POST method + body, so an MCP client resends its JSON-RPC to
   // the new origin unchanged. Serving the same redirect as an edge Redirect Rule keeps even this off the
   // worker (then /mcp never invokes Pages Functions).
-  if (url.pathname === "/mcp")
-    return Promise.resolve(Response.redirect("https://mcp.nifra.dev/", 308))
+  if (isMcpPath(request.url)) return Response.redirect("https://mcp.nifra.dev/", 308)
   return handler.fetch(...args)
 }

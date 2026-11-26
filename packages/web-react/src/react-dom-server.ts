@@ -63,9 +63,10 @@ const bunResolver = (globalThis as { Bun?: Partial<BunResolver> }).Bun
 const hasBunResolveSync = typeof bunResolver?.resolveSync === "function"
 
 // Resolve once and cache: the module identity is stable for the process lifetime, and re-resolving per
-// render would pay the import cost on every page. A Promise is cached (not the module) so concurrent
-// first renders share a single in-flight import rather than racing N imports.
+// render would pay the import cost on every page. Cache both the in-flight Promise (so concurrent first
+// renders share one import) and the resolved module (so subsequent renders run synchronously).
 let cached: Promise<ReactDomServer> | undefined
+let resolved: ReactDomServer | undefined
 
 /**
  * The consumer app root used to re-root `react-dom/server`. `nifra dev` / `nifra start` run with the CLI's
@@ -85,8 +86,20 @@ function appRoot(): string {
  */
 export function reactDomServer(): Promise<ReactDomServer> {
   if (cached !== undefined) return cached
-  cached = loadReactDomServer()
+  cached = loadReactDomServer().then((mod) => {
+    resolved = mod
+    return mod
+  })
   return cached
+}
+
+/**
+ * Synchronous once `react-dom/server` has resolved, falling back to the shared in-flight import on
+ * the first render. Lets `reactAdapter.renderToString` and `renderFragment` stay synchronous after
+ * warm-up without allocating a Promise per request.
+ */
+export function reactDomServerNow(): ReactDomServer | Promise<ReactDomServer> {
+  return resolved ?? reactDomServer()
 }
 
 /** A `Bun.resolveSync`-shaped function (specifier, from) → absolute path. */

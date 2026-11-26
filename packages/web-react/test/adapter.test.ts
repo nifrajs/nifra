@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { assertRenderAdapterConformance, renderPage } from "@nifrajs/web"
 import type { ReactNode } from "react"
 import { reactAdapter } from "../src/index.ts"
+import * as renderer from "../src/react-dom-server.ts"
 
 // This test represents a consumer route module, so resolve React from the consumer app root (the test
 // process cwd), exactly as the SSR adapter resolves react-dom/server. In a linked parent workspace the
@@ -17,6 +18,25 @@ function consumerReactPath(): string {
 }
 
 const { createElement, Suspense, use } = await import(consumerReactPath())
+
+test("buffered renders and fragments wait for the first renderer load", async () => {
+  const loaded = await renderer.reactDomServer()
+  const pending = Promise.withResolvers<typeof loaded>()
+  const load = spyOn(renderer, "reactDomServerNow").mockReturnValue(pending.promise)
+  const Page = () => createElement("p", null, "ready")
+  const fragment = () => createElement("span", null, "hole")
+  try {
+    const pageResult = reactAdapter.renderToString?.([Page], { data: null })
+    const fragmentResult = reactAdapter.renderFragment?.(fragment, {})
+    expect(pageResult).toBeInstanceOf(Promise)
+    expect(fragmentResult).toBeInstanceOf(Promise)
+    pending.resolve(loaded)
+    expect(await pageResult).toBe("<p>ready</p>")
+    expect(await fragmentResult).toBe("<span>hole</span>")
+  } finally {
+    load.mockRestore()
+  }
+})
 
 test("reactAdapter conforms to the executable RenderAdapter interface", async () => {
   const layout = (marker: string) => (props: { children: ReactNode }) =>

@@ -857,10 +857,18 @@ pub fn write_chunk(out: &mut Vec<u8>, chunk: &[u8]) {
     if chunk.is_empty() {
         return;
     }
-    use std::fmt::Write;
-    let mut hex = String::with_capacity(16);
-    let _ = write!(&mut hex, "{:x}\r\n", chunk.len());
-    out.extend_from_slice(hex.as_bytes());
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut buf = [0u8; 18];
+    let mut pos = 16;
+    buf[16] = b'\r';
+    buf[17] = b'\n';
+    let mut n = chunk.len();
+    while n > 0 {
+        pos -= 1;
+        buf[pos] = HEX[n & 0xf];
+        n >>= 4;
+    }
+    out.extend_from_slice(&buf[pos..]);
     out.extend_from_slice(chunk);
     out.extend_from_slice(b"\r\n");
 }
