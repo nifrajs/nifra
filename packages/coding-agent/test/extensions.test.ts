@@ -69,6 +69,80 @@ describe("ExtensionHost", () => {
     }
   })
 
+  test("keeps unchanged activations live through replacement and rollback", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    const stable = join(cwd, "stable.ts")
+    const changing = join(cwd, "changing.ts")
+    await writeFile(
+      stable,
+      `let open = true
+       export default ({ registerCommand }) => {
+         registerCommand("stable", () => open)
+         return { dispose: () => { open = false } }
+       }`,
+    )
+    await writeFile(
+      changing,
+      'export default ({ registerCommand }) => registerCommand("changed", () => 1)',
+    )
+    const host = new ExtensionHost({ cwd, roots: ["stable.ts", "changing.ts"] })
+    try {
+      expect((await host.reload()).rolledBack).toBe(false)
+      const before = host.extensions[0]
+      const runStable = host.command("stable")
+      expect(runStable).toBeDefined()
+      await writeFile(
+        changing,
+        'export default ({ registerCommand }) => registerCommand("stable", () => 2)',
+      )
+      expect((await host.reload()).rolledBack).toBe(true)
+      expect(host.command("stable")).toBe(runStable)
+      await writeFile(
+        changing,
+        'export default ({ registerCommand }) => registerCommand("updated", () => 2)',
+      )
+      expect((await host.reload()).rolledBack).toBe(false)
+      expect(host.extensions[0]).toBe(before)
+      expect(host.availableCommands).toEqual(["stable", "updated"])
+      const context = {
+        cwd,
+        registerCommand: () => {},
+        registerTool: () => {},
+        registerWorkflow: () => {},
+        registerSubagent: () => {},
+        registerProvider: () => {},
+        on: () => {},
+      }
+      expect(await runStable?.("", context)).toBe(true)
+      await host.close()
+      expect(await runStable?.("", context)).toBe(false)
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("retries a failed entry evaluation without editing its source", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    const config = join(cwd, "config.txt")
+    await writeFile(
+      join(cwd, "extension.ts"),
+      `import { readFileSync } from "node:fs"
+       const description = readFileSync(${JSON.stringify(config)}, "utf8")
+       export default ({ registerProvider }) => registerProvider({ name: "example", description })`,
+    )
+    const host = new ExtensionHost({ cwd, roots: ["extension.ts"] })
+    try {
+      expect((await host.reload()).rolledBack).toBe(true)
+      await writeFile(config, "ready")
+      expect((await host.reload()).rolledBack).toBe(false)
+      expect(host.provider("example")?.description).toBe("ready")
+    } finally {
+      await host.close()
+    }
+  })
+
   test("rejects extension roots outside the project", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
     tempRoots.push(cwd)

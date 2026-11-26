@@ -1810,20 +1810,28 @@ function findCliCommand(values: readonly string[]): number {
   // Most Bun/Node argv vectors reserve index 0 for the runtime and index 1 for the script. Bun 1.4
   // on Windows can omit the script for a directly spawned TS entry, leaving the command at index 0.
   // Accept that one exact-token shape while keeping arbitrary imported-module argv inert.
-  return values.findIndex((value) => isCliCommandToken(value))
+  for (const [index, value] of values.entries()) {
+    if (values[index - 1] === "--env-file" && !value.startsWith("-")) continue
+    if (isCliCommandToken(value)) return index
+  }
+  return -1
 }
 
 /**
  * The command vector from one runtime argv: the command, then its arguments. Arguments typed before
  * the command (`nifra --json check`) follow the command's own, ahead of any `--`, rather than being
- * dropped. Only when index 1 is the script: a runtime flag there means the leading entries are the
- * runtime's own, not the caller's.
+ * dropped. A leading env-file flag also belongs to the CLI when Bun omits the script path.
  */
 export function commandArgv(values: readonly string[], commandIndex: number): readonly string[] {
   const command = values.slice(commandIndex)
   const script = values[1]
-  if (commandIndex <= 2 || script === undefined || script.startsWith("-")) return command
-  const leading = values.slice(2, commandIndex)
+  const envFileIndex = values
+    .slice(0, 2)
+    .findIndex((value) => value === "--env-file" || value.startsWith("--env-file="))
+  const leadingStart = envFileIndex === -1 ? 2 : envFileIndex
+  if (commandIndex <= leadingStart || script === undefined) return command
+  if (script.startsWith("-") && envFileIndex === -1) return command
+  const leading = values.slice(leadingStart, commandIndex)
   const separator = command.indexOf("--")
   return separator === -1
     ? [...command, ...leading]

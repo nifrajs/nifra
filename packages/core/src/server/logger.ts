@@ -14,6 +14,7 @@ export interface Logger {
 }
 
 const REDACTED = "[REDACTED]"
+const MAX_SCAN_LENGTH = 8192
 
 /**
  * Field-name fragments whose values are replaced with `[REDACTED]` (case-insensitive
@@ -39,7 +40,8 @@ const SENSITIVE_KEY_PARTS: ReadonlyArray<string> = [
  * - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is
  *   replaced with the placeholder. This is the value-scanning hook for secrets that land in a value or
  *   message (e.g. `err.message`), which key-name redaction can't catch. Defaults to
- *   {@link commonSecretPatterns} for `jsonLogger` and to no patterns for `redactLogFields`.
+ *   {@link commonSecretPatterns} for `jsonLogger` and to no patterns for `redactLogFields`. Strings
+ *   over 8,192 UTF-16 code units are replaced entirely when scanning in `jsonLogger`.
  * - `placeholder` - the replacement string (default `[REDACTED]`).
  */
 export interface RedactOptions {
@@ -66,7 +68,8 @@ export const commonSecretPatterns: ReadonlyArray<RegExp> = [
 ]
 
 interface RedactConfig {
-  readonly sensitiveKey: RegExp
+  readonly keyParts: readonly string[]
+  readonly maxScanLength: number
   readonly valuePatterns: readonly RegExp[]
   readonly placeholder: string
 }
@@ -79,13 +82,15 @@ const ensureGlobal = (re: RegExp): RegExp =>
 function buildConfig(
   options?: RedactOptions,
   defaultPatterns: ReadonlyArray<RegExp> = [],
+  maxScanLength = Infinity,
 ): RedactConfig {
   const extra = options?.keyParts
-  const keyParts = extra === undefined ? SENSITIVE_KEY_PARTS : [...SENSITIVE_KEY_PARTS, ...extra]
   return {
-    sensitiveKey: new RegExp(
-      keyParts.map((part) => part.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-    ),
+    keyParts:
+      extra === undefined
+        ? SENSITIVE_KEY_PARTS
+        : [...SENSITIVE_KEY_PARTS, ...extra.map((part) => part.toLowerCase())],
+    maxScanLength,
     valuePatterns: (options?.valuePatterns ?? defaultPatterns).map(ensureGlobal),
     placeholder: options?.placeholder ?? REDACTED,
   }
@@ -93,6 +98,7 @@ function buildConfig(
 
 function redactString(value: string, config: RedactConfig): string {
   if (config.valuePatterns.length === 0) return value
+  if (value.length > config.maxScanLength) return config.placeholder
   let out = value
   for (const pattern of config.valuePatterns) out = out.replace(pattern, () => config.placeholder)
   return out
@@ -113,7 +119,8 @@ function redactValue(value: unknown, seen: WeakSet<object>, config: RedactConfig
   }
   for (const [key, val] of Object.entries(value)) {
     // A sensitive key wins outright (don't scan it) - the whole value is replaced.
-    out[key] = config.sensitiveKey.test(key.toLowerCase())
+    const lower = key.toLowerCase()
+    out[key] = config.keyParts.some((part) => lower.includes(part))
       ? config.placeholder
       : redactValue(val, seen, config)
   }
@@ -143,7 +150,7 @@ export function jsonLogger(
   write: (line: string) => void = writeToStderr,
   options?: RedactOptions,
 ): Logger {
-  const config = buildConfig(options, commonSecretPatterns)
+  const config = buildConfig(options, commonSecretPatterns, MAX_SCAN_LENGTH)
   const emit = (level: string, message: string, fields?: LogFields): void => {
     const entry: Record<string, unknown> =
       fields === undefined

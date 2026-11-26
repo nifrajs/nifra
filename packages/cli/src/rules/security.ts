@@ -490,9 +490,11 @@ function canRewriteSecretComparison(
   tree: TSApi.SourceFile,
   browser: boolean,
 ): boolean {
+  const fileName = tree.fileName.replaceAll("\\", "/").toLowerCase()
   return (
     !browser &&
-    !/(?:^|[/\\])shared[/\\]|\.shared\.[^.]+$/i.test(tree.fileName) &&
+    !`/${fileName}`.includes("/shared/") &&
+    !/\.shared\.[^./]+$/.test(fileName) &&
     tree.statements.some(
       (statement) =>
         ts.isImportDeclaration(statement) &&

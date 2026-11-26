@@ -221,6 +221,14 @@ describe("what counts as configuring or serving", () => {
     )
   })
 
+  test("an options binding must remain local to spreads and server configuration", async () => {
+    const options = "const o = { validateHost: true }"
+    expect(await one(listen(options))).toEqual([])
+    for (const use of ["updateOptions(o)", "const alias = o", "o.port = 1"]) {
+      expect(await one(listen(`${options}\n${use}`))).toHaveLength(1)
+    }
+  })
+
   test("a long route chain is still a server", async () => {
     const routes = '.get("/a", h)'.repeat(12)
     expect(

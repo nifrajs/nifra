@@ -288,7 +288,8 @@ export default function Islands() {
               bindings accept explicit http(s), mailto, tel, and relative URLs without an authority.
               They are blocked on a{" "}
               <code>script</code>, <code>iframe</code>, <code>object</code>, <code>embed</code>,{" "}
-              <code>link</code> or <code>base</code> element.
+              <code>link</code> or <code>base</code> element. SVG animation elements such as{" "}
+              <code>&lt;animate&gt;</code> reject all attribute bindings.
             </td>
           </tr>
           <tr>

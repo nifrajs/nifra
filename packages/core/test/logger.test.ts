@@ -328,3 +328,14 @@ describe("server error logging", () => {
     expect(logs).toHaveLength(0)
   })
 })
+
+test("value scanning replaces oversized fields and messages and honors an empty pattern list", () => {
+  const lines: string[] = []
+  const oversized = "text".repeat(3000)
+  jsonLogger((line) => lines.push(line)).info(oversized, { detail: oversized })
+  jsonLogger((line) => lines.push(line), { valuePatterns: [] }).info(oversized, {
+    detail: oversized,
+  })
+  expect(JSON.parse(lines[0] ?? "")).toMatchObject({ message: "[REDACTED]", detail: "[REDACTED]" })
+  expect(JSON.parse(lines[1] ?? "")).toMatchObject({ message: oversized, detail: oversized })
+})

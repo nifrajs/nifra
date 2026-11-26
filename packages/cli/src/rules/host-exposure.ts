@@ -176,17 +176,60 @@ function constantBindings(ts: typeof TSApi, tree: TSApi.SourceFile): Bindings {
   return bindings
 }
 
+function isModuleScope(ts: typeof TSApi, node: TSApi.Node): boolean {
+  for (let parent: TSApi.Node | undefined = node.parent; parent; parent = parent.parent) {
+    if (ts.isBlock(parent) || ts.isFunctionLike(parent)) return false
+  }
+  return true
+}
+
+function unescapedOptions(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+  names: CoreNames,
+  constants: Bindings,
+): Bindings {
+  const options = new Map(constants)
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isIdentifier(node) && options.has(node.text)) {
+      let value: TSApi.Node = node
+      while (
+        ts.isParenthesizedExpression(value.parent) ||
+        ts.isSatisfiesExpression(value.parent) ||
+        (ts.isConditionalExpression(value.parent) && value !== value.parent.condition) ||
+        (ts.isBinaryExpression(value.parent) &&
+          value.parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+          value === value.parent.right)
+      ) {
+        value = value.parent
+      }
+      const use = value.parent
+      const declares = ts.isVariableDeclaration(use) && use.name === node
+      const spreads = ts.isSpreadAssignment(use)
+      const configures =
+        ts.isCallExpression(use) &&
+        use.arguments[0] === value &&
+        isModuleScope(ts, use) &&
+        isServerFactory(ts, use.expression, names)
+      // Property writes, aliases, and calls to unknown code may change the options object.
+      if (!declares && !spreads && !configures) options.delete(node.text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+  return options
+}
+
 function hasHostGuard(
   ts: typeof TSApi,
   listener: TSApi.CallExpression,
   app: TSApi.Expression,
   names: CoreNames,
   constants: Bindings,
+  optionsBindings: Bindings,
 ): boolean {
   // A nested scope may shadow a module-level app, option, or factory.
-  for (let parent: TSApi.Node | undefined = listener.parent; parent; parent = parent.parent) {
-    if (ts.isBlock(parent) || ts.isFunctionLike(parent)) return false
-  }
+  if (!isModuleScope(ts, listener)) return false
   const seen = new Set<TSApi.Expression>()
   let receiver: TSApi.Expression | undefined = app
   while (receiver !== undefined && !seen.has(receiver)) {
@@ -200,8 +243,8 @@ function hasHostGuard(
         const options = receiver.arguments[0]
         if (options === undefined) return false
         return (
-          spreadSources(ts, options, constants, new Set())?.every(
-            (source) => source !== null && hostSetting(ts, source, constants) === true,
+          spreadSources(ts, options, optionsBindings, new Set())?.every(
+            (source) => source !== null && hostSetting(ts, source, optionsBindings) === true,
           ) === true
         )
       }
@@ -339,6 +382,7 @@ function listenersIn(
   const imports = serveImports(ts, tree)
   const names = coreNames(ts, tree)
   const constants = constantBindings(ts, tree)
+  const optionBindings = unescapedOptions(ts, tree, names, constants)
   const found: Listener[] = []
   const visit = (node: TSApi.Node): void => {
     if (ts.isCallExpression(node)) {
@@ -346,7 +390,8 @@ function listenersIn(
       if (
         kind !== undefined &&
         (topology === "direct" || terminatesTls(ts, node, kind)) &&
-        (kind.app === undefined || !hasHostGuard(ts, node, kind.app, names, constants))
+        (kind.app === undefined ||
+          !hasHostGuard(ts, node, kind.app, names, constants, optionBindings))
       )
         found.push({
           position: node.expression.getStart(tree),

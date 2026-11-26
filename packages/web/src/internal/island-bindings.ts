@@ -79,6 +79,7 @@ const SMIL_TAG = /^(?:set|animate|animatemotion|animatetransform)$/i
 
 /** The element surface the walker needs - structural, so tests can drive it without a real DOM. */
 export interface BindableElement {
+  readonly localName?: string
   readonly tagName?: string
   getAttribute(name: string): string | null
   setAttribute(name: string, value: string): void
@@ -152,7 +153,7 @@ export function bindScope(
   for (const [el, spec] of each("attr")) {
     for (const [attr, name] of pairs(spec)) {
       const isUrl = URL_ATTRIBUTE.test(attr)
-      const tag = el.tagName ?? ""
+      const tag = el.localName ?? el.tagName ?? ""
       if (CODE_ATTRIBUTE.test(attr) || (isUrl && URL_BLOCKED_TAG.test(tag)) || SMIL_TAG.test(tag)) {
         warnOnce("attribute", attr)
         continue

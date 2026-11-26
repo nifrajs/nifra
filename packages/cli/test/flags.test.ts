@@ -45,6 +45,16 @@ test("manual command help prints usage before dispatching", () => {
   }
 })
 
+test("a leading env-file value that names a command stays with its flag", () => {
+  const cli = resolve(import.meta.dir, "../src/cli.ts")
+  const result = Bun.spawnSync(
+    [process.execPath, "--no-env-file", cli, "--env-file", "runtime", "sdk", "--help"],
+    { timeout: 5000 },
+  )
+  expect(result.exitCode).toBe(0)
+  expect(result.stdout.toString()).toStartWith("  nifra sdk ")
+})
+
 test("parseFlags defaults to the shared uncommon DEFAULT_DEV_PORT (no flag, no env)", () => {
   delete Bun.env.PORT
   expect(parseFlags([]).port).toBe(DEFAULT_DEV_PORT)

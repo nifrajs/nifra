@@ -117,6 +117,40 @@ type ExtensionFactory = (
   | { readonly dispose?: () => void | PromiseLike<void> }
   | PromiseLike<void | { readonly dispose?: () => void | PromiseLike<void> }>
 
+function createRegistrations() {
+  return {
+    commands: new Map<string, ExtensionCommand>(),
+    tools: new Map<string, ExtensionTool>(),
+    workflows: new Map<string, ExtensionWorkflow>(),
+    subagents: new Map<string, ExtensionSubagent>(),
+    providers: new Map<string, ExtensionProvider>(),
+    handlers: new Map<string, ExtensionEventHandler[]>(),
+  }
+}
+
+type ExtensionRegistrations = ReturnType<typeof createRegistrations>
+
+interface ExtensionActivation {
+  readonly extension: CodingAgentExtension
+  readonly digest: string
+  readonly registrations: ExtensionRegistrations
+}
+
+let activationSequence = 0
+
+function replayRegistrations(
+  registrations: ExtensionRegistrations,
+  target: ExtensionContext,
+): void {
+  for (const [name, command] of registrations.commands) target.registerCommand(name, command)
+  for (const tool of registrations.tools.values()) target.registerTool(tool)
+  for (const [name, workflow] of registrations.workflows) target.registerWorkflow(name, workflow)
+  for (const role of registrations.subagents.values()) target.registerSubagent(role)
+  for (const provider of registrations.providers.values()) target.registerProvider(provider)
+  for (const [event, handlers] of registrations.handlers)
+    for (const handler of handlers) target.on(event, handler)
+}
+
 /**
  * Transactional TypeScript extension loader for the Nifra-native backend.
  *
@@ -126,12 +160,9 @@ type ExtensionFactory = (
 export class ExtensionHost {
   private readonly options: ExtensionHostOptions
   private active: readonly CodingAgentExtension[] = []
-  private commands = new Map<string, ExtensionCommand>()
-  private tools = new Map<string, ExtensionTool>()
-  private workflows = new Map<string, ExtensionWorkflow>()
-  private subagents = new Map<string, ExtensionSubagent>()
-  private providers = new Map<string, ExtensionProvider>()
-  private handlers = new Map<string, ExtensionEventHandler[]>()
+  private activations: readonly ExtensionActivation[] = []
+  private registrations = createRegistrations()
+  private lifecycle: Promise<unknown> = Promise.resolve()
   private revision = "0"
 
   constructor(options: ExtensionHostOptions) {
@@ -151,26 +182,37 @@ export class ExtensionHost {
   }
 
   get availableCommands(): readonly string[] {
-    return Object.freeze([...this.commands.keys()].sort())
+    return Object.freeze([...this.registrations.commands.keys()].sort())
   }
 
   get availableTools(): readonly ExtensionTool[] {
-    return Object.freeze([...this.tools.values()])
+    return Object.freeze([...this.registrations.tools.values()])
   }
 
   get availableWorkflows(): readonly string[] {
-    return Object.freeze([...this.workflows.keys()].sort())
+    return Object.freeze([...this.registrations.workflows.keys()].sort())
   }
 
   get availableSubagents(): readonly ExtensionSubagent[] {
-    return Object.freeze([...this.subagents.values()])
+    return Object.freeze([...this.registrations.subagents.values()])
   }
 
   get availableProviders(): readonly ExtensionProvider[] {
-    return Object.freeze([...this.providers.values()])
+    return Object.freeze([...this.registrations.providers.values()])
   }
 
-  async reload(): Promise<ExtensionReloadResult> {
+  reload(): Promise<ExtensionReloadResult> {
+    return this.runLifecycle(() => this.reloadOnce())
+  }
+
+  // A staged reload and a close must not dispose activations that another operation is retaining.
+  private runLifecycle<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.lifecycle.then(run, run)
+    this.lifecycle = next
+    return next
+  }
+
+  private async reloadOnce(): Promise<ExtensionReloadResult> {
     let pathError: string | undefined
     const paths = this.options.roots
       .map((root) => resolve(this.options.cwd, root))
@@ -191,52 +233,30 @@ export class ExtensionHost {
           return false
         }
       })
-    const next: CodingAgentExtension[] = []
-    const nextCommands = new Map<string, ExtensionCommand>()
-    const nextTools = new Map<string, ExtensionTool>()
-    const nextWorkflows = new Map<string, ExtensionWorkflow>()
-    const nextSubagents = new Map<string, ExtensionSubagent>()
-    const nextProviders = new Map<string, ExtensionProvider>()
-    const nextHandlers = new Map<string, ExtensionEventHandler[]>()
+    const next: ExtensionActivation[] = []
+    const created: ExtensionActivation[] = []
+    const registrations = createRegistrations()
+    const staging = this.context(registrations)
     try {
       if (pathError !== undefined) throw new Error(pathError)
       for (const path of paths) {
         await this.options.validate?.(path)
-        const loaded = await this.loadOne(
-          path,
-          nextCommands,
-          nextTools,
-          nextWorkflows,
-          nextSubagents,
-          nextProviders,
-          nextHandlers,
+        const digest = createHash("sha256").update(readFileSync(path)).digest("hex")
+        let activation = this.activations.find(
+          (candidate) =>
+            candidate.extension.path === path &&
+            candidate.digest === digest &&
+            !next.includes(candidate),
         )
-        next.push(loaded)
-      }
-      const previous = this.active
-      this.active = Object.freeze(next)
-      this.commands = nextCommands
-      this.tools = nextTools
-      this.workflows = nextWorkflows
-      this.subagents = nextSubagents
-      this.providers = nextProviders
-      this.handlers = nextHandlers
-      this.revision = `${Date.now().toString(36)}-${next.length}`
-      for (const extension of previous) {
-        try {
-          await extension.dispose?.()
-        } catch (error) {
-          this.options.onError?.({ path: extension.path, error })
+        if (activation === undefined) {
+          activation = await this.loadOne(path, digest)
+          created.push(activation)
         }
-      }
-      return {
-        revision: this.revision,
-        loaded: Object.freeze(next.map((extension) => extension.id)),
-        disabled: [],
-        rolledBack: false,
+        replayRegistrations(activation.registrations, staging)
+        next.push(activation)
       }
     } catch (error) {
-      for (const extension of next.reverse()) {
+      for (const { extension } of created.reverse()) {
         try {
           await extension.dispose?.()
         } catch {
@@ -253,62 +273,75 @@ export class ExtensionHost {
         error: message,
       }
     }
+
+    const previous = this.activations
+    this.activations = next
+    this.active = Object.freeze(next.map(({ extension }) => extension))
+    this.registrations = registrations
+    this.revision = `${Date.now().toString(36)}-${next.length}`
+    for (const activation of previous) {
+      if (next.includes(activation)) continue
+      const { extension } = activation
+      try {
+        await extension.dispose?.()
+      } catch (error) {
+        this.options.onError?.({ path: extension.path, error })
+      }
+    }
+    return {
+      revision: this.revision,
+      loaded: Object.freeze(this.active.map((extension) => extension.id)),
+      disabled: [],
+      rolledBack: false,
+    }
   }
 
-  async close(): Promise<void> {
-    const active = this.active
-    this.active = []
-    this.commands = new Map()
-    this.tools = new Map()
-    this.workflows = new Map()
-    this.subagents = new Map()
-    this.providers = new Map()
-    this.handlers = new Map()
-    for (const extension of active) await extension.dispose?.()
+  close(): Promise<void> {
+    return this.runLifecycle(async () => {
+      const active = this.active
+      this.active = []
+      this.activations = []
+      this.registrations = createRegistrations()
+      for (const extension of active) await extension.dispose?.()
+    })
   }
 
   command(name: string): ExtensionCommand | undefined {
-    return this.commands.get(name)
+    return this.registrations.commands.get(name)
   }
 
   tool(name: string): ExtensionTool | undefined {
-    return this.tools.get(name)
+    return this.registrations.tools.get(name)
   }
 
   workflow(name: string): ExtensionWorkflow | undefined {
-    return this.workflows.get(name)
+    return this.registrations.workflows.get(name)
   }
 
   subagent(name: string): ExtensionSubagent | undefined {
-    return this.subagents.get(name)
+    return this.registrations.subagents.get(name)
   }
 
   provider(name: string): ExtensionProvider | undefined {
-    return this.providers.get(name)
+    return this.registrations.providers.get(name)
   }
 
   async runWorkflow(name: string, options: WorkflowRunOptions = {}): Promise<WorkflowResult> {
-    const workflow = this.workflows.get(name)
+    const workflow = this.registrations.workflows.get(name)
     if (workflow === undefined) throw new Error(`unknown extension workflow: ${name}`)
     const step = await workflow(this.context())
     return new WorkflowRunner(options).run(step)
   }
 
   async emit(event: string, payload: unknown): Promise<void> {
-    for (const handler of this.handlers.get(event) ?? []) await handler(payload, this.context())
+    for (const handler of this.registrations.handlers.get(event) ?? [])
+      await handler(payload, this.context())
   }
 
-  private async loadOne(
-    path: string,
-    commands: Map<string, ExtensionCommand>,
-    tools: Map<string, ExtensionTool>,
-    workflows: Map<string, ExtensionWorkflow>,
-    subagents: Map<string, ExtensionSubagent>,
-    providers: Map<string, ExtensionProvider>,
-    handlers: Map<string, ExtensionEventHandler[]>,
-  ): Promise<CodingAgentExtension> {
-    const revision = createHash("sha256").update(readFileSync(path)).digest("hex")
-    const module = (await import(`${path}?revision=${revision}`)) as {
+  private async loadOne(path: string, digest: string): Promise<ExtensionActivation> {
+    // Reused activations never import again. New attempts need isolated module state, and a failed
+    // evaluation can stay cached for the URL used by that attempt.
+    const module = (await import(`${path}?revision=${++activationSequence}`)) as {
       default?: ExtensionFactory
       id?: string
       capabilities?: readonly string[]
@@ -320,29 +353,21 @@ export class ExtensionHost {
     const denied = capabilities.find((capability) => !trusted.has(capability))
     if (denied !== undefined)
       throw new Error(`extension ${path} requires untrusted capability: ${denied}`)
-    const context = this.context(commands, tools, workflows, subagents, providers, handlers)
-    const result = await module.default(context)
-    return Object.freeze({
+    const registrations = createRegistrations()
+    const result = await module.default(this.context(registrations))
+    const extension = Object.freeze({
       id: module.id ?? path,
       path,
       capabilities,
-      ...(result &&
-      typeof result === "object" &&
-      "dispose" in result &&
-      typeof result.dispose === "function"
+      ...(result && typeof result === "object" && typeof result.dispose === "function"
         ? { dispose: result.dispose }
         : {}),
     })
+    return { extension, digest, registrations }
   }
 
-  private context(
-    commands = this.commands,
-    tools = this.tools,
-    workflows = this.workflows,
-    subagents = this.subagents,
-    providers = this.providers,
-    handlers = this.handlers,
-  ): ExtensionContext {
+  private context(registrations = this.registrations): ExtensionContext {
+    const { commands, tools, workflows, subagents, providers, handlers } = registrations
     return {
       cwd: this.options.cwd,
       registerCommand: (name, handler) => {

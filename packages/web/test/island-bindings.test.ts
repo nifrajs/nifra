@@ -116,6 +116,16 @@ describe("bindScope - the closed attribute set", () => {
     }
   })
 
+  test("attr: namespaced SVG animation elements are identified by local name", () => {
+    const duration = signal<unknown>("1s")
+    const el = Object.assign(new FakeElement({ "data-bind-attr": "dur:duration" }), {
+      localName: "animate",
+      tagName: "svg:animate",
+    })
+    bindScope(new FakeRoot([el]), scopeOf({ duration }))
+    expect(el.getAttribute("dur")).toBeNull()
+  })
+
   test("attr: no attribute of an SVG animation element is bound, so no link is animated to a script URL", () => {
     const url = signal<unknown>("javascript:alert(1)")
     for (const tagName of ["set", "animate", "animateMotion", "ANIMATETRANSFORM"]) {

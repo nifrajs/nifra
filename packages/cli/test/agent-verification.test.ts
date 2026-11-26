@@ -250,13 +250,16 @@ describe("agent verification surfaces", () => {
   test("mechanical fix recipes are registered and apply timing-safe comparison", async () => {
     const dir = join(ROOT, "fixes")
     await mkdir(dir, { recursive: true })
-    await writeFile(join(dir, "security.ts"), "if (token === expected) return true\n")
+    await writeFile(
+      join(dir, "security.ts"),
+      'import "node:crypto"\nif (token === expected) return true\n',
+    )
     const changed = await applyDiagnosticRecipe(dir, {
       code: "NF-S002",
       severity: "error",
       message: "secret comparison",
       file: "security.ts",
-      line: 1,
+      line: 2,
       fix: { recipe: "security.timing-safe-equal" },
     })
     expect(changed).toEqual(["security.ts"])

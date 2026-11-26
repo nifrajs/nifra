@@ -3226,7 +3226,8 @@ Sets an attribute per pair, removing it for `false` or
 bindings accept explicit http(s), mailto, tel, and relative URLs without an authority.
 They are blocked on a
 `script`, `iframe`, `object`, `embed`,
-`link` or `base` element.
+`link` or `base` element. SVG animation elements such as
+`<animate>` reject all attribute bindings.
 
 `data-bind-value="query"`
 
